@@ -1,0 +1,11 @@
+# direnv environment template — copy to your project root as .envrc
+# Requires direnv: https://direnv.net
+
+# Scope sprint and knowledge databases to this project directory.
+# Add .sprintctl/ and .kctl/ to your .gitignore — these are binary blobs.
+export SPRINTCTL_DB="${PWD}/.sprintctl/sprintctl.db"
+export KCTL_DB="${PWD}/.kctl/kctl.db"
+
+# Optional: restrict which event types kctl extracts.
+# Default: all event types (note, blocker-raised, status-change, ...)
+# export KCTL_EVENT_TYPES="blocker-raised,status-change"
