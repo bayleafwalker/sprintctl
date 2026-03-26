@@ -11,5 +11,8 @@ dependencies = ["click>=8.1"]
 [project.scripts]
 sprintctl = "sprintctl.cli:cli"
 
+[tool.setuptools]
+packages = ["sprintctl"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
