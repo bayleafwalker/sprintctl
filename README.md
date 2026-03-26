@@ -125,4 +125,4 @@ PYTHONPATH=. .venv/bin/python -m pytest tests/test_core.py -v
 | 1.5 | Transition enforcement in db.py, calc.py, render annotations | Complete |
 | 2 | maintain.py (check/sweep/carryover), claim table (inactive), configurable thresholds | Planned |
 | 2.5 | Activate claims: claim create/heartbeat/release, enforce in transitions | Planned |
-| 3 | Companion tool (kctl): knowledge extraction from events, separate repo | Planned |
+| 3 | Companion tool ([kctl](https://github.com/bayleafwalker/kctl)): knowledge extraction from events | In progress |

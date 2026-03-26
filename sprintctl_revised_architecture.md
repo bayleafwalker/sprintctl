@@ -266,7 +266,7 @@ Durable knowledge (patterns learned, decisions made, reusable context) gets trap
 
 ### Boundary
 
-sprintctl owns sprint state. The companion tool (working name: `kctl`) owns knowledge state. They share a read path but not a write path.
+sprintctl owns sprint state. The companion tool ([kctl](https://github.com/bayleafwalker/kctl)) owns knowledge state. They share a read path but not a write path.
 
 ```
 ┌─────────────┐         ┌─────────────┐
