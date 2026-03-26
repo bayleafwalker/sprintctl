@@ -69,6 +69,20 @@ _MIGRATIONS: list[str] = [
         created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
     );
     """,
+    # Migration 2: claim table (schema present, no CLI exposure — Phase 2.5)
+    """
+    CREATE TABLE IF NOT EXISTS claim (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        work_item_id INTEGER NOT NULL REFERENCES work_item(id) ON DELETE CASCADE,
+        agent        TEXT    NOT NULL,
+        claim_type   TEXT    NOT NULL DEFAULT 'execute'
+                             CHECK (claim_type IN ('inspect', 'execute', 'review', 'coordinate')),
+        exclusive    INTEGER NOT NULL DEFAULT 1,
+        created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        expires_at   TEXT    NOT NULL,
+        heartbeat    TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+    )
+    """,
 ]
 
 

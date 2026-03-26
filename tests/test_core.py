@@ -299,7 +299,7 @@ class TestEdgeCases:
     def test_init_db_idempotent(self, conn):
         db.init_db(conn)  # second call
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 1
+        assert version == len(db._MIGRATIONS)
 
     def test_db_path_from_env(self, tmp_path, monkeypatch):
         custom = str(tmp_path / "custom.db")

@@ -1,10 +1,12 @@
 import json
+import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import click
 
 from . import db as _db
+from . import maintain as _maintain
 from .render import render_sprint_doc
 
 
@@ -64,6 +66,32 @@ def sprint_show(obj, sprint_id) -> None:
     click.echo(f"Goal:   {s['goal']}")
     click.echo(f"Dates:  {s['start_date']} to {s['end_date']}")
     click.echo(f"Status: {s['status']}")
+
+
+@sprint.command("status")
+@click.option("--id", "sprint_id", type=int, required=True, help="Sprint ID")
+@click.option(
+    "--status",
+    "new_status",
+    required=True,
+    type=click.Choice(["planned", "active", "closed"]),
+    help="New status",
+)
+@click.pass_obj
+def sprint_status(obj, sprint_id, new_status) -> None:
+    """Update a sprint's status (enforces allowed transitions)."""
+    conn = obj["conn"]
+    s = _db.get_sprint(conn, sprint_id)
+    if s is None:
+        click.echo(f"Sprint #{sprint_id} not found.", err=True)
+        sys.exit(1)
+    current = s["status"]
+    try:
+        _db.set_sprint_status(conn, sprint_id, new_status)
+    except _db.InvalidTransition as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"Sprint #{sprint_id} status: {current} -> {new_status}")
 
 
 @sprint.command("list")
@@ -199,6 +227,151 @@ def event_add(obj, sprint_id, event_type, actor, work_item_id, source_type, payl
         source_type=source_type, work_item_id=work_item_id, payload=payload_dict,
     )
     click.echo(f"Recorded event #{eid}: {event_type}  (actor: {actor})")
+
+
+# ---------------------------------------------------------------------------
+# render
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# maintain
+# ---------------------------------------------------------------------------
+
+@cli.group()
+def maintain() -> None:
+    """Maintenance commands (check, sweep, carryover)."""
+
+
+def _resolve_sprint(conn, sprint_id: int | None) -> dict:
+    if sprint_id is not None:
+        s = _db.get_sprint(conn, sprint_id)
+        if s is None:
+            click.echo(f"Sprint #{sprint_id} not found.", err=True)
+            sys.exit(1)
+    else:
+        s = _db.get_active_sprint(conn)
+        if s is None:
+            click.echo("No active sprint found. Use --sprint-id to specify one.", err=True)
+            sys.exit(1)
+    return s
+
+
+def _parse_threshold(threshold_str: str | None) -> timedelta | None:
+    if threshold_str is None:
+        return None
+    raw = threshold_str.rstrip("h")
+    try:
+        return timedelta(hours=float(raw))
+    except ValueError:
+        click.echo(f"Invalid threshold '{threshold_str}' — use format like '4h'.", err=True)
+        sys.exit(1)
+
+
+@maintain.command("check")
+@click.option("--sprint-id", type=int, default=None, help="Sprint ID (defaults to active)")
+@click.option("--threshold", default=None, help="Staleness threshold, e.g. 4h (default: 4h)")
+@click.pass_obj
+def maintain_check(obj, sprint_id, threshold) -> None:
+    """Dry-run: report stale items and sprint health (no writes)."""
+    conn = obj["conn"]
+    s = _resolve_sprint(conn, sprint_id)
+    now = datetime.utcnow()
+    td = _parse_threshold(threshold)
+    report = _maintain.check(conn, s["id"], now, threshold=td)
+
+    sprint = report["sprint"]
+    risk = report["risk"]
+    stale = report["stale_items"]
+    track_health = report["track_health"]
+    threshold_hours = report["threshold"].total_seconds() / 3600
+
+    risk_tag = ""
+    if risk["overdue"]:
+        risk_tag = "  [OVERDUE]"
+    elif risk["at_risk"]:
+        risk_tag = "  [AT RISK]"
+    click.echo(
+        f"Sprint #{sprint['id']}: \"{sprint['name']}\" — "
+        f"{risk['days_remaining']} days remaining, "
+        f"{risk['active_items']} active item(s){risk_tag}"
+    )
+    click.echo("")
+
+    click.echo(f"Stale items (threshold: {threshold_hours:g}h):")
+    if stale:
+        for it in stale:
+            h, rem = divmod(it["idle_seconds"], 3600)
+            m = rem // 60
+            idle = f"{h}h{m:02d}m"
+            click.echo(f"  #{it['id']}  [{it['status']:8}]  {it['title']}  — idle {idle}  (track: {it['track_name']})")
+    else:
+        click.echo("  (none)")
+    click.echo("")
+
+    click.echo("Track health:")
+    for name, health in track_health.items():
+        done_pct = int(health["done_ratio"] * 100)
+        blocked_pct = int(health["blocked_ratio"] * 100)
+        c = health["counts"]
+        click.echo(
+            f"  {name}: {health['total']} items — "
+            f"{c['done']} done ({done_pct}%), "
+            f"{c['active']} active, "
+            f"{c['pending']} pending, "
+            f"{c['blocked']} blocked ({blocked_pct}%)"
+        )
+
+
+@maintain.command("sweep")
+@click.option("--sprint-id", type=int, default=None, help="Sprint ID (defaults to active)")
+@click.option("--threshold", default=None, help="Staleness threshold, e.g. 4h (default: 4h)")
+@click.option("--auto-close", is_flag=True, default=False,
+              help="Auto-close overdue sprint if no active items remain after sweep")
+@click.pass_obj
+def maintain_sweep(obj, sprint_id, threshold, auto_close) -> None:
+    """Execute: block stale items and optionally auto-close overdue sprint."""
+    conn = obj["conn"]
+    s = _resolve_sprint(conn, sprint_id)
+    now = datetime.utcnow()
+    td = _parse_threshold(threshold)
+    result = _maintain.sweep(conn, s["id"], now, threshold=td, auto_close=auto_close)
+
+    blocked = result["blocked_items"]
+    if blocked:
+        click.echo(f"Blocked {len(blocked)} stale item(s):")
+        for it in blocked:
+            click.echo(f"  #{it['id']}  {it['title']}")
+    else:
+        click.echo("No stale items to block.")
+
+    if result["auto_closed"]:
+        click.echo(f"Sprint #{s['id']} auto-closed (overdue, no active items).")
+
+
+@maintain.command("carryover")
+@click.option("--from-sprint", "from_sprint_id", type=int, required=True, help="Source sprint ID")
+@click.option("--to-sprint", "to_sprint_id", type=int, required=True, help="Target sprint ID")
+@click.pass_obj
+def maintain_carryover(obj, from_sprint_id, to_sprint_id) -> None:
+    """Carry incomplete items from one sprint to another."""
+    conn = obj["conn"]
+    if _db.get_sprint(conn, from_sprint_id) is None:
+        click.echo(f"Source sprint #{from_sprint_id} not found.", err=True)
+        sys.exit(1)
+    if _db.get_sprint(conn, to_sprint_id) is None:
+        click.echo(f"Target sprint #{to_sprint_id} not found.", err=True)
+        sys.exit(1)
+    try:
+        created = _maintain.carryover(conn, from_sprint_id, to_sprint_id)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    if created:
+        click.echo(f"Carried {len(created)} item(s) from sprint #{from_sprint_id} to #{to_sprint_id}:")
+        for it in created:
+            click.echo(f"  #{it['id']}  {it['title']}")
+    else:
+        click.echo("No incomplete items to carry over.")
 
 
 # ---------------------------------------------------------------------------
