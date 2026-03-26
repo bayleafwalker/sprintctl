@@ -3,11 +3,22 @@ import os
 import sqlite3
 from pathlib import Path
 
+
+class InvalidTransition(ValueError):
+    pass
+
+
 VALID_TRANSITIONS: dict[str, set[str]] = {
     "pending": {"active"},
     "active": {"done", "blocked"},
     "done": set(),
     "blocked": set(),
+}
+
+SPRINT_TRANSITIONS: dict[str, set[str]] = {
+    "planned": {"active"},
+    "active": {"closed"},
+    "closed": set(),
 }
 
 _MIGRATIONS: list[str] = [
@@ -215,10 +226,33 @@ def list_work_items(
 
 
 def set_work_item_status(conn: sqlite3.Connection, item_id: int, new_status: str) -> None:
+    item = get_work_item(conn, item_id)
+    if item is None:
+        raise ValueError(f"Item #{item_id} not found")
+    current = item["status"]
+    if new_status not in VALID_TRANSITIONS[current]:
+        allowed = sorted(VALID_TRANSITIONS[current]) or "none (terminal)"
+        raise InvalidTransition(
+            f"cannot transition {current} -> {new_status}. Allowed: {allowed}"
+        )
     conn.execute(
         "UPDATE work_item SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
         (new_status, item_id),
     )
+    conn.commit()
+
+
+def set_sprint_status(conn: sqlite3.Connection, sprint_id: int, new_status: str) -> None:
+    sprint = get_sprint(conn, sprint_id)
+    if sprint is None:
+        raise ValueError(f"Sprint #{sprint_id} not found")
+    current = sprint["status"]
+    if new_status not in SPRINT_TRANSITIONS[current]:
+        allowed = sorted(SPRINT_TRANSITIONS[current]) or "none (terminal)"
+        raise InvalidTransition(
+            f"cannot transition sprint {current} -> {new_status}. Allowed: {allowed}"
+        )
+    conn.execute("UPDATE sprint SET status = ? WHERE id = ?", (new_status, sprint_id))
     conn.commit()
 
 

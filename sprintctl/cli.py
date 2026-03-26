@@ -147,14 +147,11 @@ def item_status(obj, item_id, new_status) -> None:
         click.echo(f"Item #{item_id} not found.", err=True)
         sys.exit(1)
     current = it["status"]
-    if new_status not in _db.VALID_TRANSITIONS[current]:
-        click.echo(
-            f"Error: cannot transition {current} -> {new_status}. "
-            f"Allowed: {sorted(_db.VALID_TRANSITIONS[current]) or 'none (terminal)'}",
-            err=True,
-        )
+    try:
+        _db.set_work_item_status(conn, item_id, new_status)
+    except _db.InvalidTransition as e:
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
-    _db.set_work_item_status(conn, item_id, new_status)
     click.echo(f"Item #{item_id} status: {current} -> {new_status}")
 
 
