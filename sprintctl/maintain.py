@@ -144,6 +144,23 @@ def sweep_stale_items(
     return affected
 
 
+def purge_expired_claims(conn, sprint_id: int) -> int:
+    """
+    Delete all expired claims for items in the given sprint.
+    Returns the number of claims deleted.
+    """
+    result = conn.execute(
+        """
+        DELETE FROM claim
+        WHERE work_item_id IN (SELECT id FROM work_item WHERE sprint_id = ?)
+          AND expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ','now')
+        """,
+        (sprint_id,),
+    )
+    conn.commit()
+    return result.rowcount
+
+
 def sweep(
     conn,
     sprint_id: int,
@@ -156,12 +173,14 @@ def sweep(
 
     Actions:
     - Stale active items → blocked (with system event)
+    - Expired claims deleted
     - Auto-close overdue sprint with no active items (opt-in via auto_close)
     """
     if threshold is None:
         threshold = _stale_threshold()
 
     blocked = sweep_stale_items(conn, sprint_id, now, threshold)
+    expired_claims_purged = purge_expired_claims(conn, sprint_id)
 
     auto_closed = False
     if auto_close:
@@ -182,6 +201,7 @@ def sweep(
 
     return {
         "blocked_items": blocked,
+        "expired_claims_purged": expired_claims_purged,
         "auto_closed": auto_closed,
     }
 

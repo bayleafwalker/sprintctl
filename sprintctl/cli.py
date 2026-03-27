@@ -247,6 +247,57 @@ def item_add(obj, sprint_id, track_name, title, assignee) -> None:
     click.echo(f"Added item #{item_id}: {title}  [track: {track_name}]")
 
 
+@item.command("show")
+@click.option("--id", "item_id", type=int, required=True, help="Item ID")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.pass_obj
+def item_show(obj, item_id, as_json) -> None:
+    """Show a single work item with its recent events and active claims."""
+    conn = obj["conn"]
+    it = _db.get_work_item(conn, item_id)
+    if it is None:
+        click.echo(f"Item #{item_id} not found.", err=True)
+        sys.exit(1)
+    events = _db.list_events(conn, it["sprint_id"])
+    item_events = [e for e in events if e.get("work_item_id") == item_id]
+    claims = _db.list_claims(conn, item_id, active_only=True)
+
+    if as_json:
+        click.echo(json.dumps({"item": dict(it), "events": item_events, "active_claims": claims}, indent=2))
+        return
+
+    click.echo(f"#{it['id']}  [{it['status']}]  {it['title']}")
+    click.echo(f"  Sprint:   #{it['sprint_id']}")
+    track_name = it.get("track_name", "")
+    if track_name:
+        click.echo(f"  Track:    {track_name}")
+    assignee = it.get("assignee") or "-"
+    click.echo(f"  Assignee: {assignee}")
+    click.echo(f"  Updated:  {it['updated_at']}")
+
+    if claims:
+        click.echo("\nActive claims:")
+        for c in claims:
+            excl = "exclusive" if c["exclusive"] else "shared"
+            parts = [f"  #{c['id']}  {c['agent']}  [{c['claim_type']}]  {excl}  expires={c['expires_at']}"]
+            if c.get("branch"):
+                parts.append(f"  branch={c['branch']}")
+            if c.get("commit_sha"):
+                parts.append(f"  commit={c['commit_sha']}")
+            if c.get("pr_ref"):
+                parts.append(f"  pr={c['pr_ref']}")
+            if c.get("worktree_path"):
+                parts.append(f"  worktree={c['worktree_path']}")
+            click.echo("".join(parts))
+
+    if item_events:
+        click.echo("\nEvents:")
+        for e in item_events[-10:]:
+            click.echo(f"  #{e['id']}  [{e['event_type']}]  {e['actor']}  {e['created_at']}")
+    else:
+        click.echo("\nEvents: (none)")
+
+
 @item.command("list")
 @click.option("--sprint-id", type=int, default=None, help="Filter by sprint ID")
 @click.option("--track", "track_name", default=None, help="Filter by track name")
@@ -545,6 +596,10 @@ def maintain_sweep(obj, sprint_id, threshold, auto_close) -> None:
     else:
         click.echo("No stale items to block.")
 
+    purged = result["expired_claims_purged"]
+    if purged:
+        click.echo(f"Purged {purged} expired claim(s).")
+
     if result["auto_closed"]:
         click.echo(f"Sprint #{s['id']} auto-closed (overdue, no active items).")
 
@@ -708,7 +763,7 @@ def import_cmd(obj, input_path) -> None:
 
 @cli.group()
 def claim() -> None:
-    """Manage agent claims on work items (Phase 2.5)."""
+    """Manage agent claims on work items."""
 
 
 @claim.command("create")
@@ -870,7 +925,6 @@ def handoff_cmd(obj, sprint_id, output_path, events_limit) -> None:
         "items": items,
         "events": recent_events,
         "active_claims": active_claims,
-        "knowledge_candidates": [],
     }
     dest = output_path or f"handoff-{sid}.json"
     with open(dest, "w") as fh:

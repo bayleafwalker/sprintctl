@@ -1,19 +1,75 @@
 # sprintctl
 
-A minimal, agent-centric sprint coordination CLI backed by SQLite.
+A local-first sprint state and handoff tool for a single developer and occasional agent sessions.
 
-**Not a project management tool.** sprintctl is a coordination layer for agent-driven work — a single source of truth for sprint state that agents read from and write to via CLI, instead of editing shared markdown files.
+sprintctl tracks work items through enforced state transitions, records events and decisions, and produces plain-text and JSON artifacts that git can diff and agents can consume. It is not a project management platform, a team coordination layer, or a distributed task queue.
 
-## Why this exists
+## What it is
 
-Agents working from `.md` files drift. They pattern-match on prose structure, update the wrong section, let state go stale, and have no way to enforce transitions. sprintctl replaces that with a schema-backed CLI that makes the correct operation unambiguous and the wrong operation impossible.
+- A local SQLite database of sprint state — items, tracks, events, claims
+- A CLI for advancing work through enforced transitions (`pending → active → done | blocked`)
+- A render command that produces a diffable plain-text sprint snapshot
+- A handoff command that produces a JSON bundle for agent session resumption
+- A claim system for coordinating exclusive access between you and one or two agents working the same sprint
+- A maintenance layer (check, sweep, carryover) you invoke explicitly or schedule via cron
+
+## What it is not
+
+- Not a Jira/Linear replacement
+- Not a multi-team coordination layer
+- Not a distributed task queue or swarm orchestrator
+- No web UI, no hosted dependency, no sync protocol
+- No shared database — local state only
+
+## Who it is for
+
+One developer running medium- to long-term sprints, possibly with one or two agent sessions that pick up work, claim items, and hand off state between sessions. The tool is designed for sparse agentic use: an agent starts a session, reads state, claims an item, does work, records a note or decision, and either completes the item or hands off to the next session.
+
+## Expected workflow
+
+```sh
+# Start a sprint
+sprintctl sprint create --name "Sprint 4" --start 2026-04-07 --end 2026-04-18 --status active
+
+# Populate the backlog
+sprintctl item add --sprint-id 1 --track backend --title "Implement auth"
+sprintctl item add --sprint-id 1 --track infra --title "Set up CI pipeline"
+sprintctl item add --sprint-id 1 --track docs --title "Write API reference"
+
+# Check state at any time
+sprintctl sprint show --detail
+sprintctl maintain check
+
+# Pick up an item (optionally claim it to prevent concurrent access)
+sprintctl claim create --item-id 1 --agent claude-session-1 --branch feat/auth
+sprintctl item status --id 1 --status active --actor claude-session-1
+
+# Record decisions and notes during work
+sprintctl item note --id 1 --type decision --summary "Using JWT with RS256" \
+    --detail "Symmetric keys ruled out; need cross-service verification" \
+    --tags auth,security --actor claude-session-1
+
+# Complete or block the item, then release the claim
+sprintctl item status --id 1 --status done --actor claude-session-1
+sprintctl claim release --id 1 --agent claude-session-1
+
+# Produce a handoff bundle for the next session
+sprintctl handoff
+
+# Commit a plain-text snapshot for review and diffing
+sprintctl render > docs/sprint-current.txt
+git add docs/sprint-current.txt && git commit -m "chore: sprint snapshot"
+
+# At sprint boundary: carry incomplete items forward
+sprintctl sprint create --name "Sprint 5" --start 2026-04-21 --end 2026-05-02 --status active
+sprintctl maintain carryover --from-sprint 1 --to-sprint 2
+```
 
 ## Anti-goals
 
-- Not a Jira/Linear replacement
-- No web UI, no hosted dependency
 - No per-field policy sprawl — policies belong in a policy layer, not state objects
 - No agent goodwill assumptions — transitions are enforced, not advisory
+- No speculative orchestration primitives — claims coordinate two sessions, not a swarm
 
 ## Requirements
 
@@ -90,27 +146,6 @@ sprintctl is explicitly local developer tooling. The database lives on your mach
 - The committed `sprintctl render` output is the reviewable, portable record — not the database.
 - Export/import exists for migrating state between your own machines, not for sharing state with others.
 
-## Quickstart
-
-```sh
-# Create a sprint
-sprintctl sprint create --name "Sprint 1" --start 2026-03-24 --end 2026-04-04 --status active
-
-# Add work items to tracks
-sprintctl item add --sprint-id 1 --track backend --title "Implement auth"
-sprintctl item add --sprint-id 1 --track infra --title "Set up CI pipeline"
-
-# Move items through enforced transitions: pending → active → done | blocked
-sprintctl item status --id 1 --status active
-sprintctl item status --id 1 --status done
-
-# Record events
-sprintctl event add --sprint-id 1 --type note --actor agent-1 --item-id 1
-
-# Render current sprint state as a plain-text document
-sprintctl render
-```
-
 ## Commands
 
 ### Sprints
@@ -119,8 +154,8 @@ sprintctl render
 sprintctl sprint create --name <name> --start <YYYY-MM-DD> --end <YYYY-MM-DD> \
     [--status <planned|active|closed>] [--goal <text>] [--kind <active_sprint|backlog|archive>]
 
-sprintctl sprint show [--id <id>] [--detail]   # --detail adds health summary and track breakdown
-sprintctl sprint list [--include-backlog] [--include-archive]
+sprintctl sprint show [--id <id>] [--detail] [--json]  # --detail adds health summary and track breakdown
+sprintctl sprint list [--include-backlog] [--include-archive] [--json]
 sprintctl sprint status --id <id> --status <planned|active|closed>
 sprintctl sprint kind --id <id> --kind <active_sprint|backlog|archive>
 ```
@@ -133,12 +168,24 @@ Sprint kinds classify a sprint's role — `active_sprint` (default), `backlog`, 
 
 ```sh
 sprintctl item add --sprint-id <id> --track <name> --title <title> [--assignee <name>]
-sprintctl item list [--sprint-id <id>] [--track <name>] [--status <pending|active|done|blocked>]
+sprintctl item show --id <id> [--json]
+sprintctl item list [--sprint-id <id>] [--track <name>] [--status <pending|active|done|blocked>] [--json]
 sprintctl item status --id <id> --status <pending|active|done|blocked> [--actor <name>]
 sprintctl item note --id <id> --type <type> --summary <text> [--detail <text>] [--tags <a,b>] [--actor <name>]
 ```
 
-Item status transitions are enforced. `done` and `blocked` are terminal (no further transitions allowed). Passing `--actor` to `item status` enforces exclusive claim checks — the transition is rejected if another agent holds an active exclusive claim on the item.
+Item status transitions are enforced:
+
+```
+pending → active → done     (terminal)
+                 → blocked → active   (revivable)
+```
+
+`done` is terminal. `blocked` is revivable — use `item status --status active` to unblock after addressing the issue.
+
+Passing `--actor` to `item status` enforces exclusive claim checks — the transition is rejected if another agent holds an active exclusive claim on the item.
+
+`item show` displays a single item with its recent events and active claims. Use `--json` for machine-readable output.
 
 `item note` records a structured event on a work item. Use it for decisions, blockers, architecture notes, and lessons learned. The `--type` value is freeform; see [Events](#events) for conventional types that the companion tool [kctl](https://github.com/bayleafwalker/kctl) recognizes.
 
@@ -147,6 +194,8 @@ Item status transitions are enforced. `done` and `blocked` are terminal (no furt
 ```sh
 sprintctl event add --sprint-id <id> --type <type> --actor <name> \
     [--item-id <id>] [--source <actor|daemon|system>] [--payload <json>]
+
+sprintctl event list --sprint-id <id> [--item-id <id>] [--type <type>] [--limit <n>] [--json]
 ```
 
 Event type is freeform text. Conventional types recognized by [kctl](https://github.com/bayleafwalker/kctl) for knowledge extraction:
@@ -171,15 +220,16 @@ For knowledge-bearing events, structure the payload as:
 
 ### Claims
 
-Claims allow agents to take exclusive or shared ownership of a work item before transitioning it. An exclusive claim on an item blocks other agents from transitioning it until the claim is released or expires.
+Claims let you or an agent take ownership of a work item before working on it. An exclusive claim blocks other agents from transitioning the item until the claim is released or expires. Claims are a local coordination mechanism — they are meaningful only within a single database, not across machines or sessions that don't share state.
 
 ```sh
 sprintctl claim create --item-id <id> --agent <name> \
-    [--type <inspect|execute|review|coordinate>] [--ttl <seconds>] [--non-exclusive]
+    [--type <inspect|execute|review|coordinate>] [--ttl <seconds>] [--non-exclusive] \
+    [--branch <name>] [--worktree <path>] [--commit-sha <sha>] [--pr-ref <owner/repo#123>]
 
 sprintctl claim heartbeat --id <claim-id> --agent <name> [--ttl <seconds>]
 sprintctl claim release --id <claim-id> --agent <name>
-sprintctl claim list --item-id <id> [--all]
+sprintctl claim list --item-id <id> [--all] [--json]
 sprintctl claim list-sprint [--sprint-id <id>] [--all] [--expiring-within <seconds>] [--json]
 ```
 
@@ -189,10 +239,38 @@ Claim types:
 |------|---------|
 | `execute` | Default. Agent is actively working the item. Exclusive. |
 | `inspect` | Agent is reading state. Non-exclusive. |
-| `review` | Agent is reviewing completed work. |
-| `coordinate` | Agent is orchestrating sub-agents on the item. |
+| `review` | Agent is reviewing completed work. Exclusive. |
+| `coordinate` | Agent is orchestrating sub-agents on the item. Exclusive. |
 
-Default TTL is 300 seconds. Refresh with `claim heartbeat` to keep a long-running claim alive. Claims past their TTL are expired by `maintain sweep`.
+Default TTL is 300 seconds. Refresh with `claim heartbeat` to keep a long-running claim alive. Expired claims are purged by `maintain sweep`.
+
+#### Workspace metadata on claims
+
+Claims can record the git context in which an agent is working:
+
+```sh
+sprintctl claim create --item-id 3 --agent claude-session-2 \
+    --branch feat/auth --commit-sha abc1234 --pr-ref owner/repo#42
+```
+
+The `--worktree` flag records the path to a git worktree if the agent is working in one. These fields are stored on the claim and included in `claim list --json` and `handoff` output, making it straightforward for the next session to pick up where the previous one left off.
+
+### Handoff
+
+```sh
+sprintctl handoff [--sprint-id <id>] [--output <path>] [--events <limit>]
+```
+
+Produces a JSON bundle containing the sprint, all items, recent events, and active claims. This is the primary artifact for agent session resumption: an incoming agent reads the bundle to understand current sprint state, which items are claimed and by whom, and what work context (branch, commit, PR) the previous session left behind.
+
+Default output file: `handoff-N.json`. Pass `--output -` to write to stdout.
+
+Typical agent session start:
+
+```sh
+sprintctl handoff > handoff.json
+# Pass handoff.json as context to the next agent session
+```
 
 ### Maintenance
 
@@ -202,9 +280,9 @@ sprintctl maintain sweep [--sprint-id <id>] [--threshold <Nh>] [--auto-close]
 sprintctl maintain carryover --from-sprint <id> --to-sprint <id>
 ```
 
-`maintain check` is a read-only diagnostic — it reports stale items, track health, and sprint overrun risk without writing anything. Safe to run at any time.
+`maintain check` is a read-only diagnostic — it reports stale items, track health, and sprint overrun risk without writing anything. Safe to run at any time; the companion tool [kctl](https://github.com/bayleafwalker/kctl) calls it as a pre-flight before knowledge extraction.
 
-`maintain sweep` executes: stale active items are transitioned to `blocked` and a system event is emitted per item. With `--auto-close`, an overdue sprint with no remaining active items is closed automatically.
+`maintain sweep` executes: stale active items are transitioned to `blocked` with a system event, and expired claims are deleted. With `--auto-close`, an overdue sprint with no remaining active items is closed automatically.
 
 `maintain carryover` moves all incomplete items (`pending`, `active`, `blocked`) from the source sprint to the target sprint. Each original item is marked `done` with a carryover payload. New items are created in the target sprint preserving track and title.
 
@@ -224,7 +302,7 @@ sprintctl export --sprint-id <id> [--output <path>]   # default: sprint-N.json
 sprintctl import --file <path>
 ```
 
-Export writes a JSON envelope containing the sprint, tracks, items, and events. Import re-sequences all IDs into the local database. Use this for migrating state between your own machines.
+Export writes a JSON envelope containing the sprint, tracks, items, and events. Import re-sequences all IDs into the local database. Use this for migrating state between your own machines, not for sharing state with others.
 
 ### Rendering
 
@@ -232,7 +310,7 @@ Export writes a JSON envelope containing the sprint, tracks, items, and events. 
 sprintctl render [--sprint-id <id>]
 ```
 
-Output is derived entirely from database state. Idempotent. Re-running is safe. Includes staleness annotations and track health summaries.
+Output is derived entirely from database state. Idempotent. Re-running is safe. Includes staleness annotations and track health summaries. Pipe to a file and commit it for a diffable record.
 
 ## Architecture
 
@@ -248,9 +326,10 @@ sprintctl/
                 track health summaries
   maintain.py — check, sweep, carryover logic; all writes go through db.py
 tests/
-  conftest.py     — shared fixtures (in-memory DB)
-  test_core.py    — schema, transitions, core workflow
-  test_calc.py    — calc function unit tests
+  conftest.py      — shared fixtures (in-memory DB)
+  test_core.py     — schema, transitions, core workflow
+  test_claims.py   — claim layer and CLI integration
+  test_calc.py     — calc function unit tests
   test_maintain.py — maintenance command tests
 ```
 
@@ -259,7 +338,7 @@ Key architectural decisions:
 - **No daemon** — calculate-on-call: all derived state computed at read time in `calc.py`
 - **Maintenance = explicit CLI commands** — not sweep loops
 - **Transition enforcement lives in db.py** — not cli.py; both `InvalidTransition` and `ClaimConflict` are raised there
-- **WAL mode enabled** — allows concurrent reads from multiple local agents alongside CLI writes
+- **WAL mode enabled** — allows concurrent reads from multiple local sessions alongside CLI writes
 - **DB path**: `SPRINTCTL_DB` env var or `~/.sprintctl/sprintctl.db`
 - **No ORM** — sqlite3 stdlib only; rows returned as dicts
 - **`render_sprint_doc()` is a pure function** — timestamp passed in

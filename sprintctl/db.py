@@ -71,7 +71,7 @@ _MIGRATIONS: list[str] = [
         created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
     );
     """,
-    # Migration 2: claim table (schema present, no CLI exposure — Phase 2.5)
+    # Migration 2: claim table
     """
     CREATE TABLE IF NOT EXISTS claim (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,

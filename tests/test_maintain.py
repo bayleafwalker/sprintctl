@@ -327,3 +327,66 @@ class TestMigration2:
     def test_schema_version_is_4(self, conn):
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
         assert version == 4
+
+
+# ---------------------------------------------------------------------------
+# Group 7: claim expiry purge in sweep
+# ---------------------------------------------------------------------------
+
+class TestSweepPurgesExpiredClaims:
+    def test_sweep_purges_expired_claim(self, conn, active_sprint):
+        iid = _add_item(conn, active_sprint["id"], "eng", "Claimed task")
+        # Insert a claim with an already-expired TTL (1 second, then back-date it)
+        cid = db.create_claim(conn, iid, agent="agent-a", ttl_seconds=1)
+        conn.execute(
+            "UPDATE claim SET expires_at = datetime('now', '-10 seconds') WHERE id = ?", (cid,)
+        )
+        conn.commit()
+        # Confirm claim exists before sweep
+        row = conn.execute("SELECT id FROM claim WHERE id = ?", (cid,)).fetchone()
+        assert row is not None
+
+        now = datetime.now(timezone.utc)
+        result = maint.sweep(conn, active_sprint["id"], now, threshold=timedelta(hours=99))
+        assert result["expired_claims_purged"] == 1
+
+        row = conn.execute("SELECT id FROM claim WHERE id = ?", (cid,)).fetchone()
+        assert row is None
+
+    def test_sweep_does_not_purge_active_claim(self, conn, active_sprint):
+        iid = _add_item(conn, active_sprint["id"], "eng", "Active task")
+        cid = db.create_claim(conn, iid, agent="agent-a", ttl_seconds=3600)
+        now = datetime.now(timezone.utc)
+        result = maint.sweep(conn, active_sprint["id"], now, threshold=timedelta(hours=99))
+        assert result["expired_claims_purged"] == 0
+        row = conn.execute("SELECT id FROM claim WHERE id = ?", (cid,)).fetchone()
+        assert row is not None
+
+    def test_sweep_only_purges_claims_in_sprint(self, conn):
+        s1 = db.create_sprint(conn, "S1", "", "2026-04-01", "2026-04-30", "active")
+        s2 = db.create_sprint(conn, "S2", "", "2026-04-01", "2026-04-30", "active")
+        tid1 = db.get_or_create_track(conn, s1, "eng")
+        tid2 = db.get_or_create_track(conn, s2, "eng")
+        iid1 = db.create_work_item(conn, s1, tid1, "S1 task")
+        iid2 = db.create_work_item(conn, s2, tid2, "S2 task")
+        cid1 = db.create_claim(conn, iid1, agent="a", ttl_seconds=1)
+        cid2 = db.create_claim(conn, iid2, agent="a", ttl_seconds=1)
+        conn.execute("UPDATE claim SET expires_at = datetime('now', '-5 seconds')")
+        conn.commit()
+        now = datetime.now(timezone.utc)
+        result = maint.sweep(conn, s1, now, threshold=timedelta(hours=99))
+        # Only s1's claim purged
+        assert result["expired_claims_purged"] == 1
+        assert conn.execute("SELECT id FROM claim WHERE id = ?", (cid1,)).fetchone() is None
+        assert conn.execute("SELECT id FROM claim WHERE id = ?", (cid2,)).fetchone() is not None
+
+    def test_maintain_sweep_cli_reports_purged_claims(self, runner, conn, active_sprint, db_path):
+        iid = _add_item(conn, active_sprint["id"], "eng", "Claimed task")
+        cid = db.create_claim(conn, iid, agent="agent-a", ttl_seconds=1)
+        conn.execute(
+            "UPDATE claim SET expires_at = datetime('now', '-10 seconds') WHERE id = ?", (cid,)
+        )
+        conn.commit()
+        result = runner.invoke(cli, ["maintain", "sweep", "--sprint-id", str(active_sprint["id"])])
+        assert result.exit_code == 0, result.output
+        assert "Purged 1 expired claim" in result.output

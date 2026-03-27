@@ -205,3 +205,79 @@ class TestClaimCLI:
             cli, ["item", "status", "--id", str(iid), "--status", "active", "--actor", "bot-1"]
         )
         assert result.exit_code == 0, result.output
+
+
+# ---------------------------------------------------------------------------
+# Group 4: workspace metadata on claims
+# ---------------------------------------------------------------------------
+
+class TestClaimWorkspaceMetadata:
+    def test_create_with_workspace_metadata(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        cid = db.create_claim(
+            conn, iid, agent="agent-a",
+            branch="feat/auth",
+            worktree_path="/tmp/worktrees/auth",
+            commit_sha="abc1234",
+            pr_ref="owner/repo#42",
+        )
+        row = conn.execute("SELECT * FROM claim WHERE id = ?", (cid,)).fetchone()
+        assert row["branch"] == "feat/auth"
+        assert row["worktree_path"] == "/tmp/worktrees/auth"
+        assert row["commit_sha"] == "abc1234"
+        assert row["pr_ref"] == "owner/repo#42"
+
+    def test_workspace_metadata_in_list_claims(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        db.create_claim(conn, iid, agent="agent-a", branch="feat/api", commit_sha="def5678")
+        claims = db.list_claims(conn, iid)
+        assert len(claims) == 1
+        assert claims[0]["branch"] == "feat/api"
+        assert claims[0]["commit_sha"] == "def5678"
+
+    def test_workspace_metadata_defaults_to_null(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        db.create_claim(conn, iid, agent="agent-a")
+        claims = db.list_claims(conn, iid)
+        assert claims[0]["branch"] is None
+        assert claims[0]["commit_sha"] is None
+        assert claims[0]["pr_ref"] is None
+        assert claims[0]["worktree_path"] is None
+
+    def test_claim_create_cli_with_workspace_flags(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        result = runner.invoke(cli, [
+            "claim", "create", "--item-id", str(iid), "--agent", "bot-1",
+            "--branch", "feat/auth", "--commit-sha", "abc1234", "--pr-ref", "owner/repo#99",
+        ])
+        assert result.exit_code == 0, result.output
+        claims = db.list_claims(conn, iid)
+        assert claims[0]["branch"] == "feat/auth"
+        assert claims[0]["commit_sha"] == "abc1234"
+        assert claims[0]["pr_ref"] == "owner/repo#99"
+
+    def test_item_show_displays_workspace_metadata(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        runner.invoke(cli, [
+            "claim", "create", "--item-id", str(iid), "--agent", "bot-1",
+            "--branch", "feat/login", "--pr-ref", "owner/repo#7",
+        ])
+        result = runner.invoke(cli, ["item", "show", "--id", str(iid)])
+        assert result.exit_code == 0, result.output
+        assert "feat/login" in result.output
+        assert "owner/repo#7" in result.output
+
+    def test_item_show_json_includes_claims(self, runner, conn, active_sprint, db_path):
+        import json as _json
+        iid = _item(conn, active_sprint["id"])
+        runner.invoke(cli, [
+            "claim", "create", "--item-id", str(iid), "--agent", "bot-1",
+            "--branch", "feat/check",
+        ])
+        result = runner.invoke(cli, ["item", "show", "--id", str(iid), "--json"])
+        assert result.exit_code == 0, result.output
+        data = _json.loads(result.output)
+        assert "item" in data
+        assert "active_claims" in data
+        assert len(data["active_claims"]) == 1
+        assert data["active_claims"][0]["branch"] == "feat/check"

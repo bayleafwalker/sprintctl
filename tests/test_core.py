@@ -597,3 +597,42 @@ class TestItemNote:
              "--summary", "Ghost", "--actor", "nobody"],
         )
         assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# Group 13: item show
+# ---------------------------------------------------------------------------
+
+class TestItemShow:
+    def test_item_show_basic(self, runner, conn, active_sprint, db_path):
+        tid = db.get_or_create_track(conn, active_sprint["id"], "backend")
+        iid = db.create_work_item(conn, active_sprint["id"], tid, "Build API")
+        result = runner.invoke(cli, ["item", "show", "--id", str(iid)])
+        assert result.exit_code == 0, result.output
+        assert "Build API" in result.output
+        assert "pending" in result.output
+
+    def test_item_show_json(self, runner, conn, active_sprint, db_path):
+        tid = db.get_or_create_track(conn, active_sprint["id"], "backend")
+        iid = db.create_work_item(conn, active_sprint["id"], tid, "Build API")
+        result = runner.invoke(cli, ["item", "show", "--id", str(iid), "--json"])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["item"]["title"] == "Build API"
+        assert "events" in data
+        assert "active_claims" in data
+
+    def test_item_show_includes_events(self, runner, conn, active_sprint, db_path):
+        tid = db.get_or_create_track(conn, active_sprint["id"], "backend")
+        iid = db.create_work_item(conn, active_sprint["id"], tid, "Auth task")
+        db.create_event(
+            conn, active_sprint["id"], actor="dev", event_type="decision",
+            work_item_id=iid, payload={"summary": "Use RS256"},
+        )
+        result = runner.invoke(cli, ["item", "show", "--id", str(iid)])
+        assert result.exit_code == 0, result.output
+        assert "decision" in result.output
+
+    def test_item_show_unknown_id_exits(self, runner, db_path):
+        result = runner.invoke(cli, ["item", "show", "--id", "9999"])
+        assert result.exit_code == 1
