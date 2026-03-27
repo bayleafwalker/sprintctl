@@ -405,11 +405,10 @@ class TestBlockedRevival:
             db.set_work_item_status(conn, iid, "done")
 
     def test_sweep_blocked_item_can_be_revived(self, conn, active_sprint):
-        from datetime import timedelta
+        from datetime import datetime, timedelta, timezone
         from sprintctl import maintain as maint
         iid = self._add_active_item(None, conn, active_sprint["id"])
-        from datetime import datetime
-        maint.sweep(conn, active_sprint["id"], datetime.utcnow(), threshold=timedelta(hours=0))
+        maint.sweep(conn, active_sprint["id"], datetime.now(timezone.utc), threshold=timedelta(hours=0))
         assert db.get_work_item(conn, iid)["status"] == "blocked"
         # Can revive
         db.set_work_item_status(conn, iid, "active")

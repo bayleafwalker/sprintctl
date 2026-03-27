@@ -78,7 +78,7 @@ def sprint_show(obj, sprint_id, detail) -> None:
 
     if detail:
         from . import calc as _calc
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         items = _db.list_work_items(conn, sprint_id=s["id"])
         tracks = _db.list_tracks(conn, s["id"])
         active_items = [it for it in items if it["status"] == "active"]
@@ -379,7 +379,7 @@ def maintain_check(obj, sprint_id, threshold, as_json) -> None:
     """Dry-run: report stale items and sprint health (no writes)."""
     conn = obj["conn"]
     s = _resolve_sprint(conn, sprint_id)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     td = _parse_threshold(threshold)
     report = _maintain.check(conn, s["id"], now, threshold=td)
 
@@ -447,7 +447,7 @@ def maintain_sweep(obj, sprint_id, threshold, auto_close) -> None:
     """Execute: block stale items and optionally auto-close overdue sprint."""
     conn = obj["conn"]
     s = _resolve_sprint(conn, sprint_id)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     td = _parse_threshold(threshold)
     result = _maintain.sweep(conn, s["id"], now, threshold=td, auto_close=auto_close)
 

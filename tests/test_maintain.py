@@ -2,7 +2,7 @@
 Tests for Phase 2: maintain commands (check, sweep, carryover) and sprint status CLI.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -70,7 +70,7 @@ class TestSprintStatusCmd:
 
 class TestMaintainCheck:
     def test_check_no_stale_items(self, conn, active_sprint):
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         report = maint.check(conn, active_sprint["id"], now)
         assert report["stale_items"] == []
         assert report["sprint"]["id"] == active_sprint["id"]
@@ -79,7 +79,7 @@ class TestMaintainCheck:
         iid = _add_item(conn, active_sprint["id"], "backend", "Stale task")
         db.set_work_item_status(conn, iid, "active")
         _age_item(conn, iid, hours=5)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         report = maint.check(conn, active_sprint["id"], now, threshold=timedelta(hours=4))
         stale_ids = [it["id"] for it in report["stale_items"]]
         assert iid in stale_ids
@@ -87,19 +87,19 @@ class TestMaintainCheck:
     def test_check_pending_item_not_stale_below_threshold(self, conn, active_sprint):
         iid = _add_item(conn, active_sprint["id"], "backend", "Fresh pending")
         _age_item(conn, iid, hours=2)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         report = maint.check(conn, active_sprint["id"], now, threshold=timedelta(hours=4))
         assert report["stale_items"] == []
 
     def test_check_includes_track_health(self, conn, active_sprint):
         iid = _add_item(conn, active_sprint["id"], "backend", "Item A")
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         report = maint.check(conn, active_sprint["id"], now)
         assert "backend" in report["track_health"]
 
     def test_check_invalid_sprint(self, conn):
         with pytest.raises(ValueError, match="not found"):
-            maint.check(conn, 9999, datetime.utcnow())
+            maint.check(conn, 9999, datetime.now(timezone.utc))
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +111,7 @@ class TestMaintainSweep:
         iid = _add_item(conn, active_sprint["id"], "backend", "Old task")
         db.set_work_item_status(conn, iid, "active")
         _age_item(conn, iid, hours=6)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         result = maint.sweep(conn, active_sprint["id"], now, threshold=timedelta(hours=4))
         assert any(it["id"] == iid for it in result["blocked_items"])
         assert db.get_work_item(conn, iid)["status"] == "blocked"
@@ -120,7 +120,7 @@ class TestMaintainSweep:
         iid = _add_item(conn, active_sprint["id"], "backend", "Old task")
         db.set_work_item_status(conn, iid, "active")
         _age_item(conn, iid, hours=6)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         maint.sweep(conn, active_sprint["id"], now, threshold=timedelta(hours=4))
         events = db.list_events(conn, active_sprint["id"])
         auto_blocked = [e for e in events if e["event_type"] == "auto-blocked-stale"]
@@ -131,7 +131,7 @@ class TestMaintainSweep:
     def test_sweep_skips_non_stale_items(self, conn, active_sprint):
         iid = _add_item(conn, active_sprint["id"], "backend", "Fresh task")
         db.set_work_item_status(conn, iid, "active")
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         result = maint.sweep(conn, active_sprint["id"], now, threshold=timedelta(hours=4))
         assert result["blocked_items"] == []
         assert db.get_work_item(conn, iid)["status"] == "active"
@@ -141,14 +141,14 @@ class TestMaintainSweep:
         db.set_work_item_status(conn, iid, "active")
         db.set_work_item_status(conn, iid, "blocked")
         _age_item(conn, iid, hours=10)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         # Already blocked — sweep should not touch it (only sweeps active items)
         result = maint.sweep(conn, active_sprint["id"], now, threshold=timedelta(hours=4))
         assert result["blocked_items"] == []
 
     def test_sweep_auto_close_overdue_no_active(self, conn):
         sid = db.create_sprint(conn, "Past", "", "2025-01-01", "2025-01-31", "active")
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         result = maint.sweep(conn, sid, now, auto_close=True)
         assert result["auto_closed"] is True
         assert db.get_sprint(conn, sid)["status"] == "closed"
@@ -157,7 +157,7 @@ class TestMaintainSweep:
         sid = db.create_sprint(conn, "Past2", "", "2025-01-01", "2025-01-31", "active")
         iid = _add_item(conn, sid, "t", "Unfinished")
         db.set_work_item_status(conn, iid, "active")
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         result = maint.sweep(conn, sid, now, threshold=timedelta(hours=0), auto_close=True)
         # The fresh item won't be stale (threshold=0 makes everything stale, but let's use large threshold)
         # Re-run with large threshold so item stays active
