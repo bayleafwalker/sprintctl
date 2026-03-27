@@ -24,10 +24,27 @@ def test_item_staleness_stale_active():
     assert result["idle_seconds"] == pytest.approx(6 * 3600 + 12 * 60, abs=1)
 
 
-def test_item_staleness_stale_pending():
-    updated = (NOW - timedelta(hours=11, minutes=3)).isoformat()
+def test_item_staleness_pending_never_stale_by_default():
+    # pending items are backlog — no pending_threshold means never stale
+    updated = (NOW - timedelta(days=30)).isoformat()
     result = calc.item_staleness(_item("pending", updated), NOW, THRESHOLD)
+    assert result["is_stale"] is False
+
+
+def test_item_staleness_pending_stale_when_threshold_set():
+    updated = (NOW - timedelta(hours=11, minutes=3)).isoformat()
+    result = calc.item_staleness(
+        _item("pending", updated), NOW, THRESHOLD, pending_threshold=timedelta(hours=8)
+    )
     assert result["is_stale"] is True
+
+
+def test_item_staleness_pending_not_stale_below_pending_threshold():
+    updated = (NOW - timedelta(hours=5)).isoformat()
+    result = calc.item_staleness(
+        _item("pending", updated), NOW, THRESHOLD, pending_threshold=timedelta(hours=8)
+    )
+    assert result["is_stale"] is False
 
 
 def test_item_staleness_not_stale():

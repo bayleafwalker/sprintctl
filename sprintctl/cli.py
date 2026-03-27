@@ -58,8 +58,9 @@ def sprint_create(obj, name, goal, start_date, end_date, status, kind) -> None:
 @sprint.command("show")
 @click.option("--id", "sprint_id", type=int, default=None, help="Sprint ID")
 @click.option("--detail", is_flag=True, default=False, help="Include sprint health, track health, and stale item count")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
-def sprint_show(obj, sprint_id, detail) -> None:
+def sprint_show(obj, sprint_id, detail, as_json) -> None:
     """Show a sprint (defaults to active sprint)."""
     conn = obj["conn"]
     if sprint_id is not None:
@@ -69,6 +70,42 @@ def sprint_show(obj, sprint_id, detail) -> None:
     if s is None:
         click.echo("No sprint found. Use --id to specify one.", err=True)
         sys.exit(1)
+
+    if as_json:
+        out: dict = {
+            "id": s["id"],
+            "name": s["name"],
+            "goal": s["goal"],
+            "start_date": s["start_date"],
+            "end_date": s["end_date"],
+            "status": s["status"],
+            "kind": s["kind"],
+        }
+        if detail:
+            from . import calc as _calc
+            now = datetime.now(timezone.utc)
+            items = _db.list_work_items(conn, sprint_id=s["id"])
+            tracks = _db.list_tracks(conn, s["id"])
+            active_items = [it for it in items if it["status"] == "active"]
+            risk = _calc.sprint_overrun_risk(s, len(active_items), now)
+            pending_threshold = _maintain._pending_stale_threshold()
+            stale_count = sum(
+                1 for it in items if _calc.item_staleness(it, now, pending_threshold=pending_threshold)["is_stale"]
+            )
+            items_by_track: dict[int, list] = {}
+            for it in items:
+                items_by_track.setdefault(it["track_id"], []).append(it)
+            track_health_out = {}
+            for t in tracks:
+                track_health_out[t["name"]] = _calc.track_health(items_by_track.get(t["id"], []))
+            out["detail"] = {
+                "risk": risk,
+                "stale_count": stale_count,
+                "track_health": track_health_out,
+            }
+        click.echo(json.dumps(out, indent=2))
+        return
+
     click.echo(f"ID:     {s['id']}")
     click.echo(f"Name:   {s['name']}")
     click.echo(f"Goal:   {s['goal']}")
@@ -83,8 +120,10 @@ def sprint_show(obj, sprint_id, detail) -> None:
         tracks = _db.list_tracks(conn, s["id"])
         active_items = [it for it in items if it["status"] == "active"]
         risk = _calc.sprint_overrun_risk(s, len(active_items), now)
+        from . import maintain as _maintain
+        pending_threshold = _maintain._pending_stale_threshold()
         stale_count = sum(
-            1 for it in items if _calc.item_staleness(it, now)["is_stale"]
+            1 for it in items if _calc.item_staleness(it, now, pending_threshold=pending_threshold)["is_stale"]
         )
         risk_tag = ""
         if risk["overdue"]:
@@ -92,12 +131,12 @@ def sprint_show(obj, sprint_id, detail) -> None:
         elif risk["at_risk"]:
             risk_tag = " [AT RISK]"
         click.echo(f"\nHealth: {risk['days_remaining']} days remaining, {risk['active_items']} active, {stale_count} stale{risk_tag}")
-        items_by_track: dict[int, list] = {}
+        items_by_track2: dict[int, list] = {}
         for it in items:
-            items_by_track.setdefault(it["track_id"], []).append(it)
+            items_by_track2.setdefault(it["track_id"], []).append(it)
         click.echo("Track health:")
         for t in tracks:
-            health = _calc.track_health(items_by_track.get(t["id"], []))
+            health = _calc.track_health(items_by_track2.get(t["id"], []))
             done_pct = int(health["done_ratio"] * 100)
             blocked_pct = int(health["blocked_ratio"] * 100)
             c = health["counts"]
@@ -139,8 +178,9 @@ def sprint_status(obj, sprint_id, new_status) -> None:
 @sprint.command("list")
 @click.option("--include-backlog", is_flag=True, default=False, help="Include backlog sprints")
 @click.option("--include-archive", is_flag=True, default=False, help="Include archive sprints")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
-def sprint_list(obj, include_backlog, include_archive) -> None:
+def sprint_list(obj, include_backlog, include_archive, as_json) -> None:
     """List sprints (active_sprint kind by default; use flags to include others)."""
     sprints = _db.list_sprints(obj["conn"])
     visible_kinds = {"active_sprint"}
@@ -149,6 +189,9 @@ def sprint_list(obj, include_backlog, include_archive) -> None:
     if include_archive:
         visible_kinds.add("archive")
     sprints = [s for s in sprints if s.get("kind", "active_sprint") in visible_kinds]
+    if as_json:
+        click.echo(json.dumps(sprints, indent=2))
+        return
     if not sprints:
         click.echo("No sprints found.")
         return
@@ -213,10 +256,14 @@ def item_add(obj, sprint_id, track_name, title, assignee) -> None:
     type=click.Choice(["pending", "active", "done", "blocked"]),
     help="Filter by status",
 )
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
-def item_list(obj, sprint_id, track_name, status) -> None:
+def item_list(obj, sprint_id, track_name, status, as_json) -> None:
     """List work items."""
     items = _db.list_work_items(obj["conn"], sprint_id=sprint_id, track_name=track_name, status=status)
+    if as_json:
+        click.echo(json.dumps(items, indent=2))
+        return
     if not items:
         click.echo("No items found.")
         return
@@ -333,6 +380,40 @@ def event_add(obj, sprint_id, event_type, actor, work_item_id, source_type, payl
     click.echo(f"Recorded event #{eid}: {event_type}  (actor: {actor})")
 
 
+@event.command("list")
+@click.option("--sprint-id", type=int, required=True, help="Sprint ID")
+@click.option("--item-id", "work_item_id", type=int, default=None, help="Filter by work item ID")
+@click.option("--type", "event_type", default=None, help="Filter by event type")
+@click.option("--limit", default=None, type=int, help="Maximum number of events to return (most recent)")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.pass_obj
+def event_list(obj, sprint_id, work_item_id, event_type, limit, as_json) -> None:
+    """List events for a sprint."""
+    conn = obj["conn"]
+    if _db.get_sprint(conn, sprint_id) is None:
+        click.echo(f"Sprint #{sprint_id} not found.", err=True)
+        sys.exit(1)
+    events = _db.list_events(conn, sprint_id)
+    if work_item_id is not None:
+        events = [e for e in events if e.get("work_item_id") == work_item_id]
+    if event_type is not None:
+        events = [e for e in events if e.get("event_type") == event_type]
+    if limit is not None:
+        events = events[-limit:]
+    if as_json:
+        click.echo(json.dumps(events, indent=2))
+        return
+    if not events:
+        click.echo("No events found.")
+        return
+    for e in events:
+        item_label = f"  item #{e['work_item_id']}" if e.get("work_item_id") else ""
+        click.echo(
+            f"#{e['id']}  [{e['event_type']}]  {e['actor']}  "
+            f"{e['created_at']}{item_label}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # render
 # ---------------------------------------------------------------------------
@@ -385,12 +466,14 @@ def maintain_check(obj, sprint_id, threshold, as_json) -> None:
     report = _maintain.check(conn, s["id"], now, threshold=td)
 
     if as_json:
+        pt = report["pending_threshold"]
         out = {
             "sprint": report["sprint"],
             "risk": report["risk"],
             "stale_items": report["stale_items"],
             "track_health": report["track_health"],
             "threshold_hours": report["threshold"].total_seconds() / 3600,
+            "pending_threshold_hours": pt.total_seconds() / 3600 if pt else None,
         }
         click.echo(json.dumps(out, indent=2))
         return
@@ -400,6 +483,7 @@ def maintain_check(obj, sprint_id, threshold, as_json) -> None:
     stale = report["stale_items"]
     track_health = report["track_health"]
     threshold_hours = report["threshold"].total_seconds() / 3600
+    pending_threshold = report["pending_threshold"]
 
     risk_tag = ""
     if risk["overdue"]:
@@ -413,7 +497,8 @@ def maintain_check(obj, sprint_id, threshold, as_json) -> None:
     )
     click.echo("")
 
-    click.echo(f"Stale items (threshold: {threshold_hours:g}h):")
+    pending_label = f", pending: {pending_threshold.total_seconds() / 3600:g}h" if pending_threshold else ", pending: off"
+    click.echo(f"Stale items (active threshold: {threshold_hours:g}h{pending_label}):")
     if stale:
         for it in stale:
             h, rem = divmod(it["idle_seconds"], 3600)
@@ -637,8 +722,12 @@ def claim() -> None:
 )
 @click.option("--non-exclusive", is_flag=True, default=False, help="Allow concurrent claims (non-exclusive)")
 @click.option("--ttl", "ttl_seconds", default=300, type=int, help="TTL in seconds (default: 300)")
+@click.option("--branch", default=None, help="Git branch name")
+@click.option("--worktree", "worktree_path", default=None, help="Worktree path")
+@click.option("--commit-sha", "commit_sha", default=None, help="Commit SHA")
+@click.option("--pr-ref", "pr_ref", default=None, help="PR reference (e.g. owner/repo#123)")
 @click.pass_obj
-def claim_create(obj, item_id, agent, claim_type, non_exclusive, ttl_seconds) -> None:
+def claim_create(obj, item_id, agent, claim_type, non_exclusive, ttl_seconds, branch, worktree_path, commit_sha, pr_ref) -> None:
     """Claim a work item for an agent."""
     conn = obj["conn"]
     try:
@@ -649,6 +738,10 @@ def claim_create(obj, item_id, agent, claim_type, non_exclusive, ttl_seconds) ->
             claim_type=claim_type,
             exclusive=not non_exclusive,
             ttl_seconds=ttl_seconds,
+            branch=branch,
+            worktree_path=worktree_path,
+            commit_sha=commit_sha,
+            pr_ref=pr_ref,
         )
     except (_db.ClaimConflict, ValueError) as e:
         click.echo(f"Error: {e}", err=True)
@@ -690,11 +783,15 @@ def claim_release(obj, claim_id, agent) -> None:
 @claim.command("list")
 @click.option("--item-id", type=int, required=True, help="Work item ID")
 @click.option("--all", "show_all", is_flag=True, default=False, help="Include expired claims")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
-def claim_list(obj, item_id, show_all) -> None:
+def claim_list(obj, item_id, show_all, as_json) -> None:
     """List claims on a work item."""
     conn = obj["conn"]
     claims = _db.list_claims(conn, item_id, active_only=not show_all)
+    if as_json:
+        click.echo(json.dumps(claims, indent=2))
+        return
     if not claims:
         click.echo(f"No {'active ' if not show_all else ''}claims on item #{item_id}.")
         return
@@ -745,6 +842,40 @@ def claim_list_sprint(obj, sprint_id, show_all, expiring_within, as_json) -> Non
             f"  #{c['id']}  item #{c['work_item_id']} ({c['item_title']})  "
             f"{c['agent']}  [{c['claim_type']}]  {excl}  expires={c['expires_at']}"
         )
+
+
+@cli.command("handoff")
+@click.option("--sprint-id", type=int, default=None, help="Sprint ID (defaults to active)")
+@click.option("--output", "output_path", default=None, help="Output file path (default: handoff-N.json)")
+@click.option("--events", "events_limit", type=int, default=50, help="Recent events to include (default: 50)")
+@click.pass_obj
+def handoff_cmd(obj, sprint_id, output_path, events_limit) -> None:
+    """Produce a JSON handoff bundle: sprint, items, recent events, active claims."""
+    conn = obj["conn"]
+    if sprint_id is not None:
+        s = _db.get_sprint(conn, sprint_id)
+    else:
+        s = _db.get_active_sprint(conn)
+    if s is None:
+        click.echo("No sprint found. Use --sprint-id to specify one.", err=True)
+        sys.exit(1)
+    sid = s["id"]
+    items = _db.list_work_items(conn, sprint_id=sid)
+    recent_events = _db.list_events_limited(conn, sid, limit=events_limit)
+    active_claims = _db.list_claims_by_sprint(conn, sid, active_only=True)
+    bundle = {
+        "sprintctl_version": __version__,
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "sprint": dict(s),
+        "items": items,
+        "events": recent_events,
+        "active_claims": active_claims,
+        "knowledge_candidates": [],
+    }
+    dest = output_path or f"handoff-{sid}.json"
+    with open(dest, "w") as fh:
+        json.dump(bundle, fh, indent=2)
+    click.echo(f"Handoff bundle for sprint #{sid} written to {dest}")
 
 
 @cli.command("render")

@@ -36,14 +36,36 @@ def _stale_threshold() -> timedelta:
     return DEFAULT_STALE_THRESHOLD
 
 
+def _pending_stale_threshold() -> "timedelta | None":
+    """Returns the staleness threshold for pending items, or None (never stale)."""
+    raw = os.environ.get("SPRINTCTL_PENDING_STALE_THRESHOLD")
+    if raw:
+        return timedelta(hours=float(raw))
+    return None
+
+
 # ---------------------------------------------------------------------------
 # check (read-only diagnostic)
 # ---------------------------------------------------------------------------
 
-def check(conn, sprint_id: int, now: datetime, threshold: timedelta | None = None) -> dict:
-    """Return a diagnostic report for the sprint. No writes."""
+def check(
+    conn,
+    sprint_id: int,
+    now: datetime,
+    threshold: timedelta | None = None,
+    pending_threshold: "timedelta | None | str" = "env",
+) -> dict:
+    """Return a diagnostic report for the sprint. No writes.
+
+    pending_threshold controls staleness for pending (backlog) items:
+    - "env" (default): read from SPRINTCTL_PENDING_STALE_THRESHOLD, else None
+    - None: pending items are never stale
+    - timedelta: custom threshold
+    """
     if threshold is None:
         threshold = _stale_threshold()
+    if pending_threshold == "env":
+        pending_threshold = _pending_stale_threshold()
 
     sprint = _db.get_sprint(conn, sprint_id)
     if sprint is None:
@@ -57,10 +79,10 @@ def check(conn, sprint_id: int, now: datetime, threshold: timedelta | None = Non
 
     stale = [
         it for it in items
-        if _calc.item_staleness(it, now, threshold)["is_stale"]
+        if _calc.item_staleness(it, now, threshold, pending_threshold)["is_stale"]
     ]
     stale_details = [
-        {**it, **_calc.item_staleness(it, now, threshold)}
+        {**it, **_calc.item_staleness(it, now, threshold, pending_threshold)}
         for it in stale
     ]
 
@@ -79,6 +101,7 @@ def check(conn, sprint_id: int, now: datetime, threshold: timedelta | None = Non
         "stale_items": stale_details,
         "track_health": track_health,
         "threshold": threshold,
+        "pending_threshold": pending_threshold,
     }
 
 

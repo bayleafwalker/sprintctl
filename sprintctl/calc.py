@@ -1,6 +1,10 @@
 from datetime import datetime, timedelta
+from typing import Optional
 
 DEFAULT_STALE_THRESHOLD = timedelta(hours=4)
+# pending items are untouched backlog — suppress staleness by default.
+# Set SPRINTCTL_PENDING_STALE_THRESHOLD (hours) to enable a long-idle check.
+DEFAULT_PENDING_STALE_THRESHOLD: Optional[timedelta] = None
 
 
 def _naive_utc(dt: datetime) -> datetime:
@@ -8,16 +12,34 @@ def _naive_utc(dt: datetime) -> datetime:
     return dt.replace(tzinfo=None)
 
 
-def item_staleness(item: dict, now: datetime, threshold: timedelta = DEFAULT_STALE_THRESHOLD) -> dict:
-    """Returns staleness info for a single work item."""
+def item_staleness(
+    item: dict,
+    now: datetime,
+    threshold: timedelta = DEFAULT_STALE_THRESHOLD,
+    pending_threshold: Optional[timedelta] = DEFAULT_PENDING_STALE_THRESHOLD,
+) -> dict:
+    """Returns staleness info for a single work item.
+
+    - active items: stale when idle > threshold
+    - pending items: stale when idle > pending_threshold (None = never stale)
+    - done/blocked: never stale
+    """
     updated = datetime.fromisoformat(item["updated_at"]).replace(tzinfo=None)
     delta = _naive_utc(now) - updated
-    is_stale = item["status"] in ("pending", "active") and delta > threshold
+    status = item["status"]
+
+    if status == "active":
+        is_stale = delta > threshold
+    elif status == "pending":
+        is_stale = pending_threshold is not None and delta > pending_threshold
+    else:
+        is_stale = False
+
     return {
         "item_id": item["id"],
         "idle_seconds": int(delta.total_seconds()),
         "is_stale": is_stale,
-        "status": item["status"],
+        "status": status,
     }
 
 

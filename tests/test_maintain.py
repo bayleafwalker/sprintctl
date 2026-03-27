@@ -84,12 +84,21 @@ class TestMaintainCheck:
         stale_ids = [it["id"] for it in report["stale_items"]]
         assert iid in stale_ids
 
-    def test_check_pending_item_not_stale_below_threshold(self, conn, active_sprint):
-        iid = _add_item(conn, active_sprint["id"], "backend", "Fresh pending")
-        _age_item(conn, iid, hours=2)
+    def test_check_pending_item_not_stale_by_default(self, conn, active_sprint):
+        iid = _add_item(conn, active_sprint["id"], "backend", "Old pending backlog")
+        _age_item(conn, iid, hours=72)
         now = datetime.now(timezone.utc)
-        report = maint.check(conn, active_sprint["id"], now, threshold=timedelta(hours=4))
+        # pending items are never stale unless SPRINTCTL_PENDING_STALE_THRESHOLD is set
+        report = maint.check(conn, active_sprint["id"], now, threshold=timedelta(hours=4), pending_threshold=None)
         assert report["stale_items"] == []
+
+    def test_check_pending_item_stale_when_pending_threshold_set(self, conn, active_sprint):
+        iid = _add_item(conn, active_sprint["id"], "backend", "Old pending backlog")
+        _age_item(conn, iid, hours=50)
+        now = datetime.now(timezone.utc)
+        report = maint.check(conn, active_sprint["id"], now, threshold=timedelta(hours=4), pending_threshold=timedelta(hours=24))
+        stale_ids = [it["id"] for it in report["stale_items"]]
+        assert iid in stale_ids
 
     def test_check_includes_track_health(self, conn, active_sprint):
         iid = _add_item(conn, active_sprint["id"], "backend", "Item A")
@@ -315,6 +324,6 @@ class TestMigration2:
         }
         assert "claim" in tables
 
-    def test_schema_version_is_3(self, conn):
+    def test_schema_version_is_4(self, conn):
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 3
+        assert version == 4

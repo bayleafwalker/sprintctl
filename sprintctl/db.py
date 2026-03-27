@@ -90,6 +90,13 @@ _MIGRATIONS: list[str] = [
     ALTER TABLE sprint ADD COLUMN kind TEXT NOT NULL DEFAULT 'active_sprint'
         CHECK (kind IN ('active_sprint', 'backlog', 'archive'))
     """,
+    # Migration 4: workspace metadata columns on claim
+    """
+    ALTER TABLE claim ADD COLUMN branch TEXT;
+    ALTER TABLE claim ADD COLUMN worktree_path TEXT;
+    ALTER TABLE claim ADD COLUMN commit_sha TEXT;
+    ALTER TABLE claim ADD COLUMN pr_ref TEXT
+    """,
 ]
 
 
@@ -337,6 +344,14 @@ def list_events(conn: sqlite3.Connection, sprint_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def list_events_limited(conn: sqlite3.Connection, sprint_id: int, limit: int = 50) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM event WHERE sprint_id = ? ORDER BY created_at DESC LIMIT ?",
+        (sprint_id, limit),
+    ).fetchall()
+    return [dict(r) for r in reversed(rows)]
+
+
 # --- Claim ---
 
 CLAIM_TYPES = ("inspect", "execute", "review", "coordinate")
@@ -353,6 +368,10 @@ def create_claim(
     claim_type: str = "execute",
     exclusive: bool = True,
     ttl_seconds: int = 300,
+    branch: str | None = None,
+    worktree_path: str | None = None,
+    commit_sha: str | None = None,
+    pr_ref: str | None = None,
 ) -> int:
     """Create a claim on a work item, enforcing exclusivity for exclusive claim types."""
     if claim_type not in CLAIM_TYPES:
@@ -379,10 +398,15 @@ def create_claim(
             )
     cur = conn.execute(
         """
-        INSERT INTO claim (work_item_id, agent, claim_type, exclusive, expires_at)
-        VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds'))
+        INSERT INTO claim
+            (work_item_id, agent, claim_type, exclusive, expires_at,
+             branch, worktree_path, commit_sha, pr_ref)
+        VALUES (?, ?, ?, ?,
+                strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds'),
+                ?, ?, ?, ?)
         """,
-        (work_item_id, agent, claim_type, 1 if exclusive else 0, ttl_seconds),
+        (work_item_id, agent, claim_type, 1 if exclusive else 0, ttl_seconds,
+         branch, worktree_path, commit_sha, pr_ref),
     )
     conn.commit()
     return cur.lastrowid
