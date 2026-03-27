@@ -257,7 +257,12 @@ def list_work_items(
     return [dict(r) for r in rows]
 
 
-def set_work_item_status(conn: sqlite3.Connection, item_id: int, new_status: str) -> None:
+def set_work_item_status(
+    conn: sqlite3.Connection,
+    item_id: int,
+    new_status: str,
+    actor: str | None = None,
+) -> None:
     item = get_work_item(conn, item_id)
     if item is None:
         raise ValueError(f"Item #{item_id} not found")
@@ -267,6 +272,23 @@ def set_work_item_status(conn: sqlite3.Connection, item_id: int, new_status: str
         raise InvalidTransition(
             f"cannot transition {current} -> {new_status}. Allowed: {allowed}"
         )
+    # Enforce exclusive claims: if another agent holds an active exclusive claim, block
+    if actor is not None:
+        conflict = conn.execute(
+            """
+            SELECT id, agent FROM claim
+            WHERE work_item_id = ? AND exclusive = 1
+              AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
+              AND agent != ?
+            LIMIT 1
+            """,
+            (item_id, actor),
+        ).fetchone()
+        if conflict:
+            raise ClaimConflict(
+                f"Item #{item_id} is exclusively claimed by '{conflict['agent']}' (claim #{conflict['id']}). "
+                f"Release the claim before transitioning."
+            )
     conn.execute(
         "UPDATE work_item SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
         (new_status, item_id),
@@ -312,4 +334,104 @@ def list_events(conn: sqlite3.Connection, sprint_id: int) -> list[dict]:
     rows = conn.execute(
         "SELECT * FROM event WHERE sprint_id = ? ORDER BY created_at ASC", (sprint_id,)
     ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# --- Claim ---
+
+CLAIM_TYPES = ("inspect", "execute", "review", "coordinate")
+
+
+class ClaimConflict(ValueError):
+    pass
+
+
+def create_claim(
+    conn: sqlite3.Connection,
+    work_item_id: int,
+    agent: str,
+    claim_type: str = "execute",
+    exclusive: bool = True,
+    ttl_seconds: int = 300,
+) -> int:
+    """Create a claim on a work item, enforcing exclusivity for exclusive claim types."""
+    if claim_type not in CLAIM_TYPES:
+        raise ValueError(f"Invalid claim_type '{claim_type}'. Must be one of: {', '.join(CLAIM_TYPES)}")
+    item = get_work_item(conn, work_item_id)
+    if item is None:
+        raise ValueError(f"Work item #{work_item_id} not found")
+    now_str = "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
+    if exclusive:
+        # Check for any active exclusive claim held by a different agent
+        conflict = conn.execute(
+            """
+            SELECT id, agent FROM claim
+            WHERE work_item_id = ? AND exclusive = 1
+              AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
+              AND agent != ?
+            LIMIT 1
+            """,
+            (work_item_id, agent),
+        ).fetchone()
+        if conflict:
+            raise ClaimConflict(
+                f"Item #{work_item_id} is exclusively claimed by '{conflict['agent']}' (claim #{conflict['id']})"
+            )
+    cur = conn.execute(
+        """
+        INSERT INTO claim (work_item_id, agent, claim_type, exclusive, expires_at)
+        VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds'))
+        """,
+        (work_item_id, agent, claim_type, 1 if exclusive else 0, ttl_seconds),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def heartbeat_claim(conn: sqlite3.Connection, claim_id: int, agent: str, ttl_seconds: int = 300) -> None:
+    """Refresh a claim's expiry and heartbeat timestamp."""
+    row = conn.execute("SELECT * FROM claim WHERE id = ?", (claim_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"Claim #{claim_id} not found")
+    if row["agent"] != agent:
+        raise ValueError(f"Claim #{claim_id} is owned by '{row['agent']}', not '{agent}'")
+    conn.execute(
+        """
+        UPDATE claim
+        SET heartbeat = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+            expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds')
+        WHERE id = ?
+        """,
+        (ttl_seconds, claim_id),
+    )
+    conn.commit()
+
+
+def release_claim(conn: sqlite3.Connection, claim_id: int, agent: str) -> None:
+    """Release (delete) a claim. Only the owning agent may release it."""
+    row = conn.execute("SELECT * FROM claim WHERE id = ?", (claim_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"Claim #{claim_id} not found")
+    if row["agent"] != agent:
+        raise ValueError(f"Claim #{claim_id} is owned by '{row['agent']}', not '{agent}'")
+    conn.execute("DELETE FROM claim WHERE id = ?", (claim_id,))
+    conn.commit()
+
+
+def list_claims(conn: sqlite3.Connection, work_item_id: int, active_only: bool = True) -> list[dict]:
+    """List claims for a work item; active_only filters to non-expired claims."""
+    if active_only:
+        rows = conn.execute(
+            """
+            SELECT * FROM claim
+            WHERE work_item_id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
+            ORDER BY created_at ASC
+            """,
+            (work_item_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM claim WHERE work_item_id = ? ORDER BY created_at ASC",
+            (work_item_id,),
+        ).fetchall()
     return [dict(r) for r in rows]

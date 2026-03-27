@@ -269,9 +269,10 @@ def item_note(obj, item_id, note_type, summary, detail, tags, actor) -> None:
     type=click.Choice(["pending", "active", "done", "blocked"]),
     help="New status",
 )
+@click.option("--actor", default=None, help="Actor name; enforces exclusive claim check if provided")
 @click.pass_obj
-def item_status(obj, item_id, new_status) -> None:
-    """Update an item's status (enforces allowed transitions)."""
+def item_status(obj, item_id, new_status, actor) -> None:
+    """Update an item's status (enforces allowed transitions and exclusive claims)."""
     conn = obj["conn"]
     it = _db.get_work_item(conn, item_id)
     if it is None:
@@ -279,8 +280,8 @@ def item_status(obj, item_id, new_status) -> None:
         sys.exit(1)
     current = it["status"]
     try:
-        _db.set_work_item_status(conn, item_id, new_status)
-    except _db.InvalidTransition as e:
+        _db.set_work_item_status(conn, item_id, new_status, actor=actor)
+    except (_db.InvalidTransition, _db.ClaimConflict) as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
     click.echo(f"Item #{item_id} status: {current} -> {new_status}")
@@ -605,6 +606,95 @@ def import_cmd(obj, input_path) -> None:
         f"Imported sprint '{src_sprint['name']}' as #{new_sprint_id} "
         f"({len(item_id_map)} items, {len(envelope.get('events', []))} events)"
     )
+
+
+# ---------------------------------------------------------------------------
+# claim
+# ---------------------------------------------------------------------------
+
+@cli.group()
+def claim() -> None:
+    """Manage agent claims on work items (Phase 2.5)."""
+
+
+@claim.command("create")
+@click.option("--item-id", type=int, required=True, help="Work item ID to claim")
+@click.option("--agent", required=True, help="Agent identifier")
+@click.option(
+    "--type", "claim_type",
+    default="execute",
+    type=click.Choice(["inspect", "execute", "review", "coordinate"]),
+    help="Claim type (default: execute)",
+)
+@click.option("--non-exclusive", is_flag=True, default=False, help="Allow concurrent claims (non-exclusive)")
+@click.option("--ttl", "ttl_seconds", default=300, type=int, help="TTL in seconds (default: 300)")
+@click.pass_obj
+def claim_create(obj, item_id, agent, claim_type, non_exclusive, ttl_seconds) -> None:
+    """Claim a work item for an agent."""
+    conn = obj["conn"]
+    try:
+        cid = _db.create_claim(
+            conn,
+            work_item_id=item_id,
+            agent=agent,
+            claim_type=claim_type,
+            exclusive=not non_exclusive,
+            ttl_seconds=ttl_seconds,
+        )
+    except (_db.ClaimConflict, ValueError) as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"Claim #{cid} created: {agent} → item #{item_id} ({claim_type}, ttl={ttl_seconds}s)")
+
+
+@claim.command("heartbeat")
+@click.option("--id", "claim_id", type=int, required=True, help="Claim ID")
+@click.option("--agent", required=True, help="Agent identifier (must match claim owner)")
+@click.option("--ttl", "ttl_seconds", default=300, type=int, help="Refresh TTL in seconds (default: 300)")
+@click.pass_obj
+def claim_heartbeat(obj, claim_id, agent, ttl_seconds) -> None:
+    """Refresh the TTL on an existing claim."""
+    conn = obj["conn"]
+    try:
+        _db.heartbeat_claim(conn, claim_id, agent, ttl_seconds=ttl_seconds)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"Claim #{claim_id} heartbeat refreshed (ttl={ttl_seconds}s)")
+
+
+@claim.command("release")
+@click.option("--id", "claim_id", type=int, required=True, help="Claim ID")
+@click.option("--agent", required=True, help="Agent identifier (must match claim owner)")
+@click.pass_obj
+def claim_release(obj, claim_id, agent) -> None:
+    """Release (delete) a claim."""
+    conn = obj["conn"]
+    try:
+        _db.release_claim(conn, claim_id, agent)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"Claim #{claim_id} released.")
+
+
+@claim.command("list")
+@click.option("--item-id", type=int, required=True, help="Work item ID")
+@click.option("--all", "show_all", is_flag=True, default=False, help="Include expired claims")
+@click.pass_obj
+def claim_list(obj, item_id, show_all) -> None:
+    """List claims on a work item."""
+    conn = obj["conn"]
+    claims = _db.list_claims(conn, item_id, active_only=not show_all)
+    if not claims:
+        click.echo(f"No {'active ' if not show_all else ''}claims on item #{item_id}.")
+        return
+    for c in claims:
+        excl = "exclusive" if c["exclusive"] else "shared"
+        click.echo(
+            f"#{c['id']}  {c['agent']}  [{c['claim_type']}]  {excl}  "
+            f"expires={c['expires_at']}  heartbeat={c['heartbeat']}"
+        )
 
 
 @cli.command("render")
