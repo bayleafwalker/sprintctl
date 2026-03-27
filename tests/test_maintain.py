@@ -315,6 +315,6 @@ class TestMigration2:
         }
         assert "claim" in tables
 
-    def test_schema_version_is_2(self, conn):
+    def test_schema_version_is_3(self, conn):
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 2
+        assert version == 3

@@ -12,7 +12,7 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
     "pending": {"active"},
     "active": {"done", "blocked"},
     "done": set(),
-    "blocked": set(),
+    "blocked": {"active"},
 }
 
 SPRINT_TRANSITIONS: dict[str, set[str]] = {
@@ -20,6 +20,8 @@ SPRINT_TRANSITIONS: dict[str, set[str]] = {
     "active": {"closed"},
     "closed": set(),
 }
+
+SPRINT_KINDS = ("active_sprint", "backlog", "archive")
 
 _MIGRATIONS: list[str] = [
     # Migration 1: initial schema
@@ -83,6 +85,11 @@ _MIGRATIONS: list[str] = [
         heartbeat    TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
     )
     """,
+    # Migration 3: sprint.kind classification column
+    """
+    ALTER TABLE sprint ADD COLUMN kind TEXT NOT NULL DEFAULT 'active_sprint'
+        CHECK (kind IN ('active_sprint', 'backlog', 'archive'))
+    """,
 ]
 
 
@@ -137,10 +144,11 @@ def create_sprint(
     start_date: str,
     end_date: str,
     status: str = "planned",
+    kind: str = "active_sprint",
 ) -> int:
     cur = conn.execute(
-        "INSERT INTO sprint (name, goal, start_date, end_date, status) VALUES (?, ?, ?, ?, ?)",
-        (name, goal, start_date, end_date, status),
+        "INSERT INTO sprint (name, goal, start_date, end_date, status, kind) VALUES (?, ?, ?, ?, ?, ?)",
+        (name, goal, start_date, end_date, status, kind),
     )
     conn.commit()
     return cur.lastrowid
@@ -153,9 +161,19 @@ def get_sprint(conn: sqlite3.Connection, sprint_id: int) -> dict | None:
 
 def get_active_sprint(conn: sqlite3.Connection) -> dict | None:
     row = conn.execute(
-        "SELECT * FROM sprint WHERE status = 'active' ORDER BY created_at DESC LIMIT 1"
+        "SELECT * FROM sprint WHERE status = 'active' AND kind = 'active_sprint' ORDER BY created_at DESC LIMIT 1"
     ).fetchone()
     return dict(row) if row else None
+
+
+def set_sprint_kind(conn: sqlite3.Connection, sprint_id: int, kind: str) -> None:
+    if kind not in SPRINT_KINDS:
+        raise ValueError(f"Invalid kind '{kind}'. Must be one of: {', '.join(SPRINT_KINDS)}")
+    sprint = get_sprint(conn, sprint_id)
+    if sprint is None:
+        raise ValueError(f"Sprint #{sprint_id} not found")
+    conn.execute("UPDATE sprint SET kind = ? WHERE id = ?", (kind, sprint_id))
+    conn.commit()
 
 
 def list_sprints(conn: sqlite3.Connection) -> list[dict]:

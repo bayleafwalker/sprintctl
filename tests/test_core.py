@@ -173,11 +173,19 @@ class TestStatusTransitions:
         assert result.exit_code == 1
         assert "cannot transition" in result.output
 
-    def test_invalid_transition_blocked_is_terminal(self, runner, active_sprint):
+    def test_blocked_can_revive_to_active(self, runner, conn, active_sprint):
         iid = self._add_item(runner, active_sprint["id"])
         runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "active"])
         runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "blocked"])
         result = runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "active"])
+        assert result.exit_code == 0, result.output
+        assert db.get_work_item(conn, iid)["status"] == "active"
+
+    def test_invalid_transition_blocked_to_done(self, runner, active_sprint):
+        iid = self._add_item(runner, active_sprint["id"])
+        runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "active"])
+        runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "blocked"])
+        result = runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "done"])
         assert result.exit_code == 1
         assert "cannot transition" in result.output
 
@@ -311,3 +319,282 @@ class TestEdgeCases:
         path = db.get_db_path()
         assert path.name == "sprintctl.db"
         assert ".sprintctl" in str(path)
+
+
+# ---------------------------------------------------------------------------
+# Group 7: Sprint kind
+# ---------------------------------------------------------------------------
+
+class TestSprintKind:
+    def test_sprint_default_kind_is_active_sprint(self, conn):
+        sid = db.create_sprint(conn, "K1", "", "2026-04-01", "2026-04-30", "active")
+        s = db.get_sprint(conn, sid)
+        assert s["kind"] == "active_sprint"
+
+    def test_sprint_create_with_backlog_kind(self, runner, db_path):
+        result = runner.invoke(
+            cli,
+            ["sprint", "create", "--name", "Backlog", "--goal", "", "--start", "2026-04-01",
+             "--end", "2026-04-30", "--kind", "backlog"],
+        )
+        assert result.exit_code == 0, result.output
+        sid = int(result.output.split("#")[1].split(":")[0])
+        assert db.get_sprint(db.get_connection(db_path), sid)["kind"] == "backlog"
+
+    def test_sprint_kind_cmd_sets_kind(self, runner, conn, db_path):
+        sid = db.create_sprint(conn, "K2", "", "2026-04-01", "2026-04-30", "active")
+        result = runner.invoke(cli, ["sprint", "kind", "--id", str(sid), "--kind", "archive"])
+        assert result.exit_code == 0, result.output
+        assert db.get_sprint(conn, sid)["kind"] == "archive"
+
+    def test_get_active_sprint_ignores_backlog(self, conn):
+        db.create_sprint(conn, "Backlog S", "", "2026-04-01", "2026-04-30", "active", kind="backlog")
+        s = db.get_active_sprint(conn)
+        assert s is None
+
+    def test_get_active_sprint_returns_active_sprint_kind(self, conn):
+        db.create_sprint(conn, "Backlog S", "", "2026-04-01", "2026-04-30", "active", kind="backlog")
+        sid = db.create_sprint(conn, "Active S", "", "2026-04-01", "2026-04-30", "active", kind="active_sprint")
+        s = db.get_active_sprint(conn)
+        assert s is not None
+        assert s["id"] == sid
+
+    def test_sprint_list_hides_backlog_by_default(self, runner, conn, db_path):
+        db.create_sprint(conn, "BS", "", "2026-04-01", "2026-04-30", "active", kind="backlog")
+        db.create_sprint(conn, "AS", "", "2026-04-01", "2026-04-30", "active", kind="active_sprint")
+        result = runner.invoke(cli, ["sprint", "list"])
+        assert result.exit_code == 0, result.output
+        assert "AS" in result.output
+        assert "BS" not in result.output
+
+    def test_sprint_list_shows_backlog_with_flag(self, runner, conn, db_path):
+        db.create_sprint(conn, "BS", "", "2026-04-01", "2026-04-30", "active", kind="backlog")
+        result = runner.invoke(cli, ["sprint", "list", "--include-backlog"])
+        assert result.exit_code == 0, result.output
+        assert "BS" in result.output
+
+    def test_sprint_show_includes_kind(self, runner, conn, db_path):
+        sid = db.create_sprint(conn, "ShowMe", "", "2026-04-01", "2026-04-30", "active", kind="backlog")
+        result = runner.invoke(cli, ["sprint", "show", "--id", str(sid)])
+        assert result.exit_code == 0, result.output
+        assert "backlog" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Group 8: blocked → active revival
+# ---------------------------------------------------------------------------
+
+class TestBlockedRevival:
+    def _add_active_item(self, runner, conn, sprint_id):
+        tid = db.get_or_create_track(conn, sprint_id, "t")
+        iid = db.create_work_item(conn, sprint_id, tid, "Task")
+        db.set_work_item_status(conn, iid, "active")
+        return iid
+
+    def test_blocked_to_active_allowed(self, conn, active_sprint):
+        iid = self._add_active_item(None, conn, active_sprint["id"])
+        db.set_work_item_status(conn, iid, "blocked")
+        db.set_work_item_status(conn, iid, "active")
+        assert db.get_work_item(conn, iid)["status"] == "active"
+
+    def test_blocked_to_done_not_allowed(self, conn, active_sprint):
+        import pytest
+        iid = self._add_active_item(None, conn, active_sprint["id"])
+        db.set_work_item_status(conn, iid, "blocked")
+        with pytest.raises(db.InvalidTransition):
+            db.set_work_item_status(conn, iid, "done")
+
+    def test_sweep_blocked_item_can_be_revived(self, conn, active_sprint):
+        from datetime import timedelta
+        from sprintctl import maintain as maint
+        iid = self._add_active_item(None, conn, active_sprint["id"])
+        from datetime import datetime
+        maint.sweep(conn, active_sprint["id"], datetime.utcnow(), threshold=timedelta(hours=0))
+        assert db.get_work_item(conn, iid)["status"] == "blocked"
+        # Can revive
+        db.set_work_item_status(conn, iid, "active")
+        assert db.get_work_item(conn, iid)["status"] == "active"
+
+
+# ---------------------------------------------------------------------------
+# Group 9: export / import
+# ---------------------------------------------------------------------------
+
+class TestExportImport:
+    def _build_sprint(self, runner, conn, db_path):
+        sid = db.create_sprint(conn, "Expo", "Export goal", "2026-04-01", "2026-04-30", "active")
+        tid = db.get_or_create_track(conn, sid, "backend")
+        iid = db.create_work_item(conn, sid, tid, "Do the thing", assignee="alice")
+        db.set_work_item_status(conn, iid, "active")
+        db.create_event(conn, sid, "alice", "progress", work_item_id=iid, payload={"note": "started"})
+        return sid, iid
+
+    def test_export_creates_file(self, runner, conn, db_path, tmp_path):
+        sid, _ = self._build_sprint(runner, conn, db_path)
+        out = str(tmp_path / "export.json")
+        result = runner.invoke(cli, ["export", "--sprint-id", str(sid), "--output", out])
+        assert result.exit_code == 0, result.output
+        import os
+        assert os.path.exists(out)
+
+    def test_export_json_structure(self, runner, conn, db_path, tmp_path):
+        sid, iid = self._build_sprint(runner, conn, db_path)
+        out = str(tmp_path / "export.json")
+        runner.invoke(cli, ["export", "--sprint-id", str(sid), "--output", out])
+        with open(out) as f:
+            data = json.load(f)
+        assert "sprintctl_version" in data
+        assert "exported_at" in data
+        assert data["sprint"]["id"] == sid
+        assert len(data["tracks"]) == 1
+        assert len(data["items"]) == 1
+        assert len(data["events"]) == 1
+
+    def test_import_creates_sprint_with_new_id(self, runner, conn, db_path, tmp_path):
+        sid, _ = self._build_sprint(runner, conn, db_path)
+        out = str(tmp_path / "export.json")
+        runner.invoke(cli, ["export", "--sprint-id", str(sid), "--output", out])
+        result = runner.invoke(cli, ["import", "--file", out])
+        assert result.exit_code == 0, result.output
+        # Extract new sprint ID from output "Imported sprint 'Expo' as #N"
+        new_sid = int(result.output.split(" as #")[1].split(" ")[0])
+        assert new_sid != sid
+        fresh = db.get_connection(db_path)
+        new_sprint = db.get_sprint(fresh, new_sid)
+        fresh.close()
+        assert new_sprint is not None
+        assert new_sprint["name"] == "Expo"
+
+    def test_import_preserves_items_and_events(self, runner, conn, db_path, tmp_path):
+        sid, _ = self._build_sprint(runner, conn, db_path)
+        out = str(tmp_path / "export.json")
+        runner.invoke(cli, ["export", "--sprint-id", str(sid), "--output", out])
+        result = runner.invoke(cli, ["import", "--file", out])
+        new_sid = int(result.output.split(" as #")[1].split(" ")[0])
+        fresh = db.get_connection(db_path)
+        items = db.list_work_items(fresh, sprint_id=new_sid)
+        assert len(items) == 1
+        assert items[0]["title"] == "Do the thing"
+        assert items[0]["assignee"] == "alice"
+        events = db.list_events(fresh, new_sid)
+        fresh.close()
+        assert any(e["event_type"] == "progress" for e in events)
+        # source_id traceback is embedded in payload
+        assert any(
+            json.loads(e["payload"]).get("source_id") is not None
+            for e in events if e["event_type"] == "progress"
+        )
+
+    def test_import_missing_file_exits(self, runner, db_path):
+        result = runner.invoke(cli, ["import", "--file", "/does/not/exist.json"])
+        assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# Group 10: maintain check --json
+# ---------------------------------------------------------------------------
+
+class TestMaintainCheckJson:
+    def test_check_json_valid_output(self, runner, conn, active_sprint):
+        result = runner.invoke(
+            cli, ["maintain", "check", "--sprint-id", str(active_sprint["id"]), "--json"]
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert "sprint" in data
+        assert "risk" in data
+        assert "stale_items" in data
+        assert "track_health" in data
+        assert "threshold_hours" in data
+
+    def test_check_json_risk_fields(self, runner, conn, active_sprint):
+        result = runner.invoke(
+            cli, ["maintain", "check", "--sprint-id", str(active_sprint["id"]), "--json"]
+        )
+        data = json.loads(result.output)
+        risk = data["risk"]
+        assert "days_remaining" in risk
+        assert "active_items" in risk
+        assert "at_risk" in risk
+        assert "overdue" in risk
+
+
+# ---------------------------------------------------------------------------
+# Group 11: sprint show --detail
+# ---------------------------------------------------------------------------
+
+class TestSprintShowDetail:
+    def test_detail_flag_shows_health_line(self, runner, conn, active_sprint):
+        result = runner.invoke(cli, ["sprint", "show", "--id", str(active_sprint["id"]), "--detail"])
+        assert result.exit_code == 0, result.output
+        assert "Health:" in result.output
+        assert "days remaining" in result.output
+
+    def test_detail_flag_shows_track_health(self, runner, conn, active_sprint):
+        tid = db.get_or_create_track(conn, active_sprint["id"], "mytrack")
+        db.create_work_item(conn, active_sprint["id"], tid, "Item A")
+        result = runner.invoke(cli, ["sprint", "show", "--id", str(active_sprint["id"]), "--detail"])
+        assert result.exit_code == 0, result.output
+        assert "Track health:" in result.output
+        assert "mytrack" in result.output
+
+    def test_show_without_detail_omits_health(self, runner, active_sprint):
+        result = runner.invoke(cli, ["sprint", "show", "--id", str(active_sprint["id"])])
+        assert result.exit_code == 0, result.output
+        assert "Health:" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# Group 12: item note
+# ---------------------------------------------------------------------------
+
+class TestItemNote:
+    def test_note_creates_event(self, runner, conn, active_sprint):
+        tid = db.get_or_create_track(conn, active_sprint["id"], "t")
+        iid = db.create_work_item(conn, active_sprint["id"], tid, "Task")
+        result = runner.invoke(
+            cli,
+            ["item", "note", "--id", str(iid), "--type", "decision",
+             "--summary", "Use postgres", "--actor", "alice"],
+        )
+        assert result.exit_code == 0, result.output
+        events = db.list_events(conn, active_sprint["id"])
+        assert len(events) == 1
+        assert events[0]["event_type"] == "decision"
+        assert events[0]["work_item_id"] == iid
+        assert events[0]["source_type"] == "actor"
+        assert json.loads(events[0]["payload"])["summary"] == "Use postgres"
+
+    def test_note_with_detail_and_tags(self, runner, conn, active_sprint):
+        tid = db.get_or_create_track(conn, active_sprint["id"], "t")
+        iid = db.create_work_item(conn, active_sprint["id"], tid, "Task")
+        runner.invoke(
+            cli,
+            ["item", "note", "--id", str(iid), "--type", "update",
+             "--summary", "Halfway done", "--detail", "Extended info",
+             "--tags", "arch,performance", "--actor", "bob"],
+        )
+        events = db.list_events(conn, active_sprint["id"])
+        payload = json.loads(events[0]["payload"])
+        assert payload["detail"] == "Extended info"
+        assert payload["tags"] == ["arch", "performance"]
+
+    def test_note_sprint_id_inferred_from_item(self, runner, conn, active_sprint):
+        tid = db.get_or_create_track(conn, active_sprint["id"], "t")
+        iid = db.create_work_item(conn, active_sprint["id"], tid, "Task")
+        result = runner.invoke(
+            cli,
+            ["item", "note", "--id", str(iid), "--type", "blocker",
+             "--summary", "Waiting on infra", "--actor", "charlie"],
+        )
+        assert result.exit_code == 0, result.output
+        events = db.list_events(conn, active_sprint["id"])
+        assert events[0]["sprint_id"] == active_sprint["id"]
+
+    def test_note_invalid_item_exits(self, runner, db_path):
+        result = runner.invoke(
+            cli,
+            ["item", "note", "--id", "9999", "--type", "note",
+             "--summary", "Ghost", "--actor", "nobody"],
+        )
+        assert result.exit_code == 1
