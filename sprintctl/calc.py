@@ -37,7 +37,7 @@ def track_health(items: list[dict]) -> dict:
 
 def sprint_overrun_risk(sprint: dict, active_items: int, now: datetime) -> dict:
     """Flag if sprint is approaching end with significant open work."""
-    end = datetime.fromisoformat(sprint["end_date"])
+    end = datetime.fromisoformat(sprint["end_date"]).replace(tzinfo=None)
     remaining = end - _naive_utc(now)
     return {
         "days_remaining": remaining.days,

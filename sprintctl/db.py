@@ -418,6 +418,30 @@ def release_claim(conn: sqlite3.Connection, claim_id: int, agent: str) -> None:
     conn.commit()
 
 
+def list_claims_by_sprint(
+    conn: sqlite3.Connection,
+    sprint_id: int,
+    active_only: bool = True,
+    expiring_within_seconds: int | None = None,
+) -> list[dict]:
+    """List all claims for items in a sprint, optionally filtered to active or expiring soon."""
+    base = """
+        SELECT c.*, wi.title AS item_title, wi.status AS item_status
+        FROM claim c
+        JOIN work_item wi ON c.work_item_id = wi.id
+        WHERE wi.sprint_id = ?
+    """
+    params: list = [sprint_id]
+    if active_only:
+        base += " AND c.expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')"
+    if expiring_within_seconds is not None:
+        base += " AND c.expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds')"
+        params.append(expiring_within_seconds)
+    base += " ORDER BY c.expires_at ASC"
+    rows = conn.execute(base, params).fetchall()
+    return [dict(r) for r in rows]
+
+
 def list_claims(conn: sqlite3.Connection, work_item_id: int, active_only: bool = True) -> list[dict]:
     """List claims for a work item; active_only filters to non-expired claims."""
     if active_only:

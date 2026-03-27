@@ -11,6 +11,21 @@ from datetime import datetime, timedelta
 from . import calc as _calc
 from . import db as _db
 
+
+def _force_item_done_for_carryover(conn, item_id: int) -> None:
+    """
+    Set a work item to 'done' without going through the state machine.
+
+    ONLY valid for carryover: items being carried forward may be in
+    pending/active/blocked, none of which have an allowed transition to
+    'done'. Any other caller should use db.set_work_item_status() instead.
+    """
+    conn.execute(
+        "UPDATE work_item SET status = 'done', "
+        "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+        (item_id,),
+    )
+
 DEFAULT_STALE_THRESHOLD = timedelta(hours=4)
 
 
@@ -201,14 +216,7 @@ def carryover(conn, from_sprint_id: int, to_sprint_id: int) -> list[dict]:
             },
         )
 
-        # Mark original as done with carryover note (bypass transition guard
-        # by writing directly — carried items may be blocked/active/pending,
-        # none of which normally allow -> done)
-        conn.execute(
-            "UPDATE work_item SET status = 'done', "
-            "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
-            (item["id"],),
-        )
+        _force_item_done_for_carryover(conn, item["id"])
         _db.create_event(
             conn,
             from_sprint_id,

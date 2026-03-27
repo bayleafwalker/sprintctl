@@ -540,6 +540,20 @@ def import_cmd(obj, input_path) -> None:
         sys.exit(1)
 
     src_sprint = envelope["sprint"]
+
+    # Pre-flight: all track_ids referenced by items must be present in tracks list.
+    # Validate before writing anything so the DB is never left in a partial state.
+    exported_track_ids = {t["id"] for t in envelope.get("tracks", [])}
+    missing: list[str] = []
+    for it in envelope.get("items", []):
+        if it["track_id"] not in exported_track_ids:
+            missing.append(f"  item '{it['title']}' references track_id {it['track_id']} not found in export")
+    if missing:
+        click.echo("Import aborted — items reference tracks missing from the export file:", err=True)
+        for m in missing:
+            click.echo(m, err=True)
+        sys.exit(1)
+
     new_sprint_id = _db.create_sprint(
         conn,
         name=src_sprint["name"],
@@ -559,12 +573,7 @@ def import_cmd(obj, input_path) -> None:
     # Map old item IDs → new item IDs
     item_id_map: dict[int, int] = {}
     for it in envelope.get("items", []):
-        old_track_id = it["track_id"]
-        new_track_id = track_id_map.get(old_track_id)
-        if new_track_id is None:
-            # Track may not exist if export is partial; create by looking up in tracks list
-            click.echo(f"Warning: track_id {old_track_id} not found for item '{it['title']}'; skipping.", err=True)
-            continue
+        new_track_id = track_id_map[it["track_id"]]  # guaranteed present after pre-flight
         new_iid = _db.create_work_item(
             conn,
             new_sprint_id,
@@ -694,6 +703,47 @@ def claim_list(obj, item_id, show_all) -> None:
         click.echo(
             f"#{c['id']}  {c['agent']}  [{c['claim_type']}]  {excl}  "
             f"expires={c['expires_at']}  heartbeat={c['heartbeat']}"
+        )
+
+
+@claim.command("list-sprint")
+@click.option("--sprint-id", type=int, default=None, help="Sprint ID (defaults to active)")
+@click.option("--all", "show_all", is_flag=True, default=False, help="Include expired claims")
+@click.option(
+    "--expiring-within", "expiring_within", type=int, default=None,
+    help="Only show claims expiring within N seconds",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.pass_obj
+def claim_list_sprint(obj, sprint_id, show_all, expiring_within, as_json) -> None:
+    """List all claims across a sprint, optionally filtered by expiry window."""
+    conn = obj["conn"]
+    if sprint_id is not None:
+        sprint = _db.get_sprint(conn, sprint_id)
+    else:
+        sprint = _db.get_active_sprint(conn)
+    if sprint is None:
+        click.echo("No sprint found. Use --sprint-id to specify one.", err=True)
+        sys.exit(1)
+    claims = _db.list_claims_by_sprint(
+        conn,
+        sprint["id"],
+        active_only=not show_all,
+        expiring_within_seconds=expiring_within,
+    )
+    if as_json:
+        click.echo(json.dumps(claims, indent=2))
+        return
+    if not claims:
+        label = "expiring" if expiring_within is not None else ("active " if not show_all else "")
+        click.echo(f"No {label}claims in sprint #{sprint['id']} ({sprint['name']}).")
+        return
+    click.echo(f"Claims in sprint #{sprint['id']} ({sprint['name']}):")
+    for c in claims:
+        excl = "exclusive" if c["exclusive"] else "shared"
+        click.echo(
+            f"  #{c['id']}  item #{c['work_item_id']} ({c['item_title']})  "
+            f"{c['agent']}  [{c['claim_type']}]  {excl}  expires={c['expires_at']}"
         )
 
 
