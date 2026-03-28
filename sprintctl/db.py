@@ -97,6 +97,33 @@ _MIGRATIONS: list[str] = [
     ALTER TABLE claim ADD COLUMN commit_sha TEXT;
     ALTER TABLE claim ADD COLUMN pr_ref TEXT
     """,
+    # Migration 5: make start_date and end_date nullable on sprint.
+    # Sprint is a generic execution container; dates are optional metadata.
+    # SQLite does not support ALTER COLUMN DROP NOT NULL, so we recreate the table.
+    """
+    PRAGMA foreign_keys = OFF;
+
+    CREATE TABLE sprint_new (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT    NOT NULL,
+        goal        TEXT    NOT NULL DEFAULT '',
+        start_date  TEXT,
+        end_date    TEXT,
+        status      TEXT    NOT NULL DEFAULT 'planned'
+                            CHECK (status IN ('active', 'closed', 'planned')),
+        created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        kind        TEXT    NOT NULL DEFAULT 'active_sprint'
+                            CHECK (kind IN ('active_sprint', 'backlog', 'archive'))
+    );
+
+    INSERT INTO sprint_new SELECT * FROM sprint;
+
+    DROP TABLE sprint;
+
+    ALTER TABLE sprint_new RENAME TO sprint;
+
+    PRAGMA foreign_keys = ON
+    """,
 ]
 
 
@@ -147,9 +174,9 @@ def init_db(conn: sqlite3.Connection) -> None:
 def create_sprint(
     conn: sqlite3.Connection,
     name: str,
-    goal: str,
-    start_date: str,
-    end_date: str,
+    goal: str = "",
+    start_date: str | None = None,
+    end_date: str | None = None,
     status: str = "planned",
     kind: str = "active_sprint",
 ) -> int:

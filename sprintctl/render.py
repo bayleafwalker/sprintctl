@@ -32,7 +32,8 @@ def render_sprint_doc(
         header += "  [AT RISK]"
     lines.append(header)
     lines.append(f"Goal:   {sprint['goal']}")
-    lines.append(f"Dates:  {sprint['start_date']} to {sprint['end_date']}")
+    if sprint.get("start_date") and sprint.get("end_date"):
+        lines.append(f"Dates:  {sprint['start_date']} to {sprint['end_date']}")
     lines.append(f"ID:     {sprint['id']}")
     lines.append("")
 

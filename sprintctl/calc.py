@@ -58,10 +58,24 @@ def track_health(items: list[dict]) -> dict:
 
 
 def sprint_overrun_risk(sprint: dict, active_items: int, now: datetime) -> dict:
-    """Flag if sprint is approaching end with significant open work."""
-    end = datetime.fromisoformat(sprint["end_date"]).replace(tzinfo=None)
+    """Flag if sprint is approaching end with significant open work.
+
+    Returns a sentinel dict with date_bound=False when end_date is absent or None.
+    Callers should check date_bound before using days_remaining.
+    """
+    end_date = sprint.get("end_date")
+    if not end_date:
+        return {
+            "date_bound": False,
+            "days_remaining": None,
+            "active_items": active_items,
+            "at_risk": False,
+            "overdue": False,
+        }
+    end = datetime.fromisoformat(end_date).replace(tzinfo=None)
     remaining = end - _naive_utc(now)
     return {
+        "date_bound": True,
         "days_remaining": remaining.days,
         "active_items": active_items,
         "at_risk": remaining.days <= 2 and active_items > 0,

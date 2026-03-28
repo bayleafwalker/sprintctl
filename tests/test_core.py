@@ -49,8 +49,26 @@ class TestSprintRoundTrip:
         assert "Gamma" in result.output
 
     def test_sprint_create_missing_required_args(self, runner, db_path):
+        # Only --name is required; --start and --end are optional
         result = runner.invoke(cli, ["sprint", "create"])
         assert result.exit_code == 2
+
+    def test_sprint_create_without_dates(self, runner, db_path):
+        # Sprint can be created as a generic execution container without dates
+        result = runner.invoke(
+            cli,
+            ["sprint", "create", "--name", "Dateless", "--status", "active"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "Dateless" in result.output
+
+    def test_sprint_show_dateless_omits_dates_line(self, runner, conn):
+        from sprintctl import db
+        sid = db.create_sprint(conn, "Dateless Show", status="active")
+        result = runner.invoke(cli, ["sprint", "show", "--id", str(sid)])
+        assert result.exit_code == 0, result.output
+        assert "Dates:" not in result.output
+        assert "Dateless Show" in result.output
 
     def test_sprint_show_no_active_sprint(self, runner, db_path):
         result = runner.invoke(cli, ["sprint", "show"])

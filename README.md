@@ -28,7 +28,9 @@ One developer running medium- to long-term sprints, possibly with one or two age
 ## Expected workflow
 
 ```sh
-# Start a sprint
+# Start a sprint — dates are optional; omit them for an open-ended execution container
+sprintctl sprint create --name "Sprint 4" --status active
+# Or with explicit dates if you want time-bound tracking:
 sprintctl sprint create --name "Sprint 4" --start 2026-04-07 --end 2026-04-18 --status active
 
 # Populate the backlog
@@ -151,7 +153,8 @@ sprintctl is explicitly local developer tooling. The database lives on your mach
 ### Sprints
 
 ```sh
-sprintctl sprint create --name <name> --start <YYYY-MM-DD> --end <YYYY-MM-DD> \
+sprintctl sprint create --name <name> \
+    [--start <YYYY-MM-DD>] [--end <YYYY-MM-DD>] \
     [--status <planned|active|closed>] [--goal <text>] [--kind <active_sprint|backlog|archive>]
 
 sprintctl sprint show [--id <id>] [--detail] [--json]  # --detail adds health summary and track breakdown
@@ -160,7 +163,7 @@ sprintctl sprint status --id <id> --status <planned|active|closed>
 sprintctl sprint kind --id <id> --kind <active_sprint|backlog|archive>
 ```
 
-Sprint status transitions are enforced: `planned → active → closed`. `closed` is terminal.
+Sprint is a generic execution container. Dates are optional — omit them for open-ended work cycles. Status transitions are enforced: `planned → active → closed`. `closed` is terminal.
 
 Sprint kinds classify a sprint's role — `active_sprint` (default), `backlog`, or `archive`. Sprints of kind `backlog` and `archive` are hidden from `sprint list` unless the corresponding flag is passed.
 

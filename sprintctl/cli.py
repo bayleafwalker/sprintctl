@@ -34,8 +34,8 @@ def sprint() -> None:
 @sprint.command("create")
 @click.option("--name", required=True, help="Sprint name")
 @click.option("--goal", default="", help="Sprint goal")
-@click.option("--start", "start_date", required=True, help="Start date (YYYY-MM-DD)")
-@click.option("--end", "end_date", required=True, help="End date (YYYY-MM-DD)")
+@click.option("--start", "start_date", default=None, help="Start date (YYYY-MM-DD, optional)")
+@click.option("--end", "end_date", default=None, help="End date (YYYY-MM-DD, optional)")
 @click.option(
     "--status",
     default="planned",
@@ -109,7 +109,8 @@ def sprint_show(obj, sprint_id, detail, as_json) -> None:
     click.echo(f"ID:     {s['id']}")
     click.echo(f"Name:   {s['name']}")
     click.echo(f"Goal:   {s['goal']}")
-    click.echo(f"Dates:  {s['start_date']} to {s['end_date']}")
+    if s.get("start_date") and s.get("end_date"):
+        click.echo(f"Dates:  {s['start_date']} to {s['end_date']}")
     click.echo(f"Status: {s['status']}")
     click.echo(f"Kind:   {s['kind']}")
 
@@ -130,7 +131,10 @@ def sprint_show(obj, sprint_id, detail, as_json) -> None:
             risk_tag = " [OVERDUE]"
         elif risk["at_risk"]:
             risk_tag = " [AT RISK]"
-        click.echo(f"\nHealth: {risk['days_remaining']} days remaining, {risk['active_items']} active, {stale_count} stale{risk_tag}")
+        if risk.get("date_bound", True):
+            click.echo(f"\nHealth: {risk['days_remaining']} days remaining, {risk['active_items']} active, {stale_count} stale{risk_tag}")
+        else:
+            click.echo(f"\nHealth: {risk['active_items']} active, {stale_count} stale")
         items_by_track2: dict[int, list] = {}
         for it in items:
             items_by_track2.setdefault(it["track_id"], []).append(it)
@@ -197,7 +201,8 @@ def sprint_list(obj, include_backlog, include_archive, as_json) -> None:
         return
     for s in sprints:
         kind = s.get("kind", "active_sprint")
-        click.echo(f"#{s['id']}  [{s['status']:8}]  [{kind:14}]  {s['name']}  ({s['start_date']} to {s['end_date']})")
+        date_part = f"  ({s['start_date']} to {s['end_date']})" if s.get("start_date") and s.get("end_date") else ""
+        click.echo(f"#{s['id']}  [{s['status']:8}]  [{kind:14}]  {s['name']}{date_part}")
 
 
 @sprint.command("kind")
@@ -541,10 +546,13 @@ def maintain_check(obj, sprint_id, threshold, as_json) -> None:
         risk_tag = "  [OVERDUE]"
     elif risk["at_risk"]:
         risk_tag = "  [AT RISK]"
+    if risk.get("date_bound", True):
+        date_info = f"{risk['days_remaining']} days remaining, "
+    else:
+        date_info = ""
     click.echo(
         f"Sprint #{sprint['id']}: \"{sprint['name']}\" — "
-        f"{risk['days_remaining']} days remaining, "
-        f"{risk['active_items']} active item(s){risk_tag}"
+        f"{date_info}{risk['active_items']} active item(s){risk_tag}"
     )
     click.echo("")
 
@@ -698,8 +706,8 @@ def import_cmd(obj, input_path) -> None:
         conn,
         name=src_sprint["name"],
         goal=src_sprint.get("goal", ""),
-        start_date=src_sprint["start_date"],
-        end_date=src_sprint["end_date"],
+        start_date=src_sprint.get("start_date"),
+        end_date=src_sprint.get("end_date"),
         status=src_sprint.get("status", "planned"),
         kind=src_sprint.get("kind", "active_sprint"),
     )

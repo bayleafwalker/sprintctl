@@ -146,3 +146,31 @@ def test_sprint_overrun_risk_overdue_closed_not_flagged():
     end = (NOW - timedelta(days=3)).date().isoformat()
     result = calc.sprint_overrun_risk(_sprint(end, "closed"), active_items=0, now=NOW)
     assert result["overdue"] is False
+
+
+def test_sprint_overrun_risk_date_bound_on_dated_sprint():
+    # date-bound sprints now include date_bound=True
+    end = (NOW + timedelta(days=5)).date().isoformat()
+    result = calc.sprint_overrun_risk(_sprint(end), active_items=2, now=NOW)
+    assert result["date_bound"] is True
+    assert result["days_remaining"] is not None
+
+
+def test_sprint_overrun_risk_no_end_date_key():
+    # sprint dict with no end_date key — not date-bound
+    sprint = {"id": 1, "status": "active"}
+    result = calc.sprint_overrun_risk(sprint, active_items=5, now=NOW)
+    assert result["date_bound"] is False
+    assert result["days_remaining"] is None
+    assert result["at_risk"] is False
+    assert result["overdue"] is False
+    assert result["active_items"] == 5
+
+
+def test_sprint_overrun_risk_null_end_date():
+    # sprint dict with explicit None end_date (as stored after migration)
+    sprint = {"id": 1, "end_date": None, "status": "active"}
+    result = calc.sprint_overrun_risk(sprint, active_items=3, now=NOW)
+    assert result["date_bound"] is False
+    assert result["at_risk"] is False
+    assert result["overdue"] is False
