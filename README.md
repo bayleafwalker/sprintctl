@@ -42,9 +42,18 @@ sprintctl item add --sprint-id 1 --track docs --title "Write API reference"
 sprintctl sprint show --detail
 sprintctl maintain check
 
-# Pick up an item (optionally claim it to prevent concurrent access)
-sprintctl claim create --item-id 1 --agent claude-session-1 --branch feat/auth
-sprintctl item status --id 1 --status active --actor claude-session-1
+# Pick up an item and keep the returned claim token for the life of the claim
+sprintctl claim create --item-id 1 --actor claude-session-1 \
+    --runtime-session-id "${CODEX_THREAD_ID:-manual-session}" \
+    --instance-id "codex-proc-1" \
+    --branch feat/auth
+# output includes:
+# Claim #1 created: ...
+# Claim token: <store-this-secret>
+
+# Use the claim proof on owner-only operations
+sprintctl item status --id 1 --status active --actor claude-session-1 \
+    --claim-id 1 --claim-token <claim-token>
 
 # Record decisions and notes during work
 sprintctl item note --id 1 --type decision --summary "Using JWT with RS256" \
@@ -52,10 +61,17 @@ sprintctl item note --id 1 --type decision --summary "Using JWT with RS256" \
     --tags auth,security --actor claude-session-1
 
 # Complete or block the item, then release the claim
-sprintctl item status --id 1 --status done --actor claude-session-1
-sprintctl claim release --id 1 --agent claude-session-1
+sprintctl item status --id 1 --status done --actor claude-session-1 \
+    --claim-id 1 --claim-token <claim-token>
+sprintctl claim release --id 1 --claim-token <claim-token> --actor claude-session-1
 
-# Produce a handoff bundle for the next session
+# Or explicitly hand the claim to the next live session
+sprintctl claim handoff --id 1 --claim-token <claim-token> \
+    --actor claude-session-2 --mode rotate \
+    --runtime-session-id "${CODEX_THREAD_ID:-manual-session-2}" \
+    --instance-id "codex-proc-2" --json > claim-handoff.json
+
+# Produce a general sprint handoff bundle for the next session
 sprintctl handoff
 
 # Commit a plain-text snapshot for review and diffing
@@ -173,7 +189,8 @@ Sprint kinds classify a sprint's role — `active_sprint` (default), `backlog`, 
 sprintctl item add --sprint-id <id> --track <name> --title <title> [--assignee <name>]
 sprintctl item show --id <id> [--json]
 sprintctl item list [--sprint-id <id>] [--track <name>] [--status <pending|active|done|blocked>] [--json]
-sprintctl item status --id <id> --status <pending|active|done|blocked> [--actor <name>]
+sprintctl item status --id <id> --status <pending|active|done|blocked> \
+    [--actor <name>] [--claim-id <id>] [--claim-token <token>]
 sprintctl item note --id <id> --type <type> --summary <text> [--detail <text>] [--tags <a,b>] [--actor <name>]
 ```
 
@@ -186,7 +203,7 @@ pending → active → done     (terminal)
 
 `done` is terminal. `blocked` is revivable — use `item status --status active` to unblock after addressing the issue.
 
-Passing `--actor` to `item status` enforces exclusive claim checks — the transition is rejected if another agent holds an active exclusive claim on the item.
+If an active exclusive claim exists, `item status` requires the matching `--claim-id` and `--claim-token`. `--actor` is identity metadata for the event trail, not ownership proof.
 
 `item show` displays a single item with its recent events and active claims. Use `--json` for machine-readable output.
 
@@ -210,6 +227,10 @@ Event type is freeform text. Conventional types recognized by [kctl](https://git
 | `pattern-noted` | Reusable pattern identified |
 | `risk-accepted` | Explicit risk acceptance with reasoning |
 | `lesson-learned` | Retrospective insight |
+| `claim-handoff` | Explicit ownership transfer or token rotation between live sessions |
+| `claim-ownership-corrected` | Legacy ambiguous claim adopted and re-issued with a valid token |
+| `claim-ambiguity-detected` | sprintctl detected an ambiguous legacy claim with no proof token |
+| `coordination-failure` | Wrong-token heartbeat/release, missing proof, or similar coordination mistake |
 
 For knowledge-bearing events, structure the payload as:
 
@@ -226,12 +247,16 @@ For knowledge-bearing events, structure the payload as:
 Claims let you or an agent take ownership of a work item before working on it. An exclusive claim blocks other agents from transitioning the item until the claim is released or expires. Claims are a local coordination mechanism — they are meaningful only within a single database, not across machines or sessions that don't share state.
 
 ```sh
-sprintctl claim create --item-id <id> --agent <name> \
+sprintctl claim create --item-id <id> --actor <name> \
     [--type <inspect|execute|review|coordinate>] [--ttl <seconds>] [--non-exclusive] \
-    [--branch <name>] [--worktree <path>] [--commit-sha <sha>] [--pr-ref <owner/repo#123>]
+    [--branch <name>] [--worktree <path>] [--commit-sha <sha>] [--pr-ref <owner/repo#123>] \
+    [--runtime-session-id <id>] [--instance-id <id>] [--hostname <name>] [--pid <n>] [--json]
 
-sprintctl claim heartbeat --id <claim-id> --agent <name> [--ttl <seconds>]
-sprintctl claim release --id <claim-id> --agent <name>
+sprintctl claim heartbeat --id <claim-id> --claim-token <token> [--actor <name>] [--ttl <seconds>]
+sprintctl claim release --id <claim-id> --claim-token <token> [--actor <name>]
+sprintctl claim handoff --id <claim-id> [--claim-token <token>] --actor <next-actor> \
+    [--mode <transfer|rotate>] [--ttl <seconds>] [--runtime-session-id <id>] [--instance-id <id>] \
+    [--allow-legacy-adopt] [--json]
 sprintctl claim list --item-id <id> [--all] [--json]
 sprintctl claim list-sprint [--sprint-id <id>] [--all] [--expiring-within <seconds>] [--json]
 ```
@@ -247,16 +272,52 @@ Claim types:
 
 Default TTL is 300 seconds. Refresh with `claim heartbeat` to keep a long-running claim alive. Expired claims are purged by `maintain sweep`.
 
-#### Workspace metadata on claims
+#### Ownership proof vs advisory metadata
+
+Ownership proof is always `claim_id + claim_token`.
+
+- `claim_id` is the stable claim handle.
+- `claim_token` is a server-minted opaque token returned on claim creation or explicit handoff.
+- `runtime_session_id`, `instance_id`, `actor`, `branch`, `worktree_path`, `commit_sha`, `pr_ref`, `hostname`, and `pid` are identity context only.
+- Shared metadata is never enough to heartbeat, release, or transition a claimed item.
+
+Exclusive claim heartbeats and releases reject missing or wrong tokens. Legacy claims created before token support are surfaced as `legacy_ambiguous` in JSON and require an explicit adoption handoff or expiry.
+
+#### Runtime and workspace metadata on claims
 
 Claims can record the git context in which an agent is working:
 
 ```sh
-sprintctl claim create --item-id 3 --agent claude-session-2 \
+sprintctl claim create --item-id 3 --actor claude-session-2 \
+    --runtime-session-id "${CODEX_THREAD_ID:-manual-session}" \
+    --instance-id "codex-proc-2" \
     --branch feat/auth --commit-sha abc1234 --pr-ref owner/repo#42
 ```
 
-The `--worktree` flag records the path to a git worktree if the agent is working in one. These fields are stored on the claim and included in `claim list --json` and `handoff` output, making it straightforward for the next session to pick up where the previous one left off.
+The `--worktree` flag records the path to a git worktree if the agent is working in one. `--hostname` and `--pid` default to the current process. `--runtime-session-id` should come from the runtime when available. For Codex sessions, `CODEX_THREAD_ID` is accepted automatically when `--runtime-session-id` is omitted.
+
+Recommended client behavior:
+
+- Prefer a runtime-provided session ID when the host runtime exposes one.
+- Mint a stable per-process `instance_id` and reuse it for every `claim create`, `claim heartbeat`, and `claim handoff` call from that process.
+- Store `claim_token` securely for the entire life of the claim.
+- Treat branch, worktree, commit SHA, and similar fields as hints for the next session, not as proof of ownership.
+
+Concurrent agents in the same worktree:
+
+```sh
+# Session A
+sprintctl claim create --item-id 9 --actor codex-a \
+    --runtime-session-id thread-a --instance-id proc-a \
+    --worktree /repo --commit-sha abc1234
+
+# Session B — same actor and same git metadata still conflicts without the token
+sprintctl claim create --item-id 9 --actor codex-a \
+    --runtime-session-id thread-b --instance-id proc-b \
+    --worktree /repo --commit-sha abc1234
+```
+
+The second command is rejected because shared workspace metadata does not prove ownership.
 
 ### Handoff
 
@@ -267,6 +328,8 @@ sprintctl handoff [--sprint-id <id>] [--output <path>] [--events <limit>]
 Produces a JSON bundle containing the sprint, all items, recent events, and active claims. This is the primary artifact for agent session resumption: an incoming agent reads the bundle to understand current sprint state, which items are claimed and by whom, and what work context (branch, commit, PR) the previous session left behind.
 
 Default output file: `handoff-N.json`. Pass `--output -` to write to stdout.
+
+General sprint handoff bundles surface claim identity state, including whether a claim is `proven` or `legacy_ambiguous`, but they do not include `claim_token`. Use `sprintctl claim handoff` when ownership itself needs to move to the next live session.
 
 Typical agent session start:
 
@@ -349,5 +412,7 @@ Key architectural decisions:
 ## Companion tool
 
 [kctl](https://github.com/bayleafwalker/kctl) is a separate tool that reads the sprintctl database (read-only, never writes) and extracts durable knowledge from sprint events. It operates on its own storage and calls `sprintctl maintain check` as a pre-flight before extraction.
+
+Claim ambiguity, explicit claim handoffs, ownership corrections, and coordination failures are emitted as structured sprint events so kctl can preserve the identity context and turn repeated mistakes into durable lessons.
 
 sprintctl and kctl share a read path but not a write path. kctl never transitions item or sprint status, never creates claims, and never modifies the sprintctl database.

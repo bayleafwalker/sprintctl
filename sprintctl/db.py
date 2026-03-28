@@ -1,5 +1,6 @@
 import json
 import os
+import secrets
 import sqlite3
 from pathlib import Path
 
@@ -123,6 +124,17 @@ _MIGRATIONS: list[str] = [
     ALTER TABLE sprint_new RENAME TO sprint;
 
     PRAGMA foreign_keys = ON
+    """,
+    # Migration 6: token-backed claim identity and runtime metadata.
+    """
+    ALTER TABLE claim ADD COLUMN claim_token TEXT;
+    ALTER TABLE claim ADD COLUMN runtime_session_id TEXT;
+    ALTER TABLE claim ADD COLUMN instance_id TEXT;
+    ALTER TABLE claim ADD COLUMN hostname TEXT;
+    ALTER TABLE claim ADD COLUMN pid INTEGER;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_claim_token
+        ON claim(claim_token)
+        WHERE claim_token IS NOT NULL
     """,
 ]
 
@@ -296,6 +308,8 @@ def set_work_item_status(
     item_id: int,
     new_status: str,
     actor: str | None = None,
+    claim_id: int | None = None,
+    claim_token: str | None = None,
 ) -> None:
     item = get_work_item(conn, item_id)
     if item is None:
@@ -306,23 +320,59 @@ def set_work_item_status(
         raise InvalidTransition(
             f"cannot transition {current} -> {new_status}. Allowed: {allowed}"
         )
-    # Enforce exclusive claims: if another agent holds an active exclusive claim, block
-    if actor is not None:
-        conflict = conn.execute(
-            """
-            SELECT id, agent FROM claim
-            WHERE work_item_id = ? AND exclusive = 1
-              AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
-              AND agent != ?
-            LIMIT 1
-            """,
-            (item_id, actor),
-        ).fetchone()
-        if conflict:
-            raise ClaimConflict(
-                f"Item #{item_id} is exclusively claimed by '{conflict['agent']}' (claim #{conflict['id']}). "
-                f"Release the claim before transitioning."
+    active_claim = _get_active_exclusive_claim_row(conn, item_id)
+    if active_claim is not None:
+        if claim_id is None or claim_token is None:
+            _emit_claim_event(
+                conn,
+                active_claim,
+                event_type="coordination-failure",
+                actor=actor or "system",
+                payload={
+                    "summary": f"Item transition rejected for item #{item_id}",
+                    "detail": (
+                        "An exclusive claim blocked the transition because no "
+                        "valid claim proof was supplied."
+                    ),
+                    "tags": ["claims", "coordination", "ownership-proof"],
+                    "operation": "item-status",
+                    "reason": "missing-claim-proof",
+                    "required_claim": _claim_event_identity(active_claim),
+                    "attempted_by": _claim_attempt_identity(actor=actor),
+                },
             )
+            raise ClaimConflict(
+                f"Item #{item_id} is exclusively claimed by '{active_claim['agent']}' "
+                f"(claim #{active_claim['id']}). Provide --claim-id and --claim-token."
+            )
+        if claim_id != active_claim["id"]:
+            _emit_claim_event(
+                conn,
+                active_claim,
+                event_type="coordination-failure",
+                actor=actor or "system",
+                payload={
+                    "summary": f"Item transition rejected for item #{item_id}",
+                    "detail": (
+                        "A transition supplied a claim proof for the wrong claim id "
+                        "while another exclusive claim was active."
+                    ),
+                    "tags": ["claims", "coordination", "ownership-proof"],
+                    "operation": "item-status",
+                    "reason": "wrong-claim-id",
+                    "required_claim": _claim_event_identity(active_claim),
+                    "attempted_by": _claim_attempt_identity(
+                        actor=actor,
+                        claim_id=claim_id,
+                        claim_token_present=claim_token is not None,
+                    ),
+                },
+            )
+            raise ClaimConflict(
+                f"Item #{item_id} is exclusively claimed by '{active_claim['agent']}' "
+                f"(claim #{active_claim['id']})."
+            )
+        _require_claim_proof(active_claim, claim_token)
     conn.execute(
         "UPDATE work_item SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
         (new_status, item_id),
@@ -388,6 +438,173 @@ class ClaimConflict(ValueError):
     pass
 
 
+CLAIM_IDENTITY_STATUS_PROVEN = "proven"
+CLAIM_IDENTITY_STATUS_LEGACY = "legacy_ambiguous"
+
+
+def _generate_claim_token() -> str:
+    return secrets.token_urlsafe(24)
+
+
+def _claim_identity_status(row: sqlite3.Row | dict) -> str:
+    return (
+        CLAIM_IDENTITY_STATUS_PROVEN
+        if row["claim_token"]
+        else CLAIM_IDENTITY_STATUS_LEGACY
+    )
+
+
+def _claim_event_identity(row: sqlite3.Row | dict) -> dict:
+    return {
+        "claim_id": row["id"],
+        "actor": row["agent"],
+        "runtime_session_id": row["runtime_session_id"],
+        "instance_id": row["instance_id"],
+        "branch": row["branch"],
+        "worktree_path": row["worktree_path"],
+        "commit_sha": row["commit_sha"],
+        "pr_ref": row["pr_ref"],
+        "hostname": row["hostname"],
+        "pid": row["pid"],
+        "claim_token_present": bool(row["claim_token"]),
+        "identity_status": _claim_identity_status(row),
+    }
+
+
+def _claim_attempt_identity(
+    *,
+    actor: str | None = None,
+    claim_id: int | None = None,
+    claim_token_present: bool = False,
+    runtime_session_id: str | None = None,
+    instance_id: str | None = None,
+    branch: str | None = None,
+    worktree_path: str | None = None,
+    commit_sha: str | None = None,
+    pr_ref: str | None = None,
+    hostname: str | None = None,
+    pid: int | None = None,
+) -> dict:
+    return {
+        "claim_id": claim_id,
+        "actor": actor,
+        "runtime_session_id": runtime_session_id,
+        "instance_id": instance_id,
+        "branch": branch,
+        "worktree_path": worktree_path,
+        "commit_sha": commit_sha,
+        "pr_ref": pr_ref,
+        "hostname": hostname,
+        "pid": pid,
+        "claim_token_present": claim_token_present,
+    }
+
+
+def _serialize_claim(row: sqlite3.Row | dict, *, include_secret: bool = False) -> dict:
+    raw = dict(row)
+    claim_token = raw.get("claim_token")
+    identity_status = _claim_identity_status(row)
+    if not include_secret:
+        raw.pop("claim_token", None)
+    claim = {
+        **raw,
+        "claim_id": raw["id"],
+        "actor": raw["agent"],
+        "claim_token_present": bool(claim_token),
+        "claim_token_redacted": bool(claim_token) and not include_secret,
+        "identity_status": identity_status,
+        "identity": {
+            "claim_id": raw["id"],
+            "actor": raw["agent"],
+            "runtime_session_id": raw.get("runtime_session_id"),
+            "instance_id": raw.get("instance_id"),
+            "advisory": {
+                "branch": raw.get("branch"),
+                "worktree_path": raw.get("worktree_path"),
+                "commit_sha": raw.get("commit_sha"),
+                "pr_ref": raw.get("pr_ref"),
+                "hostname": raw.get("hostname"),
+                "pid": raw.get("pid"),
+            },
+        },
+        "ownership_proof": {
+            "type": "claim_id+claim_token",
+            "claim_id": raw["id"],
+            "claim_token_required": bool(raw["exclusive"]),
+            "claim_token_present": bool(claim_token),
+            "status": (
+                "verified-capable"
+                if claim_token
+                else "ambiguous-legacy-claim"
+            ),
+        },
+    }
+    if include_secret:
+        claim["claim_token"] = claim_token
+        claim["ownership_proof"]["claim_token"] = claim_token
+    return claim
+
+
+def get_claim(
+    conn: sqlite3.Connection,
+    claim_id: int,
+    *,
+    include_secret: bool = False,
+) -> dict | None:
+    row = conn.execute("SELECT * FROM claim WHERE id = ?", (claim_id,)).fetchone()
+    return _serialize_claim(row, include_secret=include_secret) if row else None
+
+
+def _get_active_exclusive_claim_row(
+    conn: sqlite3.Connection,
+    work_item_id: int,
+) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT * FROM claim
+        WHERE work_item_id = ? AND exclusive = 1
+          AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
+        ORDER BY created_at ASC
+        LIMIT 1
+        """,
+        (work_item_id,),
+    ).fetchone()
+
+
+def _emit_claim_event(
+    conn: sqlite3.Connection,
+    claim_row: sqlite3.Row | dict,
+    *,
+    event_type: str,
+    actor: str,
+    payload: dict,
+) -> None:
+    item = get_work_item(conn, claim_row["work_item_id"])
+    if item is None:
+        return
+    create_event(
+        conn,
+        sprint_id=item["sprint_id"],
+        actor=actor,
+        event_type=event_type,
+        source_type="system",
+        work_item_id=item["id"],
+        payload=payload,
+    )
+
+
+def _require_claim_proof(row: sqlite3.Row | dict, claim_token: str | None) -> None:
+    if not row["claim_token"]:
+        raise ValueError(
+            f"Claim #{row['id']} is a legacy ambiguous claim with no claim_token. "
+            "Use explicit handoff to adopt it or wait for expiry."
+        )
+    if not claim_token:
+        raise ValueError(f"Claim #{row['id']} requires --claim-token")
+    if row["claim_token"] != claim_token:
+        raise ValueError(f"Invalid claim_token for claim #{row['id']}")
+
+
 def create_claim(
     conn: sqlite3.Connection,
     work_item_id: int,
@@ -399,6 +616,10 @@ def create_claim(
     worktree_path: str | None = None,
     commit_sha: str | None = None,
     pr_ref: str | None = None,
+    runtime_session_id: str | None = None,
+    instance_id: str | None = None,
+    hostname: str | None = None,
+    pid: int | None = None,
 ) -> int:
     """Create a claim on a work item, enforcing exclusivity for exclusive claim types."""
     if claim_type not in CLAIM_TYPES:
@@ -406,67 +627,333 @@ def create_claim(
     item = get_work_item(conn, work_item_id)
     if item is None:
         raise ValueError(f"Work item #{work_item_id} not found")
-    now_str = "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
     if exclusive:
-        # Check for any active exclusive claim held by a different agent
-        conflict = conn.execute(
-            """
-            SELECT id, agent FROM claim
-            WHERE work_item_id = ? AND exclusive = 1
-              AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
-              AND agent != ?
-            LIMIT 1
-            """,
-            (work_item_id, agent),
-        ).fetchone()
+        conflict = _get_active_exclusive_claim_row(conn, work_item_id)
         if conflict:
             raise ClaimConflict(
                 f"Item #{work_item_id} is exclusively claimed by '{conflict['agent']}' (claim #{conflict['id']})"
             )
+    claim_token = _generate_claim_token()
     cur = conn.execute(
         """
         INSERT INTO claim
             (work_item_id, agent, claim_type, exclusive, expires_at,
-             branch, worktree_path, commit_sha, pr_ref)
+             branch, worktree_path, commit_sha, pr_ref,
+             claim_token, runtime_session_id, instance_id, hostname, pid)
         VALUES (?, ?, ?, ?,
                 strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds'),
-                ?, ?, ?, ?)
+                ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (work_item_id, agent, claim_type, 1 if exclusive else 0, ttl_seconds,
-         branch, worktree_path, commit_sha, pr_ref),
+         branch, worktree_path, commit_sha, pr_ref,
+         claim_token, runtime_session_id, instance_id, hostname, pid),
     )
     conn.commit()
     return cur.lastrowid
 
 
-def heartbeat_claim(conn: sqlite3.Connection, claim_id: int, agent: str, ttl_seconds: int = 300) -> None:
+def heartbeat_claim(
+    conn: sqlite3.Connection,
+    claim_id: int,
+    claim_token: str | None,
+    ttl_seconds: int = 300,
+    actor: str | None = None,
+    runtime_session_id: str | None = None,
+    instance_id: str | None = None,
+    branch: str | None = None,
+    worktree_path: str | None = None,
+    commit_sha: str | None = None,
+    pr_ref: str | None = None,
+    hostname: str | None = None,
+    pid: int | None = None,
+) -> None:
     """Refresh a claim's expiry and heartbeat timestamp."""
     row = conn.execute("SELECT * FROM claim WHERE id = ?", (claim_id,)).fetchone()
     if row is None:
         raise ValueError(f"Claim #{claim_id} not found")
-    if row["agent"] != agent:
-        raise ValueError(f"Claim #{claim_id} is owned by '{row['agent']}', not '{agent}'")
+    try:
+        _require_claim_proof(row, claim_token)
+    except ValueError as exc:
+        if row["claim_token"]:
+            event_type = "coordination-failure"
+            summary = f"Claim heartbeat rejected for claim #{claim_id}"
+            detail = str(exc)
+            tags = ["claims", "coordination", "heartbeat"]
+        else:
+            event_type = "claim-ambiguity-detected"
+            summary = f"Legacy claim ambiguity detected for claim #{claim_id}"
+            detail = str(exc)
+            tags = ["claims", "coordination", "ambiguity", "legacy"]
+        _emit_claim_event(
+            conn,
+            row,
+            event_type=event_type,
+            actor=actor or "system",
+            payload={
+                "summary": summary,
+                "detail": detail,
+                "tags": tags,
+                "operation": "heartbeat",
+                "reason": "invalid-claim-proof" if row["claim_token"] else "legacy-ambiguous-claim",
+                "claim": _claim_event_identity(row),
+                "attempted_by": _claim_attempt_identity(
+                    actor=actor,
+                    claim_id=claim_id,
+                    claim_token_present=claim_token is not None,
+                    runtime_session_id=runtime_session_id,
+                    instance_id=instance_id,
+                    branch=branch,
+                    worktree_path=worktree_path,
+                    commit_sha=commit_sha,
+                    pr_ref=pr_ref,
+                    hostname=hostname,
+                    pid=pid,
+                ),
+            },
+        )
+        raise
     conn.execute(
         """
         UPDATE claim
         SET heartbeat = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
-            expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds')
+            expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds'),
+            runtime_session_id = COALESCE(?, runtime_session_id),
+            instance_id = COALESCE(?, instance_id),
+            branch = COALESCE(?, branch),
+            worktree_path = COALESCE(?, worktree_path),
+            commit_sha = COALESCE(?, commit_sha),
+            pr_ref = COALESCE(?, pr_ref),
+            hostname = COALESCE(?, hostname),
+            pid = COALESCE(?, pid)
         WHERE id = ?
         """,
-        (ttl_seconds, claim_id),
+        (
+            ttl_seconds,
+            runtime_session_id,
+            instance_id,
+            branch,
+            worktree_path,
+            commit_sha,
+            pr_ref,
+            hostname,
+            pid,
+            claim_id,
+        ),
     )
     conn.commit()
 
 
-def release_claim(conn: sqlite3.Connection, claim_id: int, agent: str) -> None:
+def release_claim(
+    conn: sqlite3.Connection,
+    claim_id: int,
+    claim_token: str | None,
+    actor: str | None = None,
+) -> None:
     """Release (delete) a claim. Only the owning agent may release it."""
     row = conn.execute("SELECT * FROM claim WHERE id = ?", (claim_id,)).fetchone()
     if row is None:
         raise ValueError(f"Claim #{claim_id} not found")
-    if row["agent"] != agent:
-        raise ValueError(f"Claim #{claim_id} is owned by '{row['agent']}', not '{agent}'")
+    try:
+        _require_claim_proof(row, claim_token)
+    except ValueError as exc:
+        _emit_claim_event(
+            conn,
+            row,
+            event_type=(
+                "claim-ambiguity-detected"
+                if not row["claim_token"]
+                else "coordination-failure"
+            ),
+            actor=actor or "system",
+            payload={
+                "summary": f"Claim release rejected for claim #{claim_id}",
+                "detail": str(exc),
+                "tags": (
+                    ["claims", "coordination", "ambiguity", "legacy"]
+                    if not row["claim_token"]
+                    else ["claims", "coordination", "release"]
+                ),
+                "operation": "release",
+                "reason": "invalid-claim-proof" if row["claim_token"] else "legacy-ambiguous-claim",
+                "claim": _claim_event_identity(row),
+                "attempted_by": _claim_attempt_identity(
+                    actor=actor,
+                    claim_id=claim_id,
+                    claim_token_present=claim_token is not None,
+                ),
+            },
+        )
+        raise
     conn.execute("DELETE FROM claim WHERE id = ?", (claim_id,))
     conn.commit()
+
+
+def handoff_claim(
+    conn: sqlite3.Connection,
+    claim_id: int,
+    claim_token: str | None,
+    *,
+    actor: str,
+    mode: str = "rotate",
+    ttl_seconds: int = 300,
+    runtime_session_id: str | None = None,
+    instance_id: str | None = None,
+    branch: str | None = None,
+    worktree_path: str | None = None,
+    commit_sha: str | None = None,
+    pr_ref: str | None = None,
+    hostname: str | None = None,
+    pid: int | None = None,
+    performed_by: str | None = None,
+    note: str | None = None,
+    allow_legacy_adopt: bool = False,
+) -> dict:
+    row = conn.execute("SELECT * FROM claim WHERE id = ?", (claim_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"Claim #{claim_id} not found")
+    if mode not in {"transfer", "rotate"}:
+        raise ValueError("mode must be 'transfer' or 'rotate'")
+
+    legacy_ambiguous = not bool(row["claim_token"])
+    if legacy_ambiguous:
+        if not allow_legacy_adopt:
+            _emit_claim_event(
+                conn,
+                row,
+                event_type="claim-ambiguity-detected",
+                actor=performed_by or actor,
+                payload={
+                    "summary": f"Legacy claim ambiguity detected for claim #{claim_id}",
+                    "detail": (
+                        "An explicit handoff was attempted for a legacy claim without a "
+                        "claim_token. Re-run with legacy adoption enabled to mint a new proof."
+                    ),
+                    "tags": ["claims", "coordination", "ambiguity", "legacy"],
+                    "operation": "handoff",
+                    "reason": "legacy-ambiguous-claim",
+                    "claim": _claim_event_identity(row),
+                    "attempted_by": _claim_attempt_identity(
+                        actor=performed_by or actor,
+                        claim_id=claim_id,
+                        claim_token_present=claim_token is not None,
+                        runtime_session_id=runtime_session_id,
+                        instance_id=instance_id,
+                        branch=branch,
+                        worktree_path=worktree_path,
+                        commit_sha=commit_sha,
+                        pr_ref=pr_ref,
+                        hostname=hostname,
+                        pid=pid,
+                    ),
+                },
+            )
+            raise ValueError(
+                f"Claim #{claim_id} is a legacy ambiguous claim with no claim_token. "
+                "Use allow_legacy_adopt to mint a new ownership proof."
+            )
+        mode = "rotate"
+    else:
+        try:
+            _require_claim_proof(row, claim_token)
+        except ValueError as exc:
+            _emit_claim_event(
+                conn,
+                row,
+                event_type="coordination-failure",
+                actor=performed_by or actor,
+                payload={
+                    "summary": f"Claim handoff rejected for claim #{claim_id}",
+                    "detail": str(exc),
+                    "tags": ["claims", "coordination", "handoff"],
+                    "operation": "handoff",
+                    "reason": "invalid-claim-proof",
+                    "claim": _claim_event_identity(row),
+                    "attempted_by": _claim_attempt_identity(
+                        actor=performed_by or actor,
+                        claim_id=claim_id,
+                        claim_token_present=claim_token is not None,
+                        runtime_session_id=runtime_session_id,
+                        instance_id=instance_id,
+                        branch=branch,
+                        worktree_path=worktree_path,
+                        commit_sha=commit_sha,
+                        pr_ref=pr_ref,
+                        hostname=hostname,
+                        pid=pid,
+                    ),
+                },
+            )
+            raise
+
+    from_identity = _claim_event_identity(row)
+    next_claim_token = row["claim_token"]
+    if mode == "rotate" or not next_claim_token:
+        next_claim_token = _generate_claim_token()
+
+    conn.execute(
+        """
+        UPDATE claim
+        SET agent = ?,
+            claim_token = ?,
+            expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds'),
+            runtime_session_id = ?,
+            instance_id = ?,
+            branch = ?,
+            worktree_path = ?,
+            commit_sha = ?,
+            pr_ref = ?,
+            hostname = ?,
+            pid = ?,
+            heartbeat = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+        WHERE id = ?
+        """,
+        (
+            actor,
+            next_claim_token,
+            ttl_seconds,
+            runtime_session_id,
+            instance_id,
+            branch,
+            worktree_path,
+            commit_sha,
+            pr_ref,
+            hostname,
+            pid,
+            claim_id,
+        ),
+    )
+    conn.commit()
+
+    updated = get_claim(conn, claim_id, include_secret=True)
+    assert updated is not None
+    event_type = "claim-ownership-corrected" if legacy_ambiguous else "claim-handoff"
+    _emit_claim_event(
+        conn,
+        updated,
+        event_type=event_type,
+        actor=performed_by or actor,
+        payload={
+            "summary": (
+                f"Claim #{claim_id} ownership corrected"
+                if legacy_ambiguous
+                else f"Claim #{claim_id} handed off to {actor}"
+            ),
+            "detail": note
+            or (
+                "A legacy ambiguous claim was explicitly adopted and re-issued with a new token."
+                if legacy_ambiguous
+                else f"Claim ownership was transferred with mode={mode}."
+            ),
+            "tags": ["claims", "handoff", "coordination"],
+            "operation": "handoff",
+            "mode": mode,
+            "legacy_adopted": legacy_ambiguous,
+            "token_rotated": mode == "rotate" or legacy_ambiguous,
+            "from_identity": from_identity,
+            "to_identity": _claim_event_identity(updated),
+        },
+    )
+    return updated
 
 
 def list_claims_by_sprint(
@@ -490,7 +977,7 @@ def list_claims_by_sprint(
         params.append(expiring_within_seconds)
     base += " ORDER BY c.expires_at ASC"
     rows = conn.execute(base, params).fetchall()
-    return [dict(r) for r in rows]
+    return [_serialize_claim(r) for r in rows]
 
 
 def list_claims(conn: sqlite3.Connection, work_item_id: int, active_only: bool = True) -> list[dict]:
@@ -509,4 +996,4 @@ def list_claims(conn: sqlite3.Connection, work_item_id: int, active_only: bool =
             "SELECT * FROM claim WHERE work_item_id = ? ORDER BY created_at ASC",
             (work_item_id,),
         ).fetchall()
-    return [dict(r) for r in rows]
+    return [_serialize_claim(r) for r in rows]

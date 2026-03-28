@@ -1,6 +1,8 @@
 import json
 import os
+import socket
 import sys
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import click
@@ -9,6 +11,33 @@ from . import __version__
 from . import db as _db
 from . import maintain as _maintain
 from .render import render_sprint_doc
+
+
+def _detect_runtime_session_id(explicit: str | None) -> str | None:
+    if explicit:
+        return explicit
+    return (
+        os.environ.get("SPRINTCTL_RUNTIME_SESSION_ID")
+        or os.environ.get("CODEX_THREAD_ID")
+    )
+
+
+def _detect_instance_id(explicit: str | None) -> str:
+    if explicit:
+        return explicit
+    return os.environ.get("SPRINTCTL_INSTANCE_ID") or str(uuid.uuid4())
+
+
+def _detect_hostname(explicit: str | None) -> str:
+    if explicit:
+        return explicit
+    return socket.gethostname()
+
+
+def _detect_pid(explicit: int | None) -> int:
+    if explicit is not None:
+        return explicit
+    return os.getpid()
 
 
 @click.group()
@@ -284,7 +313,14 @@ def item_show(obj, item_id, as_json) -> None:
         click.echo("\nActive claims:")
         for c in claims:
             excl = "exclusive" if c["exclusive"] else "shared"
-            parts = [f"  #{c['id']}  {c['agent']}  [{c['claim_type']}]  {excl}  expires={c['expires_at']}"]
+            parts = [
+                f"  #{c['claim_id']}  {c['actor']}  [{c['claim_type']}]  {excl}  "
+                f"proof={c['identity_status']}  expires={c['expires_at']}"
+            ]
+            if c.get("runtime_session_id"):
+                parts.append(f"  runtime={c['runtime_session_id']}")
+            if c.get("instance_id"):
+                parts.append(f"  instance={c['instance_id']}")
             if c.get("branch"):
                 parts.append(f"  branch={c['branch']}")
             if c.get("commit_sha"):
@@ -293,6 +329,10 @@ def item_show(obj, item_id, as_json) -> None:
                 parts.append(f"  pr={c['pr_ref']}")
             if c.get("worktree_path"):
                 parts.append(f"  worktree={c['worktree_path']}")
+            if c.get("hostname"):
+                parts.append(f"  host={c['hostname']}")
+            if c.get("pid") is not None:
+                parts.append(f"  pid={c['pid']}")
             click.echo("".join(parts))
 
     if item_events:
@@ -372,9 +412,11 @@ def item_note(obj, item_id, note_type, summary, detail, tags, actor) -> None:
     type=click.Choice(["pending", "active", "done", "blocked"]),
     help="New status",
 )
-@click.option("--actor", default=None, help="Actor name; enforces exclusive claim check if provided")
+@click.option("--actor", default=None, help="Actor name")
+@click.option("--claim-id", type=int, default=None, help="Claim ID to prove ownership of an active exclusive claim")
+@click.option("--claim-token", default=None, help="Claim token proving ownership of an active exclusive claim")
 @click.pass_obj
-def item_status(obj, item_id, new_status, actor) -> None:
+def item_status(obj, item_id, new_status, actor, claim_id, claim_token) -> None:
     """Update an item's status (enforces allowed transitions and exclusive claims)."""
     conn = obj["conn"]
     it = _db.get_work_item(conn, item_id)
@@ -383,7 +425,14 @@ def item_status(obj, item_id, new_status, actor) -> None:
         sys.exit(1)
     current = it["status"]
     try:
-        _db.set_work_item_status(conn, item_id, new_status, actor=actor)
+        _db.set_work_item_status(
+            conn,
+            item_id,
+            new_status,
+            actor=actor,
+            claim_id=claim_id,
+            claim_token=claim_token,
+        )
     except (_db.InvalidTransition, _db.ClaimConflict) as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -776,7 +825,7 @@ def claim() -> None:
 
 @claim.command("create")
 @click.option("--item-id", type=int, required=True, help="Work item ID to claim")
-@click.option("--agent", required=True, help="Agent identifier")
+@click.option("--actor", "--agent", "actor", required=True, help="Actor identifier")
 @click.option(
     "--type", "claim_type",
     default="execute",
@@ -789,15 +838,40 @@ def claim() -> None:
 @click.option("--worktree", "worktree_path", default=None, help="Worktree path")
 @click.option("--commit-sha", "commit_sha", default=None, help="Commit SHA")
 @click.option("--pr-ref", "pr_ref", default=None, help="PR reference (e.g. owner/repo#123)")
+@click.option("--runtime-session-id", default=None, help="Runtime session identifier when available")
+@click.option("--instance-id", default=None, help="Stable client-process-local instance ID")
+@click.option("--hostname", default=None, help="Hostname override (defaults to current host)")
+@click.option("--pid", type=int, default=None, help="PID override (defaults to current process)")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output the created claim as JSON")
 @click.pass_obj
-def claim_create(obj, item_id, agent, claim_type, non_exclusive, ttl_seconds, branch, worktree_path, commit_sha, pr_ref) -> None:
-    """Claim a work item for an agent."""
+def claim_create(
+    obj,
+    item_id,
+    actor,
+    claim_type,
+    non_exclusive,
+    ttl_seconds,
+    branch,
+    worktree_path,
+    commit_sha,
+    pr_ref,
+    runtime_session_id,
+    instance_id,
+    hostname,
+    pid,
+    as_json,
+) -> None:
+    """Claim a work item for an actor."""
     conn = obj["conn"]
+    runtime_session_id = _detect_runtime_session_id(runtime_session_id)
+    instance_id = _detect_instance_id(instance_id)
+    hostname = _detect_hostname(hostname)
+    pid = _detect_pid(pid)
     try:
         cid = _db.create_claim(
             conn,
             work_item_id=item_id,
-            agent=agent,
+            agent=actor,
             claim_type=claim_type,
             exclusive=not non_exclusive,
             ttl_seconds=ttl_seconds,
@@ -805,23 +879,74 @@ def claim_create(obj, item_id, agent, claim_type, non_exclusive, ttl_seconds, br
             worktree_path=worktree_path,
             commit_sha=commit_sha,
             pr_ref=pr_ref,
+            runtime_session_id=runtime_session_id,
+            instance_id=instance_id,
+            hostname=hostname,
+            pid=pid,
         )
     except (_db.ClaimConflict, ValueError) as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
-    click.echo(f"Claim #{cid} created: {agent} → item #{item_id} ({claim_type}, ttl={ttl_seconds}s)")
+    claim = _db.get_claim(conn, cid, include_secret=True)
+    assert claim is not None
+    if as_json:
+        click.echo(json.dumps(claim, indent=2))
+        return
+    click.echo(f"Claim #{cid} created: {actor} → item #{item_id} ({claim_type}, ttl={ttl_seconds}s)")
+    click.echo(f"Claim token: {claim['claim_token']}")
 
 
 @claim.command("heartbeat")
 @click.option("--id", "claim_id", type=int, required=True, help="Claim ID")
-@click.option("--agent", required=True, help="Agent identifier (must match claim owner)")
+@click.option("--claim-token", required=True, help="Claim token returned when the claim was created")
+@click.option("--actor", "--agent", "actor", default=None, help="Actor identifier (advisory metadata only)")
 @click.option("--ttl", "ttl_seconds", default=300, type=int, help="Refresh TTL in seconds (default: 300)")
+@click.option("--runtime-session-id", default=None, help="Runtime session identifier when available")
+@click.option("--instance-id", default=None, help="Stable client-process-local instance ID")
+@click.option("--branch", default=None, help="Git branch name")
+@click.option("--worktree", "worktree_path", default=None, help="Worktree path")
+@click.option("--commit-sha", "commit_sha", default=None, help="Commit SHA")
+@click.option("--pr-ref", "pr_ref", default=None, help="PR reference (e.g. owner/repo#123)")
+@click.option("--hostname", default=None, help="Hostname override (defaults to current host)")
+@click.option("--pid", type=int, default=None, help="PID override (defaults to current process)")
 @click.pass_obj
-def claim_heartbeat(obj, claim_id, agent, ttl_seconds) -> None:
+def claim_heartbeat(
+    obj,
+    claim_id,
+    claim_token,
+    actor,
+    ttl_seconds,
+    runtime_session_id,
+    instance_id,
+    branch,
+    worktree_path,
+    commit_sha,
+    pr_ref,
+    hostname,
+    pid,
+) -> None:
     """Refresh the TTL on an existing claim."""
     conn = obj["conn"]
+    runtime_session_id = _detect_runtime_session_id(runtime_session_id)
+    instance_id = _detect_instance_id(instance_id)
+    hostname = _detect_hostname(hostname)
+    pid = _detect_pid(pid)
     try:
-        _db.heartbeat_claim(conn, claim_id, agent, ttl_seconds=ttl_seconds)
+        _db.heartbeat_claim(
+            conn,
+            claim_id,
+            claim_token,
+            ttl_seconds=ttl_seconds,
+            actor=actor,
+            runtime_session_id=runtime_session_id,
+            instance_id=instance_id,
+            branch=branch,
+            worktree_path=worktree_path,
+            commit_sha=commit_sha,
+            pr_ref=pr_ref,
+            hostname=hostname,
+            pid=pid,
+        )
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -830,17 +955,123 @@ def claim_heartbeat(obj, claim_id, agent, ttl_seconds) -> None:
 
 @claim.command("release")
 @click.option("--id", "claim_id", type=int, required=True, help="Claim ID")
-@click.option("--agent", required=True, help="Agent identifier (must match claim owner)")
+@click.option("--claim-token", required=True, help="Claim token returned when the claim was created")
+@click.option("--actor", "--agent", "actor", default=None, help="Actor identifier (advisory metadata only)")
 @click.pass_obj
-def claim_release(obj, claim_id, agent) -> None:
+def claim_release(obj, claim_id, claim_token, actor) -> None:
     """Release (delete) a claim."""
     conn = obj["conn"]
     try:
-        _db.release_claim(conn, claim_id, agent)
+        _db.release_claim(conn, claim_id, claim_token, actor=actor)
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
     click.echo(f"Claim #{claim_id} released.")
+
+
+@claim.command("handoff")
+@click.option("--id", "claim_id", type=int, required=True, help="Claim ID")
+@click.option("--claim-token", default=None, help="Existing claim token (required unless adopting a legacy ambiguous claim)")
+@click.option("--actor", "--agent", "actor", required=True, help="Recipient actor identifier")
+@click.option(
+    "--mode",
+    default="rotate",
+    type=click.Choice(["transfer", "rotate"]),
+    help="Transfer keeps the token; rotate mints a new one (default: rotate)",
+)
+@click.option("--ttl", "ttl_seconds", default=300, type=int, help="Refresh TTL in seconds after handoff (default: 300)")
+@click.option("--runtime-session-id", default=None, help="Recipient runtime session identifier")
+@click.option("--instance-id", default=None, help="Recipient client-process-local instance ID")
+@click.option("--branch", default=None, help="Recipient git branch name")
+@click.option("--worktree", "worktree_path", default=None, help="Recipient worktree path")
+@click.option("--commit-sha", "commit_sha", default=None, help="Recipient commit SHA")
+@click.option("--pr-ref", "pr_ref", default=None, help="Recipient PR reference (e.g. owner/repo#123)")
+@click.option("--hostname", default=None, help="Recipient hostname override (defaults to current host)")
+@click.option("--pid", type=int, default=None, help="Recipient PID override (defaults to current process)")
+@click.option("--performed-by", default=None, help="Actor performing the handoff")
+@click.option("--note", default=None, help="Structured note to include in the handoff event")
+@click.option("--allow-legacy-adopt", is_flag=True, default=False, help="Adopt a legacy ambiguous claim with no token by minting a fresh proof")
+@click.option("--output", "output_path", default=None, help="Write the claim handoff bundle to a file instead of stdout")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit the claim handoff bundle as JSON")
+@click.pass_obj
+def claim_handoff(
+    obj,
+    claim_id,
+    claim_token,
+    actor,
+    mode,
+    ttl_seconds,
+    runtime_session_id,
+    instance_id,
+    branch,
+    worktree_path,
+    commit_sha,
+    pr_ref,
+    hostname,
+    pid,
+    performed_by,
+    note,
+    allow_legacy_adopt,
+    output_path,
+    as_json,
+) -> None:
+    """Explicitly transfer or rotate claim ownership and emit a claim handoff bundle."""
+    conn = obj["conn"]
+    runtime_session_id = _detect_runtime_session_id(runtime_session_id)
+    instance_id = _detect_instance_id(instance_id)
+    hostname = _detect_hostname(hostname)
+    pid = _detect_pid(pid)
+    try:
+        claim = _db.handoff_claim(
+            conn,
+            claim_id,
+            claim_token,
+            actor=actor,
+            mode=mode,
+            ttl_seconds=ttl_seconds,
+            runtime_session_id=runtime_session_id,
+            instance_id=instance_id,
+            branch=branch,
+            worktree_path=worktree_path,
+            commit_sha=commit_sha,
+            pr_ref=pr_ref,
+            hostname=hostname,
+            pid=pid,
+            performed_by=performed_by,
+            note=note,
+            allow_legacy_adopt=allow_legacy_adopt,
+        )
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    item = _db.get_work_item(conn, claim["work_item_id"])
+    sprint = _db.get_sprint(conn, item["sprint_id"]) if item else None
+    bundle = {
+        "bundle_type": "claim_handoff",
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "mode": mode,
+        "claim": claim,
+        "item": item,
+        "sprint": sprint,
+        "performed_by": performed_by or actor,
+    }
+
+    if output_path and output_path != "-":
+        with open(output_path, "w") as fh:
+            json.dump(bundle, fh, indent=2)
+        click.echo(f"Claim handoff bundle written to {output_path}")
+        if not as_json:
+            click.echo(f"Claim #{claim_id} handed off to {actor} (mode={mode})")
+            click.echo(f"Claim token: {claim['claim_token']}")
+        return
+
+    if as_json or output_path == "-":
+        click.echo(json.dumps(bundle, indent=2))
+        return
+
+    click.echo(f"Claim #{claim_id} handed off to {actor} (mode={mode})")
+    click.echo(f"Claim token: {claim['claim_token']}")
 
 
 @claim.command("list")
@@ -860,9 +1091,10 @@ def claim_list(obj, item_id, show_all, as_json) -> None:
         return
     for c in claims:
         excl = "exclusive" if c["exclusive"] else "shared"
+        proof = c["identity_status"]
         click.echo(
-            f"#{c['id']}  {c['agent']}  [{c['claim_type']}]  {excl}  "
-            f"expires={c['expires_at']}  heartbeat={c['heartbeat']}"
+            f"#{c['claim_id']}  {c['actor']}  [{c['claim_type']}]  {excl}  "
+            f"proof={proof}  expires={c['expires_at']}  heartbeat={c['heartbeat']}"
         )
 
 
@@ -902,8 +1134,9 @@ def claim_list_sprint(obj, sprint_id, show_all, expiring_within, as_json) -> Non
     for c in claims:
         excl = "exclusive" if c["exclusive"] else "shared"
         click.echo(
-            f"  #{c['id']}  item #{c['work_item_id']} ({c['item_title']})  "
-            f"{c['agent']}  [{c['claim_type']}]  {excl}  expires={c['expires_at']}"
+            f"  #{c['claim_id']}  item #{c['work_item_id']} ({c['item_title']})  "
+            f"{c['actor']}  [{c['claim_type']}]  {excl}  "
+            f"proof={c['identity_status']}  expires={c['expires_at']}"
         )
 
 
@@ -933,8 +1166,17 @@ def handoff_cmd(obj, sprint_id, output_path, events_limit) -> None:
         "items": items,
         "events": recent_events,
         "active_claims": active_claims,
+        "claim_identity_model": {
+            "ownership_proof": "claim_id+claim_token",
+            "claim_tokens_included": False,
+            "ambiguous_identity_visible": True,
+            "explicit_claim_handoff_command": "sprintctl claim handoff",
+        },
     }
     dest = output_path or f"handoff-{sid}.json"
+    if dest == "-":
+        click.echo(json.dumps(bundle, indent=2))
+        return
     with open(dest, "w") as fh:
         json.dump(bundle, fh, indent=2)
     click.echo(f"Handoff bundle for sprint #{sid} written to {dest}")
