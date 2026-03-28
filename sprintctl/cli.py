@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import socket
 import sys
 import uuid
@@ -44,11 +45,18 @@ def _detect_pid(explicit: int | None) -> int:
 @click.pass_context
 def cli(ctx: click.Context) -> None:
     ctx.ensure_object(dict)
-    db_path = _db.get_db_path()
-    conn = _db.get_connection(db_path)
-    _db.init_db(conn)
-    ctx.obj["conn"] = conn
-    ctx.call_on_close(conn.close)
+    ctx.obj.setdefault("conn", None)
+
+
+def _get_conn(obj: dict) -> sqlite3.Connection:
+    conn = obj.get("conn")
+    if conn is None:
+        db_path = _db.get_db_path()
+        conn = _db.get_connection(db_path)
+        _db.init_db(conn)
+        obj["conn"] = conn
+        click.get_current_context().call_on_close(conn.close)
+    return conn
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +88,7 @@ def sprint() -> None:
 @click.pass_obj
 def sprint_create(obj, name, goal, start_date, end_date, status, kind) -> None:
     """Create a new sprint."""
-    sid = _db.create_sprint(obj["conn"], name, goal, start_date, end_date, status, kind=kind)
+    sid = _db.create_sprint(_get_conn(obj), name, goal, start_date, end_date, status, kind=kind)
     click.echo(f"Created sprint #{sid}: {name}")
 
 
@@ -91,7 +99,7 @@ def sprint_create(obj, name, goal, start_date, end_date, status, kind) -> None:
 @click.pass_obj
 def sprint_show(obj, sprint_id, detail, as_json) -> None:
     """Show a sprint (defaults to active sprint)."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     if sprint_id is not None:
         s = _db.get_sprint(conn, sprint_id)
     else:
@@ -150,7 +158,6 @@ def sprint_show(obj, sprint_id, detail, as_json) -> None:
         tracks = _db.list_tracks(conn, s["id"])
         active_items = [it for it in items if it["status"] == "active"]
         risk = _calc.sprint_overrun_risk(s, len(active_items), now)
-        from . import maintain as _maintain
         pending_threshold = _maintain._pending_stale_threshold()
         stale_count = sum(
             1 for it in items if _calc.item_staleness(it, now, pending_threshold=pending_threshold)["is_stale"]
@@ -194,7 +201,7 @@ def sprint_show(obj, sprint_id, detail, as_json) -> None:
 @click.pass_obj
 def sprint_status(obj, sprint_id, new_status) -> None:
     """Update a sprint's status (enforces allowed transitions)."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     s = _db.get_sprint(conn, sprint_id)
     if s is None:
         click.echo(f"Sprint #{sprint_id} not found.", err=True)
@@ -215,7 +222,7 @@ def sprint_status(obj, sprint_id, new_status) -> None:
 @click.pass_obj
 def sprint_list(obj, include_backlog, include_archive, as_json) -> None:
     """List sprints (active_sprint kind by default; use flags to include others)."""
-    sprints = _db.list_sprints(obj["conn"])
+    sprints = _db.list_sprints(_get_conn(obj))
     visible_kinds = {"active_sprint"}
     if include_backlog:
         visible_kinds.add("backlog")
@@ -245,7 +252,7 @@ def sprint_list(obj, include_backlog, include_archive, as_json) -> None:
 @click.pass_obj
 def sprint_kind_cmd(obj, sprint_id, kind) -> None:
     """Set the kind classification of a sprint."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     try:
         _db.set_sprint_kind(conn, sprint_id, kind)
     except ValueError as e:
@@ -271,7 +278,7 @@ def item() -> None:
 @click.pass_obj
 def item_add(obj, sprint_id, track_name, title, assignee) -> None:
     """Add a work item to a sprint track."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     s = _db.get_sprint(conn, sprint_id)
     if s is None:
         click.echo(f"Sprint #{sprint_id} not found.", err=True)
@@ -287,7 +294,7 @@ def item_add(obj, sprint_id, track_name, title, assignee) -> None:
 @click.pass_obj
 def item_show(obj, item_id, as_json) -> None:
     """Show a single work item with its recent events and active claims."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     it = _db.get_work_item(conn, item_id)
     if it is None:
         click.echo(f"Item #{item_id} not found.", err=True)
@@ -356,7 +363,7 @@ def item_show(obj, item_id, as_json) -> None:
 @click.pass_obj
 def item_list(obj, sprint_id, track_name, status, as_json) -> None:
     """List work items."""
-    items = _db.list_work_items(obj["conn"], sprint_id=sprint_id, track_name=track_name, status=status)
+    items = _db.list_work_items(_get_conn(obj), sprint_id=sprint_id, track_name=track_name, status=status)
     if as_json:
         click.echo(json.dumps(items, indent=2))
         return
@@ -381,7 +388,7 @@ def item_list(obj, sprint_id, track_name, status, as_json) -> None:
 @click.pass_obj
 def item_note(obj, item_id, note_type, summary, detail, tags, actor) -> None:
     """Record a structured note event on a work item."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     it = _db.get_work_item(conn, item_id)
     if it is None:
         click.echo(f"Item #{item_id} not found.", err=True)
@@ -418,7 +425,7 @@ def item_note(obj, item_id, note_type, summary, detail, tags, actor) -> None:
 @click.pass_obj
 def item_status(obj, item_id, new_status, actor, claim_id, claim_token) -> None:
     """Update an item's status (enforces allowed transitions and exclusive claims)."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     it = _db.get_work_item(conn, item_id)
     if it is None:
         click.echo(f"Item #{item_id} not found.", err=True)
@@ -464,7 +471,7 @@ def event() -> None:
 @click.pass_obj
 def event_add(obj, sprint_id, event_type, actor, work_item_id, source_type, payload) -> None:
     """Record an event."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     if _db.get_sprint(conn, sprint_id) is None:
         click.echo(f"Sprint #{sprint_id} not found.", err=True)
         sys.exit(1)
@@ -494,7 +501,7 @@ def event_add(obj, sprint_id, event_type, actor, work_item_id, source_type, payl
 @click.pass_obj
 def event_list(obj, sprint_id, work_item_id, event_type, limit, as_json) -> None:
     """List events for a sprint."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     if _db.get_sprint(conn, sprint_id) is None:
         click.echo(f"Sprint #{sprint_id} not found.", err=True)
         sys.exit(1)
@@ -564,7 +571,7 @@ def _parse_threshold(threshold_str: str | None) -> timedelta | None:
 @click.pass_obj
 def maintain_check(obj, sprint_id, threshold, as_json) -> None:
     """Dry-run: report stale items and sprint health (no writes)."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     s = _resolve_sprint(conn, sprint_id)
     now = datetime.now(timezone.utc)
     td = _parse_threshold(threshold)
@@ -639,7 +646,7 @@ def maintain_check(obj, sprint_id, threshold, as_json) -> None:
 @click.pass_obj
 def maintain_sweep(obj, sprint_id, threshold, auto_close) -> None:
     """Execute: block stale items and optionally auto-close overdue sprint."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     s = _resolve_sprint(conn, sprint_id)
     now = datetime.now(timezone.utc)
     td = _parse_threshold(threshold)
@@ -667,7 +674,7 @@ def maintain_sweep(obj, sprint_id, threshold, auto_close) -> None:
 @click.pass_obj
 def maintain_carryover(obj, from_sprint_id, to_sprint_id) -> None:
     """Carry incomplete items from one sprint to another."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     if _db.get_sprint(conn, from_sprint_id) is None:
         click.echo(f"Source sprint #{from_sprint_id} not found.", err=True)
         sys.exit(1)
@@ -701,7 +708,7 @@ def maintain_carryover(obj, from_sprint_id, to_sprint_id) -> None:
 @click.pass_obj
 def export_cmd(obj, sprint_id, output_path) -> None:
     """Export a sprint (sprint, tracks, items, events) to a JSON file."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     sprint = _db.get_sprint(conn, sprint_id)
     if sprint is None:
         click.echo(f"Sprint #{sprint_id} not found.", err=True)
@@ -728,7 +735,7 @@ def export_cmd(obj, sprint_id, output_path) -> None:
 @click.pass_obj
 def import_cmd(obj, input_path) -> None:
     """Import a sprint from a JSON export file (re-sequences all IDs)."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     try:
         with open(input_path) as fh:
             envelope = json.load(fh)
@@ -871,7 +878,7 @@ def claim_create(
     --coordinate-claim-token to create an execute/inspect/review claim under
     an active coordinate claim without triggering a conflict error.
     """
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     runtime_session_id = _detect_runtime_session_id(runtime_session_id)
     instance_id = _detect_instance_id(instance_id)
     hostname = _detect_hostname(hostname)
@@ -944,7 +951,7 @@ def claim_heartbeat(
     as_json,
 ) -> None:
     """Refresh the TTL on an existing claim."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     runtime_session_id = _detect_runtime_session_id(runtime_session_id)
     instance_id = _detect_instance_id(instance_id)
     hostname = _detect_hostname(hostname)
@@ -991,7 +998,7 @@ def claim_heartbeat(
 @click.pass_obj
 def claim_release(obj, claim_id, claim_token, actor) -> None:
     """Release (delete) a claim."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     try:
         _db.release_claim(conn, claim_id, claim_token, actor=actor)
     except ValueError as e:
@@ -1047,7 +1054,7 @@ def claim_handoff(
     as_json,
 ) -> None:
     """Explicitly transfer or rotate claim ownership and emit a claim handoff bundle."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     runtime_session_id = _detect_runtime_session_id(runtime_session_id)
     instance_id = _detect_instance_id(instance_id)
     hostname = _detect_hostname(hostname)
@@ -1112,7 +1119,7 @@ def claim_handoff(
 @click.pass_obj
 def claim_list(obj, item_id, show_all, as_json) -> None:
     """List claims on a work item."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     claims = _db.list_claims(conn, item_id, active_only=not show_all)
     if as_json:
         click.echo(json.dumps(claims, indent=2))
@@ -1140,7 +1147,7 @@ def claim_list(obj, item_id, show_all, as_json) -> None:
 @click.pass_obj
 def claim_list_sprint(obj, sprint_id, show_all, expiring_within, as_json) -> None:
     """List all claims across a sprint, optionally filtered by expiry window."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     if sprint_id is not None:
         sprint = _db.get_sprint(conn, sprint_id)
     else:
@@ -1181,7 +1188,7 @@ def claim_show(obj, claim_id, claim_token, as_json) -> None:
 
     Requires the current claim_token to prove ownership before revealing it again.
     """
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     row = conn.execute("SELECT * FROM claim WHERE id = ?", (claim_id,)).fetchone()
     if row is None:
         click.echo(f"Error: Claim #{claim_id} not found", err=True)
@@ -1217,7 +1224,7 @@ def claim_resume(obj, instance_id, runtime_session_id, hostname, pid, as_json) -
     recovered, or 'claim handoff --allow-legacy-adopt' to re-mint a fresh proof.
     Provide at least one of: --instance-id, --runtime-session-id, or --hostname + --pid.
     """
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     try:
         claims = _db.find_claim_by_identity(
             conn,
@@ -1254,7 +1261,7 @@ def claim_resume(obj, instance_id, runtime_session_id, hostname, pid, as_json) -
 @click.pass_obj
 def handoff_cmd(obj, sprint_id, output_path, events_limit) -> None:
     """Produce a JSON handoff bundle: sprint, items, recent events, active claims."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     if sprint_id is not None:
         s = _db.get_sprint(conn, sprint_id)
     else:
@@ -1415,7 +1422,7 @@ def agent_protocol_cmd(as_json) -> None:
 @click.pass_obj
 def render_cmd(obj, sprint_id) -> None:
     """Render a plain-text sprint document."""
-    conn = obj["conn"]
+    conn = _get_conn(obj)
     if sprint_id is not None:
         s = _db.get_sprint(conn, sprint_id)
     else:

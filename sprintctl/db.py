@@ -2,6 +2,7 @@ import json
 import os
 import secrets
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 
@@ -157,28 +158,137 @@ def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     return conn
 
 
-def init_db(conn: sqlite3.Connection) -> None:
+def _execute_statements(conn: sqlite3.Connection, sql: str) -> None:
+    for statement in sql.split(";"):
+        stmt = statement.strip()
+        if stmt:
+            conn.execute(stmt)
+
+
+def _column_info(conn: sqlite3.Connection, table_name: str, column_name: str) -> tuple | None:
+    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    for row in rows:
+        if row[1] == column_name:
+            return row
+    return None
+
+
+def _column_exists(conn: sqlite3.Connection, table_name: str, column_name: str) -> bool:
+    return _column_info(conn, table_name, column_name) is not None
+
+
+def _column_is_nullable(conn: sqlite3.Connection, table_name: str, column_name: str) -> bool:
+    row = _column_info(conn, table_name, column_name)
+    return row is not None and row[3] == 0
+
+
+def _ensure_schema_version_row(conn: sqlite3.Connection) -> None:
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
+        """
+        INSERT INTO schema_version(version)
+        SELECT 0
+        WHERE NOT EXISTS (SELECT 1 FROM schema_version)
+        """
     )
-    row = conn.execute("SELECT version FROM schema_version").fetchone()
-    if row is None:
-        conn.execute("INSERT INTO schema_version VALUES (0)")
-        current = 0
-    else:
-        current = row[0]
 
-    for i, migration_sql in enumerate(_MIGRATIONS):
-        target_version = i + 1
-        if current < target_version:
-            for statement in migration_sql.split(";"):
-                stmt = statement.strip()
-                if stmt:
-                    conn.execute(stmt)
-            conn.execute("UPDATE schema_version SET version = ?", (target_version,))
-            current = target_version
 
-    conn.commit()
+def _get_schema_version(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        "SELECT version FROM schema_version ORDER BY rowid LIMIT 1"
+    ).fetchone()
+    return row[0] if row is not None else 0
+
+
+def _migration_1(conn: sqlite3.Connection) -> None:
+    _execute_statements(conn, _MIGRATIONS[0])
+
+
+def _migration_2(conn: sqlite3.Connection) -> None:
+    _execute_statements(conn, _MIGRATIONS[1])
+
+
+def _migration_3(conn: sqlite3.Connection) -> None:
+    if not _column_exists(conn, "sprint", "kind"):
+        conn.execute(
+            """
+            ALTER TABLE sprint ADD COLUMN kind TEXT NOT NULL DEFAULT 'active_sprint'
+                CHECK (kind IN ('active_sprint', 'backlog', 'archive'))
+            """
+        )
+
+
+def _add_column_if_missing(conn: sqlite3.Connection, table_name: str, column_name: str, definition: str) -> None:
+    if not _column_exists(conn, table_name, column_name):
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {definition}")
+
+
+def _migration_4(conn: sqlite3.Connection) -> None:
+    _add_column_if_missing(conn, "claim", "branch", "branch TEXT")
+    _add_column_if_missing(conn, "claim", "worktree_path", "worktree_path TEXT")
+    _add_column_if_missing(conn, "claim", "commit_sha", "commit_sha TEXT")
+    _add_column_if_missing(conn, "claim", "pr_ref", "pr_ref TEXT")
+
+
+def _migration_5(conn: sqlite3.Connection) -> None:
+    if (
+        _column_is_nullable(conn, "sprint", "start_date")
+        and _column_is_nullable(conn, "sprint", "end_date")
+    ):
+        return
+    _execute_statements(conn, _MIGRATIONS[4])
+
+
+def _migration_6(conn: sqlite3.Connection) -> None:
+    _add_column_if_missing(conn, "claim", "claim_token", "claim_token TEXT")
+    _add_column_if_missing(conn, "claim", "runtime_session_id", "runtime_session_id TEXT")
+    _add_column_if_missing(conn, "claim", "instance_id", "instance_id TEXT")
+    _add_column_if_missing(conn, "claim", "hostname", "hostname TEXT")
+    _add_column_if_missing(conn, "claim", "pid", "pid INTEGER")
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_claim_token
+            ON claim(claim_token)
+            WHERE claim_token IS NOT NULL
+        """
+    )
+
+
+def _run_migration(
+    conn: sqlite3.Connection,
+    target_version: int,
+    migrate: Callable[[sqlite3.Connection], None],
+    *,
+    foreign_keys_off: bool = False,
+) -> None:
+    try:
+        if foreign_keys_off:
+            conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
+        )
+        _ensure_schema_version_row(conn)
+        if _get_schema_version(conn) >= target_version:
+            conn.commit()
+            return
+        migrate(conn)
+        conn.execute("UPDATE schema_version SET version = ?", (target_version,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        if foreign_keys_off:
+            conn.execute("PRAGMA foreign_keys = ON")
+
+
+def init_db(conn: sqlite3.Connection) -> None:
+    _run_migration(conn, 1, _migration_1)
+    _run_migration(conn, 2, _migration_2)
+    _run_migration(conn, 3, _migration_3)
+    _run_migration(conn, 4, _migration_4)
+    _run_migration(conn, 5, _migration_5, foreign_keys_off=True)
+    _run_migration(conn, 6, _migration_6)
 
 
 # --- Sprint ---

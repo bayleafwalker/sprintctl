@@ -1,11 +1,93 @@
 import json
 import os
+import sqlite3
+import threading
 
 import pytest
 
 from sprintctl import db
 from sprintctl.cli import cli
 from sprintctl.render import render_sprint_doc
+
+
+def _seed_version_5_schema_with_claim_identity_columns(db_path):
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE schema_version (version INTEGER NOT NULL);
+        INSERT INTO schema_version VALUES (5);
+
+        CREATE TABLE sprint (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT    NOT NULL,
+            goal        TEXT    NOT NULL DEFAULT '',
+            start_date  TEXT,
+            end_date    TEXT,
+            status      TEXT    NOT NULL DEFAULT 'planned'
+                                CHECK (status IN ('active', 'closed', 'planned')),
+            created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+            kind        TEXT    NOT NULL DEFAULT 'active_sprint'
+                                CHECK (kind IN ('active_sprint', 'backlog', 'archive'))
+        );
+
+        CREATE TABLE track (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            sprint_id   INTEGER NOT NULL REFERENCES sprint(id) ON DELETE CASCADE,
+            name        TEXT    NOT NULL,
+            description TEXT    NOT NULL DEFAULT '',
+            created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+            UNIQUE (sprint_id, name)
+        );
+
+        CREATE TABLE work_item (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            track_id    INTEGER NOT NULL REFERENCES track(id) ON DELETE CASCADE,
+            sprint_id   INTEGER NOT NULL REFERENCES sprint(id) ON DELETE CASCADE,
+            title       TEXT    NOT NULL,
+            description TEXT    NOT NULL DEFAULT '',
+            status      TEXT    NOT NULL DEFAULT 'pending'
+                                CHECK (status IN ('pending', 'active', 'done', 'blocked')),
+            assignee    TEXT,
+            created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+            updated_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+        );
+
+        CREATE TABLE event (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            sprint_id    INTEGER NOT NULL REFERENCES sprint(id) ON DELETE CASCADE,
+            work_item_id INTEGER REFERENCES work_item(id) ON DELETE SET NULL,
+            source_type  TEXT    NOT NULL
+                                 CHECK (source_type IN ('actor', 'daemon', 'system')),
+            actor        TEXT    NOT NULL,
+            event_type   TEXT    NOT NULL,
+            payload      TEXT    NOT NULL DEFAULT '{}',
+            created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+        );
+
+        CREATE TABLE claim (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            work_item_id       INTEGER NOT NULL REFERENCES work_item(id) ON DELETE CASCADE,
+            agent              TEXT    NOT NULL,
+            claim_type         TEXT    NOT NULL DEFAULT 'execute'
+                                       CHECK (claim_type IN ('inspect', 'execute', 'review', 'coordinate')),
+            exclusive          INTEGER NOT NULL DEFAULT 1,
+            created_at         TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+            expires_at         TEXT    NOT NULL,
+            heartbeat          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+            branch             TEXT,
+            worktree_path      TEXT,
+            commit_sha         TEXT,
+            pr_ref             TEXT,
+            claim_token        TEXT,
+            runtime_session_id TEXT,
+            instance_id        TEXT,
+            hostname           TEXT,
+            pid                INTEGER
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +409,43 @@ class TestEdgeCases:
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
         assert version == len(db._MIGRATIONS)
 
+    def test_init_db_handles_concurrent_version_lag_after_upgrade(self, tmp_path):
+        db_path = tmp_path / "lagged.db"
+        _seed_version_5_schema_with_claim_identity_columns(db_path)
+
+        errors = []
+        barrier = threading.Barrier(8)
+
+        def worker():
+            conn = db.get_connection(db_path)
+            try:
+                barrier.wait()
+                db.init_db(conn)
+            except Exception as exc:  # pragma: no cover - exercised on failure
+                errors.append(exc)
+            finally:
+                conn.close()
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert not errors, [repr(exc) for exc in errors]
+
+        conn = db.get_connection(db_path)
+        try:
+            version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
+            index_row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_claim_token'"
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert version == len(db._MIGRATIONS)
+        assert index_row is not None
+
     def test_db_path_from_env(self, tmp_path, monkeypatch):
         custom = str(tmp_path / "custom.db")
         monkeypatch.setenv("SPRINTCTL_DB", custom)
@@ -547,6 +666,19 @@ class TestSprintShowDetail:
         assert "Health:" in result.output
         assert "days remaining" in result.output
 
+    def test_detail_flag_json_includes_health(self, runner, conn, active_sprint):
+        result = runner.invoke(
+            cli,
+            ["sprint", "show", "--id", str(active_sprint["id"]), "--detail", "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["id"] == active_sprint["id"]
+        assert "detail" in data
+        assert "risk" in data["detail"]
+        assert "stale_count" in data["detail"]
+        assert "track_health" in data["detail"]
+
     def test_detail_flag_shows_track_health(self, runner, conn, active_sprint):
         tid = db.get_or_create_track(conn, active_sprint["id"], "mytrack")
         db.create_work_item(conn, active_sprint["id"], tid, "Item A")
@@ -559,6 +691,22 @@ class TestSprintShowDetail:
         result = runner.invoke(cli, ["sprint", "show", "--id", str(active_sprint["id"])])
         assert result.exit_code == 0, result.output
         assert "Health:" not in result.output
+
+
+class TestHelpCommands:
+    def test_claim_help_does_not_create_db(self, runner, tmp_path, monkeypatch):
+        db_path = tmp_path / "help" / "test.db"
+        monkeypatch.setenv("SPRINTCTL_DB", str(db_path))
+        result = runner.invoke(cli, ["claim", "--help"])
+        assert result.exit_code == 0, result.output
+        assert not db_path.exists()
+
+    def test_agent_protocol_help_does_not_create_db(self, runner, tmp_path, monkeypatch):
+        db_path = tmp_path / "help-protocol" / "test.db"
+        monkeypatch.setenv("SPRINTCTL_DB", str(db_path))
+        result = runner.invoke(cli, ["agent-protocol", "--help"])
+        assert result.exit_code == 0, result.output
+        assert not db_path.exists()
 
 
 # ---------------------------------------------------------------------------
