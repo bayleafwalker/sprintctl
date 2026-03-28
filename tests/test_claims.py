@@ -446,3 +446,210 @@ class TestClaimJSONAndCLI:
         assert active_claim["claim_token_present"] is True
         assert active_claim["identity_status"] == "proven"
         assert "claim_token" not in active_claim
+
+
+class TestClaimShow:
+    def test_claim_show_returns_token_with_valid_proof(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        created = runner.invoke(
+            cli, ["claim", "create", "--item-id", str(iid), "--agent", "bot-1", "--json"]
+        )
+        claim = json.loads(created.output)
+
+        result = runner.invoke(
+            cli,
+            ["claim", "show", "--id", str(claim["claim_id"]), "--claim-token", claim["claim_token"], "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["claim_token"] == claim["claim_token"]
+        assert data["claim_id"] == claim["claim_id"]
+        assert data["identity_status"] == "proven"
+
+    def test_claim_show_fails_with_wrong_token(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        created = runner.invoke(
+            cli, ["claim", "create", "--item-id", str(iid), "--agent", "bot-1", "--json"]
+        )
+        claim = json.loads(created.output)
+
+        result = runner.invoke(
+            cli,
+            ["claim", "show", "--id", str(claim["claim_id"]), "--claim-token", "wrong-token"],
+        )
+        assert result.exit_code == 1
+        assert "Invalid claim_token" in result.output
+
+    def test_claim_show_fails_for_missing_claim(self, runner, conn, active_sprint, db_path):
+        result = runner.invoke(cli, ["claim", "show", "--id", "9999", "--claim-token", "x"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+
+class TestClaimResume:
+    def test_resume_finds_claim_by_instance_id(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        claim = _claim(conn, iid, agent="bot-1", instance_id="proc-resume-1")
+        results = db.find_claim_by_identity(conn, instance_id="proc-resume-1")
+        assert len(results) == 1
+        assert results[0]["claim_id"] == claim["claim_id"]
+        assert "claim_token" not in results[0]
+
+    def test_resume_finds_claim_by_runtime_session_id(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        claim = _claim(conn, iid, agent="bot-1", runtime_session_id="thread-resume-1")
+        results = db.find_claim_by_identity(conn, runtime_session_id="thread-resume-1")
+        assert len(results) == 1
+        assert results[0]["claim_id"] == claim["claim_id"]
+
+    def test_resume_finds_claim_by_hostname_and_pid(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        claim = _claim(conn, iid, agent="bot-1", hostname="host-x", pid=7777)
+        results = db.find_claim_by_identity(conn, hostname="host-x", pid=7777)
+        assert len(results) == 1
+        assert results[0]["claim_id"] == claim["claim_id"]
+
+    def test_resume_requires_at_least_one_identity_field(self, conn):
+        with pytest.raises(ValueError, match="At least one"):
+            db.find_claim_by_identity(conn)
+
+    def test_resume_does_not_return_expired_claims(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        cid = db.create_claim(conn, iid, agent="bot-1", instance_id="proc-exp", ttl_seconds=1)
+        conn.execute(
+            "UPDATE claim SET expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 seconds') WHERE id = ?",
+            (cid,),
+        )
+        conn.commit()
+        results = db.find_claim_by_identity(conn, instance_id="proc-exp", active_only=True)
+        assert len(results) == 0
+
+    def test_resume_cmd_json_output(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        runner.invoke(
+            cli,
+            ["claim", "create", "--item-id", str(iid), "--agent", "bot-1",
+             "--instance-id", "proc-resume-cli"],
+        )
+        result = runner.invoke(cli, ["claim", "resume", "--instance-id", "proc-resume-cli", "--json"])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert len(data) == 1
+        assert data[0]["identity"]["instance_id"] == "proc-resume-cli"
+        assert "claim_token" not in data[0]
+
+    def test_resume_cmd_no_results(self, runner, conn, active_sprint, db_path):
+        result = runner.invoke(cli, ["claim", "resume", "--instance-id", "nobody"])
+        assert result.exit_code == 0
+        assert "No active claims" in result.output
+
+
+class TestCoordinateHierarchy:
+    def test_subagent_can_claim_execute_under_coordinate(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        coord = _claim(conn, iid, agent="orchestrator", claim_type="coordinate")
+        # Sub-agent creates execute claim under the coordinate claim
+        sub_cid = db.create_claim(
+            conn,
+            iid,
+            agent="worker-1",
+            claim_type="execute",
+            coordinate_claim_id=coord["claim_id"],
+            coordinate_claim_token=coord["claim_token"],
+        )
+        sub = db.get_claim(conn, sub_cid)
+        assert sub is not None
+        assert sub["actor"] == "worker-1"
+
+    def test_subagent_claim_fails_with_wrong_coordinate_token(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        _claim(conn, iid, agent="orchestrator", claim_type="coordinate")
+        with pytest.raises(ValueError, match="Invalid claim_token"):
+            db.create_claim(
+                conn,
+                iid,
+                agent="worker-1",
+                claim_type="execute",
+                coordinate_claim_id=1,
+                coordinate_claim_token="wrong-token",
+            )
+
+    def test_execute_claim_still_conflicts_without_coordinate_proof(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        _claim(conn, iid, agent="orchestrator", claim_type="coordinate")
+        with pytest.raises(db.ClaimConflict, match="exclusively claimed"):
+            db.create_claim(conn, iid, agent="worker-1", claim_type="execute")
+
+    def test_execute_claim_conflicts_with_execute_not_coordinate(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        exec_claim = _claim(conn, iid, agent="agent-a", claim_type="execute")
+        with pytest.raises(db.ClaimConflict, match="exclusively claimed"):
+            db.create_claim(
+                conn,
+                iid,
+                agent="agent-b",
+                claim_type="execute",
+                coordinate_claim_id=exec_claim["claim_id"],
+                coordinate_claim_token=exec_claim["claim_token"],
+            )
+
+    def test_subagent_cli_coordinate_claim_id_flags(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        coord_result = runner.invoke(
+            cli,
+            ["claim", "create", "--item-id", str(iid), "--agent", "orchestrator", "--type", "coordinate", "--json"],
+        )
+        assert coord_result.exit_code == 0, coord_result.output
+        coord = json.loads(coord_result.output)
+
+        sub_result = runner.invoke(
+            cli,
+            [
+                "claim", "create",
+                "--item-id", str(iid),
+                "--agent", "worker-1",
+                "--type", "execute",
+                "--coordinate-claim-id", str(coord["claim_id"]),
+                "--coordinate-claim-token", coord["claim_token"],
+                "--json",
+            ],
+        )
+        assert sub_result.exit_code == 0, sub_result.output
+        sub = json.loads(sub_result.output)
+        assert sub["actor"] == "worker-1"
+        assert sub["claim_type"] == "execute"
+
+
+class TestAgentProtocol:
+    def test_agent_protocol_cmd_text(self, runner, db_path):
+        result = runner.invoke(cli, ["agent-protocol"])
+        assert result.exit_code == 0, result.output
+        assert "claim create" in result.output
+        assert "heartbeat" in result.output
+        assert "handoff" in result.output
+        assert "release" in result.output
+
+    def test_agent_protocol_cmd_json(self, runner, db_path):
+        result = runner.invoke(cli, ["agent-protocol", "--json"])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["sprintctl_agent_protocol_version"] == "1"
+        assert "lifecycle" in data
+        assert "session_resumption" in data
+        assert "shutdown_checklist" in data
+        assert "environment_hints" in data
+        assert "coordinate" in data["claim_model"]["claim_types"]
+
+
+class TestHandoffBundleShutdownProtocol:
+    def test_handoff_bundle_includes_shutdown_protocol(self, runner, conn, active_sprint, db_path):
+        result = runner.invoke(
+            cli, ["handoff", "--sprint-id", str(active_sprint["id"]), "--output", "-"]
+        )
+        assert result.exit_code == 0, result.output
+        bundle = json.loads(result.output)
+        assert "agent_shutdown_protocol" in bundle
+        proto = bundle["agent_shutdown_protocol"]
+        assert "required_before_termination" in proto
+        assert "resumption_hint" in proto
+        assert len(proto["required_before_termination"]) >= 2

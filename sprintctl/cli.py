@@ -842,6 +842,8 @@ def claim() -> None:
 @click.option("--instance-id", default=None, help="Stable client-process-local instance ID")
 @click.option("--hostname", default=None, help="Hostname override (defaults to current host)")
 @click.option("--pid", type=int, default=None, help="PID override (defaults to current process)")
+@click.option("--coordinate-claim-id", type=int, default=None, help="Coordinator's claim ID (sub-agent use: bypass coordinate claim lock)")
+@click.option("--coordinate-claim-token", default=None, help="Coordinator's claim token (required with --coordinate-claim-id)")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output the created claim as JSON")
 @click.pass_obj
 def claim_create(
@@ -859,9 +861,16 @@ def claim_create(
     instance_id,
     hostname,
     pid,
+    coordinate_claim_id,
+    coordinate_claim_token,
     as_json,
 ) -> None:
-    """Claim a work item for an actor."""
+    """Claim a work item for an actor.
+
+    Sub-agents spawned by a coordinator should pass --coordinate-claim-id and
+    --coordinate-claim-token to create an execute/inspect/review claim under
+    an active coordinate claim without triggering a conflict error.
+    """
     conn = obj["conn"]
     runtime_session_id = _detect_runtime_session_id(runtime_session_id)
     instance_id = _detect_instance_id(instance_id)
@@ -883,6 +892,8 @@ def claim_create(
             instance_id=instance_id,
             hostname=hostname,
             pid=pid,
+            coordinate_claim_id=coordinate_claim_id,
+            coordinate_claim_token=coordinate_claim_token,
         )
     except (_db.ClaimConflict, ValueError) as e:
         click.echo(f"Error: {e}", err=True)
@@ -901,6 +912,10 @@ def claim_create(
 @click.option("--claim-token", required=True, help="Claim token returned when the claim was created")
 @click.option("--actor", "--agent", "actor", default=None, help="Actor identifier (advisory metadata only)")
 @click.option("--ttl", "ttl_seconds", default=300, type=int, help="Refresh TTL in seconds (default: 300)")
+@click.option(
+    "--warn-before-expiry", "warn_before_expiry", type=int, default=60,
+    help="Emit a warning if the refreshed claim expires within N seconds (default: 60). Set 0 to disable.",
+)
 @click.option("--runtime-session-id", default=None, help="Runtime session identifier when available")
 @click.option("--instance-id", default=None, help="Stable client-process-local instance ID")
 @click.option("--branch", default=None, help="Git branch name")
@@ -909,6 +924,7 @@ def claim_create(
 @click.option("--pr-ref", "pr_ref", default=None, help="PR reference (e.g. owner/repo#123)")
 @click.option("--hostname", default=None, help="Hostname override (defaults to current host)")
 @click.option("--pid", type=int, default=None, help="PID override (defaults to current process)")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output refreshed claim state as JSON")
 @click.pass_obj
 def claim_heartbeat(
     obj,
@@ -916,6 +932,7 @@ def claim_heartbeat(
     claim_token,
     actor,
     ttl_seconds,
+    warn_before_expiry,
     runtime_session_id,
     instance_id,
     branch,
@@ -924,6 +941,7 @@ def claim_heartbeat(
     pr_ref,
     hostname,
     pid,
+    as_json,
 ) -> None:
     """Refresh the TTL on an existing claim."""
     conn = obj["conn"]
@@ -950,7 +968,20 @@ def claim_heartbeat(
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
-    click.echo(f"Claim #{claim_id} heartbeat refreshed (ttl={ttl_seconds}s)")
+    refreshed = _db.get_claim(conn, claim_id)
+    assert refreshed is not None
+    if as_json:
+        refreshed["heartbeat_ttl_seconds"] = ttl_seconds
+        click.echo(json.dumps(refreshed, indent=2))
+        return
+    click.echo(f"Claim #{claim_id} heartbeat refreshed (ttl={ttl_seconds}s, expires={refreshed['expires_at']})")
+    if warn_before_expiry > 0 and ttl_seconds <= warn_before_expiry:
+        click.echo(
+            f"Warning: claim #{claim_id} expires in {ttl_seconds}s which is within "
+            f"the --warn-before-expiry window ({warn_before_expiry}s). "
+            "Consider increasing --ttl or heartbeating more frequently.",
+            err=True,
+        )
 
 
 @claim.command("release")
@@ -1140,6 +1171,82 @@ def claim_list_sprint(obj, sprint_id, show_all, expiring_within, as_json) -> Non
         )
 
 
+@claim.command("show")
+@click.option("--id", "claim_id", type=int, required=True, help="Claim ID")
+@click.option("--claim-token", required=True, help="Claim token (proves ownership; re-displays the token)")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.pass_obj
+def claim_show(obj, claim_id, claim_token, as_json) -> None:
+    """Show a claim and re-display its token (useful after context loss).
+
+    Requires the current claim_token to prove ownership before revealing it again.
+    """
+    conn = obj["conn"]
+    row = conn.execute("SELECT * FROM claim WHERE id = ?", (claim_id,)).fetchone()
+    if row is None:
+        click.echo(f"Error: Claim #{claim_id} not found", err=True)
+        sys.exit(1)
+    try:
+        from .db import _require_claim_proof
+        _require_claim_proof(row, claim_token)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    claim = _db.get_claim(conn, claim_id, include_secret=True)
+    assert claim is not None
+    if as_json:
+        click.echo(json.dumps(claim, indent=2))
+        return
+    click.echo(f"Claim #{claim_id}  actor={claim['actor']}  type={claim['claim_type']}")
+    click.echo(f"  expires={claim['expires_at']}  identity_status={claim['identity_status']}")
+    click.echo(f"  claim_token: {claim['claim_token']}")
+
+
+@claim.command("resume")
+@click.option("--instance-id", default=None, help="Your stable instance ID (preferred)")
+@click.option("--runtime-session-id", default=None, help="Your runtime session ID")
+@click.option("--hostname", default=None, help="Hostname (use with --pid)")
+@click.option("--pid", type=int, default=None, help="PID (use with --hostname)")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.pass_obj
+def claim_resume(obj, instance_id, runtime_session_id, hostname, pid, as_json) -> None:
+    """Find active claims matching your agent identity for session resumption.
+
+    Use this when restarting after context loss to locate your existing claims.
+    Claims are returned without the token — use 'claim show' with the token once
+    recovered, or 'claim handoff --allow-legacy-adopt' to re-mint a fresh proof.
+    Provide at least one of: --instance-id, --runtime-session-id, or --hostname + --pid.
+    """
+    conn = obj["conn"]
+    try:
+        claims = _db.find_claim_by_identity(
+            conn,
+            instance_id=instance_id,
+            hostname=hostname,
+            pid=pid,
+            runtime_session_id=runtime_session_id,
+            active_only=True,
+        )
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    if as_json:
+        click.echo(json.dumps(claims, indent=2))
+        return
+    if not claims:
+        click.echo("No active claims found matching the provided identity.")
+        return
+    click.echo(f"Found {len(claims)} active claim(s) matching your identity:")
+    for c in claims:
+        click.echo(
+            f"  #{c['claim_id']}  item #{c['work_item_id']}  {c['actor']}  "
+            f"[{c['claim_type']}]  expires={c['expires_at']}  "
+            f"proof={c['identity_status']}"
+        )
+    click.echo("Use 'claim show --id <id> --claim-token <token>' to re-display the token if still held.")
+    click.echo("Use 'claim handoff --allow-legacy-adopt' if the token is lost and the claim has no secret.")
+
+
 @cli.command("handoff")
 @click.option("--sprint-id", type=int, default=None, help="Sprint ID (defaults to active)")
 @click.option("--output", "output_path", default=None, help="Output file path (default: handoff-N.json)")
@@ -1172,6 +1279,17 @@ def handoff_cmd(obj, sprint_id, output_path, events_limit) -> None:
             "ambiguous_identity_visible": True,
             "explicit_claim_handoff_command": "sprintctl claim handoff",
         },
+        "agent_shutdown_protocol": {
+            "required_before_termination": [
+                "For each active claim you own: run 'sprintctl claim handoff --id <id> --claim-token <token> --actor <next-agent> --mode rotate' to pass ownership to the incoming session.",
+                "If no incoming session: run 'sprintctl claim release --id <id> --claim-token <token>' to free each claim.",
+                "If handing off the sprint: run 'sprintctl handoff' to produce a new bundle for the next agent.",
+            ],
+            "resumption_hint": (
+                "Incoming agents: use 'sprintctl claim resume --instance-id <id>' or "
+                "'--runtime-session-id <id>' to locate claims transferred to you."
+            ),
+        },
     }
     dest = output_path or f"handoff-{sid}.json"
     if dest == "-":
@@ -1180,6 +1298,116 @@ def handoff_cmd(obj, sprint_id, output_path, events_limit) -> None:
     with open(dest, "w") as fh:
         json.dump(bundle, fh, indent=2)
     click.echo(f"Handoff bundle for sprint #{sid} written to {dest}")
+
+
+@cli.command("agent-protocol")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+def agent_protocol_cmd(as_json) -> None:
+    """Print the claim lifecycle protocol for agent consumption.
+
+    Outputs a structured summary of how agents should interact with sprintctl
+    claims: startup, heartbeat, handoff, and shutdown steps. Suitable for
+    injecting into an agent system prompt or reading programmatically.
+    """
+    protocol = {
+        "sprintctl_agent_protocol_version": "1",
+        "claim_model": {
+            "ownership_proof": "claim_id + claim_token (both required; token is a server-minted opaque secret)",
+            "ttl_seconds_default": 300,
+            "claim_types": {
+                "execute": "Exclusive. Agent is implementing work on the item.",
+                "inspect": "Exclusive. Agent is reading item state.",
+                "review": "Exclusive. Agent is reviewing completed work.",
+                "coordinate": "Exclusive. Orchestrator managing sub-agents. Sub-agents may claim execute under it.",
+            },
+        },
+        "lifecycle": {
+            "1_startup": {
+                "description": "Claim the item before beginning work.",
+                "command": (
+                    "sprintctl claim create --item-id <id> --actor <name> "
+                    "[--type execute|coordinate] [--ttl <seconds>] "
+                    "[--runtime-session-id <env-session-id>] [--instance-id <stable-per-process-uuid>] "
+                    "[--branch <branch>] --json"
+                ),
+                "store": "Save claim_id and claim_token for the entire session. Treat claim_token as a secret.",
+                "coordinator_note": (
+                    "If acting as an orchestrator, claim with --type coordinate first, then spawn sub-agents "
+                    "that call 'claim create' with --coordinate-claim-id and --coordinate-claim-token."
+                ),
+            },
+            "2_heartbeat": {
+                "description": "Refresh the claim TTL periodically (every ~half the TTL).",
+                "command": (
+                    "sprintctl claim heartbeat --id <claim_id> --claim-token <token> "
+                    "[--ttl <seconds>] [--actor <name>]"
+                ),
+                "frequency": "Every 120s if TTL=300s. Increase --ttl for long-running tasks.",
+            },
+            "3_status_transition": {
+                "description": "Transition item status. Claim proof is required.",
+                "command": (
+                    "sprintctl item status --id <item_id> --status active|done|blocked "
+                    "--actor <name> --claim-id <claim_id> --claim-token <token>"
+                ),
+            },
+            "4_handoff": {
+                "description": "Pass claim ownership to an incoming agent session (required on shutdown if work continues).",
+                "command": (
+                    "sprintctl claim handoff --id <claim_id> --claim-token <token> "
+                    "--actor <next-agent-name> --mode rotate "
+                    "[--runtime-session-id <next-session-id>] [--instance-id <next-instance-id>] --json"
+                ),
+                "note": "The returned claim_token is the new agent's secret. The old token is invalidated.",
+            },
+            "5_release": {
+                "description": "Release the claim when work is complete and no handoff is needed.",
+                "command": "sprintctl claim release --id <claim_id> --claim-token <token> --actor <name>",
+            },
+        },
+        "session_resumption": {
+            "description": "If context is lost, locate your claims by identity before re-claiming.",
+            "command": (
+                "sprintctl claim resume --instance-id <your-instance-id> "
+                "[--runtime-session-id <id>] [--hostname <host> --pid <pid>] --json"
+            ),
+            "recovery": (
+                "If token is still held: use 'claim show --id <id> --claim-token <token>' to re-display it. "
+                "If token is lost: use 'claim handoff --allow-legacy-adopt' to mint a fresh proof."
+            ),
+        },
+        "shutdown_checklist": [
+            "For each owned claim: handoff to next agent OR release.",
+            "Run 'sprintctl handoff' to write a bundle for the incoming session.",
+        ],
+        "environment_hints": {
+            "SPRINTCTL_RUNTIME_SESSION_ID": "Set to your runtime session ID (auto-detected from CODEX_THREAD_ID).",
+            "SPRINTCTL_INSTANCE_ID": "Set to a stable per-process UUID; persisted across heartbeats.",
+            "SPRINTCTL_DB": "Override the database path (default: ~/.local/share/sprintctl/sprintctl.db).",
+        },
+    }
+    if as_json:
+        click.echo(json.dumps(protocol, indent=2))
+        return
+
+    click.echo("=== sprintctl Agent Claim Protocol ===\n")
+    click.echo(f"Ownership proof: {protocol['claim_model']['ownership_proof']}\n")
+    click.echo("Lifecycle steps:")
+    for step, info in protocol["lifecycle"].items():
+        click.echo(f"\n  {step}: {info['description']}")
+        click.echo(f"    $ {info['command']}")
+        for key in ("store", "frequency", "note", "coordinator_note"):
+            if key in info:
+                click.echo(f"    [{key}] {info[key]}")
+    click.echo("\nSession resumption:")
+    click.echo(f"  $ {protocol['session_resumption']['command']}")
+    click.echo(f"  {protocol['session_resumption']['recovery']}")
+    click.echo("\nShutdown checklist:")
+    for item in protocol["shutdown_checklist"]:
+        click.echo(f"  - {item}")
+    click.echo("\nEnvironment variables:")
+    for var, desc in protocol["environment_hints"].items():
+        click.echo(f"  {var}: {desc}")
 
 
 @cli.command("render")

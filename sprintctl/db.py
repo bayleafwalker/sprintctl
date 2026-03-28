@@ -620,8 +620,15 @@ def create_claim(
     instance_id: str | None = None,
     hostname: str | None = None,
     pid: int | None = None,
+    coordinate_claim_id: int | None = None,
+    coordinate_claim_token: str | None = None,
 ) -> int:
-    """Create a claim on a work item, enforcing exclusivity for exclusive claim types."""
+    """Create a claim on a work item, enforcing exclusivity for exclusive claim types.
+
+    Sub-agents spawned by a coordinator may pass coordinate_claim_id +
+    coordinate_claim_token to create an execute/inspect/review claim under an
+    existing coordinate claim without triggering a ClaimConflict.
+    """
     if claim_type not in CLAIM_TYPES:
         raise ValueError(f"Invalid claim_type '{claim_type}'. Must be one of: {', '.join(CLAIM_TYPES)}")
     item = get_work_item(conn, work_item_id)
@@ -630,9 +637,23 @@ def create_claim(
     if exclusive:
         conflict = _get_active_exclusive_claim_row(conn, work_item_id)
         if conflict:
-            raise ClaimConflict(
-                f"Item #{work_item_id} is exclusively claimed by '{conflict['agent']}' (claim #{conflict['id']})"
-            )
+            # Allow sub-agent claim if the conflict IS the coordinate claim being delegated under.
+            if (
+                conflict["claim_type"] == "coordinate"
+                and coordinate_claim_id is not None
+                and coordinate_claim_id == conflict["id"]
+            ):
+                coord_row = conn.execute(
+                    "SELECT * FROM claim WHERE id = ?", (coordinate_claim_id,)
+                ).fetchone()
+                if coord_row is None:
+                    raise ValueError(f"Coordinate claim #{coordinate_claim_id} not found")
+                _require_claim_proof(coord_row, coordinate_claim_token)
+                # Permit the sub-agent claim — fall through to INSERT below.
+            else:
+                raise ClaimConflict(
+                    f"Item #{work_item_id} is exclusively claimed by '{conflict['agent']}' (claim #{conflict['id']})"
+                )
     claim_token = _generate_claim_token()
     cur = conn.execute(
         """
@@ -997,3 +1018,62 @@ def list_claims(conn: sqlite3.Connection, work_item_id: int, active_only: bool =
             (work_item_id,),
         ).fetchall()
     return [_serialize_claim(r) for r in rows]
+
+
+def find_claim_by_identity(
+    conn: sqlite3.Connection,
+    *,
+    instance_id: str | None = None,
+    hostname: str | None = None,
+    pid: int | None = None,
+    runtime_session_id: str | None = None,
+    active_only: bool = True,
+) -> list[dict]:
+    """Find active claims matching the given identity fields.
+
+    Useful for session resumption when the claim_token is lost but the agent
+    knows its own instance_id, runtime_session_id, or hostname+pid.
+    At least one of instance_id, runtime_session_id, or (hostname+pid) must be provided.
+    Returns serialized claims without the secret token.
+    """
+    if not any([instance_id, runtime_session_id, (hostname and pid is not None)]):
+        raise ValueError(
+            "At least one of --instance-id, --runtime-session-id, or "
+            "--hostname + --pid must be provided to resume a claim."
+        )
+    conditions = []
+    params: list = []
+    if active_only:
+        conditions.append("expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')")
+    if instance_id:
+        conditions.append("instance_id = ?")
+        params.append(instance_id)
+    if runtime_session_id:
+        conditions.append("runtime_session_id = ?")
+        params.append(runtime_session_id)
+    if hostname and pid is not None:
+        conditions.append("(hostname = ? AND pid = ?)")
+        params.extend([hostname, pid])
+    where = " AND ".join(conditions)
+    rows = conn.execute(
+        f"SELECT * FROM claim WHERE {where} ORDER BY created_at DESC",
+        params,
+    ).fetchall()
+    return [_serialize_claim(r) for r in rows]
+
+
+def _get_active_coordinate_claim_row(
+    conn: sqlite3.Connection,
+    work_item_id: int,
+) -> sqlite3.Row | None:
+    """Return the first active exclusive coordinate claim on the item, if any."""
+    return conn.execute(
+        """
+        SELECT * FROM claim
+        WHERE work_item_id = ? AND exclusive = 1 AND claim_type = 'coordinate'
+          AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
+        ORDER BY created_at ASC
+        LIMIT 1
+        """,
+        (work_item_id,),
+    ).fetchone()
