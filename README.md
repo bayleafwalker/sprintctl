@@ -121,6 +121,8 @@ See [envrc.example](envrc.example) for a direnv template.
 
 ## Integration into projects
 
+For a fuller project-level operating model, see [docs/project-integration.md](docs/project-integration.md). Copyable samples live in [docs/examples/AGENTS.sprintctl.md](docs/examples/AGENTS.sprintctl.md) and [docs/examples/Makefile.sprintctl.mk](docs/examples/Makefile.sprintctl.mk).
+
 ### Per-project database via direnv
 
 Each project should have its own sprint database scoped to its working directory. Add this to `.envrc`:
@@ -155,6 +157,22 @@ sprint-snapshot:
 ```
 
 Run this at natural checkpoints — end of day, before a review, after a carryover. The snapshot is what you share and review; the database is what drives it.
+
+### Recommended project conventions
+
+The most effective repo integrations follow a simple split:
+
+- live state in `.sprintctl/sprintctl.db` (gitignored)
+- shared state in a committed snapshot such as `docs/sprint-snapshots/sprint-current.txt`
+- repo guidance in `AGENTS.md` or a runbook that tells agents to consult live `sprintctl` state before editing files
+
+Recommended precedence when sources disagree:
+
+1. `sprintctl` live state for item status, claims, and recent events
+2. committed `sprintctl render` output for the shared reviewable view
+3. repo process docs such as `AGENTS.md` or runbooks
+
+When multiple agents or worktrees may touch the same item, claim before editing files, keep heartbeats alive, and use `claim_id + claim_token` as the only ownership proof. Use `sprintctl claim handoff` when ownership itself changes; use `sprintctl handoff` when the next session just needs broader sprint context.
 
 ## Local-only design
 
