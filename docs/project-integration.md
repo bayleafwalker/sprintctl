@@ -201,3 +201,16 @@ If you want the shortest useful integration, add only these:
 5. one `Makefile` target that renders the snapshot
 
 That is enough to reproduce the strongest parts of the reference usage without importing its entire documentation structure.
+
+## Bootstrap Prompts and Workflow Examples
+
+To initialize `sprintctl` on a fresh repository using an agent session, see:
+
+- [docs/examples/bootstrap-prompt.md](examples/bootstrap-prompt.md) — copy-paste prompt for agent onboarding
+- [docs/examples/bootstrap-workflow.md](examples/bootstrap-workflow.md) — minimal walkthrough of the setup + work loop
+
+For a complete worked example — including AGENTS.md, sprint naming conventions, all five workflow patterns (idea-to-backlog, direct implementation, review, knowledge promotion, fresh-repo bootstrap), and a sample rendered sprint — see the separate bootstrap template repository:
+
+**[sprintctl-bootstrap-template](https://github.com/bayleafwalker/sprintctl-bootstrap-template)**
+
+That repo demonstrates "what does good look like when starting from nothing?" It is designed to be forked and adapted, not read in-place.
