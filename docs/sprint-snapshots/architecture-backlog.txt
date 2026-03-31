@@ -1,0 +1,123 @@
+SPRINT: Architecture Backlog  [planned]
+Goal:   Staged backlog for sprintctl+kctl architecture directions: execution context, refs, handoffs, dependencies, worktree-awareness, knowledge model, synthesis, operator UX, docs, hardening
+ID:     1
+
+--- Track: execution-context ---
+  health: 8 items — 0 done (0%), 0 active, 8 pending, 0 blocked (0%)
+  [pending ] #1  Design usage read model: define data sources and shape for compact current-state context  (assignee: -)
+  [pending ] #2  Implement usage command: one-shot sprint summary with active claims, blocked items, stale items, recent decisions  (assignee: -)
+  [pending ] #3  Add next-useful-work hint to usage output based on item status, staleness, and dependencies  (assignee: -)
+  [pending ] #4  Add --format flag to usage command: terminal, markdown, json output modes  (assignee: -)
+  [pending ] #5  Optimize usage output for agent consumption: minimal prompt-glue, self-contained context  (assignee: -)
+  [pending ] #6  Add recent-decisions extraction to usage read model from event stream  (assignee: -)
+  [pending ] #7  Tests for usage command: empty sprint, active sprint, mixed states, JSON output  (assignee: -)
+  [pending ] #8  Docs: usage command reference and agent onboarding examples  (assignee: -)
+
+--- Track: refs-and-artifacts ---
+  health: 10 items — 0 done (0%), 0 active, 10 pending, 0 blocked (0%)
+  [pending ] #9  Design typed item refs model: ref kinds (adr, doc, file, glob, test, command, pr, commit, knowledge-entry)  (assignee: -)
+  [pending ] #10  Add item_ref table to DB schema with ref_kind, target, label, and item FK  (assignee: -)
+  [pending ] #11  Add CLI: sprintctl item ref add/list/remove for managing refs on items  (assignee: -)
+  [pending ] #12  Surface refs in item show and item list --detail output  (assignee: -)
+  [pending ] #13  Include refs in render output and handoff bundles  (assignee: -)
+  [pending ] #14  Add validation-command ref kind: associate runnable verification commands with items  (assignee: -)
+  [pending ] #15  Support glob-pattern refs for file sets (e.g. src/db/*.py)  (assignee: -)
+  [pending ] #16  Migration: add item_ref table with backward-compatible schema version bump  (assignee: -)
+  [pending ] #17  Tests: ref CRUD, ref rendering, ref in handoff output, invalid ref handling  (assignee: -)
+  [pending ] #18  Docs: ref model design rationale and CLI usage examples  (assignee: -)
+
+--- Track: handoffs-and-artifacts ---
+  health: 9 items — 0 done (0%), 0 active, 9 pending, 0 blocked (0%)
+  [pending ] #19  Design artifact contract: define compact vs full handoff bundle shapes and their use cases  (assignee: -)
+  [pending ] #20  Implement compact handoff mode: minimal context for quick session resumption  (assignee: -)
+  [pending ] #21  Implement review handoff mode: read-only bundle optimized for code review, not execution  (assignee: -)
+  [pending ] #22  Add changed-since-last-handoff diff: track handoff timestamps and surface delta  (assignee: -)
+  [pending ] #23  Add evidence summary to handoff: changed files, test results, validation outcomes  (assignee: -)
+  [pending ] #24  Improve render output: richer sprint snapshot with health trends and completion trajectory  (assignee: -)
+  [pending ] #25  Add handoff event recording: log each handoff generation with metadata for audit trail  (assignee: -)
+  [pending ] #26  Tests: compact vs full handoff, review bundle, delta computation, evidence summary  (assignee: -)
+  [pending ] #27  Docs: handoff modes, artifact contracts, and review workflow examples  (assignee: -)
+
+--- Track: dependencies ---
+  health: 9 items — 0 done (0%), 0 active, 9 pending, 0 blocked (0%)
+  [pending ] #28  Design dependency model: blocked-by and waiting-on relationships between items  (assignee: -)
+  [pending ] #29  Add item_dependency table to DB schema with source_item_id, target_item_id, dep_kind  (assignee: -)
+  [pending ] #30  Add CLI: sprintctl item dep add/list/remove for managing dependencies  (assignee: -)
+  [pending ] #31  Add blocked-item detection to maintain check: items blocked by incomplete deps  (assignee: -)
+  [pending ] #32  Implement next-work suggestion: recommend unblocked pending items with priority heuristic  (assignee: -)
+  [pending ] #33  Add staleness and aging visibility to item list and render output  (assignee: -)
+  [pending ] #34  Surface dependency info in render, handoff, and usage outputs  (assignee: -)
+  [pending ] #35  Tests: dependency CRUD, cycle detection, blocked-item detection, next-work suggestion  (assignee: -)
+  [pending ] #36  Docs: dependency model, work recommendation algorithm, CLI examples  (assignee: -)
+
+--- Track: worktree-awareness ---
+  health: 8 items — 0 done (0%), 0 active, 8 pending, 0 blocked (0%)
+  [pending ] #37  Design repo-context model: item-to-branch, item-to-worktree, item-to-PR linkage semantics  (assignee: -)
+  [pending ] #38  Extend claim metadata to populate item-level branch/worktree/PR associations on claim create/heartbeat  (assignee: -)
+  [pending ] #39  Add file-association tracking: optional file or glob links per item via refs model  (assignee: -)
+  [pending ] #40  Add git-context to handoff output: current branch, dirty-file list, recent commits for claimed items  (assignee: -)
+  [pending ] #41  Distinguish advisory metadata from hard proof in claim/item display  (assignee: -)
+  [pending ] #42  Surface worktree and branch info in render and usage outputs  (assignee: -)
+  [pending ] #43  Tests: repo-context population, git-aware handoff, file association via refs  (assignee: -)
+  [pending ] #44  Docs: worktree-awareness model, advisory vs proof semantics, agent usage patterns  (assignee: -)
+
+--- Track: knowledge-model ---
+  health: 11 items — 0 done (0%), 0 active, 11 pending, 0 blocked (0%)
+  [pending ] #45  Design typed knowledge entry model: decision, lesson, pattern, risk, reference with structured fields  (assignee: -)
+  [pending ] #46  Add evidence links from knowledge entries back to sprint events and items  (assignee: -)
+  [pending ] #47  Add review status and confidence level to knowledge entries  (assignee: -)
+  [pending ] #48  Design knowledge relations: related-to, supersedes, contradicted-by between entries  (assignee: -)
+  [pending ] #49  Add domain tags and code-area links to knowledge entries  (assignee: -)
+  [pending ] #50  Add freshness and revalidation-needed markers for time-sensitive knowledge  (assignee: -)
+  [pending ] #51  Update kctl extract pipeline to produce typed entries with evidence links  (assignee: -)
+  [pending ] #52  Update kctl review workflow to handle typed entries and relations  (assignee: -)
+  [pending ] #53  Update kctl render/export to reflect typed model and relations  (assignee: -)
+  [pending ] #54  Tests: knowledge entry CRUD, evidence links, relations, review lifecycle  (assignee: -)
+  [pending ] #55  Docs: knowledge object model design, entry types, relation semantics  (assignee: -)
+
+--- Track: knowledge-synthesis ---
+  health: 9 items — 0 done (0%), 0 active, 9 pending, 0 blocked (0%)
+  [pending ] #56  Design duplicate-candidate detection: similarity matching across knowledge entries  (assignee: -)
+  [pending ] #57  Implement synthesis across repeated events: merge recurring patterns into consolidated entries  (assignee: -)
+  [pending ] #58  Add stale/contradicted knowledge detection: flag entries invalidated by newer evidence  (assignee: -)
+  [pending ] #59  Design backlog-seed generation: convert approved knowledge into sprintctl item proposals  (assignee: -)
+  [pending ] #60  Implement backlog-seed export: kctl command to output proposed items for sprintctl import  (assignee: -)
+  [pending ] #61  Add recurring-blocker detection: identify systemic issues from repeated blocker events  (assignee: -)
+  [pending ] #62  Add ranking and grouping of candidate future work by domain area  (assignee: -)
+  [pending ] #63  Tests: duplicate detection, synthesis, drift flagging, backlog seed generation  (assignee: -)
+  [pending ] #64  Docs: synthesis pipeline, drift detection, backlog seeding workflow and examples  (assignee: -)
+
+--- Track: operator-ux ---
+  health: 9 items — 0 done (0%), 0 active, 9 pending, 0 blocked (0%)
+  [pending ] #65  Define phased operator-UX roadmap: no-TUI → lightweight live view → optional richer TUI  (assignee: -)
+  [pending ] #66  Improve CLI output formatting: consistent table layout, color coding for status, alignment  (assignee: -)
+  [pending ] #67  Add fzf-friendly output mode: line-per-item with parseable fields for pipe workflows  (assignee: -)
+  [pending ] #68  Add watch mode for sprint show: periodic refresh of sprint status in terminal  (assignee: -)
+  [pending ] #69  Add JSON views for all list/show commands that currently lack --json  (assignee: -)
+  [pending ] #70  Define CLI/TUI boundary: what stays in sprintctl CLI vs what moves to optional TUI sidecar  (assignee: -)
+  [pending ] #71  Concept design: lightweight monitor surface (curses or Bubble Tea) for live sprint status  (assignee: -)
+  [pending ] #72  Tests: output format consistency, JSON schema validation for machine-readable outputs  (assignee: -)
+  [pending ] #73  Docs: operator-UX phased plan, CLI ergonomics guide  (assignee: -)
+
+--- Track: docs-and-contracts ---
+  health: 7 items — 0 done (0%), 0 active, 7 pending, 0 blocked (0%)
+  [pending ] #74  Write AGENTS.md update: sprintctl-aware repo behavior, claim protocol, handoff expectations  (assignee: -)
+  [pending ] #75  Document current-state vs source-of-truth guidance: DB is live state, rendered snapshots are reviewable  (assignee: -)
+  [pending ] #76  Create work-loop examples: claim → work → note → handoff → resume lifecycle  (assignee: -)
+  [pending ] #77  Document knowledge review flow: extract → review → publish → render pipeline  (assignee: -)
+  [pending ] #78  Document refs, handoff modes, and review bundle contracts  (assignee: -)
+  [pending ] #79  Add migration guidance document: what to do when schema/model changes are introduced  (assignee: -)
+  [pending ] #80  Update command reference for new commands: usage, item ref, item dep  (assignee: -)
+
+--- Track: hardening ---
+  health: 8 items — 0 done (0%), 0 active, 8 pending, 0 blocked (0%)
+  [pending ] #81  Design migration safety framework: versioned schema changes with rollback support  (assignee: -)
+  [pending ] #82  Audit test coverage gaps: state transitions, claim conflicts, edge cases in maintain commands  (assignee: -)
+  [pending ] #83  Add rollback-friendly implementation pattern: feature flags or version-gated behavior for new tables  (assignee: -)
+  [pending ] #84  Add failure-mode tests: claim token collisions, concurrent writes, expired claim edge cases  (assignee: -)
+  [pending ] #85  Add failure-mode tests for refs: dangling refs, invalid targets, ref-on-deleted-item  (assignee: -)
+  [pending ] #86  Add performance sanity checks: DB size growth, query timing for local-first use  (assignee: -)
+  [pending ] #87  Add observability helpers: debug output mode, event-stream diagnostics  (assignee: -)
+  [pending ] #88  Document backward-compatibility strategy for schema additions  (assignee: -)
+
+Rendered: 2026-03-31T06:14:50Z
