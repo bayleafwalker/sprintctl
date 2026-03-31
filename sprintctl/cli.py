@@ -198,8 +198,9 @@ def sprint_show(obj, sprint_id, detail, as_json) -> None:
     type=click.Choice(["planned", "active", "closed"]),
     help="New status",
 )
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
-def sprint_status(obj, sprint_id, new_status) -> None:
+def sprint_status(obj, sprint_id, new_status, as_json) -> None:
     """Update a sprint's status (enforces allowed transitions)."""
     conn = _get_conn(obj)
     s = _db.get_sprint(conn, sprint_id)
@@ -212,6 +213,9 @@ def sprint_status(obj, sprint_id, new_status) -> None:
     except _db.InvalidTransition as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+    if as_json:
+        click.echo(json.dumps({"sprint_id": sprint_id, "previous": current, "status": new_status}, indent=2))
+        return
     click.echo(f"Sprint #{sprint_id} status: {current} -> {new_status}")
 
 
@@ -249,8 +253,9 @@ def sprint_list(obj, include_backlog, include_archive, as_json) -> None:
     type=click.Choice(["active_sprint", "backlog", "archive"]),
     help="New kind",
 )
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
-def sprint_kind_cmd(obj, sprint_id, kind) -> None:
+def sprint_kind_cmd(obj, sprint_id, kind, as_json) -> None:
     """Set the kind classification of a sprint."""
     conn = _get_conn(obj)
     try:
@@ -258,6 +263,9 @@ def sprint_kind_cmd(obj, sprint_id, kind) -> None:
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+    if as_json:
+        click.echo(json.dumps({"sprint_id": sprint_id, "kind": kind}, indent=2))
+        return
     click.echo(f"Sprint #{sprint_id} kind set to: {kind}")
 
 
@@ -869,14 +877,24 @@ def maintain_check(obj, sprint_id, threshold, as_json) -> None:
 @click.option("--threshold", default=None, help="Staleness threshold, e.g. 4h (default: 4h)")
 @click.option("--auto-close", is_flag=True, default=False,
               help="Auto-close overdue sprint if no active items remain after sweep")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
-def maintain_sweep(obj, sprint_id, threshold, auto_close) -> None:
+def maintain_sweep(obj, sprint_id, threshold, auto_close, as_json) -> None:
     """Execute: block stale items and optionally auto-close overdue sprint."""
     conn = _get_conn(obj)
     s = _resolve_sprint(conn, sprint_id)
     now = datetime.now(timezone.utc)
     td = _parse_threshold(threshold)
     result = _maintain.sweep(conn, s["id"], now, threshold=td, auto_close=auto_close)
+
+    if as_json:
+        click.echo(json.dumps({
+            "sprint_id": s["id"],
+            "blocked_items": [{"id": it["id"], "title": it["title"]} for it in result["blocked_items"]],
+            "expired_claims_purged": result["expired_claims_purged"],
+            "auto_closed": result["auto_closed"],
+        }, indent=2))
+        return
 
     blocked = result["blocked_items"]
     if blocked:
@@ -897,8 +915,9 @@ def maintain_sweep(obj, sprint_id, threshold, auto_close) -> None:
 @maintain.command("carryover")
 @click.option("--from-sprint", "from_sprint_id", type=int, required=True, help="Source sprint ID")
 @click.option("--to-sprint", "to_sprint_id", type=int, required=True, help="Target sprint ID")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
-def maintain_carryover(obj, from_sprint_id, to_sprint_id) -> None:
+def maintain_carryover(obj, from_sprint_id, to_sprint_id, as_json) -> None:
     """Carry incomplete items from one sprint to another."""
     conn = _get_conn(obj)
     if _db.get_sprint(conn, from_sprint_id) is None:
@@ -912,6 +931,13 @@ def maintain_carryover(obj, from_sprint_id, to_sprint_id) -> None:
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+    if as_json:
+        click.echo(json.dumps({
+            "from_sprint_id": from_sprint_id,
+            "to_sprint_id": to_sprint_id,
+            "carried_items": created,
+        }, indent=2))
+        return
     if created:
         click.echo(f"Carried {len(created)} item(s) from sprint #{from_sprint_id} to #{to_sprint_id}:")
         for it in created:
