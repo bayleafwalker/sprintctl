@@ -802,3 +802,183 @@ class TestItemShow:
     def test_item_show_unknown_id_exits(self, runner, db_path):
         result = runner.invoke(cli, ["item", "show", "--id", "9999"])
         assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# Group 10: usage command
+# ---------------------------------------------------------------------------
+
+class TestUsageCommand:
+    def test_usage_exits_zero(self, runner, db_path):
+        result = runner.invoke(cli, ["usage"])
+        assert result.exit_code == 0, result.output
+
+    def test_usage_covers_major_groups(self, runner, db_path):
+        result = runner.invoke(cli, ["usage"])
+        for section in ("SPRINT", "ITEM", "EVENT", "MAINTAIN", "CLAIM", "TOP-LEVEL", "ENV"):
+            assert section in result.output, f"Missing section: {section}"
+
+    def test_usage_mentions_key_commands(self, runner, db_path):
+        result = runner.invoke(cli, ["usage"])
+        for cmd in ("sprint create", "item add", "claim create", "maintain check", "handoff", "render"):
+            assert cmd in result.output, f"Missing command: {cmd}"
+
+    def test_usage_mentions_env_vars(self, runner, db_path):
+        result = runner.invoke(cli, ["usage"])
+        assert "SPRINTCTL_DB" in result.output
+        assert "SPRINTCTL_STALE_THRESHOLD" in result.output
+
+    def test_usage_does_not_create_db(self, runner, tmp_path, monkeypatch):
+        db_file = tmp_path / "nodb.db"
+        monkeypatch.setenv("SPRINTCTL_DB", str(db_file))
+        result = runner.invoke(cli, ["usage"])
+        assert result.exit_code == 0
+        assert not db_file.exists()
+
+
+# ---------------------------------------------------------------------------
+# Group 11: render --output
+# ---------------------------------------------------------------------------
+
+class TestRenderOutput:
+    def test_render_output_writes_file(self, runner, active_sprint, tmp_path):
+        out = tmp_path / "sprint.txt"
+        result = runner.invoke(cli, ["render", "--sprint-id", str(active_sprint["id"]), "--output", str(out)])
+        assert result.exit_code == 0, result.output
+        assert out.exists()
+        content = out.read_text()
+        assert "S1" in content
+        assert "Rendered:" in content
+
+    def test_render_output_confirms_path(self, runner, active_sprint, tmp_path):
+        out = tmp_path / "out.txt"
+        result = runner.invoke(cli, ["render", "--sprint-id", str(active_sprint["id"]), "--output", str(out)])
+        assert result.exit_code == 0, result.output
+        assert str(out) in result.output
+
+    def test_render_stdout_unchanged_without_output(self, runner, active_sprint):
+        result = runner.invoke(cli, ["render", "--sprint-id", str(active_sprint["id"])])
+        assert result.exit_code == 0, result.output
+        assert "SPRINT:" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Group 12: render improvements (items summary + refs in render)
+# ---------------------------------------------------------------------------
+
+class TestRenderImprovements:
+    def test_render_items_summary_line(self, runner, conn, active_sprint):
+        sid = str(active_sprint["id"])
+        runner.invoke(cli, ["item", "add", "--sprint-id", sid, "--track", "eng", "--title", "Task A"])
+        result = runner.invoke(cli, ["render", "--sprint-id", sid])
+        assert result.exit_code == 0, result.output
+        assert "Items:" in result.output
+        assert "total" in result.output
+
+    def test_render_items_summary_counts(self, runner, conn, active_sprint):
+        sid = str(active_sprint["id"])
+        runner.invoke(cli, ["item", "add", "--sprint-id", sid, "--track", "eng", "--title", "Task A"])
+        runner.invoke(cli, ["item", "add", "--sprint-id", sid, "--track", "eng", "--title", "Task B"])
+        result = runner.invoke(cli, ["render", "--sprint-id", sid])
+        assert result.exit_code == 0, result.output
+        assert "2 total" in result.output
+
+    def test_render_no_items_summary_when_empty(self, runner, active_sprint):
+        result = runner.invoke(cli, ["render", "--sprint-id", str(active_sprint["id"])])
+        assert result.exit_code == 0, result.output
+        assert "Items:" not in result.output
+
+    def test_render_shows_refs_under_item(self, runner, conn, active_sprint, db_path):
+        sid = active_sprint["id"]
+        tid = db.get_or_create_track(conn, sid, "eng")
+        iid = db.create_work_item(conn, sid, tid, "Auth task")
+        db.add_ref(conn, iid, "pr", "https://github.com/org/repo/pull/7", "Auth PR")
+        result = runner.invoke(cli, ["render", "--sprint-id", str(sid)])
+        assert result.exit_code == 0, result.output
+        assert "github.com/org/repo/pull/7" in result.output
+        assert "Auth PR" in result.output
+
+    def test_render_ref_type_label_shown(self, runner, conn, active_sprint, db_path):
+        sid = active_sprint["id"]
+        tid = db.get_or_create_track(conn, sid, "eng")
+        iid = db.create_work_item(conn, sid, tid, "Spec task")
+        db.add_ref(conn, iid, "doc", "https://docs.example.com/spec")
+        result = runner.invoke(cli, ["render", "--sprint-id", str(sid)])
+        assert result.exit_code == 0, result.output
+        assert "doc" in result.output
+        assert "docs.example.com" in result.output
+
+    def test_render_no_refs_section_when_item_has_none(self, runner, conn, active_sprint):
+        sid = str(active_sprint["id"])
+        runner.invoke(cli, ["item", "add", "--sprint-id", sid, "--track", "eng", "--title", "Plain task"])
+        result = runner.invoke(cli, ["render", "--sprint-id", sid])
+        assert result.exit_code == 0, result.output
+        assert "ref [" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# Group 13: handoff --format text
+# ---------------------------------------------------------------------------
+
+class TestHandoffTextMode:
+    def test_handoff_text_format_stdout(self, runner, conn, active_sprint, db_path):
+        result = runner.invoke(cli, [
+            "handoff", "--sprint-id", str(active_sprint["id"]),
+            "--output", "-", "--format", "text",
+        ])
+        assert result.exit_code == 0, result.output
+        assert "HANDOFF:" in result.output
+        assert "S1" in result.output
+
+    def test_handoff_text_format_shows_status_groups(self, runner, conn, active_sprint, db_path):
+        sid = str(active_sprint["id"])
+        runner.invoke(cli, ["item", "add", "--sprint-id", sid, "--track", "eng", "--title", "Pending task"])
+        result = runner.invoke(cli, [
+            "handoff", "--sprint-id", sid, "--output", "-", "--format", "text",
+        ])
+        assert result.exit_code == 0, result.output
+        assert "PENDING" in result.output
+        assert "Pending task" in result.output
+
+    def test_handoff_text_format_shows_shutdown_protocol(self, runner, active_sprint, db_path):
+        result = runner.invoke(cli, [
+            "handoff", "--sprint-id", str(active_sprint["id"]),
+            "--output", "-", "--format", "text",
+        ])
+        assert result.exit_code == 0, result.output
+        assert "SHUTDOWN PROTOCOL:" in result.output
+
+    def test_handoff_text_format_writes_txt_file(self, runner, active_sprint, db_path, tmp_path):
+        out = tmp_path / "handoff.txt"
+        result = runner.invoke(cli, [
+            "handoff", "--sprint-id", str(active_sprint["id"]),
+            "--output", str(out), "--format", "text",
+        ])
+        assert result.exit_code == 0, result.output
+        assert out.exists()
+        content = out.read_text()
+        assert "HANDOFF:" in content
+
+    def test_handoff_json_format_still_works(self, runner, active_sprint, db_path, tmp_path):
+        out = tmp_path / "handoff.json"
+        result = runner.invoke(cli, [
+            "handoff", "--sprint-id", str(active_sprint["id"]),
+            "--output", str(out), "--format", "json",
+        ])
+        assert result.exit_code == 0, result.output
+        import json
+        data = json.loads(out.read_text())
+        assert "sprint" in data
+        assert data["sprint"]["name"] == "S1"
+
+    def test_handoff_text_shows_active_claims(self, runner, conn, active_sprint, db_path):
+        sid = active_sprint["id"]
+        tid = db.get_or_create_track(conn, sid, "eng")
+        iid = db.create_work_item(conn, sid, tid, "Claimed task")
+        db.create_claim(conn, iid, agent="agent-x", ttl_seconds=300)
+        result = runner.invoke(cli, [
+            "handoff", "--sprint-id", str(sid), "--output", "-", "--format", "text",
+        ])
+        assert result.exit_code == 0, result.output
+        assert "ACTIVE CLAIMS" in result.output
+        assert "agent-x" in result.output

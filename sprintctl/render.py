@@ -16,12 +16,14 @@ def render_sprint_doc(
     tracks: list[dict],
     items_by_track: dict[int, list[dict]],
     rendered_at: str,
+    refs_by_item: dict[int, list[dict]] | None = None,
 ) -> str:
     # Parse as naive UTC — SQLite timestamps are also naive UTC strings
     now = datetime.strptime(rendered_at, "%Y-%m-%dT%H:%M:%SZ")
     all_items = [it for items in items_by_track.values() for it in items]
     active_count = sum(1 for it in all_items if it["status"] == "active")
     risk = _calc.sprint_overrun_risk(sprint, active_count, now)
+    refs_by_item = refs_by_item or {}
 
     lines: list[str] = []
 
@@ -35,6 +37,13 @@ def render_sprint_doc(
     if sprint.get("start_date") and sprint.get("end_date"):
         lines.append(f"Dates:  {sprint['start_date']} to {sprint['end_date']}")
     lines.append(f"ID:     {sprint['id']}")
+    if all_items:
+        counts = _calc.track_health(all_items)["counts"]
+        lines.append(
+            f"Items:  {len(all_items)} total — "
+            f"{counts['done']} done, {counts['active']} active, "
+            f"{counts['pending']} pending, {counts['blocked']} blocked"
+        )
     lines.append("")
 
     for track in tracks:
@@ -59,6 +68,9 @@ def render_sprint_doc(
                     f"  [{item['status']:8}] #{item['id']}  {item['title']}  "
                     f"(assignee: {assignee}){stale_tag}"
                 )
+                for ref in refs_by_item.get(item["id"], []):
+                    label = f" {ref['label']}" if ref["label"] else ""
+                    lines.append(f"    ref [{ref['ref_type']}]{label}: {ref['url']}")
         else:
             lines.append("  (no items)")
         lines.append("")

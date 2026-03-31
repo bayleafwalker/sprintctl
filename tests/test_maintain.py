@@ -324,9 +324,27 @@ class TestMigration2:
         }
         assert "claim" in tables
 
-    def test_schema_version_is_6(self, conn):
+    def test_schema_version_is_8(self, conn):
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 6
+        assert version == 8
+
+    def test_ref_table_exists_after_init(self, conn):
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert "ref" in tables
+
+    def test_dep_table_exists_after_init(self, conn):
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert "dep" in tables
 
 
 # ---------------------------------------------------------------------------

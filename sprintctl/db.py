@@ -137,7 +137,32 @@ _MIGRATIONS: list[str] = [
         ON claim(claim_token)
         WHERE claim_token IS NOT NULL
     """,
+    # Migration 7: external refs attached to work items.
+    """
+    CREATE TABLE IF NOT EXISTS ref (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        work_item_id INTEGER NOT NULL REFERENCES work_item(id) ON DELETE CASCADE,
+        ref_type     TEXT    NOT NULL DEFAULT 'other'
+                             CHECK (ref_type IN ('pr', 'issue', 'doc', 'other')),
+        url          TEXT    NOT NULL,
+        label        TEXT    NOT NULL DEFAULT '',
+        created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+    )
+    """,
+    # Migration 8: work item dependencies.
+    # item_id must complete (done) before blocked_item_id can be started.
+    """
+    CREATE TABLE IF NOT EXISTS dep (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id         INTEGER NOT NULL REFERENCES work_item(id) ON DELETE CASCADE,
+        blocked_item_id INTEGER NOT NULL REFERENCES work_item(id) ON DELETE CASCADE,
+        created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        UNIQUE (item_id, blocked_item_id)
+    )
+    """,
 ]
+
+REF_TYPES = ("pr", "issue", "doc", "other")
 
 
 def get_db_path() -> Path:
@@ -253,6 +278,14 @@ def _migration_6(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_7(conn: sqlite3.Connection) -> None:
+    _execute_statements(conn, _MIGRATIONS[6])
+
+
+def _migration_8(conn: sqlite3.Connection) -> None:
+    _execute_statements(conn, _MIGRATIONS[7])
+
+
 def _run_migration(
     conn: sqlite3.Connection,
     target_version: int,
@@ -289,6 +322,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     _run_migration(conn, 4, _migration_4)
     _run_migration(conn, 5, _migration_5, foreign_keys_off=True)
     _run_migration(conn, 6, _migration_6)
+    _run_migration(conn, 7, _migration_7)
+    _run_migration(conn, 8, _migration_8)
 
 
 # --- Sprint ---
@@ -361,6 +396,11 @@ def list_tracks(conn: sqlite3.Connection, sprint_id: int) -> list[dict]:
         "SELECT * FROM track WHERE sprint_id = ? ORDER BY created_at ASC", (sprint_id,)
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_track(conn: sqlite3.Connection, track_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM track WHERE id = ?", (track_id,)).fetchone()
+    return dict(row) if row else None
 
 
 # --- WorkItem ---
@@ -537,6 +577,24 @@ def list_events_limited(conn: sqlite3.Connection, sprint_id: int, limit: int = 5
         (sprint_id, limit),
     ).fetchall()
     return [dict(r) for r in reversed(rows)]
+
+
+KNOWLEDGE_EVENT_TYPES = ("pattern-noted", "lesson-learned", "risk-accepted")
+
+
+def list_knowledge_candidates(conn: sqlite3.Connection, sprint_id: int) -> list[dict]:
+    """Return events of knowledge types for a sprint, with payload deserialized."""
+    placeholders = ",".join("?" for _ in KNOWLEDGE_EVENT_TYPES)
+    rows = conn.execute(
+        f"SELECT * FROM event WHERE sprint_id = ? AND event_type IN ({placeholders}) ORDER BY created_at ASC",
+        (sprint_id, *KNOWLEDGE_EVENT_TYPES),
+    ).fetchall()
+    result = []
+    for r in rows:
+        row = dict(r)
+        row["payload"] = json.loads(row.get("payload") or "{}")
+        result.append(row)
+    return result
 
 
 # --- Claim ---
@@ -1187,3 +1245,202 @@ def _get_active_coordinate_claim_row(
         """,
         (work_item_id,),
     ).fetchone()
+
+
+# --- Ref ---
+
+def add_ref(
+    conn: sqlite3.Connection,
+    work_item_id: int,
+    ref_type: str,
+    url: str,
+    label: str = "",
+) -> int:
+    if ref_type not in REF_TYPES:
+        raise ValueError(f"Invalid ref_type '{ref_type}'. Must be one of: {', '.join(REF_TYPES)}")
+    item = get_work_item(conn, work_item_id)
+    if item is None:
+        raise ValueError(f"Work item #{work_item_id} not found")
+    cur = conn.execute(
+        "INSERT INTO ref (work_item_id, ref_type, url, label) VALUES (?, ?, ?, ?)",
+        (work_item_id, ref_type, url, label),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def list_refs(conn: sqlite3.Connection, work_item_id: int) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM ref WHERE work_item_id = ? ORDER BY created_at ASC",
+        (work_item_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def remove_ref(conn: sqlite3.Connection, ref_id: int, work_item_id: int) -> None:
+    row = conn.execute(
+        "SELECT id FROM ref WHERE id = ? AND work_item_id = ?", (ref_id, work_item_id)
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"Ref #{ref_id} not found on item #{work_item_id}")
+    conn.execute("DELETE FROM ref WHERE id = ?", (ref_id,))
+    conn.commit()
+
+
+# --- Dep ---
+
+def add_dep(
+    conn: sqlite3.Connection,
+    item_id: int,
+    blocked_item_id: int,
+) -> int:
+    """Record that item_id must be done before blocked_item_id can start.
+
+    Both items must exist. An item cannot depend on itself.
+    Duplicate deps are ignored (returns existing dep id).
+    """
+    if item_id == blocked_item_id:
+        raise ValueError("An item cannot depend on itself")
+    if get_work_item(conn, item_id) is None:
+        raise ValueError(f"Work item #{item_id} not found")
+    if get_work_item(conn, blocked_item_id) is None:
+        raise ValueError(f"Work item #{blocked_item_id} not found")
+    conn.execute(
+        "INSERT OR IGNORE INTO dep (item_id, blocked_item_id) VALUES (?, ?)",
+        (item_id, blocked_item_id),
+    )
+    row = conn.execute(
+        "SELECT id FROM dep WHERE item_id = ? AND blocked_item_id = ?",
+        (item_id, blocked_item_id),
+    ).fetchone()
+    conn.commit()
+    return row[0]
+
+
+def list_deps_blocking(conn: sqlite3.Connection, item_id: int) -> list[dict]:
+    """Return deps where item_id is blocked — i.e. items that must complete first."""
+    rows = conn.execute(
+        """
+        SELECT d.id, d.item_id, d.blocked_item_id, d.created_at,
+               wi.title AS blocker_title, wi.status AS blocker_status
+        FROM dep d
+        JOIN work_item wi ON d.item_id = wi.id
+        WHERE d.blocked_item_id = ?
+        ORDER BY d.created_at ASC
+        """,
+        (item_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_deps_blocked_by(conn: sqlite3.Connection, item_id: int) -> list[dict]:
+    """Return deps where item_id is the blocker — i.e. items waiting on it."""
+    rows = conn.execute(
+        """
+        SELECT d.id, d.item_id, d.blocked_item_id, d.created_at,
+               wi.title AS waiting_title, wi.status AS waiting_status
+        FROM dep d
+        JOIN work_item wi ON d.blocked_item_id = wi.id
+        WHERE d.item_id = ?
+        ORDER BY d.created_at ASC
+        """,
+        (item_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def remove_dep(conn: sqlite3.Connection, dep_id: int, item_id: int) -> None:
+    """Remove a dep. item_id must match either item_id or blocked_item_id."""
+    row = conn.execute(
+        "SELECT id FROM dep WHERE id = ? AND (item_id = ? OR blocked_item_id = ?)",
+        (dep_id, item_id, item_id),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"Dep #{dep_id} not found for item #{item_id}")
+    conn.execute("DELETE FROM dep WHERE id = ?", (dep_id,))
+    conn.commit()
+
+
+def get_ready_items(
+    conn: sqlite3.Connection,
+    sprint_id: int,
+) -> list[dict]:
+    """Return pending items in the sprint that have no unresolved blocking deps.
+
+    An item is ready if all its blockers (items that must complete first) are done.
+    Items with no deps at all are always ready.
+    """
+    items = list_work_items(conn, sprint_id=sprint_id, status="pending")
+    ready = []
+    for item in items:
+        blockers = list_deps_blocking(conn, item["id"])
+        unresolved = [b for b in blockers if b["blocker_status"] != "done"]
+        if not unresolved:
+            ready.append({**item, "blockers_resolved": len(blockers), "unresolved_blockers": 0})
+        else:
+            # Include items with unresolved blockers so caller can inspect
+            item_with_deps = {
+                **item,
+                "blockers_resolved": len(blockers) - len(unresolved),
+                "unresolved_blockers": len(unresolved),
+                "unresolved_blocker_ids": [b["item_id"] for b in unresolved],
+            }
+            _ = item_with_deps  # not included in ready list
+    return ready
+
+
+# --- Backlog seeding ---
+
+def backlog_seed_from_candidates(
+    conn: sqlite3.Connection,
+    source_sprint_id: int,
+    target_sprint_id: int,
+    actor: str = "system",
+) -> list[dict]:
+    """Create backlog items in target_sprint from knowledge candidates in source_sprint.
+
+    Returns only the newly created items. Candidates already seeded (tracked via
+    backlog-seeded events in target_sprint) are skipped — making the call idempotent.
+    """
+    if get_sprint(conn, source_sprint_id) is None:
+        raise ValueError(f"Source sprint #{source_sprint_id} not found")
+    if get_sprint(conn, target_sprint_id) is None:
+        raise ValueError(f"Target sprint #{target_sprint_id} not found")
+
+    candidates = list_knowledge_candidates(conn, source_sprint_id)
+    if not candidates:
+        return []
+
+    # Find already-seeded source event IDs to avoid duplicates.
+    existing_events = list_events(conn, target_sprint_id)
+    already_seeded: set[int] = set()
+    for ev in existing_events:
+        if ev["event_type"] == "backlog-seeded":
+            p = json.loads(ev.get("payload") or "{}")
+            if "source_event_id" in p:
+                already_seeded.add(p["source_event_id"])
+
+    track_id = get_or_create_track(conn, target_sprint_id, "knowledge")
+    seeded = []
+    for candidate in candidates:
+        if candidate["id"] in already_seeded:
+            continue
+        summary = candidate["payload"].get("summary", f"Knowledge item from event #{candidate['id']}")
+        title = f"[knowledge] {summary}"
+        item_id = create_work_item(conn, target_sprint_id, track_id, title)
+        create_event(
+            conn,
+            target_sprint_id,
+            actor=actor,
+            event_type="backlog-seeded",
+            source_type="system",
+            work_item_id=item_id,
+            payload={
+                "source_sprint_id": source_sprint_id,
+                "source_item_id": candidate.get("work_item_id"),
+                "source_event_id": candidate["id"],
+                "source_event_type": candidate["event_type"],
+            },
+        )
+        seeded.append(get_work_item(conn, item_id))
+    return seeded

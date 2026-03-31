@@ -261,6 +261,33 @@ def sprint_kind_cmd(obj, sprint_id, kind) -> None:
     click.echo(f"Sprint #{sprint_id} kind set to: {kind}")
 
 
+@sprint.command("backlog-seed")
+@click.option("--from-sprint-id", "source_sprint_id", type=int, required=True,
+              help="Sprint ID to read knowledge candidates from")
+@click.option("--to-sprint-id", "target_sprint_id", type=int, required=True,
+              help="Sprint ID (backlog) to seed items into")
+@click.option("--actor", default="system", help="Actor name (default: system)")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output seeded items as JSON")
+@click.pass_obj
+def sprint_backlog_seed(obj, source_sprint_id, target_sprint_id, actor, as_json) -> None:
+    """Seed backlog items from knowledge candidate events in another sprint."""
+    conn = _get_conn(obj)
+    try:
+        seeded = _db.backlog_seed_from_candidates(conn, source_sprint_id, target_sprint_id, actor=actor)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    if as_json:
+        click.echo(json.dumps(seeded, indent=2))
+        return
+    if not seeded:
+        click.echo(f"No new items seeded (0 candidates or all already seeded).")
+        return
+    click.echo(f"Seeded {len(seeded)} item(s) into sprint #{target_sprint_id}:")
+    for it in seeded:
+        click.echo(f"  #{it['id']}  {it['title']}")
+
+
 # ---------------------------------------------------------------------------
 # item
 # ---------------------------------------------------------------------------
@@ -302,9 +329,18 @@ def item_show(obj, item_id, as_json) -> None:
     events = _db.list_events(conn, it["sprint_id"])
     item_events = [e for e in events if e.get("work_item_id") == item_id]
     claims = _db.list_claims(conn, item_id, active_only=True)
+    refs = _db.list_refs(conn, item_id)
+    blocking = _db.list_deps_blocking(conn, item_id)
+    blocked_by_me = _db.list_deps_blocked_by(conn, item_id)
 
     if as_json:
-        click.echo(json.dumps({"item": dict(it), "events": item_events, "active_claims": claims}, indent=2))
+        click.echo(json.dumps({
+            "item": dict(it),
+            "events": item_events,
+            "active_claims": claims,
+            "refs": refs,
+            "deps": {"blocked_by": blocking, "blocks": blocked_by_me},
+        }, indent=2))
         return
 
     click.echo(f"#{it['id']}  [{it['status']}]  {it['title']}")
@@ -315,6 +351,21 @@ def item_show(obj, item_id, as_json) -> None:
     assignee = it.get("assignee") or "-"
     click.echo(f"  Assignee: {assignee}")
     click.echo(f"  Updated:  {it['updated_at']}")
+
+    if refs:
+        click.echo("\nRefs:")
+        for r in refs:
+            label = f"  {r['label']}" if r["label"] else ""
+            click.echo(f"  #{r['id']}  [{r['ref_type']}]  {r['url']}{label}")
+
+    if blocking:
+        click.echo("\nBlocked by:")
+        for d in blocking:
+            click.echo(f"  #{d['item_id']}  [{d['blocker_status']}]  {d['blocker_title']}")
+    if blocked_by_me:
+        click.echo("\nBlocks:")
+        for d in blocked_by_me:
+            click.echo(f"  #{d['blocked_item_id']}  [{d['waiting_status']}]  {d['waiting_title']}")
 
     if claims:
         click.echo("\nActive claims:")
@@ -385,8 +436,17 @@ def item_list(obj, sprint_id, track_name, status, as_json) -> None:
 @click.option("--detail", default=None, help="Extended detail")
 @click.option("--tags", default=None, help="Comma-separated tags")
 @click.option("--actor", default="actor", help="Actor name (default: actor)")
+@click.option("--evidence-item-id", type=int, default=None, help="Work item ID this knowledge came from")
+@click.option("--evidence-event-id", type=int, default=None, help="Event ID this knowledge came from")
+@click.option("--git-branch", default=None, help="Git branch name at time of note")
+@click.option("--git-sha", default=None, help="Git commit SHA at time of note")
+@click.option("--git-worktree", default=None, help="Git worktree path at time of note")
 @click.pass_obj
-def item_note(obj, item_id, note_type, summary, detail, tags, actor) -> None:
+def item_note(
+    obj, item_id, note_type, summary, detail, tags, actor,
+    evidence_item_id, evidence_event_id,
+    git_branch, git_sha, git_worktree,
+) -> None:
     """Record a structured note event on a work item."""
     conn = _get_conn(obj)
     it = _db.get_work_item(conn, item_id)
@@ -398,6 +458,16 @@ def item_note(obj, item_id, note_type, summary, detail, tags, actor) -> None:
         payload["detail"] = detail
     if tags:
         payload["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
+    if evidence_item_id is not None:
+        payload["evidence_item_id"] = evidence_item_id
+    if evidence_event_id is not None:
+        payload["evidence_event_id"] = evidence_event_id
+    if git_branch is not None:
+        payload["git_branch"] = git_branch
+    if git_sha is not None:
+        payload["git_sha"] = git_sha
+    if git_worktree is not None:
+        payload["git_worktree"] = git_worktree
     eid = _db.create_event(
         conn,
         it["sprint_id"],
@@ -444,6 +514,141 @@ def item_status(obj, item_id, new_status, actor, claim_id, claim_token) -> None:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
     click.echo(f"Item #{item_id} status: {current} -> {new_status}")
+
+
+# ---------------------------------------------------------------------------
+# item ref
+# ---------------------------------------------------------------------------
+
+@item.group("ref")
+def item_ref() -> None:
+    """Manage external references on a work item."""
+
+
+@item_ref.command("add")
+@click.option("--id", "item_id", type=int, required=True, help="Work item ID")
+@click.option(
+    "--type", "ref_type",
+    required=True,
+    type=click.Choice(["pr", "issue", "doc", "other"]),
+    help="Reference type",
+)
+@click.option("--url", required=True, help="URL of the external reference")
+@click.option("--label", default="", help="Short human-readable label")
+@click.pass_obj
+def item_ref_add(obj, item_id, ref_type, url, label) -> None:
+    """Attach an external reference to a work item."""
+    conn = _get_conn(obj)
+    try:
+        ref_id = _db.add_ref(conn, item_id, ref_type, url, label)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"Ref #{ref_id} added to item #{item_id}: [{ref_type}] {url}")
+
+
+@item_ref.command("list")
+@click.option("--id", "item_id", type=int, required=True, help="Work item ID")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.pass_obj
+def item_ref_list(obj, item_id, as_json) -> None:
+    """List external references on a work item."""
+    conn = _get_conn(obj)
+    if _db.get_work_item(conn, item_id) is None:
+        click.echo(f"Item #{item_id} not found.", err=True)
+        sys.exit(1)
+    refs = _db.list_refs(conn, item_id)
+    if as_json:
+        click.echo(json.dumps(refs, indent=2))
+        return
+    if not refs:
+        click.echo(f"No refs on item #{item_id}.")
+        return
+    for r in refs:
+        label = f"  {r['label']}" if r["label"] else ""
+        click.echo(f"  #{r['id']}  [{r['ref_type']}]  {r['url']}{label}")
+
+
+@item_ref.command("remove")
+@click.option("--id", "item_id", type=int, required=True, help="Work item ID")
+@click.option("--ref-id", type=int, required=True, help="Ref ID to remove")
+@click.pass_obj
+def item_ref_remove(obj, item_id, ref_id) -> None:
+    """Remove an external reference from a work item."""
+    conn = _get_conn(obj)
+    try:
+        _db.remove_ref(conn, ref_id, item_id)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"Ref #{ref_id} removed from item #{item_id}.")
+
+
+# ---------------------------------------------------------------------------
+# item dep
+# ---------------------------------------------------------------------------
+
+@item.group("dep")
+def item_dep() -> None:
+    """Manage dependencies between work items."""
+
+
+@item_dep.command("add")
+@click.option("--id", "item_id", type=int, required=True, help="Blocker item ID (must complete first)")
+@click.option("--blocks-item-id", type=int, required=True, help="ID of the item being blocked")
+@click.pass_obj
+def item_dep_add(obj, item_id, blocks_item_id) -> None:
+    """Record that item --id must complete before --blocks-item-id can start."""
+    conn = _get_conn(obj)
+    try:
+        dep_id = _db.add_dep(conn, item_id, blocks_item_id)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"Dep #{dep_id}: item #{item_id} blocks item #{blocks_item_id}")
+
+
+@item_dep.command("list")
+@click.option("--id", "item_id", type=int, required=True, help="Work item ID")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.pass_obj
+def item_dep_list(obj, item_id, as_json) -> None:
+    """List dependencies for a work item (what blocks it and what it blocks)."""
+    conn = _get_conn(obj)
+    if _db.get_work_item(conn, item_id) is None:
+        click.echo(f"Item #{item_id} not found.", err=True)
+        sys.exit(1)
+    blocking = _db.list_deps_blocking(conn, item_id)
+    blocked_by_me = _db.list_deps_blocked_by(conn, item_id)
+    if as_json:
+        click.echo(json.dumps({"blocked_by": blocking, "blocks": blocked_by_me}, indent=2))
+        return
+    if not blocking and not blocked_by_me:
+        click.echo(f"No dependencies on item #{item_id}.")
+        return
+    if blocking:
+        click.echo(f"Item #{item_id} is blocked by:")
+        for d in blocking:
+            click.echo(f"  #{d['item_id']}  [{d['blocker_status']}]  {d['blocker_title']}  (dep #{d['id']})")
+    if blocked_by_me:
+        click.echo(f"Item #{item_id} blocks:")
+        for d in blocked_by_me:
+            click.echo(f"  #{d['blocked_item_id']}  [{d['waiting_status']}]  {d['waiting_title']}  (dep #{d['id']})")
+
+
+@item_dep.command("remove")
+@click.option("--id", "item_id", type=int, required=True, help="Work item ID (either side of the dep)")
+@click.option("--dep-id", type=int, required=True, help="Dep ID to remove")
+@click.pass_obj
+def item_dep_remove(obj, item_id, dep_id) -> None:
+    """Remove a dependency."""
+    conn = _get_conn(obj)
+    try:
+        _db.remove_dep(conn, dep_id, item_id)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"Dep #{dep_id} removed.")
 
 
 # ---------------------------------------------------------------------------
@@ -496,15 +701,40 @@ def event_add(obj, sprint_id, event_type, actor, work_item_id, source_type, payl
 @click.option("--sprint-id", type=int, required=True, help="Sprint ID")
 @click.option("--item-id", "work_item_id", type=int, default=None, help="Filter by work item ID")
 @click.option("--type", "event_type", default=None, help="Filter by event type")
+@click.option("--knowledge", "knowledge_only", is_flag=True, default=False,
+              help="Show only knowledge candidate events (pattern-noted, lesson-learned, risk-accepted)")
 @click.option("--limit", default=None, type=int, help="Maximum number of events to return (most recent)")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
-def event_list(obj, sprint_id, work_item_id, event_type, limit, as_json) -> None:
+def event_list(obj, sprint_id, work_item_id, event_type, knowledge_only, limit, as_json) -> None:
     """List events for a sprint."""
+    if knowledge_only and event_type is not None:
+        click.echo("Error: --knowledge and --type are mutually exclusive.", err=True)
+        sys.exit(1)
     conn = _get_conn(obj)
     if _db.get_sprint(conn, sprint_id) is None:
         click.echo(f"Sprint #{sprint_id} not found.", err=True)
         sys.exit(1)
+    if knowledge_only:
+        events = _db.list_knowledge_candidates(conn, sprint_id)
+        # list_knowledge_candidates already deserializes payload; re-serialize for JSON output
+        if work_item_id is not None:
+            events = [e for e in events if e.get("work_item_id") == work_item_id]
+        if limit is not None:
+            events = events[-limit:]
+        if as_json:
+            click.echo(json.dumps(events, indent=2))
+            return
+        if not events:
+            click.echo("No events found.")
+            return
+        for e in events:
+            item_label = f"  item #{e['work_item_id']}" if e.get("work_item_id") else ""
+            click.echo(
+                f"#{e['id']}  [{e['event_type']}]  {e['actor']}  "
+                f"{e['created_at']}{item_label}"
+            )
+        return
     events = _db.list_events(conn, sprint_id)
     if work_item_id is not None:
         events = [e for e in events if e.get("work_item_id") == work_item_id]
@@ -525,10 +755,6 @@ def event_list(obj, sprint_id, work_item_id, event_type, limit, as_json) -> None
             f"{e['created_at']}{item_label}"
         )
 
-
-# ---------------------------------------------------------------------------
-# render
-# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # maintain
@@ -716,6 +942,11 @@ def export_cmd(obj, sprint_id, output_path) -> None:
     tracks = _db.list_tracks(conn, sprint_id)
     items = _db.list_work_items(conn, sprint_id=sprint_id)
     events = _db.list_events(conn, sprint_id)
+    refs_by_item: dict[int, list[dict]] = {}
+    for it in items:
+        item_refs = _db.list_refs(conn, it["id"])
+        if item_refs:
+            refs_by_item[it["id"]] = item_refs
     envelope = {
         "sprintctl_version": __version__,
         "exported_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -723,6 +954,7 @@ def export_cmd(obj, sprint_id, output_path) -> None:
         "tracks": [dict(t) for t in tracks],
         "items": [dict(it) for it in items],
         "events": [dict(e) for e in events],
+        "refs": refs_by_item,
     }
     dest = output_path or f"sprint-{sprint_id}.json"
     with open(dest, "w") as fh:
@@ -813,6 +1045,15 @@ def import_cmd(obj, input_path) -> None:
             work_item_id=new_item_id,
             payload=payload,
         )
+
+    # Re-insert refs, remapping old item IDs to new item IDs
+    refs_by_item = envelope.get("refs", {})
+    for old_item_id_str, item_refs in refs_by_item.items():
+        new_item_id = item_id_map.get(int(old_item_id_str))
+        if new_item_id is None:
+            continue
+        for r in item_refs:
+            _db.add_ref(conn, new_item_id, r["ref_type"], r["url"], r.get("label", ""))
 
     conn.commit()
     click.echo(
@@ -1254,13 +1495,80 @@ def claim_resume(obj, instance_id, runtime_session_id, hostname, pid, as_json) -
     click.echo("Use 'claim handoff --allow-legacy-adopt' if the token is lost and the claim has no secret.")
 
 
+def _render_handoff_text(bundle: dict) -> str:
+    """Render a handoff bundle as a human-readable text summary."""
+    s = bundle["sprint"]
+    items = bundle["items"]
+    claims = bundle["active_claims"]
+    events = bundle["events"]
+
+    lines: list[str] = []
+    lines.append(f"=== HANDOFF: {s['name']}  [{s['status']}] ===")
+    lines.append(f"Generated: {bundle['generated_at']}")
+    if s.get("goal"):
+        lines.append(f"Goal: {s['goal']}")
+    if s.get("start_date") and s.get("end_date"):
+        lines.append(f"Dates: {s['start_date']} to {s['end_date']}")
+    lines.append("")
+
+    by_status: dict[str, list] = {"active": [], "pending": [], "blocked": [], "done": []}
+    for it in items:
+        by_status.setdefault(it["status"], []).append(it)
+
+    for status in ("active", "pending", "blocked", "done"):
+        group = by_status[status]
+        if not group:
+            continue
+        lines.append(f"{status.upper()} ({len(group)}):")
+        for it in group:
+            assignee = it.get("assignee") or "-"
+            lines.append(f"  #{it['id']}  {it['title']}  [track: {it['track_name']}]  assignee: {assignee}")
+        lines.append("")
+
+    if claims:
+        lines.append(f"ACTIVE CLAIMS ({len(claims)}):")
+        for c in claims:
+            excl = "exclusive" if c["exclusive"] else "shared"
+            lines.append(
+                f"  #{c['claim_id']}  item #{c['work_item_id']} ({c.get('item_title', '')})  "
+                f"{c['actor']}  [{c['claim_type']}]  {excl}  expires={c['expires_at']}"
+            )
+        lines.append("")
+        lines.append("NOTE: Incoming agent must claim handoff or release each active claim.")
+        lines.append("")
+
+    if events:
+        lines.append(f"RECENT EVENTS ({len(events)}):")
+        for e in events[-10:]:
+            item_label = f"  item #{e['work_item_id']}" if e.get("work_item_id") else ""
+            lines.append(f"  [{e['event_type']}]  {e['actor']}  {e['created_at']}{item_label}")
+        lines.append("")
+
+    lines.append("SHUTDOWN PROTOCOL:")
+    for step in bundle.get("agent_shutdown_protocol", {}).get("required_before_termination", []):
+        lines.append(f"  - {step}")
+
+    return "\n".join(lines)
+
+
 @cli.command("handoff")
 @click.option("--sprint-id", type=int, default=None, help="Sprint ID (defaults to active)")
-@click.option("--output", "output_path", default=None, help="Output file path (default: handoff-N.json)")
+@click.option("--output", "output_path", default=None, help="Output file path (default: handoff-N.json or handoff-N.txt)")
 @click.option("--events", "events_limit", type=int, default=50, help="Recent events to include (default: 50)")
+@click.option(
+    "--format", "fmt",
+    default="json",
+    type=click.Choice(["json", "text"]),
+    help="Output format: json (default) or text (human-readable summary)",
+)
 @click.pass_obj
-def handoff_cmd(obj, sprint_id, output_path, events_limit) -> None:
-    """Produce a JSON handoff bundle: sprint, items, recent events, active claims."""
+def handoff_cmd(obj, sprint_id, output_path, events_limit, fmt) -> None:
+    """Produce a handoff bundle: sprint, items, recent events, active claims.
+
+    Use --format text for a human-readable summary suitable for LLM context injection.
+    Use --format json (default) for a machine-parseable bundle.
+    Pass --output - to write to stdout regardless of format.
+    """
     conn = _get_conn(obj)
     if sprint_id is not None:
         s = _db.get_sprint(conn, sprint_id)
@@ -1298,12 +1606,22 @@ def handoff_cmd(obj, sprint_id, output_path, events_limit) -> None:
             ),
         },
     }
-    dest = output_path or f"handoff-{sid}.json"
+
+    if fmt == "text":
+        content = _render_handoff_text(bundle)
+        ext = ".txt"
+    else:
+        content = json.dumps(bundle, indent=2)
+        ext = ".json"
+
+    dest = output_path or f"handoff-{sid}{ext}"
     if dest == "-":
-        click.echo(json.dumps(bundle, indent=2))
+        click.echo(content)
         return
     with open(dest, "w") as fh:
-        json.dump(bundle, fh, indent=2)
+        fh.write(content)
+        if not content.endswith("\n"):
+            fh.write("\n")
     click.echo(f"Handoff bundle for sprint #{sid} written to {dest}")
 
 
@@ -1417,10 +1735,301 @@ def agent_protocol_cmd(as_json) -> None:
         click.echo(f"  {var}: {desc}")
 
 
+@cli.command("next-work")
+@click.option("--sprint-id", type=int, default=None, help="Sprint ID (defaults to active)")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.pass_obj
+def next_work_cmd(obj, sprint_id, as_json) -> None:
+    """Suggest pending items that are ready to start (no unresolved blocking deps).
+
+    Items are listed in creation order. Items blocked by incomplete predecessors
+    are excluded from the suggestion.
+    """
+    conn = _get_conn(obj)
+    if sprint_id is not None:
+        s = _db.get_sprint(conn, sprint_id)
+        if s is None:
+            click.echo(f"Sprint #{sprint_id} not found.", err=True)
+            sys.exit(1)
+    else:
+        s = _db.get_active_sprint(conn)
+        if s is None:
+            click.echo("No active sprint found. Use --sprint-id to specify one.", err=True)
+            sys.exit(1)
+    ready = _db.get_ready_items(conn, s["id"])
+    if as_json:
+        click.echo(json.dumps(ready, indent=2))
+        return
+    if not ready:
+        click.echo(f"No pending items ready to start in sprint #{s['id']} ({s['name']}).")
+        return
+    click.echo(f"Ready to start in sprint #{s['id']} ({s['name']}):")
+    for it in ready:
+        assignee = it.get("assignee") or "-"
+        click.echo(
+            f"  #{it['id']}  {it['title']}  [track: {it['track_name']}]  assignee: {assignee}"
+        )
+
+
+@cli.command("usage")
+@click.option(
+    "--context",
+    "as_context",
+    is_flag=True,
+    default=False,
+    help="Emit current sprint context (active claims, stale/blocked items, ready work, recent decisions)",
+)
+@click.option("--sprint-id", type=int, default=None, help="Sprint ID for --context (defaults to active)")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output --context as JSON")
+@click.pass_obj
+def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
+    """Print a compact command reference, or current sprint context with --context."""
+    if as_context:
+        conn = _get_conn(obj)
+        s = _resolve_sprint(conn, sprint_id)
+        now = datetime.now(timezone.utc)
+
+        # active claims
+        active_claims = _db.list_claims_by_sprint(conn, s["id"], active_only=True)
+
+        # stale items (use env threshold)
+        report = _maintain.check(conn, s["id"], now)
+        stale_items = report["stale_items"]
+
+        # all items — derive blocked and pending counts
+        all_items = _db.list_work_items(conn, sprint_id=s["id"])
+        blocked_items = [it for it in all_items if it["status"] == "blocked"]
+        active_items = [it for it in all_items if it["status"] == "active"]
+        done_items = [it for it in all_items if it["status"] == "done"]
+        pending_items = [it for it in all_items if it["status"] == "pending"]
+
+        # ready items (pending with no unresolved blockers)
+        ready_items = _db.get_ready_items(conn, s["id"])
+
+        # recent knowledge candidates (last 5)
+        knowledge = _db.list_knowledge_candidates(conn, s["id"])
+        recent_decisions = knowledge[-5:] if len(knowledge) > 5 else knowledge
+
+        if as_json:
+            out = {
+                "sprint": {
+                    "id": s["id"],
+                    "name": s["name"],
+                    "goal": s["goal"],
+                    "status": s["status"],
+                    "start_date": s.get("start_date"),
+                    "end_date": s.get("end_date"),
+                },
+                "summary": {
+                    "total": len(all_items),
+                    "done": len(done_items),
+                    "active": len(active_items),
+                    "pending": len(pending_items),
+                    "blocked": len(blocked_items),
+                    "stale": len(stale_items),
+                    "ready": len(ready_items),
+                    "active_claims": len(active_claims),
+                },
+                "active_claims": active_claims,
+                "stale_items": [
+                    {"id": it["id"], "title": it["title"], "status": it["status"],
+                     "track": it["track_name"], "idle_seconds": it["idle_seconds"]}
+                    for it in stale_items
+                ],
+                "blocked_items": [
+                    {"id": it["id"], "title": it["title"], "track": it["track_name"]}
+                    for it in blocked_items
+                ],
+                "ready_items": [
+                    {"id": it["id"], "title": it["title"], "track": it["track_name"]}
+                    for it in ready_items
+                ],
+                "recent_decisions": recent_decisions,
+            }
+            click.echo(json.dumps(out, indent=2))
+            return
+
+        # text output
+        risk = report["risk"]
+        risk_tag = ""
+        if risk["overdue"]:
+            risk_tag = "  [OVERDUE]"
+        elif risk["at_risk"]:
+            risk_tag = "  [AT RISK]"
+
+        click.echo(f"Sprint #{s['id']}: {s['name']}{risk_tag}")
+        click.echo(f"Goal: {s['goal']}")
+        if s.get("start_date") and s.get("end_date"):
+            click.echo(f"Dates: {s['start_date']} → {s['end_date']}")
+        click.echo(
+            f"Items: {len(all_items)} total — "
+            f"{len(done_items)} done, {len(active_items)} active, "
+            f"{len(pending_items)} pending, {len(blocked_items)} blocked"
+        )
+        click.echo("")
+
+        click.echo(f"Active claims ({len(active_claims)}):")
+        if active_claims:
+            for cl in active_claims:
+                item_title = cl.get("item_title") or f"item #{cl['item_id']}"
+                actor = cl.get("actor") or "-"
+                expires = cl.get("expires_at") or "no expiry"
+                click.echo(f"  claim #{cl['id']}  [{actor}]  {item_title}  expires: {expires}")
+        else:
+            click.echo("  (none)")
+        click.echo("")
+
+        click.echo(f"Stale items ({len(stale_items)}):")
+        if stale_items:
+            for it in stale_items:
+                h, rem = divmod(it["idle_seconds"], 3600)
+                m = rem // 60
+                click.echo(f"  #{it['id']}  [{it['status']:8}]  {it['title']}  — idle {h}h{m:02d}m  (track: {it['track_name']})")
+        else:
+            click.echo("  (none)")
+        click.echo("")
+
+        click.echo(f"Blocked items ({len(blocked_items)}):")
+        if blocked_items:
+            for it in blocked_items:
+                click.echo(f"  #{it['id']}  {it['title']}  (track: {it['track_name']})")
+        else:
+            click.echo("  (none)")
+        click.echo("")
+
+        click.echo(f"Ready to start ({len(ready_items)}):")
+        if ready_items:
+            for it in ready_items[:5]:
+                click.echo(f"  #{it['id']}  {it['title']}  (track: {it['track_name']})")
+            if len(ready_items) > 5:
+                click.echo(f"  … {len(ready_items) - 5} more")
+        else:
+            click.echo("  (none)")
+        click.echo("")
+
+        click.echo(f"Recent decisions ({len(recent_decisions)}):")
+        if recent_decisions:
+            for ev in recent_decisions:
+                payload = ev.get("payload") or {}
+                summary = payload.get("summary") or ev.get("event_type", "")
+                click.echo(f"  [{ev['event_type']}]  {summary}")
+        else:
+            click.echo("  (none)")
+        return
+
+    lines = [
+        "sprintctl — agent-centric sprint coordination CLI",
+        "",
+        "SPRINT",
+        "  sprint create  --name NAME [--goal GOAL] [--start YYYY-MM-DD] [--end YYYY-MM-DD]",
+        "                 [--status planned|active|closed] [--kind active_sprint|backlog|archive]",
+        "  sprint show    [--id ID] [--detail] [--json]",
+        "  sprint status  --id ID --status planned|active|closed",
+        "  sprint list    [--include-backlog] [--include-archive] [--json]",
+        "  sprint kind    --id ID --kind active_sprint|backlog|archive",
+        "",
+        "ITEM",
+        "  item add       --sprint-id ID --track NAME --title TITLE [--assignee NAME]",
+        "  item show      --id ID [--json]",
+        "  item list      [--sprint-id ID] [--track NAME] [--status STATUS] [--json]",
+        "  item note      --id ID --type TYPE --summary TEXT [--detail TEXT] [--tags T1,T2]",
+        "                 [--actor NAME]",
+        "  item status    --id ID --status pending|active|done|blocked [--actor NAME]",
+        "                 [--claim-id N --claim-token TOKEN]",
+        "  item ref add   --id ID --type pr|issue|doc|other --url URL [--label TEXT]",
+        "  item ref list  --id ID [--json]",
+        "  item ref remove --id ID --ref-id N",
+        "  item dep add   --id BLOCKER_ID --blocks-item-id BLOCKED_ID",
+        "  item dep list  --id ID [--json]",
+        "  item dep remove --id ID --dep-id N",
+        "",
+        "EVENT",
+        "  event add      --sprint-id ID --type TYPE --actor NAME [--item-id ID]",
+        "                 [--source actor|daemon|system] [--payload JSON]",
+        "  event list     --sprint-id ID [--item-id ID] [--type TYPE] [--limit N] [--json]",
+        "",
+        "MAINTAIN",
+        "  maintain check    [--sprint-id ID] [--threshold Nh] [--json]",
+        "  maintain sweep    [--sprint-id ID] [--threshold Nh] [--auto-close]",
+        "  maintain carryover --from-sprint ID --to-sprint ID",
+        "",
+        "CLAIM",
+        "  claim create   --item-id ID --actor NAME [--type execute|inspect|review|coordinate]",
+        "                 [--ttl N] [--non-exclusive] [--branch B] [--worktree PATH]",
+        "                 [--commit-sha SHA] [--pr-ref REF] [--runtime-session-id ID]",
+        "                 [--instance-id ID] [--coordinate-claim-id N --coordinate-claim-token T]",
+        "                 [--json]",
+        "  claim heartbeat --id N --claim-token TOKEN [--ttl N] [--actor NAME] [--json]",
+        "  claim release  --id N --claim-token TOKEN [--actor NAME]",
+        "  claim handoff  --id N --claim-token TOKEN --actor NAME [--mode transfer|rotate]",
+        "                 [--ttl N] [--note TEXT] [--allow-legacy-adopt] [--output PATH] [--json]",
+        "  claim list     --item-id ID [--all] [--json]",
+        "  claim list-sprint [--sprint-id ID] [--all] [--expiring-within N] [--json]",
+        "  claim show     --id N --claim-token TOKEN [--json]",
+        "  claim resume   [--instance-id ID] [--runtime-session-id ID]",
+        "                 [--hostname H --pid N] [--json]",
+        "",
+        "TOP-LEVEL",
+        "  export         --sprint-id ID [--output PATH]",
+        "  import         --file PATH",
+        "  handoff        [--sprint-id ID] [--output PATH] [--events N] [--format json|text]",
+        "  render         [--sprint-id ID] [--output PATH]",
+        "  next-work      [--sprint-id ID] [--json]",
+        "  agent-protocol [--json]",
+        "  usage          [--context] [--sprint-id ID] [--json]",
+        "",
+        "ENV",
+        "  SPRINTCTL_DB                    Database path (default: ~/.sprintctl/sprintctl.db)",
+        "  SPRINTCTL_STALE_THRESHOLD       Active item staleness in hours (default: 4)",
+        "  SPRINTCTL_PENDING_STALE_THRESHOLD  Pending item staleness threshold (default: off)",
+        "  SPRINTCTL_RUNTIME_SESSION_ID    Runtime session ID (auto-detected from CODEX_THREAD_ID)",
+        "  SPRINTCTL_INSTANCE_ID           Stable per-process instance UUID",
+    ]
+    click.echo("\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# git-context
+# ---------------------------------------------------------------------------
+
+
+@cli.command("git-context")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+def git_context_cmd(as_json) -> None:
+    """Show the current git branch, commit SHA, and worktree path."""
+    import subprocess  # noqa: PLC0415
+
+    def _run(args: list[str]) -> str:
+        r = subprocess.run(args, capture_output=True, text=True)
+        if r.returncode != 0:
+            raise click.ClickException("Not inside a git repository.")
+        return r.stdout.strip()
+
+    try:
+        branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+        sha = _run(["git", "rev-parse", "HEAD"])
+        worktree = _run(["git", "rev-parse", "--show-toplevel"])
+    except click.ClickException:
+        click.echo("Error: not a git repository.", err=True)
+        sys.exit(1)
+
+    if as_json:
+        click.echo(json.dumps({"branch": branch, "sha": sha, "worktree": worktree}))
+        return
+    click.echo(f"Branch:   {branch}")
+    click.echo(f"SHA:      {sha}")
+    click.echo(f"Worktree: {worktree}")
+
+
+# ---------------------------------------------------------------------------
+# render
+# ---------------------------------------------------------------------------
+
 @cli.command("render")
 @click.option("--sprint-id", type=int, default=None, help="Sprint ID (defaults to active)")
+@click.option("--output", "output_path", default=None, help="Write rendered doc to a file instead of stdout")
 @click.pass_obj
-def render_cmd(obj, sprint_id) -> None:
+def render_cmd(obj, sprint_id, output_path) -> None:
     """Render a plain-text sprint document."""
     conn = _get_conn(obj)
     if sprint_id is not None:
@@ -1435,6 +2044,16 @@ def render_cmd(obj, sprint_id) -> None:
     items_by_track: dict[int, list[dict]] = {}
     for it in all_items:
         items_by_track.setdefault(it["track_id"], []).append(it)
+    refs_by_item: dict[int, list[dict]] = {}
+    for it in all_items:
+        item_refs = _db.list_refs(conn, it["id"])
+        if item_refs:
+            refs_by_item[it["id"]] = item_refs
     rendered_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    doc = render_sprint_doc(s, tracks, items_by_track, rendered_at)
-    click.echo(doc)
+    doc = render_sprint_doc(s, tracks, items_by_track, rendered_at, refs_by_item=refs_by_item)
+    if output_path:
+        with open(output_path, "w") as fh:
+            fh.write(doc + "\n")
+        click.echo(f"Sprint #{s['id']} rendered to {output_path}")
+    else:
+        click.echo(doc)
