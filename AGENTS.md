@@ -60,15 +60,23 @@ Status transitions are **blocked** unless you provide valid claim proof.
 ### 4. Handoff — required before session end if work continues
 
 ```bash
+# Transfer claim ownership to next session (token rotates)
 sprintctl claim handoff \
   --id <claim_id> --claim-token <token> \
   --actor <next-agent-name> --mode rotate \
   --runtime-session-id <next-session-id> \
   --json
+
+# Produce a sprint handoff bundle for the incoming session
+sprintctl handoff [--sprint-id N] [--output path] [--format json|text]
 ```
 
-The response contains the new `claim_token` for the incoming agent.
+The claim handoff response contains the new `claim_token` for the incoming agent.
 The old token is immediately invalidated.
+
+`--format text` produces a human-readable bundle (status groups, active claims,
+shutdown protocol). `--format json` (default) produces the machine-parseable
+bundle for agent session resumption.
 
 ### 5. Release — when work is done
 
@@ -113,6 +121,71 @@ Before terminating:
 - `instance_id`, `hostname`, `pid`, `actor` name are advisory metadata only — never proof
 - Default TTL: 300 s.  Use `--ttl` to increase for long-running tasks
 - `coordinate` claims allow sub-agent `execute` claims; all other exclusive claim types block each other
+
+---
+
+## Reading current sprint context
+
+Before picking up work, read the current state in one call:
+
+```bash
+sprintctl usage --context [--sprint-id N] [--json]
+```
+
+This emits: sprint summary, active claims (who owns what), stale/blocked items,
+ready-to-start items (no unresolved deps), and recent knowledge candidates.
+
+Use `--json` for machine-readable output — compact enough to paste into a prompt
+without summarisation.
+
+```bash
+# See what's ready to pick up
+sprintctl next-work [--sprint-id N] [--json]
+
+# See your current git context (branch, sha, worktree)
+sprintctl git-context [--json]
+```
+
+---
+
+## Refs and deps
+
+After creating or claiming an item you can attach external references:
+
+```bash
+# Attach a PR, issue, doc, or other URL
+sprintctl item ref add --id <item-id> --type pr --url <url> [--label <text>]
+sprintctl item ref list --id <item-id> [--json]
+sprintctl item ref remove --id <item-id> --ref-id <ref-id>
+```
+
+Record blocking dependencies between items:
+
+```bash
+# item-A must finish before item-B can start
+sprintctl item dep add --id <item-A-id> --blocks-item-id <item-B-id>
+sprintctl item dep list --id <item-id> [--json]
+sprintctl item dep remove --id <item-id> --dep-id <dep-id>
+```
+
+Items with unresolved blockers are excluded from `next-work` output.
+
+---
+
+## Recording git context on notes and claims
+
+`item note` accepts git provenance fields so knowledge candidates carry their origin:
+
+```bash
+sprintctl item note --id <item-id> --type decision \
+  --summary "Chose RSA over ECDSA for compatibility" \
+  --git-branch feat/auth --git-sha abc1234 \
+  --evidence-item-id <related-item-id> \
+  --actor <your-name>
+```
+
+`claim create` and `claim heartbeat` accept `--branch`, `--commit-sha`,
+`--worktree`, and `--pr-ref` to keep the claim record current as work progresses.
 
 ---
 

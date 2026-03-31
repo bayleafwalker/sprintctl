@@ -195,6 +195,7 @@ sprintctl sprint show [--id <id>] [--detail] [--json]  # --detail adds health su
 sprintctl sprint list [--include-backlog] [--include-archive] [--json]
 sprintctl sprint status --id <id> --status <planned|active|closed>
 sprintctl sprint kind --id <id> --kind <active_sprint|backlog|archive>
+sprintctl sprint backlog-seed --from-sprint-id <id> --to-sprint-id <id> [--actor <name>] [--json]
 ```
 
 Sprint is a generic execution container. Dates are optional — omit them for open-ended work cycles. Status transitions are enforced: `planned → active → closed`. `closed` is terminal.
@@ -226,6 +227,40 @@ If an active exclusive claim exists, `item status` requires the matching `--clai
 `item show` displays a single item with its recent events and active claims. Use `--json` for machine-readable output.
 
 `item note` records a structured event on a work item. Use it for decisions, blockers, architecture notes, and lessons learned. The `--type` value is freeform; see [Events](#events) for conventional types that the companion tool [kctl](https://github.com/bayleafwalker/kctl) recognizes.
+
+`item note` accepts provenance fields for knowledge traceability:
+
+```sh
+sprintctl item note --id <id> --type decision --summary <text> \
+    [--evidence-item-id <id>] [--evidence-event-id <id>] \
+    [--git-branch <name>] [--git-sha <sha>] [--git-worktree <path>] \
+    [--actor <name>]
+```
+
+### Item refs
+
+Attach typed external references to an item:
+
+```sh
+sprintctl item ref add --id <item-id> \
+    --type <pr|issue|doc|other> --url <url> [--label <text>]
+sprintctl item ref list --id <item-id> [--json]
+sprintctl item ref remove --id <item-id> --ref-id <ref-id>
+```
+
+Refs appear in `item show`, `render`, and handoff output.
+
+### Item dependencies
+
+Record blocking dependencies between items:
+
+```sh
+sprintctl item dep add --id <blocker-id> --blocks-item-id <blocked-id>
+sprintctl item dep list --id <item-id> [--json]
+sprintctl item dep remove --id <item-id> --dep-id <dep-id>
+```
+
+Items with unresolved blockers are excluded from `next-work` output. A blocked item becomes ready automatically once all its blockers reach `done`.
 
 ### Events
 
@@ -337,13 +372,48 @@ sprintctl claim create --item-id 9 --actor codex-a \
 
 The second command is rejected because shared workspace metadata does not prove ownership.
 
+### Context surface
+
+```sh
+sprintctl usage [--context] [--sprint-id <id>] [--json]
+```
+
+Without `--context`, prints a compact command reference. With `--context`, emits
+the current sprint state as a one-shot summary: sprint goal, item counts, active
+claims, stale/blocked items, ready-to-start items, and recent knowledge candidates.
+Designed to be injected into an agent prompt at session start without summarisation.
+
+```sh
+# See what's unblocked and ready to pick up
+sprintctl next-work [--sprint-id <id>] [--json]
+
+# Print current git context (branch, sha, worktree)
+sprintctl git-context [--json]
+```
+
+### Sprint backlog seeding
+
+```sh
+sprintctl sprint backlog-seed \
+    --from-sprint-id <source-id> \
+    --to-sprint-id <target-backlog-id> \
+    [--actor <name>] [--json]
+```
+
+Seeds knowledge candidate events from the source sprint as items into the target
+sprint's `knowledge` track. Idempotent — re-running is safe. Source events must
+be of type `decision`, `pattern-noted`, `lesson-learned`, or `risk-accepted`.
+
 ### Handoff
 
 ```sh
-sprintctl handoff [--sprint-id <id>] [--output <path>] [--events <limit>]
+sprintctl handoff [--sprint-id <id>] [--output <path>] [--events <limit>] [--format <json|text>]
 ```
 
-Produces a JSON bundle containing the sprint, all items, recent events, and active claims. This is the primary artifact for agent session resumption: an incoming agent reads the bundle to understand current sprint state, which items are claimed and by whom, and what work context (branch, commit, PR) the previous session left behind.
+Produces a bundle for agent session resumption. `--format json` (default) produces
+a machine-parseable envelope containing the sprint, all items, recent events, and
+active claims. `--format text` produces a human-readable summary with status groups,
+active claims, and a shutdown protocol checklist.
 
 Default output file: `handoff-N.json`. Pass `--output -` to write to stdout.
 
@@ -352,7 +422,7 @@ General sprint handoff bundles surface claim identity state, including whether a
 Typical agent session start:
 
 ```sh
-sprintctl handoff > handoff.json
+sprintctl handoff --output handoff.json
 # Pass handoff.json as context to the next agent session
 ```
 
