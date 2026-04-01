@@ -693,6 +693,38 @@ class TestSprintShowDetail:
         assert "Health:" not in result.output
 
 
+class TestSprintShowWatch:
+    def test_watch_rejects_json_mode(self, runner, active_sprint):
+        result = runner.invoke(
+            cli,
+            ["sprint", "show", "--id", str(active_sprint["id"]), "--watch", "--json"],
+        )
+        assert result.exit_code == 1
+        assert "--watch cannot be combined with --json" in result.output
+
+    def test_watch_requires_positive_interval(self, runner, active_sprint):
+        result = runner.invoke(
+            cli,
+            ["sprint", "show", "--id", str(active_sprint["id"]), "--watch", "--interval", "0"],
+        )
+        assert result.exit_code == 1
+        assert "--interval must be > 0" in result.output
+
+    def test_watch_renders_and_exits_on_keyboard_interrupt(self, runner, active_sprint, monkeypatch):
+        def _interrupt_after_first_sleep(_seconds: float) -> None:
+            raise KeyboardInterrupt()
+
+        monkeypatch.setattr("sprintctl.cli.time.sleep", _interrupt_after_first_sleep)
+        result = runner.invoke(
+            cli,
+            ["sprint", "show", "--id", str(active_sprint["id"]), "--watch", "--interval", "0.01"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "watch refresh" in result.output
+        assert active_sprint["name"] in result.output
+        assert "Watch mode stopped." in result.output
+
+
 class TestHelpCommands:
     def test_claim_help_does_not_create_db(self, runner, tmp_path, monkeypatch):
         db_path = tmp_path / "help" / "test.db"

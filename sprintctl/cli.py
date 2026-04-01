@@ -3,6 +3,7 @@ import os
 import sqlite3
 import socket
 import sys
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -93,6 +94,94 @@ def _render_table(headers: list[str], rows: list[list[str]]) -> list[str]:
     return [header, separator, *rendered_rows]
 
 
+def _clear_terminal_for_watch() -> bool:
+    term = os.environ.get("TERM", "")
+    if not sys.stdout.isatty() or not term or term.lower() == "dumb":
+        return False
+    click.echo("\033[2J\033[H", nl=False)
+    return True
+
+
+def _collect_sprint_show_payload(conn: sqlite3.Connection, s: dict, detail: bool) -> dict:
+    out: dict = {
+        "id": s["id"],
+        "name": s["name"],
+        "goal": s["goal"],
+        "start_date": s["start_date"],
+        "end_date": s["end_date"],
+        "status": s["status"],
+        "kind": s["kind"],
+    }
+    if not detail:
+        return out
+
+    from . import calc as _calc
+
+    now = datetime.now(timezone.utc)
+    items = _db.list_work_items(conn, sprint_id=s["id"])
+    tracks = _db.list_tracks(conn, s["id"])
+    active_items = [it for it in items if it["status"] == "active"]
+    risk = _calc.sprint_overrun_risk(s, len(active_items), now)
+    pending_threshold = _maintain._pending_stale_threshold()
+    stale_count = sum(
+        1 for it in items if _calc.item_staleness(it, now, pending_threshold=pending_threshold)["is_stale"]
+    )
+    items_by_track: dict[int, list] = {}
+    for it in items:
+        items_by_track.setdefault(it["track_id"], []).append(it)
+    track_health_out = {}
+    for t in tracks:
+        track_health_out[t["name"]] = _calc.track_health(items_by_track.get(t["id"], []))
+    out["detail"] = {
+        "risk": risk,
+        "stale_count": stale_count,
+        "track_health": track_health_out,
+    }
+    return out
+
+
+def _emit_sprint_show_text(payload: dict, detail: bool) -> None:
+    click.echo(f"ID:     {payload['id']}")
+    click.echo(f"Name:   {payload['name']}")
+    click.echo(f"Goal:   {payload['goal']}")
+    if payload.get("start_date") and payload.get("end_date"):
+        click.echo(f"Dates:  {payload['start_date']} to {payload['end_date']}")
+    click.echo(f"Status: {payload['status']}")
+    click.echo(f"Kind:   {payload['kind']}")
+
+    if not detail:
+        return
+
+    detail_payload = payload["detail"]
+    risk = detail_payload["risk"]
+    stale_count = detail_payload["stale_count"]
+    risk_tag = ""
+    if risk["overdue"]:
+        risk_tag = " [OVERDUE]"
+    elif risk["at_risk"]:
+        risk_tag = " [AT RISK]"
+    if risk.get("date_bound", True):
+        click.echo(
+            f"\nHealth: {risk['days_remaining']} days remaining, "
+            f"{risk['active_items']} active, {stale_count} stale{risk_tag}"
+        )
+    else:
+        click.echo(f"\nHealth: {risk['active_items']} active, {stale_count} stale")
+    click.echo("Track health:")
+    track_health = detail_payload["track_health"]
+    for track_name, health in track_health.items():
+        done_pct = int(health["done_ratio"] * 100)
+        blocked_pct = int(health["blocked_ratio"] * 100)
+        c = health["counts"]
+        click.echo(
+            f"  {track_name}: {health['total']} items — "
+            f"{c['done']} done ({done_pct}%), "
+            f"{c['active']} active, "
+            f"{c['pending']} pending, "
+            f"{c['blocked']} blocked ({blocked_pct}%)"
+        )
+
+
 # ---------------------------------------------------------------------------
 # sprint
 # ---------------------------------------------------------------------------
@@ -129,98 +218,49 @@ def sprint_create(obj, name, goal, start_date, end_date, status, kind) -> None:
 @sprint.command("show")
 @click.option("--id", "sprint_id", type=int, default=None, help="Sprint ID")
 @click.option("--detail", is_flag=True, default=False, help="Include sprint health, track health, and stale item count")
+@click.option("--watch", "watch_mode", is_flag=True, default=False, help="Refresh output in a loop until interrupted")
+@click.option("--interval", type=float, default=30.0, show_default=True, help="Watch refresh interval in seconds")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
-def sprint_show(obj, sprint_id, detail, as_json) -> None:
+def sprint_show(obj, sprint_id, detail, watch_mode, interval, as_json) -> None:
     """Show a sprint (defaults to active sprint)."""
-    conn = _get_conn(obj)
-    if sprint_id is not None:
-        s = _db.get_sprint(conn, sprint_id)
-    else:
-        s = _db.get_active_sprint(conn)
-    if s is None:
-        click.echo("No sprint found. Use --id to specify one.", err=True)
+    if watch_mode and as_json:
+        click.echo("Error: --watch cannot be combined with --json.", err=True)
+        sys.exit(1)
+    if interval <= 0:
+        click.echo("Error: --interval must be > 0.", err=True)
         sys.exit(1)
 
-    if as_json:
-        out: dict = {
-            "id": s["id"],
-            "name": s["name"],
-            "goal": s["goal"],
-            "start_date": s["start_date"],
-            "end_date": s["end_date"],
-            "status": s["status"],
-            "kind": s["kind"],
-        }
-        if detail:
-            from . import calc as _calc
-            now = datetime.now(timezone.utc)
-            items = _db.list_work_items(conn, sprint_id=s["id"])
-            tracks = _db.list_tracks(conn, s["id"])
-            active_items = [it for it in items if it["status"] == "active"]
-            risk = _calc.sprint_overrun_risk(s, len(active_items), now)
-            pending_threshold = _maintain._pending_stale_threshold()
-            stale_count = sum(
-                1 for it in items if _calc.item_staleness(it, now, pending_threshold=pending_threshold)["is_stale"]
-            )
-            items_by_track: dict[int, list] = {}
-            for it in items:
-                items_by_track.setdefault(it["track_id"], []).append(it)
-            track_health_out = {}
-            for t in tracks:
-                track_health_out[t["name"]] = _calc.track_health(items_by_track.get(t["id"], []))
-            out["detail"] = {
-                "risk": risk,
-                "stale_count": stale_count,
-                "track_health": track_health_out,
-            }
-        click.echo(json.dumps(out, indent=2))
+    conn = _get_conn(obj)
+    def render_once() -> None:
+        if sprint_id is not None:
+            sprint = _db.get_sprint(conn, sprint_id)
+        else:
+            sprint = _db.get_active_sprint(conn)
+        if sprint is None:
+            click.echo("No sprint found. Use --id to specify one.", err=True)
+            sys.exit(1)
+
+        payload = _collect_sprint_show_payload(conn, sprint, detail=detail)
+        if as_json:
+            click.echo(json.dumps(payload, indent=2))
+            return
+        _emit_sprint_show_text(payload, detail=detail)
+
+    if not watch_mode:
+        render_once()
         return
 
-    click.echo(f"ID:     {s['id']}")
-    click.echo(f"Name:   {s['name']}")
-    click.echo(f"Goal:   {s['goal']}")
-    if s.get("start_date") and s.get("end_date"):
-        click.echo(f"Dates:  {s['start_date']} to {s['end_date']}")
-    click.echo(f"Status: {s['status']}")
-    click.echo(f"Kind:   {s['kind']}")
-
-    if detail:
-        from . import calc as _calc
-        now = datetime.now(timezone.utc)
-        items = _db.list_work_items(conn, sprint_id=s["id"])
-        tracks = _db.list_tracks(conn, s["id"])
-        active_items = [it for it in items if it["status"] == "active"]
-        risk = _calc.sprint_overrun_risk(s, len(active_items), now)
-        pending_threshold = _maintain._pending_stale_threshold()
-        stale_count = sum(
-            1 for it in items if _calc.item_staleness(it, now, pending_threshold=pending_threshold)["is_stale"]
-        )
-        risk_tag = ""
-        if risk["overdue"]:
-            risk_tag = " [OVERDUE]"
-        elif risk["at_risk"]:
-            risk_tag = " [AT RISK]"
-        if risk.get("date_bound", True):
-            click.echo(f"\nHealth: {risk['days_remaining']} days remaining, {risk['active_items']} active, {stale_count} stale{risk_tag}")
-        else:
-            click.echo(f"\nHealth: {risk['active_items']} active, {stale_count} stale")
-        items_by_track2: dict[int, list] = {}
-        for it in items:
-            items_by_track2.setdefault(it["track_id"], []).append(it)
-        click.echo("Track health:")
-        for t in tracks:
-            health = _calc.track_health(items_by_track2.get(t["id"], []))
-            done_pct = int(health["done_ratio"] * 100)
-            blocked_pct = int(health["blocked_ratio"] * 100)
-            c = health["counts"]
-            click.echo(
-                f"  {t['name']}: {health['total']} items — "
-                f"{c['done']} done ({done_pct}%), "
-                f"{c['active']} active, "
-                f"{c['pending']} pending, "
-                f"{c['blocked']} blocked ({blocked_pct}%)"
-            )
+    try:
+        while True:
+            cleared = _clear_terminal_for_watch()
+            if not cleared:
+                stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                click.echo(f"\n--- sprintctl watch refresh {stamp} ---")
+            render_once()
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        click.echo("\nWatch mode stopped.")
 
 
 @sprint.command("status")
