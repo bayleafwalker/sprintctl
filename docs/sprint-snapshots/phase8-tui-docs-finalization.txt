@@ -1,41 +1,19 @@
-warning: `VIRTUAL_ENV=/usr` does not match the project environment path `.venv` and will be ignored; use `--active` to target the active environment instead
-SPRINT: Phase 8: TUI Concept + Docs Finalization  [active]
-Goal:   Deliver operator-UX concept design (TUI/watch mode), finalize all pending docs (AGENTS.md, handoff contracts, work-loop examples, command reference), and harden the docs-and-contracts + operator-ux tracks to a reviewable state
-Dates:  2026-03-31 to 2026-04-14
+SPRINT: Phase 8: TUI Concept + Docs Finalization  [archived]
+Goal:   Historical snapshot retained for reference only. Operator UX planning now lives under docs/plans/.
 ID:     1
-Items:  24 total — 0 done, 0 active, 24 pending, 0 blocked
+Items:  0 total -- archived snapshot only
 
---- Track: operator-ux ---
-  health: 9 items — 0 done (0%), 0 active, 9 pending, 0 blocked (0%)
-  [pending ] #1  Define phased operator-UX roadmap: no-TUI → lightweight live view → optional richer TUI  (assignee: -)
-  [pending ] #2  Improve CLI output formatting: consistent table layout, color coding for status, alignment  (assignee: -)
-  [pending ] #3  Add fzf-friendly output mode: line-per-item with parseable fields for pipe workflows  (assignee: -)
-  [pending ] #4  Add watch mode for sprint show: periodic refresh of sprint status in terminal  (assignee: -)
-  [pending ] #5  Add JSON views for all list/show commands that currently lack --json  (assignee: -)
-  [pending ] #6  Define CLI/TUI boundary: what stays in sprintctl CLI vs what moves to optional TUI sidecar  (assignee: -)
-  [pending ] #7  Concept design: lightweight monitor surface (curses or Bubble Tea) for live sprint status  (assignee: -)
-  [pending ] #8  Tests: output format consistency, JSON schema validation for machine-readable outputs  (assignee: -)
-  [pending ] #9  Docs: operator-UX phased plan, CLI ergonomics guide  (assignee: -)
+Archive note:
+  This snapshot mixed real docs work with speculative TUI and UX items.
 
---- Track: docs-and-contracts ---
-  health: 7 items — 0 done (0%), 0 active, 7 pending, 0 blocked (0%)
-  [pending ] #10  Write AGENTS.md update: sprintctl-aware repo behavior, claim protocol, handoff expectations  (assignee: -)
-  [pending ] #11  Document current-state vs source-of-truth guidance: DB is live state, rendered snapshots are reviewable  (assignee: -)
-  [pending ] #12  Create work-loop examples: claim → work → note → handoff → resume lifecycle  (assignee: -)
-  [pending ] #13  Document knowledge review flow: extract → review → publish → render pipeline  (assignee: -)
-  [pending ] #14  Document refs, handoff modes, and review bundle contracts  (assignee: -)
-  [pending ] #15  Add migration guidance document: what to do when schema/model changes are introduced  (assignee: -)
-  [pending ] #16  Update command reference for new commands: usage, item ref, item dep  (assignee: -)
+Why it is archived:
+  - context and handoff contracts are now prioritized ahead of watch/TUI/fzf work
+  - the UX plan pack moved to docs/plans/ux/
+  - snapshot text files are no longer the roadmap source
 
---- Track: hardening ---
-  health: 8 items — 0 done (0%), 0 active, 8 pending, 0 blocked (0%)
-  [pending ] #17  Design migration safety framework: versioned schema changes with rollback support  (assignee: -)
-  [pending ] #18  Audit test coverage gaps: state transitions, claim conflicts, edge cases in maintain commands  (assignee: -)
-  [pending ] #19  Add rollback-friendly implementation pattern: feature flags or version-gated behavior for new tables  (assignee: -)
-  [pending ] #20  Add failure-mode tests: claim token collisions, concurrent writes, expired claim edge cases  (assignee: -)
-  [pending ] #21  Add failure-mode tests for refs: dangling refs, invalid targets, ref-on-deleted-item  (assignee: -)
-  [pending ] #22  Add performance sanity checks: DB size growth, query timing for local-first use  (assignee: -)
-  [pending ] #23  Add observability helpers: debug output mode, event-stream diagnostics  (assignee: -)
-  [pending ] #24  Document backward-compatibility strategy for schema additions  (assignee: -)
+See instead:
+  - docs/plans/roadmap-reset.md
+  - docs/plans/operator-ux-roadmap.md
+  - docs/plans/ux/00-index.md
 
-Rendered: 2026-03-31T10:13:09Z
+Rendered: 2026-04-01T18:00:00Z

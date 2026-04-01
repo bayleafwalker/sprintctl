@@ -20,8 +20,8 @@ sprintctl sprint show --detail
 ```
 
 `usage --context` is the fastest way to answer "where is the sprint right now?"
-It surfaces active claims, stale/blocked items, ready-to-start items, and recent
-knowledge candidates in a single call.
+It surfaces active claims, conflicts, ready/blocked/stale work, recent
+decisions, and one explicit `next_action` in a single call.
 
 ---
 
@@ -164,8 +164,8 @@ sprintctl handoff --output - --format text
 ```
 
 Pass `handoff.json` (or its text equivalent) as context to the next agent
-session.  The incoming session reads it to understand item status, claim
-ownership, and recent decisions — then calls `usage --context` for a live view.
+session. The incoming session reads it as a working-memory snapshot, then calls
+`usage --context` for the live view before continuing.
 
 ---
 
@@ -190,7 +190,7 @@ sprintctl claim handoff \
 
 ```bash
 # Read the handoff bundle (if one was written)
-cat handoff.json | jq '.items[] | select(.status == "active")'
+cat handoff.json | jq '.summary, .work, .next_action'
 
 # Then get the live view
 sprintctl usage --context --json

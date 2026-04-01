@@ -1,0 +1,75 @@
+# Start Here
+
+Use this page when you want the narrowest useful `sprintctl` path.
+
+## 1. Create a sprint
+
+```sh
+sprintctl sprint create --name "Sprint 4" --status active
+```
+
+Add a few items:
+
+```sh
+sprintctl item add --sprint-id 1 --track docs --title "Write resume guide"
+sprintctl item add --sprint-id 1 --track cli --title "Tighten handoff contract"
+```
+
+## 2. Read live context
+
+```sh
+sprintctl usage --context --json
+```
+
+This is the primary resume surface. It gives you:
+
+- sprint summary
+- active claims
+- conflicts
+- ready, blocked, and stale work
+- recent decisions
+- one concise next action
+
+## 3. Start or claim work
+
+If overlap is possible, claim before editing files:
+
+```sh
+sprintctl claim create --item-id 1 --actor codex-session-1 --json
+sprintctl item status --id 1 --status active --claim-id <id> --claim-token <token>
+```
+
+If you are working solo and do not need claim discipline, you can still move
+the item directly:
+
+```sh
+sprintctl item status --id 1 --status active
+```
+
+## 4. Record durable history
+
+Use `item note` for decisions, blockers, lessons, and risks:
+
+```sh
+sprintctl item note \
+  --id 1 \
+  --type decision \
+  --summary "Use handoff as working-memory snapshot"
+```
+
+## 5. Hand off or checkpoint
+
+```sh
+sprintctl handoff --output handoff.json
+sprintctl render > docs/sprint-snapshots/sprint-current.txt
+```
+
+Use `handoff` when a later session must resume the same work. Use `render` when
+you want a reviewable snapshot in git.
+
+## Next Guides
+
+- [Resume Work](resume-work.md)
+- [Agent-Assisted Work](agent-assisted.md)
+- [Project Integration](project-integration.md)
+- [Context and Handoff Contracts](../reference/context-and-handoff.md)

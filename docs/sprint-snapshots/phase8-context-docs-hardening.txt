@@ -1,37 +1,20 @@
-SPRINT: Phase 8: Context Surface + Docs + Hardening  [active]
-Goal:   Implement usage as agent context-surface command; finalize AGENTS.md, work-loop examples, and command reference docs; harden migration safety and failure-mode test coverage
-Dates:  2026-03-31 to 2026-04-14
+SPRINT: Phase 8: Context Surface + Docs + Hardening  [archived]
+Goal:   Historical snapshot retained for reference only. Its pending items have been absorbed into docs/plans/roadmap-reset.md.
 ID:     1
-Items:  18 total — 4 done, 0 active, 14 pending, 0 blocked
+Items:  0 total -- archived snapshot only
 
---- Track: operator-ux ---
-  health: 3 items — 0 done (0%), 0 active, 3 pending, 0 blocked (0%)
-  [pending ] #40  Define CLI/TUI boundary: what stays in sprintctl CLI vs what moves to optional TUI sidecar  (assignee: -)
-  [pending ] #41  Add JSON views for maintain sweep, maintain carryover, sprint status, sprint kind  (assignee: -)
-  [pending ] #42  Improve CLI output formatting: consistent table layout, color coding for status  (assignee: -)
+Archive note:
+  This snapshot captured the transition where `usage --context` landed and the
+  surrounding docs/hardening work was still tracked as pending.
 
---- Track: docs-and-contracts ---
-  health: 6 items — 0 done (0%), 0 active, 6 pending, 0 blocked (0%)
-  [pending ] #29  Write AGENTS.md: sprintctl-aware repo behavior, claim protocol, handoff expectations  (assignee: -)
-  [pending ] #30  Create work-loop examples: claim → work → note → handoff → resume lifecycle  (assignee: -)
-  [pending ] #31  Document knowledge review flow: extract → review → publish → render pipeline  (assignee: -)
-  [pending ] #32  Update command reference for usage --context, item ref, item dep  (assignee: -)
-  [pending ] #33  Document refs, handoff modes, and review bundle contracts  (assignee: -)
-  [pending ] #34  Add migration guidance: what to do when schema/model changes are introduced  (assignee: -)
+Why it is archived:
+  - `usage --context` is now a shipped command with a frozen v1 contract
+  - planning moved from sprint snapshots to docs/plans/
+  - stale "pending" items in this file are no longer authoritative
 
---- Track: hardening ---
-  health: 5 items — 0 done (0%), 0 active, 5 pending, 0 blocked (0%)
-  [pending ] #35  Design migration safety framework: versioned schema changes with rollback support  (assignee: -)
-  [pending ] #36  Audit test coverage gaps: state transitions, claim conflicts, maintain edge cases  (assignee: -)
-  [pending ] #37  Add failure-mode tests: claim token collisions, concurrent writes, expired claim edge cases  (assignee: -)
-  [pending ] #38  Add failure-mode tests for refs: dangling refs, invalid targets, ref-on-deleted-item  (assignee: -)
-  [pending ] #39  Add performance sanity checks: DB size growth, query timing for local-first use  (assignee: -)
+See instead:
+  - docs/plans/roadmap-reset.md
+  - docs/reference/context-and-handoff.md
+  - docs/plans/README.md
 
---- Track: context-surface ---
-  health: 4 items — 4 done (100%), 0 active, 0 pending, 0 blocked (0%)
-  [done    ] #25  Design usage read model: active claims, blocked items, stale items, recent decisions per sprint  (assignee: -)
-  [done    ] #26  Implement usage --context flag: one-shot agent-consumable sprint summary (text + json)  (assignee: -)
-  [done    ] #27  Add next-useful-work hint to usage --context based on ready items and dep state  (assignee: -)
-  [done    ] #28  Tests: usage --context empty sprint, active sprint, mixed states, JSON output  (assignee: -)
-
-Rendered: 2026-03-31T11:07:39Z
+Rendered: 2026-04-01T18:00:00Z

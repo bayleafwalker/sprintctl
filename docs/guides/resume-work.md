@@ -1,0 +1,59 @@
+# Resume Work
+
+The resume path should be mechanical:
+
+1. read the most recent handoff bundle if one exists
+2. refresh live state with `usage --context`
+3. inspect the target item only if you need more detail
+4. resume or reclaim ownership
+
+## Live Resume Path
+
+```sh
+sprintctl usage --context --json
+sprintctl next-work --json
+sprintctl item show --id <id> --json
+```
+
+Prioritize the `next_action` and `conflicts` fields from `usage --context`.
+
+## If a handoff bundle exists
+
+```sh
+cat handoff.json | jq '.summary, .work, .next_action'
+```
+
+Then refresh with live state:
+
+```sh
+sprintctl usage --context --json
+```
+
+The handoff bundle is a snapshot. `usage --context` is the current answer.
+
+## If a claim is involved
+
+Find your claims by identity:
+
+```sh
+sprintctl claim resume --instance-id "$SPRINTCTL_INSTANCE_ID" --json
+```
+
+If the token is lost and the claim is legacy/ambiguous:
+
+```sh
+sprintctl claim handoff --id <claim-id> --actor <you> --mode rotate --allow-legacy-adopt --json
+```
+
+## Resume Checklist
+
+- check `conflicts` before starting new work
+- inspect `recent_decisions` before repeating context gathering
+- use `claim resume` before creating a competing claim
+- use `item show` only after `usage --context` narrows the target
+
+## Related
+
+- [Start Here](start-here.md)
+- [Work Loop](work-loop.md)
+- [Context and Handoff Contracts](../reference/context-and-handoff.md)

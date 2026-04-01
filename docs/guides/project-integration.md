@@ -1,5 +1,9 @@
 # Project Integration Guide
 
+For the shortest path, start with [Start Here](start-here.md) and then use this
+guide once you are wiring `sprintctl` into a real repository. For the current
+read contracts, see [Context and Handoff Contracts](../reference/context-and-handoff.md).
+
 This guide covers how to use `sprintctl` inside a real repository, not just how to invoke the CLI.
 
 The patterns here are based on the way a larger reference repo (`homelab-analytics`) uses `sprintctl`: local operational state, committed shared snapshots, and explicit claim-based coordination for agent sessions.
