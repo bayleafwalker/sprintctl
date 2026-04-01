@@ -579,7 +579,7 @@ def list_events_limited(conn: sqlite3.Connection, sprint_id: int, limit: int = 5
     return [dict(r) for r in reversed(rows)]
 
 
-KNOWLEDGE_EVENT_TYPES = ("pattern-noted", "lesson-learned", "risk-accepted")
+KNOWLEDGE_EVENT_TYPES = ("decision", "pattern-noted", "lesson-learned", "risk-accepted")
 
 
 def list_knowledge_candidates(conn: sqlite3.Connection, sprint_id: int) -> list[dict]:

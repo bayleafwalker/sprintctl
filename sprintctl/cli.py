@@ -710,7 +710,7 @@ def event_add(obj, sprint_id, event_type, actor, work_item_id, source_type, payl
 @click.option("--item-id", "work_item_id", type=int, default=None, help="Filter by work item ID")
 @click.option("--type", "event_type", default=None, help="Filter by event type")
 @click.option("--knowledge", "knowledge_only", is_flag=True, default=False,
-              help="Show only knowledge candidate events (pattern-noted, lesson-learned, risk-accepted)")
+              help="Show only knowledge candidate events (decision, pattern-noted, lesson-learned, risk-accepted)")
 @click.option("--limit", default=None, type=int, help="Maximum number of events to return (most recent)")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
@@ -796,6 +796,610 @@ def _parse_threshold(threshold_str: str | None) -> timedelta | None:
     except ValueError:
         click.echo(f"Invalid threshold '{threshold_str}' — use format like '4h'.", err=True)
         sys.exit(1)
+
+
+def _parse_utc_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+
+
+def _event_payload(event: dict) -> dict:
+    payload = event.get("payload") or {}
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(payload, str):
+        try:
+            decoded = json.loads(payload)
+            return decoded if isinstance(decoded, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _summarize_event(event: dict) -> dict:
+    payload = _event_payload(event)
+    tags = payload.get("tags")
+    if not isinstance(tags, list):
+        tags = []
+    return {
+        "id": event["id"],
+        "event_id": event["id"],
+        "event_type": event["event_type"],
+        "created_at": event["created_at"],
+        "actor": event["actor"],
+        "work_item_id": event.get("work_item_id"),
+        "summary": payload.get("summary") or event["event_type"],
+        "detail": payload.get("detail"),
+        "tags": tags,
+    }
+
+
+def _dependency_waiting_items(conn, sprint_id: int) -> list[dict]:
+    waiting: list[dict] = []
+    pending_items = _db.list_work_items(conn, sprint_id=sprint_id, status="pending")
+    for item in pending_items:
+        blockers = _db.list_deps_blocking(conn, item["id"])
+        unresolved = [blocker for blocker in blockers if blocker["blocker_status"] != "done"]
+        if not unresolved:
+            continue
+        waiting.append(
+            {
+                "id": item["id"],
+                "title": item["title"],
+                "track": item["track_name"],
+                "unresolved_blockers": len(unresolved),
+                "unresolved_blocker_ids": [blocker["item_id"] for blocker in unresolved],
+                "unresolved_blocker_titles": [blocker["blocker_title"] for blocker in unresolved],
+            }
+        )
+    return waiting
+
+
+def _claims_expiring_within(active_claims: list[dict], now: datetime, seconds: int) -> list[dict]:
+    expiring: list[dict] = []
+    for claim in active_claims:
+        expires_at = _parse_utc_timestamp(claim.get("expires_at"))
+        if expires_at is None:
+            continue
+        if (expires_at - now).total_seconds() <= seconds:
+            expiring.append(claim)
+    return expiring
+
+
+def _derive_conflicts(
+    *,
+    active_claims: list[dict],
+    blocked_items: list[dict],
+    stale_items: list[dict],
+    dependency_waiting_items: list[dict],
+    now: datetime,
+) -> list[dict]:
+    conflicts: list[dict] = []
+
+    legacy_claims = [claim for claim in active_claims if claim.get("identity_status") != "proven"]
+    if legacy_claims:
+        conflicts.append(
+            {
+                "kind": "claim-identity",
+                "severity": "warning",
+                "summary": (
+                    f"{len(legacy_claims)} active claim(s) have ambiguous ownership proof "
+                    "and require explicit adoption or expiry."
+                ),
+                "claim_ids": [claim["claim_id"] for claim in legacy_claims],
+                "item_ids": [claim["work_item_id"] for claim in legacy_claims],
+            }
+        )
+
+    expiring_claims = _claims_expiring_within(active_claims, now, seconds=120)
+    if expiring_claims:
+        conflicts.append(
+            {
+                "kind": "claim-expiry",
+                "severity": "warning",
+                "summary": (
+                    f"{len(expiring_claims)} active claim(s) expire within 120 seconds "
+                    "and may need heartbeat or handoff."
+                ),
+                "claim_ids": [claim["claim_id"] for claim in expiring_claims],
+                "item_ids": [claim["work_item_id"] for claim in expiring_claims],
+            }
+        )
+
+    if dependency_waiting_items:
+        blocker_ids = sorted(
+            {
+                blocker_id
+                for item in dependency_waiting_items
+                for blocker_id in item["unresolved_blocker_ids"]
+            }
+        )
+        conflicts.append(
+            {
+                "kind": "dependency-blocked",
+                "severity": "warning",
+                "summary": (
+                    f"{len(dependency_waiting_items)} pending item(s) are waiting on unresolved blockers."
+                ),
+                "item_ids": [item["id"] for item in dependency_waiting_items],
+                "blocker_ids": blocker_ids,
+            }
+        )
+
+    if blocked_items:
+        conflicts.append(
+            {
+                "kind": "blocked-work",
+                "severity": "warning",
+                "summary": f"{len(blocked_items)} item(s) are explicitly blocked and need triage.",
+                "item_ids": [item["id"] for item in blocked_items],
+            }
+        )
+
+    if stale_items:
+        conflicts.append(
+            {
+                "kind": "stale-work",
+                "severity": "warning",
+                "summary": f"{len(stale_items)} item(s) are stale and may be drifting out of date.",
+                "item_ids": [item["id"] for item in stale_items],
+            }
+        )
+
+    return conflicts
+
+
+def _derive_next_action(
+    *,
+    active_claims: list[dict],
+    conflicts: list[dict],
+    ready_items: list[dict],
+    blocked_items: list[dict],
+    stale_items: list[dict],
+    dependency_waiting_items: list[dict],
+) -> dict:
+    if conflicts:
+        first = conflicts[0]
+        if first["kind"] == "claim-identity":
+            return {
+                "kind": "resolve-claim-identity",
+                "summary": "Resolve ambiguous active claim ownership before resuming or starting new work.",
+                "claim_id": first["claim_ids"][0],
+                "item_id": first["item_ids"][0],
+                "reason": first["summary"],
+            }
+        if first["kind"] == "claim-expiry":
+            return {
+                "kind": "refresh-claim",
+                "summary": "Heartbeat or hand off the next expiring claim before it lapses.",
+                "claim_id": first["claim_ids"][0],
+                "item_id": first["item_ids"][0],
+                "reason": first["summary"],
+            }
+        if first["kind"] == "dependency-blocked":
+            waiting = dependency_waiting_items[0]
+            return {
+                "kind": "unblock-dependent-work",
+                "summary": (
+                    f"Resolve blocker #{waiting['unresolved_blocker_ids'][0]} "
+                    f"to unblock item #{waiting['id']}."
+                ),
+                "item_id": waiting["id"],
+                "blocker_item_id": waiting["unresolved_blocker_ids"][0],
+                "reason": first["summary"],
+            }
+        if first["kind"] == "blocked-work":
+            item = blocked_items[0]
+            return {
+                "kind": "triage-blocked-item",
+                "summary": f"Triage blocked item #{item['id']} before pulling new work.",
+                "item_id": item["id"],
+                "reason": first["summary"],
+            }
+        if first["kind"] == "stale-work":
+            item = stale_items[0]
+            return {
+                "kind": "refresh-stale-item",
+                "summary": f"Refresh stale item #{item['id']} before it drifts further.",
+                "item_id": item["id"],
+                "reason": first["summary"],
+            }
+
+    if active_claims:
+        claim = active_claims[0]
+        return {
+            "kind": "inspect-active-claim",
+            "summary": f"Inspect claimed item #{claim['work_item_id']} before starting new work.",
+            "claim_id": claim["claim_id"],
+            "item_id": claim["work_item_id"],
+            "reason": "Active claimed work already exists in this sprint.",
+        }
+
+    if ready_items:
+        item = ready_items[0]
+        return {
+            "kind": "start-ready-item",
+            "summary": f"Start ready item #{item['id']} because it is unblocked and no active claims are open.",
+            "item_id": item["id"],
+            "reason": "Ready work is available now.",
+        }
+
+    if dependency_waiting_items:
+        waiting = dependency_waiting_items[0]
+        return {
+            "kind": "resolve-blocker",
+            "summary": (
+                f"Resolve blocker #{waiting['unresolved_blocker_ids'][0]} "
+                f"to unblock item #{waiting['id']}."
+            ),
+            "item_id": waiting["id"],
+            "blocker_item_id": waiting["unresolved_blocker_ids"][0],
+            "reason": "All pending work is currently waiting on dependencies.",
+        }
+
+    return {
+        "kind": "no-action",
+        "summary": "No immediate action is suggested from current sprint state.",
+        "reason": "There is no ready, active, blocked, or stale work to prioritize.",
+    }
+
+
+def _collect_context_contract(conn, sprint: dict, now: datetime) -> dict:
+    active_claims = _db.list_claims_by_sprint(conn, sprint["id"], active_only=True)
+    report = _maintain.check(conn, sprint["id"], now)
+    stale_items = [
+        {
+            "id": item["id"],
+            "title": item["title"],
+            "status": item["status"],
+            "track": item["track_name"],
+            "idle_seconds": item["idle_seconds"],
+        }
+        for item in report["stale_items"]
+    ]
+
+    all_items = _db.list_work_items(conn, sprint_id=sprint["id"])
+    blocked_items = [
+        {"id": item["id"], "title": item["title"], "track": item["track_name"]}
+        for item in all_items
+        if item["status"] == "blocked"
+    ]
+    active_items = [
+        {"id": item["id"], "title": item["title"], "track": item["track_name"]}
+        for item in all_items
+        if item["status"] == "active"
+    ]
+    ready_items = [
+        {
+            "id": item["id"],
+            "title": item["title"],
+            "track": item["track_name"],
+        }
+        for item in _db.get_ready_items(conn, sprint["id"])
+    ]
+    dependency_waiting_items = _dependency_waiting_items(conn, sprint["id"])
+    knowledge = _db.list_knowledge_candidates(conn, sprint["id"])
+    recent_decisions = [_summarize_event(event) for event in reversed(knowledge[-5:])]
+    conflicts = _derive_conflicts(
+        active_claims=active_claims,
+        blocked_items=blocked_items,
+        stale_items=stale_items,
+        dependency_waiting_items=dependency_waiting_items,
+        now=now,
+    )
+    next_action = _derive_next_action(
+        active_claims=active_claims,
+        conflicts=conflicts,
+        ready_items=ready_items,
+        blocked_items=blocked_items,
+        stale_items=stale_items,
+        dependency_waiting_items=dependency_waiting_items,
+    )
+
+    done_items = [item for item in all_items if item["status"] == "done"]
+    pending_items = [item for item in all_items if item["status"] == "pending"]
+
+    return {
+        "contract_version": "1",
+        "sprint": {
+            "id": sprint["id"],
+            "name": sprint["name"],
+            "goal": sprint["goal"],
+            "status": sprint["status"],
+            "start_date": sprint.get("start_date"),
+            "end_date": sprint.get("end_date"),
+        },
+        "summary": {
+            "total": len(all_items),
+            "done": len(done_items),
+            "active": len(active_items),
+            "pending": len(pending_items),
+            "blocked": len(blocked_items),
+            "stale": len(stale_items),
+            "ready": len(ready_items),
+            "waiting_on_dependencies": len(dependency_waiting_items),
+            "active_claims": len(active_claims),
+        },
+        "active_claims": active_claims,
+        "conflicts": conflicts,
+        "ready_items": ready_items,
+        "blocked_items": blocked_items,
+        "stale_items": stale_items,
+        "recent_decisions": recent_decisions,
+        "next_action": next_action,
+    }
+
+
+def _render_context_text(snapshot: dict) -> str:
+    sprint = snapshot["sprint"]
+    summary = snapshot["summary"]
+    lines = [f"Sprint #{sprint['id']}: {sprint['name']}", f"Goal: {sprint['goal']}"]
+    if sprint.get("start_date") and sprint.get("end_date"):
+        lines.append(f"Dates: {sprint['start_date']} -> {sprint['end_date']}")
+    lines.append(
+        "Items: "
+        f"{summary['total']} total — "
+        f"{summary['done']} done, {summary['active']} active, "
+        f"{summary['pending']} pending, {summary['blocked']} blocked"
+    )
+    lines.append("")
+
+    active_claims = snapshot["active_claims"]
+    lines.append(f"Active claims ({len(active_claims)}):")
+    if active_claims:
+        for claim in active_claims:
+            item_title = claim.get("item_title") or f"item #{claim['work_item_id']}"
+            lines.append(
+                f"  claim #{claim['claim_id']}  [{claim['actor']}]  {item_title}  "
+                f"expires: {claim['expires_at']}"
+            )
+    else:
+        lines.append("  (none)")
+    lines.append("")
+
+    conflicts = snapshot["conflicts"]
+    lines.append(f"Conflicts ({len(conflicts)}):")
+    if conflicts:
+        for conflict in conflicts:
+            lines.append(f"  [{conflict['kind']}]  {conflict['summary']}")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+
+    ready_items = snapshot["ready_items"]
+    lines.append(f"Ready to start ({len(ready_items)}):")
+    if ready_items:
+        for item in ready_items[:5]:
+            lines.append(f"  #{item['id']}  {item['title']}  (track: {item['track']})")
+        if len(ready_items) > 5:
+            lines.append(f"  ... {len(ready_items) - 5} more")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+
+    blocked_items = snapshot["blocked_items"]
+    lines.append(f"Blocked items ({len(blocked_items)}):")
+    if blocked_items:
+        for item in blocked_items:
+            lines.append(f"  #{item['id']}  {item['title']}  (track: {item['track']})")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+
+    stale_items = snapshot["stale_items"]
+    lines.append(f"Stale items ({len(stale_items)}):")
+    if stale_items:
+        for item in stale_items:
+            hours, rem = divmod(item["idle_seconds"], 3600)
+            minutes = rem // 60
+            lines.append(
+                f"  #{item['id']}  [{item['status']:8}]  {item['title']}  "
+                f"— idle {hours}h{minutes:02d}m  (track: {item['track']})"
+            )
+    else:
+        lines.append("  (none)")
+    lines.append("")
+
+    recent_decisions = snapshot["recent_decisions"]
+    lines.append(f"Recent decisions ({len(recent_decisions)}):")
+    if recent_decisions:
+        for decision in recent_decisions:
+            lines.append(f"  [{decision['event_type']}]  {decision['summary']}")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+
+    next_action = snapshot["next_action"]
+    lines.append("Next action:")
+    lines.append(f"  [{next_action['kind']}]  {next_action['summary']}")
+    return "\n".join(lines)
+
+
+def _detect_git_context() -> dict | None:
+    import subprocess  # noqa: PLC0415
+
+    def _run(args: list[str]) -> str:
+        result = subprocess.run(args, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError
+        return result.stdout.strip()
+
+    try:
+        branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+        sha = _run(["git", "rev-parse", "HEAD"])
+        worktree = _run(["git", "rev-parse", "--show-toplevel"])
+        dirty = _run(["git", "status", "--short"])
+    except RuntimeError:
+        return None
+
+    dirty_files: list[str] = []
+    if dirty:
+        for line in dirty.splitlines():
+            if not line.strip():
+                continue
+            dirty_files.append(line[3:].strip() if len(line) > 3 else line.strip())
+
+    return {
+        "branch": branch,
+        "sha": sha,
+        "worktree": worktree,
+        "dirty_files": dirty_files,
+    }
+
+
+def _previous_handoff_generated(conn, sprint_id: int) -> dict | None:
+    events = _db.list_events(conn, sprint_id)
+    for event in reversed(events):
+        if event["event_type"] == "handoff-generated":
+            return event
+    return None
+
+
+def _build_delta_since_last_handoff(
+    *,
+    previous_handoff: dict | None,
+    items: list[dict],
+    all_events: list[dict],
+    active_claims: list[dict],
+) -> dict:
+    previous_handoff_at = previous_handoff["created_at"] if previous_handoff else None
+    if previous_handoff_at is None:
+        return {
+            "previous_handoff_at": None,
+            "item_ids_touched": [],
+            "event_count": len(all_events),
+            "claim_ids_touched": [],
+        }
+
+    item_ids_touched = [item["id"] for item in items if item["updated_at"] > previous_handoff_at]
+    claim_ids_touched = [
+        claim["claim_id"]
+        for claim in active_claims
+        if (
+            (claim.get("created_at") and claim["created_at"] > previous_handoff_at)
+            or (claim.get("heartbeat") and claim["heartbeat"] > previous_handoff_at)
+        )
+    ]
+    previous_handoff_id = previous_handoff["id"]
+    event_count = sum(1 for event in all_events if event["id"] > previous_handoff_id)
+    return {
+        "previous_handoff_at": previous_handoff_at,
+        "item_ids_touched": item_ids_touched,
+        "event_count": event_count,
+        "claim_ids_touched": claim_ids_touched,
+    }
+
+
+def _build_handoff_bundle(conn, sprint: dict, events_limit: int) -> dict:
+    now = datetime.now(timezone.utc)
+    generated_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    context = _collect_context_contract(conn, sprint, now)
+    items = _db.list_work_items(conn, sprint_id=sprint["id"])
+    items_with_refs = []
+    for item in items:
+        enriched = {**item}
+        refs = _db.list_refs(conn, item["id"])
+        if refs:
+            enriched["refs"] = refs
+        items_with_refs.append(enriched)
+
+    recent_events = _db.list_events_limited(conn, sprint["id"], limit=events_limit)
+    all_events = _db.list_events(conn, sprint["id"])
+    active_items = [
+        {"id": item["id"], "title": item["title"], "track": item["track_name"]}
+        for item in items
+        if item["status"] == "active"
+    ]
+    previous_handoff = _previous_handoff_generated(conn, sprint["id"])
+    git_context = _detect_git_context()
+
+    return {
+        "bundle_type": "handoff",
+        "bundle_version": "1",
+        "sprintctl_version": __version__,
+        "generated_at": generated_at,
+        "generated_from": {
+            "command": "sprintctl handoff",
+            "events_limit": events_limit,
+        },
+        "sprint": dict(sprint),
+        "summary": context["summary"],
+        "active_claims": context["active_claims"],
+        "conflicts": context["conflicts"],
+        "work": {
+            "active_items": active_items,
+            "ready_items": context["ready_items"],
+            "blocked_items": context["blocked_items"],
+            "stale_items": context["stale_items"],
+        },
+        "recent_decisions": context["recent_decisions"],
+        "recent_events": [_summarize_event(event) for event in recent_events],
+        "next_action": context["next_action"],
+        "delta_since_last_handoff": _build_delta_since_last_handoff(
+            previous_handoff=previous_handoff,
+            items=items_with_refs,
+            all_events=all_events,
+            active_claims=context["active_claims"],
+        ),
+        "freshness": {
+            "generated_at": generated_at,
+            "previous_handoff_at": previous_handoff["created_at"] if previous_handoff else None,
+            "stale_item_count": len(context["stale_items"]),
+            "active_claim_count": len(context["active_claims"]),
+            "dirty_file_count": len(git_context["dirty_files"]) if git_context else 0,
+        },
+        "evidence": {
+            "dirty_files": git_context["dirty_files"] if git_context else [],
+            "items_with_refs": sum(1 for item in items_with_refs if item.get("refs")),
+            "total_refs": sum(len(item.get("refs", [])) for item in items_with_refs),
+            "recent_event_count": len(recent_events),
+            "recent_decision_count": len(context["recent_decisions"]),
+            "validation_outcomes": [],
+        },
+        "git_context": git_context,
+        "claim_identity_model": {
+            "ownership_proof": "claim_id+claim_token",
+            "claim_tokens_included": False,
+            "ambiguous_identity_visible": True,
+            "explicit_claim_handoff_command": "sprintctl claim handoff",
+        },
+        "resume_instructions": [
+            "Read this handoff bundle first.",
+            "Refresh live state with 'sprintctl usage --context --json'.",
+            "Inspect the target item with 'sprintctl item show --id <id> --json' if more detail is needed.",
+            "Use 'sprintctl claim resume' to locate transferred claims before claiming new work.",
+        ],
+        "agent_shutdown_protocol": {
+            "required_before_termination": [
+                "For each active claim you own: run 'sprintctl claim handoff --id <id> --claim-token <token> --actor <next-agent> --mode rotate' to pass ownership to the incoming session.",
+                "If no incoming session: run 'sprintctl claim release --id <id> --claim-token <token>' to free each claim.",
+                "If handing off the sprint: run 'sprintctl handoff' to produce a new bundle for the next agent.",
+            ],
+            "resumption_hint": (
+                "Incoming agents: use 'sprintctl claim resume --instance-id <id>' or "
+                "'--runtime-session-id <id>' to locate claims transferred to you."
+            ),
+        },
+        "items": items_with_refs,
+        "events": recent_events,
+    }
+
+
+def _record_handoff_generated(conn, sprint_id: int, bundle: dict) -> None:
+    _db.create_event(
+        conn,
+        sprint_id=sprint_id,
+        actor="handoff",
+        event_type="handoff-generated",
+        source_type="system",
+        payload={
+            "summary": f"Handoff bundle generated for sprint #{sprint_id}",
+            "detail": "Generated a working-memory handoff bundle for the next session.",
+            "bundle_version": bundle["bundle_version"],
+            "events_limit": bundle["generated_from"]["events_limit"],
+        },
+    )
 
 
 @maintain.command("check")
@@ -1524,9 +2128,11 @@ def claim_resume(obj, instance_id, runtime_session_id, hostname, pid, as_json) -
 def _render_handoff_text(bundle: dict) -> str:
     """Render a handoff bundle as a human-readable text summary."""
     s = bundle["sprint"]
-    items = bundle["items"]
     claims = bundle["active_claims"]
-    events = bundle["events"]
+    work = bundle["work"]
+    recent_decisions = bundle["recent_decisions"]
+    recent_events = bundle["recent_events"]
+    next_action = bundle["next_action"]
 
     lines: list[str] = []
     lines.append(f"=== HANDOFF: {s['name']}  [{s['status']}] ===")
@@ -1535,21 +2141,50 @@ def _render_handoff_text(bundle: dict) -> str:
         lines.append(f"Goal: {s['goal']}")
     if s.get("start_date") and s.get("end_date"):
         lines.append(f"Dates: {s['start_date']} to {s['end_date']}")
+    summary = bundle["summary"]
+    lines.append(
+        "Summary: "
+        f"{summary['total']} total, {summary['done']} done, {summary['active']} active, "
+        f"{summary['pending']} pending, {summary['blocked']} blocked"
+    )
     lines.append("")
 
-    by_status: dict[str, list] = {"active": [], "pending": [], "blocked": [], "done": []}
-    for it in items:
-        by_status.setdefault(it["status"], []).append(it)
+    lines.append(f"ACTIVE WORK ({len(work['active_items'])}):")
+    if work["active_items"]:
+        for item in work["active_items"]:
+            lines.append(f"  #{item['id']}  {item['title']}  [track: {item['track']}]")
+    else:
+        lines.append("  (none)")
+    lines.append("")
 
-    for status in ("active", "pending", "blocked", "done"):
-        group = by_status[status]
-        if not group:
-            continue
-        lines.append(f"{status.upper()} ({len(group)}):")
-        for it in group:
-            assignee = it.get("assignee") or "-"
-            lines.append(f"  #{it['id']}  {it['title']}  [track: {it['track_name']}]  assignee: {assignee}")
-        lines.append("")
+    lines.append(f"READY TO START ({len(work['ready_items'])}):")
+    if work["ready_items"]:
+        for item in work["ready_items"]:
+            lines.append(f"  #{item['id']}  {item['title']}  [track: {item['track']}]")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+
+    lines.append(f"BLOCKED ITEMS ({len(work['blocked_items'])}):")
+    if work["blocked_items"]:
+        for item in work["blocked_items"]:
+            lines.append(f"  #{item['id']}  {item['title']}  [track: {item['track']}]")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+
+    lines.append(f"STALE ITEMS ({len(work['stale_items'])}):")
+    if work["stale_items"]:
+        for item in work["stale_items"]:
+            idle_hours, rem = divmod(item["idle_seconds"], 3600)
+            idle_minutes = rem // 60
+            lines.append(
+                f"  #{item['id']}  [{item['status']:8}]  {item['title']}  "
+                f"idle {idle_hours}h{idle_minutes:02d}m  [track: {item['track']}]"
+            )
+    else:
+        lines.append("  (none)")
+    lines.append("")
 
     if claims:
         lines.append(f"ACTIVE CLAIMS ({len(claims)}):")
@@ -1563,15 +2198,41 @@ def _render_handoff_text(bundle: dict) -> str:
         lines.append("NOTE: Incoming agent must claim handoff or release each active claim.")
         lines.append("")
 
-    if events:
-        lines.append(f"RECENT EVENTS ({len(events)}):")
-        for e in events[-10:]:
-            item_label = f"  item #{e['work_item_id']}" if e.get("work_item_id") else ""
-            lines.append(f"  [{e['event_type']}]  {e['actor']}  {e['created_at']}{item_label}")
+    conflicts = bundle["conflicts"]
+    lines.append(f"CONFLICTS ({len(conflicts)}):")
+    if conflicts:
+        for conflict in conflicts:
+            lines.append(f"  [{conflict['kind']}]  {conflict['summary']}")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+
+    lines.append(f"RECENT DECISIONS ({len(recent_decisions)}):")
+    if recent_decisions:
+        for event in recent_decisions:
+            lines.append(f"  [{event['event_type']}]  {event['summary']}")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+
+    if recent_events:
+        lines.append(f"RECENT EVENTS ({len(recent_events)}):")
+        for event in recent_events[-10:]:
+            item_label = f"  item #{event['work_item_id']}" if event.get("work_item_id") else ""
+            lines.append(f"  [{event['event_type']}]  {event['actor']}  {event['created_at']}{item_label}")
         lines.append("")
+
+    lines.append("NEXT ACTION:")
+    lines.append(f"  [{next_action['kind']}]  {next_action['summary']}")
+    lines.append("")
 
     lines.append("SHUTDOWN PROTOCOL:")
     for step in bundle.get("agent_shutdown_protocol", {}).get("required_before_termination", []):
+        lines.append(f"  - {step}")
+    lines.append("")
+
+    lines.append("RESUME PATH:")
+    for step in bundle.get("resume_instructions", []):
         lines.append(f"  - {step}")
 
     return "\n".join(lines)
@@ -1589,7 +2250,7 @@ def _render_handoff_text(bundle: dict) -> str:
 )
 @click.pass_obj
 def handoff_cmd(obj, sprint_id, output_path, events_limit, fmt) -> None:
-    """Produce a handoff bundle: sprint, items, recent events, active claims.
+    """Produce a working-memory handoff bundle for session resumption.
 
     Use --format text for a human-readable summary suitable for LLM context injection.
     Use --format json (default) for a machine-parseable bundle.
@@ -1604,34 +2265,7 @@ def handoff_cmd(obj, sprint_id, output_path, events_limit, fmt) -> None:
         click.echo("No sprint found. Use --sprint-id to specify one.", err=True)
         sys.exit(1)
     sid = s["id"]
-    items = _db.list_work_items(conn, sprint_id=sid)
-    recent_events = _db.list_events_limited(conn, sid, limit=events_limit)
-    active_claims = _db.list_claims_by_sprint(conn, sid, active_only=True)
-    bundle = {
-        "sprintctl_version": __version__,
-        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "sprint": dict(s),
-        "items": items,
-        "events": recent_events,
-        "active_claims": active_claims,
-        "claim_identity_model": {
-            "ownership_proof": "claim_id+claim_token",
-            "claim_tokens_included": False,
-            "ambiguous_identity_visible": True,
-            "explicit_claim_handoff_command": "sprintctl claim handoff",
-        },
-        "agent_shutdown_protocol": {
-            "required_before_termination": [
-                "For each active claim you own: run 'sprintctl claim handoff --id <id> --claim-token <token> --actor <next-agent> --mode rotate' to pass ownership to the incoming session.",
-                "If no incoming session: run 'sprintctl claim release --id <id> --claim-token <token>' to free each claim.",
-                "If handing off the sprint: run 'sprintctl handoff' to produce a new bundle for the next agent.",
-            ],
-            "resumption_hint": (
-                "Incoming agents: use 'sprintctl claim resume --instance-id <id>' or "
-                "'--runtime-session-id <id>' to locate claims transferred to you."
-            ),
-        },
-    }
+    bundle = _build_handoff_bundle(conn, s, events_limit)
 
     if fmt == "text":
         content = _render_handoff_text(bundle)
@@ -1643,11 +2277,13 @@ def handoff_cmd(obj, sprint_id, output_path, events_limit, fmt) -> None:
     dest = output_path or f"handoff-{sid}{ext}"
     if dest == "-":
         click.echo(content)
+        _record_handoff_generated(conn, sid, bundle)
         return
     with open(dest, "w") as fh:
         fh.write(content)
         if not content.endswith("\n"):
             fh.write("\n")
+    _record_handoff_generated(conn, sid, bundle)
     click.echo(f"Handoff bundle for sprint #{sid} written to {dest}")
 
 
@@ -1814,133 +2450,11 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         conn = _get_conn(obj)
         s = _resolve_sprint(conn, sprint_id)
         now = datetime.now(timezone.utc)
-
-        # active claims
-        active_claims = _db.list_claims_by_sprint(conn, s["id"], active_only=True)
-
-        # stale items (use env threshold)
-        report = _maintain.check(conn, s["id"], now)
-        stale_items = report["stale_items"]
-
-        # all items — derive blocked and pending counts
-        all_items = _db.list_work_items(conn, sprint_id=s["id"])
-        blocked_items = [it for it in all_items if it["status"] == "blocked"]
-        active_items = [it for it in all_items if it["status"] == "active"]
-        done_items = [it for it in all_items if it["status"] == "done"]
-        pending_items = [it for it in all_items if it["status"] == "pending"]
-
-        # ready items (pending with no unresolved blockers)
-        ready_items = _db.get_ready_items(conn, s["id"])
-
-        # recent knowledge candidates (last 5)
-        knowledge = _db.list_knowledge_candidates(conn, s["id"])
-        recent_decisions = knowledge[-5:] if len(knowledge) > 5 else knowledge
-
+        snapshot = _collect_context_contract(conn, s, now)
         if as_json:
-            out = {
-                "sprint": {
-                    "id": s["id"],
-                    "name": s["name"],
-                    "goal": s["goal"],
-                    "status": s["status"],
-                    "start_date": s.get("start_date"),
-                    "end_date": s.get("end_date"),
-                },
-                "summary": {
-                    "total": len(all_items),
-                    "done": len(done_items),
-                    "active": len(active_items),
-                    "pending": len(pending_items),
-                    "blocked": len(blocked_items),
-                    "stale": len(stale_items),
-                    "ready": len(ready_items),
-                    "active_claims": len(active_claims),
-                },
-                "active_claims": active_claims,
-                "stale_items": [
-                    {"id": it["id"], "title": it["title"], "status": it["status"],
-                     "track": it["track_name"], "idle_seconds": it["idle_seconds"]}
-                    for it in stale_items
-                ],
-                "blocked_items": [
-                    {"id": it["id"], "title": it["title"], "track": it["track_name"]}
-                    for it in blocked_items
-                ],
-                "ready_items": [
-                    {"id": it["id"], "title": it["title"], "track": it["track_name"]}
-                    for it in ready_items
-                ],
-                "recent_decisions": recent_decisions,
-            }
-            click.echo(json.dumps(out, indent=2))
+            click.echo(json.dumps(snapshot, indent=2))
             return
-
-        # text output
-        risk = report["risk"]
-        risk_tag = ""
-        if risk["overdue"]:
-            risk_tag = "  [OVERDUE]"
-        elif risk["at_risk"]:
-            risk_tag = "  [AT RISK]"
-
-        click.echo(f"Sprint #{s['id']}: {s['name']}{risk_tag}")
-        click.echo(f"Goal: {s['goal']}")
-        if s.get("start_date") and s.get("end_date"):
-            click.echo(f"Dates: {s['start_date']} → {s['end_date']}")
-        click.echo(
-            f"Items: {len(all_items)} total — "
-            f"{len(done_items)} done, {len(active_items)} active, "
-            f"{len(pending_items)} pending, {len(blocked_items)} blocked"
-        )
-        click.echo("")
-
-        click.echo(f"Active claims ({len(active_claims)}):")
-        if active_claims:
-            for cl in active_claims:
-                item_title = cl.get("item_title") or f"item #{cl['item_id']}"
-                actor = cl.get("actor") or "-"
-                expires = cl.get("expires_at") or "no expiry"
-                click.echo(f"  claim #{cl['id']}  [{actor}]  {item_title}  expires: {expires}")
-        else:
-            click.echo("  (none)")
-        click.echo("")
-
-        click.echo(f"Stale items ({len(stale_items)}):")
-        if stale_items:
-            for it in stale_items:
-                h, rem = divmod(it["idle_seconds"], 3600)
-                m = rem // 60
-                click.echo(f"  #{it['id']}  [{it['status']:8}]  {it['title']}  — idle {h}h{m:02d}m  (track: {it['track_name']})")
-        else:
-            click.echo("  (none)")
-        click.echo("")
-
-        click.echo(f"Blocked items ({len(blocked_items)}):")
-        if blocked_items:
-            for it in blocked_items:
-                click.echo(f"  #{it['id']}  {it['title']}  (track: {it['track_name']})")
-        else:
-            click.echo("  (none)")
-        click.echo("")
-
-        click.echo(f"Ready to start ({len(ready_items)}):")
-        if ready_items:
-            for it in ready_items[:5]:
-                click.echo(f"  #{it['id']}  {it['title']}  (track: {it['track_name']})")
-            if len(ready_items) > 5:
-                click.echo(f"  … {len(ready_items) - 5} more")
-        else:
-            click.echo("  (none)")
-        click.echo("")
-
-        click.echo(f"Recent decisions ({len(recent_decisions)}):")
-        if recent_decisions:
-            for ev in recent_decisions:
-                payload = ev.get("payload") or {}
-                summary = payload.get("summary") or ev.get("event_type", "")
-                click.echo(f"  [{ev['event_type']}]  {summary}")
-        else:
-            click.echo("  (none)")
+        click.echo(_render_context_text(snapshot))
         return
 
     lines = [
@@ -2001,6 +2515,7 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "  handoff        [--sprint-id ID] [--output PATH] [--events N] [--format json|text]",
         "  render         [--sprint-id ID] [--output PATH]",
         "  next-work      [--sprint-id ID] [--json]",
+        "  git-context    [--json]",
         "  agent-protocol [--json]",
         "  usage          [--context] [--sprint-id ID] [--json]",
         "",
@@ -2023,28 +2538,17 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 def git_context_cmd(as_json) -> None:
     """Show the current git branch, commit SHA, and worktree path."""
-    import subprocess  # noqa: PLC0415
-
-    def _run(args: list[str]) -> str:
-        r = subprocess.run(args, capture_output=True, text=True)
-        if r.returncode != 0:
-            raise click.ClickException("Not inside a git repository.")
-        return r.stdout.strip()
-
-    try:
-        branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
-        sha = _run(["git", "rev-parse", "HEAD"])
-        worktree = _run(["git", "rev-parse", "--show-toplevel"])
-    except click.ClickException:
+    context = _detect_git_context()
+    if context is None:
         click.echo("Error: not a git repository.", err=True)
         sys.exit(1)
 
     if as_json:
-        click.echo(json.dumps({"branch": branch, "sha": sha, "worktree": worktree}))
+        click.echo(json.dumps(context))
         return
-    click.echo(f"Branch:   {branch}")
-    click.echo(f"SHA:      {sha}")
-    click.echo(f"Worktree: {worktree}")
+    click.echo(f"Branch:   {context['branch']}")
+    click.echo(f"SHA:      {context['sha']}")
+    click.echo(f"Worktree: {context['worktree']}")
 
 
 # ---------------------------------------------------------------------------
