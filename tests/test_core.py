@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import sqlite3
@@ -6,6 +7,7 @@ import threading
 import pytest
 
 from sprintctl import db
+import sprintctl.cli as cli_module
 from sprintctl.cli import cli
 from sprintctl.render import render_sprint_doc
 
@@ -723,6 +725,19 @@ class TestSprintShowWatch:
         assert "watch refresh" in result.output
         assert active_sprint["name"] in result.output
         assert "Watch mode stopped." in result.output
+
+    def test_clear_terminal_helper_uses_tty_clear_sequence(self):
+        class _TTYBuffer(io.StringIO):
+            def isatty(self) -> bool:
+                return True
+
+        stream = _TTYBuffer()
+        cleared = cli_module._clear_terminal_for_watch(
+            stdout=stream,
+            term="xterm-256color",
+        )
+        assert cleared is True
+        assert stream.getvalue() == "\x1b[2J\x1b[H"
 
 
 class TestHelpCommands:

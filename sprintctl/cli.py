@@ -6,6 +6,7 @@ import sys
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import TextIO
 
 import click
 
@@ -94,11 +95,12 @@ def _render_table(headers: list[str], rows: list[list[str]]) -> list[str]:
     return [header, separator, *rendered_rows]
 
 
-def _clear_terminal_for_watch() -> bool:
-    term = os.environ.get("TERM", "")
-    if not sys.stdout.isatty() or not term or term.lower() == "dumb":
+def _clear_terminal_for_watch(stdout: TextIO | None = None, term: str | None = None) -> bool:
+    stream = stdout if stdout is not None else sys.stdout
+    active_term = term if term is not None else os.environ.get("TERM", "")
+    if not stream.isatty() or not active_term or active_term.lower() == "dumb":
         return False
-    click.echo("\033[2J\033[H", nl=False)
+    click.echo("\033[2J\033[H", nl=False, file=stream)
     return True
 
 
