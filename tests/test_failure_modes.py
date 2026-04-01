@@ -191,6 +191,29 @@ class TestClaimTokenEdgeCases:
         with pytest.raises(ValueError, match="Invalid claim_token"):
             db.heartbeat_claim(conn, claim["claim_id"], claim["claim_token"], actor="agent-a")
 
+    def test_create_claim_retries_on_token_collision(self, conn, active_sprint, monkeypatch):
+        iid_a = _item(conn, active_sprint["id"], "A")
+        iid_b = _item(conn, active_sprint["id"], "B")
+        tokens = iter(["fixed-token", "fixed-token", "unique-token"])
+        monkeypatch.setattr(db, "_generate_claim_token", lambda: next(tokens))
+
+        c1 = db.create_claim(conn, iid_a, agent="agent-a")
+        c2 = db.create_claim(conn, iid_b, agent="agent-b")
+
+        claim1 = db.get_claim(conn, c1, include_secret=True)
+        claim2 = db.get_claim(conn, c2, include_secret=True)
+        assert claim1["claim_token"] == "fixed-token"
+        assert claim2["claim_token"] == "unique-token"
+
+    def test_create_claim_raises_after_repeated_token_collision(self, conn, active_sprint, monkeypatch):
+        iid_a = _item(conn, active_sprint["id"], "A")
+        iid_b = _item(conn, active_sprint["id"], "B")
+        monkeypatch.setattr(db, "_generate_claim_token", lambda: "always-collide")
+
+        db.create_claim(conn, iid_a, agent="agent-a")
+        with pytest.raises(RuntimeError, match="unique claim token"):
+            db.create_claim(conn, iid_b, agent="agent-b")
+
 
 # ---------------------------------------------------------------------------
 # Group 3: Claim — concurrent write patterns

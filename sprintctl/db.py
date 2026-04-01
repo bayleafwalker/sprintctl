@@ -608,10 +608,16 @@ class ClaimConflict(ValueError):
 
 CLAIM_IDENTITY_STATUS_PROVEN = "proven"
 CLAIM_IDENTITY_STATUS_LEGACY = "legacy_ambiguous"
+MAX_CLAIM_TOKEN_INSERT_RETRIES = 5
 
 
 def _generate_claim_token() -> str:
     return secrets.token_urlsafe(24)
+
+
+def _is_claim_token_collision(exc: sqlite3.IntegrityError) -> bool:
+    msg = str(exc).lower()
+    return "claim_token" in msg or "idx_claim_token" in msg
 
 
 def _claim_identity_status(row: sqlite3.Row | dict) -> str:
@@ -822,23 +828,34 @@ def create_claim(
                 raise ClaimConflict(
                     f"Item #{work_item_id} is exclusively claimed by '{conflict['agent']}' (claim #{conflict['id']})"
                 )
-    claim_token = _generate_claim_token()
-    cur = conn.execute(
-        """
-        INSERT INTO claim
-            (work_item_id, agent, claim_type, exclusive, expires_at,
-             branch, worktree_path, commit_sha, pr_ref,
-             claim_token, runtime_session_id, instance_id, hostname, pid)
-        VALUES (?, ?, ?, ?,
-                strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds'),
-                ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (work_item_id, agent, claim_type, 1 if exclusive else 0, ttl_seconds,
-         branch, worktree_path, commit_sha, pr_ref,
-         claim_token, runtime_session_id, instance_id, hostname, pid),
-    )
-    conn.commit()
-    return cur.lastrowid
+    for attempt in range(MAX_CLAIM_TOKEN_INSERT_RETRIES):
+        claim_token = _generate_claim_token()
+        try:
+            cur = conn.execute(
+                """
+                INSERT INTO claim
+                    (work_item_id, agent, claim_type, exclusive, expires_at,
+                     branch, worktree_path, commit_sha, pr_ref,
+                     claim_token, runtime_session_id, instance_id, hostname, pid)
+                VALUES (?, ?, ?, ?,
+                        strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds'),
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (work_item_id, agent, claim_type, 1 if exclusive else 0, ttl_seconds,
+                 branch, worktree_path, commit_sha, pr_ref,
+                 claim_token, runtime_session_id, instance_id, hostname, pid),
+            )
+            conn.commit()
+            return cur.lastrowid
+        except sqlite3.IntegrityError as exc:
+            # Extremely rare, but token generation can theoretically collide.
+            if not _is_claim_token_collision(exc):
+                raise
+            conn.rollback()
+            if attempt == MAX_CLAIM_TOKEN_INSERT_RETRIES - 1:
+                raise RuntimeError(
+                    "Failed to create claim: could not generate a unique claim token."
+                ) from exc
 
 
 def heartbeat_claim(
