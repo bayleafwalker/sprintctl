@@ -1,0 +1,20 @@
+SPRINT: Phase 12: Operator UX Lightweight Live View  [active]
+Goal:   Ship Phase 2 UX roadmap scope: watch mode and fzf-friendly item list with docs/tests
+Dates:  2026-04-01 to 2026-04-08
+ID:     2
+Items:  4 total — 4 done, 0 active, 0 pending, 0 blocked
+
+--- Track: contract-hardening ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #91  Add CLI tests for --watch/--fzf behavior and output contract  (assignee: -)
+
+--- Track: interop ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #92  Update docs and command references for Phase 2 operator UX features  (assignee: -)
+
+--- Track: product-surface ---
+  health: 2 items — 2 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #89  Implement sprint show --watch with interval refresh loop  (assignee: -)
+  [done    ] #90  Implement item list --fzf parseable output mode  (assignee: -)
+
+Rendered: 2026-04-01T20:44:02Z
