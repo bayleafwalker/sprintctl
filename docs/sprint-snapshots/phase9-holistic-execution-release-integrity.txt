@@ -1,0 +1,30 @@
+SPRINT: Phase 9: Holistic Execution + Release Integrity  [active]
+Goal:   Continue roadmap-reset holistically across docs/contracts, hardening, and operator UX with release-integrity focus
+Dates:  2026-04-15 to 2026-04-28
+ID:     3
+Items:  14 total — 14 done, 0 active, 0 pending, 0 blocked
+
+--- Track: docs-and-contracts ---
+  health: 6 items — 6 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #43  Write AGENTS.md: sprintctl-aware repo behavior, claim protocol, handoff expectations  (assignee: -)
+  [done    ] #44  Create work-loop examples: claim → work → note → handoff → resume lifecycle  (assignee: -)
+  [done    ] #45  Document knowledge review flow: extract → review → publish → render pipeline  (assignee: -)
+  [done    ] #46  Update command reference for usage --context, item ref, item dep  (assignee: -)
+  [done    ] #47  Document refs, handoff modes, and review bundle contracts  (assignee: -)
+  [done    ] #48  Add migration guidance: what to do when schema/model changes are introduced  (assignee: -)
+
+--- Track: hardening ---
+  health: 5 items — 5 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #49  Design migration safety framework: versioned schema changes with rollback support  (assignee: -)
+  [done    ] #50  Audit test coverage gaps: state transitions, claim conflicts, maintain edge cases  (assignee: -)
+  [done    ] #51  Add failure-mode tests: claim token collisions, concurrent writes, expired claim edge cases  (assignee: -)
+  [done    ] #52  Add failure-mode tests for refs: dangling refs, invalid targets, ref-on-deleted-item  (assignee: -)
+  [done    ] #53  Add performance sanity checks: DB size growth, query timing for local-first use  (assignee: -)
+
+--- Track: operator-ux ---
+  health: 3 items — 3 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #54  Define CLI/TUI boundary: what stays in sprintctl CLI vs what moves to optional TUI sidecar  (assignee: -)
+  [done    ] #55  Add JSON views for maintain sweep, maintain carryover, sprint status, sprint kind  (assignee: -)
+  [done    ] #56  Improve CLI output formatting: consistent table layout, color coding for status  (assignee: -)
+
+Rendered: 2026-04-01T19:08:46Z
