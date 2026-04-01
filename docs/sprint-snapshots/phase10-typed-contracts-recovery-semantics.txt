@@ -1,0 +1,19 @@
+SPRINT: Phase 10: Typed Contracts + Recovery Semantics  [closed]
+Goal:   Introduce typed context/handoff contracts, canonicalize event payloads, and strengthen resume/recovery semantics
+Dates:  2026-04-01 to 2026-04-14
+ID:     4
+Items:  3 total — 3 done, 0 active, 0 pending, 0 blocked
+
+--- Track: context-contract ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #57  Introduce typed contract models for usage context and handoff bundle payloads  (assignee: -)
+
+--- Track: memory-semantics ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #58  Canonicalize decision and claim-handoff event payload shapes  (assignee: -)
+
+--- Track: release-integrity ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #59  Add serialization-stability tests for context and handoff contract models  (assignee: -)
+
+Rendered: 2026-04-01T19:27:31Z
