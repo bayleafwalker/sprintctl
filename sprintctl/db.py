@@ -6,6 +6,8 @@ from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urlparse
 
+from . import contracts as _contracts
+
 
 class InvalidTransition(ValueError):
     pass
@@ -562,7 +564,8 @@ def create_event(
     work_item_id: int | None = None,
     payload: dict | None = None,
 ) -> int:
-    payload_str = json.dumps(payload or {})
+    canonical_payload = _contracts.canonicalize_event_payload(event_type, payload)
+    payload_str = json.dumps(canonical_payload)
     cur = conn.execute(
         "INSERT INTO event (sprint_id, work_item_id, source_type, actor, event_type, payload) VALUES (?, ?, ?, ?, ?, ?)",
         (sprint_id, work_item_id, source_type, actor, event_type, payload_str),

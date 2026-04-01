@@ -16,6 +16,61 @@ def _copy_mapping_list(values: Sequence[Mapping[str, Any]]) -> list[dict[str, An
     return [dict(value) for value in values]
 
 
+def _normalize_tags(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(tag) for tag in value if str(tag).strip()]
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    return []
+
+
+def canonicalize_decision_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]:
+    source = dict(payload or {})
+    summary = source.pop("summary", None)
+    detail = source.pop("detail", None)
+    tags = _normalize_tags(source.pop("tags", []))
+
+    result: dict[str, Any] = {
+        "summary": str(summary) if summary is not None else "decision",
+        "detail": detail if detail is None or isinstance(detail, str) else str(detail),
+        "tags": tags,
+    }
+    for field in ("evidence_item_id", "evidence_event_id", "git_branch", "git_sha", "git_worktree"):
+        if field in source:
+            result[field] = source.pop(field)
+    result.update(source)
+    return result
+
+
+def canonicalize_claim_handoff_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]:
+    source = dict(payload or {})
+    summary = source.pop("summary", None)
+    detail = source.pop("detail", None)
+    tags = _normalize_tags(source.pop("tags", ["claims", "handoff", "coordination"]))
+
+    result: dict[str, Any] = {
+        "summary": str(summary) if summary is not None else "claim-handoff",
+        "detail": detail if detail is None or isinstance(detail, str) else str(detail),
+        "tags": tags,
+        "operation": source.pop("operation", "handoff"),
+        "mode": source.pop("mode", "rotate"),
+        "legacy_adopted": bool(source.pop("legacy_adopted", False)),
+        "token_rotated": bool(source.pop("token_rotated", False)),
+        "from_identity": dict(source.pop("from_identity", {})),
+        "to_identity": dict(source.pop("to_identity", {})),
+    }
+    result.update(source)
+    return result
+
+
+def canonicalize_event_payload(event_type: str, payload: Mapping[str, Any] | None) -> dict[str, Any]:
+    if event_type == "decision":
+        return canonicalize_decision_payload(payload)
+    if event_type in {"claim-handoff", "claim-ownership-corrected"}:
+        return canonicalize_claim_handoff_payload(payload)
+    return dict(payload or {})
+
+
 @dataclass(frozen=True, slots=True)
 class ContextContract:
     sprint: Mapping[str, Any]
