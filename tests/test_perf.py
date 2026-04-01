@@ -247,3 +247,31 @@ class TestUsageContextAtScale:
         elapsed = _ms(start)
         assert result.exit_code == 0, result.output
         assert elapsed < 200, f"usage --context took {elapsed:.1f} ms"
+
+    def test_next_work_json_large_sprint_under_120ms(self, db_path):
+        """next-work --json should stay fast for a 200-item pending sprint."""
+        from click.testing import CliRunner
+        conn = db.get_connection(db_path)
+        db.init_db(conn)
+        sprint = _build_large_sprint(conn)
+        conn.close()
+        runner = CliRunner()
+        start = time.monotonic()
+        result = runner.invoke(cli, ["next-work", "--sprint-id", str(sprint["id"]), "--json"])
+        elapsed = _ms(start)
+        assert result.exit_code == 0, result.output
+        assert elapsed < 120, f"next-work --json took {elapsed:.1f} ms"
+
+    def test_handoff_json_large_sprint_under_300ms(self, db_path):
+        """handoff JSON generation should remain bounded for large local sprints."""
+        from click.testing import CliRunner
+        conn = db.get_connection(db_path)
+        db.init_db(conn)
+        sprint = _build_large_sprint(conn)
+        conn.close()
+        runner = CliRunner()
+        start = time.monotonic()
+        result = runner.invoke(cli, ["handoff", "--sprint-id", str(sprint["id"]), "--output", "-"])
+        elapsed = _ms(start)
+        assert result.exit_code == 0, result.output
+        assert elapsed < 300, f"handoff --output - took {elapsed:.1f} ms"
