@@ -17,6 +17,13 @@ sprintctl next-work
 
 # Full sprint snapshot
 sprintctl sprint show --detail
+
+# Optional: keep a live status pane open during focused work
+sprintctl sprint show --watch --detail --interval 30
+
+# Optional: pick an item quickly with fzf
+ITEM_ID=$(sprintctl item list --fzf | fzf | cut -f1 | tr -d '#')
+sprintctl item show --id "$ITEM_ID"
 ```
 
 `usage --context` is the fastest way to answer "where is the sprint right now?"

@@ -6,7 +6,7 @@ to an optional TUI layer.
 
 ---
 
-## Phase 1 — CLI only (current)
+## Phase 1 — CLI baseline (shipped)
 
 All output is text or JSON. No live refresh, no interactive panes.
 
@@ -27,10 +27,10 @@ workflow without any interactive dependency.
 
 ---
 
-## Phase 2 — Lightweight live view (future, optional)
+## Phase 2 — Lightweight live view (shipped, optional)
 
-A `watch` mode that periodically re-renders sprint status in the terminal.
-Implemented as a simple loop in the CLI — no TUI framework needed.
+This phase is now in the CLI. `watch` mode periodically re-renders sprint
+status in the terminal using a simple loop (no TUI framework needed).
 
 ```sh
 sprintctl sprint show --watch [--interval 30]
@@ -47,7 +47,7 @@ require a persistent process — each refresh is an independent DB read.
 This phase also includes fzf-friendly output for pipe workflows:
 
 ```sh
-# One item per line with parseable fields
+# One item per line: #ID<TAB>STATUS<TAB>TRACK<TAB>ASSIGNEE<TAB>TITLE
 sprintctl item list --fzf
 
 # Pipe to fzf for interactive item selection
@@ -77,7 +77,7 @@ of the same SQLite database — it does not introduce new write paths.
 | All write operations | ✅ stays in CLI | ❌ not in TUI |
 | Machine-readable output (`--json`) | ✅ stays in CLI | ❌ not in TUI |
 | Agent-consumable context | ✅ stays in CLI (`usage --context`) | ❌ not in TUI |
-| Live refresh / watch mode | Phase 2 (simple loop) | Phase 3 (optional) |
+| Live refresh / watch mode | ✅ `sprint show --watch` | Phase 3 (optional richer live view) |
 | Interactive panes | ❌ not in CLI | Phase 3 (optional) |
 | Scripting and piping | ✅ CLI only | ❌ not in TUI |
 

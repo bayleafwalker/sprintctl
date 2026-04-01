@@ -19,6 +19,9 @@ sprintctl item add --sprint-id 1 --track cli --title "Tighten handoff contract"
 
 ```sh
 sprintctl usage --context --json
+
+# Optional live pane during active work
+sprintctl sprint show --watch --detail --interval 30
 ```
 
 This is the primary resume surface. It gives you:
