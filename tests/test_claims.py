@@ -439,8 +439,16 @@ class TestClaimJSONAndCLI:
         )
         assert result.exit_code == 0, result.output
         bundle = json.loads(result.output)
+        assert bundle["bundle_type"] == "handoff"
+        assert bundle["bundle_version"] == "1"
         assert bundle["claim_identity_model"]["ownership_proof"] == "claim_id+claim_token"
         assert bundle["claim_identity_model"]["claim_tokens_included"] is False
+        assert "summary" in bundle
+        assert "work" in bundle
+        assert "recent_decisions" in bundle
+        assert "next_action" in bundle
+        assert "freshness" in bundle
+        assert "evidence" in bundle
         active_claim = bundle["active_claims"][0]
         assert active_claim["claim_id"] == claim["claim_id"]
         assert active_claim["claim_token_present"] is True
@@ -653,3 +661,25 @@ class TestHandoffBundleShutdownProtocol:
         assert "required_before_termination" in proto
         assert "resumption_hint" in proto
         assert len(proto["required_before_termination"]) >= 2
+        assert "resume_instructions" in bundle
+
+    def test_second_handoff_bundle_tracks_previous_handoff(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"], "Task")
+        first = runner.invoke(cli, ["handoff", "--sprint-id", str(active_sprint["id"]), "--output", "-"])
+        assert first.exit_code == 0, first.output
+
+        db.create_event(
+            conn,
+            active_sprint["id"],
+            "agent",
+            event_type="decision",
+            work_item_id=iid,
+            payload={"summary": "Pinned handoff to working-memory contract"},
+        )
+
+        second = runner.invoke(cli, ["handoff", "--sprint-id", str(active_sprint["id"]), "--output", "-"])
+        assert second.exit_code == 0, second.output
+        bundle = json.loads(second.output)
+        delta = bundle["delta_since_last_handoff"]
+        assert delta["previous_handoff_at"] is not None
+        assert delta["event_count"] >= 1

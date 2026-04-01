@@ -1,7 +1,5 @@
 import json
 
-import pytest
-
 from sprintctl import db
 from sprintctl.cli import cli
 
@@ -16,82 +14,82 @@ class TestUsageContext:
         result = runner.invoke(cli, ["usage", "--context"])
         assert result.exit_code == 0, result.output
 
-    def test_context_shows_sprint_name_and_goal(self, runner, active_sprint):
-        result = runner.invoke(cli, ["usage", "--context"])
-        assert active_sprint["name"] in result.output
-        assert active_sprint["goal"] in result.output
-
     def test_context_fails_without_active_sprint(self, runner, db_path):
         result = runner.invoke(cli, ["usage", "--context"])
         assert result.exit_code != 0
 
-    def test_context_shows_item_summary(self, runner, conn, active_sprint):
-        _add_item(conn, active_sprint["id"],"Item A")
-        _add_item(conn, active_sprint["id"],"Item B")
+    def test_context_text_uses_contract_sections(self, runner, conn, active_sprint):
+        _add_item(conn, active_sprint["id"], "Ready Item")
         result = runner.invoke(cli, ["usage", "--context"])
         assert result.exit_code == 0, result.output
-        assert "2 total" in result.output or "pending" in result.output
-
-    def test_context_shows_ready_items(self, runner, conn, active_sprint):
-        _add_item(conn, active_sprint["id"],"Ready Item")
-        result = runner.invoke(cli, ["usage", "--context"])
-        assert result.exit_code == 0, result.output
+        assert "Active claims" in result.output
+        assert "Conflicts" in result.output
         assert "Ready to start" in result.output
-        assert "Ready Item" in result.output
+        assert "Blocked items" in result.output
+        assert "Stale items" in result.output
+        assert "Recent decisions" in result.output
+        assert "Next action" in result.output
 
-    def test_context_ready_truncated_to_five(self, runner, conn, active_sprint):
-        for i in range(8):
-            _add_item(conn, active_sprint["id"],f"Item {i}")
-        result = runner.invoke(cli, ["usage", "--context"])
-        assert result.exit_code == 0, result.output
-        assert "more" in result.output
-
-    def test_context_json_exits_zero(self, runner, active_sprint):
+    def test_context_json_has_frozen_top_level_shape(self, runner, active_sprint):
         result = runner.invoke(cli, ["usage", "--context", "--json"])
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
-        assert "sprint" in data
-        assert "summary" in data
-
-    def test_context_json_sprint_fields(self, runner, active_sprint):
-        result = runner.invoke(cli, ["usage", "--context", "--json"])
-        data = json.loads(result.output)
-        assert data["sprint"]["id"] == active_sprint["id"]
-        assert data["sprint"]["name"] == active_sprint["name"]
+        assert list(data.keys()) == [
+            "contract_version",
+            "sprint",
+            "summary",
+            "active_claims",
+            "conflicts",
+            "ready_items",
+            "blocked_items",
+            "stale_items",
+            "recent_decisions",
+            "next_action",
+        ]
+        assert data["contract_version"] == "1"
 
     def test_context_json_summary_counts(self, runner, conn, active_sprint):
-        _add_item(conn, active_sprint["id"],"Item A")
-        _add_item(conn, active_sprint["id"],"Item B")
+        _add_item(conn, active_sprint["id"], "Item A")
+        _add_item(conn, active_sprint["id"], "Item B")
         result = runner.invoke(cli, ["usage", "--context", "--json"])
         data = json.loads(result.output)
         assert data["summary"]["total"] == 2
         assert data["summary"]["pending"] == 2
         assert data["summary"]["done"] == 0
+        assert data["summary"]["ready"] == 2
+        assert data["summary"]["waiting_on_dependencies"] == 0
 
     def test_context_json_has_ready_items(self, runner, conn, active_sprint):
-        _add_item(conn, active_sprint["id"],"Ready Item")
+        _add_item(conn, active_sprint["id"], "Ready Item")
         result = runner.invoke(cli, ["usage", "--context", "--json"])
         data = json.loads(result.output)
         assert len(data["ready_items"]) == 1
         assert data["ready_items"][0]["title"] == "Ready Item"
+        assert data["next_action"]["kind"] == "start-ready-item"
 
     def test_context_json_has_blocked_items(self, runner, conn, active_sprint):
-        iid = _add_item(conn, active_sprint["id"],"Blocked Item")
+        iid = _add_item(conn, active_sprint["id"], "Blocked Item")
         db.set_work_item_status(conn, iid, "active")
         db.set_work_item_status(conn, iid, "blocked")
         result = runner.invoke(cli, ["usage", "--context", "--json"])
         data = json.loads(result.output)
         assert data["summary"]["blocked"] == 1
-        assert any(it["id"] == iid for it in data["blocked_items"])
+        assert any(item["id"] == iid for item in data["blocked_items"])
+        assert any(conflict["kind"] == "blocked-work" for conflict in data["conflicts"])
 
-    def test_context_json_blocked_item_not_in_ready(self, runner, conn, active_sprint):
-        iid = _add_item(conn, active_sprint["id"],"Blocked Item")
-        db.set_work_item_status(conn, iid, "active")
-        db.set_work_item_status(conn, iid, "blocked")
+    def test_context_json_dependency_conflict_and_next_action(self, runner, conn, active_sprint):
+        blocker = _add_item(conn, active_sprint["id"], "Blocker")
+        blocked = _add_item(conn, active_sprint["id"], "Blocked")
+        db.add_dep(conn, blocker, blocked)
         result = runner.invoke(cli, ["usage", "--context", "--json"])
         data = json.loads(result.output)
-        ready_ids = [it["id"] for it in data["ready_items"]]
-        assert iid not in ready_ids
+        conflict_kinds = [conflict["kind"] for conflict in data["conflicts"]]
+        assert "dependency-blocked" in conflict_kinds
+        assert data["summary"]["ready"] == 1
+        assert data["summary"]["waiting_on_dependencies"] == 1
+        assert data["next_action"]["kind"] == "unblock-dependent-work"
+        assert data["next_action"]["item_id"] == blocked
+        assert data["next_action"]["blocker_item_id"] == blocker
 
     def test_context_json_includes_active_claims_key(self, runner, active_sprint):
         result = runner.invoke(cli, ["usage", "--context", "--json"])
@@ -99,33 +97,30 @@ class TestUsageContext:
         assert "active_claims" in data
         assert isinstance(data["active_claims"], list)
 
-    def test_context_json_includes_recent_decisions_key(self, runner, active_sprint):
-        result = runner.invoke(cli, ["usage", "--context", "--json"])
-        data = json.loads(result.output)
-        assert "recent_decisions" in data
-        assert isinstance(data["recent_decisions"], list)
-
-    def test_context_json_recent_decisions_from_knowledge_events(self, runner, conn, active_sprint):
-        iid = _add_item(conn, active_sprint["id"],"Item")
+    def test_context_json_includes_recent_decisions_and_summary(self, runner, conn, active_sprint):
+        iid = _add_item(conn, active_sprint["id"], "Item")
         db.create_event(
             conn,
             sprint_id=active_sprint["id"],
             work_item_id=iid,
             source_type="actor",
             actor="agent",
-            event_type="lesson-learned",
-            payload={"summary": "caching helps"},
+            event_type="decision",
+            payload={"summary": "Use working-memory handoff contract"},
         )
         result = runner.invoke(cli, ["usage", "--context", "--json"])
         data = json.loads(result.output)
         assert len(data["recent_decisions"]) == 1
-        assert data["recent_decisions"][0]["event_type"] == "lesson-learned"
+        assert data["recent_decisions"][0]["event_type"] == "decision"
+        assert data["recent_decisions"][0]["summary"] == "Use working-memory handoff contract"
 
-    def test_context_by_sprint_id(self, runner, conn, db_path):
+    def test_context_json_by_sprint_id(self, runner, conn, db_path):
         sid = db.create_sprint(conn, "Other Sprint", "goal", "2026-04-01", "2026-04-30", "planned")
-        result = runner.invoke(cli, ["usage", "--context", "--sprint-id", str(sid)])
+        result = runner.invoke(cli, ["usage", "--context", "--sprint-id", str(sid), "--json"])
         assert result.exit_code == 0, result.output
-        assert "Other Sprint" in result.output
+        data = json.loads(result.output)
+        assert data["sprint"]["id"] == sid
+        assert data["sprint"]["name"] == "Other Sprint"
 
     def test_bare_usage_still_works_after_context_flag_added(self, runner, db_path):
         result = runner.invoke(cli, ["usage"])

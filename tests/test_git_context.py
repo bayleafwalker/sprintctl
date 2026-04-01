@@ -138,7 +138,8 @@ class TestItemNoteGitContext:
         ])
         assert result.exit_code == 0, result.output
         candidates = db.list_knowledge_candidates(conn, active_sprint["id"])
-        p = candidates[0]["payload"]
+        pattern = next(candidate for candidate in candidates if candidate["event_type"] == "pattern-noted")
+        p = pattern["payload"]
         assert p["evidence_event_id"] == src_eid
         assert p["git_branch"] == "main"
         assert p["git_sha"] == "cafe999"

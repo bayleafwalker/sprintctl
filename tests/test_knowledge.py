@@ -1,7 +1,7 @@
 """
-Tests for Phase 5: knowledge event typing + evidence links.
+Tests for knowledge event typing + evidence links.
 
-Knowledge event types: pattern-noted, lesson-learned, risk-accepted.
+Knowledge event types: decision, pattern-noted, lesson-learned, risk-accepted.
 Evidence links attach item/event IDs to the payload for kctl to follow.
 """
 
@@ -12,7 +12,7 @@ import pytest
 from sprintctl import db
 from sprintctl.cli import cli
 
-KNOWLEDGE_TYPES = ("pattern-noted", "lesson-learned", "risk-accepted")
+KNOWLEDGE_TYPES = ("decision", "pattern-noted", "lesson-learned", "risk-accepted")
 
 
 def _item(conn, sprint_id, title="Task"):
@@ -26,6 +26,17 @@ def _item(conn, sprint_id, title="Task"):
 
 
 class TestListKnowledgeCandidates:
+    def test_returns_decision(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        eid = db.create_event(
+            conn, active_sprint["id"], "agent",
+            event_type="decision",
+            work_item_id=iid,
+            payload={"summary": "freeze usage contract v1"},
+        )
+        results = db.list_knowledge_candidates(conn, active_sprint["id"])
+        assert any(r["id"] == eid for r in results)
+
     def test_returns_pattern_noted(self, conn, active_sprint):
         iid = _item(conn, active_sprint["id"])
         eid = db.create_event(
@@ -61,12 +72,6 @@ class TestListKnowledgeCandidates:
 
     def test_excludes_non_knowledge_types(self, conn, active_sprint):
         iid = _item(conn, active_sprint["id"])
-        db.create_event(
-            conn, active_sprint["id"], "agent",
-            event_type="decision",
-            work_item_id=iid,
-            payload={"summary": "picked JSON"},
-        )
         db.create_event(
             conn, active_sprint["id"], "agent",
             event_type="update",
@@ -181,7 +186,8 @@ class TestItemNoteCLIEvidence:
         ])
         assert result.exit_code == 0, result.output
         candidates = db.list_knowledge_candidates(conn, active_sprint["id"])
-        assert candidates[0]["payload"]["evidence_event_id"] == src_eid
+        lesson = next(candidate for candidate in candidates if candidate["event_type"] == "lesson-learned")
+        assert lesson["payload"]["evidence_event_id"] == src_eid
 
     def test_item_note_both_evidence_fields(self, runner, conn, active_sprint, db_path):
         iid = _item(conn, active_sprint["id"])
@@ -198,8 +204,9 @@ class TestItemNoteCLIEvidence:
         ])
         assert result.exit_code == 0, result.output
         candidates = db.list_knowledge_candidates(conn, active_sprint["id"])
-        assert candidates[0]["payload"]["evidence_item_id"] == iid
-        assert candidates[0]["payload"]["evidence_event_id"] == src_eid
+        risk = next(candidate for candidate in candidates if candidate["event_type"] == "risk-accepted")
+        assert risk["payload"]["evidence_item_id"] == iid
+        assert risk["payload"]["evidence_event_id"] == src_eid
 
     def test_item_note_no_evidence_still_works(self, runner, conn, active_sprint, db_path):
         iid = _item(conn, active_sprint["id"])
@@ -235,7 +242,7 @@ class TestEventListKnowledgeFlag:
         ])
         assert result.exit_code == 0, result.output
         assert "pattern-noted" in result.output
-        assert "decision" not in result.output
+        assert "decision" in result.output
 
     def test_knowledge_flag_json_output(self, runner, conn, active_sprint, db_path):
         iid = _item(conn, active_sprint["id"])
@@ -255,8 +262,8 @@ class TestEventListKnowledgeFlag:
 
     def test_knowledge_flag_empty_when_no_candidates(self, runner, conn, active_sprint, db_path):
         iid = _item(conn, active_sprint["id"])
-        db.create_event(conn, active_sprint["id"], "agent", event_type="decision",
-                        work_item_id=iid, payload={"summary": "d"})
+        db.create_event(conn, active_sprint["id"], "agent", event_type="update",
+                        work_item_id=iid, payload={"summary": "progress"})
         result = runner.invoke(cli, [
             "event", "list",
             "--sprint-id", str(active_sprint["id"]),

@@ -930,14 +930,14 @@ class TestHandoffTextMode:
         assert "HANDOFF:" in result.output
         assert "S1" in result.output
 
-    def test_handoff_text_format_shows_status_groups(self, runner, conn, active_sprint, db_path):
+    def test_handoff_text_format_shows_ready_section(self, runner, conn, active_sprint, db_path):
         sid = str(active_sprint["id"])
         runner.invoke(cli, ["item", "add", "--sprint-id", sid, "--track", "eng", "--title", "Pending task"])
         result = runner.invoke(cli, [
             "handoff", "--sprint-id", sid, "--output", "-", "--format", "text",
         ])
         assert result.exit_code == 0, result.output
-        assert "PENDING" in result.output
+        assert "READY TO START" in result.output
         assert "Pending task" in result.output
 
     def test_handoff_text_format_shows_shutdown_protocol(self, runner, active_sprint, db_path):
@@ -947,6 +947,7 @@ class TestHandoffTextMode:
         ])
         assert result.exit_code == 0, result.output
         assert "SHUTDOWN PROTOCOL:" in result.output
+        assert "RESUME PATH:" in result.output
 
     def test_handoff_text_format_writes_txt_file(self, runner, active_sprint, db_path, tmp_path):
         out = tmp_path / "handoff.txt"

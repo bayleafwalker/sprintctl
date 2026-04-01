@@ -45,6 +45,16 @@ def backlog_sprint(conn):
 
 
 class TestBacklogSeedDB:
+    def test_creates_item_for_decision_candidate(self, conn, source_sprint, backlog_sprint):
+        iid = _item(conn, source_sprint["id"], "Source item")
+        _knowledge_event(conn, source_sprint["id"], iid, event_type="decision", summary="freeze usage contract")
+
+        seeded = db.backlog_seed_from_candidates(
+            conn, source_sprint["id"], backlog_sprint["id"]
+        )
+        assert len(seeded) == 1
+        assert "freeze usage contract" in seeded[0]["title"]
+
     def test_creates_items_for_each_candidate(self, conn, source_sprint, backlog_sprint):
         iid = _item(conn, source_sprint["id"], "Source item")
         _knowledge_event(conn, source_sprint["id"], iid, summary="pattern A")
