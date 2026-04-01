@@ -74,6 +74,11 @@ class TestRefDB:
         with pytest.raises(ValueError, match="Invalid ref_type"):
             db.add_ref(conn, iid, "wiki", "https://example.com")
 
+    def test_add_ref_invalid_url_raises(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        with pytest.raises(ValueError, match="Invalid ref URL"):
+            db.add_ref(conn, iid, "doc", "not-a-url")
+
     def test_add_ref_missing_item_raises(self, conn):
         with pytest.raises(ValueError, match="not found"):
             db.add_ref(conn, 9999, "pr", "https://github.com/org/repo/pull/1")
@@ -123,6 +128,17 @@ class TestRefCLI:
         assert result.exit_code == 0, result.output
         refs = db.list_refs(conn, iid)
         assert refs[0]["label"] == "Bug #42"
+
+    def test_item_ref_add_invalid_url_fails(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        result = runner.invoke(cli, [
+            "item", "ref", "add",
+            "--id", str(iid),
+            "--type", "doc",
+            "--url", "relative/path",
+        ])
+        assert result.exit_code == 1
+        assert "Invalid ref URL" in result.output
 
     def test_item_ref_list_text(self, runner, conn, active_sprint, db_path):
         iid = _item(conn, active_sprint["id"])

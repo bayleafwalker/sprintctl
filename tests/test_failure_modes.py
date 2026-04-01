@@ -296,6 +296,11 @@ class TestRefFailureModes:
         with pytest.raises(ValueError, match="not found"):
             db.add_ref(conn, 9999, "pr", "https://example.com")
 
+    def test_add_ref_invalid_target_url_raises(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        with pytest.raises(ValueError, match="Invalid ref URL"):
+            db.add_ref(conn, iid, "doc", "bad-target")
+
     def test_remove_ref_wrong_item_raises(self, conn, active_sprint):
         iid1 = _item(conn, active_sprint["id"], "Item A")
         iid2 = _item(conn, active_sprint["id"], "Item B")

@@ -4,6 +4,7 @@ import secrets
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 class InvalidTransition(ValueError):
@@ -163,6 +164,12 @@ _MIGRATIONS: list[str] = [
 ]
 
 REF_TYPES = ("pr", "issue", "doc", "other")
+
+
+def _validate_ref_url(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("Invalid ref URL. Use an absolute http(s) URL.")
 
 
 def get_db_path() -> Path:
@@ -1275,6 +1282,7 @@ def add_ref(
 ) -> int:
     if ref_type not in REF_TYPES:
         raise ValueError(f"Invalid ref_type '{ref_type}'. Must be one of: {', '.join(REF_TYPES)}")
+    _validate_ref_url(url)
     item = get_work_item(conn, work_item_id)
     if item is None:
         raise ValueError(f"Work item #{work_item_id} not found")
