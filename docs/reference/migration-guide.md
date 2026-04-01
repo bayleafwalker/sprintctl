@@ -94,6 +94,32 @@ Current schema version: **8** (ref and dep tables, claim token fields, sprint ki
 
 ---
 
+## Migration safety framework (design checklist)
+
+Use this sequence when introducing a new schema version:
+
+1. Preflight
+   - take a timestamped DB backup (`cp ...sprintctl.db ...bak-YYYYMMDD`)
+   - run `sprintctl maintain check --json` and save the output for comparison
+   - run a full local test pass before changing migration code
+2. Apply
+   - implement an additive migration (`ALTER TABLE ... ADD COLUMN` or new table)
+   - register it in `init_db()` as the next sequential version
+   - run targeted migration tests plus full suite
+3. Verify
+   - reopen DB with current CLI (`init_db()` path) and confirm schema version
+   - run smoke commands: `sprintctl sprint list --json`, `sprintctl usage --context --json`
+   - check no data-loss regressions on `item`, `claim`, `ref`, `dep` paths
+4. Rollback drill (before release)
+   - restore the backup DB into a temp path
+   - run previous sprintctl version against restored DB
+   - verify baseline commands still succeed
+
+This keeps migration safety explicit without introducing a separate migration
+runner or distributed upgrade coordinator.
+
+---
+
 ## Backward compatibility
 
 ### Adding a column with a default
