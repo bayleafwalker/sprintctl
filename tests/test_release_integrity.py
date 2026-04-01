@@ -27,5 +27,7 @@ class TestReleaseIntegrity:
             "handoff        [--sprint-id ID] [--output PATH] [--events N] [--format json|text]",
             "next-work      [--sprint-id ID] [--json]",
             "git-context",
+            "sprint show    [--id ID] [--detail] [--watch] [--interval SECONDS] [--json]",
+            "item list      [--sprint-id ID] [--track NAME] [--status STATUS] [--fzf] [--json]",
         ):
             assert fragment in result.output
