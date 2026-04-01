@@ -7,3 +7,6 @@ dist/
 build/
 *.db
 *.zip
+handoff.json
+handoff-*.json
+sprint-*.json
