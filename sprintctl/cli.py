@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 import click
 
 from . import __version__
+from . import contracts as _contracts
 from . import db as _db
 from . import maintain as _maintain
 from .render import render_sprint_doc
@@ -1156,9 +1157,8 @@ def _collect_context_contract(conn, sprint: dict, now: datetime) -> dict:
     done_items = [item for item in all_items if item["status"] == "done"]
     pending_items = [item for item in all_items if item["status"] == "pending"]
 
-    return {
-        "contract_version": "1",
-        "sprint": {
+    return _contracts.ContextContract(
+        sprint={
             "id": sprint["id"],
             "name": sprint["name"],
             "goal": sprint["goal"],
@@ -1166,7 +1166,7 @@ def _collect_context_contract(conn, sprint: dict, now: datetime) -> dict:
             "start_date": sprint.get("start_date"),
             "end_date": sprint.get("end_date"),
         },
-        "summary": {
+        summary={
             "total": len(all_items),
             "done": len(done_items),
             "active": len(active_items),
@@ -1177,14 +1177,14 @@ def _collect_context_contract(conn, sprint: dict, now: datetime) -> dict:
             "waiting_on_dependencies": len(dependency_waiting_items),
             "active_claims": len(active_claims),
         },
-        "active_claims": active_claims,
-        "conflicts": conflicts,
-        "ready_items": ready_items,
-        "blocked_items": blocked_items,
-        "stale_items": stale_items,
-        "recent_decisions": recent_decisions,
-        "next_action": next_action,
-    }
+        active_claims=active_claims,
+        conflicts=conflicts,
+        ready_items=ready_items,
+        blocked_items=blocked_items,
+        stale_items=stale_items,
+        recent_decisions=recent_decisions,
+        next_action=next_action,
+    ).to_dict()
 
 
 def _render_context_text(snapshot: dict) -> str:
@@ -1370,42 +1370,40 @@ def _build_handoff_bundle(conn, sprint: dict, events_limit: int) -> dict:
     previous_handoff = _previous_handoff_generated(conn, sprint["id"])
     git_context = _detect_git_context()
 
-    return {
-        "bundle_type": "handoff",
-        "bundle_version": "1",
-        "sprintctl_version": __version__,
-        "generated_at": generated_at,
-        "generated_from": {
+    return _contracts.HandoffBundle(
+        sprintctl_version=__version__,
+        generated_at=generated_at,
+        generated_from={
             "command": "sprintctl handoff",
             "events_limit": events_limit,
         },
-        "sprint": dict(sprint),
-        "summary": context["summary"],
-        "active_claims": context["active_claims"],
-        "conflicts": context["conflicts"],
-        "work": {
+        sprint=dict(sprint),
+        summary=context["summary"],
+        active_claims=context["active_claims"],
+        conflicts=context["conflicts"],
+        work={
             "active_items": active_items,
             "ready_items": context["ready_items"],
             "blocked_items": context["blocked_items"],
             "stale_items": context["stale_items"],
         },
-        "recent_decisions": context["recent_decisions"],
-        "recent_events": [_summarize_event(event) for event in recent_events],
-        "next_action": context["next_action"],
-        "delta_since_last_handoff": _build_delta_since_last_handoff(
+        recent_decisions=context["recent_decisions"],
+        recent_events=[_summarize_event(event) for event in recent_events],
+        next_action=context["next_action"],
+        delta_since_last_handoff=_build_delta_since_last_handoff(
             previous_handoff=previous_handoff,
             items=items_with_refs,
             all_events=all_events,
             active_claims=context["active_claims"],
         ),
-        "freshness": {
+        freshness={
             "generated_at": generated_at,
             "previous_handoff_at": previous_handoff["created_at"] if previous_handoff else None,
             "stale_item_count": len(context["stale_items"]),
             "active_claim_count": len(context["active_claims"]),
             "dirty_file_count": len(git_context["dirty_files"]) if git_context else 0,
         },
-        "evidence": {
+        evidence={
             "dirty_files": git_context["dirty_files"] if git_context else [],
             "items_with_refs": sum(1 for item in items_with_refs if item.get("refs")),
             "total_refs": sum(len(item.get("refs", [])) for item in items_with_refs),
@@ -1413,20 +1411,20 @@ def _build_handoff_bundle(conn, sprint: dict, events_limit: int) -> dict:
             "recent_decision_count": len(context["recent_decisions"]),
             "validation_outcomes": [],
         },
-        "git_context": git_context,
-        "claim_identity_model": {
+        git_context=git_context,
+        claim_identity_model={
             "ownership_proof": "claim_id+claim_token",
             "claim_tokens_included": False,
             "ambiguous_identity_visible": True,
             "explicit_claim_handoff_command": "sprintctl claim handoff",
         },
-        "resume_instructions": [
+        resume_instructions=[
             "Read this handoff bundle first.",
             "Refresh live state with 'sprintctl usage --context --json'.",
             "Inspect the target item with 'sprintctl item show --id <id> --json' if more detail is needed.",
             "Use 'sprintctl claim resume' to locate transferred claims before claiming new work.",
         ],
-        "agent_shutdown_protocol": {
+        agent_shutdown_protocol={
             "required_before_termination": [
                 "For each active claim you own: run 'sprintctl claim handoff --id <id> --claim-token <token> --actor <next-agent> --mode rotate' to pass ownership to the incoming session.",
                 "If no incoming session: run 'sprintctl claim release --id <id> --claim-token <token>' to free each claim.",
@@ -1437,9 +1435,9 @@ def _build_handoff_bundle(conn, sprint: dict, events_limit: int) -> dict:
                 "'--runtime-session-id <id>' to locate claims transferred to you."
             ),
         },
-        "items": items_with_refs,
-        "events": recent_events,
-    }
+        items=items_with_refs,
+        events=recent_events,
+    ).to_dict()
 
 
 def _record_handoff_generated(conn, sprint_id: int, bundle: dict) -> None:
