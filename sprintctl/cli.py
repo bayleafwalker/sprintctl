@@ -59,6 +59,39 @@ def _get_conn(obj: dict) -> sqlite3.Connection:
     return conn
 
 
+def _style_status(status: str) -> str:
+    palette = {
+        "planned": "yellow",
+        "pending": "yellow",
+        "active": "cyan",
+        "done": "green",
+        "blocked": "red",
+        "closed": "magenta",
+    }
+    return click.style(status, fg=palette.get(status, "white"), bold=True)
+
+
+def _pad_styled(value: str, width: int) -> str:
+    visible = len(click.unstyle(value))
+    if visible >= width:
+        return value
+    return value + (" " * (width - visible))
+
+
+def _render_table(headers: list[str], rows: list[list[str]]) -> list[str]:
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for idx, cell in enumerate(row):
+            widths[idx] = max(widths[idx], len(click.unstyle(str(cell))))
+    header = "  ".join(headers[i].ljust(widths[i]) for i in range(len(headers)))
+    separator = "  ".join("-" * widths[i] for i in range(len(headers)))
+    rendered_rows = [
+        "  ".join(_pad_styled(str(row[i]), widths[i]) for i in range(len(headers)))
+        for row in rows
+    ]
+    return [header, separator, *rendered_rows]
+
+
 # ---------------------------------------------------------------------------
 # sprint
 # ---------------------------------------------------------------------------
@@ -239,10 +272,25 @@ def sprint_list(obj, include_backlog, include_archive, as_json) -> None:
     if not sprints:
         click.echo("No sprints found.")
         return
+    rows: list[list[str]] = []
     for s in sprints:
         kind = s.get("kind", "active_sprint")
-        date_part = f"  ({s['start_date']} to {s['end_date']})" if s.get("start_date") and s.get("end_date") else ""
-        click.echo(f"#{s['id']}  [{s['status']:8}]  [{kind:14}]  {s['name']}{date_part}")
+        dates = (
+            f"{s['start_date']} to {s['end_date']}"
+            if s.get("start_date") and s.get("end_date")
+            else "-"
+        )
+        rows.append(
+            [
+                f"#{s['id']}",
+                _style_status(s["status"]),
+                kind,
+                s["name"],
+                dates,
+            ]
+        )
+    for line in _render_table(["ID", "STATUS", "KIND", "NAME", "DATES"], rows):
+        click.echo(line)
 
 
 @sprint.command("kind")
@@ -429,12 +477,20 @@ def item_list(obj, sprint_id, track_name, status, as_json) -> None:
     if not items:
         click.echo("No items found.")
         return
+    rows: list[list[str]] = []
     for it in items:
         assignee = it.get("assignee") or "-"
-        click.echo(
-            f"#{it['id']}  [{it['status']:8}]  {it['title']}  "
-            f"(track: {it['track_name']}, assignee: {assignee})"
+        rows.append(
+            [
+                f"#{it['id']}",
+                _style_status(it["status"]),
+                it["track_name"],
+                assignee,
+                it["title"],
+            ]
         )
+    for line in _render_table(["ID", "STATUS", "TRACK", "ASSIGNEE", "TITLE"], rows):
+        click.echo(line)
 
 
 @item.command("note")
@@ -2426,11 +2482,12 @@ def next_work_cmd(obj, sprint_id, as_json) -> None:
         click.echo(f"No pending items ready to start in sprint #{s['id']} ({s['name']}).")
         return
     click.echo(f"Ready to start in sprint #{s['id']} ({s['name']}):")
+    rows: list[list[str]] = []
     for it in ready:
         assignee = it.get("assignee") or "-"
-        click.echo(
-            f"  #{it['id']}  {it['title']}  [track: {it['track_name']}]  assignee: {assignee}"
-        )
+        rows.append([f"#{it['id']}", it["track_name"], assignee, it["title"]])
+    for line in _render_table(["ID", "TRACK", "ASSIGNEE", "TITLE"], rows):
+        click.echo(f"  {line}")
 
 
 @cli.command("usage")
