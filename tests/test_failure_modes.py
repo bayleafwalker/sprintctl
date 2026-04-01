@@ -3,6 +3,7 @@ Failure-mode tests: claim token collisions, concurrent write patterns,
 expired claim edge cases, ref integrity, and dep edge cases.
 """
 
+import json
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
@@ -10,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from sprintctl import db, maintain
+import sprintctl.cli as cli_module
 from sprintctl.cli import cli
 
 
@@ -519,3 +521,45 @@ class TestMaintainSweepEdgeCases:
         _status(conn, iid, "active")
         result = maintain.sweep(conn, active_sprint["id"], _now(), threshold=timedelta(seconds=0))
         assert len(result["blocked_items"]) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Group 8: Context and handoff recovery surfaces
+# ---------------------------------------------------------------------------
+
+class TestContextAndHandoffRecoveryModes:
+    def test_handoff_without_any_sprint_fails_cleanly(self, runner, db_path):
+        result = runner.invoke(cli, ["handoff", "--output", "-"])
+        assert result.exit_code == 1
+        assert "No sprint found" in result.output
+
+    def test_handoff_explicit_sprint_id_succeeds_without_active_sprint(self, runner, conn, db_path):
+        sid = db.create_sprint(conn, "Planned", "resume target", "2026-04-01", "2026-04-14", "planned")
+        result = runner.invoke(cli, ["handoff", "--sprint-id", str(sid), "--output", "-"])
+        assert result.exit_code == 0, result.output
+        bundle = json.loads(result.output)
+        assert bundle["sprint"]["id"] == sid
+        assert bundle["sprint"]["status"] == "planned"
+
+    def test_handoff_without_git_context_still_emits_typed_bundle(self, runner, conn, active_sprint, db_path, monkeypatch):
+        iid = _item(conn, active_sprint["id"], "Task")
+        db.create_event(
+            conn,
+            active_sprint["id"],
+            actor="agent",
+            event_type="decision",
+            source_type="actor",
+            work_item_id=iid,
+            payload={"summary": "Recovery-safe bundle without git context"},
+        )
+        monkeypatch.setattr(cli_module, "_detect_git_context", lambda: None)
+
+        result = runner.invoke(cli, ["handoff", "--sprint-id", str(active_sprint["id"]), "--output", "-"])
+        assert result.exit_code == 0, result.output
+        bundle = json.loads(result.output)
+        assert bundle["bundle_type"] == "handoff"
+        assert bundle["bundle_version"] == "1"
+        assert bundle["git_context"] is None
+        assert bundle["evidence"]["dirty_files"] == []
+        assert bundle["freshness"]["dirty_file_count"] == 0
+        assert bundle["recent_decisions"][0]["summary"] == "Recovery-safe bundle without git context"

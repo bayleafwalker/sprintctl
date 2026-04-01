@@ -3,10 +3,17 @@
 For the shortest path, start with [Start Here](start-here.md) and then use this
 guide once you are wiring `sprintctl` into a real repository. For the current
 read contracts, see [Context and Handoff Contracts](../reference/context-and-handoff.md).
+If you need to integrate `sprintctl` with an external tracker, planner, or
+orchestrator, also read [Interoperability Patterns](interoperability.md).
 
 This guide covers how to use `sprintctl` inside a real repository, not just how to invoke the CLI.
 
 The patterns here are based on the way a larger reference repo (`homelab-analytics`) uses `sprintctl`: local operational state, committed shared snapshots, and explicit claim-based coordination for agent sessions.
+
+`sprintctl` should usually be the execution-memory layer inside the repo, not a
+replacement for the surrounding issue tracker or planning system. Keep external
+planning broad; mirror only the execution state that must remain local and
+recoverable.
 
 ## Recommended Repo Shape
 
@@ -218,3 +225,6 @@ For a complete worked example — including AGENTS.md, sprint naming conventions
 **[sprintctl-bootstrap-template](https://github.com/bayleafwalker/sprintctl-bootstrap-template)**
 
 That repo demonstrates "what does good look like when starting from nothing?" It is designed to be forked and adapted, not read in-place.
+
+If the repository already has another system for backlog or orchestration,
+[Interoperability Patterns](interoperability.md) describes the boundary to keep.

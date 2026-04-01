@@ -72,4 +72,5 @@ you want a reviewable snapshot in git.
 - [Resume Work](resume-work.md)
 - [Agent-Assisted Work](agent-assisted.md)
 - [Project Integration](project-integration.md)
+- [Interoperability Patterns](interoperability.md)
 - [Context and Handoff Contracts](../reference/context-and-handoff.md)

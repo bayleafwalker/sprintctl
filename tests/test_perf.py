@@ -10,6 +10,7 @@ Scale: a "large sprint" is 200 items across 5 tracks — well above any real
 sprint, but realistic as a stress floor for the local SQLite model.
 """
 
+import json
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -26,6 +27,13 @@ from sprintctl.cli import cli
 
 LARGE_SPRINT_ITEMS = 200
 TRACKS = ["alpha", "beta", "gamma", "delta", "epsilon"]
+RICH_ACTIVE_ITEMS = 50
+RICH_BLOCKED_ITEMS = 20
+RICH_DONE_ITEMS = 20
+RICH_DEPENDENCY_PAIRS = 20
+RICH_REF_ITEMS = 30
+RICH_DECISION_EVENTS = 12
+RICH_STALE_ITEMS = 10
 
 
 def _now():
@@ -44,6 +52,53 @@ def _build_large_sprint(conn) -> dict:
         track_name = TRACKS[i % len(TRACKS)]
         db.create_work_item(conn, sid, track_ids[track_name], f"Item {i:04d}")
     return db.get_sprint(conn, sid)
+
+
+def _enrich_large_sprint_for_resume_surfaces(conn, sprint: dict) -> list[dict]:
+    items = db.list_work_items(conn, sprint_id=sprint["id"])
+
+    for item in items[:RICH_ACTIVE_ITEMS]:
+        db.set_work_item_status(conn, item["id"], "active")
+        db.create_claim(conn, item["id"], agent=f"agent-{item['id']}")
+
+    for item in items[RICH_ACTIVE_ITEMS:RICH_ACTIVE_ITEMS + RICH_BLOCKED_ITEMS]:
+        db.set_work_item_status(conn, item["id"], "active")
+        db.set_work_item_status(conn, item["id"], "blocked")
+
+    done_start = RICH_ACTIVE_ITEMS + RICH_BLOCKED_ITEMS
+    done_end = done_start + RICH_DONE_ITEMS
+    for item in items[done_start:done_end]:
+        db.set_work_item_status(conn, item["id"], "active")
+        db.set_work_item_status(conn, item["id"], "done")
+
+    dep_start = done_end
+    for offset in range(RICH_DEPENDENCY_PAIRS):
+        blocker = items[dep_start + offset]
+        blocked = items[dep_start + RICH_DEPENDENCY_PAIRS + offset]
+        db.add_dep(conn, blocker["id"], blocked["id"])
+
+    for item in items[:RICH_REF_ITEMS]:
+        db.add_ref(conn, item["id"], "doc", f"https://docs.example.com/items/{item['id']}")
+
+    for item in items[:RICH_DECISION_EVENTS]:
+        db.create_event(
+            conn,
+            sprint["id"],
+            actor="agent-a",
+            event_type="decision",
+            source_type="actor",
+            work_item_id=item["id"],
+            payload={"summary": f"Decision for item {item['id']}"},
+        )
+
+    stale_ids = [item["id"] for item in items[:RICH_STALE_ITEMS]]
+    placeholders = ",".join("?" for _ in stale_ids)
+    conn.execute(
+        f"UPDATE work_item SET updated_at = '2020-01-01T00:00:00Z' WHERE id IN ({placeholders})",
+        stale_ids,
+    )
+    conn.commit()
+    return items
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +303,25 @@ class TestUsageContextAtScale:
         assert result.exit_code == 0, result.output
         assert elapsed < 200, f"usage --context took {elapsed:.1f} ms"
 
+    def test_usage_context_json_rich_large_sprint_under_300ms(self, db_path):
+        """usage --context --json should stay bounded with claims, deps, refs, and stale work."""
+        from click.testing import CliRunner
+        conn = db.get_connection(db_path)
+        db.init_db(conn)
+        sprint = _build_large_sprint(conn)
+        _enrich_large_sprint_for_resume_surfaces(conn, sprint)
+        conn.close()
+        runner = CliRunner()
+        start = time.monotonic()
+        result = runner.invoke(cli, ["usage", "--context", "--sprint-id", str(sprint["id"]), "--json"])
+        elapsed = _ms(start)
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["summary"]["active_claims"] == RICH_ACTIVE_ITEMS
+        assert payload["summary"]["waiting_on_dependencies"] == RICH_DEPENDENCY_PAIRS
+        assert payload["summary"]["stale"] == RICH_STALE_ITEMS
+        assert elapsed < 300, f"usage --context --json took {elapsed:.1f} ms"
+
     def test_next_work_json_large_sprint_under_120ms(self, db_path):
         """next-work --json should stay fast for a 200-item pending sprint."""
         from click.testing import CliRunner
@@ -275,3 +349,40 @@ class TestUsageContextAtScale:
         elapsed = _ms(start)
         assert result.exit_code == 0, result.output
         assert elapsed < 300, f"handoff --output - took {elapsed:.1f} ms"
+
+    def test_handoff_json_rich_large_sprint_second_pass_under_450ms(self, db_path):
+        """A second handoff on a rich large sprint should stay bounded and compute delta data."""
+        from click.testing import CliRunner
+        conn = db.get_connection(db_path)
+        db.init_db(conn)
+        sprint = _build_large_sprint(conn)
+        items = _enrich_large_sprint_for_resume_surfaces(conn, sprint)
+        runner = CliRunner()
+
+        first = runner.invoke(cli, ["handoff", "--sprint-id", str(sprint["id"]), "--output", "-"])
+        assert first.exit_code == 0, first.output
+
+        db.create_event(
+            conn,
+            sprint["id"],
+            actor="agent-b",
+            event_type="decision",
+            source_type="actor",
+            work_item_id=items[0]["id"],
+            payload={"summary": "Post-handoff decision"},
+        )
+        db.set_work_item_status(conn, items[-1]["id"], "active")
+        db.set_work_item_status(conn, items[-1]["id"], "done")
+        conn.close()
+
+        start = time.monotonic()
+        result = runner.invoke(cli, ["handoff", "--sprint-id", str(sprint["id"]), "--output", "-"])
+        elapsed = _ms(start)
+        assert result.exit_code == 0, result.output
+        bundle = json.loads(result.output)
+        assert bundle["delta_since_last_handoff"]["previous_handoff_at"] is not None
+        assert bundle["delta_since_last_handoff"]["event_count"] >= 1
+        assert bundle["evidence"]["total_refs"] == RICH_REF_ITEMS
+        assert bundle["evidence"]["recent_decision_count"] == len(bundle["recent_decisions"])
+        assert bundle["evidence"]["recent_decision_count"] == 5
+        assert elapsed < 450, f"handoff rich second pass took {elapsed:.1f} ms"

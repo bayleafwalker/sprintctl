@@ -532,6 +532,16 @@ def set_work_item_status(
                 f"(claim #{active_claim['id']})."
             )
         _require_claim_proof(active_claim, claim_token)
+    if new_status == "active":
+        unresolved = [
+            blocker for blocker in list_deps_blocking(conn, item_id)
+            if blocker["blocker_status"] != "done"
+        ]
+        if unresolved:
+            blocker_ids = [blocker["item_id"] for blocker in unresolved]
+            raise InvalidTransition(
+                f"cannot transition {current} -> active while blockers remain unresolved: {blocker_ids}"
+            )
     conn.execute(
         "UPDATE work_item SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
         (new_status, item_id),
@@ -818,29 +828,30 @@ def create_claim(
     item = get_work_item(conn, work_item_id)
     if item is None:
         raise ValueError(f"Work item #{work_item_id} not found")
-    if exclusive:
-        conflict = _get_active_exclusive_claim_row(conn, work_item_id)
-        if conflict:
-            # Allow sub-agent claim if the conflict IS the coordinate claim being delegated under.
-            if (
-                conflict["claim_type"] == "coordinate"
-                and coordinate_claim_id is not None
-                and coordinate_claim_id == conflict["id"]
-            ):
-                coord_row = conn.execute(
-                    "SELECT * FROM claim WHERE id = ?", (coordinate_claim_id,)
-                ).fetchone()
-                if coord_row is None:
-                    raise ValueError(f"Coordinate claim #{coordinate_claim_id} not found")
-                _require_claim_proof(coord_row, coordinate_claim_token)
-                # Permit the sub-agent claim — fall through to INSERT below.
-            else:
-                raise ClaimConflict(
-                    f"Item #{work_item_id} is exclusively claimed by '{conflict['agent']}' (claim #{conflict['id']})"
-                )
     for attempt in range(MAX_CLAIM_TOKEN_INSERT_RETRIES):
         claim_token = _generate_claim_token()
         try:
+            conn.execute("BEGIN IMMEDIATE")
+            if exclusive:
+                conflict = _get_active_exclusive_claim_row(conn, work_item_id)
+                if conflict:
+                    # Allow sub-agent claim if the conflict IS the coordinate claim being delegated under.
+                    if (
+                        conflict["claim_type"] == "coordinate"
+                        and coordinate_claim_id is not None
+                        and coordinate_claim_id == conflict["id"]
+                    ):
+                        coord_row = conn.execute(
+                            "SELECT * FROM claim WHERE id = ?", (coordinate_claim_id,)
+                        ).fetchone()
+                        if coord_row is None:
+                            raise ValueError(f"Coordinate claim #{coordinate_claim_id} not found")
+                        _require_claim_proof(coord_row, coordinate_claim_token)
+                        # Permit the sub-agent claim — fall through to INSERT below.
+                    else:
+                        raise ClaimConflict(
+                            f"Item #{work_item_id} is exclusively claimed by '{conflict['agent']}' (claim #{conflict['id']})"
+                        )
             cur = conn.execute(
                 """
                 INSERT INTO claim
@@ -853,19 +864,22 @@ def create_claim(
                 """,
                 (work_item_id, agent, claim_type, 1 if exclusive else 0, ttl_seconds,
                  branch, worktree_path, commit_sha, pr_ref,
-                 claim_token, runtime_session_id, instance_id, hostname, pid),
+                claim_token, runtime_session_id, instance_id, hostname, pid),
             )
             conn.commit()
             return cur.lastrowid
         except sqlite3.IntegrityError as exc:
             # Extremely rare, but token generation can theoretically collide.
+            conn.rollback()
             if not _is_claim_token_collision(exc):
                 raise
-            conn.rollback()
             if attempt == MAX_CLAIM_TOKEN_INSERT_RETRIES - 1:
                 raise RuntimeError(
                     "Failed to create claim: could not generate a unique claim token."
                 ) from exc
+        except Exception:
+            conn.rollback()
+            raise
 
 
 def heartbeat_claim(

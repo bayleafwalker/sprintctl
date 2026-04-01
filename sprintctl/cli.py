@@ -559,7 +559,7 @@ def item_note(
 @click.option("--claim-token", default=None, help="Claim token proving ownership of an active exclusive claim")
 @click.pass_obj
 def item_status(obj, item_id, new_status, actor, claim_id, claim_token) -> None:
-    """Update an item's status (enforces allowed transitions and exclusive claims)."""
+    """Update an item's status (enforces transitions, claims, and dependency safety)."""
     conn = _get_conn(obj)
     it = _db.get_work_item(conn, item_id)
     if it is None:
@@ -1279,7 +1279,7 @@ def _detect_git_context() -> dict | None:
         result = subprocess.run(args, capture_output=True, text=True)
         if result.returncode != 0:
             raise RuntimeError
-        return result.stdout.strip()
+        return result.stdout.rstrip("\n")
 
     try:
         branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])

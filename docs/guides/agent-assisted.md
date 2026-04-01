@@ -58,3 +58,4 @@ sprintctl handoff --output handoff.json
 - [Resume Work](resume-work.md)
 - [Advanced Coordination](advanced-coordination.md)
 - [Project Integration](project-integration.md)
+- [Interoperability Patterns](interoperability.md)

@@ -1,0 +1,23 @@
+SPRINT: Phase 11: Interop Docs + Safety Coverage  [closed]
+Goal:   Document interoperability patterns, tighten dependency safety where it changes execution correctness, and expand failure/performance coverage
+Dates:  2026-04-01 to 2026-04-14
+ID:     5
+Items:  4 total — 4 done, 0 active, 0 pending, 0 blocked
+
+--- Track: deps ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #62  Tighten dependency enforcement only where it improves execution safety  (assignee: -)
+
+--- Track: failure-mode ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #63  Expand recovery and failure-mode coverage for typed context and handoff flows  (assignee: -)
+
+--- Track: interop ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #60  Document interoperability patterns for task graphs, issue trackers, and orchestrators  (assignee: -)
+
+--- Track: performance ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #61  Add larger-sprint performance sanity coverage for context and handoff generation  (assignee: -)
+
+Rendered: 2026-04-01T20:29:05Z

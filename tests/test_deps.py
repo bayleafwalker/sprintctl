@@ -119,6 +119,31 @@ class TestDepDB:
         blocker_ids = {b["item_id"] for b in blockers}
         assert blocker_ids == {iid_a, iid_b}
 
+    def test_pending_to_active_raises_when_blockers_unresolved(self, conn, active_sprint):
+        blocker = _item(conn, active_sprint["id"], "Blocker")
+        blocked = _item(conn, active_sprint["id"], "Blocked")
+        db.add_dep(conn, blocker, blocked)
+        with pytest.raises(db.InvalidTransition, match="blockers remain unresolved"):
+            db.set_work_item_status(conn, blocked, "active")
+
+    def test_blocked_to_active_raises_when_blockers_unresolved(self, conn, active_sprint):
+        blocker = _item(conn, active_sprint["id"], "Blocker")
+        blocked = _item(conn, active_sprint["id"], "Blocked")
+        db.set_work_item_status(conn, blocked, "active")
+        db.set_work_item_status(conn, blocked, "blocked")
+        db.add_dep(conn, blocker, blocked)
+        with pytest.raises(db.InvalidTransition, match="blockers remain unresolved"):
+            db.set_work_item_status(conn, blocked, "active")
+
+    def test_pending_to_active_allowed_when_blockers_done(self, conn, active_sprint):
+        blocker = _item(conn, active_sprint["id"], "Blocker")
+        blocked = _item(conn, active_sprint["id"], "Blocked")
+        db.add_dep(conn, blocker, blocked)
+        db.set_work_item_status(conn, blocker, "active")
+        db.set_work_item_status(conn, blocker, "done")
+        db.set_work_item_status(conn, blocked, "active")
+        assert db.get_work_item(conn, blocked)["status"] == "active"
+
 
 # ---------------------------------------------------------------------------
 # get_ready_items
@@ -294,6 +319,17 @@ class TestDepCLI:
         assert result.exit_code == 0, result.output
         assert "Blocked by:" not in result.output
         assert "Blocks:" not in result.output
+
+    def test_item_status_active_fails_when_blockers_unresolved(self, runner, conn, active_sprint, db_path):
+        blocker = _item(conn, active_sprint["id"], "Blocker")
+        blocked = _item(conn, active_sprint["id"], "Blocked")
+        db.add_dep(conn, blocker, blocked)
+        result = runner.invoke(
+            cli,
+            ["item", "status", "--id", str(blocked), "--status", "active"],
+        )
+        assert result.exit_code == 1
+        assert "blockers remain unresolved" in result.output
 
 
 # ---------------------------------------------------------------------------

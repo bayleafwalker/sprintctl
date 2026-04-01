@@ -12,6 +12,7 @@ import subprocess
 import pytest
 
 from sprintctl import db
+import sprintctl.cli as cli_module
 from sprintctl.cli import cli
 
 
@@ -174,6 +175,31 @@ class TestGitContextCommand:
     def test_git_context_text_output_contains_branch(self, runner, db_path):
         result = runner.invoke(cli, ["git-context"])
         assert "branch" in result.output.lower() or "Branch" in result.output
+
+    def test_git_context_preserves_leading_path_characters(self, monkeypatch):
+        def fake_run(args, capture_output, text):
+            if args == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
+                return subprocess.CompletedProcess(args, 0, stdout="main\n", stderr="")
+            if args == ["git", "rev-parse", "HEAD"]:
+                return subprocess.CompletedProcess(args, 0, stdout="abc123\n", stderr="")
+            if args == ["git", "rev-parse", "--show-toplevel"]:
+                return subprocess.CompletedProcess(args, 0, stdout="/tmp/repo\n", stderr="")
+            if args == ["git", "status", "--short"]:
+                return subprocess.CompletedProcess(
+                    args,
+                    0,
+                    stdout=" M docs/guides/start-here.md\n?? docs/guides/interoperability.md\n",
+                    stderr="",
+                )
+            raise AssertionError(f"unexpected command: {args}")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        context = cli_module._detect_git_context()
+        assert context is not None
+        assert context["dirty_files"] == [
+            "docs/guides/start-here.md",
+            "docs/guides/interoperability.md",
+        ]
 
     def test_git_context_outside_repo(self, runner, db_path, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
