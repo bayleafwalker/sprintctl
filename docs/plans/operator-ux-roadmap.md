@@ -48,6 +48,7 @@ This phase also includes fzf-friendly output for pipe workflows:
 
 ```sh
 # One item per line: #ID<TAB>STATUS<TAB>TRACK<TAB>ASSIGNEE<TAB>TITLE
+# Field values escape tabs/newlines/backslashes as \t, \n, and \\
 sprintctl item list --fzf
 
 # Pipe to fzf for interactive item selection

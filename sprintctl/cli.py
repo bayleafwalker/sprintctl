@@ -104,6 +104,15 @@ def _clear_terminal_for_watch(stdout: TextIO | None = None, term: str | None = N
     return True
 
 
+def _escape_fzf_field(value: str) -> str:
+    return (
+        value.replace("\\", "\\\\")
+        .replace("\t", "\\t")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+    )
+
+
 def _collect_sprint_show_payload(conn: sqlite3.Connection, s: dict, detail: bool) -> dict:
     out: dict = {
         "id": s["id"],
@@ -531,7 +540,13 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, as_json) -> None:
     if as_fzf:
         for it in items:
             assignee = it.get("assignee") or "-"
-            click.echo(f"#{it['id']}\t{it['status']}\t{it['track_name']}\t{assignee}\t{it['title']}")
+            click.echo(
+                f"#{it['id']}\t"
+                f"{_escape_fzf_field(it['status'])}\t"
+                f"{_escape_fzf_field(it['track_name'])}\t"
+                f"{_escape_fzf_field(assignee)}\t"
+                f"{_escape_fzf_field(it['title'])}"
+            )
         return
     if not items:
         click.echo("No items found.")

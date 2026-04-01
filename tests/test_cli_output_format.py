@@ -90,3 +90,26 @@ class TestCliFzfOutput:
         )
         assert result.exit_code == 1
         assert "--fzf cannot be combined with --json" in result.output
+
+    def test_item_list_fzf_escapes_tabs_newlines_and_backslashes(self, runner, conn, active_sprint):
+        item_id = _item(
+            conn,
+            active_sprint["id"],
+            title="Fix\tbad\nline\\path",
+            track="eng\tops\ncore",
+            assignee="al\nice\t\\",
+        )
+        result = runner.invoke(
+            cli,
+            ["item", "list", "--sprint-id", str(active_sprint["id"]), "--fzf"],
+        )
+        assert result.exit_code == 0, result.output
+        lines = [line for line in result.output.splitlines() if line.strip()]
+        assert len(lines) == 1
+        assert lines[0].split("\t") == [
+            f"#{item_id}",
+            "pending",
+            "eng\\tops\\ncore",
+            "al\\nice\\t\\\\",
+            "Fix\\tbad\\nline\\\\path",
+        ]
