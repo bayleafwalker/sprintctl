@@ -52,3 +52,41 @@ class TestCliStatusColor:
         assert "\x1b[" in result.output
         assert "pending" in result.output
 
+
+class TestCliFzfOutput:
+    def test_item_list_fzf_outputs_parseable_rows(self, runner, conn, active_sprint):
+        item_id = _item(conn, active_sprint["id"], "Write docs", track="docs", assignee="alice")
+        result = runner.invoke(
+            cli,
+            ["item", "list", "--sprint-id", str(active_sprint["id"]), "--fzf"],
+        )
+        assert result.exit_code == 0, result.output
+        lines = [line for line in result.output.splitlines() if line.strip()]
+        assert lines == [f"#{item_id}\tpending\tdocs\talice\tWrite docs"]
+
+    def test_item_list_fzf_disables_colorized_table_output(self, runner, conn, active_sprint):
+        _item(conn, active_sprint["id"], "Task", track="eng", assignee="alice")
+        result = runner.invoke(
+            cli,
+            ["item", "list", "--sprint-id", str(active_sprint["id"]), "--fzf"],
+            color=True,
+        )
+        assert result.exit_code == 0, result.output
+        assert "\x1b[" not in result.output
+
+    def test_item_list_fzf_empty_outputs_no_lines(self, runner, active_sprint):
+        result = runner.invoke(
+            cli,
+            ["item", "list", "--sprint-id", str(active_sprint["id"]), "--fzf"],
+        )
+        assert result.exit_code == 0, result.output
+        assert result.output == ""
+
+    def test_item_list_fzf_cannot_combine_with_json(self, runner, conn, active_sprint):
+        _item(conn, active_sprint["id"], "Task")
+        result = runner.invoke(
+            cli,
+            ["item", "list", "--sprint-id", str(active_sprint["id"]), "--fzf", "--json"],
+        )
+        assert result.exit_code == 1
+        assert "--fzf cannot be combined with --json" in result.output

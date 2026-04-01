@@ -507,13 +507,29 @@ def item_show(obj, item_id, as_json) -> None:
     type=click.Choice(["pending", "active", "done", "blocked"]),
     help="Filter by status",
 )
+@click.option(
+    "--fzf",
+    "as_fzf",
+    is_flag=True,
+    default=False,
+    help="Output one tab-separated item per line for fzf/pipe workflows",
+)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
-def item_list(obj, sprint_id, track_name, status, as_json) -> None:
+def item_list(obj, sprint_id, track_name, status, as_fzf, as_json) -> None:
     """List work items."""
+    if as_json and as_fzf:
+        click.echo("Error: --fzf cannot be combined with --json.", err=True)
+        sys.exit(1)
+
     items = _db.list_work_items(_get_conn(obj), sprint_id=sprint_id, track_name=track_name, status=status)
     if as_json:
         click.echo(json.dumps(items, indent=2))
+        return
+    if as_fzf:
+        for it in items:
+            assignee = it.get("assignee") or "-"
+            click.echo(f"#{it['id']}\t{it['status']}\t{it['track_name']}\t{assignee}\t{it['title']}")
         return
     if not items:
         click.echo("No items found.")
