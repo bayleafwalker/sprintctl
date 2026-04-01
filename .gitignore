@@ -7,6 +7,10 @@ dist/
 build/
 *.db
 *.zip
+
+# sprintctl local operational state (do not commit)
+.sprintctl/
 handoff.json
 handoff-*.json
 sprint-*.json
+claim-handoff*.json
