@@ -379,6 +379,14 @@ class TestNextWork:
         assert isinstance(data, list)
         assert any(it["id"] == iid_a for it in data)
 
+    def test_next_work_json_output_remains_ready_items_shape(self, runner, conn, active_sprint, db_path):
+        _item(conn, active_sprint["id"], "Ready task")
+        expected = db.get_ready_items(conn, active_sprint["id"])
+        result = runner.invoke(cli, ["next-work", "--sprint-id", str(active_sprint["id"]), "--json"])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data == expected
+
     def test_next_work_json_explain_output(self, runner, conn, active_sprint, db_path):
         iid_ready = _item(conn, active_sprint["id"], "Ready task")
         result = runner.invoke(
@@ -417,6 +425,25 @@ class TestNextWork:
         assert waiting["id"] == blocked
         assert waiting["reason_code"] == "waiting-on-dependencies"
         assert waiting["unresolved_blocker_ids"] == [blocker]
+
+    def test_next_work_json_explain_prioritizes_active_claim(self, runner, conn, active_sprint, db_path):
+        claimed = _item(conn, active_sprint["id"], "Claimed task")
+        claim_id = db.create_claim(
+            conn,
+            claimed,
+            "codex-agent",
+            runtime_session_id="session-next-work",
+            instance_id="instance-next-work",
+        )
+        result = runner.invoke(
+            cli,
+            ["next-work", "--sprint-id", str(active_sprint["id"]), "--json", "--explain"],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["summary"]["active_claims"] == 1
+        assert data["next_action"]["kind"] == "inspect-active-claim"
+        assert data["next_action"]["claim_id"] == claim_id
 
     def test_next_work_explain_requires_json(self, runner, active_sprint):
         result = runner.invoke(cli, ["next-work", "--sprint-id", str(active_sprint["id"]), "--explain"])

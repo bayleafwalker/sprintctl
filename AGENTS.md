@@ -140,7 +140,7 @@ without summarisation.
 
 ```bash
 # See what's ready to pick up
-sprintctl next-work [--sprint-id N] [--json]
+sprintctl next-work [--sprint-id N] [--json] [--explain]
 
 # See your current git context (branch, sha, worktree)
 sprintctl git-context [--json]

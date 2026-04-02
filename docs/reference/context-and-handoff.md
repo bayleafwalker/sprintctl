@@ -40,6 +40,41 @@ Field intent:
 
 Text output mirrors the same section order so human and agent paths stay aligned.
 
+## `next-work --json --explain`
+
+`next-work --json --explain` is the detailed readiness surface for automation
+that needs exclusion reasons and a local next-step recommendation.
+
+Contract version: `1`
+
+Top-level shape:
+
+```json
+{
+  "contract_version": "1",
+  "sprint": {},
+  "summary": {},
+  "ready_items": [],
+  "dependency_waiting_items": [],
+  "active_claims": [],
+  "conflicts": [],
+  "next_action": {}
+}
+```
+
+Field intent:
+
+- `summary.pending_total`: `ready + waiting_on_dependencies`
+- `ready_items`: pending items with no unresolved blockers, each with `reason_code=ready-unblocked`
+- `dependency_waiting_items`: pending items excluded from ready output due to unresolved blockers, each with `reason_code=waiting-on-dependencies`
+- `active_claims`: current active claim slice without claim secrets
+- `conflicts`: claim/dependency conflicts derived from current sprint state
+- `next_action`: one concise recommendation based on the same conflict/priority rules used by context surfaces
+
+Compatibility note:
+
+- `next-work --json` (without `--explain`) preserves the legacy list-only output shape.
+
 ## `handoff --format json`
 
 `handoff --format json` is the serialized working-memory contract.
