@@ -1,0 +1,19 @@
+SPRINT: Phase 20: Next-Work Command Bundles  [closed]
+Goal:   Ship actionable command bundle recommendations in next-work explain surfaces with tests and docs
+Dates:  2026-04-02 to 2026-04-16
+ID:     13
+Items:  3 total — 3 done, 0 active, 0 pending, 0 blocked
+
+--- Track: contract-hardening ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #92  Add tests for command bundle generation and explain-mode rendering contracts  (assignee: codex)
+
+--- Track: docs ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #93  Document command bundles in context/reference docs, render snapshot, and close sprint  (assignee: codex)
+
+--- Track: product-surface ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #91  Add actionable recommended_commands bundle to next-work --explain JSON/text outputs  (assignee: codex)
+
+Rendered: 2026-04-02T12:35:30Z

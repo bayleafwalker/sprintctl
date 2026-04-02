@@ -61,7 +61,8 @@ Top-level shape:
   "dependency_waiting_items": [],
   "active_claims": [],
   "conflicts": [],
-  "next_action": {}
+  "next_action": {},
+  "recommended_commands": []
 }
 ```
 
@@ -73,6 +74,7 @@ Field intent:
 - `active_claims`: current active claim slice without claim secrets
 - `conflicts`: claim/dependency conflicts derived from current sprint state
 - `next_action`: one concise recommendation based on the same conflict/priority rules used by context surfaces
+- `recommended_commands`: ordered command bundle aligned with `next_action`; some entries intentionally use placeholders like `<token>` or `<name>` where proof-bearing values are required
 
 Compatibility note:
 

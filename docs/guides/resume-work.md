@@ -22,6 +22,8 @@ sprintctl item show --id <id> --json
 
 Prioritize the `next_action` and `conflicts` fields from `usage --context`.
 For a quick human view, use `sprintctl next-work --explain`.
+In JSON mode, `next-work --json --explain` also includes `recommended_commands`
+so restart automation can execute a concrete next-step bundle.
 
 `session resume` is a convenience surface that packages those checks into one
 output contract. The underlying commands remain the source of truth and should
