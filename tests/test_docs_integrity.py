@@ -178,3 +178,13 @@ def test_phase3_docs_local_markdown_links_resolve():
     for source in phase3_docs:
         for label, target in _iter_local_markdown_links(source):
             _assert_markdown_link_declared_and_resolves(source, label, target)
+
+
+def test_readme_docs_map_links_resolve():
+    for label, target in _iter_local_markdown_links("README.md"):
+        _assert_markdown_link_declared_and_resolves("README.md", label, target)
+
+
+def test_start_here_next_guides_links_resolve():
+    for label, target in _iter_local_markdown_links("docs/guides/start-here.md"):
+        _assert_markdown_link_declared_and_resolves("docs/guides/start-here.md", label, target)
