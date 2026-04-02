@@ -75,11 +75,15 @@ you want a reviewable snapshot in git.
 
 ## Next Guides
 
+- [Daily Loop](daily-loop.md)
 - [Resume Work](resume-work.md)
 - [Agent-Assisted Work](agent-assisted.md)
 - [Project Integration](project-integration.md)
 - [Customization Guide](../customization.md)
 - [Interoperability Patterns](interoperability.md)
+- [Alias Pack](../examples/alias-pack.md)
+- [Agent Prompt Snippets](../examples/agent-prompt-snippets.md)
+- [Editor And Terminal Integration](../examples/editor-and-terminal-integration.md)
 - [Coordinator Mode](../advanced/coordinator-mode.md)
 - [Claim Discipline](../advanced/claim-discipline.md)
 - [Context and Handoff Contracts](../reference/context-and-handoff.md)

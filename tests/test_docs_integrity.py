@@ -67,6 +67,17 @@ def test_phase4_docs_files_exist():
     assert missing == []
 
 
+def test_phase3_docs_files_exist():
+    expected_files = [
+        "docs/guides/daily-loop.md",
+        "docs/examples/alias-pack.md",
+        "docs/examples/agent-prompt-snippets.md",
+        "docs/examples/editor-and-terminal-integration.md",
+    ]
+    missing = [path for path in expected_files if not (REPO_ROOT / path).exists()]
+    assert missing == []
+
+
 def test_readme_links_phase4_docs():
     _assert_markdown_link_declared_and_resolves(
         "README.md", "Customization Guide", "docs/customization.md"
@@ -82,6 +93,25 @@ def test_readme_links_phase4_docs():
     )
 
 
+def test_readme_links_phase3_docs():
+    _assert_markdown_link_declared_and_resolves(
+        "README.md", "Daily Loop", "docs/guides/daily-loop.md"
+    )
+    _assert_markdown_link_declared_and_resolves(
+        "README.md", "alias-pack.md", "docs/examples/alias-pack.md"
+    )
+    _assert_markdown_link_declared_and_resolves(
+        "README.md",
+        "agent-prompt-snippets.md",
+        "docs/examples/agent-prompt-snippets.md",
+    )
+    _assert_markdown_link_declared_and_resolves(
+        "README.md",
+        "editor-and-terminal-integration.md",
+        "docs/examples/editor-and-terminal-integration.md",
+    )
+
+
 def test_start_here_links_phase4_docs():
     _assert_markdown_link_declared_and_resolves(
         "docs/guides/start-here.md", "Customization Guide", "../customization.md"
@@ -91,6 +121,25 @@ def test_start_here_links_phase4_docs():
     )
     _assert_markdown_link_declared_and_resolves(
         "docs/guides/start-here.md", "Claim Discipline", "../advanced/claim-discipline.md"
+    )
+
+
+def test_start_here_links_phase3_docs():
+    _assert_markdown_link_declared_and_resolves(
+        "docs/guides/start-here.md", "Daily Loop", "daily-loop.md"
+    )
+    _assert_markdown_link_declared_and_resolves(
+        "docs/guides/start-here.md", "Alias Pack", "../examples/alias-pack.md"
+    )
+    _assert_markdown_link_declared_and_resolves(
+        "docs/guides/start-here.md",
+        "Agent Prompt Snippets",
+        "../examples/agent-prompt-snippets.md",
+    )
+    _assert_markdown_link_declared_and_resolves(
+        "docs/guides/start-here.md",
+        "Editor And Terminal Integration",
+        "../examples/editor-and-terminal-integration.md",
     )
 
 
@@ -115,5 +164,17 @@ def test_phase4_docs_local_markdown_links_resolve():
         "docs/examples/repo-template.md",
     ]
     for source in phase4_docs:
+        for label, target in _iter_local_markdown_links(source):
+            _assert_markdown_link_declared_and_resolves(source, label, target)
+
+
+def test_phase3_docs_local_markdown_links_resolve():
+    phase3_docs = [
+        "docs/guides/daily-loop.md",
+        "docs/examples/alias-pack.md",
+        "docs/examples/agent-prompt-snippets.md",
+        "docs/examples/editor-and-terminal-integration.md",
+    ]
+    for source in phase3_docs:
         for label, target in _iter_local_markdown_links(source):
             _assert_markdown_link_declared_and_resolves(source, label, target)

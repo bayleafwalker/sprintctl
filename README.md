@@ -64,6 +64,7 @@ Start here:
 Detailed guides:
 
 - [Work Loop](docs/guides/work-loop.md)
+- [Daily Loop](docs/guides/daily-loop.md)
 - [Project Integration](docs/guides/project-integration.md)
 - [Customization Guide](docs/customization.md)
 - [Coordinator Mode](docs/advanced/coordinator-mode.md)
@@ -86,6 +87,9 @@ Examples:
 - [AGENTS.sprintctl.md](docs/examples/AGENTS.sprintctl.md)
 - [Makefile.sprintctl.mk](docs/examples/Makefile.sprintctl.mk)
 - [repo-template.md](docs/examples/repo-template.md)
+- [alias-pack.md](docs/examples/alias-pack.md)
+- [agent-prompt-snippets.md](docs/examples/agent-prompt-snippets.md)
+- [editor-and-terminal-integration.md](docs/examples/editor-and-terminal-integration.md)
 - [bootstrap-prompt.md](docs/examples/bootstrap-prompt.md)
 - [bootstrap-workflow.md](docs/examples/bootstrap-workflow.md)
 
