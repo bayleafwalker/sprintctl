@@ -5,6 +5,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*$")
+HEADING_WITH_LEVEL_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 
 
 def _read(path: str) -> str:
@@ -37,7 +38,7 @@ def _assert_markdown_link_declared_and_resolves(source_path: str, label: str, li
     target_path, _, fragment = link.partition("#")
     resolved = (source.parent / target_path).resolve()
     repo_root = REPO_ROOT.resolve()
-    assert str(resolved).startswith(str(repo_root))
+    assert repo_root == resolved or repo_root in resolved.parents
     assert resolved.exists()
     assert resolved.is_file()
 
@@ -53,6 +54,37 @@ def _iter_local_markdown_links(path: str) -> list[tuple[str, str]]:
         if ".md" not in target:
             continue
         links.append((label, target))
+    return links
+
+
+def _iter_local_markdown_links_in_section(path: str, heading: str) -> list[tuple[str, str]]:
+    links: list[tuple[str, str]] = []
+    in_section = False
+    section_level = -1
+
+    for line in _read(path).splitlines():
+        heading_match = HEADING_WITH_LEVEL_RE.match(line.strip())
+        if heading_match:
+            level = len(heading_match.group(1))
+            title = heading_match.group(2)
+            if in_section and level <= section_level:
+                break
+            if not in_section and title == heading:
+                in_section = True
+                section_level = level
+                continue
+
+        if not in_section:
+            continue
+
+        for label, target in MD_LINK_RE.findall(line):
+            if target.startswith(("http://", "https://", "mailto:", "#")):
+                continue
+            if ".md" not in target:
+                continue
+            links.append((label, target))
+
+    assert in_section, f"Missing section heading '{heading}' in {path}"
     return links
 
 
@@ -181,10 +213,28 @@ def test_phase3_docs_local_markdown_links_resolve():
 
 
 def test_readme_docs_map_links_resolve():
-    for label, target in _iter_local_markdown_links("README.md"):
+    links = _iter_local_markdown_links_in_section("README.md", "Docs Map")
+    required = {
+        ("Daily Loop", "docs/guides/daily-loop.md"),
+        ("alias-pack.md", "docs/examples/alias-pack.md"),
+        ("agent-prompt-snippets.md", "docs/examples/agent-prompt-snippets.md"),
+        ("editor-and-terminal-integration.md", "docs/examples/editor-and-terminal-integration.md"),
+    }
+    assert required.issubset(set(links))
+
+    for label, target in links:
         _assert_markdown_link_declared_and_resolves("README.md", label, target)
 
 
 def test_start_here_next_guides_links_resolve():
-    for label, target in _iter_local_markdown_links("docs/guides/start-here.md"):
+    links = _iter_local_markdown_links_in_section("docs/guides/start-here.md", "Next Guides")
+    required = {
+        ("Daily Loop", "daily-loop.md"),
+        ("Alias Pack", "../examples/alias-pack.md"),
+        ("Agent Prompt Snippets", "../examples/agent-prompt-snippets.md"),
+        ("Editor And Terminal Integration", "../examples/editor-and-terminal-integration.md"),
+    }
+    assert required.issubset(set(links))
+
+    for label, target in links:
         _assert_markdown_link_declared_and_resolves("docs/guides/start-here.md", label, target)
