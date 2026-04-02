@@ -1,11 +1,59 @@
+import re
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
+HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*$")
 
 
 def _read(path: str) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
+
+
+def _slugify_anchor(heading: str) -> str:
+    slug = heading.strip().lower()
+    slug = re.sub(r"[^\w\s-]", "", slug)
+    slug = slug.replace(" ", "-")
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return slug
+
+
+def _markdown_anchors(path: Path) -> set[str]:
+    anchors: set[str] = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = HEADING_RE.match(line.strip())
+        if not match:
+            continue
+        anchors.add(_slugify_anchor(match.group(1)))
+    return anchors
+
+
+def _assert_markdown_link_declared_and_resolves(source_path: str, label: str, link: str) -> None:
+    source = REPO_ROOT / source_path
+    source_text = source.read_text(encoding="utf-8")
+    assert f"[{label}]({link})" in source_text
+
+    target_path, _, fragment = link.partition("#")
+    resolved = (source.parent / target_path).resolve()
+    repo_root = REPO_ROOT.resolve()
+    assert str(resolved).startswith(str(repo_root))
+    assert resolved.exists()
+    assert resolved.is_file()
+
+    if fragment:
+        assert fragment in _markdown_anchors(resolved)
+
+
+def _iter_local_markdown_links(path: str) -> list[tuple[str, str]]:
+    links: list[tuple[str, str]] = []
+    for label, target in MD_LINK_RE.findall(_read(path)):
+        if target.startswith(("http://", "https://", "mailto:", "#")):
+            continue
+        if ".md" not in target:
+            continue
+        links.append((label, target))
+    return links
 
 
 def test_phase4_docs_files_exist():
@@ -20,21 +68,52 @@ def test_phase4_docs_files_exist():
 
 
 def test_readme_links_phase4_docs():
-    readme = _read("README.md")
-    assert "[Customization Guide](docs/customization.md)" in readme
-    assert "[Coordinator Mode](docs/advanced/coordinator-mode.md)" in readme
-    assert "[Claim Discipline](docs/advanced/claim-discipline.md)" in readme
-    assert "[repo-template.md](docs/examples/repo-template.md)" in readme
+    _assert_markdown_link_declared_and_resolves(
+        "README.md", "Customization Guide", "docs/customization.md"
+    )
+    _assert_markdown_link_declared_and_resolves(
+        "README.md", "Coordinator Mode", "docs/advanced/coordinator-mode.md"
+    )
+    _assert_markdown_link_declared_and_resolves(
+        "README.md", "Claim Discipline", "docs/advanced/claim-discipline.md"
+    )
+    _assert_markdown_link_declared_and_resolves(
+        "README.md", "repo-template.md", "docs/examples/repo-template.md"
+    )
 
 
 def test_start_here_links_phase4_docs():
-    start_here = _read("docs/guides/start-here.md")
-    assert "[Customization Guide](../customization.md)" in start_here
-    assert "[Coordinator Mode](../advanced/coordinator-mode.md)" in start_here
-    assert "[Claim Discipline](../advanced/claim-discipline.md)" in start_here
+    _assert_markdown_link_declared_and_resolves(
+        "docs/guides/start-here.md", "Customization Guide", "../customization.md"
+    )
+    _assert_markdown_link_declared_and_resolves(
+        "docs/guides/start-here.md", "Coordinator Mode", "../advanced/coordinator-mode.md"
+    )
+    _assert_markdown_link_declared_and_resolves(
+        "docs/guides/start-here.md", "Claim Discipline", "../advanced/claim-discipline.md"
+    )
 
 
 def test_advanced_coordination_links_phase4_docs():
-    advanced = _read("docs/guides/advanced-coordination.md")
-    assert "[Coordinator Mode](../advanced/coordinator-mode.md)" in advanced
-    assert "[Claim Discipline](../advanced/claim-discipline.md)" in advanced
+    _assert_markdown_link_declared_and_resolves(
+        "docs/guides/advanced-coordination.md",
+        "Coordinator Mode",
+        "../advanced/coordinator-mode.md",
+    )
+    _assert_markdown_link_declared_and_resolves(
+        "docs/guides/advanced-coordination.md",
+        "Claim Discipline",
+        "../advanced/claim-discipline.md",
+    )
+
+
+def test_phase4_docs_local_markdown_links_resolve():
+    phase4_docs = [
+        "docs/customization.md",
+        "docs/advanced/coordinator-mode.md",
+        "docs/advanced/claim-discipline.md",
+        "docs/examples/repo-template.md",
+    ]
+    for source in phase4_docs:
+        for label, target in _iter_local_markdown_links(source):
+            _assert_markdown_link_declared_and_resolves(source, label, target)
