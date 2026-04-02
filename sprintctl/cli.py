@@ -45,6 +45,7 @@ def _detect_pid(explicit: int | None) -> int:
 
 
 @click.group()
+@click.version_option(__version__, prog_name="sprintctl")
 @click.pass_context
 def cli(ctx: click.Context) -> None:
     ctx.ensure_object(dict)
@@ -2890,7 +2891,7 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         return
 
     lines = [
-        "sprintctl — agent-centric sprint coordination CLI",
+        f"sprintctl v{__version__} — agent-centric sprint coordination CLI",
         "",
         "SPRINT",
         "  sprint create  --name NAME [--goal GOAL] [--start YYYY-MM-DD] [--end YYYY-MM-DD]",
