@@ -3,7 +3,7 @@
 The resume path should be mechanical:
 
 1. read the most recent handoff bundle if one exists
-2. refresh live state with `usage --context`
+2. refresh live state with `session resume` (or `usage --context` + `next-work --explain`)
 3. inspect the target item only if you need more detail
 4. resume or reclaim ownership
 
@@ -14,6 +14,7 @@ commands via `python -m sprintctl` from the repo so options like
 ## Live Resume Path
 
 ```sh
+sprintctl session resume --json
 sprintctl usage --context --json
 sprintctl next-work --json --explain
 sprintctl item show --id <id> --json
@@ -21,6 +22,10 @@ sprintctl item show --id <id> --json
 
 Prioritize the `next_action` and `conflicts` fields from `usage --context`.
 For a quick human view, use `sprintctl next-work --explain`.
+
+`session resume` is a convenience surface that packages those checks into one
+output contract. The underlying commands remain the source of truth and should
+still be used when you need to script one surface independently.
 
 ## If a handoff bundle exists
 

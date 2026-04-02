@@ -8,6 +8,7 @@ SQLite, then projects that state into two primary read surfaces:
 
 - `usage --context` for live resume context
 - `handoff` for serialized working-memory snapshots
+- `session resume` for a single-command resume bundle (context + next-work + git)
 
 It is not a team project manager, a distributed coordinator, or a richer clone
 of an existing task graph tool.
@@ -36,7 +37,9 @@ sprintctl sprint create --name "Sprint 4" --status active
 sprintctl item add --sprint-id 1 --track docs --title "Write resume guide"
 
 # 2. Read live context
+sprintctl session resume --json
 sprintctl usage --context --json
+sprintctl next-work --json --explain
 
 # 3. Claim or start work
 sprintctl claim start --item-id 1 --actor codex-session-1 --json
@@ -127,7 +130,7 @@ Prefer invoking the CLI from the source tree while developing:
 ```
 
 The source-tree entrypoint should expose the same command surface as the
-console script, including `next-work --explain`.
+console script, including `next-work --explain` and `session resume`.
 
 ## Configuration
 
