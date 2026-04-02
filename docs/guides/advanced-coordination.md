@@ -49,4 +49,6 @@ sprintctl claim create \
 
 - [Agent-Assisted Work](agent-assisted.md)
 - [Context and Handoff Contracts](../reference/context-and-handoff.md)
+- [Coordinator Mode](../advanced/coordinator-mode.md)
+- [Claim Discipline](../advanced/claim-discipline.md)
 - [UX Plan Pack](../plans/ux/00-index.md)

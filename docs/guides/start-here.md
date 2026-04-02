@@ -74,5 +74,8 @@ you want a reviewable snapshot in git.
 - [Resume Work](resume-work.md)
 - [Agent-Assisted Work](agent-assisted.md)
 - [Project Integration](project-integration.md)
+- [Customization Guide](../customization.md)
 - [Interoperability Patterns](interoperability.md)
+- [Coordinator Mode](../advanced/coordinator-mode.md)
+- [Claim Discipline](../advanced/claim-discipline.md)
 - [Context and Handoff Contracts](../reference/context-and-handoff.md)

@@ -65,6 +65,9 @@ Detailed guides:
 
 - [Work Loop](docs/guides/work-loop.md)
 - [Project Integration](docs/guides/project-integration.md)
+- [Customization Guide](docs/customization.md)
+- [Coordinator Mode](docs/advanced/coordinator-mode.md)
+- [Claim Discipline](docs/advanced/claim-discipline.md)
 
 Reference:
 
@@ -82,6 +85,7 @@ Examples:
 
 - [AGENTS.sprintctl.md](docs/examples/AGENTS.sprintctl.md)
 - [Makefile.sprintctl.mk](docs/examples/Makefile.sprintctl.mk)
+- [repo-template.md](docs/examples/repo-template.md)
 - [bootstrap-prompt.md](docs/examples/bootstrap-prompt.md)
 - [bootstrap-workflow.md](docs/examples/bootstrap-workflow.md)
 
