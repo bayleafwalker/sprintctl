@@ -1,0 +1,19 @@
+SPRINT: Phase 21: Structured Command Bundle Metadata  [closed]
+Goal:   Ship structured, exportable command-bundle metadata in next-work/session-resume JSON contracts with tests and docs
+Dates:  2026-04-02 to 2026-04-16
+ID:     14
+Items:  3 total — 3 done, 0 active, 0 pending, 0 blocked
+
+--- Track: contract-hardening ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #95  Add tests for command-bundle step metadata (placeholders, executability, ordering)  (assignee: codex)
+
+--- Track: docs ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #96  Document command-bundle metadata, render phase snapshot, and close sprint  (assignee: codex)
+
+--- Track: product-surface ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #94  Add structured recommended_command_bundle metadata to next-work --json --explain and session resume contracts  (assignee: codex)
+
+Rendered: 2026-04-02T13:06:12Z

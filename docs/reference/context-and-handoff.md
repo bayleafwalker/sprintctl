@@ -62,7 +62,8 @@ Top-level shape:
   "active_claims": [],
   "conflicts": [],
   "next_action": {},
-  "recommended_commands": []
+  "recommended_commands": [],
+  "recommended_command_bundle": {}
 }
 ```
 
@@ -75,6 +76,7 @@ Field intent:
 - `conflicts`: claim/dependency conflicts derived from current sprint state
 - `next_action`: one concise recommendation based on the same conflict/priority rules used by context surfaces
 - `recommended_commands`: ordered command bundle aligned with `next_action`; some entries intentionally use placeholders like `<token>` or `<name>` where proof-bearing values are required
+- `recommended_command_bundle`: structured version of `recommended_commands` with ordered `steps`; each step includes `kind`, `command`, `placeholders`, and `is_executable`/`requires_input` flags for automation
 
 Compatibility note:
 
@@ -101,7 +103,8 @@ Top-level shape:
   "next_work": {},
   "git_context": {},
   "next_action": {},
-  "recommended_sequence": []
+  "recommended_sequence": [],
+  "recommended_sequence_bundle": {}
 }
 ```
 
@@ -112,6 +115,7 @@ Field intent:
 - `git_context`: current branch/SHA/worktree/dirty-files when in a git repo; otherwise `null`
 - `next_action`: primary recommendation for resume flows
 - `recommended_sequence`: explicit follow-up command sequence
+- `recommended_sequence_bundle`: structured metadata for `recommended_sequence`, using the same step schema as `next_work.recommended_command_bundle`
 
 Consistency rule:
 
