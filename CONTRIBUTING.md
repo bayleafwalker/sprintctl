@@ -8,10 +8,13 @@
 
 ## Setup
 
-Install sprintctl globally:
+Install or update CLI tools:
 
 ```sh
 pipx install git+https://github.com/bayleafwalker/sprintctl.git
+pipx install git+https://github.com/bayleafwalker/kctl.git
+pipx upgrade sprintctl
+pipx upgrade kctl
 ```
 
 Copy the direnv template into the project root and allow it:
@@ -30,6 +33,9 @@ exercise the checked-out source:
 .venv/bin/python -m sprintctl --help
 .venv/bin/python -m sprintctl next-work --help
 ```
+
+If a globally installed `sprintctl` misses documented flags, keep using the
+repo-local module entrypoint and refresh the global tool with `pipx upgrade sprintctl`.
 
 Bootstrap your local sprint state:
 

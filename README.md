@@ -117,6 +117,14 @@ not the control plane.
 
 ```sh
 pipx install git+https://github.com/bayleafwalker/sprintctl.git
+pipx install git+https://github.com/bayleafwalker/kctl.git
+```
+
+To refresh stale global installs:
+
+```sh
+pipx upgrade sprintctl
+pipx upgrade kctl
 ```
 
 For local development:
@@ -133,6 +141,10 @@ Prefer invoking the CLI from the source tree while developing:
 .venv/bin/python -m sprintctl --help
 .venv/bin/python -m sprintctl next-work --help
 ```
+
+If your global install drifts from the checked-out source command surface,
+prefer the module entrypoint for `sprintctl` and keep `kctl` updated with
+`pipx upgrade kctl`.
 
 The source-tree entrypoint should expose the same command surface as the
 console script, including `next-work --explain` and `session resume`.
