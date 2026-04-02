@@ -1059,6 +1059,96 @@ def _collect_next_work_explained_payload(
     }
 
 
+def _render_next_work_explained_text(payload: dict) -> str:
+    sprint = payload["sprint"]
+    summary = payload["summary"]
+    lines = [
+        f"Sprint #{sprint['id']}: {sprint['name']}",
+        (
+            "Summary: "
+            f"{summary['pending_total']} pending total, "
+            f"{summary['ready']} ready, "
+            f"{summary['waiting_on_dependencies']} waiting on dependencies, "
+            f"{summary['active_claims']} active claims"
+        ),
+        "",
+    ]
+
+    ready_items = payload["ready_items"]
+    lines.append(f"Ready items ({len(ready_items)}):")
+    if ready_items:
+        rows: list[list[str]] = []
+        for item in ready_items:
+            rows.append(
+                [
+                    f"#{item['id']}",
+                    item["track_name"],
+                    item.get("assignee") or "-",
+                    item["title"],
+                ]
+            )
+        for line in _render_table(["ID", "TRACK", "ASSIGNEE", "TITLE"], rows):
+            lines.append(f"  {line}")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+
+    waiting_items = payload["dependency_waiting_items"]
+    lines.append(f"Dependency waiting items ({len(waiting_items)}):")
+    if waiting_items:
+        rows = []
+        for item in waiting_items:
+            blocker_ids = ",".join(f"#{bid}" for bid in item["unresolved_blocker_ids"])
+            rows.append(
+                [
+                    f"#{item['id']}",
+                    item["track"],
+                    item.get("assignee") or "-",
+                    blocker_ids,
+                    item["title"],
+                ]
+            )
+        for line in _render_table(["ID", "TRACK", "ASSIGNEE", "BLOCKERS", "TITLE"], rows):
+            lines.append(f"  {line}")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+
+    active_claims = payload["active_claims"]
+    lines.append(f"Active claims ({len(active_claims)}):")
+    if active_claims:
+        rows = []
+        for claim in active_claims:
+            rows.append(
+                [
+                    f"#{claim['claim_id']}",
+                    f"#{claim['work_item_id']}",
+                    claim["agent"],
+                    claim["claim_type"],
+                    claim["expires_at"],
+                ]
+            )
+        for line in _render_table(["CLAIM", "ITEM", "AGENT", "TYPE", "EXPIRES_AT"], rows):
+            lines.append(f"  {line}")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+
+    conflicts = payload["conflicts"]
+    lines.append(f"Conflicts ({len(conflicts)}):")
+    if conflicts:
+        for conflict in conflicts:
+            lines.append(f"  [{conflict['kind']}]  {conflict['summary']}")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+
+    next_action = payload["next_action"]
+    lines.append("Next action:")
+    lines.append(f"  [{next_action['kind']}]  {next_action['summary']}")
+    return "\n".join(lines)
+
+
 def _claims_expiring_within(active_claims: list[dict], now: datetime, seconds: int) -> list[dict]:
     expiring: list[dict] = []
     for claim in active_claims:
@@ -2725,7 +2815,7 @@ def agent_protocol_cmd(as_json) -> None:
     "--explain",
     is_flag=True,
     default=False,
-    help="With --json, include exclusion reasons, conflicts, and next_action.",
+    help="Include exclusion reasons, conflicts, and next_action (detailed in --json mode).",
 )
 @click.pass_obj
 def next_work_cmd(obj, sprint_id, as_json, explain) -> None:
@@ -2746,20 +2836,22 @@ def next_work_cmd(obj, sprint_id, as_json, explain) -> None:
             click.echo("No active sprint found. Use --sprint-id to specify one.", err=True)
             sys.exit(1)
     ready = _db.get_ready_items(conn, s["id"])
-    if explain and not as_json:
-        click.echo("--explain requires --json.", err=True)
-        sys.exit(1)
+    payload = None
+    if explain:
+        payload = _collect_next_work_explained_payload(
+            conn=conn,
+            sprint=s,
+            ready_items=ready,
+            now=datetime.now(timezone.utc),
+        )
     if as_json:
         if explain:
-            payload = _collect_next_work_explained_payload(
-                conn=conn,
-                sprint=s,
-                ready_items=ready,
-                now=datetime.now(timezone.utc),
-            )
             click.echo(json.dumps(payload, indent=2))
             return
         click.echo(json.dumps(ready, indent=2))
+        return
+    if explain:
+        click.echo(_render_next_work_explained_text(payload))
         return
     if not ready:
         click.echo(f"No pending items ready to start in sprint #{s['id']} ({s['name']}).")

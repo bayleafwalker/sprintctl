@@ -16,6 +16,7 @@ sprintctl item show --id <id> --json
 ```
 
 Prioritize the `next_action` and `conflicts` fields from `usage --context`.
+For a quick human view, use `sprintctl next-work --explain`.
 
 ## If a handoff bundle exists
 

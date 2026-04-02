@@ -445,10 +445,34 @@ class TestNextWork:
         assert data["next_action"]["kind"] == "inspect-active-claim"
         assert data["next_action"]["claim_id"] == claim_id
 
-    def test_next_work_explain_requires_json(self, runner, active_sprint):
+    def test_next_work_explain_text_output(self, runner, conn, active_sprint):
+        _item(conn, active_sprint["id"], "Ready task")
         result = runner.invoke(cli, ["next-work", "--sprint-id", str(active_sprint["id"]), "--explain"])
-        assert result.exit_code == 1
-        assert "--explain requires --json" in result.output
+        assert result.exit_code == 0, result.output
+        assert f"Sprint #{active_sprint['id']}:" in result.output
+        assert "Summary:" in result.output
+        assert "Ready items (1):" in result.output
+        assert "Dependency waiting items (0):" in result.output
+        assert "Active claims (0):" in result.output
+        assert "Conflicts (0):" in result.output
+        assert "Next action:" in result.output
+
+    def test_next_work_explain_text_output_includes_waiting_blockers(
+        self, runner, conn, active_sprint
+    ):
+        blocker = _item(conn, active_sprint["id"], "Blocker")
+        _blocked = _item(conn, active_sprint["id"], "Blocked task")
+        db.add_dep(conn, blocker, _blocked)
+        conn.execute("UPDATE work_item SET status = 'active' WHERE id = ?", (blocker,))
+        conn.commit()
+
+        result = runner.invoke(cli, ["next-work", "--sprint-id", str(active_sprint["id"]), "--explain"])
+        assert result.exit_code == 0, result.output
+        assert "Dependency waiting items (1):" in result.output
+        assert "BLOCKERS" in result.output
+        assert f"#{blocker}" in result.output
+        assert "Conflicts (1):" in result.output
+        assert "[unblock-dependent-work]" in result.output
 
     def test_next_work_no_active_sprint_fails(self, runner, db_path):
         result = runner.invoke(cli, ["next-work"])

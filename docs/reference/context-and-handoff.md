@@ -40,10 +40,13 @@ Field intent:
 
 Text output mirrors the same section order so human and agent paths stay aligned.
 
-## `next-work --json --explain`
+## `next-work --explain`
 
-`next-work --json --explain` is the detailed readiness surface for automation
-that needs exclusion reasons and a local next-step recommendation.
+`next-work --explain` enriches readiness output with exclusion reasons,
+conflicts, and a local next-step recommendation.
+
+- text mode (`next-work --explain`) renders a human-readable summary
+- JSON mode (`next-work --json --explain`) emits the full typed contract below
 
 Contract version: `1`
 
