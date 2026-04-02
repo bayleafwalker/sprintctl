@@ -20,6 +20,16 @@ this file, run the repo-local source entrypoint instead:
 .venv/bin/python -m sprintctl <command> ...
 ```
 
+Keep global tool installs fresh before longer sessions:
+
+```bash
+# Preferred when pipx is available
+pipx upgrade sprintctl && pipx upgrade kctl
+
+# Equivalent uv tool flow
+uv tool upgrade sprintctl kctl
+```
+
 ---
 
 ## Claim lifecycle (summary)

@@ -120,11 +120,19 @@ pipx install git+https://github.com/bayleafwalker/sprintctl.git
 pipx install git+https://github.com/bayleafwalker/kctl.git
 ```
 
+Equivalent `uv tool` install:
+
+```sh
+uv tool install git+https://github.com/bayleafwalker/sprintctl.git
+uv tool install git+https://github.com/bayleafwalker/kctl.git
+```
+
 To refresh stale global installs:
 
 ```sh
 pipx upgrade sprintctl
 pipx upgrade kctl
+# or: uv tool upgrade sprintctl kctl
 ```
 
 For local development:

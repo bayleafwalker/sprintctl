@@ -6,6 +6,10 @@ repeatable in-flow pattern during active coding.
 If your global `sprintctl` install is missing expected flags, run commands via
 `.venv/bin/python -m sprintctl ...` from this repository.
 
+Before long sessions, refresh local tools (`sprintctl` + `kctl`) with either
+`pipx upgrade sprintctl && pipx upgrade kctl` or
+`uv tool upgrade sprintctl kctl`.
+
 ## 1. Start of session: load context
 
 ```bash

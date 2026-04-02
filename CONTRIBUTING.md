@@ -15,6 +15,9 @@ pipx install git+https://github.com/bayleafwalker/sprintctl.git
 pipx install git+https://github.com/bayleafwalker/kctl.git
 pipx upgrade sprintctl
 pipx upgrade kctl
+# or: uv tool install git+https://github.com/bayleafwalker/sprintctl.git
+# or: uv tool install git+https://github.com/bayleafwalker/kctl.git
+# or: uv tool upgrade sprintctl kctl
 ```
 
 Copy the direnv template into the project root and allow it:

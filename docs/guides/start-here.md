@@ -6,6 +6,9 @@ If your global `sprintctl` install is older than this repo and a documented
 command/flag is missing, run commands via `python -m sprintctl` from the repo
 checkout.
 
+When available, refresh global installs before starting work:
+`pipx upgrade sprintctl && pipx upgrade kctl` (or `uv tool upgrade sprintctl kctl`).
+
 ## 1. Create a sprint
 
 ```sh
