@@ -127,15 +127,18 @@ Knowledge-bearing event types (`decision`, `pattern-noted`, `lesson-learned`,
 ## 5a. Complete the item
 
 ```bash
-# Mark done — requires claim proof
-sprintctl item status \
-  --id 7 --status done --actor claude-session-1 \
-  --claim-id "$CLAIM_ID" --claim-token "$CLAIM_TOKEN"
-
-# Release the claim
-sprintctl claim release \
-  --id "$CLAIM_ID" --claim-token "$CLAIM_TOKEN" \
+# Mark done and release in one command
+sprintctl item done-from-claim \
+  --id 7 \
+  --claim-id "$CLAIM_ID" --claim-token "$CLAIM_TOKEN" \
   --actor claude-session-1
+
+# Optional: keep the claim for follow-up work after marking done
+sprintctl item done-from-claim \
+  --id 7 \
+  --claim-id "$CLAIM_ID" --claim-token "$CLAIM_TOKEN" \
+  --actor claude-session-1 \
+  --keep-claim
 
 # Commit a snapshot
 sprintctl render > docs/sprint-snapshots/sprint-current.txt

@@ -101,5 +101,6 @@ class TestReleaseIntegrity:
             "git-context",
             "sprint show    [--id ID] [--detail] [--watch] [--interval SECONDS] [--json]",
             "item list      [--sprint-id ID] [--track NAME] [--status STATUS] [--fzf] [--json]",
+            "item done-from-claim --id ID --claim-id N --claim-token TOKEN [--actor NAME]",
         ):
             assert fragment in result.output

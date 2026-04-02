@@ -23,10 +23,14 @@ sprintctl claim start --item-id <id> --actor codex-session-1 --ttl 900 --json
 sprintctl item note --id <id> --type decision --summary "Pinned contract v1"
 ```
 
-4. Agent either releases the claim:
+4. Agent marks the item done and releases the claim in one flow:
 
 ```sh
-sprintctl claim release --id <claim-id> --claim-token <token> --actor codex-session-1
+sprintctl item done-from-claim \
+  --id <item-id> \
+  --claim-id <claim-id> \
+  --claim-token <token> \
+  --actor codex-session-1
 ```
 
 5. Or hands ownership to the next live session:
