@@ -1,0 +1,20 @@
+SPRINT: Phase 19: Done-From-Claim Flow  [closed]
+Goal:   Ship an item done-from-claim convenience flow with strong ownership proof semantics, tests, and documentation
+Dates:  2026-04-02 to 2026-04-16
+ID:     12
+Items:  4 total — 4 done, 0 active, 0 pending, 0 blocked
+
+--- Track: product-surface ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #87  Add item done-from-claim CLI flow with claim-proofed status transition and optional auto-release  (assignee: codex)
+
+--- Track: contract-hardening ---
+  health: 2 items — 2 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #88  Add tests for done-from-claim success/failure/JSON contract and release behavior  (assignee: codex)
+  [done    ] #90  Address Phase 19 review findings: clarify docs branching and add missing done-from-claim guard-path tests  (assignee: codex)
+
+--- Track: docs ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #89  Document done-from-claim workflow, update references, render snapshot, and close sprint  (assignee: codex)
+
+Rendered: 2026-04-02T12:23:50Z
