@@ -1177,6 +1177,8 @@ def _collect_session_resume_payload(*, conn: sqlite3.Connection, sprint: dict, n
         ready_items=ready_items,
         now=now,
     )
+    # Keep a single primary recommendation for resume flows to avoid mixed guidance.
+    next_work["next_action"] = context["next_action"]
     return {
         "contract_version": "1",
         "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),

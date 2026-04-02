@@ -50,7 +50,21 @@ class TestSessionResumeCommand:
         assert data["context"]["contract_version"] == "1"
         assert data["next_work"]["contract_version"] == "1"
         assert data["next_action"] == data["context"]["next_action"]
+        assert data["next_action"] == data["next_work"]["next_action"]
         assert data["next_work"]["ready_items"][0]["id"] == ready_id
+
+    def test_resume_json_uses_single_next_action_even_when_context_conflicts_exist(
+        self, runner, conn, active_sprint
+    ):
+        _item(conn, active_sprint["id"], "Ready task")
+        blocked_id = _item(conn, active_sprint["id"], "Blocked task")
+        db.set_work_item_status(conn, blocked_id, "active")
+        db.set_work_item_status(conn, blocked_id, "blocked")
+        result = runner.invoke(cli, ["session", "resume", "--json"])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["next_action"]["kind"] == "triage-blocked-item"
+        assert data["next_action"] == data["next_work"]["next_action"]
 
     def test_resume_json_respects_sprint_id(self, runner, conn):
         sid = db.create_sprint(conn, "Manual Sprint", "goal", "2026-04-02", "2026-04-16", "planned")

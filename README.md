@@ -4,7 +4,7 @@
 developer with optional agent sessions.
 
 It tracks work items, claims, decisions, dependencies, and sprint state in
-SQLite, then projects that state into two primary read surfaces:
+SQLite, then projects that state into three primary read surfaces:
 
 - `usage --context` for live resume context
 - `handoff` for serialized working-memory snapshots

@@ -78,6 +78,44 @@ Compatibility note:
 
 - `next-work --json` (without `--explain`) preserves the legacy list-only output shape.
 
+## `session resume --json`
+
+`session resume --json` is a convenience resume contract that bundles:
+
+- `usage --context --json`
+- `next-work --json --explain`
+- current git metadata from `git-context` when available
+
+Contract version: `1`
+
+Top-level shape:
+
+```json
+{
+  "contract_version": "1",
+  "generated_at": "...",
+  "sprint": {},
+  "context": {},
+  "next_work": {},
+  "git_context": {},
+  "next_action": {},
+  "recommended_sequence": []
+}
+```
+
+Field intent:
+
+- `context`: embedded `usage --context --json` contract
+- `next_work`: embedded `next-work --json --explain` contract
+- `git_context`: current branch/SHA/worktree/dirty-files when in a git repo; otherwise `null`
+- `next_action`: primary recommendation for resume flows
+- `recommended_sequence`: explicit follow-up command sequence
+
+Consistency rule:
+
+- `next_action` is canonical for this surface and is mirrored into
+  `next_work.next_action` so resume output presents one recommendation.
+
 ## `handoff --format json`
 
 `handoff --format json` is the serialized working-memory contract.
