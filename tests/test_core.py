@@ -346,6 +346,16 @@ class TestStatusTransitions:
         result = runner.invoke(cli, ["item", "status", "--id", "9999", "--status", "active"])
         assert result.exit_code == 1
 
+    def test_item_status_json_output(self, runner, conn, active_sprint):
+        iid = self._add_item(runner, active_sprint["id"])
+        result = runner.invoke(
+            cli,
+            ["item", "status", "--id", str(iid), "--status", "active", "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data == {"item_id": iid, "previous": "pending", "status": "active"}
+
 
 # ---------------------------------------------------------------------------
 # Group 4: Event logging

@@ -645,8 +645,9 @@ def item_note(
 @click.option("--actor", default=None, help="Actor name")
 @click.option("--claim-id", type=int, default=None, help="Claim ID to prove ownership of an active exclusive claim")
 @click.option("--claim-token", default=None, help="Claim token proving ownership of an active exclusive claim")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output status transition as JSON")
 @click.pass_obj
-def item_status(obj, item_id, new_status, actor, claim_id, claim_token) -> None:
+def item_status(obj, item_id, new_status, actor, claim_id, claim_token, as_json) -> None:
     """Update an item's status (enforces transitions, claims, and dependency safety)."""
     conn = _get_conn(obj)
     it = _db.get_work_item(conn, item_id)
@@ -666,6 +667,9 @@ def item_status(obj, item_id, new_status, actor, claim_id, claim_token) -> None:
     except (_db.InvalidTransition, _db.ClaimConflict) as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+    if as_json:
+        click.echo(json.dumps({"item_id": item_id, "previous": current, "status": new_status}, indent=2))
+        return
     click.echo(f"Item #{item_id} status: {current} -> {new_status}")
 
 
@@ -2921,7 +2925,7 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "  item list      [--sprint-id ID] [--track NAME] [--status STATUS] [--fzf] [--json]",
         "  item note      --id ID --type TYPE --summary TEXT [--detail TEXT] [--tags T1,T2]",
         "                 [--actor NAME]",
-        "  item status    --id ID --status pending|active|done|blocked [--actor NAME]",
+        "  item status    --id ID --status pending|active|done|blocked [--actor NAME] [--json]",
         "                 [--claim-id N --claim-token TOKEN]",
         "  item ref add   --id ID --type pr|issue|doc|other --url URL [--label TEXT]",
         "  item ref list  --id ID [--json]",
