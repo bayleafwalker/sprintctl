@@ -220,10 +220,17 @@ def sprint() -> None:
     type=click.Choice(["active_sprint", "backlog", "archive"]),
     help="Sprint kind (default: active_sprint)",
 )
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output created sprint as JSON")
 @click.pass_obj
-def sprint_create(obj, name, goal, start_date, end_date, status, kind) -> None:
+def sprint_create(obj, name, goal, start_date, end_date, status, kind, as_json) -> None:
     """Create a new sprint."""
-    sid = _db.create_sprint(_get_conn(obj), name, goal, start_date, end_date, status, kind=kind)
+    conn = _get_conn(obj)
+    sid = _db.create_sprint(conn, name, goal, start_date, end_date, status, kind=kind)
+    if as_json:
+        sprint = _db.get_sprint(conn, sid)
+        assert sprint is not None
+        click.echo(json.dumps(sprint, indent=2))
+        return
     click.echo(f"Created sprint #{sid}: {name}")
 
 
@@ -411,8 +418,9 @@ def item() -> None:
 @click.option("--track", "track_name", required=True, help="Track name (created if absent)")
 @click.option("--title", required=True, help="Item title")
 @click.option("--assignee", default=None, help="Assignee name")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output created item as JSON")
 @click.pass_obj
-def item_add(obj, sprint_id, track_name, title, assignee) -> None:
+def item_add(obj, sprint_id, track_name, title, assignee, as_json) -> None:
     """Add a work item to a sprint track."""
     conn = _get_conn(obj)
     s = _db.get_sprint(conn, sprint_id)
@@ -421,6 +429,12 @@ def item_add(obj, sprint_id, track_name, title, assignee) -> None:
         sys.exit(1)
     track_id = _db.get_or_create_track(conn, sprint_id, track_name)
     item_id = _db.create_work_item(conn, sprint_id, track_id, title, assignee=assignee)
+    if as_json:
+        item = _db.get_work_item(conn, item_id)
+        assert item is not None
+        payload = {**item, "track_name": track_name}
+        click.echo(json.dumps(payload, indent=2))
+        return
     click.echo(f"Added item #{item_id}: {title}  [track: {track_name}]")
 
 
@@ -2895,14 +2909,14 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "",
         "SPRINT",
         "  sprint create  --name NAME [--goal GOAL] [--start YYYY-MM-DD] [--end YYYY-MM-DD]",
-        "                 [--status planned|active|closed] [--kind active_sprint|backlog|archive]",
+        "                 [--status planned|active|closed] [--kind active_sprint|backlog|archive] [--json]",
         "  sprint show    [--id ID] [--detail] [--watch] [--interval SECONDS] [--json]",
         "  sprint status  --id ID --status planned|active|closed",
         "  sprint list    [--include-backlog] [--include-archive] [--json]",
         "  sprint kind    --id ID --kind active_sprint|backlog|archive",
         "",
         "ITEM",
-        "  item add       --sprint-id ID --track NAME --title TITLE [--assignee NAME]",
+        "  item add       --sprint-id ID --track NAME --title TITLE [--assignee NAME] [--json]",
         "  item show      --id ID [--json]",
         "  item list      [--sprint-id ID] [--track NAME] [--status STATUS] [--fzf] [--json]",
         "  item note      --id ID --type TYPE --summary TEXT [--detail TEXT] [--tags T1,T2]",

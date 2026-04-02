@@ -146,6 +146,31 @@ class TestSprintRoundTrip:
         assert result.exit_code == 0, result.output
         assert "Dateless" in result.output
 
+    def test_sprint_create_json_output(self, runner, conn, db_path):
+        result = runner.invoke(
+            cli,
+            [
+                "sprint",
+                "create",
+                "--name",
+                "Json Sprint",
+                "--goal",
+                "Test json create",
+                "--status",
+                "active",
+                "--kind",
+                "backlog",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["name"] == "Json Sprint"
+        assert data["goal"] == "Test json create"
+        assert data["status"] == "active"
+        assert data["kind"] == "backlog"
+        assert isinstance(data["id"], int)
+
     def test_sprint_show_dateless_omits_dates_line(self, runner, conn):
         from sprintctl import db
         sid = db.create_sprint(conn, "Dateless Show", status="active")
@@ -221,6 +246,32 @@ class TestItemCRUD:
             cli, ["item", "add", "--sprint-id", "9999", "--track", "t", "--title", "Orphan"]
         )
         assert result.exit_code == 1
+
+    def test_item_add_json_output(self, runner, conn, active_sprint):
+        result = runner.invoke(
+            cli,
+            [
+                "item",
+                "add",
+                "--sprint-id",
+                str(active_sprint["id"]),
+                "--track",
+                "backend",
+                "--title",
+                "JSON item",
+                "--assignee",
+                "alice",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["sprint_id"] == active_sprint["id"]
+        assert data["track_name"] == "backend"
+        assert data["title"] == "JSON item"
+        assert data["assignee"] == "alice"
+        assert data["status"] == "pending"
+        assert isinstance(data["id"], int)
 
 
 # ---------------------------------------------------------------------------
