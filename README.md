@@ -151,8 +151,8 @@ Prefer invoking the CLI from the source tree while developing:
 ```
 
 If your global install drifts from the checked-out source command surface,
-prefer the module entrypoint for `sprintctl` and keep `kctl` updated with
-`pipx upgrade kctl` (or `uv tool upgrade kctl`).
+prefer the module entrypoint for `sprintctl` and refresh global tools with
+`pipx upgrade sprintctl && pipx upgrade kctl` (or `uv tool upgrade sprintctl kctl`).
 
 The source-tree entrypoint should expose the same command surface as the
 console script, including `next-work --explain` and `session resume`.

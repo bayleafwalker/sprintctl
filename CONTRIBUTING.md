@@ -38,7 +38,8 @@ exercise the checked-out source:
 ```
 
 If a globally installed `sprintctl` misses documented flags, keep using the
-repo-local module entrypoint and refresh the global tool with `pipx upgrade sprintctl`.
+repo-local module entrypoint and refresh global tools with
+`pipx upgrade sprintctl && pipx upgrade kctl` (or `uv tool upgrade sprintctl kctl`).
 
 Bootstrap your local sprint state:
 
