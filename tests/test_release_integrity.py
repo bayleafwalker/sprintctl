@@ -1,4 +1,7 @@
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tomllib
 
 from sprintctl import __version__
@@ -25,6 +28,36 @@ class TestReleaseIntegrity:
         assert result.exit_code == 0, result.output
         for command in ("usage", "handoff", "next-work", "git-context", "claim", "maintain"):
             assert command in result.output
+
+    def test_module_entrypoint_exposes_cli_help(self, db_path):
+        env = os.environ.copy()
+        env["SPRINTCTL_DB"] = str(db_path)
+        result = subprocess.run(
+            [sys.executable, "-m", "sprintctl", "--help"],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "Usage: python -m sprintctl" in result.stdout
+        for command in ("usage", "handoff", "next-work", "git-context", "claim", "maintain"):
+            assert command in result.stdout
+
+    def test_module_entrypoint_next_work_help_includes_explain(self, db_path):
+        env = os.environ.copy()
+        env["SPRINTCTL_DB"] = str(db_path)
+        result = subprocess.run(
+            [sys.executable, "-m", "sprintctl", "next-work", "--help"],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "--explain" in result.stdout
 
     def test_usage_reference_lists_current_contract_commands(self, runner, db_path):
         result = runner.invoke(cli, ["usage"])
