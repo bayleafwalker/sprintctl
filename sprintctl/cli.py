@@ -978,12 +978,85 @@ def _dependency_waiting_items(conn, sprint_id: int) -> list[dict]:
                 "id": item["id"],
                 "title": item["title"],
                 "track": item["track_name"],
+                "assignee": item.get("assignee"),
                 "unresolved_blockers": len(unresolved),
                 "unresolved_blocker_ids": [blocker["item_id"] for blocker in unresolved],
                 "unresolved_blocker_titles": [blocker["blocker_title"] for blocker in unresolved],
             }
         )
     return waiting
+
+
+def _collect_next_work_explained_payload(
+    *,
+    conn: sqlite3.Connection,
+    sprint: dict,
+    ready_items: list[dict],
+    now: datetime,
+) -> dict:
+    dependency_waiting_items = _dependency_waiting_items(conn, sprint["id"])
+    active_claims = _db.list_claims_by_sprint(conn, sprint["id"], active_only=True)
+    conflicts = _derive_conflicts(
+        active_claims=active_claims,
+        blocked_items=[],
+        stale_items=[],
+        dependency_waiting_items=dependency_waiting_items,
+        now=now,
+    )
+    next_action = _derive_next_action(
+        active_claims=active_claims,
+        conflicts=conflicts,
+        ready_items=ready_items,
+        blocked_items=[],
+        stale_items=[],
+        dependency_waiting_items=dependency_waiting_items,
+    )
+    ready_with_reason = [
+        {
+            **item,
+            "reason_code": "ready-unblocked",
+            "reason": "No unresolved blocking dependencies.",
+        }
+        for item in ready_items
+    ]
+    dependency_waiting_with_reason = [
+        {
+            **item,
+            "reason_code": "waiting-on-dependencies",
+            "reason": "One or more blocking dependencies are not done.",
+        }
+        for item in dependency_waiting_items
+    ]
+    visible_claims = [
+        {
+            "claim_id": claim["claim_id"],
+            "work_item_id": claim["work_item_id"],
+            "agent": claim["agent"],
+            "claim_type": claim["claim_type"],
+            "expires_at": claim["expires_at"],
+            "identity_status": claim.get("identity_status"),
+        }
+        for claim in active_claims
+    ]
+    return {
+        "contract_version": "1",
+        "sprint": {
+            "id": sprint["id"],
+            "name": sprint["name"],
+            "status": sprint["status"],
+        },
+        "summary": {
+            "pending_total": len(ready_items) + len(dependency_waiting_items),
+            "ready": len(ready_items),
+            "waiting_on_dependencies": len(dependency_waiting_items),
+            "active_claims": len(visible_claims),
+        },
+        "ready_items": ready_with_reason,
+        "dependency_waiting_items": dependency_waiting_with_reason,
+        "active_claims": visible_claims,
+        "conflicts": conflicts,
+        "next_action": next_action,
+    }
 
 
 def _claims_expiring_within(active_claims: list[dict], now: datetime, seconds: int) -> list[dict]:
@@ -2648,8 +2721,14 @@ def agent_protocol_cmd(as_json) -> None:
 @cli.command("next-work")
 @click.option("--sprint-id", type=int, default=None, help="Sprint ID (defaults to active)")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.option(
+    "--explain",
+    is_flag=True,
+    default=False,
+    help="With --json, include exclusion reasons, conflicts, and next_action.",
+)
 @click.pass_obj
-def next_work_cmd(obj, sprint_id, as_json) -> None:
+def next_work_cmd(obj, sprint_id, as_json, explain) -> None:
     """Suggest pending items that are ready to start (no unresolved blocking deps).
 
     Items are listed in creation order. Items blocked by incomplete predecessors
@@ -2667,7 +2746,19 @@ def next_work_cmd(obj, sprint_id, as_json) -> None:
             click.echo("No active sprint found. Use --sprint-id to specify one.", err=True)
             sys.exit(1)
     ready = _db.get_ready_items(conn, s["id"])
+    if explain and not as_json:
+        click.echo("--explain requires --json.", err=True)
+        sys.exit(1)
     if as_json:
+        if explain:
+            payload = _collect_next_work_explained_payload(
+                conn=conn,
+                sprint=s,
+                ready_items=ready,
+                now=datetime.now(timezone.utc),
+            )
+            click.echo(json.dumps(payload, indent=2))
+            return
         click.echo(json.dumps(ready, indent=2))
         return
     if not ready:
@@ -2766,7 +2857,7 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "  import         --file PATH",
         "  handoff        [--sprint-id ID] [--output PATH] [--events N] [--format json|text]",
         "  render         [--sprint-id ID] [--output PATH]",
-        "  next-work      [--sprint-id ID] [--json]",
+        "  next-work      [--sprint-id ID] [--json] [--explain]",
         "  git-context    [--json]",
         "  agent-protocol [--json]",
         "  usage          [--context] [--sprint-id ID] [--json]",

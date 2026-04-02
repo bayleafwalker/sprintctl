@@ -25,7 +25,7 @@ class TestReleaseIntegrity:
         for fragment in (
             "usage          [--context] [--sprint-id ID] [--json]",
             "handoff        [--sprint-id ID] [--output PATH] [--events N] [--format json|text]",
-            "next-work      [--sprint-id ID] [--json]",
+            "next-work      [--sprint-id ID] [--json] [--explain]",
             "git-context",
             "sprint show    [--id ID] [--detail] [--watch] [--interval SECONDS] [--json]",
             "item list      [--sprint-id ID] [--track NAME] [--status STATUS] [--fzf] [--json]",

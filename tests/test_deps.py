@@ -379,6 +379,50 @@ class TestNextWork:
         assert isinstance(data, list)
         assert any(it["id"] == iid_a for it in data)
 
+    def test_next_work_json_explain_output(self, runner, conn, active_sprint, db_path):
+        iid_ready = _item(conn, active_sprint["id"], "Ready task")
+        result = runner.invoke(
+            cli,
+            ["next-work", "--sprint-id", str(active_sprint["id"]), "--json", "--explain"],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["contract_version"] == "1"
+        assert data["sprint"]["id"] == active_sprint["id"]
+        assert data["summary"]["ready"] == 1
+        assert data["summary"]["waiting_on_dependencies"] == 0
+        assert data["next_action"]["kind"] == "start-ready-item"
+        ready = data["ready_items"][0]
+        assert ready["id"] == iid_ready
+        assert ready["reason_code"] == "ready-unblocked"
+
+    def test_next_work_json_explain_includes_waiting_dependency_details(
+        self, runner, conn, active_sprint, db_path
+    ):
+        blocker = _item(conn, active_sprint["id"], "Blocker")
+        blocked = _item(conn, active_sprint["id"], "Blocked task")
+        db.add_dep(conn, blocker, blocked)
+        conn.execute("UPDATE work_item SET status = 'active' WHERE id = ?", (blocker,))
+        conn.commit()
+        result = runner.invoke(
+            cli,
+            ["next-work", "--sprint-id", str(active_sprint["id"]), "--json", "--explain"],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["summary"]["ready"] == 0
+        assert data["summary"]["waiting_on_dependencies"] == 1
+        assert data["next_action"]["kind"] == "unblock-dependent-work"
+        waiting = data["dependency_waiting_items"][0]
+        assert waiting["id"] == blocked
+        assert waiting["reason_code"] == "waiting-on-dependencies"
+        assert waiting["unresolved_blocker_ids"] == [blocker]
+
+    def test_next_work_explain_requires_json(self, runner, active_sprint):
+        result = runner.invoke(cli, ["next-work", "--sprint-id", str(active_sprint["id"]), "--explain"])
+        assert result.exit_code == 1
+        assert "--explain requires --json" in result.output
+
     def test_next_work_no_active_sprint_fails(self, runner, db_path):
         result = runner.invoke(cli, ["next-work"])
         assert result.exit_code == 1

@@ -11,7 +11,7 @@ The resume path should be mechanical:
 
 ```sh
 sprintctl usage --context --json
-sprintctl next-work --json
+sprintctl next-work --json --explain
 sprintctl item show --id <id> --json
 ```
 
