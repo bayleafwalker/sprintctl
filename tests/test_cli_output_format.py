@@ -67,6 +67,10 @@ class TestNextWorkExplainTextFormatting:
                 "",
                 "Next action:",
                 f"  [start-ready-item]  Start ready item #{item_id} because it is unblocked and no active claims are open.",
+                "",
+                "Recommended commands:",
+                f"  - sprintctl claim start --item-id {item_id} --actor <name> --ttl 600 --json",
+                f"  - sprintctl item show --id {item_id}",
             ]
         )
         assert result.output == f"{expected}\n"
@@ -104,6 +108,11 @@ class TestNextWorkExplainTextFormatting:
                 "",
                 "Next action:",
                 f"  [unblock-dependent-work]  Resolve blocker #{blocker_id} to unblock item #{blocked_id}.",
+                "",
+                "Recommended commands:",
+                f"  - sprintctl item show --id {blocker_id}",
+                f"  - sprintctl item show --id {blocked_id}",
+                f"  - sprintctl next-work --sprint-id {active_sprint['id']} --json --explain",
             ]
         )
         assert result.output == f"{expected}\n"

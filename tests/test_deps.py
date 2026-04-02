@@ -403,6 +403,10 @@ class TestNextWork:
         ready = data["ready_items"][0]
         assert ready["id"] == iid_ready
         assert ready["reason_code"] == "ready-unblocked"
+        assert data["recommended_commands"] == [
+            f"sprintctl claim start --item-id {iid_ready} --actor <name> --ttl 600 --json",
+            f"sprintctl item show --id {iid_ready}",
+        ]
 
     def test_next_work_json_explain_includes_waiting_dependency_details(
         self, runner, conn, active_sprint, db_path
@@ -425,6 +429,11 @@ class TestNextWork:
         assert waiting["id"] == blocked
         assert waiting["reason_code"] == "waiting-on-dependencies"
         assert waiting["unresolved_blocker_ids"] == [blocker]
+        assert data["recommended_commands"] == [
+            f"sprintctl item show --id {blocker}",
+            f"sprintctl item show --id {blocked}",
+            f"sprintctl next-work --sprint-id {active_sprint['id']} --json --explain",
+        ]
 
     def test_next_work_json_explain_prioritizes_active_claim(self, runner, conn, active_sprint, db_path):
         claimed = _item(conn, active_sprint["id"], "Claimed task")
@@ -444,6 +453,11 @@ class TestNextWork:
         assert data["summary"]["active_claims"] == 1
         assert data["next_action"]["kind"] == "inspect-active-claim"
         assert data["next_action"]["claim_id"] == claim_id
+        assert data["recommended_commands"] == [
+            f"sprintctl item show --id {claimed}",
+            f"sprintctl claim heartbeat --id {claim_id} --claim-token <token> --ttl 600 --actor <name>",
+            f"sprintctl claim handoff --id {claim_id} --claim-token <token> --actor <next-agent> --mode rotate --json",
+        ]
 
     def test_next_work_explain_text_output(self, runner, conn, active_sprint):
         _item(conn, active_sprint["id"], "Ready task")
@@ -456,6 +470,7 @@ class TestNextWork:
         assert "Active claims (0):" in result.output
         assert "Conflicts (0):" in result.output
         assert "Next action:" in result.output
+        assert "Recommended commands:" in result.output
 
     def test_next_work_explain_text_output_includes_waiting_blockers(
         self, runner, conn, active_sprint

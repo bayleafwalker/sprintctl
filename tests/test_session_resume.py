@@ -52,6 +52,10 @@ class TestSessionResumeCommand:
         assert data["next_action"] == data["context"]["next_action"]
         assert data["next_action"] == data["next_work"]["next_action"]
         assert data["next_work"]["ready_items"][0]["id"] == ready_id
+        assert data["next_work"]["recommended_commands"] == [
+            f"sprintctl claim start --item-id {ready_id} --actor <name> --ttl 600 --json",
+            f"sprintctl item show --id {ready_id}",
+        ]
 
     def test_resume_json_uses_single_next_action_even_when_context_conflicts_exist(
         self, runner, conn, active_sprint
