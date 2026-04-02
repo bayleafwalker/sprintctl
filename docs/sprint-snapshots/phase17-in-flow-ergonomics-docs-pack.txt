@@ -1,0 +1,21 @@
+SPRINT: Phase 17: In-Flow Ergonomics Docs Pack  [closed]
+Goal:   Ship Phase 3 UX documentation deliverables for daily-loop ergonomics, wrapper patterns, and agent/operator command bundles
+Dates:  2026-04-02 to 2026-04-16
+ID:     10
+Items:  5 total — 5 done, 0 active, 0 pending, 0 blocked
+
+--- Track: docs ---
+  health: 2 items — 2 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #78  Create daily-loop guide for in-flow ergonomics  (assignee: -)
+  [done    ] #79  Create alias-pack examples for claim/note/render workflows  (assignee: -)
+
+--- Track: interop ---
+  health: 2 items — 2 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #80  Create agent prompt snippet examples for operator and agent command bundles  (assignee: -)
+  [done    ] #81  Create editor and terminal integration examples for daily operation  (assignee: -)
+
+--- Track: release-integrity ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #82  Update docs map and lock Phase 3 docs discoverability in tests  (assignee: -)
+
+Rendered: 2026-04-02T11:18:35Z
