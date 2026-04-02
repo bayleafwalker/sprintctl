@@ -1299,8 +1299,17 @@ def _collect_session_resume_payload(*, conn: sqlite3.Connection, sprint: dict, n
         ready_items=ready_items,
         now=now,
     )
-    # Keep a single primary recommendation for resume flows to avoid mixed guidance.
-    next_work["next_action"] = context["next_action"]
+    # Keep a single primary recommendation for resume flows and recompute command guidance.
+    next_action = context["next_action"]
+    next_work["next_action"] = next_action
+    next_work["recommended_commands"] = _recommended_commands_for_next_action(
+        sprint_id=sprint["id"],
+        next_action=next_action,
+    )
+    next_work["recommended_command_bundle"] = _recommended_command_bundle(
+        commands=next_work["recommended_commands"],
+        next_action=next_action,
+    )
     recommended_sequence = [
         f"sprintctl usage --context --sprint-id {sprint['id']} --json",
         f"sprintctl next-work --sprint-id {sprint['id']} --json --explain",
@@ -1317,11 +1326,11 @@ def _collect_session_resume_payload(*, conn: sqlite3.Connection, sprint: dict, n
         "context": context,
         "next_work": next_work,
         "git_context": _detect_git_context(),
-        "next_action": context["next_action"],
+        "next_action": next_action,
         "recommended_sequence": recommended_sequence,
         "recommended_sequence_bundle": _recommended_command_bundle(
             commands=recommended_sequence,
-            next_action=context["next_action"],
+            next_action=next_action,
         ),
     }
 
