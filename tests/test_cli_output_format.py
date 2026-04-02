@@ -40,6 +40,75 @@ class TestCliTableFormatting:
         assert "TITLE" in result.output
 
 
+class TestNextWorkExplainTextFormatting:
+    def test_next_work_explain_text_output_snapshot_ready_item(self, runner, conn, active_sprint):
+        item_id = _item(conn, active_sprint["id"], "Ready task", track="eng")
+        result = runner.invoke(cli, ["next-work", "--sprint-id", str(active_sprint["id"]), "--explain"])
+        assert result.exit_code == 0, result.output
+
+        expected = "\n".join(
+            [
+                f"Sprint #{active_sprint['id']}: {active_sprint['name']}",
+                "Summary: 1 pending total, 1 ready, 0 waiting on dependencies, 0 active claims",
+                "",
+                "Ready items (1):",
+                "  ID  TRACK  ASSIGNEE  TITLE     ",
+                "  --  -----  --------  ----------",
+                f"  #{item_id}  eng    -         Ready task",
+                "",
+                "Dependency waiting items (0):",
+                "  (none)",
+                "",
+                "Active claims (0):",
+                "  (none)",
+                "",
+                "Conflicts (0):",
+                "  (none)",
+                "",
+                "Next action:",
+                f"  [start-ready-item]  Start ready item #{item_id} because it is unblocked and no active claims are open.",
+            ]
+        )
+        assert result.output == f"{expected}\n"
+
+    def test_next_work_explain_text_output_snapshot_dependency_waiting(
+        self, runner, conn, active_sprint
+    ):
+        blocker_id = _item(conn, active_sprint["id"], "Blocker", track="eng")
+        blocked_id = _item(conn, active_sprint["id"], "Blocked task", track="eng")
+        db.add_dep(conn, blocker_id, blocked_id)
+        conn.execute("UPDATE work_item SET status = 'active' WHERE id = ?", (blocker_id,))
+        conn.commit()
+
+        result = runner.invoke(cli, ["next-work", "--sprint-id", str(active_sprint["id"]), "--explain"])
+        assert result.exit_code == 0, result.output
+
+        expected = "\n".join(
+            [
+                f"Sprint #{active_sprint['id']}: {active_sprint['name']}",
+                "Summary: 1 pending total, 0 ready, 1 waiting on dependencies, 0 active claims",
+                "",
+                "Ready items (0):",
+                "  (none)",
+                "",
+                "Dependency waiting items (1):",
+                "  ID  TRACK  ASSIGNEE  BLOCKERS  TITLE       ",
+                "  --  -----  --------  --------  ------------",
+                f"  #{blocked_id}  eng    -         #{blocker_id}        Blocked task",
+                "",
+                "Active claims (0):",
+                "  (none)",
+                "",
+                "Conflicts (1):",
+                "  [dependency-blocked]  1 pending item(s) are waiting on unresolved blockers.",
+                "",
+                "Next action:",
+                f"  [unblock-dependent-work]  Resolve blocker #{blocker_id} to unblock item #{blocked_id}.",
+            ]
+        )
+        assert result.output == f"{expected}\n"
+
+
 class TestCliStatusColor:
     def test_item_list_uses_ansi_color_when_enabled(self, runner, conn, active_sprint):
         _item(conn, active_sprint["id"], "Pending task")
