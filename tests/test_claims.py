@@ -375,6 +375,164 @@ class TestClaimJSONAndCLI:
         assert "Claim #" in result.output and "was released" in result.output
         assert db.list_claims(conn, iid, active_only=False) == []
 
+    def test_item_done_from_claim_cmd_json_marks_done_and_releases_claim(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        started = runner.invoke(
+            cli,
+            ["claim", "start", "--item-id", str(iid), "--agent", "bot-1", "--json"],
+        )
+        claim = json.loads(started.output)
+
+        result = runner.invoke(
+            cli,
+            [
+                "item",
+                "done-from-claim",
+                "--id",
+                str(iid),
+                "--claim-id",
+                str(claim["claim_id"]),
+                "--claim-token",
+                claim["claim_token"],
+                "--actor",
+                "bot-1",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["operation"] == "item_done_from_claim"
+        assert data["item_status_before"] == "active"
+        assert data["item_status_after"] == "done"
+        assert data["claim_released"] is True
+        assert data["claim_still_present"] is False
+        assert db.get_work_item(conn, iid)["status"] == "done"
+        assert db.get_claim(conn, claim["claim_id"]) is None
+
+    def test_item_done_from_claim_cmd_keep_claim_retains_claim(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        started = runner.invoke(
+            cli,
+            ["claim", "start", "--item-id", str(iid), "--agent", "bot-1", "--json"],
+        )
+        claim = json.loads(started.output)
+
+        result = runner.invoke(
+            cli,
+            [
+                "item",
+                "done-from-claim",
+                "--id",
+                str(iid),
+                "--claim-id",
+                str(claim["claim_id"]),
+                "--claim-token",
+                claim["claim_token"],
+                "--actor",
+                "bot-1",
+                "--keep-claim",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["claim_released"] is False
+        assert data["claim_still_present"] is True
+        assert data["keep_claim"] is True
+        assert db.get_work_item(conn, iid)["status"] == "done"
+        assert db.get_claim(conn, claim["claim_id"]) is not None
+
+    def test_item_done_from_claim_cmd_wrong_token_fails_and_status_stays_active(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        started = runner.invoke(
+            cli,
+            ["claim", "start", "--item-id", str(iid), "--agent", "bot-1", "--json"],
+        )
+        claim = json.loads(started.output)
+
+        result = runner.invoke(
+            cli,
+            [
+                "item",
+                "done-from-claim",
+                "--id",
+                str(iid),
+                "--claim-id",
+                str(claim["claim_id"]),
+                "--claim-token",
+                "wrong-token",
+                "--actor",
+                "bot-1",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "Invalid claim_token" in result.output
+        assert db.get_work_item(conn, iid)["status"] == "active"
+        assert db.get_claim(conn, claim["claim_id"]) is not None
+
+    def test_item_done_from_claim_cmd_rejects_claim_item_mismatch(self, runner, conn, active_sprint, db_path):
+        iid_a = _item(conn, active_sprint["id"], title="Task A")
+        iid_b = _item(conn, active_sprint["id"], title="Task B")
+        started = runner.invoke(
+            cli,
+            ["claim", "start", "--item-id", str(iid_a), "--agent", "bot-1", "--json"],
+        )
+        claim = json.loads(started.output)
+        db.set_work_item_status(conn, iid_b, "active", actor="seed")
+
+        result = runner.invoke(
+            cli,
+            [
+                "item",
+                "done-from-claim",
+                "--id",
+                str(iid_b),
+                "--claim-id",
+                str(claim["claim_id"]),
+                "--claim-token",
+                claim["claim_token"],
+                "--actor",
+                "bot-1",
+            ],
+        )
+        assert result.exit_code == 1
+        assert f"belongs to item #{iid_a}" in result.output
+        assert db.get_work_item(conn, iid_a)["status"] == "active"
+        assert db.get_work_item(conn, iid_b)["status"] == "active"
+
+    def test_item_done_from_claim_cmd_rejects_expired_claim(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        started = runner.invoke(
+            cli,
+            ["claim", "start", "--item-id", str(iid), "--agent", "bot-1", "--json"],
+        )
+        claim = json.loads(started.output)
+        conn.execute(
+            "UPDATE claim SET expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-5 minutes') WHERE id = ?",
+            (claim["claim_id"],),
+        )
+        conn.commit()
+
+        result = runner.invoke(
+            cli,
+            [
+                "item",
+                "done-from-claim",
+                "--id",
+                str(iid),
+                "--claim-id",
+                str(claim["claim_id"]),
+                "--claim-token",
+                claim["claim_token"],
+                "--actor",
+                "bot-1",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "is expired" in result.output
+        assert db.get_work_item(conn, iid)["status"] == "active"
+        assert db.get_claim(conn, claim["claim_id"]) is not None
+
     def test_claim_heartbeat_cmd_with_token(self, runner, conn, active_sprint, db_path):
         iid = _item(conn, active_sprint["id"])
         created = runner.invoke(
