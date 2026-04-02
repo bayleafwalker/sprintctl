@@ -1132,6 +1132,10 @@ def _collect_next_work_explained_payload(
         stale_items=[],
         dependency_waiting_items=dependency_waiting_items,
     )
+    recommended_commands = _recommended_commands_for_next_action(
+        sprint_id=sprint["id"],
+        next_action=next_action,
+    )
     ready_with_reason = [
         {
             **item,
@@ -1177,6 +1181,7 @@ def _collect_next_work_explained_payload(
         "active_claims": visible_claims,
         "conflicts": conflicts,
         "next_action": next_action,
+        "recommended_commands": recommended_commands,
     }
 
 
@@ -1267,6 +1272,15 @@ def _render_next_work_explained_text(payload: dict) -> str:
     next_action = payload["next_action"]
     lines.append("Next action:")
     lines.append(f"  [{next_action['kind']}]  {next_action['summary']}")
+    lines.append("")
+
+    commands = payload.get("recommended_commands", [])
+    lines.append("Recommended commands:")
+    if commands:
+        for command in commands:
+            lines.append(f"  - {command}")
+    else:
+        lines.append("  (none)")
     return "\n".join(lines)
 
 
@@ -1528,6 +1542,80 @@ def _derive_next_action(
         "summary": "No immediate action is suggested from current sprint state.",
         "reason": "There is no ready, active, blocked, or stale work to prioritize.",
     }
+
+
+def _recommended_commands_for_next_action(*, sprint_id: int, next_action: dict) -> list[str]:
+    kind = next_action.get("kind")
+    item_id = next_action.get("item_id")
+    claim_id = next_action.get("claim_id")
+    blocker_id = next_action.get("blocker_item_id")
+
+    if kind == "resolve-claim-identity":
+        commands = [
+            f"sprintctl claim resume --sprint-id {sprint_id} --json",
+        ]
+        if claim_id is not None:
+            commands.append(
+                f"sprintctl claim handoff --id {claim_id} --actor <name> --mode rotate --allow-legacy-adopt --json"
+            )
+        return commands
+
+    if kind == "refresh-claim":
+        commands = []
+        if claim_id is not None:
+            commands.append(
+                f"sprintctl claim heartbeat --id {claim_id} --claim-token <token> --ttl 600 --actor <name>"
+            )
+            commands.append(
+                f"sprintctl claim handoff --id {claim_id} --claim-token <token> --actor <next-agent> --mode rotate --json"
+            )
+        return commands
+
+    if kind in {"unblock-dependent-work", "resolve-blocker"}:
+        commands = []
+        if blocker_id is not None:
+            commands.append(f"sprintctl item show --id {blocker_id}")
+        if item_id is not None:
+            commands.append(f"sprintctl item show --id {item_id}")
+        commands.append(f"sprintctl next-work --sprint-id {sprint_id} --json --explain")
+        return commands
+
+    if kind == "inspect-active-claim":
+        commands = []
+        if item_id is not None:
+            commands.append(f"sprintctl item show --id {item_id}")
+        if claim_id is not None:
+            commands.append(
+                f"sprintctl claim heartbeat --id {claim_id} --claim-token <token> --ttl 600 --actor <name>"
+            )
+            commands.append(
+                f"sprintctl claim handoff --id {claim_id} --claim-token <token> --actor <next-agent> --mode rotate --json"
+            )
+        return commands
+
+    if kind == "start-ready-item":
+        commands = []
+        if item_id is not None:
+            commands.extend(
+                [
+                    f"sprintctl claim start --item-id {item_id} --actor <name> --ttl 600 --json",
+                    f"sprintctl item show --id {item_id}",
+                ]
+            )
+        return commands
+
+    if kind in {"triage-blocked-item", "refresh-stale-item"}:
+        if item_id is None:
+            return []
+        return [f"sprintctl item show --id {item_id}"]
+
+    if kind == "no-action":
+        return [
+            f"sprintctl usage --context --sprint-id {sprint_id} --json",
+            f"sprintctl next-work --sprint-id {sprint_id} --json --explain",
+        ]
+
+    return []
 
 
 def _collect_context_contract(conn, sprint: dict, now: datetime) -> dict:
