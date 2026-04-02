@@ -2,6 +2,10 @@
 
 Use this page when you want the narrowest useful `sprintctl` path.
 
+If your global `sprintctl` install is older than this repo and a documented
+command/flag is missing, run commands via `python -m sprintctl` from the repo
+checkout.
+
 ## 1. Create a sprint
 
 ```sh

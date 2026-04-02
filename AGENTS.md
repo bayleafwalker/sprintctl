@@ -13,6 +13,13 @@ sprintctl agent-protocol          # print full lifecycle protocol (human-readabl
 sprintctl agent-protocol --json   # machine-readable JSON version
 ```
 
+If your global `sprintctl` binary is stale and missing commands documented in
+this file, run the repo-local source entrypoint instead:
+
+```bash
+.venv/bin/python -m sprintctl <command> ...
+```
+
 ---
 
 ## Claim lifecycle (summary)

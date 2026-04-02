@@ -45,6 +45,35 @@ class TestReleaseIntegrity:
         for command in ("usage", "handoff", "next-work", "git-context", "claim", "maintain"):
             assert command in result.stdout
 
+    def test_module_entrypoint_reports_package_version(self, db_path):
+        env = os.environ.copy()
+        env["SPRINTCTL_DB"] = str(db_path)
+        result = subprocess.run(
+            [sys.executable, "-m", "sprintctl", "--version"],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        assert __version__ in result.stdout
+        assert "sprintctl, version" in result.stdout
+
+    def test_module_entrypoint_usage_lists_next_work_explain(self, db_path):
+        env = os.environ.copy()
+        env["SPRINTCTL_DB"] = str(db_path)
+        result = subprocess.run(
+            [sys.executable, "-m", "sprintctl", "usage"],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "next-work      [--sprint-id ID] [--json] [--explain]" in result.stdout
+
     def test_module_entrypoint_next_work_help_includes_explain(self, db_path):
         env = os.environ.copy()
         env["SPRINTCTL_DB"] = str(db_path)
