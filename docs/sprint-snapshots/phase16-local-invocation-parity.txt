@@ -1,0 +1,20 @@
+SPRINT: Phase 16: Local Invocation Parity  [closed]
+Goal:   Make repo-local CLI invocation parity explicit and testable across module entrypoint, docs, and release-integrity checks
+Dates:  2026-04-02 to 2026-04-16
+ID:     9
+Items:  4 total — 4 done, 0 active, 0 pending, 0 blocked
+
+--- Track: cli-runtime ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #74  Add module entrypoint so  mirrors console-script behavior  (assignee: -)
+
+--- Track: release-integrity ---
+  health: 2 items — 2 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #75  Add tests that lock module entrypoint invocation and next-work --explain surface  (assignee: -)
+  [done    ] #77  Close parity gaps from sprint assessment: add version/usage parity checks and fallback notes  (assignee: -)
+
+--- Track: docs ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #76  Document local invocation guidance and clarify command-surface expectations  (assignee: -)
+
+Rendered: 2026-04-02T07:55:05Z
