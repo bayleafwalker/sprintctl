@@ -38,6 +38,7 @@ class TestSessionResumeCommand:
             "git_context",
             "next_action",
             "recommended_sequence",
+            "recommended_sequence_bundle",
         ]
         assert data["contract_version"] == "1"
         assert data["generated_at"].endswith("Z")
@@ -56,6 +57,10 @@ class TestSessionResumeCommand:
             f"sprintctl claim start --item-id {ready_id} --actor <name> --ttl 600 --json",
             f"sprintctl item show --id {ready_id}",
         ]
+        next_work_bundle = data["next_work"]["recommended_command_bundle"]
+        assert next_work_bundle["bundle_version"] == "1"
+        assert next_work_bundle["next_action_kind"] == "start-ready-item"
+        assert [step["kind"] for step in next_work_bundle["steps"]] == ["claim-start", "item-show"]
 
     def test_resume_json_uses_single_next_action_even_when_context_conflicts_exist(
         self, runner, conn, active_sprint
@@ -87,3 +92,13 @@ class TestSessionResumeCommand:
         assert commands[0].startswith("sprintctl usage --context --sprint-id ")
         assert commands[1].startswith("sprintctl next-work --sprint-id ")
         assert commands[2] == "sprintctl claim resume --json"
+        sequence_bundle = data["recommended_sequence_bundle"]
+        assert sequence_bundle["bundle_version"] == "1"
+        assert sequence_bundle["next_action_kind"] == data["next_action"]["kind"]
+        assert [step["command"] for step in sequence_bundle["steps"]] == commands
+        assert [step["kind"] for step in sequence_bundle["steps"]] == [
+            "usage-context",
+            "next-work",
+            "claim-resume",
+        ]
+        assert all(step["is_executable"] for step in sequence_bundle["steps"])

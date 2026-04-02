@@ -407,6 +407,16 @@ class TestNextWork:
             f"sprintctl claim start --item-id {iid_ready} --actor <name> --ttl 600 --json",
             f"sprintctl item show --id {iid_ready}",
         ]
+        bundle = data["recommended_command_bundle"]
+        assert bundle["bundle_version"] == "1"
+        assert bundle["next_action_kind"] == "start-ready-item"
+        assert [step["kind"] for step in bundle["steps"]] == ["claim-start", "item-show"]
+        assert bundle["steps"][0]["placeholders"] == ["<name>"]
+        assert bundle["steps"][0]["requires_input"] is True
+        assert bundle["steps"][0]["is_executable"] is False
+        assert bundle["steps"][1]["placeholders"] == []
+        assert bundle["steps"][1]["requires_input"] is False
+        assert bundle["steps"][1]["is_executable"] is True
 
     def test_next_work_json_explain_includes_waiting_dependency_details(
         self, runner, conn, active_sprint, db_path
@@ -434,6 +444,10 @@ class TestNextWork:
             f"sprintctl item show --id {blocked}",
             f"sprintctl next-work --sprint-id {active_sprint['id']} --json --explain",
         ]
+        bundle = data["recommended_command_bundle"]
+        assert bundle["next_action_kind"] == "unblock-dependent-work"
+        assert [step["kind"] for step in bundle["steps"]] == ["item-show", "item-show", "next-work"]
+        assert all(step["is_executable"] for step in bundle["steps"])
 
     def test_next_work_json_explain_prioritizes_active_claim(self, runner, conn, active_sprint, db_path):
         claimed = _item(conn, active_sprint["id"], "Claimed task")
@@ -458,6 +472,15 @@ class TestNextWork:
             f"sprintctl claim heartbeat --id {claim_id} --claim-token <token> --ttl 600 --actor <name>",
             f"sprintctl claim handoff --id {claim_id} --claim-token <token> --actor <next-agent> --mode rotate --json",
         ]
+        bundle = data["recommended_command_bundle"]
+        assert bundle["next_action_kind"] == "inspect-active-claim"
+        assert [step["kind"] for step in bundle["steps"]] == [
+            "item-show",
+            "claim-heartbeat",
+            "claim-handoff",
+        ]
+        assert bundle["steps"][1]["placeholders"] == ["<token>", "<name>"]
+        assert bundle["steps"][2]["placeholders"] == ["<token>", "<next-agent>"]
 
     def test_next_work_explain_text_output(self, runner, conn, active_sprint):
         _item(conn, active_sprint["id"], "Ready task")
