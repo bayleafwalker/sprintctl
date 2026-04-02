@@ -1,0 +1,19 @@
+SPRINT: Phase 23: Local Install Sync + Practice Hardening  [closed]
+Goal:   Align local sprintctl/kctl install guidance with source-first workflow, lock docs with tests, and finalize a clean operator loop
+Dates:  2026-04-02 to 2026-04-16
+ID:     16
+Items:  3 total — 3 done, 0 active, 0 pending, 0 blocked
+
+--- Track: docs ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #102  Update working-practice guides and finalize phase snapshot  (assignee: codex)
+
+--- Track: product-surface ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #100  Align sprintctl and kctl local install guidance in top-level setup docs  (assignee: codex)
+
+--- Track: release-integrity ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #101  Lock install/workflow guidance with regression tests  (assignee: codex)
+
+Rendered: 2026-04-02T13:24:59Z
