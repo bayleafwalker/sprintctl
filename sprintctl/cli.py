@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sqlite3
 import socket
 import sys
@@ -1136,6 +1137,10 @@ def _collect_next_work_explained_payload(
         sprint_id=sprint["id"],
         next_action=next_action,
     )
+    recommended_command_bundle = _recommended_command_bundle(
+        commands=recommended_commands,
+        next_action=next_action,
+    )
     ready_with_reason = [
         {
             **item,
@@ -1182,6 +1187,7 @@ def _collect_next_work_explained_payload(
         "conflicts": conflicts,
         "next_action": next_action,
         "recommended_commands": recommended_commands,
+        "recommended_command_bundle": recommended_command_bundle,
     }
 
 
@@ -1295,6 +1301,11 @@ def _collect_session_resume_payload(*, conn: sqlite3.Connection, sprint: dict, n
     )
     # Keep a single primary recommendation for resume flows to avoid mixed guidance.
     next_work["next_action"] = context["next_action"]
+    recommended_sequence = [
+        f"sprintctl usage --context --sprint-id {sprint['id']} --json",
+        f"sprintctl next-work --sprint-id {sprint['id']} --json --explain",
+        "sprintctl claim resume --json",
+    ]
     return {
         "contract_version": "1",
         "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -1307,11 +1318,11 @@ def _collect_session_resume_payload(*, conn: sqlite3.Connection, sprint: dict, n
         "next_work": next_work,
         "git_context": _detect_git_context(),
         "next_action": context["next_action"],
-        "recommended_sequence": [
-            f"sprintctl usage --context --sprint-id {sprint['id']} --json",
-            f"sprintctl next-work --sprint-id {sprint['id']} --json --explain",
-            "sprintctl claim resume --json",
-        ],
+        "recommended_sequence": recommended_sequence,
+        "recommended_sequence_bundle": _recommended_command_bundle(
+            commands=recommended_sequence,
+            next_action=context["next_action"],
+        ),
     }
 
 
@@ -1616,6 +1627,45 @@ def _recommended_commands_for_next_action(*, sprint_id: int, next_action: dict) 
         ]
 
     return []
+
+
+def _recommended_command_bundle(*, commands: list[str], next_action: dict) -> dict:
+    steps: list[dict] = []
+    for idx, command in enumerate(commands, start=1):
+        placeholders = re.findall(r"<[^>\n]+>", command)
+        steps.append(
+            {
+                "step": idx,
+                "kind": _command_step_kind(command),
+                "command": command,
+                "placeholders": placeholders,
+                "requires_input": bool(placeholders),
+                "is_executable": not placeholders,
+            }
+        )
+    return {
+        "bundle_version": "1",
+        "next_action_kind": next_action.get("kind"),
+        "steps": steps,
+    }
+
+
+def _command_step_kind(command: str) -> str:
+    if command.startswith("sprintctl claim start"):
+        return "claim-start"
+    if command.startswith("sprintctl claim resume"):
+        return "claim-resume"
+    if command.startswith("sprintctl claim heartbeat"):
+        return "claim-heartbeat"
+    if command.startswith("sprintctl claim handoff"):
+        return "claim-handoff"
+    if command.startswith("sprintctl item show"):
+        return "item-show"
+    if command.startswith("sprintctl usage --context"):
+        return "usage-context"
+    if command.startswith("sprintctl next-work"):
+        return "next-work"
+    return "other"
 
 
 def _collect_context_contract(conn, sprint: dict, now: datetime) -> dict:
