@@ -175,6 +175,22 @@ def test_start_here_links_phase3_docs():
     )
 
 
+def test_daily_loop_links_phase3_examples():
+    _assert_markdown_link_declared_and_resolves(
+        "docs/guides/daily-loop.md", "alias-pack.md", "../examples/alias-pack.md"
+    )
+    _assert_markdown_link_declared_and_resolves(
+        "docs/guides/daily-loop.md",
+        "agent-prompt-snippets.md",
+        "../examples/agent-prompt-snippets.md",
+    )
+    _assert_markdown_link_declared_and_resolves(
+        "docs/guides/daily-loop.md",
+        "editor-and-terminal-integration.md",
+        "../examples/editor-and-terminal-integration.md",
+    )
+
+
 def test_advanced_coordination_links_phase4_docs():
     _assert_markdown_link_declared_and_resolves(
         "docs/guides/advanced-coordination.md",
@@ -210,6 +226,24 @@ def test_phase3_docs_local_markdown_links_resolve():
     for source in phase3_docs:
         for label, target in _iter_local_markdown_links(source):
             _assert_markdown_link_declared_and_resolves(source, label, target)
+
+
+def test_phase3_examples_publish_core_sections():
+    alias_pack = _read("docs/examples/alias-pack.md")
+    assert "## Bash/Zsh functions" in alias_pack
+    assert "## Claim helpers (explicit proof retained)" in alias_pack
+    assert "## Minimal alias-only mode" in alias_pack
+
+    snippets = _read("docs/examples/agent-prompt-snippets.md")
+    assert "## 1. Session startup snippet" in snippets
+    assert "## 2. Claim-and-execute snippet" in snippets
+    assert "## 3. Coordinator + sub-agent snippet" in snippets
+    assert "## 4. End-of-session snippet" in snippets
+
+    integration = _read("docs/examples/editor-and-terminal-integration.md")
+    assert "## tmux split layout" in integration
+    assert "## VS Code tasks" in integration
+    assert "## Neovim command wrappers" in integration
 
 
 def test_readme_docs_map_links_resolve():
