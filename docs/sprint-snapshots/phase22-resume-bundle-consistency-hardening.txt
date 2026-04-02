@@ -1,0 +1,19 @@
+SPRINT: Phase 22: Resume Bundle Consistency Hardening  [closed]
+Goal:   Fix session-resume next_action/command-bundle consistency under conflicts, add regression tests, and tighten contract docs
+Dates:  2026-04-02 to 2026-04-16
+ID:     15
+Items:  3 total — 3 done, 0 active, 0 pending, 0 blocked
+
+--- Track: contract-hardening ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #98  Add regression tests for session resume command-bundle consistency when context overrides next_action  (assignee: codex)
+
+--- Track: docs ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #99  Specify structured command-bundle schema fields and allowed step kinds; render snapshot and close sprint  (assignee: codex)
+
+--- Track: product-surface ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #97  Align session resume next_work commands/bundle with the canonical next_action  (assignee: codex)
+
+Rendered: 2026-04-02T13:12:23Z

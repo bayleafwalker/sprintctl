@@ -78,6 +78,29 @@ Field intent:
 - `recommended_commands`: ordered command bundle aligned with `next_action`; some entries intentionally use placeholders like `<token>` or `<name>` where proof-bearing values are required
 - `recommended_command_bundle`: structured version of `recommended_commands` with ordered `steps`; each step includes `kind`, `command`, `placeholders`, and `is_executable`/`requires_input` flags for automation
 
+Command bundle schema:
+
+```json
+{
+  "bundle_version": "1",
+  "next_action_kind": "start-ready-item",
+  "steps": [
+    {
+      "step": 1,
+      "kind": "claim-start",
+      "command": "sprintctl claim start --item-id 123 --actor <name> --ttl 600 --json",
+      "placeholders": ["<name>"],
+      "requires_input": true,
+      "is_executable": false
+    }
+  ]
+}
+```
+
+`recommended_command_bundle.steps[*].kind` currently uses:
+`claim-start`, `claim-resume`, `claim-heartbeat`, `claim-handoff`,
+`item-show`, `usage-context`, `next-work`, and `other`.
+
 Compatibility note:
 
 - `next-work --json` (without `--explain`) preserves the legacy list-only output shape.
@@ -121,6 +144,8 @@ Consistency rule:
 
 - `next_action` is canonical for this surface and is mirrored into
   `next_work.next_action` so resume output presents one recommendation.
+- `next_work.recommended_commands` and `next_work.recommended_command_bundle`
+  are recomputed from that canonical `next_action`.
 
 ## `handoff --format json`
 
