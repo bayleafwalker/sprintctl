@@ -38,8 +38,7 @@ This is the primary resume surface. It gives you:
 If overlap is possible, claim before editing files:
 
 ```sh
-sprintctl claim create --item-id 1 --actor codex-session-1 --json
-sprintctl item status --id 1 --status active --claim-id <id> --claim-token <token>
+sprintctl claim start --item-id 1 --actor codex-session-1 --json
 ```
 
 If you are working solo and do not need claim discipline, you can still move

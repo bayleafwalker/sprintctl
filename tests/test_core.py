@@ -867,7 +867,7 @@ class TestUsageCommand:
 
     def test_usage_mentions_key_commands(self, runner, db_path):
         result = runner.invoke(cli, ["usage"])
-        for cmd in ("sprint create", "item add", "claim create", "maintain check", "handoff", "render"):
+        for cmd in ("sprint create", "item add", "claim start", "claim create", "maintain check", "handoff", "render"):
             assert cmd in result.output, f"Missing command: {cmd}"
 
     def test_usage_mentions_env_vars(self, runner, db_path):

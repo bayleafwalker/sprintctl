@@ -1912,6 +1912,124 @@ def claim_create(
     click.echo(f"Claim token: {claim['claim_token']}")
 
 
+@claim.command("start")
+@click.option("--item-id", type=int, required=True, help="Work item ID to claim and move to active")
+@click.option("--actor", "--agent", "actor", required=True, help="Actor identifier")
+@click.option("--ttl", "ttl_seconds", default=300, type=int, help="TTL in seconds (default: 300)")
+@click.option("--branch", default=None, help="Git branch name")
+@click.option("--worktree", "worktree_path", default=None, help="Worktree path")
+@click.option("--commit-sha", "commit_sha", default=None, help="Commit SHA")
+@click.option("--pr-ref", "pr_ref", default=None, help="PR reference (e.g. owner/repo#123)")
+@click.option("--runtime-session-id", default=None, help="Runtime session identifier when available")
+@click.option("--instance-id", default=None, help="Stable client-process-local instance ID")
+@click.option("--hostname", default=None, help="Hostname override (defaults to current host)")
+@click.option("--pid", type=int, default=None, help="PID override (defaults to current process)")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output the created claim and status transition as JSON")
+@click.pass_obj
+def claim_start(
+    obj,
+    item_id,
+    actor,
+    ttl_seconds,
+    branch,
+    worktree_path,
+    commit_sha,
+    pr_ref,
+    runtime_session_id,
+    instance_id,
+    hostname,
+    pid,
+    as_json,
+) -> None:
+    """Create an execute claim and move the item to active in one flow.
+
+    If activating the item fails after claim creation, sprintctl attempts to
+    release the new claim automatically to avoid leaving accidental ownership.
+    """
+    conn = _get_conn(obj)
+    item = _db.get_work_item(conn, item_id)
+    if item is None:
+        click.echo(f"Item #{item_id} not found.", err=True)
+        sys.exit(1)
+    previous_status = item["status"]
+    runtime_session_id = _detect_runtime_session_id(runtime_session_id)
+    instance_id = _detect_instance_id(instance_id)
+    hostname = _detect_hostname(hostname)
+    pid = _detect_pid(pid)
+    try:
+        cid = _db.create_claim(
+            conn,
+            work_item_id=item_id,
+            agent=actor,
+            claim_type="execute",
+            exclusive=True,
+            ttl_seconds=ttl_seconds,
+            branch=branch,
+            worktree_path=worktree_path,
+            commit_sha=commit_sha,
+            pr_ref=pr_ref,
+            runtime_session_id=runtime_session_id,
+            instance_id=instance_id,
+            hostname=hostname,
+            pid=pid,
+        )
+    except (_db.ClaimConflict, ValueError) as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    claim = _db.get_claim(conn, cid, include_secret=True)
+    assert claim is not None
+
+    transitioned = False
+    transition_error = None
+    if previous_status != "active":
+        try:
+            _db.set_work_item_status(
+                conn,
+                item_id,
+                "active",
+                actor=actor,
+                claim_id=cid,
+                claim_token=claim["claim_token"],
+            )
+            transitioned = True
+        except (_db.InvalidTransition, _db.ClaimConflict) as e:
+            transition_error = e
+
+    if transition_error is not None:
+        release_note = ""
+        try:
+            _db.release_claim(conn, cid, claim["claim_token"], actor=actor)
+            release_note = f" Claim #{cid} was released."
+        except ValueError as release_error:
+            release_note = f" Automatic release failed: {release_error}"
+        click.echo(
+            f"Error: claim #{cid} was created but item #{item_id} could not be moved to active: "
+            f"{transition_error}.{release_note}",
+            err=True,
+        )
+        sys.exit(1)
+
+    updated_item = _db.get_work_item(conn, item_id)
+    assert updated_item is not None
+    if as_json:
+        click.echo(json.dumps({
+            "operation": "claim_start",
+            "claim": claim,
+            "item_id": item_id,
+            "item_status_before": previous_status,
+            "item_status_after": updated_item["status"],
+            "status_transition_applied": transitioned,
+        }, indent=2))
+        return
+
+    click.echo(f"Claim #{cid} created: {actor} → item #{item_id} (execute, ttl={ttl_seconds}s)")
+    if transitioned:
+        click.echo(f"Item #{item_id} status: {previous_status} -> {updated_item['status']}")
+    else:
+        click.echo(f"Item #{item_id} already active; status unchanged.")
+    click.echo(f"Claim token: {claim['claim_token']}")
+
+
 @claim.command("heartbeat")
 @click.option("--id", "claim_id", type=int, required=True, help="Claim ID")
 @click.option("--claim-token", required=True, help="Claim token returned when the claim was created")
@@ -2439,10 +2557,13 @@ def agent_protocol_cmd(as_json) -> None:
             "1_startup": {
                 "description": "Claim the item before beginning work.",
                 "command": (
-                    "sprintctl claim create --item-id <id> --actor <name> "
-                    "[--type execute|coordinate] [--ttl <seconds>] "
-                    "[--runtime-session-id <env-session-id>] [--instance-id <stable-per-process-uuid>] "
-                    "[--branch <branch>] --json"
+                    "Preferred for execute flow: "
+                    "sprintctl claim start --item-id <id> --actor <name> "
+                    "[--ttl <seconds>] [--runtime-session-id <env-session-id>] "
+                    "[--instance-id <stable-per-process-uuid>] [--branch <branch>] --json. "
+                    "Coordinator setup: sprintctl claim create --item-id <id> --actor <name> "
+                    "--type coordinate [--ttl <seconds>] [--runtime-session-id <env-session-id>] "
+                    "[--instance-id <stable-per-process-uuid>] [--branch <branch>] --json"
                 ),
                 "store": "Save claim_id and claim_token for the entire session. Treat claim_token as a secret.",
                 "coordinator_note": (
@@ -2622,6 +2743,9 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "  maintain carryover --from-sprint ID --to-sprint ID",
         "",
         "CLAIM",
+        "  claim start    --item-id ID --actor NAME [--ttl N] [--branch B] [--worktree PATH]",
+        "                 [--commit-sha SHA] [--pr-ref REF] [--runtime-session-id ID]",
+        "                 [--instance-id ID] [--json]",
         "  claim create   --item-id ID --actor NAME [--type execute|inspect|review|coordinate]",
         "                 [--ttl N] [--non-exclusive] [--branch B] [--worktree PATH]",
         "                 [--commit-sha SHA] [--pr-ref REF] [--runtime-session-id ID]",

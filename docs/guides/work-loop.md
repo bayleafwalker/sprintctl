@@ -35,22 +35,18 @@ decisions, and one explicit `next_action` in a single call.
 ## 2. Claim — establish ownership before editing files
 
 ```bash
-# Claim an item exclusively; save both values for the entire session
-CLAIM=$(sprintctl claim create \
+# Claim an item exclusively and move it to active in one command.
+# Save both values for the entire session.
+CLAIM=$(sprintctl claim start \
   --item-id 7 --actor claude-session-1 \
-  --type execute --ttl 900 \
+  --ttl 900 \
   --branch feat/auth \
   --runtime-session-id "${CODEX_THREAD_ID:-manual}" \
   --instance-id "${SPRINTCTL_INSTANCE_ID:-proc-1}" \
   --json)
 
-CLAIM_ID=$(echo "$CLAIM" | jq -r '.claim_id')
-CLAIM_TOKEN=$(echo "$CLAIM" | jq -r '.claim_token')
-
-# Transition the item to active using the claim as proof
-sprintctl item status \
-  --id 7 --status active --actor claude-session-1 \
-  --claim-id "$CLAIM_ID" --claim-token "$CLAIM_TOKEN"
+CLAIM_ID=$(echo "$CLAIM" | jq -r '.claim.claim_id')
+CLAIM_TOKEN=$(echo "$CLAIM" | jq -r '.claim.claim_token')
 ```
 
 `claim_token` is a secret — store it for the entire session and never share it.

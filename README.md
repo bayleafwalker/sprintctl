@@ -39,8 +39,7 @@ sprintctl item add --sprint-id 1 --track docs --title "Write resume guide"
 sprintctl usage --context --json
 
 # 3. Claim or start work
-sprintctl claim create --item-id 1 --actor codex-session-1 --json
-sprintctl item status --id 1 --status active --claim-id <id> --claim-token <token>
+sprintctl claim start --item-id 1 --actor codex-session-1 --json
 
 # 4. Record durable history during work
 sprintctl item note --id 1 --type decision --summary "Use handoff as working-memory snapshot"

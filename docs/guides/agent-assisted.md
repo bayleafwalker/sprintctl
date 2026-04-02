@@ -14,7 +14,7 @@ sprintctl usage --context --json
 2. Agent claims one item:
 
 ```sh
-sprintctl claim create --item-id <id> --actor codex-session-1 --ttl 900 --json
+sprintctl claim start --item-id <id> --actor codex-session-1 --ttl 900 --json
 ```
 
 3. Agent records durable notes while working:

@@ -288,6 +288,70 @@ class TestClaimJSONAndCLI:
         assert data["branch"] == "feat/auth"
         assert data["identity"]["advisory"]["branch"] == "feat/auth"
 
+    def test_claim_start_cmd_json_creates_claim_and_activates_item(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        result = runner.invoke(
+            cli,
+            [
+                "claim", "start",
+                "--item-id", str(iid),
+                "--agent", "bot-1",
+                "--ttl", "900",
+                "--runtime-session-id", "thread-1",
+                "--instance-id", "proc-1",
+                "--branch", "feat/auth",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["operation"] == "claim_start"
+        assert data["status_transition_applied"] is True
+        assert data["item_status_before"] == "pending"
+        assert data["item_status_after"] == "active"
+        assert data["claim"]["claim_type"] == "execute"
+        assert data["claim"]["claim_token"]
+        assert data["claim"]["runtime_session_id"] == "thread-1"
+        assert data["claim"]["instance_id"] == "proc-1"
+        assert db.get_work_item(conn, iid)["status"] == "active"
+
+    def test_claim_start_cmd_active_item_skips_status_transition(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        db.set_work_item_status(conn, iid, "active", actor="seed")
+
+        result = runner.invoke(
+            cli,
+            [
+                "claim", "start",
+                "--item-id", str(iid),
+                "--agent", "bot-1",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["item_status_before"] == "active"
+        assert data["item_status_after"] == "active"
+        assert data["status_transition_applied"] is False
+
+    def test_claim_start_cmd_releases_claim_if_status_transition_fails(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        db.set_work_item_status(conn, iid, "active", actor="seed")
+        db.set_work_item_status(conn, iid, "done", actor="seed")
+
+        result = runner.invoke(
+            cli,
+            [
+                "claim", "start",
+                "--item-id", str(iid),
+                "--agent", "bot-1",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "could not be moved to active" in result.output
+        assert "Claim #" in result.output and "was released" in result.output
+        assert db.list_claims(conn, iid, active_only=False) == []
+
     def test_claim_heartbeat_cmd_with_token(self, runner, conn, active_sprint, db_path):
         iid = _item(conn, active_sprint["id"])
         created = runner.invoke(
