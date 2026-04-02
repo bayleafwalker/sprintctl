@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Python 3.11+
-- [pipx](https://pipx.pypa.io/)
+- [pipx](https://pipx.pypa.io/) or [uv](https://docs.astral.sh/uv/)
 - [direnv](https://direnv.net/) (recommended)
 
 ## Setup
