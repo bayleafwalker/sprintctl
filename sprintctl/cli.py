@@ -1992,7 +1992,7 @@ def claim_start(
                 claim_token=claim["claim_token"],
             )
             transitioned = True
-        except (_db.InvalidTransition, _db.ClaimConflict) as e:
+        except Exception as e:
             transition_error = e
 
     if transition_error is not None:
@@ -2014,6 +2014,8 @@ def claim_start(
     if as_json:
         click.echo(json.dumps({
             "operation": "claim_start",
+            "claim_id": claim["claim_id"],
+            "claim_token": claim["claim_token"],
             "claim": claim,
             "item_id": item_id,
             "item_status_before": previous_status,
@@ -2557,17 +2559,15 @@ def agent_protocol_cmd(as_json) -> None:
             "1_startup": {
                 "description": "Claim the item before beginning work.",
                 "command": (
-                    "Preferred for execute flow: "
                     "sprintctl claim start --item-id <id> --actor <name> "
                     "[--ttl <seconds>] [--runtime-session-id <env-session-id>] "
-                    "[--instance-id <stable-per-process-uuid>] [--branch <branch>] --json. "
-                    "Coordinator setup: sprintctl claim create --item-id <id> --actor <name> "
-                    "--type coordinate [--ttl <seconds>] [--runtime-session-id <env-session-id>] "
                     "[--instance-id <stable-per-process-uuid>] [--branch <branch>] --json"
                 ),
                 "store": "Save claim_id and claim_token for the entire session. Treat claim_token as a secret.",
                 "coordinator_note": (
-                    "If acting as an orchestrator, claim with --type coordinate first, then spawn sub-agents "
+                    "If acting as an orchestrator, use "
+                    "'sprintctl claim create --item-id <id> --actor <name> --type coordinate --json' first, "
+                    "then spawn sub-agents "
                     "that call 'claim create' with --coordinate-claim-id and --coordinate-claim-token."
                 ),
             },

@@ -20,9 +20,8 @@ sprintctl agent-protocol --json   # machine-readable JSON version
 ### 1. Startup — claim the item
 
 ```bash
-sprintctl claim create \
+sprintctl claim start \
   --item-id <id> --actor <your-name> \
-  --type execute \
   --ttl 600 \
   --instance-id "$SPRINTCTL_INSTANCE_ID" \
   --json
@@ -46,16 +45,17 @@ sprintctl claim heartbeat \
 Heartbeat every ~half-TTL.  The response includes `expires_at` and a warning
 if the TTL is within the expiry-warn window.
 
-### 3. Transition item status
+### 3. Transition item status (done/blocked, or active when using `claim create`)
 
 ```bash
 sprintctl item status \
-  --id <item_id> --status active \
+  --id <item_id> --status active|done|blocked \
   --actor <your-name> \
   --claim-id <claim_id> --claim-token <token>
 ```
 
 Status transitions are **blocked** unless you provide valid claim proof.
+`claim start` already performs the `pending -> active` transition.
 
 ### 4. Handoff — required before session end if work continues
 

@@ -81,9 +81,8 @@ You are working in a repository that uses the sprintctl workflow. Orient yoursel
 ## Claim → work → done cycle
 
 Before starting non-trivial work:
-  sprintctl claim create --item-id <id> --actor <you> --runtime-session-id "${CODEX_THREAD_ID:-session}" --json
+  sprintctl claim start --item-id <id> --actor <you> --runtime-session-id "${CODEX_THREAD_ID:-session}" --json
   # Save claim_id and claim_token from output
-  sprintctl item status --id <id> --status active --actor <you> --claim-id <id> --claim-token <token>
 
 Record decisions during work:
   sprintctl item note --id <id> --type decision --summary "<decision and rationale>" --actor <you>

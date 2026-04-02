@@ -309,6 +309,8 @@ class TestClaimJSONAndCLI:
         assert data["status_transition_applied"] is True
         assert data["item_status_before"] == "pending"
         assert data["item_status_after"] == "active"
+        assert data["claim_id"] == data["claim"]["claim_id"]
+        assert data["claim_token"] == data["claim"]["claim_token"]
         assert data["claim"]["claim_type"] == "execute"
         assert data["claim"]["claim_token"]
         assert data["claim"]["runtime_session_id"] == "thread-1"
@@ -349,6 +351,27 @@ class TestClaimJSONAndCLI:
         )
         assert result.exit_code == 1
         assert "could not be moved to active" in result.output
+        assert "Claim #" in result.output and "was released" in result.output
+        assert db.list_claims(conn, iid, active_only=False) == []
+
+    def test_claim_start_cmd_releases_claim_if_unexpected_transition_error(self, runner, conn, active_sprint, db_path, monkeypatch):
+        iid = _item(conn, active_sprint["id"])
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("synthetic transition failure")
+
+        monkeypatch.setattr(db, "set_work_item_status", _boom)
+
+        result = runner.invoke(
+            cli,
+            [
+                "claim", "start",
+                "--item-id", str(iid),
+                "--agent", "bot-1",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "synthetic transition failure" in result.output
         assert "Claim #" in result.output and "was released" in result.output
         assert db.list_claims(conn, iid, active_only=False) == []
 
@@ -711,6 +734,9 @@ class TestAgentProtocol:
         assert "shutdown_checklist" in data
         assert "environment_hints" in data
         assert "coordinate" in data["claim_model"]["claim_types"]
+        startup_cmd = data["lifecycle"]["1_startup"]["command"]
+        assert startup_cmd.startswith("sprintctl claim start")
+        assert "Preferred for execute flow" not in startup_cmd
 
 
 class TestHandoffBundleShutdownProtocol:

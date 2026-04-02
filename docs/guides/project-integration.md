@@ -116,25 +116,24 @@ sprintctl item show --id 1 --json
 sprintctl claim list-sprint --json
 ```
 
-If the item is yours to execute, create a claim and keep its token:
+If the item is yours to execute, start with a claim and keep its token:
 
 ```sh
-sprintctl claim create \
+sprintctl claim start \
   --item-id 1 \
   --actor codex-session-1 \
-  --type execute \
   --ttl 600 \
   --runtime-session-id "${CODEX_THREAD_ID:-manual-session}" \
   --instance-id "$SPRINTCTL_INSTANCE_ID" \
   --json
 ```
 
-Then move the item to active:
+`claim start` already transitions `pending -> active`. For later transitions:
 
 ```sh
 sprintctl item status \
   --id 1 \
-  --status active \
+  --status done|blocked \
   --actor codex-session-1 \
   --claim-id <claim-id> \
   --claim-token <claim-token>

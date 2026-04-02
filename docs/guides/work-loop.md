@@ -45,8 +45,8 @@ CLAIM=$(sprintctl claim start \
   --instance-id "${SPRINTCTL_INSTANCE_ID:-proc-1}" \
   --json)
 
-CLAIM_ID=$(echo "$CLAIM" | jq -r '.claim.claim_id')
-CLAIM_TOKEN=$(echo "$CLAIM" | jq -r '.claim.claim_token')
+CLAIM_ID=$(echo "$CLAIM" | jq -r '.claim_id')
+CLAIM_TOKEN=$(echo "$CLAIM" | jq -r '.claim_token')
 ```
 
 `claim_token` is a secret — store it for the entire session and never share it.
