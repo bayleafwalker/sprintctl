@@ -131,9 +131,17 @@ sprintctl claim start \
 `claim start` already transitions `pending -> active`. For later transitions:
 
 ```sh
+# Mark done and release in one flow
+sprintctl item done-from-claim \
+  --id 1 \
+  --claim-id <claim-id> \
+  --claim-token <claim-token> \
+  --actor codex-session-1
+
+# Use explicit status transition for blocked/resume flow
 sprintctl item status \
   --id 1 \
-  --status done|blocked \
+  --status blocked \
   --actor codex-session-1 \
   --claim-id <claim-id> \
   --claim-token <claim-token>
@@ -183,7 +191,7 @@ If the next session only needs context, produce a broader bundle:
 sprintctl handoff --output handoff-current.json
 ```
 
-If work is done, release the claim:
+If work is done via explicit status transition (instead of `done-from-claim`), release the claim:
 
 ```sh
 sprintctl claim release --id <claim-id> --claim-token <claim-token> --actor codex-session-1

@@ -68,13 +68,14 @@ Recommended `--type` guidance:
 When done:
 
 ```bash
-sprintctl item status \
-  --id 42 --status done --actor codex \
-  --claim-id "$CLAIM_ID" --claim-token "$CLAIM_TOKEN"
-
-sprintctl claim release \
-  --id "$CLAIM_ID" --claim-token "$CLAIM_TOKEN" --actor codex
+sprintctl item done-from-claim \
+  --id 42 \
+  --claim-id "$CLAIM_ID" --claim-token "$CLAIM_TOKEN" \
+  --actor codex
 ```
+
+If release fails, this command exits non-zero and reports `release_error`; the
+item may still be marked `done`.
 
 When work continues in the next session:
 
@@ -96,4 +97,3 @@ Use these examples to reduce repetition without changing `sprintctl` semantics:
 - [alias-pack.md](../examples/alias-pack.md)
 - [agent-prompt-snippets.md](../examples/agent-prompt-snippets.md)
 - [editor-and-terminal-integration.md](../examples/editor-and-terminal-integration.md)
-

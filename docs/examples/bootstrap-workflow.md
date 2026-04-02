@@ -85,13 +85,14 @@ sprintctl item note --id 1 --type decision \
   --summary "Using SQLAlchemy declarative base with type annotations for all models." \
   --actor claude-session-1
 
-# Done: note + state transition + release claim
+# Done: note + done-from-claim
 sprintctl item note --id 1 --type decision \
   --summary "Done. src/models.py created with User, Session, Event. First Alembic migration generated." \
   --actor claude-session-1
-sprintctl item status --id 1 --status done \
-  --actor claude-session-1 --claim-id "$CLAIM_ID" --claim-token "$CLAIM_TOKEN"
-sprintctl claim release --id "$CLAIM_ID" --claim-token "$CLAIM_TOKEN" --actor claude-session-1
+sprintctl item done-from-claim \
+  --id 1 \
+  --claim-id "$CLAIM_ID" --claim-token "$CLAIM_TOKEN" \
+  --actor claude-session-1
 ```
 
 ## Handoff to the next session

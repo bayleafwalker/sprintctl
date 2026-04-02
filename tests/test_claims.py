@@ -533,6 +533,97 @@ class TestClaimJSONAndCLI:
         assert db.get_work_item(conn, iid)["status"] == "active"
         assert db.get_claim(conn, claim["claim_id"]) is not None
 
+    def test_item_done_from_claim_cmd_release_failure_returns_json_and_nonzero(
+        self, runner, conn, active_sprint, db_path, monkeypatch
+    ):
+        iid = _item(conn, active_sprint["id"])
+        started = runner.invoke(
+            cli,
+            ["claim", "start", "--item-id", str(iid), "--agent", "bot-1", "--json"],
+        )
+        claim = json.loads(started.output)
+
+        def _release_fail(*args, **kwargs):
+            raise ValueError("synthetic release failure")
+
+        monkeypatch.setattr(db, "release_claim", _release_fail)
+
+        result = runner.invoke(
+            cli,
+            [
+                "item",
+                "done-from-claim",
+                "--id",
+                str(iid),
+                "--claim-id",
+                str(claim["claim_id"]),
+                "--claim-token",
+                claim["claim_token"],
+                "--actor",
+                "bot-1",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 1
+        data = json.loads(result.output)
+        assert data["operation"] == "item_done_from_claim"
+        assert data["item_status_after"] == "done"
+        assert data["claim_released"] is False
+        assert data["claim_still_present"] is True
+        assert "synthetic release failure" in data["release_error"]
+        assert db.get_work_item(conn, iid)["status"] == "done"
+        assert db.get_claim(conn, claim["claim_id"]) is not None
+
+    def test_item_done_from_claim_cmd_rejects_non_execute_claim(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        db.set_work_item_status(conn, iid, "active", actor="seed")
+        claim = _claim(conn, iid, agent="bot-1", claim_type="review")
+
+        result = runner.invoke(
+            cli,
+            [
+                "item",
+                "done-from-claim",
+                "--id",
+                str(iid),
+                "--claim-id",
+                str(claim["claim_id"]),
+                "--claim-token",
+                claim["claim_token"],
+                "--actor",
+                "bot-1",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "requires an active exclusive execute claim" in result.output
+        assert db.get_work_item(conn, iid)["status"] == "active"
+        assert db.get_claim(conn, claim["claim_id"]) is not None
+
+    def test_item_done_from_claim_cmd_rejects_non_exclusive_claim(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        db.set_work_item_status(conn, iid, "active", actor="seed")
+        claim = _claim(conn, iid, agent="bot-1", claim_type="execute", exclusive=False)
+
+        result = runner.invoke(
+            cli,
+            [
+                "item",
+                "done-from-claim",
+                "--id",
+                str(iid),
+                "--claim-id",
+                str(claim["claim_id"]),
+                "--claim-token",
+                claim["claim_token"],
+                "--actor",
+                "bot-1",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "requires an active exclusive execute claim" in result.output
+        assert db.get_work_item(conn, iid)["status"] == "active"
+        assert db.get_claim(conn, claim["claim_id"]) is not None
+
     def test_claim_heartbeat_cmd_with_token(self, runner, conn, active_sprint, db_path):
         iid = _item(conn, active_sprint["id"])
         created = runner.invoke(

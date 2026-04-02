@@ -146,6 +146,10 @@ git add docs/sprint-snapshots/sprint-current.txt
 git commit -m "chore: sprint snapshot after completing auth item"
 ```
 
+`item done-from-claim` applies status first, then release. If release fails, the
+command exits non-zero and JSON includes `release_error`; the item may already
+be `done`.
+
 ---
 
 ## 5b. Hand off to the next session (work continues)
