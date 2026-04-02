@@ -1168,6 +1168,75 @@ def _render_next_work_explained_text(payload: dict) -> str:
     return "\n".join(lines)
 
 
+def _collect_session_resume_payload(*, conn: sqlite3.Connection, sprint: dict, now: datetime) -> dict:
+    context = _collect_context_contract(conn, sprint, now)
+    ready_items = _db.get_ready_items(conn, sprint["id"])
+    next_work = _collect_next_work_explained_payload(
+        conn=conn,
+        sprint=sprint,
+        ready_items=ready_items,
+        now=now,
+    )
+    return {
+        "contract_version": "1",
+        "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "sprint": {
+            "id": sprint["id"],
+            "name": sprint["name"],
+            "status": sprint["status"],
+        },
+        "context": context,
+        "next_work": next_work,
+        "git_context": _detect_git_context(),
+        "next_action": context["next_action"],
+        "recommended_sequence": [
+            f"sprintctl usage --context --sprint-id {sprint['id']} --json",
+            f"sprintctl next-work --sprint-id {sprint['id']} --json --explain",
+            "sprintctl claim resume --json",
+        ],
+    }
+
+
+def _render_session_resume_text(payload: dict) -> str:
+    sprint = payload["sprint"]
+    next_action = payload["next_action"]
+    lines = [
+        f"Session resume for sprint #{sprint['id']}: {sprint['name']}",
+        f"Generated: {payload['generated_at']}",
+        "",
+        "Recommended sequence:",
+    ]
+    for command in payload["recommended_sequence"]:
+        lines.append(f"  - {command}")
+
+    lines.append("")
+    lines.append("Next action:")
+    lines.append(f"  [{next_action['kind']}]  {next_action['summary']}")
+    lines.append("")
+    lines.append("Git context:")
+
+    git_context = payload["git_context"]
+    if git_context is None:
+        lines.append("  (not in a git repository)")
+    else:
+        lines.append(f"  Branch:   {git_context['branch']}")
+        lines.append(f"  SHA:      {git_context['sha']}")
+        lines.append(f"  Worktree: {git_context['worktree']}")
+        dirty_files = git_context.get("dirty_files") or []
+        lines.append(f"  Dirty files: {len(dirty_files)}")
+
+    lines.append("")
+    lines.append("usage --context snapshot:")
+    for line in _render_context_text(payload["context"]).splitlines():
+        lines.append(f"  {line}")
+
+    lines.append("")
+    lines.append("next-work --explain snapshot:")
+    for line in _render_next_work_explained_text(payload["next_work"]).splitlines():
+        lines.append(f"  {line}")
+    return "\n".join(lines)
+
+
 def _claims_expiring_within(active_claims: list[dict], now: datetime, seconds: int) -> list[dict]:
     expiring: list[dict] = []
     for claim in active_claims:
@@ -2884,6 +2953,30 @@ def next_work_cmd(obj, sprint_id, as_json, explain) -> None:
         click.echo(f"  {line}")
 
 
+@cli.group()
+def session() -> None:
+    """Session lifecycle helpers."""
+
+
+@session.command("resume")
+@click.option("--sprint-id", type=int, default=None, help="Sprint ID (defaults to active)")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.pass_obj
+def session_resume_cmd(obj, sprint_id, as_json) -> None:
+    """Show a combined resume surface (context, next-work explain, and git context)."""
+    conn = _get_conn(obj)
+    sprint = _resolve_sprint(conn, sprint_id)
+    payload = _collect_session_resume_payload(
+        conn=conn,
+        sprint=sprint,
+        now=datetime.now(timezone.utc),
+    )
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+        return
+    click.echo(_render_session_resume_text(payload))
+
+
 @cli.command("usage")
 @click.option(
     "--context",
@@ -2969,6 +3062,7 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "  handoff        [--sprint-id ID] [--output PATH] [--events N] [--format json|text]",
         "  render         [--sprint-id ID] [--output PATH]",
         "  next-work      [--sprint-id ID] [--json] [--explain]",
+        "  session resume [--sprint-id ID] [--json]",
         "  git-context    [--json]",
         "  agent-protocol [--json]",
         "  usage          [--context] [--sprint-id ID] [--json]",
