@@ -74,6 +74,13 @@ class TestSessionResumeCommand:
         data = json.loads(result.output)
         assert data["next_action"]["kind"] == "triage-blocked-item"
         assert data["next_action"] == data["next_work"]["next_action"]
+        assert data["next_work"]["recommended_commands"] == [f"sprintctl item show --id {blocked_id}"]
+        next_work_bundle = data["next_work"]["recommended_command_bundle"]
+        assert next_work_bundle["next_action_kind"] == "triage-blocked-item"
+        assert [step["kind"] for step in next_work_bundle["steps"]] == ["item-show"]
+        assert [step["command"] for step in next_work_bundle["steps"]] == data["next_work"][
+            "recommended_commands"
+        ]
 
     def test_resume_json_respects_sprint_id(self, runner, conn):
         sid = db.create_sprint(conn, "Manual Sprint", "goal", "2026-04-02", "2026-04-16", "planned")
