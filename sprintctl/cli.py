@@ -673,6 +673,108 @@ def item_status(obj, item_id, new_status, actor, claim_id, claim_token, as_json)
     click.echo(f"Item #{item_id} status: {current} -> {new_status}")
 
 
+@item.command("done-from-claim")
+@click.option("--id", "item_id", type=int, required=True, help="Item ID")
+@click.option("--claim-id", type=int, required=True, help="Claim ID proving ownership")
+@click.option("--claim-token", required=True, help="Claim token proving ownership")
+@click.option("--actor", default=None, help="Actor name")
+@click.option(
+    "--keep-claim",
+    is_flag=True,
+    default=False,
+    help="Do not release the claim after marking the item done",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output operation result as JSON")
+@click.pass_obj
+def item_done_from_claim(obj, item_id, claim_id, claim_token, actor, keep_claim, as_json) -> None:
+    """Mark an active item done using claim proof, then optionally release the claim."""
+    conn = _get_conn(obj)
+    it = _db.get_work_item(conn, item_id)
+    if it is None:
+        click.echo(f"Item #{item_id} not found.", err=True)
+        sys.exit(1)
+    claim = _db.get_claim(conn, claim_id)
+    if claim is None:
+        click.echo(f"Claim #{claim_id} not found.", err=True)
+        sys.exit(1)
+    if claim["work_item_id"] != item_id:
+        click.echo(
+            f"Error: claim #{claim_id} belongs to item #{claim['work_item_id']}, not item #{item_id}.",
+            err=True,
+        )
+        sys.exit(1)
+    if claim["claim_type"] != "execute" or not bool(claim["exclusive"]):
+        click.echo(
+            "Error: done-from-claim requires an active exclusive execute claim.",
+            err=True,
+        )
+        sys.exit(1)
+    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if claim["expires_at"] <= now_utc:
+        click.echo(
+            f"Error: claim #{claim_id} is expired ({claim['expires_at']}). Refresh or re-claim first.",
+            err=True,
+        )
+        sys.exit(1)
+
+    previous_status = it["status"]
+    try:
+        _db.set_work_item_status(
+            conn,
+            item_id,
+            "done",
+            actor=actor,
+            claim_id=claim_id,
+            claim_token=claim_token,
+        )
+    except (_db.InvalidTransition, _db.ClaimConflict, ValueError) as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    claim_released = False
+    release_error = None
+    if not keep_claim:
+        try:
+            _db.release_claim(conn, claim_id, claim_token, actor=actor)
+            claim_released = True
+        except ValueError as e:
+            release_error = str(e)
+
+    updated_item = _db.get_work_item(conn, item_id)
+    assert updated_item is not None
+    claim_still_present = _db.get_claim(conn, claim_id) is not None
+
+    if as_json:
+        payload = {
+            "operation": "item_done_from_claim",
+            "item_id": item_id,
+            "item_status_before": previous_status,
+            "item_status_after": updated_item["status"],
+            "claim_id": claim_id,
+            "claim_released": claim_released,
+            "claim_still_present": claim_still_present,
+            "keep_claim": keep_claim,
+        }
+        if release_error is not None:
+            payload["release_error"] = release_error
+        click.echo(json.dumps(payload, indent=2))
+        if release_error is not None:
+            sys.exit(1)
+        return
+
+    click.echo(f"Item #{item_id} status: {previous_status} -> {updated_item['status']}")
+    if claim_released:
+        click.echo(f"Claim #{claim_id} released.")
+    elif keep_claim:
+        click.echo(f"Claim #{claim_id} retained (--keep-claim).")
+    if release_error is not None:
+        click.echo(
+            f"Error: item moved to done but claim release failed: {release_error}",
+            err=True,
+        )
+        sys.exit(1)
+
+
 # ---------------------------------------------------------------------------
 # item ref
 # ---------------------------------------------------------------------------
@@ -3022,6 +3124,8 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "                 [--actor NAME]",
         "  item status    --id ID --status pending|active|done|blocked [--actor NAME] [--json]",
         "                 [--claim-id N --claim-token TOKEN]",
+        "  item done-from-claim --id ID --claim-id N --claim-token TOKEN [--actor NAME]",
+        "                 [--keep-claim] [--json]",
         "  item ref add   --id ID --type pr|issue|doc|other --url URL [--label TEXT]",
         "  item ref list  --id ID [--json]",
         "  item ref remove --id ID --ref-id N",
