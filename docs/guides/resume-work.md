@@ -7,6 +7,10 @@ The resume path should be mechanical:
 3. inspect the target item only if you need more detail
 4. resume or reclaim ownership
 
+If your global `sprintctl` install is older than the repository source, run
+commands via `python -m sprintctl` from the repo so options like
+`next-work --explain` are available.
+
 ## Live Resume Path
 
 ```sh

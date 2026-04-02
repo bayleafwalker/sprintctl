@@ -23,6 +23,14 @@ direnv allow
 
 This scopes `SPRINTCTL_DB` to the project directory. Verify with `echo $SPRINTCTL_DB`.
 
+For repo-local development, prefer running the module entrypoint so you always
+exercise the checked-out source:
+
+```sh
+.venv/bin/python -m sprintctl --help
+.venv/bin/python -m sprintctl next-work --help
+```
+
 Bootstrap your local sprint state:
 
 ```sh

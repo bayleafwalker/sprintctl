@@ -115,6 +115,16 @@ python -m venv .venv
 .venv/bin/python -m pytest tests/ -v
 ```
 
+Prefer invoking the CLI from the source tree while developing:
+
+```sh
+.venv/bin/python -m sprintctl --help
+.venv/bin/python -m sprintctl next-work --help
+```
+
+The source-tree entrypoint should expose the same command surface as the
+console script, including `next-work --explain`.
+
 ## Configuration
 
 ```sh
