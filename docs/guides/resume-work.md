@@ -28,7 +28,9 @@ metadata with placeholder/executability flags), so restart automation can
 execute or preflight a concrete next-step bundle.
 
 `session resume --json` mirrors this with `recommended_sequence` and
-`recommended_sequence_bundle`.
+`recommended_sequence_bundle`, and it now includes a top-level
+`claim_recovery` field that reports active claim IDs, local recovery-token file
+status, recovery-token paths, and current runtime/instance match hints.
 
 `session resume` is a convenience surface that packages those checks into one
 output contract. The underlying commands remain the source of truth and should
@@ -56,7 +58,14 @@ Find your claims by identity:
 sprintctl claim resume --instance-id "$SPRINTCTL_INSTANCE_ID" --json
 ```
 
-If the token is lost and the claim is legacy/ambiguous:
+If sprintctl previously wrote a local recovery file for the claim, restore the
+token directly:
+
+```sh
+sprintctl claim recover --id <claim-id> --json
+```
+
+If no local recovery file exists and the claim is legacy/ambiguous:
 
 ```sh
 sprintctl claim handoff --id <claim-id> --actor <you> --mode rotate --allow-legacy-adopt --json
@@ -67,6 +76,7 @@ sprintctl claim handoff --id <claim-id> --actor <you> --mode rotate --allow-lega
 - check `conflicts` before starting new work
 - inspect `recent_decisions` before repeating context gathering
 - use `claim resume` before creating a competing claim
+- use `claim_recovery` from `session resume --json` to confirm whether a local token file exists before escalating to adoption
 - use `item show` only after `usage --context` narrows the target
 
 ## Related

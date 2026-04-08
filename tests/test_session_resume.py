@@ -22,6 +22,7 @@ class TestSessionResumeCommand:
         assert "Session resume for sprint" in result.output
         assert "Recommended sequence:" in result.output
         assert "Next action:" in result.output
+        assert "Claim recovery:" in result.output
         assert "usage --context snapshot:" in result.output
         assert "next-work --explain snapshot:" in result.output
 
@@ -36,11 +37,12 @@ class TestSessionResumeCommand:
             "context",
             "next_work",
             "git_context",
+            "claim_recovery",
             "next_action",
             "recommended_sequence",
             "recommended_sequence_bundle",
         ]
-        assert data["contract_version"] == "1"
+        assert data["contract_version"] == "2"
         assert data["generated_at"].endswith("Z")
 
     def test_resume_json_embeds_existing_contracts(self, runner, conn, active_sprint):
@@ -52,6 +54,7 @@ class TestSessionResumeCommand:
         assert data["next_work"]["contract_version"] == "1"
         assert data["next_action"] == data["context"]["next_action"]
         assert data["next_action"] == data["next_work"]["next_action"]
+        assert list(data["claim_recovery"].keys()) == ["current_identity", "active_claims"]
         assert data["next_work"]["ready_items"][0]["id"] == ready_id
         assert data["next_work"]["recommended_commands"] == [
             f"sprintctl claim start --item-id {ready_id} --actor <name> --ttl 600 --json",
@@ -109,3 +112,44 @@ class TestSessionResumeCommand:
             "claim-resume",
         ]
         assert all(step["is_executable"] for step in sequence_bundle["steps"])
+
+    def test_resume_json_claim_recovery_surfaces_local_token_status(self, runner, conn, active_sprint, monkeypatch):
+        iid = _item(conn, active_sprint["id"], "Claimed task")
+        monkeypatch.setenv("SPRINTCTL_INSTANCE_ID", "proc-session-resume")
+        monkeypatch.setenv("SPRINTCTL_RUNTIME_SESSION_ID", "thread-session-resume")
+
+        created = runner.invoke(
+            cli,
+            [
+                "claim",
+                "start",
+                "--item-id",
+                str(iid),
+                "--agent",
+                "bot-1",
+                "--instance-id",
+                "proc-session-resume",
+                "--runtime-session-id",
+                "thread-session-resume",
+                "--json",
+            ],
+        )
+        assert created.exit_code == 0, created.output
+        claim = json.loads(created.output)
+
+        result = runner.invoke(cli, ["session", "resume", "--json"])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        recovery = data["claim_recovery"]
+        assert recovery["current_identity"] == {
+            "runtime_session_id": "thread-session-resume",
+            "instance_id": "proc-session-resume",
+        }
+        assert len(recovery["active_claims"]) == 1
+        claim_recovery = recovery["active_claims"][0]
+        assert claim_recovery["claim_id"] == claim["claim_id"]
+        assert claim_recovery["recovery_token_exists"] is True
+        assert claim_recovery["runtime_session_id_matches"] is True
+        assert claim_recovery["instance_id_matches"] is True
+        assert claim_recovery["plausible_identity_match"] is True
+        assert claim_recovery["recovery_token_path"].endswith(f"claim-{claim['claim_id']}.json")

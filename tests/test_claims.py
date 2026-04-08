@@ -287,6 +287,8 @@ class TestClaimJSONAndCLI:
         assert data["instance_id"] == "proc-1"
         assert data["branch"] == "feat/auth"
         assert data["identity"]["advisory"]["branch"] == "feat/auth"
+        assert data["local_recovery"]["recovery_token_exists"] is True
+        assert data["local_recovery"]["recovery_token_path"].endswith(f"claim-{data['claim_id']}.json")
 
     def test_claim_start_cmd_json_creates_claim_and_activates_item(self, runner, conn, active_sprint, db_path):
         iid = _item(conn, active_sprint["id"])
@@ -315,6 +317,8 @@ class TestClaimJSONAndCLI:
         assert data["claim"]["claim_token"]
         assert data["claim"]["runtime_session_id"] == "thread-1"
         assert data["claim"]["instance_id"] == "proc-1"
+        assert data["local_recovery"]["recovery_token_exists"] is True
+        assert data["local_recovery"]["recovery_token_path"].endswith(f"claim-{data['claim_id']}.json")
         assert db.get_work_item(conn, iid)["status"] == "active"
 
     def test_claim_start_cmd_active_item_skips_status_transition(self, runner, conn, active_sprint, db_path):
@@ -881,11 +885,102 @@ class TestClaimResume:
         assert len(data) == 1
         assert data[0]["identity"]["instance_id"] == "proc-resume-cli"
         assert "claim_token" not in data[0]
+        assert data[0]["local_recovery"]["recovery_token_exists"] is True
+        assert data[0]["local_recovery"]["recovery_token_path"].endswith(f"claim-{data[0]['claim_id']}.json")
+
+    def test_resume_cmd_can_filter_by_item_id(self, runner, conn, active_sprint, db_path):
+        iid_a = _item(conn, active_sprint["id"], "Task A")
+        iid_b = _item(conn, active_sprint["id"], "Task B")
+        for item_id in (iid_a, iid_b):
+            result = runner.invoke(
+                cli,
+                [
+                    "claim",
+                    "create",
+                    "--item-id",
+                    str(item_id),
+                    "--agent",
+                    "bot-1",
+                    "--instance-id",
+                    "proc-resume-filter",
+                    "--json",
+                ],
+            )
+            assert result.exit_code == 0, result.output
+
+        result = runner.invoke(
+            cli,
+            [
+                "claim",
+                "resume",
+                "--instance-id",
+                "proc-resume-filter",
+                "--item-id",
+                str(iid_b),
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert len(data) == 1
+        assert data[0]["work_item_id"] == iid_b
 
     def test_resume_cmd_no_results(self, runner, conn, active_sprint, db_path):
         result = runner.invoke(cli, ["claim", "resume", "--instance-id", "nobody"])
         assert result.exit_code == 0
         assert "No active claims" in result.output
+
+    def test_claim_recover_cmd_json_returns_locally_persisted_token(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        created = runner.invoke(
+            cli,
+            [
+                "claim",
+                "create",
+                "--item-id",
+                str(iid),
+                "--agent",
+                "bot-1",
+                "--runtime-session-id",
+                "thread-recover",
+                "--instance-id",
+                "proc-recover",
+                "--json",
+            ],
+        )
+        assert created.exit_code == 0, created.output
+        claim = json.loads(created.output)
+
+        result = runner.invoke(cli, ["claim", "recover", "--id", str(claim["claim_id"]), "--json"])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["claim"]["claim_id"] == claim["claim_id"]
+        assert data["claim_token"] == claim["claim_token"]
+        assert data["local_recovery"]["recovery_token_exists"] is True
+        assert data["local_recovery"]["recovery_token_path"] == claim["local_recovery"]["recovery_token_path"]
+
+    def test_claim_recover_cmd_by_item_id_and_release_cleanup(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        created = runner.invoke(
+            cli,
+            ["claim", "start", "--item-id", str(iid), "--agent", "bot-1", "--json"],
+        )
+        assert created.exit_code == 0, created.output
+        claim = json.loads(created.output)
+        recovery_path = db_path.parent / "claim-recovery" / f"claim-{claim['claim_id']}.json"
+        assert recovery_path.exists()
+
+        recovered = runner.invoke(cli, ["claim", "recover", "--item-id", str(iid), "--json"])
+        assert recovered.exit_code == 0, recovered.output
+        recovered_data = json.loads(recovered.output)
+        assert recovered_data["claim_token"] == claim["claim_token"]
+
+        released = runner.invoke(
+            cli,
+            ["claim", "release", "--id", str(claim["claim_id"]), "--claim-token", claim["claim_token"]],
+        )
+        assert released.exit_code == 0, released.output
+        assert not recovery_path.exists()
 
 
 class TestCoordinateHierarchy:

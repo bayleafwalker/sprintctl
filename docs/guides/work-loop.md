@@ -47,10 +47,13 @@ CLAIM=$(sprintctl claim start \
 
 CLAIM_ID=$(echo "$CLAIM" | jq -r '.claim_id')
 CLAIM_TOKEN=$(echo "$CLAIM" | jq -r '.claim_token')
+CLAIM_RECOVERY_PATH=$(echo "$CLAIM" | jq -r '.local_recovery.recovery_token_path')
 ```
 
 `claim_token` is a secret — store it for the entire session and never share it.
 `claim_id` is the stable handle used in every subsequent call.
+sprintctl also persists a local recovery token file for the claim, so the
+context-loss path is part of the CLI rather than an external repo convention.
 
 ### Coordinator + sub-agent pattern
 
@@ -185,7 +188,10 @@ session. The incoming session reads it as a working-memory snapshot, then calls
 # Find claims by advisory identity
 sprintctl claim resume --instance-id "$SPRINTCTL_INSTANCE_ID" --json
 
-# Re-adopt the claim and get a fresh token
+# Recover the token that sprintctl previously persisted locally
+sprintctl claim recover --id "$CLAIM_ID" --json
+
+# If no local recovery file exists, re-adopt the claim and get a fresh token
 sprintctl claim handoff \
   --id "$CLAIM_ID" \
   --actor claude-session-1 \

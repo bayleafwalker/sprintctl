@@ -7,6 +7,7 @@ import sys
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import TextIO
 
 import click
@@ -62,6 +63,120 @@ def _get_conn(obj: dict) -> sqlite3.Connection:
         obj["conn"] = conn
         click.get_current_context().call_on_close(conn.close)
     return conn
+
+
+def _claim_recovery_dir() -> Path:
+    return _db.get_db_path().parent / "claim-recovery"
+
+
+def _claim_recovery_path(claim_id: int) -> Path:
+    return _claim_recovery_dir() / f"claim-{claim_id}.json"
+
+
+def _write_claim_recovery_record(claim: dict) -> Path | None:
+    claim_id = claim.get("claim_id")
+    claim_token = claim.get("claim_token")
+    if claim_id is None or not claim_token:
+        return None
+    path = _claim_recovery_path(int(claim_id))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "claim_id": claim["claim_id"],
+        "work_item_id": claim["work_item_id"],
+        "actor": claim["actor"],
+        "claim_type": claim["claim_type"],
+        "claim_token": claim_token,
+        "runtime_session_id": claim.get("runtime_session_id"),
+        "instance_id": claim.get("instance_id"),
+        "written_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n")
+    return path
+
+
+def _remove_claim_recovery_record(claim_id: int) -> None:
+    path = _claim_recovery_path(claim_id)
+    if path.exists():
+        path.unlink()
+
+
+def _load_claim_recovery_record(claim_id: int) -> dict | None:
+    path = _claim_recovery_path(claim_id)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _claim_recovery_status(
+    claim: dict,
+    *,
+    current_runtime_session_id: str | None,
+    current_instance_id: str | None,
+) -> dict:
+    path = _claim_recovery_path(claim["claim_id"])
+    record = _load_claim_recovery_record(claim["claim_id"])
+    claim_runtime_session_id = claim.get("runtime_session_id")
+    claim_instance_id = claim.get("instance_id")
+    runtime_session_id_matches = bool(
+        current_runtime_session_id and claim_runtime_session_id == current_runtime_session_id
+    )
+    instance_id_matches = bool(current_instance_id and claim_instance_id == current_instance_id)
+    return {
+        "claim_id": claim["claim_id"],
+        "work_item_id": claim["work_item_id"],
+        "actor": claim["actor"],
+        "claim_type": claim["claim_type"],
+        "current_identity": {
+            "runtime_session_id": current_runtime_session_id,
+            "instance_id": current_instance_id,
+        },
+        "claim_identity": {
+            "runtime_session_id": claim_runtime_session_id,
+            "instance_id": claim_instance_id,
+        },
+        "runtime_session_id_matches": runtime_session_id_matches,
+        "instance_id_matches": instance_id_matches,
+        "plausible_identity_match": runtime_session_id_matches or instance_id_matches,
+        "recovery_token_exists": record is not None,
+        "recovery_token_path": str(path),
+        "recovery_record_written_at": record.get("written_at") if record else None,
+    }
+
+
+def _claim_with_recovery_status(
+    claim: dict,
+    *,
+    current_runtime_session_id: str | None,
+    current_instance_id: str | None,
+) -> dict:
+    enriched = dict(claim)
+    enriched["local_recovery"] = _claim_recovery_status(
+        claim,
+        current_runtime_session_id=current_runtime_session_id,
+        current_instance_id=current_instance_id,
+    )
+    return enriched
+
+
+def _find_recoverable_claim(conn: sqlite3.Connection, *, claim_id: int | None, item_id: int | None) -> dict:
+    if claim_id is not None:
+        claim = _db.get_claim(conn, claim_id)
+        if claim is None:
+            raise ValueError(f"Claim #{claim_id} not found")
+        return claim
+    assert item_id is not None
+    claims = _db.list_claims(conn, item_id, active_only=True)
+    if not claims:
+        raise ValueError(f"No active claims found for item #{item_id}")
+    if len(claims) > 1:
+        candidates = ", ".join(str(c["claim_id"]) for c in claims)
+        raise ValueError(
+            f"Multiple active claims found for item #{item_id}; rerun with --id. Candidates: {candidates}"
+        )
+    return claims[0]
 
 
 def _style_status(status: str) -> str:
@@ -737,6 +852,7 @@ def item_done_from_claim(obj, item_id, claim_id, claim_token, actor, keep_claim,
     if not keep_claim:
         try:
             _db.release_claim(conn, claim_id, claim_token, actor=actor)
+            _remove_claim_recovery_record(claim_id)
             claim_released = True
         except ValueError as e:
             release_error = str(e)
@@ -1292,6 +1408,8 @@ def _render_next_work_explained_text(payload: dict) -> str:
 
 def _collect_session_resume_payload(*, conn: sqlite3.Connection, sprint: dict, now: datetime) -> dict:
     context = _collect_context_contract(conn, sprint, now)
+    current_runtime_session_id = _detect_runtime_session_id(None)
+    current_instance_id = os.environ.get("SPRINTCTL_INSTANCE_ID")
     ready_items = _db.get_ready_items(conn, sprint["id"])
     next_work = _collect_next_work_explained_payload(
         conn=conn,
@@ -1315,8 +1433,22 @@ def _collect_session_resume_payload(*, conn: sqlite3.Connection, sprint: dict, n
         f"sprintctl next-work --sprint-id {sprint['id']} --json --explain",
         "sprintctl claim resume --json",
     ]
+    claim_recovery = {
+        "current_identity": {
+            "runtime_session_id": current_runtime_session_id,
+            "instance_id": current_instance_id,
+        },
+        "active_claims": [
+            _claim_recovery_status(
+                claim,
+                current_runtime_session_id=current_runtime_session_id,
+                current_instance_id=current_instance_id,
+            )
+            for claim in context["active_claims"]
+        ],
+    }
     return {
-        "contract_version": "1",
+        "contract_version": "2",
         "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "sprint": {
             "id": sprint["id"],
@@ -1326,6 +1458,7 @@ def _collect_session_resume_payload(*, conn: sqlite3.Connection, sprint: dict, n
         "context": context,
         "next_work": next_work,
         "git_context": _detect_git_context(),
+        "claim_recovery": claim_recovery,
         "next_action": next_action,
         "recommended_sequence": recommended_sequence,
         "recommended_sequence_bundle": _recommended_command_bundle(
@@ -1338,6 +1471,7 @@ def _collect_session_resume_payload(*, conn: sqlite3.Connection, sprint: dict, n
 def _render_session_resume_text(payload: dict) -> str:
     sprint = payload["sprint"]
     next_action = payload["next_action"]
+    claim_recovery = payload.get("claim_recovery", {})
     lines = [
         f"Session resume for sprint #{sprint['id']}: {sprint['name']}",
         f"Generated: {payload['generated_at']}",
@@ -1362,6 +1496,20 @@ def _render_session_resume_text(payload: dict) -> str:
         lines.append(f"  Worktree: {git_context['worktree']}")
         dirty_files = git_context.get("dirty_files") or []
         lines.append(f"  Dirty files: {len(dirty_files)}")
+
+    lines.append("")
+    lines.append("Claim recovery:")
+    recovery_claims = claim_recovery.get("active_claims", [])
+    if not recovery_claims:
+        lines.append("  (no active claims)")
+    else:
+        for claim in recovery_claims:
+            lines.append(
+                f"  Claim #{claim['claim_id']} item #{claim['work_item_id']}: "
+                f"local_token={'yes' if claim['recovery_token_exists'] else 'no'} "
+                f"identity_match={'yes' if claim['plausible_identity_match'] else 'no'}"
+            )
+            lines.append(f"    path: {claim['recovery_token_path']}")
 
     lines.append("")
     lines.append("usage --context snapshot:")
@@ -2407,11 +2555,20 @@ def claim_create(
         sys.exit(1)
     claim = _db.get_claim(conn, cid, include_secret=True)
     assert claim is not None
+    recovery_path = _write_claim_recovery_record(claim)
     if as_json:
+        if recovery_path is not None:
+            claim = dict(claim)
+            claim["local_recovery"] = {
+                "recovery_token_exists": True,
+                "recovery_token_path": str(recovery_path),
+            }
         click.echo(json.dumps(claim, indent=2))
         return
     click.echo(f"Claim #{cid} created: {actor} → item #{item_id} ({claim_type}, ttl={ttl_seconds}s)")
     click.echo(f"Claim token: {claim['claim_token']}")
+    if recovery_path is not None:
+        click.echo(f"Recovery token file: {recovery_path}")
 
 
 @claim.command("start")
@@ -2480,6 +2637,7 @@ def claim_start(
         sys.exit(1)
     claim = _db.get_claim(conn, cid, include_secret=True)
     assert claim is not None
+    recovery_path = _write_claim_recovery_record(claim)
 
     transitioned = False
     transition_error = None
@@ -2501,6 +2659,7 @@ def claim_start(
         release_note = ""
         try:
             _db.release_claim(conn, cid, claim["claim_token"], actor=actor)
+            _remove_claim_recovery_record(cid)
             release_note = f" Claim #{cid} was released."
         except ValueError as release_error:
             release_note = f" Automatic release failed: {release_error}"
@@ -2519,6 +2678,10 @@ def claim_start(
             "claim_id": claim["claim_id"],
             "claim_token": claim["claim_token"],
             "claim": claim,
+            "local_recovery": {
+                "recovery_token_exists": recovery_path is not None,
+                "recovery_token_path": str(recovery_path) if recovery_path is not None else None,
+            },
             "item_id": item_id,
             "item_status_before": previous_status,
             "item_status_after": updated_item["status"],
@@ -2532,6 +2695,8 @@ def claim_start(
     else:
         click.echo(f"Item #{item_id} already active; status unchanged.")
     click.echo(f"Claim token: {claim['claim_token']}")
+    if recovery_path is not None:
+        click.echo(f"Recovery token file: {recovery_path}")
 
 
 @claim.command("heartbeat")
@@ -2624,6 +2789,7 @@ def claim_release(obj, claim_id, claim_token, actor) -> None:
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+    _remove_claim_recovery_record(claim_id)
     click.echo(f"Claim #{claim_id} released.")
 
 
@@ -2702,6 +2868,7 @@ def claim_handoff(
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+    recovery_path = _write_claim_recovery_record(claim)
 
     item = _db.get_work_item(conn, claim["work_item_id"])
     sprint = _db.get_sprint(conn, item["sprint_id"]) if item else None
@@ -2722,6 +2889,8 @@ def claim_handoff(
         if not as_json:
             click.echo(f"Claim #{claim_id} handed off to {actor} (mode={mode})")
             click.echo(f"Claim token: {claim['claim_token']}")
+            if recovery_path is not None:
+                click.echo(f"Recovery token file: {recovery_path}")
         return
 
     if as_json or output_path == "-":
@@ -2730,6 +2899,8 @@ def claim_handoff(
 
     click.echo(f"Claim #{claim_id} handed off to {actor} (mode={mode})")
     click.echo(f"Claim token: {claim['claim_token']}")
+    if recovery_path is not None:
+        click.echo(f"Recovery token file: {recovery_path}")
 
 
 @claim.command("list")
@@ -2830,13 +3001,14 @@ def claim_show(obj, claim_id, claim_token, as_json) -> None:
 
 
 @claim.command("resume")
+@click.option("--item-id", type=int, default=None, help="Filter results to a specific work item")
 @click.option("--instance-id", default=None, help="Your stable instance ID (preferred)")
 @click.option("--runtime-session-id", default=None, help="Your runtime session ID")
 @click.option("--hostname", default=None, help="Hostname (use with --pid)")
 @click.option("--pid", type=int, default=None, help="PID (use with --hostname)")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
-def claim_resume(obj, instance_id, runtime_session_id, hostname, pid, as_json) -> None:
+def claim_resume(obj, item_id, instance_id, runtime_session_id, hostname, pid, as_json) -> None:
     """Find active claims matching your agent identity for session resumption.
 
     Use this when restarting after context loss to locate your existing claims.
@@ -2845,6 +3017,8 @@ def claim_resume(obj, instance_id, runtime_session_id, hostname, pid, as_json) -
     Provide at least one of: --instance-id, --runtime-session-id, or --hostname + --pid.
     """
     conn = _get_conn(obj)
+    runtime_session_id = _detect_runtime_session_id(runtime_session_id)
+    instance_id = instance_id or os.environ.get("SPRINTCTL_INSTANCE_ID")
     try:
         claims = _db.find_claim_by_identity(
             conn,
@@ -2857,6 +3031,16 @@ def claim_resume(obj, instance_id, runtime_session_id, hostname, pid, as_json) -
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+    if item_id is not None:
+        claims = [claim for claim in claims if claim["work_item_id"] == item_id]
+    claims = [
+        _claim_with_recovery_status(
+            claim,
+            current_runtime_session_id=runtime_session_id,
+            current_instance_id=instance_id,
+        )
+        for claim in claims
+    ]
     if as_json:
         click.echo(json.dumps(claims, indent=2))
         return
@@ -2870,8 +3054,69 @@ def claim_resume(obj, instance_id, runtime_session_id, hostname, pid, as_json) -
             f"[{c['claim_type']}]  expires={c['expires_at']}  "
             f"proof={c['identity_status']}"
         )
-    click.echo("Use 'claim show --id <id> --claim-token <token>' to re-display the token if still held.")
+        click.echo(
+            f"    local_token={'yes' if c['local_recovery']['recovery_token_exists'] else 'no'}  "
+            f"identity_match={'yes' if c['local_recovery']['plausible_identity_match'] else 'no'}"
+        )
+        click.echo(f"    recovery_path={c['local_recovery']['recovery_token_path']}")
+    click.echo("Use 'claim recover --id <id>' or '--item-id <id>' to restore a locally persisted token.")
     click.echo("Use 'claim handoff --allow-legacy-adopt' if the token is lost and the claim has no secret.")
+
+
+@claim.command("recover")
+@click.option("--id", "claim_id", type=int, default=None, help="Claim ID to recover")
+@click.option("--item-id", type=int, default=None, help="Recover the only active claim for a work item")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.pass_obj
+def claim_recover(obj, claim_id, item_id, as_json) -> None:
+    """Recover a claim token from sprintctl's local recovery record."""
+    if (claim_id is None) == (item_id is None):
+        click.echo("Error: Provide exactly one of --id or --item-id", err=True)
+        sys.exit(1)
+    conn = _get_conn(obj)
+    try:
+        claim = _find_recoverable_claim(conn, claim_id=claim_id, item_id=item_id)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    current_runtime_session_id = _detect_runtime_session_id(None)
+    current_instance_id = os.environ.get("SPRINTCTL_INSTANCE_ID")
+    recovery_status = _claim_recovery_status(
+        claim,
+        current_runtime_session_id=current_runtime_session_id,
+        current_instance_id=current_instance_id,
+    )
+    record = _load_claim_recovery_record(claim["claim_id"])
+    payload = {
+        "claim": claim,
+        "local_recovery": recovery_status,
+        "claim_token": record.get("claim_token") if record else None,
+    }
+    if record is None:
+        message = (
+            f"No local recovery token file exists for claim #{claim['claim_id']}. "
+            f"Expected {recovery_status['recovery_token_path']}"
+        )
+        if as_json:
+            payload["error"] = message
+            click.echo(json.dumps(payload, indent=2))
+        else:
+            click.echo(f"Error: {message}", err=True)
+        sys.exit(1)
+
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+        return
+
+    click.echo(f"Claim #{claim['claim_id']} recovered for item #{claim['work_item_id']} ({claim['claim_type']})")
+    click.echo(f"Claim token: {record['claim_token']}")
+    click.echo(f"Recovery token file: {recovery_status['recovery_token_path']}")
+    click.echo(
+        "Identity match: "
+        f"runtime_session_id={'yes' if recovery_status['runtime_session_id_matches'] else 'no'}, "
+        f"instance_id={'yes' if recovery_status['instance_id_matches'] else 'no'}"
+    )
 
 
 def _render_handoff_text(bundle: dict) -> str:
@@ -3048,7 +3293,10 @@ def agent_protocol_cmd(as_json) -> None:
     protocol = {
         "sprintctl_agent_protocol_version": "1",
         "claim_model": {
-            "ownership_proof": "claim_id + claim_token (both required; token is a server-minted opaque secret)",
+            "ownership_proof": (
+                "claim_id + claim_token (both required for claim operations; sprintctl can also "
+                "persist a local recovery copy of the token for context-loss recovery)"
+            ),
             "ttl_seconds_default": 300,
             "claim_types": {
                 "execute": "Exclusive. Agent is implementing work on the item.",
@@ -3065,7 +3313,11 @@ def agent_protocol_cmd(as_json) -> None:
                     "[--ttl <seconds>] [--runtime-session-id <env-session-id>] "
                     "[--instance-id <stable-per-process-uuid>] [--branch <branch>] --json"
                 ),
-                "store": "Save claim_id and claim_token for the entire session. Treat claim_token as a secret.",
+                "store": (
+                    "Save claim_id for the session. sprintctl also writes a local recovery token file "
+                    "next to the active database so 'claim recover' can restore the secret after context loss. "
+                    "Treat claim_token as a secret."
+                ),
                 "coordinator_note": (
                     "If acting as an orchestrator, use "
                     "'sprintctl claim create --item-id <id> --actor <name> --type coordinate --json' first, "
@@ -3109,8 +3361,9 @@ def agent_protocol_cmd(as_json) -> None:
                 "[--runtime-session-id <id>] [--hostname <host> --pid <pid>] --json"
             ),
             "recovery": (
-                "If token is still held: use 'claim show --id <id> --claim-token <token>' to re-display it. "
-                "If token is lost: use 'claim handoff --allow-legacy-adopt' to mint a fresh proof."
+                "Use 'claim recover --id <id>' or '--item-id <id>' to restore a token from sprintctl's local "
+                "recovery file. If no local recovery file exists and the claim is legacy/ambiguous, use "
+                "'claim handoff --allow-legacy-adopt' to mint a fresh proof."
             ),
         },
         "shutdown_checklist": [
@@ -3306,8 +3559,9 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "  claim list     --item-id ID [--all] [--json]",
         "  claim list-sprint [--sprint-id ID] [--all] [--expiring-within N] [--json]",
         "  claim show     --id N --claim-token TOKEN [--json]",
-        "  claim resume   [--instance-id ID] [--runtime-session-id ID]",
+        "  claim resume   [--item-id ID] [--instance-id ID] [--runtime-session-id ID]",
         "                 [--hostname H --pid N] [--json]",
+        "  claim recover  (--id N | --item-id ID) [--json]",
         "",
         "TOP-LEVEL",
         "  export         --sprint-id ID [--output PATH]",

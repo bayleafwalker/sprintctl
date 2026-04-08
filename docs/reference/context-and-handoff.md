@@ -7,7 +7,7 @@ work safely.
 
 `usage --context --json` is the primary live resume contract.
 
-Contract version: `1`
+Contract version: `2`
 
 Top-level shape:
 
@@ -119,12 +119,13 @@ Top-level shape:
 
 ```json
 {
-  "contract_version": "1",
+  "contract_version": "2",
   "generated_at": "...",
   "sprint": {},
   "context": {},
   "next_work": {},
   "git_context": {},
+  "claim_recovery": {},
   "next_action": {},
   "recommended_sequence": [],
   "recommended_sequence_bundle": {}
@@ -136,6 +137,7 @@ Field intent:
 - `context`: embedded `usage --context --json` contract
 - `next_work`: embedded `next-work --json --explain` contract
 - `git_context`: current branch/SHA/worktree/dirty-files when in a git repo; otherwise `null`
+- `claim_recovery`: local token-recovery status for each active claim, including whether a sprintctl-managed recovery file exists, where it lives, and whether the current runtime/instance identity plausibly matches
 - `next_action`: primary recommendation for resume flows
 - `recommended_sequence`: explicit follow-up command sequence
 - `recommended_sequence_bundle`: structured metadata for `recommended_sequence`, using the same step schema as `next_work.recommended_command_bundle`
@@ -213,9 +215,11 @@ Each recent decision entry includes:
 ## Ownership Model
 
 - proof = `claim_id + claim_token`
+- sprintctl may persist a local recovery copy of the token so `claim recover` can restore that proof after context loss
 - `claim handoff` transfers ownership
 - `handoff` transfers resumable context
 - `claim resume` finds claims by advisory identity when context is lost
+- `session resume --json` surfaces local recovery-file status without exposing the token itself
 
 ## Design Constraints
 

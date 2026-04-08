@@ -44,6 +44,10 @@ sprintctl next-work --json --explain
 # 3. Claim or start work
 sprintctl claim start --item-id 1 --actor codex-session-1 --json
 
+# 3b. If context is lost later, recover the same token from sprintctl's
+# local recovery file instead of relying on an external runbook.
+sprintctl claim recover --item-id 1 --json
+
 # 4. Record durable history during work
 sprintctl item note --id 1 --type decision --summary "Use handoff as working-memory snapshot"
 
@@ -173,8 +177,10 @@ and gitignore that directory.
 ## Design Defaults
 
 - CLI-first, local-first, explicit state
-- `claim_id + claim_token` is the only ownership proof
+- `claim_id + claim_token` remains the ownership proof for claim operations
+- sprintctl persists a local recovery copy of each active claim token next to the active database
 - `usage --context --json` is the primary resume contract
+- `session resume --json` includes claim-recovery status for each active claim
 - `handoff --format json` is the serialized working-memory contract
 - JSON and text surfaces should describe the same state in the same order
-- Convenience belongs mostly in repo-local wrappers, not in the core binary
+- critical recovery ergonomics belong in the core binary; repo-local wrappers can build on top of them
