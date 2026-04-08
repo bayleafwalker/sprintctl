@@ -7,7 +7,7 @@ work safely.
 
 `usage --context --json` is the primary live resume contract.
 
-Contract version: `2`
+Contract version: `1`
 
 Top-level shape:
 
@@ -48,7 +48,7 @@ conflicts, and a local next-step recommendation.
 - text mode (`next-work --explain`) renders a human-readable summary
 - JSON mode (`next-work --json --explain`) emits the full typed contract below
 
-Contract version: `1`
+Contract version: `2`
 
 Top-level shape:
 
