@@ -1038,22 +1038,16 @@ def event() -> None:
     """Manage events."""
 
 
-@event.command("add")
-@click.option("--sprint-id", type=int, required=True, help="Sprint ID")
-@click.option("--type", "event_type", required=True, help="Event type")
-@click.option("--actor", required=True, help="Actor name")
-@click.option("--item-id", "work_item_id", type=int, default=None, help="Work item ID")
-@click.option(
-    "--source",
-    "source_type",
-    default="actor",
-    type=click.Choice(["actor", "daemon", "system"]),
-    help="Source type",
-)
-@click.option("--payload", default=None, help="JSON payload string")
-@click.pass_obj
-def event_add(obj, sprint_id, event_type, actor, work_item_id, source_type, payload) -> None:
-    """Record an event."""
+def _event_add_impl(
+    obj,
+    sprint_id: int,
+    event_type: str,
+    actor: str,
+    work_item_id: int | None,
+    source_type: str,
+    payload: str | None,
+    as_json: bool,
+) -> None:
     conn = _get_conn(obj)
     if _db.get_sprint(conn, sprint_id) is None:
         click.echo(f"Sprint #{sprint_id} not found.", err=True)
@@ -1072,7 +1066,58 @@ def event_add(obj, sprint_id, event_type, actor, work_item_id, source_type, payl
         conn, sprint_id, actor, event_type,
         source_type=source_type, work_item_id=work_item_id, payload=payload_dict,
     )
+    if as_json:
+        click.echo(json.dumps({
+            "operation": "event_add",
+            "event_id": eid,
+            "sprint_id": sprint_id,
+            "item_id": work_item_id,
+            "type": event_type,
+            "actor": actor,
+            "source": source_type,
+        }, indent=2))
+        return
     click.echo(f"Recorded event #{eid}: {event_type}  (actor: {actor})")
+
+
+@event.command("add")
+@click.option("--sprint-id", type=int, required=True, help="Sprint ID")
+@click.option("--type", "--event-type", "event_type", required=True, help="Event type")
+@click.option("--actor", required=True, help="Actor name")
+@click.option("--item-id", "work_item_id", type=int, default=None, help="Work item ID")
+@click.option(
+    "--source",
+    "source_type",
+    default="actor",
+    type=click.Choice(["actor", "daemon", "system"]),
+    help="Source type",
+)
+@click.option("--payload", default=None, help="JSON payload string")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output created event metadata as JSON")
+@click.pass_obj
+def event_add(obj, sprint_id, event_type, actor, work_item_id, source_type, payload, as_json) -> None:
+    """Record an event."""
+    _event_add_impl(obj, sprint_id, event_type, actor, work_item_id, source_type, payload, as_json)
+
+
+@event.command("log")
+@click.option("--sprint-id", type=int, required=True, help="Sprint ID")
+@click.option("--type", "--event-type", "event_type", required=True, help="Event type")
+@click.option("--actor", required=True, help="Actor name")
+@click.option("--item-id", "work_item_id", type=int, default=None, help="Work item ID")
+@click.option(
+    "--source",
+    "source_type",
+    default="actor",
+    type=click.Choice(["actor", "daemon", "system"]),
+    help="Source type",
+)
+@click.option("--payload", default=None, help="JSON payload string")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output created event metadata as JSON")
+@click.pass_obj
+def event_log(obj, sprint_id, event_type, actor, work_item_id, source_type, payload, as_json) -> None:
+    """Alias for 'event add'."""
+    _event_add_impl(obj, sprint_id, event_type, actor, work_item_id, source_type, payload, as_json)
 
 
 @event.command("list")
@@ -3536,8 +3581,9 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "  item dep remove --id ID --dep-id N",
         "",
         "EVENT",
-        "  event add      --sprint-id ID --type TYPE --actor NAME [--item-id ID]",
-        "                 [--source actor|daemon|system] [--payload JSON]",
+        "  event add      --sprint-id ID --type|--event-type TYPE --actor NAME [--item-id ID]",
+        "                 [--source actor|daemon|system] [--payload JSON] [--json]",
+        "  event log      Alias for event add",
         "  event list     --sprint-id ID [--item-id ID] [--type TYPE] [--limit N] [--json]",
         "",
         "MAINTAIN",

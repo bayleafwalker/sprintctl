@@ -52,6 +52,64 @@ class TestDecisionPayloadContract:
         assert payload["git_worktree"] == "/tmp/wt"
 
 
+class TestEventAddCliContract:
+    def test_event_add_json_accepts_event_type_alias(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        result = runner.invoke(
+            cli,
+            [
+                "event",
+                "add",
+                "--sprint-id",
+                str(active_sprint["id"]),
+                "--event-type",
+                "lesson-learned",
+                "--actor",
+                "agent",
+                "--item-id",
+                str(iid),
+                "--payload",
+                '{"summary": "record the lesson"}',
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["operation"] == "event_add"
+        assert data["sprint_id"] == active_sprint["id"]
+        assert data["item_id"] == iid
+        assert data["type"] == "lesson-learned"
+        assert data["actor"] == "agent"
+        assert data["event_id"] > 0
+
+    def test_event_log_alias_records_event(self, runner, conn, active_sprint, db_path):
+        result = runner.invoke(
+            cli,
+            [
+                "event",
+                "log",
+                "--sprint-id",
+                str(active_sprint["id"]),
+                "--type",
+                "decision",
+                "--actor",
+                "agent",
+                "--payload",
+                '{"summary": "alias works"}',
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["operation"] == "event_add"
+        assert data["type"] == "decision"
+        events = db.list_events(conn, active_sprint["id"])
+        assert len(events) == 1
+        assert events[0]["event_type"] == "decision"
+
+
 class TestClaimHandoffPayloadContract:
     def test_claim_handoff_payload_is_canonicalized(self, conn, active_sprint):
         iid = _item(conn, active_sprint["id"])

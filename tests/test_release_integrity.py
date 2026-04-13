@@ -102,5 +102,7 @@ class TestReleaseIntegrity:
             "sprint show    [--id ID] [--detail] [--watch] [--interval SECONDS] [--json]",
             "item list      [--sprint-id ID] [--track NAME] [--status STATUS] [--fzf] [--json]",
             "item done-from-claim [--id ID] --claim-id N --claim-token TOKEN [--actor NAME]",
+            "event add      --sprint-id ID --type|--event-type TYPE --actor NAME [--item-id ID]",
+            "event log      Alias for event add",
         ):
             assert fragment in result.output
