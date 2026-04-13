@@ -790,7 +790,7 @@ def item_status(obj, item_id, new_status, actor, claim_id, claim_token, as_json)
 
 
 @item.command("done-from-claim")
-@click.option("--id", "item_id", type=int, required=True, help="Item ID")
+@click.option("--id", "item_id", type=int, default=None, help="Item ID (defaults to the claim's item)")
 @click.option("--claim-id", type=int, required=True, help="Claim ID proving ownership")
 @click.option("--claim-token", required=True, help="Claim token proving ownership")
 @click.option("--actor", default=None, help="Actor name")
@@ -805,19 +805,21 @@ def item_status(obj, item_id, new_status, actor, claim_id, claim_token, as_json)
 def item_done_from_claim(obj, item_id, claim_id, claim_token, actor, keep_claim, as_json) -> None:
     """Mark an active item done using claim proof, then optionally release the claim."""
     conn = _get_conn(obj)
-    it = _db.get_work_item(conn, item_id)
-    if it is None:
-        click.echo(f"Item #{item_id} not found.", err=True)
-        sys.exit(1)
     claim = _db.get_claim(conn, claim_id)
     if claim is None:
         click.echo(f"Claim #{claim_id} not found.", err=True)
         sys.exit(1)
+    if item_id is None:
+        item_id = claim["work_item_id"]
     if claim["work_item_id"] != item_id:
         click.echo(
             f"Error: claim #{claim_id} belongs to item #{claim['work_item_id']}, not item #{item_id}.",
             err=True,
         )
+        sys.exit(1)
+    it = _db.get_work_item(conn, item_id)
+    if it is None:
+        click.echo(f"Item #{item_id} not found.", err=True)
         sys.exit(1)
     if claim["claim_type"] != "execute" or not bool(claim["exclusive"]):
         click.echo(
@@ -3524,7 +3526,7 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "                 [--actor NAME]",
         "  item status    --id ID --status pending|active|done|blocked [--actor NAME] [--json]",
         "                 [--claim-id N --claim-token TOKEN]",
-        "  item done-from-claim --id ID --claim-id N --claim-token TOKEN [--actor NAME]",
+        "  item done-from-claim [--id ID] --claim-id N --claim-token TOKEN [--actor NAME]",
         "                 [--keep-claim] [--json]",
         "  item ref add   --id ID --type pr|issue|doc|other --url URL [--label TEXT]",
         "  item ref list  --id ID [--json]",

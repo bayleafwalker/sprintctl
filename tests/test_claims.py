@@ -413,6 +413,37 @@ class TestClaimJSONAndCLI:
         assert db.get_work_item(conn, iid)["status"] == "done"
         assert db.get_claim(conn, claim["claim_id"]) is None
 
+    def test_item_done_from_claim_cmd_infers_item_id_from_claim(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        started = runner.invoke(
+            cli,
+            ["claim", "start", "--item-id", str(iid), "--agent", "bot-1", "--json"],
+        )
+        claim = json.loads(started.output)
+
+        result = runner.invoke(
+            cli,
+            [
+                "item",
+                "done-from-claim",
+                "--claim-id",
+                str(claim["claim_id"]),
+                "--claim-token",
+                claim["claim_token"],
+                "--actor",
+                "bot-1",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["operation"] == "item_done_from_claim"
+        assert data["item_id"] == iid
+        assert data["item_status_after"] == "done"
+        assert data["claim_released"] is True
+        assert db.get_work_item(conn, iid)["status"] == "done"
+
     def test_item_done_from_claim_cmd_keep_claim_retains_claim(self, runner, conn, active_sprint, db_path):
         iid = _item(conn, active_sprint["id"])
         started = runner.invoke(

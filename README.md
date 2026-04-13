@@ -51,8 +51,8 @@ sprintctl claim recover --item-id 1 --json
 # 4. Record durable history during work
 sprintctl item note --id 1 --type decision --summary "Use handoff as working-memory snapshot"
 
-# 5a. If done: complete from claim (done + release)
-sprintctl item done-from-claim --id 1 --claim-id <claim_id> --claim-token <token> --actor codex-session-1
+# 5a. If done: complete from claim (done + release; --id is optional when claim-id is supplied)
+sprintctl item done-from-claim --claim-id <claim_id> --claim-token <token> --actor codex-session-1
 
 # 5b. If work continues: hand off claim ownership instead
 # (do not release first)
