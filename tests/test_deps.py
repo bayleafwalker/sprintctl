@@ -424,7 +424,7 @@ class TestNextWork:
         blocker = _item(conn, active_sprint["id"], "Blocker")
         blocked = _item(conn, active_sprint["id"], "Blocked task")
         db.add_dep(conn, blocker, blocked)
-        conn.execute("UPDATE work_item SET status = 'active' WHERE id = ?", (blocker,))
+        conn.execute("UPDATE work_item SET status = 'blocked' WHERE id = ?", (blocker,))
         conn.commit()
         result = runner.invoke(
             cli,
@@ -501,7 +501,7 @@ class TestNextWork:
         blocker = _item(conn, active_sprint["id"], "Blocker")
         _blocked = _item(conn, active_sprint["id"], "Blocked task")
         db.add_dep(conn, blocker, _blocked)
-        conn.execute("UPDATE work_item SET status = 'active' WHERE id = ?", (blocker,))
+        conn.execute("UPDATE work_item SET status = 'blocked' WHERE id = ?", (blocker,))
         conn.commit()
 
         result = runner.invoke(cli, ["next-work", "--sprint-id", str(active_sprint["id"]), "--explain"])

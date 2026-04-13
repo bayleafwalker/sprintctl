@@ -76,6 +76,7 @@ class ContextContract:
     sprint: Mapping[str, Any]
     summary: Mapping[str, Any]
     active_claims: Sequence[Mapping[str, Any]]
+    active_unclaimed_items: Sequence[Mapping[str, Any]]
     conflicts: Sequence[Mapping[str, Any]]
     ready_items: Sequence[Mapping[str, Any]]
     blocked_items: Sequence[Mapping[str, Any]]
@@ -90,6 +91,7 @@ class ContextContract:
             "sprint": _copy_mapping(self.sprint),
             "summary": _copy_mapping(self.summary),
             "active_claims": _copy_mapping_list(self.active_claims),
+            "active_unclaimed_items": _copy_mapping_list(self.active_unclaimed_items),
             "conflicts": _copy_mapping_list(self.conflicts),
             "ready_items": _copy_mapping_list(self.ready_items),
             "blocked_items": _copy_mapping_list(self.blocked_items),

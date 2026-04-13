@@ -49,7 +49,7 @@ class TestNextWorkExplainTextFormatting:
         expected = "\n".join(
             [
                 f"Sprint #{active_sprint['id']}: {active_sprint['name']}",
-                "Summary: 1 pending total, 1 ready, 0 waiting on dependencies, 0 active claims",
+                "Summary: 1 pending total, 1 ready, 0 waiting on dependencies, 0 active claims, 0 active unclaimed",
                 "",
                 "Ready items (1):",
                 "  ID  TRACK  ASSIGNEE  TITLE     ",
@@ -60,6 +60,9 @@ class TestNextWorkExplainTextFormatting:
                 "  (none)",
                 "",
                 "Active claims (0):",
+                "  (none)",
+                "",
+                "Active items without claims (0):",
                 "  (none)",
                 "",
                 "Conflicts (0):",
@@ -81,7 +84,7 @@ class TestNextWorkExplainTextFormatting:
         blocker_id = _item(conn, active_sprint["id"], "Blocker", track="eng")
         blocked_id = _item(conn, active_sprint["id"], "Blocked task", track="eng")
         db.add_dep(conn, blocker_id, blocked_id)
-        conn.execute("UPDATE work_item SET status = 'active' WHERE id = ?", (blocker_id,))
+        conn.execute("UPDATE work_item SET status = 'blocked' WHERE id = ?", (blocker_id,))
         conn.commit()
 
         result = runner.invoke(cli, ["next-work", "--sprint-id", str(active_sprint["id"]), "--explain"])
@@ -90,7 +93,7 @@ class TestNextWorkExplainTextFormatting:
         expected = "\n".join(
             [
                 f"Sprint #{active_sprint['id']}: {active_sprint['name']}",
-                "Summary: 1 pending total, 0 ready, 1 waiting on dependencies, 0 active claims",
+                "Summary: 1 pending total, 0 ready, 1 waiting on dependencies, 0 active claims, 0 active unclaimed",
                 "",
                 "Ready items (0):",
                 "  (none)",
@@ -101,6 +104,9 @@ class TestNextWorkExplainTextFormatting:
                 f"  #{blocked_id}  eng    -         #{blocker_id}        Blocked task",
                 "",
                 "Active claims (0):",
+                "  (none)",
+                "",
+                "Active items without claims (0):",
                 "  (none)",
                 "",
                 "Conflicts (1):",

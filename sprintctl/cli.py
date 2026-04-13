@@ -1272,6 +1272,11 @@ def _dependency_waiting_items(conn, sprint_id: int) -> list[dict]:
     return waiting
 
 
+def _active_items_without_claims(active_items: list[dict], active_claims: list[dict]) -> list[dict]:
+    claimed_item_ids = {claim["work_item_id"] for claim in active_claims}
+    return [item for item in active_items if item["id"] not in claimed_item_ids]
+
+
 def _collect_next_work_explained_payload(
     *,
     conn: sqlite3.Connection,
@@ -1281,8 +1286,14 @@ def _collect_next_work_explained_payload(
 ) -> dict:
     dependency_waiting_items = _dependency_waiting_items(conn, sprint["id"])
     active_claims = _db.list_claims_by_sprint(conn, sprint["id"], active_only=True)
+    active_items = [
+        {"id": item["id"], "title": item["title"], "track": item["track_name"]}
+        for item in _db.list_work_items(conn, sprint_id=sprint["id"], status="active")
+    ]
+    active_unclaimed_items = _active_items_without_claims(active_items, active_claims)
     conflicts = _derive_conflicts(
         active_claims=active_claims,
+        active_unclaimed_items=active_unclaimed_items,
         blocked_items=[],
         stale_items=[],
         dependency_waiting_items=dependency_waiting_items,
@@ -1290,6 +1301,7 @@ def _collect_next_work_explained_payload(
     )
     next_action = _derive_next_action(
         active_claims=active_claims,
+        active_unclaimed_items=active_unclaimed_items,
         conflicts=conflicts,
         ready_items=ready_items,
         blocked_items=[],
@@ -1343,10 +1355,12 @@ def _collect_next_work_explained_payload(
             "ready": len(ready_items),
             "waiting_on_dependencies": len(dependency_waiting_items),
             "active_claims": len(visible_claims),
+            "active_unclaimed": len(active_unclaimed_items),
         },
         "ready_items": ready_with_reason,
         "dependency_waiting_items": dependency_waiting_with_reason,
         "active_claims": visible_claims,
+        "active_unclaimed_items": active_unclaimed_items,
         "conflicts": conflicts,
         "next_action": next_action,
         "recommended_commands": recommended_commands,
@@ -1364,7 +1378,8 @@ def _render_next_work_explained_text(payload: dict) -> str:
             f"{summary['pending_total']} pending total, "
             f"{summary['ready']} ready, "
             f"{summary['waiting_on_dependencies']} waiting on dependencies, "
-            f"{summary['active_claims']} active claims"
+            f"{summary['active_claims']} active claims, "
+            f"{summary['active_unclaimed']} active unclaimed"
         ),
         "",
     ]
@@ -1424,6 +1439,24 @@ def _render_next_work_explained_text(payload: dict) -> str:
                 ]
             )
         for line in _render_table(["CLAIM", "ITEM", "AGENT", "TYPE", "EXPIRES_AT"], rows):
+            lines.append(f"  {line}")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+
+    active_unclaimed_items = payload["active_unclaimed_items"]
+    lines.append(f"Active items without claims ({len(active_unclaimed_items)}):")
+    if active_unclaimed_items:
+        rows = []
+        for item in active_unclaimed_items:
+            rows.append(
+                [
+                    f"#{item['id']}",
+                    item["track"],
+                    item["title"],
+                ]
+            )
+        for line in _render_table(["ID", "TRACK", "TITLE"], rows):
             lines.append(f"  {line}")
     else:
         lines.append("  (none)")
@@ -1584,6 +1617,7 @@ def _claims_expiring_within(active_claims: list[dict], now: datetime, seconds: i
 def _derive_conflicts(
     *,
     active_claims: list[dict],
+    active_unclaimed_items: list[dict],
     blocked_items: list[dict],
     stale_items: list[dict],
     dependency_waiting_items: list[dict],
@@ -1618,6 +1652,19 @@ def _derive_conflicts(
                 ),
                 "claim_ids": [claim["claim_id"] for claim in expiring_claims],
                 "item_ids": [claim["work_item_id"] for claim in expiring_claims],
+            }
+        )
+
+    if active_unclaimed_items:
+        conflicts.append(
+            {
+                "kind": "unclaimed-active-work",
+                "severity": "warning",
+                "summary": (
+                    f"{len(active_unclaimed_items)} active item(s) have no live claim "
+                    "and need resume, handoff, or status triage."
+                ),
+                "item_ids": [item["id"] for item in active_unclaimed_items],
             }
         )
 
@@ -1667,6 +1714,7 @@ def _derive_conflicts(
 def _derive_next_action(
     *,
     active_claims: list[dict],
+    active_unclaimed_items: list[dict],
     conflicts: list[dict],
     ready_items: list[dict],
     blocked_items: list[dict],
@@ -1689,6 +1737,14 @@ def _derive_next_action(
                 "summary": "Heartbeat or hand off the next expiring claim before it lapses.",
                 "claim_id": first["claim_ids"][0],
                 "item_id": first["item_ids"][0],
+                "reason": first["summary"],
+            }
+        if first["kind"] == "unclaimed-active-work":
+            item = active_unclaimed_items[0]
+            return {
+                "kind": "resume-unclaimed-active-item",
+                "summary": f"Resume or triage active item #{item['id']} because it has no live claim.",
+                "item_id": item["id"],
                 "reason": first["summary"],
             }
         if first["kind"] == "dependency-blocked":
@@ -1808,6 +1864,17 @@ def _recommended_commands_for_next_action(*, sprint_id: int, next_action: dict) 
             )
         return commands
 
+    if kind == "resume-unclaimed-active-item":
+        commands = []
+        if item_id is not None:
+            commands.extend(
+                [
+                    f"sprintctl claim start --item-id {item_id} --actor <name> --ttl 600 --json",
+                    f"sprintctl item show --id {item_id}",
+                ]
+            )
+        return commands
+
     if kind == "start-ready-item":
         commands = []
         if item_id is not None:
@@ -1897,6 +1964,7 @@ def _collect_context_contract(conn, sprint: dict, now: datetime) -> dict:
         for item in all_items
         if item["status"] == "active"
     ]
+    active_unclaimed_items = _active_items_without_claims(active_items, active_claims)
     ready_items = [
         {
             "id": item["id"],
@@ -1910,6 +1978,7 @@ def _collect_context_contract(conn, sprint: dict, now: datetime) -> dict:
     recent_decisions = [_summarize_event(event) for event in reversed(knowledge[-5:])]
     conflicts = _derive_conflicts(
         active_claims=active_claims,
+        active_unclaimed_items=active_unclaimed_items,
         blocked_items=blocked_items,
         stale_items=stale_items,
         dependency_waiting_items=dependency_waiting_items,
@@ -1917,6 +1986,7 @@ def _collect_context_contract(conn, sprint: dict, now: datetime) -> dict:
     )
     next_action = _derive_next_action(
         active_claims=active_claims,
+        active_unclaimed_items=active_unclaimed_items,
         conflicts=conflicts,
         ready_items=ready_items,
         blocked_items=blocked_items,
@@ -1946,8 +2016,10 @@ def _collect_context_contract(conn, sprint: dict, now: datetime) -> dict:
             "ready": len(ready_items),
             "waiting_on_dependencies": len(dependency_waiting_items),
             "active_claims": len(active_claims),
+            "active_unclaimed": len(active_unclaimed_items),
         },
         active_claims=active_claims,
+        active_unclaimed_items=active_unclaimed_items,
         conflicts=conflicts,
         ready_items=ready_items,
         blocked_items=blocked_items,
@@ -1980,6 +2052,15 @@ def _render_context_text(snapshot: dict) -> str:
                 f"  claim #{claim['claim_id']}  [{claim['actor']}]  {item_title}  "
                 f"expires: {claim['expires_at']}"
             )
+    else:
+        lines.append("  (none)")
+    lines.append("")
+
+    active_unclaimed_items = snapshot["active_unclaimed_items"]
+    lines.append(f"Active items without claims ({len(active_unclaimed_items)}):")
+    if active_unclaimed_items:
+        for item in active_unclaimed_items:
+            lines.append(f"  #{item['id']}  {item['title']}  (track: {item['track']})")
     else:
         lines.append("  (none)")
     lines.append("")
@@ -2153,6 +2234,7 @@ def _build_handoff_bundle(conn, sprint: dict, events_limit: int) -> dict:
         conflicts=context["conflicts"],
         work={
             "active_items": active_items,
+            "active_unclaimed_items": context["active_unclaimed_items"],
             "ready_items": context["ready_items"],
             "blocked_items": context["blocked_items"],
             "stale_items": context["stale_items"],

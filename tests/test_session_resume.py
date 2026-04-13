@@ -85,6 +85,27 @@ class TestSessionResumeCommand:
             "recommended_commands"
         ]
 
+    def test_resume_json_recommends_reclaiming_unclaimed_active_item(
+        self, runner, conn, active_sprint
+    ):
+        iid = _item(conn, active_sprint["id"], "Interrupted task")
+        db.set_work_item_status(conn, iid, "active")
+
+        result = runner.invoke(cli, ["session", "resume", "--json"])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["context"]["active_unclaimed_items"] == [
+            {"id": iid, "title": "Interrupted task", "track": "eng"}
+        ]
+        assert data["next_work"]["summary"]["active_unclaimed"] == 1
+        assert data["next_work"]["active_unclaimed_items"][0]["id"] == iid
+        assert data["next_action"]["kind"] == "resume-unclaimed-active-item"
+        assert data["next_work"]["recommended_commands"] == [
+            f"sprintctl claim start --item-id {iid} --actor <name> --ttl 600 --json",
+            f"sprintctl item show --id {iid}",
+        ]
+
     def test_resume_json_respects_sprint_id(self, runner, conn):
         sid = db.create_sprint(conn, "Manual Sprint", "goal", "2026-04-02", "2026-04-16", "planned")
         result = runner.invoke(cli, ["session", "resume", "--sprint-id", str(sid), "--json"])
