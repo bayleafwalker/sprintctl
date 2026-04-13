@@ -3373,7 +3373,7 @@ def agent_protocol_cmd(as_json) -> None:
         "environment_hints": {
             "SPRINTCTL_RUNTIME_SESSION_ID": "Set to your runtime session ID (auto-detected from CODEX_THREAD_ID).",
             "SPRINTCTL_INSTANCE_ID": "Set to a stable per-process UUID; persisted across heartbeats.",
-            "SPRINTCTL_DB": "Override the database path (default: ~/.local/share/sprintctl/sprintctl.db).",
+            "SPRINTCTL_DB": "Override the database path (default: ~/.sprintctl/sprintctl.db).",
         },
     }
     if as_json:

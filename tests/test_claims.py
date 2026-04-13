@@ -1078,6 +1078,7 @@ class TestAgentProtocol:
         assert "shutdown_checklist" in data
         assert "environment_hints" in data
         assert "coordinate" in data["claim_model"]["claim_types"]
+        assert "~/.sprintctl/sprintctl.db" in data["environment_hints"]["SPRINTCTL_DB"]
         startup_cmd = data["lifecycle"]["1_startup"]["command"]
         assert startup_cmd.startswith("sprintctl claim start")
         assert "Preferred for execute flow" not in startup_cmd
