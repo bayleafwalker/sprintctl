@@ -178,24 +178,27 @@ class TestGitContextCommand:
 
     def test_git_context_preserves_leading_path_characters(self, monkeypatch):
         def fake_run(args, capture_output, text):
-            if args == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
-                return subprocess.CompletedProcess(args, 0, stdout="main\n", stderr="")
-            if args == ["git", "rev-parse", "HEAD"]:
-                return subprocess.CompletedProcess(args, 0, stdout="abc123\n", stderr="")
-            if args == ["git", "rev-parse", "--show-toplevel"]:
-                return subprocess.CompletedProcess(args, 0, stdout="/tmp/repo\n", stderr="")
-            if args == ["git", "status", "--short"]:
+            if args == ["git", "status", "--porcelain=v2", "--branch"]:
                 return subprocess.CompletedProcess(
                     args,
                     0,
-                    stdout=" M docs/guides/start-here.md\n?? docs/guides/interoperability.md\n",
+                    stdout=(
+                        "# branch.oid abc123\n"
+                        "# branch.head main\n"
+                        "1 .M N... 100755 100755 100755 abc abc docs/guides/start-here.md\n"
+                        "? docs/guides/interoperability.md\n"
+                    ),
                     stderr="",
                 )
+            if args == ["git", "rev-parse", "--show-toplevel"]:
+                return subprocess.CompletedProcess(args, 0, stdout="/tmp/repo\n", stderr="")
             raise AssertionError(f"unexpected command: {args}")
 
         monkeypatch.setattr(subprocess, "run", fake_run)
         context = cli_module._detect_git_context()
         assert context is not None
+        assert context["branch"] == "main"
+        assert context["sha"] == "abc123"
         assert context["dirty_files"] == [
             "docs/guides/start-here.md",
             "docs/guides/interoperability.md",

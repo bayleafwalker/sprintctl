@@ -2133,19 +2133,35 @@ def _detect_git_context() -> dict | None:
         return result.stdout.rstrip("\n")
 
     try:
-        branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
-        sha = _run(["git", "rev-parse", "HEAD"])
+        status = _run(["git", "status", "--porcelain=v2", "--branch"])
         worktree = _run(["git", "rev-parse", "--show-toplevel"])
-        dirty = _run(["git", "status", "--short"])
     except RuntimeError:
         return None
 
+    branch = "HEAD"
+    sha = ""
     dirty_files: list[str] = []
-    if dirty:
-        for line in dirty.splitlines():
-            if not line.strip():
-                continue
-            dirty_files.append(line[3:].strip() if len(line) > 3 else line.strip())
+    for line in status.splitlines():
+        if not line.strip():
+            continue
+        if line.startswith("# branch.head "):
+            branch = line.removeprefix("# branch.head ")
+            continue
+        if line.startswith("# branch.oid "):
+            sha = line.removeprefix("# branch.oid ")
+            continue
+        if line.startswith("? "):
+            dirty_files.append(line[2:].strip())
+            continue
+        if line.startswith("1 ") or line.startswith("u "):
+            fields = line.split(" ", 8)
+            if len(fields) == 9:
+                dirty_files.append(fields[8])
+            continue
+        if line.startswith("2 "):
+            fields = line.split(" ", 9)
+            if len(fields) == 10:
+                dirty_files.append(fields[9].split("\t", 1)[0])
 
     return {
         "branch": branch,

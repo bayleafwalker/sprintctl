@@ -1,0 +1,23 @@
+SPRINT: Phase 24: Dispatch Ergonomics Hardening  [closed]
+Goal:   Tighten sprintctl around real dispatch friction: unclaimed active work, done-from-claim inference, event aliases, and protocol default consistency
+Dates:  2026-04-13 to 2026-04-20
+ID:     4
+Items:  4 total — 4 done, 0 active, 0 pending, 0 blocked
+
+--- Track: claim-ergonomics ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #95  Infer item id in item done-from-claim when claim proof identifies the item  (assignee: codex)
+
+--- Track: event-ergonomics ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #97  Add event add compatibility aliases and JSON output  (assignee: codex)
+
+--- Track: resume-flow ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #96  Surface active items without live claims in resume and next-work context  (assignee: codex)
+
+--- Track: docs-contract ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #98  Correct agent protocol SPRINTCTL_DB default and lock it with tests  (assignee: codex)
+
+Rendered: 2026-04-13T17:35:38Z
