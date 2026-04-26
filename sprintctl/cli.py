@@ -13,6 +13,7 @@ from typing import TextIO
 import click
 
 from . import __version__
+from . import backend as _backend
 from . import contracts as _contracts
 from . import db as _db
 from . import maintain as _maintain
@@ -57,6 +58,11 @@ def cli(ctx: click.Context) -> None:
 def _get_conn(obj: dict) -> sqlite3.Connection:
     conn = obj.get("conn")
     if conn is None:
+        try:
+            _backend.require_local_backend()
+        except _backend.BackendConfigError as e:
+            click.echo(str(e), err=True)
+            sys.exit(1)
         db_path = _db.get_db_path()
         conn = _db.get_connection(db_path)
         _db.init_db(conn)
