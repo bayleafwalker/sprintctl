@@ -1,6 +1,7 @@
 import json
 
 from sprintctl import db
+from sprintctl.cli import cli
 
 
 def _takeup(conn, sprint_id, actor, instance_id, **payload):
@@ -147,3 +148,117 @@ def test_takeup_events_remain_plain_json_payloads(conn, active_sprint):
     payload = json.loads(row["payload"])
 
     assert payload["tags"] == ["takeup"]
+
+
+def test_takeup_take_cli_records_json_event(runner, conn, active_sprint, db_path):
+    result = runner.invoke(
+        cli,
+        [
+            "takeup", "take",
+            "--sprint-id", str(active_sprint["id"]),
+            "--actor", "agent-a",
+            "--instance-id", "inst-a",
+            "--runtime-session-id", "sess-a",
+            "--hostname", "devbox",
+            "--pid", "123",
+            "--context", "remote-mode-prep",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["operation"] == "takeup_take"
+    assert data["sprint_id"] == active_sprint["id"]
+    assert data["actor"] == "agent-a"
+    assert data["instance_id"] == "inst-a"
+    assert data["hostname"] == "devbox"
+    assert data["pid"] == 123
+    assert data["forced"] is False
+    event = db.list_events(conn, active_sprint["id"])[0]
+    assert event["event_type"] == "sprint-taken-up"
+
+
+def test_takeup_take_cli_rejects_same_actor_instance_without_force(runner, conn, active_sprint, db_path):
+    args = [
+        "takeup", "take",
+        "--sprint-id", str(active_sprint["id"]),
+        "--actor", "agent-a",
+        "--instance-id", "inst-a",
+    ]
+    first = runner.invoke(cli, args)
+    second = runner.invoke(cli, args)
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 2
+    assert "Use --force for crash recovery" in second.output
+
+
+def test_takeup_take_cli_force_records_second_event(runner, conn, active_sprint, db_path):
+    args = [
+        "takeup", "take",
+        "--sprint-id", str(active_sprint["id"]),
+        "--actor", "agent-a",
+        "--instance-id", "inst-a",
+    ]
+    first = runner.invoke(cli, args)
+    forced = runner.invoke(cli, [*args, "--force", "--json"])
+
+    assert first.exit_code == 0, first.output
+    assert forced.exit_code == 0, forced.output
+    data = json.loads(forced.output)
+    assert data["forced"] is True
+    active = db.list_active_takeups(conn, active_sprint["id"])
+    assert len(active) == 1
+    assert active[0]["forced"] is True
+
+
+def test_takeup_release_cli_matches_latest_active_takeup(runner, conn, active_sprint, db_path):
+    take = runner.invoke(
+        cli,
+        [
+            "takeup", "take",
+            "--sprint-id", str(active_sprint["id"]),
+            "--actor", "agent-a",
+            "--instance-id", "inst-a",
+        ],
+    )
+    release = runner.invoke(
+        cli,
+        [
+            "takeup", "release",
+            "--sprint-id", str(active_sprint["id"]),
+            "--actor", "agent-a",
+            "--instance-id", "inst-a",
+            "--reason", "done",
+            "--json",
+        ],
+    )
+
+    assert take.exit_code == 0, take.output
+    assert release.exit_code == 0, release.output
+    data = json.loads(release.output)
+    assert data["operation"] == "takeup_release"
+    assert data["reason"] == "done"
+    assert data["matched_takeup_event_id"] is not None
+    assert db.list_active_takeups(conn, active_sprint["id"]) == []
+
+
+def test_takeup_release_cli_without_prior_takeup_warns_and_records(runner, conn, active_sprint, db_path):
+    result = runner.invoke(
+        cli,
+        [
+            "takeup", "release",
+            "--sprint-id", str(active_sprint["id"]),
+            "--actor", "agent-a",
+            "--instance-id", "inst-a",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "No matching takeup found" in result.output
+    data = json.loads(result.output[result.output.index("{"):])
+    assert data["matched_takeup_event_id"] is None
+    history = db.list_takeup_history(conn, active_sprint["id"])
+    assert len(history["unmatched_releases"]) == 1

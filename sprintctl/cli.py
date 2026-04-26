@@ -1180,6 +1180,260 @@ def event_list(obj, sprint_id, work_item_id, event_type, knowledge_only, limit, 
 
 
 # ---------------------------------------------------------------------------
+# takeup
+# ---------------------------------------------------------------------------
+
+@cli.group()
+def takeup() -> None:
+    """Manage sprint-level takeup events."""
+
+
+def _takeup_payload(
+    *,
+    actor_kind: str,
+    hostname: str | None,
+    pid: int | None,
+    instance_id: str | None,
+    runtime_session_id: str | None,
+    summary: str,
+    detail: str | None,
+    context: str | None = None,
+    forced: bool | None = None,
+    reason: str | None = None,
+    matched_takeup_event_id: int | None = None,
+) -> dict:
+    payload = {
+        "summary": summary,
+        "detail": detail,
+        "actor_kind": actor_kind,
+        "hostname": hostname,
+        "pid": pid,
+        "instance_id": instance_id,
+        "runtime_session_id": runtime_session_id,
+    }
+    if context is not None:
+        payload["context"] = context
+    if forced is not None:
+        payload["forced"] = forced
+    if reason is not None:
+        payload["reason"] = reason
+    if matched_takeup_event_id is not None:
+        payload["matched_takeup_event_id"] = matched_takeup_event_id
+    return payload
+
+
+def _matching_active_takeups(
+    conn: sqlite3.Connection,
+    *,
+    sprint_id: int,
+    actor: str,
+    instance_id: str | None,
+) -> list[dict]:
+    matches = [
+        row for row in _db.list_active_takeups(conn, sprint_id)
+        if row["actor"] == actor
+    ]
+    if instance_id is not None:
+        matches = [row for row in matches if row.get("instance_id") == instance_id]
+    return sorted(matches, key=lambda row: (row["taken_up_at"], row["taken_up_event_id"]))
+
+
+@takeup.command("take")
+@click.option("--sprint-id", type=int, required=True, help="Sprint ID")
+@click.option("--actor", required=True, help="Actor name")
+@click.option(
+    "--actor-kind",
+    default="agent",
+    type=click.Choice(["agent", "human"]),
+    help="Actor kind",
+)
+@click.option("--context", default=None, help="Free-form takeup context")
+@click.option("--instance-id", default=None, help="Stable actor instance ID")
+@click.option("--runtime-session-id", default=None, help="Runtime session ID")
+@click.option("--hostname", default=None, help="Hostname")
+@click.option("--pid", type=int, default=None, help="Process ID")
+@click.option("--summary", default="sprint takeup", show_default=True, help="Event summary")
+@click.option("--detail", default=None, help="Event detail")
+@click.option("--force", is_flag=True, default=False, help="Record takeup even if this actor instance is active")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.pass_obj
+def takeup_take_cmd(
+    obj,
+    sprint_id,
+    actor,
+    actor_kind,
+    context,
+    instance_id,
+    runtime_session_id,
+    hostname,
+    pid,
+    summary,
+    detail,
+    force,
+    as_json,
+) -> None:
+    """Record that an actor has taken up a sprint."""
+    conn = _get_conn(obj)
+    sprint = _db.get_sprint(conn, sprint_id)
+    if sprint is None:
+        click.echo(f"Sprint #{sprint_id} not found.", err=True)
+        sys.exit(1)
+
+    instance_id = _detect_instance_id(instance_id)
+    runtime_session_id = _detect_runtime_session_id(runtime_session_id)
+    hostname = _detect_hostname(hostname)
+    pid = _detect_pid(pid)
+
+    active_matches = _matching_active_takeups(
+        conn,
+        sprint_id=sprint_id,
+        actor=actor,
+        instance_id=instance_id,
+    )
+    if active_matches and not force:
+        click.echo(
+            f"Sprint #{sprint_id} already taken up by actor='{actor}' "
+            f"instance='{instance_id}'. Use --force for crash recovery.",
+            err=True,
+        )
+        sys.exit(2)
+
+    if sprint.get("kind") != "active_sprint":
+        click.echo(
+            f"Warning: sprint #{sprint_id} kind is '{sprint.get('kind')}', not 'active_sprint'.",
+            err=True,
+        )
+
+    event_id = _db.create_event(
+        conn,
+        sprint_id,
+        actor,
+        "sprint-taken-up",
+        payload=_takeup_payload(
+            actor_kind=actor_kind,
+            hostname=hostname,
+            pid=pid,
+            instance_id=instance_id,
+            runtime_session_id=runtime_session_id,
+            summary=summary,
+            detail=detail,
+            context=context,
+            forced=force,
+        ),
+    )
+    if as_json:
+        click.echo(json.dumps({
+            "operation": "takeup_take",
+            "event_id": event_id,
+            "sprint_id": sprint_id,
+            "actor": actor,
+            "actor_kind": actor_kind,
+            "instance_id": instance_id,
+            "hostname": hostname,
+            "pid": pid,
+            "forced": force,
+            "context": context,
+        }, indent=2))
+        return
+    click.echo(
+        f"Sprint #{sprint_id} taken up by {actor} "
+        f"(instance: {instance_id}, host: {hostname}) event #{event_id}"
+    )
+
+
+@takeup.command("release")
+@click.option("--sprint-id", type=int, required=True, help="Sprint ID")
+@click.option("--actor", required=True, help="Actor name")
+@click.option(
+    "--actor-kind",
+    default="agent",
+    type=click.Choice(["agent", "human"]),
+    help="Actor kind",
+)
+@click.option("--instance-id", default=None, help="Stable actor instance ID")
+@click.option("--runtime-session-id", default=None, help="Runtime session ID")
+@click.option("--hostname", default=None, help="Hostname")
+@click.option("--pid", type=int, default=None, help="Process ID")
+@click.option("--reason", default=None, help="Release reason")
+@click.option("--summary", default="sprint release", show_default=True, help="Event summary")
+@click.option("--detail", default=None, help="Event detail")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.pass_obj
+def takeup_release_cmd(
+    obj,
+    sprint_id,
+    actor,
+    actor_kind,
+    instance_id,
+    runtime_session_id,
+    hostname,
+    pid,
+    reason,
+    summary,
+    detail,
+    as_json,
+) -> None:
+    """Record that an actor has released a sprint takeup."""
+    conn = _get_conn(obj)
+    sprint = _db.get_sprint(conn, sprint_id)
+    if sprint is None:
+        click.echo(f"Sprint #{sprint_id} not found.", err=True)
+        sys.exit(1)
+
+    runtime_session_id = _detect_runtime_session_id(runtime_session_id)
+    hostname = _detect_hostname(hostname)
+    pid = _detect_pid(pid)
+    matches = _matching_active_takeups(
+        conn,
+        sprint_id=sprint_id,
+        actor=actor,
+        instance_id=instance_id,
+    )
+    matched = matches[-1] if matches else None
+    matched_takeup_event_id = matched["taken_up_event_id"] if matched else None
+    if matched is None:
+        click.echo("No matching takeup found; recording release anyway.", err=True)
+
+    event_id = _db.create_event(
+        conn,
+        sprint_id,
+        actor,
+        "sprint-released",
+        payload=_takeup_payload(
+            actor_kind=actor_kind,
+            hostname=hostname,
+            pid=pid,
+            instance_id=instance_id,
+            runtime_session_id=runtime_session_id,
+            summary=summary,
+            detail=detail,
+            reason=reason,
+            matched_takeup_event_id=matched_takeup_event_id,
+        ),
+    )
+    if as_json:
+        click.echo(json.dumps({
+            "operation": "takeup_release",
+            "event_id": event_id,
+            "sprint_id": sprint_id,
+            "actor": actor,
+            "actor_kind": actor_kind,
+            "instance_id": instance_id,
+            "hostname": hostname,
+            "pid": pid,
+            "reason": reason,
+            "matched_takeup_event_id": matched_takeup_event_id,
+        }, indent=2))
+        return
+    matched_label = (
+        f"matched takeup #{matched_takeup_event_id}"
+        if matched_takeup_event_id is not None
+        else "no prior takeup"
+    )
+    click.echo(f"Sprint #{sprint_id} released by {actor} ({matched_label}) event #{event_id}")
+
+
+# ---------------------------------------------------------------------------
 # maintain
 # ---------------------------------------------------------------------------
 
