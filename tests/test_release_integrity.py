@@ -104,5 +104,7 @@ class TestReleaseIntegrity:
             "item done-from-claim [--id ID] --claim-id N --claim-token TOKEN [--actor NAME]",
             "event add      --sprint-id ID --type|--event-type TYPE --actor NAME [--item-id ID]",
             "event log      Alias for event add",
+            "takeup take    --sprint-id ID --actor NAME [--instance-id ID] [--context TEXT]",
+            "takeup         take|release|list|show",
         ):
             assert fragment in result.output

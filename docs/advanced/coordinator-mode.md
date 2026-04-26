@@ -5,6 +5,10 @@ on the same item in parallel.
 
 For normal single-session work, use a direct execute claim instead.
 
+If you only need sprint-level visibility for operators or cockpit-style views,
+use [Sprint Takeup](takeup.md). Takeup does not grant ownership and does not
+replace item claims.
+
 ## When It Is Worth It
 
 Coordinator mode is justified when:
@@ -77,5 +81,6 @@ This rotates proof and invalidates prior token material.
 ## Related
 
 - [Advanced Coordination Overview](../guides/advanced-coordination.md)
+- [Sprint Takeup](takeup.md)
 - [Claim Discipline](claim-discipline.md)
 - [Agent Integration Example](../examples/AGENTS.sprintctl.md)

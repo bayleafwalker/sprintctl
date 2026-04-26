@@ -3845,6 +3845,25 @@ def agent_protocol_cmd(as_json) -> None:
                 "coordinate": "Exclusive. Orchestrator managing sub-agents. Sub-agents may claim execute under it.",
             },
         },
+        "takeup_model": {
+            "description": (
+                "Sprint-level takeup is an append-only visibility signal, not ownership proof. "
+                "Use it to mark which actors are actively looking at or operating on a sprint."
+            ),
+            "event_types": ["sprint-taken-up", "sprint-released"],
+            "commands": {
+                "take": (
+                    "sprintctl takeup take --sprint-id <id> --actor <name> "
+                    "[--instance-id <uuid>] [--context TEXT] [--force] [--json]"
+                ),
+                "release": (
+                    "sprintctl takeup release --sprint-id <id> --actor <name> "
+                    "[--instance-id <uuid>] [--reason TEXT] [--json]"
+                ),
+                "inspect": "sprintctl takeup list [--sprint-id <id>] [--all-history] [--json]",
+            },
+            "proof_note": "Takeup has no TTL, heartbeat, or claim token. Claims remain the exclusive ownership mechanism.",
+        },
         "lifecycle": {
             "1_startup": {
                 "description": "Claim the item before beginning work.",
@@ -3922,6 +3941,11 @@ def agent_protocol_cmd(as_json) -> None:
 
     click.echo("=== sprintctl Agent Claim Protocol ===\n")
     click.echo(f"Ownership proof: {protocol['claim_model']['ownership_proof']}\n")
+    click.echo("Sprint takeup:")
+    click.echo(f"  {protocol['takeup_model']['description']}")
+    click.echo(f"  $ {protocol['takeup_model']['commands']['take']}")
+    click.echo(f"  $ {protocol['takeup_model']['commands']['release']}")
+    click.echo("")
     click.echo("Lifecycle steps:")
     for step, info in protocol["lifecycle"].items():
         click.echo(f"\n  {step}: {info['description']}")
@@ -4079,6 +4103,13 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "  event log      Alias for event add",
         "  event list     --sprint-id ID [--item-id ID] [--type TYPE] [--limit N] [--json]",
         "",
+        "TAKEUP",
+        "  takeup take    --sprint-id ID --actor NAME [--instance-id ID] [--context TEXT]",
+        "                 [--force] [--json]",
+        "  takeup release --sprint-id ID --actor NAME [--instance-id ID] [--reason TEXT] [--json]",
+        "  takeup list    [--sprint-id ID] [--all-history] [--json]",
+        "  takeup show    --sprint-id ID [--json]",
+        "",
         "MAINTAIN",
         "  maintain check    [--sprint-id ID] [--threshold Nh] [--json]",
         "  maintain sweep    [--sprint-id ID] [--threshold Nh] [--auto-close]",
@@ -4110,6 +4141,7 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "  handoff        [--sprint-id ID] [--output PATH] [--events N] [--format json|text]",
         "  render         [--sprint-id ID] [--output PATH]",
         "  next-work      [--sprint-id ID] [--json] [--explain]",
+        "  takeup         take|release|list|show",
         "  session resume [--sprint-id ID] [--json]",
         "  git-context    [--json]",
         "  agent-protocol [--json]",

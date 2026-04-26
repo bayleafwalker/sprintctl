@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 
@@ -93,6 +94,7 @@ def test_phase4_docs_files_exist():
         "docs/customization.md",
         "docs/advanced/coordinator-mode.md",
         "docs/advanced/claim-discipline.md",
+        "docs/advanced/takeup.md",
         "docs/examples/repo-template.md",
     ]
     missing = [path for path in expected_files if not (REPO_ROOT / path).exists()]
@@ -209,6 +211,7 @@ def test_phase4_docs_local_markdown_links_resolve():
         "docs/customization.md",
         "docs/advanced/coordinator-mode.md",
         "docs/advanced/claim-discipline.md",
+        "docs/advanced/takeup.md",
         "docs/examples/repo-template.md",
     ]
     for source in phase4_docs:
@@ -226,6 +229,20 @@ def test_phase3_docs_local_markdown_links_resolve():
     for source in phase3_docs:
         for label, target in _iter_local_markdown_links(source):
             _assert_markdown_link_declared_and_resolves(source, label, target)
+
+
+def test_agent_protocol_mentions_takeup(runner, db_path):
+    from sprintctl.cli import cli
+
+    result = runner.invoke(cli, ["agent-protocol", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert "takeup_model" in data
+    assert data["takeup_model"]["event_types"] == [
+        "sprint-taken-up",
+        "sprint-released",
+    ]
 
 
 def test_phase3_examples_publish_core_sections():

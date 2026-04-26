@@ -1106,6 +1106,7 @@ class TestAgentProtocol:
         assert data["sprintctl_agent_protocol_version"] == "1"
         assert "lifecycle" in data
         assert "session_resumption" in data
+        assert "takeup_model" in data
         assert "shutdown_checklist" in data
         assert "environment_hints" in data
         assert "coordinate" in data["claim_model"]["claim_types"]
