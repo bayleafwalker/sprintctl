@@ -17,6 +17,7 @@ def render_sprint_doc(
     items_by_track: dict[int, list[dict]],
     rendered_at: str,
     refs_by_item: dict[int, list[dict]] | None = None,
+    active_takeups: list[dict] | None = None,
 ) -> str:
     # Parse as naive UTC — SQLite timestamps are also naive UTC strings
     now = datetime.strptime(rendered_at, "%Y-%m-%dT%H:%M:%SZ")
@@ -24,6 +25,7 @@ def render_sprint_doc(
     active_count = sum(1 for it in all_items if it["status"] == "active")
     risk = _calc.sprint_overrun_risk(sprint, active_count, now)
     refs_by_item = refs_by_item or {}
+    active_takeups = active_takeups or []
 
     lines: list[str] = []
 
@@ -45,6 +47,18 @@ def render_sprint_doc(
             f"{counts['pending']} pending, {counts['blocked']} blocked"
         )
     lines.append("")
+
+    if active_takeups:
+        lines.append("Takeup:")
+        for row in active_takeups:
+            instance = row.get("instance_id") or "-"
+            host = row.get("hostname") or "-"
+            context = row.get("context") or "-"
+            lines.append(
+                f"  - {row['actor']}@{host}  "
+                f"(instance {instance})  since {row['taken_up_at']}  ctx: {context}"
+            )
+        lines.append("")
 
     for track in tracks:
         lines.append(f"--- Track: {track['name']} ---")

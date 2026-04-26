@@ -260,10 +260,15 @@ def _collect_sprint_show_payload(conn: sqlite3.Connection, s: dict, detail: bool
     track_health_out = {}
     for t in tracks:
         track_health_out[t["name"]] = _calc.track_health(items_by_track.get(t["id"], []))
+    active_takeups = _db.list_active_takeups(conn, s["id"])
     out["detail"] = {
         "risk": risk,
         "stale_count": stale_count,
         "track_health": track_health_out,
+        "takeup": {
+            "active_count": len(active_takeups),
+            "active": active_takeups,
+        },
     }
     return out
 
@@ -322,6 +327,16 @@ def _emit_sprint_show_text(payload: dict, detail: bool) -> None:
             f"{c['pending']} pending, "
             f"{c['blocked']} blocked ({blocked_pct}%)"
         )
+    takeup = detail_payload.get("takeup", {})
+    active_takeups = takeup.get("active", [])
+    if active_takeups:
+        click.echo("\nTakeup:")
+        for row in active_takeups:
+            click.echo(
+                f"  {row['actor']}@{row.get('hostname') or '-'}  "
+                f"(instance {row.get('instance_id') or '-'})  "
+                f"since {row['taken_up_at']}  ctx: {row.get('context') or '-'}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -4161,7 +4176,15 @@ def render_cmd(obj, sprint_id, output_path) -> None:
         if item_refs:
             refs_by_item[it["id"]] = item_refs
     rendered_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    doc = render_sprint_doc(s, tracks, items_by_track, rendered_at, refs_by_item=refs_by_item)
+    active_takeups = _db.list_active_takeups(conn, s["id"])
+    doc = render_sprint_doc(
+        s,
+        tracks,
+        items_by_track,
+        rendered_at,
+        refs_by_item=refs_by_item,
+        active_takeups=active_takeups,
+    )
     if output_path:
         with open(output_path, "w") as fh:
             fh.write(doc + "\n")

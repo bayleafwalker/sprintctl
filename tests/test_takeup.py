@@ -382,3 +382,72 @@ def test_takeup_list_cli_text_renders_active_table(runner, conn, active_sprint, 
     assert "Active takeups:" in result.output
     assert "agent-a" in result.output
     assert "devbox" in result.output
+
+
+def test_render_includes_active_takeup_section(runner, conn, active_sprint, db_path):
+    take = runner.invoke(
+        cli,
+        [
+            "takeup", "take",
+            "--sprint-id", str(active_sprint["id"]),
+            "--actor", "agent-a",
+            "--instance-id", "inst-a",
+            "--hostname", "devbox",
+            "--context", "cockpit-realign",
+        ],
+    )
+    result = runner.invoke(cli, ["render", "--sprint-id", str(active_sprint["id"])])
+
+    assert take.exit_code == 0, take.output
+    assert result.exit_code == 0, result.output
+    assert "Takeup:" in result.output
+    assert "agent-a@devbox" in result.output
+    assert "ctx: cockpit-realign" in result.output
+
+
+def test_render_omits_takeup_section_when_empty(runner, active_sprint):
+    result = runner.invoke(cli, ["render", "--sprint-id", str(active_sprint["id"])])
+
+    assert result.exit_code == 0, result.output
+    assert "Takeup:" not in result.output
+
+
+def test_sprint_show_detail_json_includes_takeup_block(runner, conn, active_sprint, db_path):
+    take = runner.invoke(
+        cli,
+        [
+            "takeup", "take",
+            "--sprint-id", str(active_sprint["id"]),
+            "--actor", "agent-a",
+            "--instance-id", "inst-a",
+        ],
+    )
+    result = runner.invoke(
+        cli,
+        ["sprint", "show", "--id", str(active_sprint["id"]), "--detail", "--json"],
+    )
+
+    assert take.exit_code == 0, take.output
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["detail"]["takeup"]["active_count"] == 1
+    assert data["detail"]["takeup"]["active"][0]["actor"] == "agent-a"
+
+
+def test_sprint_show_detail_text_includes_active_takeup(runner, conn, active_sprint, db_path):
+    take = runner.invoke(
+        cli,
+        [
+            "takeup", "take",
+            "--sprint-id", str(active_sprint["id"]),
+            "--actor", "agent-a",
+            "--instance-id", "inst-a",
+            "--hostname", "devbox",
+        ],
+    )
+    result = runner.invoke(cli, ["sprint", "show", "--id", str(active_sprint["id"]), "--detail"])
+
+    assert take.exit_code == 0, take.output
+    assert result.exit_code == 0, result.output
+    assert "Takeup:" in result.output
+    assert "agent-a@devbox" in result.output
