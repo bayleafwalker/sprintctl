@@ -1238,6 +1238,39 @@ def _matching_active_takeups(
     return sorted(matches, key=lambda row: (row["taken_up_at"], row["taken_up_event_id"]))
 
 
+def _short_id(value: str | None) -> str:
+    if not value:
+        return "-"
+    return value if len(value) <= 12 else f"{value[:8]}..."
+
+
+def _render_takeup_rows(rows: list[dict], *, released: bool = False) -> None:
+    if not rows:
+        click.echo("  (none)")
+        return
+    headers = ["SPRINT", "ACTOR", "INSTANCE", "HOST", "SINCE", "CONTEXT"]
+    table_rows: list[list[str]] = []
+    for row in rows:
+        context = row.get("context") or "-"
+        values = [
+            f"#{row['sprint_id']}",
+            row["actor"],
+            _short_id(row.get("instance_id")),
+            row.get("hostname") or "-",
+            row.get("taken_up_at") or "-",
+            context,
+        ]
+        if released:
+            if "RELEASED" not in headers:
+                headers.append("RELEASED")
+                headers.append("REASON")
+            values.append(row.get("released_at") or "-")
+            values.append(row.get("reason") or "-")
+        table_rows.append(values)
+    for line in _render_table(headers, table_rows):
+        click.echo(f"  {line}")
+
+
 @takeup.command("take")
 @click.option("--sprint-id", type=int, required=True, help="Sprint ID")
 @click.option("--actor", required=True, help="Actor name")
@@ -1431,6 +1464,80 @@ def takeup_release_cmd(
         else "no prior takeup"
     )
     click.echo(f"Sprint #{sprint_id} released by {actor} ({matched_label}) event #{event_id}")
+
+
+@takeup.command("list")
+@click.option("--sprint-id", type=int, default=None, help="Sprint ID")
+@click.option("--all-history", is_flag=True, default=False, help="Include released takeups")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.pass_obj
+def takeup_list_cmd(obj, sprint_id, all_history, as_json) -> None:
+    """List current sprint takeups."""
+    conn = _get_conn(obj)
+    if sprint_id is not None and _db.get_sprint(conn, sprint_id) is None:
+        click.echo(f"Sprint #{sprint_id} not found.", err=True)
+        sys.exit(1)
+    history = _db.list_takeup_history(conn, sprint_id)
+    payload = {
+        "operation": "takeup_list",
+        "active_takeups": history["active_takeups"],
+        "released_takeups": history["released_takeups"] if all_history else [],
+        "unmatched_releases": history["unmatched_releases"] if all_history else [],
+    }
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+        return
+
+    click.echo("Active takeups:")
+    _render_takeup_rows(payload["active_takeups"])
+    if all_history:
+        click.echo("\nReleased takeups:")
+        _render_takeup_rows(payload["released_takeups"], released=True)
+        if payload["unmatched_releases"]:
+            click.echo("\nUnmatched releases:")
+            for row in payload["unmatched_releases"]:
+                click.echo(
+                    f"  #{row['sprint_id']}  {row['actor']}  "
+                    f"instance={_short_id(row.get('instance_id'))}  "
+                    f"released={row.get('released_at')}  reason={row.get('reason') or '-'}"
+                )
+
+
+@takeup.command("show")
+@click.option("--sprint-id", type=int, required=True, help="Sprint ID")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.pass_obj
+def takeup_show_cmd(obj, sprint_id, as_json) -> None:
+    """Show full takeup history for a sprint."""
+    conn = _get_conn(obj)
+    sprint = _db.get_sprint(conn, sprint_id)
+    if sprint is None:
+        click.echo(f"Sprint #{sprint_id} not found.", err=True)
+        sys.exit(1)
+    history = _db.list_takeup_history(conn, sprint_id)
+    payload = {
+        "operation": "takeup_show",
+        "sprint": sprint,
+        "active_takeups": history["active_takeups"],
+        "released_takeups": history["released_takeups"],
+        "unmatched_releases": history["unmatched_releases"],
+    }
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+        return
+
+    click.echo(f"Sprint #{sprint_id}: {sprint['name']}")
+    click.echo("\nActive takeups:")
+    _render_takeup_rows(payload["active_takeups"])
+    click.echo("\nReleased takeups:")
+    _render_takeup_rows(payload["released_takeups"], released=True)
+    if payload["unmatched_releases"]:
+        click.echo("\nUnmatched releases:")
+        for row in payload["unmatched_releases"]:
+            click.echo(
+                f"  {row['actor']}  instance={_short_id(row.get('instance_id'))}  "
+                f"released={row.get('released_at')}  reason={row.get('reason') or '-'}"
+            )
 
 
 # ---------------------------------------------------------------------------

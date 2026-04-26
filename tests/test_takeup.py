@@ -262,3 +262,123 @@ def test_takeup_release_cli_without_prior_takeup_warns_and_records(runner, conn,
     assert data["matched_takeup_event_id"] is None
     history = db.list_takeup_history(conn, active_sprint["id"])
     assert len(history["unmatched_releases"]) == 1
+
+
+def test_takeup_list_cli_json_shows_active_takeups(runner, conn, active_sprint, db_path):
+    first = runner.invoke(
+        cli,
+        [
+            "takeup", "take",
+            "--sprint-id", str(active_sprint["id"]),
+            "--actor", "agent-a",
+            "--instance-id", "inst-a",
+        ],
+    )
+    second_sprint = db.create_sprint(conn, "S2", status="active")
+    second = runner.invoke(
+        cli,
+        [
+            "takeup", "take",
+            "--sprint-id", str(second_sprint),
+            "--actor", "agent-b",
+            "--instance-id", "inst-b",
+        ],
+    )
+    result = runner.invoke(cli, ["takeup", "list", "--json"])
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["operation"] == "takeup_list"
+    assert [row["actor"] for row in data["active_takeups"]] == ["agent-a", "agent-b"]
+    assert data["released_takeups"] == []
+
+
+def test_takeup_list_cli_all_history_includes_released(runner, conn, active_sprint, db_path):
+    take = runner.invoke(
+        cli,
+        [
+            "takeup", "take",
+            "--sprint-id", str(active_sprint["id"]),
+            "--actor", "agent-a",
+            "--instance-id", "inst-a",
+        ],
+    )
+    release = runner.invoke(
+        cli,
+        [
+            "takeup", "release",
+            "--sprint-id", str(active_sprint["id"]),
+            "--actor", "agent-a",
+            "--instance-id", "inst-a",
+            "--reason", "done",
+        ],
+    )
+    result = runner.invoke(
+        cli,
+        ["takeup", "list", "--sprint-id", str(active_sprint["id"]), "--all-history", "--json"],
+    )
+
+    assert take.exit_code == 0, take.output
+    assert release.exit_code == 0, release.output
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["active_takeups"] == []
+    assert len(data["released_takeups"]) == 1
+    assert data["released_takeups"][0]["reason"] == "done"
+
+
+def test_takeup_show_cli_json_returns_full_sprint_history(runner, conn, active_sprint, db_path):
+    active = runner.invoke(
+        cli,
+        [
+            "takeup", "take",
+            "--sprint-id", str(active_sprint["id"]),
+            "--actor", "agent-a",
+            "--instance-id", "inst-a",
+        ],
+    )
+    unmatched = runner.invoke(
+        cli,
+        [
+            "takeup", "release",
+            "--sprint-id", str(active_sprint["id"]),
+            "--actor", "agent-b",
+            "--instance-id", "inst-b",
+            "--json",
+        ],
+    )
+    result = runner.invoke(
+        cli,
+        ["takeup", "show", "--sprint-id", str(active_sprint["id"]), "--json"],
+    )
+
+    assert active.exit_code == 0, active.output
+    assert unmatched.exit_code == 0, unmatched.output
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["operation"] == "takeup_show"
+    assert data["sprint"]["id"] == active_sprint["id"]
+    assert [row["actor"] for row in data["active_takeups"]] == ["agent-a"]
+    assert [row["actor"] for row in data["unmatched_releases"]] == ["agent-b"]
+
+
+def test_takeup_list_cli_text_renders_active_table(runner, conn, active_sprint, db_path):
+    take = runner.invoke(
+        cli,
+        [
+            "takeup", "take",
+            "--sprint-id", str(active_sprint["id"]),
+            "--actor", "agent-a",
+            "--instance-id", "inst-a",
+            "--hostname", "devbox",
+        ],
+    )
+    result = runner.invoke(cli, ["takeup", "list", "--sprint-id", str(active_sprint["id"])])
+
+    assert take.exit_code == 0, take.output
+    assert result.exit_code == 0, result.output
+    assert "Active takeups:" in result.output
+    assert "agent-a" in result.output
+    assert "devbox" in result.output
