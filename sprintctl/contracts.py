@@ -63,11 +63,73 @@ def canonicalize_claim_handoff_payload(payload: Mapping[str, Any] | None) -> dic
     return result
 
 
+def _normalize_optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _normalize_optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    return int(value)
+
+
+def canonicalize_sprint_taken_up_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]:
+    source = dict(payload or {})
+    summary = source.pop("summary", None)
+    detail = source.pop("detail", None)
+    tags = _normalize_tags(source.pop("tags", ["takeup"]))
+
+    result: dict[str, Any] = {
+        "summary": str(summary) if summary is not None else "sprint takeup",
+        "detail": _normalize_optional_string(detail),
+        "tags": tags or ["takeup"],
+        "actor_kind": str(source.pop("actor_kind", "agent")),
+        "hostname": _normalize_optional_string(source.pop("hostname", None)),
+        "pid": _normalize_optional_int(source.pop("pid", None)),
+        "instance_id": _normalize_optional_string(source.pop("instance_id", None)),
+        "runtime_session_id": _normalize_optional_string(source.pop("runtime_session_id", None)),
+        "context": _normalize_optional_string(source.pop("context", None)),
+        "forced": bool(source.pop("forced", False)),
+    }
+    result.update(source)
+    return result
+
+
+def canonicalize_sprint_released_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]:
+    source = dict(payload or {})
+    summary = source.pop("summary", None)
+    detail = source.pop("detail", None)
+    tags = _normalize_tags(source.pop("tags", ["takeup"]))
+
+    result: dict[str, Any] = {
+        "summary": str(summary) if summary is not None else "sprint release",
+        "detail": _normalize_optional_string(detail),
+        "tags": tags or ["takeup"],
+        "actor_kind": str(source.pop("actor_kind", "agent")),
+        "hostname": _normalize_optional_string(source.pop("hostname", None)),
+        "pid": _normalize_optional_int(source.pop("pid", None)),
+        "instance_id": _normalize_optional_string(source.pop("instance_id", None)),
+        "runtime_session_id": _normalize_optional_string(source.pop("runtime_session_id", None)),
+        "reason": _normalize_optional_string(source.pop("reason", None)),
+        "matched_takeup_event_id": _normalize_optional_int(
+            source.pop("matched_takeup_event_id", None)
+        ),
+    }
+    result.update(source)
+    return result
+
+
 def canonicalize_event_payload(event_type: str, payload: Mapping[str, Any] | None) -> dict[str, Any]:
     if event_type == "decision":
         return canonicalize_decision_payload(payload)
     if event_type in {"claim-handoff", "claim-ownership-corrected"}:
         return canonicalize_claim_handoff_payload(payload)
+    if event_type == "sprint-taken-up":
+        return canonicalize_sprint_taken_up_payload(payload)
+    if event_type == "sprint-released":
+        return canonicalize_sprint_released_payload(payload)
     return dict(payload or {})
 
 

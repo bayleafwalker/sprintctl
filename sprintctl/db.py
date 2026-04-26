@@ -163,6 +163,11 @@ _MIGRATIONS: list[str] = [
         UNIQUE (item_id, blocked_item_id)
     )
     """,
+    # Migration 9: sprint takeup event lookup index.
+    """
+    CREATE INDEX IF NOT EXISTS idx_event_sprint_type_ts
+        ON event(sprint_id, event_type, created_at)
+    """,
 ]
 
 REF_TYPES = ("pr", "issue", "doc", "other")
@@ -295,6 +300,10 @@ def _migration_8(conn: sqlite3.Connection) -> None:
     _execute_statements(conn, _MIGRATIONS[7])
 
 
+def _migration_9(conn: sqlite3.Connection) -> None:
+    _execute_statements(conn, _MIGRATIONS[8])
+
+
 def _run_migration(
     conn: sqlite3.Connection,
     target_version: int,
@@ -333,6 +342,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     _run_migration(conn, 6, _migration_6)
     _run_migration(conn, 7, _migration_7)
     _run_migration(conn, 8, _migration_8)
+    _run_migration(conn, 9, _migration_9)
 
 
 # --- Sprint ---
@@ -360,10 +370,26 @@ def get_sprint(conn: sqlite3.Connection, sprint_id: int) -> dict | None:
 
 
 def get_active_sprint(conn: sqlite3.Connection) -> dict | None:
+    """Return the newest active sprint.
+
+    Multiple active sprints are allowed. Callers that need to reason about
+    ambiguity should use list_active_sprints instead.
+    """
     row = conn.execute(
         "SELECT * FROM sprint WHERE status = 'active' AND kind = 'active_sprint' ORDER BY created_at DESC LIMIT 1"
     ).fetchone()
     return dict(row) if row else None
+
+
+def list_active_sprints(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT * FROM sprint
+        WHERE status = 'active' AND kind = 'active_sprint'
+        ORDER BY created_at DESC, id DESC
+        """
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def set_sprint_kind(conn: sqlite3.Connection, sprint_id: int, kind: str) -> None:
@@ -599,6 +625,153 @@ def list_events_limited(conn: sqlite3.Connection, sprint_id: int, limit: int = 5
     return [dict(r) for r in reversed(rows)]
 
 
+TAKEUP_EVENT_TYPES = ("sprint-taken-up", "sprint-released")
+
+
+def _decode_event_payload(row: sqlite3.Row | dict) -> dict:
+    raw = dict(row)
+    payload = raw.get("payload") or "{}"
+    if isinstance(payload, dict):
+        return payload
+    return json.loads(payload)
+
+
+def _takeup_key(row: dict, payload: dict) -> tuple[int, str, str | None]:
+    return (row["sprint_id"], row["actor"], payload.get("instance_id"))
+
+
+def _takeup_actor_key(row: dict) -> tuple[int, str]:
+    return (row["sprint_id"], row["actor"])
+
+
+def _serialize_takeup_row(row: dict, payload: dict) -> dict:
+    return {
+        "sprint_id": row["sprint_id"],
+        "actor": row["actor"],
+        "actor_kind": payload.get("actor_kind", "agent"),
+        "instance_id": payload.get("instance_id"),
+        "hostname": payload.get("hostname"),
+        "pid": payload.get("pid"),
+        "taken_up_at": row["created_at"],
+        "taken_up_event_id": row["id"],
+        "context": payload.get("context"),
+        "forced": bool(payload.get("forced", False)),
+    }
+
+
+def _serialize_released_takeup(
+    takeup_row: dict,
+    takeup_payload: dict,
+    release_row: dict,
+    release_payload: dict,
+) -> dict:
+    result = _serialize_takeup_row(takeup_row, takeup_payload)
+    result.update(
+        {
+            "released_at": release_row["created_at"],
+            "released_event_id": release_row["id"],
+            "reason": release_payload.get("reason"),
+            "matched_takeup_event_id": release_payload.get("matched_takeup_event_id"),
+        }
+    )
+    return result
+
+
+def _takeup_events(
+    conn: sqlite3.Connection,
+    sprint_id: int | None = None,
+) -> list[dict]:
+    params: list = [*TAKEUP_EVENT_TYPES]
+    query = """
+        SELECT * FROM event
+        WHERE event_type IN (?, ?)
+    """
+    if sprint_id is not None:
+        query += " AND sprint_id = ?"
+        params.append(sprint_id)
+    query += " ORDER BY sprint_id ASC, created_at ASC, id ASC"
+    return [dict(row) for row in conn.execute(query, params).fetchall()]
+
+
+def list_takeup_history(
+    conn: sqlite3.Connection,
+    sprint_id: int | None = None,
+) -> dict[str, list[dict]]:
+    """Return active and released sprint takeup rows derived from events."""
+    active_by_event_id: dict[int, tuple[dict, dict]] = {}
+    active_by_key: dict[tuple[int, str, str | None], list[int]] = {}
+    active_by_actor: dict[tuple[int, str], list[int]] = {}
+    released: list[dict] = []
+    unmatched_releases: list[dict] = []
+
+    for row in _takeup_events(conn, sprint_id):
+        payload = _decode_event_payload(row)
+        if row["event_type"] == "sprint-taken-up":
+            active_by_event_id[row["id"]] = (row, payload)
+            active_by_key.setdefault(_takeup_key(row, payload), []).append(row["id"])
+            active_by_actor.setdefault(_takeup_actor_key(row), []).append(row["id"])
+            continue
+
+        matched_id = payload.get("matched_takeup_event_id")
+        takeup_pair: tuple[dict, dict] | None = None
+        if matched_id is not None:
+            takeup_pair = active_by_event_id.pop(matched_id, None)
+        if takeup_pair is None:
+            key = _takeup_key(row, payload)
+            candidates = active_by_key.get(key, [])
+            while candidates and candidates[-1] not in active_by_event_id:
+                candidates.pop()
+            if candidates:
+                takeup_pair = active_by_event_id.pop(candidates.pop(), None)
+        if takeup_pair is None and payload.get("instance_id") is None:
+            candidates = active_by_actor.get(_takeup_actor_key(row), [])
+            while candidates and candidates[-1] not in active_by_event_id:
+                candidates.pop()
+            if candidates:
+                takeup_pair = active_by_event_id.pop(candidates.pop(), None)
+        if takeup_pair is None:
+            unmatched_releases.append(
+                {
+                    "sprint_id": row["sprint_id"],
+                    "actor": row["actor"],
+                    "actor_kind": payload.get("actor_kind", "agent"),
+                    "instance_id": payload.get("instance_id"),
+                    "hostname": payload.get("hostname"),
+                    "pid": payload.get("pid"),
+                    "released_at": row["created_at"],
+                    "released_event_id": row["id"],
+                    "reason": payload.get("reason"),
+                    "matched_takeup_event_id": payload.get("matched_takeup_event_id"),
+                }
+            )
+            continue
+
+        released.append(_serialize_released_takeup(*takeup_pair, row, payload))
+
+    current_by_key: dict[tuple[int, str, str | None], dict] = {}
+    for takeup_row, takeup_payload in active_by_event_id.values():
+        current_by_key[_takeup_key(takeup_row, takeup_payload)] = _serialize_takeup_row(
+            takeup_row,
+            takeup_payload,
+        )
+    active = sorted(
+        current_by_key.values(),
+        key=lambda item: (item["sprint_id"], item["taken_up_at"], item["taken_up_event_id"]),
+    )
+    return {
+        "active_takeups": active,
+        "released_takeups": released,
+        "unmatched_releases": unmatched_releases,
+    }
+
+
+def list_active_takeups(
+    conn: sqlite3.Connection,
+    sprint_id: int | None = None,
+) -> list[dict]:
+    return list_takeup_history(conn, sprint_id)["active_takeups"]
+
+
 KNOWLEDGE_EVENT_TYPES = ("decision", "pattern-noted", "lesson-learned", "risk-accepted")
 
 
@@ -606,7 +779,11 @@ def list_knowledge_candidates(conn: sqlite3.Connection, sprint_id: int) -> list[
     """Return events of knowledge types for a sprint, with payload deserialized."""
     placeholders = ",".join("?" for _ in KNOWLEDGE_EVENT_TYPES)
     rows = conn.execute(
-        f"SELECT * FROM event WHERE sprint_id = ? AND event_type IN ({placeholders}) ORDER BY created_at ASC",
+        f"""
+        SELECT * FROM event
+        WHERE sprint_id = ? AND event_type IN ({placeholders})
+        ORDER BY created_at ASC, id ASC
+        """,
         (sprint_id, *KNOWLEDGE_EVENT_TYPES),
     ).fetchall()
     result = []

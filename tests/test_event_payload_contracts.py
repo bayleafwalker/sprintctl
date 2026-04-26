@@ -144,3 +144,70 @@ class TestClaimHandoffPayloadContract:
         assert payload["legacy_adopted"] is False
         assert payload["from_identity"]["actor"] == "agent-a"
         assert payload["to_identity"]["actor"] == "agent-b"
+
+
+class TestSprintTakeupPayloadContract:
+    def test_sprint_taken_up_payload_is_canonicalized(self, conn, active_sprint):
+        db.create_event(
+            conn,
+            active_sprint["id"],
+            "agent-a",
+            "sprint-taken-up",
+            payload={
+                "context": "remote-mode-prep",
+                "hostname": "devbox",
+                "pid": "123",
+                "instance_id": 456,
+            },
+        )
+
+        event = db.list_events(conn, active_sprint["id"])[0]
+        payload = json.loads(event["payload"])
+        assert list(payload.keys())[:10] == [
+            "summary",
+            "detail",
+            "tags",
+            "actor_kind",
+            "hostname",
+            "pid",
+            "instance_id",
+            "runtime_session_id",
+            "context",
+            "forced",
+        ]
+        assert payload["summary"] == "sprint takeup"
+        assert payload["tags"] == ["takeup"]
+        assert payload["actor_kind"] == "agent"
+        assert payload["hostname"] == "devbox"
+        assert payload["pid"] == 123
+        assert payload["instance_id"] == "456"
+        assert payload["context"] == "remote-mode-prep"
+        assert payload["forced"] is False
+
+    def test_sprint_released_payload_is_canonicalized(self, conn, active_sprint):
+        db.create_event(
+            conn,
+            active_sprint["id"],
+            "agent-a",
+            "sprint-released",
+            payload={"reason": 123, "matched_takeup_event_id": "7"},
+        )
+
+        event = db.list_events(conn, active_sprint["id"])[0]
+        payload = json.loads(event["payload"])
+        assert list(payload.keys())[:10] == [
+            "summary",
+            "detail",
+            "tags",
+            "actor_kind",
+            "hostname",
+            "pid",
+            "instance_id",
+            "runtime_session_id",
+            "reason",
+            "matched_takeup_event_id",
+        ]
+        assert payload["summary"] == "sprint release"
+        assert payload["tags"] == ["takeup"]
+        assert payload["reason"] == "123"
+        assert payload["matched_takeup_event_id"] == 7
