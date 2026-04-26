@@ -268,6 +268,20 @@ def _collect_sprint_show_payload(conn: sqlite3.Connection, s: dict, detail: bool
     return out
 
 
+def _resolve_implicit_sprint(conn: sqlite3.Connection, *, option_name: str = "--sprint-id") -> dict | None:
+    active_sprints = _db.list_active_sprints(conn)
+    if not active_sprints:
+        return None
+    if len(active_sprints) > 1:
+        candidates = ", ".join(f"#{s['id']}" for s in active_sprints)
+        click.echo(
+            f"Multiple active sprints ({candidates}). Pass {option_name} explicitly.",
+            err=True,
+        )
+        sys.exit(1)
+    return active_sprints[0]
+
+
 def _emit_sprint_show_text(payload: dict, detail: bool) -> None:
     click.echo(f"ID:     {payload['id']}")
     click.echo(f"Name:   {payload['name']}")
@@ -371,7 +385,7 @@ def sprint_show(obj, sprint_id, detail, watch_mode, interval, as_json) -> None:
         if sprint_id is not None:
             sprint = _db.get_sprint(conn, sprint_id)
         else:
-            sprint = _db.get_active_sprint(conn)
+            sprint = _resolve_implicit_sprint(conn, option_name="--id")
         if sprint is None:
             click.echo("No sprint found. Use --id to specify one.", err=True)
             sys.exit(1)
@@ -431,17 +445,22 @@ def sprint_status(obj, sprint_id, new_status, as_json) -> None:
 @sprint.command("list")
 @click.option("--include-backlog", is_flag=True, default=False, help="Include backlog sprints")
 @click.option("--include-archive", is_flag=True, default=False, help="Include archive sprints")
+@click.option("--active", "active_only", is_flag=True, default=False, help="Show active active_sprint sprints")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
-def sprint_list(obj, include_backlog, include_archive, as_json) -> None:
+def sprint_list(obj, include_backlog, include_archive, active_only, as_json) -> None:
     """List sprints (active_sprint kind by default; use flags to include others)."""
-    sprints = _db.list_sprints(_get_conn(obj))
-    visible_kinds = {"active_sprint"}
-    if include_backlog:
-        visible_kinds.add("backlog")
-    if include_archive:
-        visible_kinds.add("archive")
-    sprints = [s for s in sprints if s.get("kind", "active_sprint") in visible_kinds]
+    conn = _get_conn(obj)
+    if active_only:
+        sprints = _db.list_active_sprints(conn)
+    else:
+        sprints = _db.list_sprints(conn)
+        visible_kinds = {"active_sprint"}
+        if include_backlog:
+            visible_kinds.add("backlog")
+        if include_archive:
+            visible_kinds.add("archive")
+        sprints = [s for s in sprints if s.get("kind", "active_sprint") in visible_kinds]
     if as_json:
         click.echo(json.dumps(sprints, indent=2))
         return
@@ -1556,7 +1575,7 @@ def _resolve_sprint(conn, sprint_id: int | None) -> dict:
             click.echo(f"Sprint #{sprint_id} not found.", err=True)
             sys.exit(1)
     else:
-        s = _db.get_active_sprint(conn)
+        s = _resolve_implicit_sprint(conn)
         if s is None:
             click.echo("No active sprint found. Use --sprint-id to specify one.", err=True)
             sys.exit(1)
@@ -3448,7 +3467,7 @@ def claim_list_sprint(obj, sprint_id, show_all, expiring_within, as_json) -> Non
     if sprint_id is not None:
         sprint = _db.get_sprint(conn, sprint_id)
     else:
-        sprint = _db.get_active_sprint(conn)
+        sprint = _resolve_implicit_sprint(conn)
     if sprint is None:
         click.echo("No sprint found. Use --sprint-id to specify one.", err=True)
         sys.exit(1)
@@ -3760,7 +3779,7 @@ def handoff_cmd(obj, sprint_id, output_path, events_limit, fmt) -> None:
     if sprint_id is not None:
         s = _db.get_sprint(conn, sprint_id)
     else:
-        s = _db.get_active_sprint(conn)
+        s = _resolve_implicit_sprint(conn)
     if s is None:
         click.echo("No sprint found. Use --sprint-id to specify one.", err=True)
         sys.exit(1)
@@ -3929,7 +3948,7 @@ def next_work_cmd(obj, sprint_id, as_json, explain) -> None:
             click.echo(f"Sprint #{sprint_id} not found.", err=True)
             sys.exit(1)
     else:
-        s = _db.get_active_sprint(conn)
+        s = _resolve_implicit_sprint(conn)
         if s is None:
             click.echo("No active sprint found. Use --sprint-id to specify one.", err=True)
             sys.exit(1)
@@ -4127,7 +4146,7 @@ def render_cmd(obj, sprint_id, output_path) -> None:
     if sprint_id is not None:
         s = _db.get_sprint(conn, sprint_id)
     else:
-        s = _db.get_active_sprint(conn)
+        s = _resolve_implicit_sprint(conn)
     if s is None:
         click.echo("No sprint found. Use --sprint-id to specify one.", err=True)
         sys.exit(1)
