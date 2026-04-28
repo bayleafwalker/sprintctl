@@ -30,6 +30,7 @@ def _suppress_auditctl(monkeypatch):
 def db_path(tmp_path, monkeypatch):
     path = tmp_path / "test.db"
     monkeypatch.setenv("SPRINTCTL_DB", str(path))
+    monkeypatch.setenv("SPRINTCTL_BACKEND", "local")
     return path
 
 
