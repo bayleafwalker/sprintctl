@@ -3,6 +3,7 @@ import os
 import re
 import sqlite3
 import socket
+import subprocess
 import sys
 import time
 import uuid
@@ -18,6 +19,39 @@ from . import contracts as _contracts
 from . import db as _db
 from . import maintain as _maintain
 from .render import render_sprint_doc
+
+
+def _emit_audit_event(
+    event_type: str,
+    *,
+    summary: str,
+    refs: list[str],
+    metadata: dict,
+) -> None:
+    """Emit an auditctl event via subprocess. Non-fatal: warns to stderr on failure.
+
+    Uses subprocess (not AuditctlClient) to keep the decoupling boundary —
+    sprintctl does not depend on auditctl at import time.
+    """
+    cmd = [
+        "auditctl", "add",
+        "--type", event_type,
+        "--source", "sprintctl",
+        "--actor", os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown",
+        "--summary", summary,
+        "--metadata", json.dumps(metadata, separators=(",", ":")),
+    ]
+    for ref in refs:
+        cmd.extend(["--ref", ref])
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=10)
+        if result.returncode != 0:
+            click.echo(
+                f"warning: auditctl emit failed: {result.stderr.decode(errors='replace').strip()}",
+                err=True,
+            )
+    except Exception as exc:
+        click.echo(f"warning: auditctl emit failed: {exc}", err=True)
 
 
 def _detect_runtime_session_id(explicit: str | None) -> str | None:
@@ -424,6 +458,13 @@ def sprint_create(obj, name, goal, start_date, end_date, status, kind, as_json) 
     """Create a new sprint."""
     store, m = _get_store(obj)
     sid = m.create_sprint(store, name, goal, start_date, end_date, status, kind=kind)
+    if status == "active":
+        _emit_audit_event(
+            "sprint.opened",
+            summary=f"Sprint {sid} opened",
+            refs=[f"sprint:{sid}"],
+            metadata={"sprint_id": sid, "event_type": "sprint-opened"},
+        )
     if as_json:
         sprint = m.get_sprint(store, sid)
         assert sprint is not None
@@ -504,6 +545,20 @@ def sprint_status(obj, sprint_id, new_status, as_json) -> None:
     except _db.InvalidTransition as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+    if new_status == "active":
+        _emit_audit_event(
+            "sprint.opened",
+            summary=f"Sprint {sprint_id} opened",
+            refs=[f"sprint:{sprint_id}"],
+            metadata={"sprint_id": sprint_id, "event_type": "sprint-opened"},
+        )
+    elif new_status == "closed":
+        _emit_audit_event(
+            "sprint.closed",
+            summary=f"Sprint {sprint_id} closed",
+            refs=[f"sprint:{sprint_id}"],
+            metadata={"sprint_id": sprint_id, "event_type": "sprint-closed"},
+        )
     if as_json:
         click.echo(json.dumps({"sprint_id": sprint_id, "previous": current, "status": new_status}, indent=2))
         return
@@ -825,7 +880,7 @@ def item_note(
         payload["git_sha"] = git_sha
     if git_worktree is not None:
         payload["git_worktree"] = git_worktree
-    eid = _db.create_event(
+    eid = m.create_event(
         store,
         it["sprint_id"],
         actor=actor,
@@ -834,6 +889,18 @@ def item_note(
         work_item_id=item_id,
         payload=payload,
     )
+    if note_type in _db.KNOWLEDGE_EVENT_TYPES:
+        _emit_audit_event(
+            "knowledge.landed",
+            summary=f"Knowledge event #{eid} ({note_type}) on item #{item_id}",
+            refs=[f"sprint:{it['sprint_id']}", f"ka:{eid}"],
+            metadata={
+                "sprint_id": it["sprint_id"],
+                "event_type": "knowledge-landed",
+                "knowledge_event_id": eid,
+                "note_type": note_type,
+            },
+        )
     click.echo(f"Recorded note #{eid} ({note_type}) on item #{item_id}: {summary}")
 
 
@@ -860,7 +927,7 @@ def item_status(obj, item_id, new_status, actor, claim_id, claim_token, as_json)
         sys.exit(1)
     current = it["status"]
     try:
-        _db.set_work_item_status(
+        m.set_work_item_status(
             store,
             item_id,
             new_status,
@@ -925,7 +992,7 @@ def item_done_from_claim(obj, item_id, claim_id, claim_token, actor, keep_claim,
 
     previous_status = it["status"]
     try:
-        _db.set_work_item_status(
+        m.set_work_item_status(
             store,
             item_id,
             "done",
@@ -1427,7 +1494,7 @@ def takeup_take_cmd(
             err=True,
         )
 
-    event_id = _db.create_event(
+    event_id = m.create_event(
         store,
         sprint_id,
         actor,
@@ -1443,6 +1510,12 @@ def takeup_take_cmd(
             context=context,
             forced=force,
         ),
+    )
+    _emit_audit_event(
+        "sprint.taken_up",
+        summary=f"Sprint {sprint_id} taken up by {actor}",
+        refs=[f"sprint:{sprint_id}"],
+        metadata={"sprint_id": sprint_id, "event_type": "sprint-taken-up", "actor": actor},
     )
     if as_json:
         click.echo(json.dumps({
@@ -1517,7 +1590,7 @@ def takeup_release_cmd(
     if matched is None:
         click.echo("No matching takeup found; recording release anyway.", err=True)
 
-    event_id = _db.create_event(
+    event_id = m.create_event(
         store,
         sprint_id,
         actor,
@@ -1533,6 +1606,12 @@ def takeup_release_cmd(
             reason=reason,
             matched_takeup_event_id=matched_takeup_event_id,
         ),
+    )
+    _emit_audit_event(
+        "sprint.released",
+        summary=f"Sprint {sprint_id} released by {actor}",
+        refs=[f"sprint:{sprint_id}"],
+        metadata={"sprint_id": sprint_id, "event_type": "sprint-released", "actor": actor},
     )
     if as_json:
         click.echo(json.dumps({
@@ -3138,7 +3217,7 @@ def claim_create(
     hostname = _detect_hostname(hostname)
     pid = _detect_pid(pid)
     try:
-        cid = _db.create_claim(
+        cid = m.create_claim(
             store,
             work_item_id=item_id,
             agent=actor,
@@ -3222,7 +3301,7 @@ def claim_start(
     hostname = _detect_hostname(hostname)
     pid = _detect_pid(pid)
     try:
-        cid = _db.create_claim(
+        cid = m.create_claim(
             store,
             work_item_id=item_id,
             agent=actor,
@@ -3249,7 +3328,7 @@ def claim_start(
     transition_error = None
     if previous_status != "active":
         try:
-            _db.set_work_item_status(
+            m.set_work_item_status(
                 store,
                 item_id,
                 "active",
@@ -3348,7 +3427,7 @@ def claim_heartbeat(
     hostname = _detect_hostname(hostname)
     pid = _detect_pid(pid)
     try:
-        _db.heartbeat_claim(
+        m.heartbeat_claim(
             store,
             claim_id,
             claim_token,
@@ -3452,7 +3531,7 @@ def claim_handoff(
     hostname = _detect_hostname(hostname)
     pid = _detect_pid(pid)
     try:
-        claim = _db.handoff_claim(
+        claim = m.handoff_claim(
             store,
             claim_id,
             claim_token,
@@ -3552,7 +3631,7 @@ def claim_list_sprint(obj, sprint_id, show_all, expiring_within, as_json) -> Non
     if sprint is None:
         click.echo("No sprint found. Use --sprint-id to specify one.", err=True)
         sys.exit(1)
-    claims = _db.list_claims_by_sprint(
+    claims = m.list_claims_by_sprint(
         store,
         sprint["id"],
         active_only=not show_all,
@@ -3624,7 +3703,7 @@ def claim_resume(obj, item_id, instance_id, runtime_session_id, hostname, pid, a
     runtime_session_id = _detect_runtime_session_id(runtime_session_id)
     instance_id = instance_id or os.environ.get("SPRINTCTL_INSTANCE_ID")
     try:
-        claims = _db.find_claim_by_identity(
+        claims = m.find_claim_by_identity(
             store,
             instance_id=instance_id,
             hostname=hostname,

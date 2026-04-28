@@ -1,8 +1,29 @@
+import subprocess
+
 import pytest
 from click.testing import CliRunner
 
 from sprintctl import db
 from sprintctl.cli import cli
+
+
+@pytest.fixture(autouse=True)
+def _suppress_auditctl(monkeypatch):
+    """Prevent real auditctl subprocess calls from contaminating test output.
+
+    Tests that need to inspect or assert on audit calls should override
+    subprocess.run themselves (as test_audit_events.py does).
+    """
+    import sprintctl.cli as _cli_module
+
+    original = _cli_module.subprocess.run
+
+    def _selective(args, **kwargs):
+        if args and args[0] == "auditctl":
+            return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
+        return original(args, **kwargs)
+
+    monkeypatch.setattr(_cli_module.subprocess, "run", _selective)
 
 
 @pytest.fixture
