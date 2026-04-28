@@ -71,6 +71,47 @@ def _get_conn(obj: dict) -> sqlite3.Connection:
     return conn
 
 
+def _get_store(obj: dict):
+    """Return (store, db_module) for the configured backend. Exits on error."""
+    try:
+        config = _backend.load_backend_config()
+    except _backend.BackendConfigError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+
+    if config.mode == "local":
+        conn = obj.get("conn")
+        if conn is None:
+            db_path = _db.get_db_path()
+            conn = _db.get_connection(db_path)
+            _db.init_db(conn)
+            obj["conn"] = conn
+            click.get_current_context().call_on_close(conn.close)
+        return conn, _db
+
+    # Remote mode — lazy import so psycopg is optional for local-only use
+    from . import pg as _pg  # noqa: PLC0415
+    store = obj.get("pg_store")
+    if store is None:
+        try:
+            store = _pg.get_connection(config.url)
+            _pg.init_db(store)
+        except Exception as e:
+            click.echo(f"Error: could not connect to postgres from SPRINTCTL_URL: {e}", err=True)
+            sys.exit(1)
+        obj["pg_store"] = store
+        click.get_current_context().call_on_close(store.conn.close)
+    return store, _pg
+
+
+def _local_recovery_available() -> bool:
+    try:
+        config = _backend.load_backend_config()
+        return config.mode == "local"
+    except _backend.BackendConfigError:
+        return False
+
+
 def _claim_recovery_dir() -> Path:
     return _db.get_db_path().parent / "claim-recovery"
 
@@ -80,6 +121,8 @@ def _claim_recovery_path(claim_id: int) -> Path:
 
 
 def _write_claim_recovery_record(claim: dict) -> Path | None:
+    if not _local_recovery_available():
+        return None
     claim_id = claim.get("claim_id")
     claim_token = claim.get("claim_token")
     if claim_id is None or not claim_token:
@@ -101,6 +144,8 @@ def _write_claim_recovery_record(claim: dict) -> Path | None:
 
 
 def _remove_claim_recovery_record(claim_id: int) -> None:
+    if not _local_recovery_available():
+        return
     path = _claim_recovery_path(claim_id)
     if path.exists():
         path.unlink()
@@ -236,7 +281,8 @@ def _escape_fzf_field(value: str) -> str:
     )
 
 
-def _collect_sprint_show_payload(conn: sqlite3.Connection, s: dict, detail: bool) -> dict:
+def _collect_sprint_show_payload(conn, s: dict, detail: bool, *, m=None) -> dict:
+    m = m or _db
     out: dict = {
         "id": s["id"],
         "name": s["name"],
@@ -252,8 +298,8 @@ def _collect_sprint_show_payload(conn: sqlite3.Connection, s: dict, detail: bool
     from . import calc as _calc
 
     now = datetime.now(timezone.utc)
-    items = _db.list_work_items(conn, sprint_id=s["id"])
-    tracks = _db.list_tracks(conn, s["id"])
+    items = m.list_work_items(conn, sprint_id=s["id"])
+    tracks = m.list_tracks(conn, s["id"])
     active_items = [it for it in items if it["status"] == "active"]
     risk = _calc.sprint_overrun_risk(s, len(active_items), now)
     pending_threshold = _maintain._pending_stale_threshold()
@@ -266,7 +312,7 @@ def _collect_sprint_show_payload(conn: sqlite3.Connection, s: dict, detail: bool
     track_health_out = {}
     for t in tracks:
         track_health_out[t["name"]] = _calc.track_health(items_by_track.get(t["id"], []))
-    active_takeups = _db.list_active_takeups(conn, s["id"])
+    active_takeups = m.list_active_takeups(conn, s["id"])
     out["detail"] = {
         "risk": risk,
         "stale_count": stale_count,
@@ -279,8 +325,9 @@ def _collect_sprint_show_payload(conn: sqlite3.Connection, s: dict, detail: bool
     return out
 
 
-def _resolve_implicit_sprint(conn: sqlite3.Connection, *, option_name: str = "--sprint-id") -> dict | None:
-    active_sprints = _db.list_active_sprints(conn)
+def _resolve_implicit_sprint(conn, *, option_name: str = "--sprint-id", m=None) -> dict | None:
+    m = m or _db
+    active_sprints = m.list_active_sprints(conn)
     if not active_sprints:
         return None
     if len(active_sprints) > 1:
@@ -375,10 +422,10 @@ def sprint() -> None:
 @click.pass_obj
 def sprint_create(obj, name, goal, start_date, end_date, status, kind, as_json) -> None:
     """Create a new sprint."""
-    conn = _get_conn(obj)
-    sid = _db.create_sprint(conn, name, goal, start_date, end_date, status, kind=kind)
+    store, m = _get_store(obj)
+    sid = m.create_sprint(store, name, goal, start_date, end_date, status, kind=kind)
     if as_json:
-        sprint = _db.get_sprint(conn, sid)
+        sprint = m.get_sprint(store, sid)
         assert sprint is not None
         click.echo(json.dumps(sprint, indent=2))
         return
@@ -401,17 +448,17 @@ def sprint_show(obj, sprint_id, detail, watch_mode, interval, as_json) -> None:
         click.echo("Error: --interval must be > 0.", err=True)
         sys.exit(1)
 
-    conn = _get_conn(obj)
+    store, m = _get_store(obj)
     def render_once() -> None:
         if sprint_id is not None:
-            sprint = _db.get_sprint(conn, sprint_id)
+            sprint = m.get_sprint(store, sprint_id)
         else:
-            sprint = _resolve_implicit_sprint(conn, option_name="--id")
+            sprint = _resolve_implicit_sprint(store, m=m, option_name="--id")
         if sprint is None:
             click.echo("No sprint found. Use --id to specify one.", err=True)
             sys.exit(1)
 
-        payload = _collect_sprint_show_payload(conn, sprint, detail=detail)
+        payload = _collect_sprint_show_payload(store, sprint, detail=detail, m=m)
         if as_json:
             click.echo(json.dumps(payload, indent=2))
             return
@@ -446,14 +493,14 @@ def sprint_show(obj, sprint_id, detail, watch_mode, interval, as_json) -> None:
 @click.pass_obj
 def sprint_status(obj, sprint_id, new_status, as_json) -> None:
     """Update a sprint's status (enforces allowed transitions)."""
-    conn = _get_conn(obj)
-    s = _db.get_sprint(conn, sprint_id)
+    store, m = _get_store(obj)
+    s = m.get_sprint(store, sprint_id)
     if s is None:
         click.echo(f"Sprint #{sprint_id} not found.", err=True)
         sys.exit(1)
     current = s["status"]
     try:
-        _db.set_sprint_status(conn, sprint_id, new_status)
+        m.set_sprint_status(store, sprint_id, new_status)
     except _db.InvalidTransition as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -471,11 +518,11 @@ def sprint_status(obj, sprint_id, new_status, as_json) -> None:
 @click.pass_obj
 def sprint_list(obj, include_backlog, include_archive, active_only, as_json) -> None:
     """List sprints (active_sprint kind by default; use flags to include others)."""
-    conn = _get_conn(obj)
+    store, m = _get_store(obj)
     if active_only:
-        sprints = _db.list_active_sprints(conn)
+        sprints = m.list_active_sprints(store)
     else:
-        sprints = _db.list_sprints(conn)
+        sprints = m.list_sprints(store)
         visible_kinds = {"active_sprint"}
         if include_backlog:
             visible_kinds.add("backlog")
@@ -521,9 +568,9 @@ def sprint_list(obj, include_backlog, include_archive, active_only, as_json) -> 
 @click.pass_obj
 def sprint_kind_cmd(obj, sprint_id, kind, as_json) -> None:
     """Set the kind classification of a sprint."""
-    conn = _get_conn(obj)
+    store, m = _get_store(obj)
     try:
-        _db.set_sprint_kind(conn, sprint_id, kind)
+        m.set_sprint_kind(store, sprint_id, kind)
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -543,9 +590,9 @@ def sprint_kind_cmd(obj, sprint_id, kind, as_json) -> None:
 @click.pass_obj
 def sprint_backlog_seed(obj, source_sprint_id, target_sprint_id, actor, as_json) -> None:
     """Seed backlog items from knowledge candidate events in another sprint."""
-    conn = _get_conn(obj)
+    store, m = _get_store(obj)
     try:
-        seeded = _db.backlog_seed_from_candidates(conn, source_sprint_id, target_sprint_id, actor=actor)
+        seeded = m.backlog_seed_from_candidates(store, source_sprint_id, target_sprint_id, actor=actor)
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -578,15 +625,15 @@ def item() -> None:
 @click.pass_obj
 def item_add(obj, sprint_id, track_name, title, assignee, as_json) -> None:
     """Add a work item to a sprint track."""
-    conn = _get_conn(obj)
-    s = _db.get_sprint(conn, sprint_id)
+    store, m = _get_store(obj)
+    s = m.get_sprint(store, sprint_id)
     if s is None:
         click.echo(f"Sprint #{sprint_id} not found.", err=True)
         sys.exit(1)
-    track_id = _db.get_or_create_track(conn, sprint_id, track_name)
-    item_id = _db.create_work_item(conn, sprint_id, track_id, title, assignee=assignee)
+    track_id = m.get_or_create_track(store, sprint_id, track_name)
+    item_id = m.create_work_item(store, sprint_id, track_id, title, assignee=assignee)
     if as_json:
-        item = _db.get_work_item(conn, item_id)
+        item = m.get_work_item(store, item_id)
         assert item is not None
         payload = {**item, "track_name": track_name}
         click.echo(json.dumps(payload, indent=2))
@@ -600,17 +647,17 @@ def item_add(obj, sprint_id, track_name, title, assignee, as_json) -> None:
 @click.pass_obj
 def item_show(obj, item_id, as_json) -> None:
     """Show a single work item with its recent events and active claims."""
-    conn = _get_conn(obj)
-    it = _db.get_work_item(conn, item_id)
+    store, m = _get_store(obj)
+    it = m.get_work_item(store, item_id)
     if it is None:
         click.echo(f"Item #{item_id} not found.", err=True)
         sys.exit(1)
-    events = _db.list_events(conn, it["sprint_id"])
+    events = m.list_events(store, it["sprint_id"])
     item_events = [e for e in events if e.get("work_item_id") == item_id]
-    claims = _db.list_claims(conn, item_id, active_only=True)
-    refs = _db.list_refs(conn, item_id)
-    blocking = _db.list_deps_blocking(conn, item_id)
-    blocked_by_me = _db.list_deps_blocked_by(conn, item_id)
+    claims = m.list_claims(store, item_id, active_only=True)
+    refs = m.list_refs(store, item_id)
+    blocking = m.list_deps_blocking(store, item_id)
+    blocked_by_me = m.list_deps_blocked_by(store, item_id)
 
     if as_json:
         click.echo(json.dumps({
@@ -704,7 +751,8 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, as_json) -> None:
         click.echo("Error: --fzf cannot be combined with --json.", err=True)
         sys.exit(1)
 
-    items = _db.list_work_items(_get_conn(obj), sprint_id=sprint_id, track_name=track_name, status=status)
+    store, m = _get_store(obj)
+    items = m.list_work_items(store, sprint_id=sprint_id, track_name=track_name, status=status)
     if as_json:
         click.echo(json.dumps(items, indent=2))
         return
@@ -757,8 +805,8 @@ def item_note(
     git_branch, git_sha, git_worktree,
 ) -> None:
     """Record a structured note event on a work item."""
-    conn = _get_conn(obj)
-    it = _db.get_work_item(conn, item_id)
+    store, m = _get_store(obj)
+    it = m.get_work_item(store, item_id)
     if it is None:
         click.echo(f"Item #{item_id} not found.", err=True)
         sys.exit(1)
@@ -778,7 +826,7 @@ def item_note(
     if git_worktree is not None:
         payload["git_worktree"] = git_worktree
     eid = _db.create_event(
-        conn,
+        store,
         it["sprint_id"],
         actor=actor,
         event_type=note_type,
@@ -805,15 +853,15 @@ def item_note(
 @click.pass_obj
 def item_status(obj, item_id, new_status, actor, claim_id, claim_token, as_json) -> None:
     """Update an item's status (enforces transitions, claims, and dependency safety)."""
-    conn = _get_conn(obj)
-    it = _db.get_work_item(conn, item_id)
+    store, m = _get_store(obj)
+    it = m.get_work_item(store, item_id)
     if it is None:
         click.echo(f"Item #{item_id} not found.", err=True)
         sys.exit(1)
     current = it["status"]
     try:
         _db.set_work_item_status(
-            conn,
+            store,
             item_id,
             new_status,
             actor=actor,
@@ -844,8 +892,8 @@ def item_status(obj, item_id, new_status, actor, claim_id, claim_token, as_json)
 @click.pass_obj
 def item_done_from_claim(obj, item_id, claim_id, claim_token, actor, keep_claim, as_json) -> None:
     """Mark an active item done using claim proof, then optionally release the claim."""
-    conn = _get_conn(obj)
-    claim = _db.get_claim(conn, claim_id)
+    store, m = _get_store(obj)
+    claim = m.get_claim(store, claim_id)
     if claim is None:
         click.echo(f"Claim #{claim_id} not found.", err=True)
         sys.exit(1)
@@ -857,7 +905,7 @@ def item_done_from_claim(obj, item_id, claim_id, claim_token, actor, keep_claim,
             err=True,
         )
         sys.exit(1)
-    it = _db.get_work_item(conn, item_id)
+    it = m.get_work_item(store, item_id)
     if it is None:
         click.echo(f"Item #{item_id} not found.", err=True)
         sys.exit(1)
@@ -878,7 +926,7 @@ def item_done_from_claim(obj, item_id, claim_id, claim_token, actor, keep_claim,
     previous_status = it["status"]
     try:
         _db.set_work_item_status(
-            conn,
+            store,
             item_id,
             "done",
             actor=actor,
@@ -893,15 +941,15 @@ def item_done_from_claim(obj, item_id, claim_id, claim_token, actor, keep_claim,
     release_error = None
     if not keep_claim:
         try:
-            _db.release_claim(conn, claim_id, claim_token, actor=actor)
+            m.release_claim(store, claim_id, claim_token, actor=actor)
             _remove_claim_recovery_record(claim_id)
             claim_released = True
         except ValueError as e:
             release_error = str(e)
 
-    updated_item = _db.get_work_item(conn, item_id)
+    updated_item = m.get_work_item(store, item_id)
     assert updated_item is not None
-    claim_still_present = _db.get_claim(conn, claim_id) is not None
+    claim_still_present = m.get_claim(store, claim_id) is not None
 
     if as_json:
         payload = {
@@ -956,9 +1004,9 @@ def item_ref() -> None:
 @click.pass_obj
 def item_ref_add(obj, item_id, ref_type, url, label) -> None:
     """Attach an external reference to a work item."""
-    conn = _get_conn(obj)
+    store, m = _get_store(obj)
     try:
-        ref_id = _db.add_ref(conn, item_id, ref_type, url, label)
+        ref_id = m.add_ref(store, item_id, ref_type, url, label)
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -971,11 +1019,11 @@ def item_ref_add(obj, item_id, ref_type, url, label) -> None:
 @click.pass_obj
 def item_ref_list(obj, item_id, as_json) -> None:
     """List external references on a work item."""
-    conn = _get_conn(obj)
-    if _db.get_work_item(conn, item_id) is None:
+    store, m = _get_store(obj)
+    if m.get_work_item(store, item_id) is None:
         click.echo(f"Item #{item_id} not found.", err=True)
         sys.exit(1)
-    refs = _db.list_refs(conn, item_id)
+    refs = m.list_refs(store, item_id)
     if as_json:
         click.echo(json.dumps(refs, indent=2))
         return
@@ -993,9 +1041,9 @@ def item_ref_list(obj, item_id, as_json) -> None:
 @click.pass_obj
 def item_ref_remove(obj, item_id, ref_id) -> None:
     """Remove an external reference from a work item."""
-    conn = _get_conn(obj)
+    store, m = _get_store(obj)
     try:
-        _db.remove_ref(conn, ref_id, item_id)
+        m.remove_ref(store, ref_id, item_id)
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -1017,9 +1065,9 @@ def item_dep() -> None:
 @click.pass_obj
 def item_dep_add(obj, item_id, blocks_item_id) -> None:
     """Record that item --id must complete before --blocks-item-id can start."""
-    conn = _get_conn(obj)
+    store, m = _get_store(obj)
     try:
-        dep_id = _db.add_dep(conn, item_id, blocks_item_id)
+        dep_id = m.add_dep(store, item_id, blocks_item_id)
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -1032,12 +1080,12 @@ def item_dep_add(obj, item_id, blocks_item_id) -> None:
 @click.pass_obj
 def item_dep_list(obj, item_id, as_json) -> None:
     """List dependencies for a work item (what blocks it and what it blocks)."""
-    conn = _get_conn(obj)
-    if _db.get_work_item(conn, item_id) is None:
+    store, m = _get_store(obj)
+    if m.get_work_item(store, item_id) is None:
         click.echo(f"Item #{item_id} not found.", err=True)
         sys.exit(1)
-    blocking = _db.list_deps_blocking(conn, item_id)
-    blocked_by_me = _db.list_deps_blocked_by(conn, item_id)
+    blocking = m.list_deps_blocking(store, item_id)
+    blocked_by_me = m.list_deps_blocked_by(store, item_id)
     if as_json:
         click.echo(json.dumps({"blocked_by": blocking, "blocks": blocked_by_me}, indent=2))
         return
@@ -1060,9 +1108,9 @@ def item_dep_list(obj, item_id, as_json) -> None:
 @click.pass_obj
 def item_dep_remove(obj, item_id, dep_id) -> None:
     """Remove a dependency."""
-    conn = _get_conn(obj)
+    store, m = _get_store(obj)
     try:
-        _db.remove_dep(conn, dep_id, item_id)
+        m.remove_dep(store, dep_id, item_id)
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -1088,11 +1136,11 @@ def _event_add_impl(
     payload: str | None,
     as_json: bool,
 ) -> None:
-    conn = _get_conn(obj)
-    if _db.get_sprint(conn, sprint_id) is None:
+    store, m = _get_store(obj)
+    if m.get_sprint(store, sprint_id) is None:
         click.echo(f"Sprint #{sprint_id} not found.", err=True)
         sys.exit(1)
-    if work_item_id is not None and _db.get_work_item(conn, work_item_id) is None:
+    if work_item_id is not None and m.get_work_item(store, work_item_id) is None:
         click.echo(f"Work item #{work_item_id} not found.", err=True)
         sys.exit(1)
     payload_dict: dict | None = None
@@ -1102,8 +1150,8 @@ def _event_add_impl(
         except json.JSONDecodeError as e:
             click.echo(f"Invalid JSON payload: {e}", err=True)
             sys.exit(1)
-    eid = _db.create_event(
-        conn, sprint_id, actor, event_type,
+    eid = m.create_event(
+        store, sprint_id, actor, event_type,
         source_type=source_type, work_item_id=work_item_id, payload=payload_dict,
     )
     if as_json:
@@ -1174,12 +1222,12 @@ def event_list(obj, sprint_id, work_item_id, event_type, knowledge_only, limit, 
     if knowledge_only and event_type is not None:
         click.echo("Error: --knowledge and --type are mutually exclusive.", err=True)
         sys.exit(1)
-    conn = _get_conn(obj)
-    if _db.get_sprint(conn, sprint_id) is None:
+    store, m = _get_store(obj)
+    if m.get_sprint(store, sprint_id) is None:
         click.echo(f"Sprint #{sprint_id} not found.", err=True)
         sys.exit(1)
     if knowledge_only:
-        events = _db.list_knowledge_candidates(conn, sprint_id)
+        events = m.list_knowledge_candidates(store, sprint_id)
         # list_knowledge_candidates already deserializes payload; re-serialize for JSON output
         if work_item_id is not None:
             events = [e for e in events if e.get("work_item_id") == work_item_id]
@@ -1198,7 +1246,7 @@ def event_list(obj, sprint_id, work_item_id, event_type, knowledge_only, limit, 
                 f"{e['created_at']}{item_label}"
             )
         return
-    events = _db.list_events(conn, sprint_id)
+    events = m.list_events(store, sprint_id)
     if work_item_id is not None:
         events = [e for e in events if e.get("work_item_id") == work_item_id]
     if event_type is not None:
@@ -1263,14 +1311,16 @@ def _takeup_payload(
 
 
 def _matching_active_takeups(
-    conn: sqlite3.Connection,
+    conn,
     *,
     sprint_id: int,
     actor: str,
     instance_id: str | None,
+    m=None,
 ) -> list[dict]:
+    m = m or _db
     matches = [
-        row for row in _db.list_active_takeups(conn, sprint_id)
+        row for row in m.list_active_takeups(conn, sprint_id)
         if row["actor"] == actor
     ]
     if instance_id is not None:
@@ -1346,8 +1396,8 @@ def takeup_take_cmd(
     as_json,
 ) -> None:
     """Record that an actor has taken up a sprint."""
-    conn = _get_conn(obj)
-    sprint = _db.get_sprint(conn, sprint_id)
+    store, m = _get_store(obj)
+    sprint = m.get_sprint(store, sprint_id)
     if sprint is None:
         click.echo(f"Sprint #{sprint_id} not found.", err=True)
         sys.exit(1)
@@ -1358,7 +1408,7 @@ def takeup_take_cmd(
     pid = _detect_pid(pid)
 
     active_matches = _matching_active_takeups(
-        conn,
+        store,
         sprint_id=sprint_id,
         actor=actor,
         instance_id=instance_id,
@@ -1378,7 +1428,7 @@ def takeup_take_cmd(
         )
 
     event_id = _db.create_event(
-        conn,
+        store,
         sprint_id,
         actor,
         "sprint-taken-up",
@@ -1447,8 +1497,8 @@ def takeup_release_cmd(
     as_json,
 ) -> None:
     """Record that an actor has released a sprint takeup."""
-    conn = _get_conn(obj)
-    sprint = _db.get_sprint(conn, sprint_id)
+    store, m = _get_store(obj)
+    sprint = m.get_sprint(store, sprint_id)
     if sprint is None:
         click.echo(f"Sprint #{sprint_id} not found.", err=True)
         sys.exit(1)
@@ -1457,7 +1507,7 @@ def takeup_release_cmd(
     hostname = _detect_hostname(hostname)
     pid = _detect_pid(pid)
     matches = _matching_active_takeups(
-        conn,
+        store,
         sprint_id=sprint_id,
         actor=actor,
         instance_id=instance_id,
@@ -1468,7 +1518,7 @@ def takeup_release_cmd(
         click.echo("No matching takeup found; recording release anyway.", err=True)
 
     event_id = _db.create_event(
-        conn,
+        store,
         sprint_id,
         actor,
         "sprint-released",
@@ -1513,11 +1563,11 @@ def takeup_release_cmd(
 @click.pass_obj
 def takeup_list_cmd(obj, sprint_id, all_history, as_json) -> None:
     """List current sprint takeups."""
-    conn = _get_conn(obj)
-    if sprint_id is not None and _db.get_sprint(conn, sprint_id) is None:
+    store, m = _get_store(obj)
+    if sprint_id is not None and m.get_sprint(store, sprint_id) is None:
         click.echo(f"Sprint #{sprint_id} not found.", err=True)
         sys.exit(1)
-    history = _db.list_takeup_history(conn, sprint_id)
+    history = m.list_takeup_history(store, sprint_id)
     payload = {
         "operation": "takeup_list",
         "active_takeups": history["active_takeups"],
@@ -1549,12 +1599,12 @@ def takeup_list_cmd(obj, sprint_id, all_history, as_json) -> None:
 @click.pass_obj
 def takeup_show_cmd(obj, sprint_id, as_json) -> None:
     """Show full takeup history for a sprint."""
-    conn = _get_conn(obj)
-    sprint = _db.get_sprint(conn, sprint_id)
+    store, m = _get_store(obj)
+    sprint = m.get_sprint(store, sprint_id)
     if sprint is None:
         click.echo(f"Sprint #{sprint_id} not found.", err=True)
         sys.exit(1)
-    history = _db.list_takeup_history(conn, sprint_id)
+    history = m.list_takeup_history(store, sprint_id)
     payload = {
         "operation": "takeup_show",
         "sprint": sprint,
@@ -1589,14 +1639,15 @@ def maintain() -> None:
     """Maintenance commands (check, sweep, carryover)."""
 
 
-def _resolve_sprint(conn, sprint_id: int | None) -> dict:
+def _resolve_sprint(conn, sprint_id: int | None, *, m=None) -> dict:
+    m = m or _db
     if sprint_id is not None:
-        s = _db.get_sprint(conn, sprint_id)
+        s = m.get_sprint(conn, sprint_id)
         if s is None:
             click.echo(f"Sprint #{sprint_id} not found.", err=True)
             sys.exit(1)
     else:
-        s = _resolve_implicit_sprint(conn)
+        s = _resolve_implicit_sprint(conn, m=m)
         if s is None:
             click.echo("No active sprint found. Use --sprint-id to specify one.", err=True)
             sys.exit(1)
@@ -1651,11 +1702,12 @@ def _summarize_event(event: dict) -> dict:
     }
 
 
-def _dependency_waiting_items(conn, sprint_id: int) -> list[dict]:
+def _dependency_waiting_items(conn, sprint_id: int, *, m=None) -> list[dict]:
+    m = m or _db
     waiting: list[dict] = []
-    pending_items = _db.list_work_items(conn, sprint_id=sprint_id, status="pending")
+    pending_items = m.list_work_items(conn, sprint_id=sprint_id, status="pending")
     for item in pending_items:
-        blockers = _db.list_deps_blocking(conn, item["id"])
+        blockers = m.list_deps_blocking(conn, item["id"])
         unresolved = [blocker for blocker in blockers if blocker["blocker_status"] != "done"]
         if not unresolved:
             continue
@@ -1680,16 +1732,18 @@ def _active_items_without_claims(active_items: list[dict], active_claims: list[d
 
 def _collect_next_work_explained_payload(
     *,
-    conn: sqlite3.Connection,
+    conn,
     sprint: dict,
     ready_items: list[dict],
     now: datetime,
+    m=None,
 ) -> dict:
-    dependency_waiting_items = _dependency_waiting_items(conn, sprint["id"])
-    active_claims = _db.list_claims_by_sprint(conn, sprint["id"], active_only=True)
+    m = m or _db
+    dependency_waiting_items = _dependency_waiting_items(conn, sprint["id"], m=m)
+    active_claims = m.list_claims_by_sprint(conn, sprint["id"], active_only=True)
     active_items = [
         {"id": item["id"], "title": item["title"], "track": item["track_name"]}
-        for item in _db.list_work_items(conn, sprint_id=sprint["id"], status="active")
+        for item in m.list_work_items(conn, sprint_id=sprint["id"], status="active")
     ]
     active_unclaimed_items = _active_items_without_claims(active_items, active_claims)
     conflicts = _derive_conflicts(
@@ -1887,16 +1941,18 @@ def _render_next_work_explained_text(payload: dict) -> str:
     return "\n".join(lines)
 
 
-def _collect_session_resume_payload(*, conn: sqlite3.Connection, sprint: dict, now: datetime) -> dict:
-    context = _collect_context_contract(conn, sprint, now)
+def _collect_session_resume_payload(*, conn, sprint: dict, now: datetime, m=None) -> dict:
+    m = m or _db
+    context = _collect_context_contract(conn, sprint, now, m=m)
     current_runtime_session_id = _detect_runtime_session_id(None)
     current_instance_id = os.environ.get("SPRINTCTL_INSTANCE_ID")
-    ready_items = _db.get_ready_items(conn, sprint["id"])
+    ready_items = m.get_ready_items(conn, sprint["id"])
     next_work = _collect_next_work_explained_payload(
         conn=conn,
         sprint=sprint,
         ready_items=ready_items,
         now=now,
+        m=m,
     )
     # Keep a single primary recommendation for resume flows and recompute command guidance.
     next_action = context["next_action"]
@@ -2340,9 +2396,10 @@ def _command_step_kind(command: str) -> str:
     return "other"
 
 
-def _collect_context_contract(conn, sprint: dict, now: datetime) -> dict:
-    active_claims = _db.list_claims_by_sprint(conn, sprint["id"], active_only=True)
-    report = _maintain.check(conn, sprint["id"], now)
+def _collect_context_contract(conn, sprint: dict, now: datetime, *, m=None) -> dict:
+    m = m or _db
+    active_claims = m.list_claims_by_sprint(conn, sprint["id"], active_only=True)
+    report = _maintain.check(conn, sprint["id"], now, _m=m)
     stale_items = [
         {
             "id": item["id"],
@@ -2354,7 +2411,7 @@ def _collect_context_contract(conn, sprint: dict, now: datetime) -> dict:
         for item in report["stale_items"]
     ]
 
-    all_items = _db.list_work_items(conn, sprint_id=sprint["id"])
+    all_items = m.list_work_items(conn, sprint_id=sprint["id"])
     blocked_items = [
         {"id": item["id"], "title": item["title"], "track": item["track_name"]}
         for item in all_items
@@ -2372,10 +2429,10 @@ def _collect_context_contract(conn, sprint: dict, now: datetime) -> dict:
             "title": item["title"],
             "track": item["track_name"],
         }
-        for item in _db.get_ready_items(conn, sprint["id"])
+        for item in m.get_ready_items(conn, sprint["id"])
     ]
-    dependency_waiting_items = _dependency_waiting_items(conn, sprint["id"])
-    knowledge = _db.list_knowledge_candidates(conn, sprint["id"])
+    dependency_waiting_items = _dependency_waiting_items(conn, sprint["id"], m=m)
+    knowledge = m.list_knowledge_candidates(conn, sprint["id"])
     recent_decisions = [_summarize_event(event) for event in reversed(knowledge[-5:])]
     conflicts = _derive_conflicts(
         active_claims=active_claims,
@@ -2572,8 +2629,9 @@ def _detect_git_context() -> dict | None:
     }
 
 
-def _previous_handoff_generated(conn, sprint_id: int) -> dict | None:
-    events = _db.list_events(conn, sprint_id)
+def _previous_handoff_generated(conn, sprint_id: int, *, m=None) -> dict | None:
+    m = m or _db
+    events = m.list_events(conn, sprint_id)
     for event in reversed(events):
         if event["event_type"] == "handoff-generated":
             return event
@@ -2615,27 +2673,28 @@ def _build_delta_since_last_handoff(
     }
 
 
-def _build_handoff_bundle(conn, sprint: dict, events_limit: int) -> dict:
+def _build_handoff_bundle(conn, sprint: dict, events_limit: int, *, m=None) -> dict:
+    m = m or _db
     now = datetime.now(timezone.utc)
     generated_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    context = _collect_context_contract(conn, sprint, now)
-    items = _db.list_work_items(conn, sprint_id=sprint["id"])
+    context = _collect_context_contract(conn, sprint, now, m=m)
+    items = m.list_work_items(conn, sprint_id=sprint["id"])
     items_with_refs = []
     for item in items:
         enriched = {**item}
-        refs = _db.list_refs(conn, item["id"])
+        refs = m.list_refs(conn, item["id"])
         if refs:
             enriched["refs"] = refs
         items_with_refs.append(enriched)
 
-    recent_events = _db.list_events_limited(conn, sprint["id"], limit=events_limit)
-    all_events = _db.list_events(conn, sprint["id"])
+    recent_events = m.list_events_limited(conn, sprint["id"], limit=events_limit)
+    all_events = m.list_events(conn, sprint["id"])
     active_items = [
         {"id": item["id"], "title": item["title"], "track": item["track_name"]}
         for item in items
         if item["status"] == "active"
     ]
-    previous_handoff = _previous_handoff_generated(conn, sprint["id"])
+    previous_handoff = _previous_handoff_generated(conn, sprint["id"], m=m)
     git_context = _detect_git_context()
 
     return _contracts.HandoffBundle(
@@ -2709,8 +2768,9 @@ def _build_handoff_bundle(conn, sprint: dict, events_limit: int) -> dict:
     ).to_dict()
 
 
-def _record_handoff_generated(conn, sprint_id: int, bundle: dict) -> None:
-    _db.create_event(
+def _record_handoff_generated(conn, sprint_id: int, bundle: dict, *, m=None) -> None:
+    m = m or _db
+    m.create_event(
         conn,
         sprint_id=sprint_id,
         actor="handoff",
@@ -2732,11 +2792,11 @@ def _record_handoff_generated(conn, sprint_id: int, bundle: dict) -> None:
 @click.pass_obj
 def maintain_check(obj, sprint_id, threshold, as_json) -> None:
     """Dry-run: report stale items and sprint health (no writes)."""
-    conn = _get_conn(obj)
-    s = _resolve_sprint(conn, sprint_id)
+    store, m = _get_store(obj)
+    s = _resolve_sprint(store, sprint_id, m=m)
     now = datetime.now(timezone.utc)
     td = _parse_threshold(threshold)
-    report = _maintain.check(conn, s["id"], now, threshold=td)
+    report = _maintain.check(store, s["id"], now, threshold=td, _m=m)
 
     if as_json:
         pt = report["pending_threshold"]
@@ -2808,11 +2868,11 @@ def maintain_check(obj, sprint_id, threshold, as_json) -> None:
 @click.pass_obj
 def maintain_sweep(obj, sprint_id, threshold, auto_close, as_json) -> None:
     """Execute: block stale items and optionally auto-close overdue sprint."""
-    conn = _get_conn(obj)
-    s = _resolve_sprint(conn, sprint_id)
+    store, m = _get_store(obj)
+    s = _resolve_sprint(store, sprint_id, m=m)
     now = datetime.now(timezone.utc)
     td = _parse_threshold(threshold)
-    result = _maintain.sweep(conn, s["id"], now, threshold=td, auto_close=auto_close)
+    result = _maintain.sweep(store, s["id"], now, threshold=td, auto_close=auto_close, _m=m)
 
     if as_json:
         click.echo(json.dumps({
@@ -2846,15 +2906,15 @@ def maintain_sweep(obj, sprint_id, threshold, auto_close, as_json) -> None:
 @click.pass_obj
 def maintain_carryover(obj, from_sprint_id, to_sprint_id, as_json) -> None:
     """Carry incomplete items from one sprint to another."""
-    conn = _get_conn(obj)
-    if _db.get_sprint(conn, from_sprint_id) is None:
+    store, m = _get_store(obj)
+    if m.get_sprint(store, from_sprint_id) is None:
         click.echo(f"Source sprint #{from_sprint_id} not found.", err=True)
         sys.exit(1)
-    if _db.get_sprint(conn, to_sprint_id) is None:
+    if m.get_sprint(store, to_sprint_id) is None:
         click.echo(f"Target sprint #{to_sprint_id} not found.", err=True)
         sys.exit(1)
     try:
-        created = _maintain.carryover(conn, from_sprint_id, to_sprint_id)
+        created = _maintain.carryover(store, from_sprint_id, to_sprint_id, _m=m)
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -3072,14 +3132,14 @@ def claim_create(
     --coordinate-claim-token to create an execute/inspect/review claim under
     an active coordinate claim without triggering a conflict error.
     """
-    conn = _get_conn(obj)
+    store, m = _get_store(obj)
     runtime_session_id = _detect_runtime_session_id(runtime_session_id)
     instance_id = _detect_instance_id(instance_id)
     hostname = _detect_hostname(hostname)
     pid = _detect_pid(pid)
     try:
         cid = _db.create_claim(
-            conn,
+            store,
             work_item_id=item_id,
             agent=actor,
             claim_type=claim_type,
@@ -3099,7 +3159,7 @@ def claim_create(
     except (_db.ClaimConflict, ValueError) as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
-    claim = _db.get_claim(conn, cid, include_secret=True)
+    claim = m.get_claim(store, cid, include_secret=True)
     assert claim is not None
     recovery_path = _write_claim_recovery_record(claim)
     if as_json:
@@ -3151,8 +3211,8 @@ def claim_start(
     If activating the item fails after claim creation, sprintctl attempts to
     release the new claim automatically to avoid leaving accidental ownership.
     """
-    conn = _get_conn(obj)
-    item = _db.get_work_item(conn, item_id)
+    store, m = _get_store(obj)
+    item = m.get_work_item(store, item_id)
     if item is None:
         click.echo(f"Item #{item_id} not found.", err=True)
         sys.exit(1)
@@ -3163,7 +3223,7 @@ def claim_start(
     pid = _detect_pid(pid)
     try:
         cid = _db.create_claim(
-            conn,
+            store,
             work_item_id=item_id,
             agent=actor,
             claim_type="execute",
@@ -3181,7 +3241,7 @@ def claim_start(
     except (_db.ClaimConflict, ValueError) as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
-    claim = _db.get_claim(conn, cid, include_secret=True)
+    claim = m.get_claim(store, cid, include_secret=True)
     assert claim is not None
     recovery_path = _write_claim_recovery_record(claim)
 
@@ -3190,7 +3250,7 @@ def claim_start(
     if previous_status != "active":
         try:
             _db.set_work_item_status(
-                conn,
+                store,
                 item_id,
                 "active",
                 actor=actor,
@@ -3204,7 +3264,7 @@ def claim_start(
     if transition_error is not None:
         release_note = ""
         try:
-            _db.release_claim(conn, cid, claim["claim_token"], actor=actor)
+            m.release_claim(store, cid, claim["claim_token"], actor=actor)
             _remove_claim_recovery_record(cid)
             release_note = f" Claim #{cid} was released."
         except ValueError as release_error:
@@ -3216,7 +3276,7 @@ def claim_start(
         )
         sys.exit(1)
 
-    updated_item = _db.get_work_item(conn, item_id)
+    updated_item = m.get_work_item(store, item_id)
     assert updated_item is not None
     if as_json:
         click.echo(json.dumps({
@@ -3282,14 +3342,14 @@ def claim_heartbeat(
     as_json,
 ) -> None:
     """Refresh the TTL on an existing claim."""
-    conn = _get_conn(obj)
+    store, m = _get_store(obj)
     runtime_session_id = _detect_runtime_session_id(runtime_session_id)
     instance_id = _detect_instance_id(instance_id)
     hostname = _detect_hostname(hostname)
     pid = _detect_pid(pid)
     try:
         _db.heartbeat_claim(
-            conn,
+            store,
             claim_id,
             claim_token,
             ttl_seconds=ttl_seconds,
@@ -3306,7 +3366,7 @@ def claim_heartbeat(
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
-    refreshed = _db.get_claim(conn, claim_id)
+    refreshed = m.get_claim(store, claim_id)
     assert refreshed is not None
     if as_json:
         refreshed["heartbeat_ttl_seconds"] = ttl_seconds
@@ -3329,9 +3389,9 @@ def claim_heartbeat(
 @click.pass_obj
 def claim_release(obj, claim_id, claim_token, actor) -> None:
     """Release (delete) a claim."""
-    conn = _get_conn(obj)
+    store, m = _get_store(obj)
     try:
-        _db.release_claim(conn, claim_id, claim_token, actor=actor)
+        m.release_claim(store, claim_id, claim_token, actor=actor)
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -3386,14 +3446,14 @@ def claim_handoff(
     as_json,
 ) -> None:
     """Explicitly transfer or rotate claim ownership and emit a claim handoff bundle."""
-    conn = _get_conn(obj)
+    store, m = _get_store(obj)
     runtime_session_id = _detect_runtime_session_id(runtime_session_id)
     instance_id = _detect_instance_id(instance_id)
     hostname = _detect_hostname(hostname)
     pid = _detect_pid(pid)
     try:
         claim = _db.handoff_claim(
-            conn,
+            store,
             claim_id,
             claim_token,
             actor=actor,
@@ -3416,8 +3476,8 @@ def claim_handoff(
         sys.exit(1)
     recovery_path = _write_claim_recovery_record(claim)
 
-    item = _db.get_work_item(conn, claim["work_item_id"])
-    sprint = _db.get_sprint(conn, item["sprint_id"]) if item else None
+    item = m.get_work_item(store, claim["work_item_id"])
+    sprint = m.get_sprint(store, item["sprint_id"]) if item else None
     bundle = {
         "bundle_type": "claim_handoff",
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -3456,8 +3516,8 @@ def claim_handoff(
 @click.pass_obj
 def claim_list(obj, item_id, show_all, as_json) -> None:
     """List claims on a work item."""
-    conn = _get_conn(obj)
-    claims = _db.list_claims(conn, item_id, active_only=not show_all)
+    store, m = _get_store(obj)
+    claims = m.list_claims(store, item_id, active_only=not show_all)
     if as_json:
         click.echo(json.dumps(claims, indent=2))
         return
@@ -3484,16 +3544,16 @@ def claim_list(obj, item_id, show_all, as_json) -> None:
 @click.pass_obj
 def claim_list_sprint(obj, sprint_id, show_all, expiring_within, as_json) -> None:
     """List all claims across a sprint, optionally filtered by expiry window."""
-    conn = _get_conn(obj)
+    store, m = _get_store(obj)
     if sprint_id is not None:
-        sprint = _db.get_sprint(conn, sprint_id)
+        sprint = m.get_sprint(store, sprint_id)
     else:
-        sprint = _resolve_implicit_sprint(conn)
+        sprint = _resolve_implicit_sprint(store, m=m)
     if sprint is None:
         click.echo("No sprint found. Use --sprint-id to specify one.", err=True)
         sys.exit(1)
     claims = _db.list_claims_by_sprint(
-        conn,
+        store,
         sprint["id"],
         active_only=not show_all,
         expiring_within_seconds=expiring_within,
@@ -3525,19 +3585,17 @@ def claim_show(obj, claim_id, claim_token, as_json) -> None:
 
     Requires the current claim_token to prove ownership before revealing it again.
     """
-    conn = _get_conn(obj)
-    row = conn.execute("SELECT * FROM claim WHERE id = ?", (claim_id,)).fetchone()
-    if row is None:
+    store, m = _get_store(obj)
+    claim = m.get_claim(store, claim_id, include_secret=True)
+    if claim is None:
         click.echo(f"Error: Claim #{claim_id} not found", err=True)
         sys.exit(1)
     try:
         from .db import _require_claim_proof
-        _require_claim_proof(row, claim_token)
+        _require_claim_proof(claim, claim_token)
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
-    claim = _db.get_claim(conn, claim_id, include_secret=True)
-    assert claim is not None
     if as_json:
         click.echo(json.dumps(claim, indent=2))
         return
@@ -3562,12 +3620,12 @@ def claim_resume(obj, item_id, instance_id, runtime_session_id, hostname, pid, a
     recovered, or 'claim handoff --allow-legacy-adopt' to re-mint a fresh proof.
     Provide at least one of: --instance-id, --runtime-session-id, or --hostname + --pid.
     """
-    conn = _get_conn(obj)
+    store, m = _get_store(obj)
     runtime_session_id = _detect_runtime_session_id(runtime_session_id)
     instance_id = instance_id or os.environ.get("SPRINTCTL_INSTANCE_ID")
     try:
         claims = _db.find_claim_by_identity(
-            conn,
+            store,
             instance_id=instance_id,
             hostname=hostname,
             pid=pid,
@@ -3618,6 +3676,18 @@ def claim_recover(obj, claim_id, item_id, as_json) -> None:
     """Recover a claim token from sprintctl's local recovery record."""
     if (claim_id is None) == (item_id is None):
         click.echo("Error: Provide exactly one of --id or --item-id", err=True)
+        sys.exit(1)
+    try:
+        config = _backend.load_backend_config()
+    except _backend.BackendConfigError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+    if config.mode == "remote":
+        click.echo(
+            "Error: claim recovery files are local-mode only. "
+            "Use pg claim state or an explicit claim token.",
+            err=True,
+        )
         sys.exit(1)
     conn = _get_conn(obj)
     try:
@@ -3796,16 +3866,16 @@ def handoff_cmd(obj, sprint_id, output_path, events_limit, fmt) -> None:
     Use --format json (default) for a machine-parseable bundle.
     Pass --output - to write to stdout regardless of format.
     """
-    conn = _get_conn(obj)
+    store, m = _get_store(obj)
     if sprint_id is not None:
-        s = _db.get_sprint(conn, sprint_id)
+        s = m.get_sprint(store, sprint_id)
     else:
-        s = _resolve_implicit_sprint(conn)
+        s = _resolve_implicit_sprint(store, m=m)
     if s is None:
         click.echo("No sprint found. Use --sprint-id to specify one.", err=True)
         sys.exit(1)
     sid = s["id"]
-    bundle = _build_handoff_bundle(conn, s, events_limit)
+    bundle = _build_handoff_bundle(store, s, events_limit, m=m)
 
     if fmt == "text":
         content = _render_handoff_text(bundle)
@@ -3817,13 +3887,13 @@ def handoff_cmd(obj, sprint_id, output_path, events_limit, fmt) -> None:
     dest = output_path or f"handoff-{sid}{ext}"
     if dest == "-":
         click.echo(content)
-        _record_handoff_generated(conn, sid, bundle)
+        _record_handoff_generated(store, sid, bundle, m=m)
         return
     with open(dest, "w") as fh:
         fh.write(content)
         if not content.endswith("\n"):
             fh.write("\n")
-    _record_handoff_generated(conn, sid, bundle)
+    _record_handoff_generated(store, sid, bundle, m=m)
     click.echo(f"Handoff bundle for sprint #{sid} written to {dest}")
 
 
@@ -3986,25 +4056,26 @@ def next_work_cmd(obj, sprint_id, as_json, explain) -> None:
     Items are listed in creation order. Items blocked by incomplete predecessors
     are excluded from the suggestion.
     """
-    conn = _get_conn(obj)
+    store, m = _get_store(obj)
     if sprint_id is not None:
-        s = _db.get_sprint(conn, sprint_id)
+        s = m.get_sprint(store, sprint_id)
         if s is None:
             click.echo(f"Sprint #{sprint_id} not found.", err=True)
             sys.exit(1)
     else:
-        s = _resolve_implicit_sprint(conn)
+        s = _resolve_implicit_sprint(store, m=m)
         if s is None:
             click.echo("No active sprint found. Use --sprint-id to specify one.", err=True)
             sys.exit(1)
-    ready = _db.get_ready_items(conn, s["id"])
+    ready = m.get_ready_items(store, s["id"])
     payload = None
     if explain:
         payload = _collect_next_work_explained_payload(
-            conn=conn,
+            conn=store,
             sprint=s,
             ready_items=ready,
             now=datetime.now(timezone.utc),
+            m=m,
         )
     if as_json:
         if explain:
@@ -4038,12 +4109,13 @@ def session() -> None:
 @click.pass_obj
 def session_resume_cmd(obj, sprint_id, as_json) -> None:
     """Show a combined resume surface (context, next-work explain, and git context)."""
-    conn = _get_conn(obj)
-    sprint = _resolve_sprint(conn, sprint_id)
+    store, m = _get_store(obj)
+    sprint = _resolve_sprint(store, sprint_id, m=m)
     payload = _collect_session_resume_payload(
-        conn=conn,
+        conn=store,
         sprint=sprint,
         now=datetime.now(timezone.utc),
+        m=m,
     )
     if as_json:
         click.echo(json.dumps(payload, indent=2))
@@ -4065,10 +4137,10 @@ def session_resume_cmd(obj, sprint_id, as_json) -> None:
 def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
     """Print a compact command reference, or current sprint context with --context."""
     if as_context:
-        conn = _get_conn(obj)
-        s = _resolve_sprint(conn, sprint_id)
+        store, m = _get_store(obj)
+        s = _resolve_sprint(store, sprint_id, m=m)
         now = datetime.now(timezone.utc)
-        snapshot = _collect_context_contract(conn, s, now)
+        snapshot = _collect_context_contract(store, s, now, m=m)
         if as_json:
             click.echo(json.dumps(snapshot, indent=2))
             return
@@ -4195,26 +4267,26 @@ def git_context_cmd(as_json) -> None:
 @click.pass_obj
 def render_cmd(obj, sprint_id, output_path) -> None:
     """Render a plain-text sprint document."""
-    conn = _get_conn(obj)
+    store, m = _get_store(obj)
     if sprint_id is not None:
-        s = _db.get_sprint(conn, sprint_id)
+        s = m.get_sprint(store, sprint_id)
     else:
-        s = _resolve_implicit_sprint(conn)
+        s = _resolve_implicit_sprint(store, m=m)
     if s is None:
         click.echo("No sprint found. Use --sprint-id to specify one.", err=True)
         sys.exit(1)
-    tracks = _db.list_tracks(conn, s["id"])
-    all_items = _db.list_work_items(conn, sprint_id=s["id"])
+    tracks = m.list_tracks(store, s["id"])
+    all_items = m.list_work_items(store, sprint_id=s["id"])
     items_by_track: dict[int, list[dict]] = {}
     for it in all_items:
         items_by_track.setdefault(it["track_id"], []).append(it)
     refs_by_item: dict[int, list[dict]] = {}
     for it in all_items:
-        item_refs = _db.list_refs(conn, it["id"])
+        item_refs = m.list_refs(store, it["id"])
         if item_refs:
             refs_by_item[it["id"]] = item_refs
     rendered_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    active_takeups = _db.list_active_takeups(conn, s["id"])
+    active_takeups = m.list_active_takeups(store, s["id"])
     doc = render_sprint_doc(
         s,
         tracks,
@@ -4229,3 +4301,206 @@ def render_cmd(obj, sprint_id, output_path) -> None:
         click.echo(f"Sprint #{s['id']} rendered to {output_path}")
     else:
         click.echo(doc)
+
+
+# ---------------------------------------------------------------------------
+# migrate-to-remote
+# ---------------------------------------------------------------------------
+
+@cli.command("migrate-to-remote")
+@click.option("--url", "pg_url", default=None, help="Postgres URL (default: $SPRINTCTL_URL)")
+@click.option("--db", "db_path_override", default=None, help="Source sqlite path (default: auto-detect)")
+@click.option("--repo-root", "repo_root_override", default=None, help="Repo root override")
+@click.option("--repo-id", "repo_id_assert", default=None, help="Assert this repo_id (must match path-derived value)")
+@click.option("--dry-run", is_flag=True, default=False, help="Validate without importing or freezing")
+@click.option("--replace", is_flag=True, default=False, help="Delete existing pg rows for repo_id before import")
+@click.option("--keep-ndjson", "keep_ndjson_path", default=None, help="Write NDJSON to this file for inspection")
+@click.option("--yes", "skip_confirm", is_flag=True, default=False, help="Skip confirmation prompt before freezing sqlite")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit machine-readable summary")
+def migrate_to_remote_cmd(
+    pg_url,
+    db_path_override,
+    repo_root_override,
+    repo_id_assert,
+    dry_run,
+    replace,
+    keep_ndjson_path,
+    skip_confirm,
+    as_json,
+) -> None:
+    """Migrate a local sqlite database to remote postgres."""
+    import io  # noqa: PLC0415
+    from . import pg as _pg  # noqa: PLC0415
+
+    # 1. Preflight: resolve repo identity
+    cwd = Path(repo_root_override) if repo_root_override else Path.cwd()
+    try:
+        repo_root, repo_id, marker = _backend.resolve_repo_identity(cwd)
+    except _backend.BackendConfigError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+
+    if repo_id is None:
+        click.echo(
+            "Error: cannot resolve repo_id. Run from inside a repository with .sprintctl/backend.json or .git.",
+            err=True,
+        )
+        sys.exit(1)
+
+    if repo_id_assert is not None and repo_id_assert != repo_id:
+        click.echo(
+            f"Error: --repo-id='{repo_id_assert}' does not match path-derived repo_id='{repo_id}'.",
+            err=True,
+        )
+        sys.exit(1)
+
+    # Resolve pg URL
+    url = pg_url or os.environ.get("SPRINTCTL_URL")
+    if not url:
+        click.echo("Error: Postgres URL required. Pass --url or set SPRINTCTL_URL.", err=True)
+        sys.exit(1)
+
+    # Resolve sqlite source path
+    if db_path_override:
+        sqlite_path = Path(db_path_override)
+    elif os.environ.get("SPRINTCTL_DB"):
+        sqlite_path = Path(os.environ["SPRINTCTL_DB"])
+    elif repo_root:
+        sqlite_path = repo_root / ".sprintctl" / "sprintctl.db"
+    else:
+        sqlite_path = _db.get_db_path()
+
+    if not sqlite_path.exists() or not sqlite_path.is_file():
+        click.echo(f"Error: sqlite source not found: {sqlite_path}", err=True)
+        sys.exit(1)
+
+    # Open and upgrade sqlite source
+    sqlite_conn = _db.get_connection(sqlite_path)
+    try:
+        _db.init_db(sqlite_conn)
+    except Exception as e:
+        click.echo(f"Error: local migration failed before export: {e}", err=True)
+        sys.exit(1)
+
+    # Connect to pg and init schema
+    try:
+        pg_store = _pg.get_connection(url)
+        _pg.init_db(pg_store)
+    except Exception as e:
+        click.echo(f"Error: could not connect to postgres from SPRINTCTL_URL: {e}", err=True)
+        sys.exit(1)
+
+    # Check for existing pg data
+    try:
+        with pg_store.conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS cnt FROM sprint WHERE repo_id = %s", (repo_id,))
+            row = cur.fetchone()
+            existing_count = row["cnt"] if row else 0
+    except Exception:
+        existing_count = 0
+
+    if existing_count > 0 and not replace:
+        click.echo(
+            f"Error: remote repo_id '{repo_id}' already has data ({existing_count} sprints). "
+            "Use --replace to re-import intentionally.",
+            err=True,
+        )
+        sys.exit(1)
+
+    # 2. Export NDJSON
+    ndjson_buf = io.StringIO()
+    try:
+        counts = _pg.export_ndjson(sqlite_conn, repo_id, ndjson_buf)
+    except Exception as e:
+        click.echo(f"Error: NDJSON export failed: {e}", err=True)
+        sys.exit(1)
+
+    ndjson_content = ndjson_buf.getvalue()
+    records = [json.loads(line) for line in ndjson_content.splitlines() if line.strip()]
+
+    if keep_ndjson_path:
+        try:
+            Path(keep_ndjson_path).write_text(ndjson_content)
+        except OSError as e:
+            click.echo(f"Warning: could not write NDJSON to {keep_ndjson_path}: {e}", err=True)
+
+    if dry_run:
+        if as_json:
+            click.echo(json.dumps({
+                "dry_run": True,
+                "repo_id": repo_id,
+                "sqlite_path": str(sqlite_path),
+                "counts": counts,
+            }, indent=2))
+        else:
+            click.echo(f"Dry run for repo '{repo_id}' from {sqlite_path}")
+            for table, count in counts.items():
+                click.echo(f"  {table}: {count} rows")
+        sqlite_conn.close()
+        pg_store.conn.close()
+        return
+
+    # Confirm before freeze
+    if not skip_confirm:
+        total_rows = sum(counts.values())
+        click.echo(
+            f"About to migrate repo '{repo_id}' ({total_rows} rows) to postgres "
+            f"and freeze {sqlite_path}."
+        )
+        if not click.confirm("Proceed?"):
+            click.echo("Aborted.")
+            sqlite_conn.close()
+            pg_store.conn.close()
+            sys.exit(0)
+
+    # 3. Import to pg
+    try:
+        _pg.import_ndjson(pg_store, records, replace=replace)
+    except Exception as e:
+        click.echo(f"Error: import failed: {e}", err=True)
+        click.echo("Sqlite has NOT been modified. Fix the error and retry (use --replace if pg now has partial data).")
+        sqlite_conn.close()
+        pg_store.conn.close()
+        sys.exit(1)
+
+    sqlite_conn.close()
+
+    # 4. Freeze local
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    frozen_path = sqlite_path.parent / f".sprintctl.db.frozen-{ts}"
+    marker_path = sqlite_path.parent / "backend.json"
+    sentinel_path = sqlite_path  # will become a directory
+
+    try:
+        sqlite_path.rename(frozen_path)
+        marker_path.write_text(json.dumps({
+            "backend": "remote",
+            "repo_id": repo_id,
+            "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }, indent=2) + "\n")
+        sentinel_path.mkdir(exist_ok=False)
+    except Exception as e:
+        click.echo(f"Error: freeze failed after successful import: {e}", err=True)
+        click.echo(
+            "The pg import succeeded. To complete the freeze manually:\n"
+            f"  mv '{sqlite_path}' '{frozen_path}'\n"
+            f"  echo '{{\"backend\":\"remote\",\"repo_id\":\"{repo_id}\"}}' > '{marker_path}'\n"
+            f"  mkdir '{sentinel_path}'"
+        )
+        pg_store.conn.close()
+        sys.exit(1)
+
+    pg_store.conn.close()
+
+    if as_json:
+        click.echo(json.dumps({
+            "repo_id": repo_id,
+            "counts": counts,
+            "frozen_sqlite": str(frozen_path),
+            "backend_marker": str(marker_path),
+        }, indent=2))
+    else:
+        click.echo(f"Migrated repo '{repo_id}' to remote postgres.")
+        parts = [f"{v} {k}" for k, v in counts.items() if v > 0]
+        click.echo(f"Imported: {', '.join(parts)}.")
+        click.echo(f"Frozen sqlite: {frozen_path}")

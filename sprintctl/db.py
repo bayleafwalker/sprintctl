@@ -693,18 +693,20 @@ def _takeup_events(
     return [dict(row) for row in conn.execute(query, params).fetchall()]
 
 
-def list_takeup_history(
-    conn: sqlite3.Connection,
-    sprint_id: int | None = None,
-) -> dict[str, list[dict]]:
-    """Return active and released sprint takeup rows derived from events."""
+def process_takeup_events(events: list[dict]) -> dict[str, list[dict]]:
+    """Derive active/released takeup state from a pre-fetched list of takeup events.
+
+    Accepts events already fetched from either sqlite or pg. The payload field
+    may be a dict (pg jsonb) or a JSON string (sqlite text); _decode_event_payload
+    handles both.
+    """
     active_by_event_id: dict[int, tuple[dict, dict]] = {}
     active_by_key: dict[tuple[int, str, str | None], list[int]] = {}
     active_by_actor: dict[tuple[int, str], list[int]] = {}
     released: list[dict] = []
     unmatched_releases: list[dict] = []
 
-    for row in _takeup_events(conn, sprint_id):
+    for row in events:
         payload = _decode_event_payload(row)
         if row["event_type"] == "sprint-taken-up":
             active_by_event_id[row["id"]] = (row, payload)
@@ -763,6 +765,14 @@ def list_takeup_history(
         "released_takeups": released,
         "unmatched_releases": unmatched_releases,
     }
+
+
+def list_takeup_history(
+    conn: sqlite3.Connection,
+    sprint_id: int | None = None,
+) -> dict[str, list[dict]]:
+    """Return active and released sprint takeup rows derived from events."""
+    return process_takeup_events(_takeup_events(conn, sprint_id))
 
 
 def list_active_takeups(
@@ -1606,6 +1616,15 @@ def get_ready_items(
             }
             _ = item_with_deps  # not included in ready list
     return ready
+
+
+def force_item_done_for_carryover(conn: sqlite3.Connection, item_id: int) -> None:
+    """Set item status to 'done' bypassing the state machine. Carryover use only."""
+    conn.execute(
+        "UPDATE work_item SET status = 'done', "
+        "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+        (item_id,),
+    )
 
 
 # --- Backlog seeding ---
