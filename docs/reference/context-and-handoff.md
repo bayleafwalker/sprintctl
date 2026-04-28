@@ -153,6 +153,32 @@ Consistency rule:
 - `next_work.recommended_commands` and `next_work.recommended_command_bundle`
   are recomputed from that canonical `next_action`.
 
+## Backend Mode Expectations
+
+The read-contract surfaces in this document are backend-agnostic: switching
+between sqlite `local` mode and postgres `remote` mode must not change the JSON
+shape, contract versions, field names, or `next_action` semantics.
+
+Resume-specific backend rules:
+
+- `usage --context --json`, `next-work --json --explain`, `session resume --json`,
+  and `handoff --format json` keep the same contract in both modes
+- backend selection happens before storage opens; callers should expect startup
+  errors from mode mismatch or missing remote configuration before any contract
+  payload is emitted
+- `claim_recovery` remains part of `session resume --json`, but local filesystem
+  recovery artifacts are only meaningful in sqlite `local` mode
+- remote mode must report claim state from postgres and must not imply that a
+  local recovery file exists or is required
+- `claim recover` is a local-mode recovery path; remote-mode operators should
+  resume with live claim state or an explicit claim token instead
+
+Consumer guidance:
+
+- treat the contract surface as stable across backends
+- treat claim-token recovery details as backend-specific operational metadata
+- do not infer the active backend from missing recovery files alone
+
 ## `handoff --format json`
 
 `handoff --format json` is the serialized working-memory contract.
@@ -224,6 +250,8 @@ Each recent decision entry includes:
 - `handoff` transfers resumable context
 - `claim resume` finds claims by advisory identity when context is lost
 - `session resume --json` surfaces local recovery-file status without exposing the token itself
+- local recovery files are a sqlite `local` mode artifact; remote mode relies on
+  the shared claim state instead of a per-host token cache
 
 ## Design Constraints
 

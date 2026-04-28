@@ -47,6 +47,10 @@ def _load_marker(path: Path) -> BackendMarker:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise BackendConfigError(f"Error: invalid backend marker {path}: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise BackendConfigError(
+            f"Error: invalid backend marker {path}: expected a JSON object."
+        )
     backend = raw.get("backend")
     if backend not in {"local", "remote"}:
         raise BackendConfigError(

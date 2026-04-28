@@ -28,6 +28,32 @@ def test_invalid_backend_value_errors(tmp_path):
         raise AssertionError("expected backend config error")
 
 
+def test_invalid_backend_marker_json_errors(tmp_path):
+    marker_dir = tmp_path / ".sprintctl"
+    marker_dir.mkdir()
+    (marker_dir / "backend.json").write_text("{not-json", encoding="utf-8")
+
+    try:
+        backend.load_backend_config(cwd=tmp_path, environ={})
+    except backend.BackendConfigError as exc:
+        assert "invalid backend marker" in str(exc)
+    else:
+        raise AssertionError("expected backend config error")
+
+
+def test_invalid_backend_marker_shape_errors(tmp_path):
+    marker_dir = tmp_path / ".sprintctl"
+    marker_dir.mkdir()
+    (marker_dir / "backend.json").write_text(json.dumps(["remote"]), encoding="utf-8")
+
+    try:
+        backend.load_backend_config(cwd=tmp_path, environ={})
+    except backend.BackendConfigError as exc:
+        assert "expected a JSON object" in str(exc)
+    else:
+        raise AssertionError("expected backend config error")
+
+
 def test_remote_mode_requires_url(tmp_path):
     try:
         backend.load_backend_config(
@@ -118,6 +144,22 @@ def test_repo_identity_uses_sqlite_marker_before_git(tmp_path):
     sprintctl_dir = repo / ".sprintctl"
     sprintctl_dir.mkdir()
     (sprintctl_dir / "sprintctl.db").write_text("", encoding="utf-8")
+
+    repo_root, repo_id, marker = backend.resolve_repo_identity(nested)
+
+    assert repo_root == repo
+    assert repo_id == "repo"
+    assert marker is None
+
+
+def test_repo_identity_uses_sqlite_directory_sentinel_before_git(tmp_path):
+    repo = tmp_path / "repo"
+    nested = repo / "a"
+    nested.mkdir(parents=True)
+    (repo / ".git").mkdir()
+    sprintctl_dir = repo / ".sprintctl"
+    sprintctl_dir.mkdir()
+    (sprintctl_dir / "sprintctl.db").mkdir()
 
     repo_root, repo_id, marker = backend.resolve_repo_identity(nested)
 
