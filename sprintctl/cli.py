@@ -4393,6 +4393,7 @@ def render_cmd(obj, sprint_id, output_path) -> None:
 @click.option("--repo-id", "repo_id_assert", default=None, help="Assert this repo_id (must match path-derived value)")
 @click.option("--dry-run", is_flag=True, default=False, help="Validate without importing or freezing")
 @click.option("--replace", is_flag=True, default=False, help="Delete existing pg rows for repo_id before import")
+@click.option("--remap-ids", "remap_ids", is_flag=True, default=False, help="Let postgres assign new IDs (needed when shared DB already has conflicting global IDs)")
 @click.option("--keep-ndjson", "keep_ndjson_path", default=None, help="Write NDJSON to this file for inspection")
 @click.option("--yes", "skip_confirm", is_flag=True, default=False, help="Skip confirmation prompt before freezing sqlite")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Emit machine-readable summary")
@@ -4403,6 +4404,7 @@ def migrate_to_remote_cmd(
     repo_id_assert,
     dry_run,
     replace,
+    remap_ids,
     keep_ndjson_path,
     skip_confirm,
     as_json,
@@ -4534,7 +4536,7 @@ def migrate_to_remote_cmd(
 
     # 3. Import to pg
     try:
-        _pg.import_ndjson(pg_store, records, replace=replace)
+        _pg.import_ndjson(pg_store, records, replace=replace, remap_ids=remap_ids)
     except Exception as e:
         click.echo(f"Error: import failed: {e}", err=True)
         click.echo("Sqlite has NOT been modified. Fix the error and retry (use --replace if pg now has partial data).")

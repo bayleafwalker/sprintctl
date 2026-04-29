@@ -1531,7 +1531,7 @@ _IMPORT_FK_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "event":     [("sprint_id", "sprint"), ("work_item_id", "work_item")],
     "claim":     [("work_item_id", "work_item")],
     "ref":       [("work_item_id", "work_item")],
-    "dep":       [("work_item_id", "work_item"), ("blocked_item_id", "work_item")],
+    "dep":       [("item_id", "work_item"), ("blocked_item_id", "work_item")],
 }
 
 
@@ -1627,6 +1627,12 @@ def _import_row(
     """Insert one row into the named table, using OVERRIDING SYSTEM VALUE for identity columns."""
     row = dict(data)
     row["repo_id"] = repo_id
+
+    # SQLite stores booleans as integers; coerce to Python bool for psycopg.
+    _BOOL_COLUMNS: dict[str, set[str]] = {"claim": {"exclusive"}}
+    for col in _BOOL_COLUMNS.get(table, set()):
+        if col in row and not isinstance(row[col], bool):
+            row[col] = bool(row[col])
 
     # Canonicalise event payloads during import.
     if table == "event":
