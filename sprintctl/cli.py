@@ -4585,3 +4585,59 @@ def migrate_to_remote_cmd(
         parts = [f"{v} {k}" for k, v in counts.items() if v > 0]
         click.echo(f"Imported: {', '.join(parts)}.")
         click.echo(f"Frozen sqlite: {frozen_path}")
+
+
+# ---------------------------------------------------------------------------
+# repo — remote repo management
+# ---------------------------------------------------------------------------
+
+@cli.group()
+def repo() -> None:
+    """Manage repositories in remote postgres."""
+
+
+@repo.command("list")
+@click.pass_obj
+def repo_list(obj) -> None:
+    """List all repo_ids present in remote postgres."""
+    store, _m = _get_store(obj)
+    if not hasattr(store, "conn"):
+        click.echo("Error: repo list requires remote backend (SPRINTCTL_BACKEND=remote)", err=True)
+        sys.exit(1)
+    from . import pg as _pg  # noqa: PLC0415
+    repo_ids = _pg.list_repos(store.conn)
+    for rid in repo_ids:
+        click.echo(rid)
+
+
+@repo.command("delete")
+@click.argument("repo_id")
+@click.option("--yes", "skip_confirm", is_flag=True, default=False, help="Skip confirmation prompt")
+@click.pass_obj
+def repo_delete(obj, repo_id, skip_confirm) -> None:
+    """Delete all data for a repository from remote postgres."""
+    store, _m = _get_store(obj)
+    if not hasattr(store, "conn"):
+        click.echo("Error: repo delete requires remote backend (SPRINTCTL_BACKEND=remote)", err=True)
+        sys.exit(1)
+    from . import pg as _pg  # noqa: PLC0415
+
+    with store.conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS cnt FROM sprint WHERE repo_id = %s", (repo_id,))
+        row = cur.fetchone()
+        sprint_count = row["cnt"] if row else 0
+
+    if sprint_count == 0:
+        click.echo(f"No data found for repo_id '{repo_id}'.", err=True)
+        sys.exit(1)
+
+    if not skip_confirm:
+        click.confirm(
+            f"Delete all data for '{repo_id}' ({sprint_count} sprint(s))? This cannot be undone.",
+            abort=True,
+        )
+
+    counts = _pg.delete_repo(store.conn, repo_id)
+    total = sum(counts.values())
+    deleted = {t: n for t, n in counts.items() if n > 0}
+    click.echo(f"Deleted {total} rows for '{repo_id}': {deleted}")

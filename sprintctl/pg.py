@@ -1535,6 +1535,24 @@ _IMPORT_FK_COLUMNS: dict[str, list[tuple[str, str]]] = {
 }
 
 
+def list_repos(conn: Any) -> list[str]:
+    """Return all distinct repo_ids present in the sprint table, sorted."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT repo_id FROM sprint ORDER BY repo_id")
+        return [row["repo_id"] for row in cur.fetchall()]
+
+
+def delete_repo(conn: Any, repo_id: str) -> dict[str, int]:
+    """Delete all rows for repo_id across all tables. Returns deleted row counts per table."""
+    counts: dict[str, int] = {}
+    with conn.cursor() as cur:
+        for table in reversed(_EXPORT_TABLES):
+            cur.execute(f"DELETE FROM {table} WHERE repo_id = %s", (repo_id,))  # noqa: S608
+            counts[table] = cur.rowcount
+    conn.commit()
+    return counts
+
+
 def import_ndjson(
     store: PgStore,
     records: list[dict],
