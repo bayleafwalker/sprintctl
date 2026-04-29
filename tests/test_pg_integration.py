@@ -385,7 +385,7 @@ class TestNdjsonRoundTrip:
         pg.init_db(rt_store)
         try:
             records = [json.loads(ln) for ln in buf.getvalue().splitlines() if ln.strip()]
-            import_counts = pg.import_ndjson(rt_store, records)
+            import_counts = pg.import_ndjson(rt_store, records, remap_ids=True)
 
             assert import_counts["sprint"] == export_counts["sprint"] == 1
             assert import_counts["track"] == export_counts["track"] == 1
@@ -424,9 +424,9 @@ class TestNdjsonRoundTrip:
         pg.init_db(repl_store)
         try:
             records = [json.loads(ln) for ln in buf.getvalue().splitlines() if ln.strip()]
-            pg.import_ndjson(repl_store, records)
+            pg.import_ndjson(repl_store, records, remap_ids=True)
             # Re-importing with replace should succeed without unique-violation errors
-            pg.import_ndjson(repl_store, records, replace=True)
+            pg.import_ndjson(repl_store, records, replace=True, remap_ids=True)
             assert len(pg.list_sprints(repl_store)) == 1
         finally:
             with repl_store.conn.cursor() as cur:

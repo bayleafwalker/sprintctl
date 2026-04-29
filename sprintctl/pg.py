@@ -246,6 +246,23 @@ def _repo_id_from_cwd() -> str:
 def init_db(store: PgStore) -> None:
     with store.conn.cursor() as cur:
         cur.execute(_DDL)
+        # Advance identity sequences past any ids that were inserted via
+        # OVERRIDING SYSTEM VALUE (which bypasses the sequence). Without this,
+        # the next nextval call would return a value that conflicts with
+        # already-imported data.
+        for _t in ("sprint", "track", "work_item", "event", "claim", "ref", "dep"):
+            try:
+                seq_row = cur.execute(
+                    f"SELECT pg_get_serial_sequence('{_t}', 'id') AS seq"
+                ).fetchone()
+                seq_name = seq_row["seq"] if seq_row else None
+                if seq_name:
+                    cur.execute(
+                        f"SELECT setval('{seq_name}',"
+                        f" COALESCE((SELECT MAX(id) FROM {_t}), 0), true)"
+                    )
+            except Exception:
+                pass
     store.conn.commit()
 
 
@@ -1507,34 +1524,91 @@ def export_ndjson(sqlite_conn: Any, repo_id: str, out: Any) -> dict[str, int]:
     return counts
 
 
-def import_ndjson(store: PgStore, records: list[dict], *, replace: bool = False) -> dict[str, int]:
+# FK columns that may need id remapping during import, keyed by child table.
+_IMPORT_FK_COLUMNS: dict[str, list[tuple[str, str]]] = {
+    "track":     [("sprint_id", "sprint")],
+    "work_item": [("sprint_id", "sprint"), ("track_id", "track")],
+    "event":     [("sprint_id", "sprint"), ("work_item_id", "work_item")],
+    "claim":     [("work_item_id", "work_item")],
+    "ref":       [("work_item_id", "work_item")],
+    "dep":       [("work_item_id", "work_item"), ("blocked_item_id", "work_item")],
+}
+
+
+def import_ndjson(
+    store: PgStore,
+    records: list[dict],
+    *,
+    replace: bool = False,
+    remap_ids: bool = False,
+) -> dict[str, int]:
     """Import NDJSON records into pg, preserving original sqlite integer IDs.
 
     If replace=True, deletes existing rows for store.repo_id first.
+    If remap_ids=True, drops explicit ids and lets the sequence assign fresh ones,
+    remapping FK columns accordingly. Use this when importing into a shared database
+    where global sequence ids may already be taken by other repos.
     All work done in a single transaction.
     """
     counts: dict[str, int] = {t: 0 for t in _EXPORT_TABLES}
+    # old sqlite id → new postgres id, per table (only populated when remap_ids=True)
+    id_maps: dict[str, dict[int, int]] = {t: {} for t in _EXPORT_TABLES}
 
     with store.conn.cursor() as cur:
+        if remap_ids:
+            # Advance every sequence past the current global max BEFORE any deletes,
+            # so the max reflects all committed data. Running this after the replace
+            # DELETE would lower the max and could reset the sequence back to 1.
+            for table in _EXPORT_TABLES:
+                try:
+                    seq_row = cur.execute(
+                        f"SELECT pg_get_serial_sequence('{table}', 'id') AS seq"
+                    ).fetchone()
+                    seq_name = seq_row["seq"] if seq_row else None
+                    if seq_name:
+                        cur.execute(
+                            f"SELECT setval('{seq_name}',"
+                            f" COALESCE((SELECT MAX(id) FROM {table}), 0), true)"
+                        )
+                except Exception:
+                    pass
+
         if replace:
             for table in reversed(_EXPORT_TABLES):
                 cur.execute(f"DELETE FROM {table} WHERE repo_id = %s", (store.repo_id,))
 
         for record in records:
             table = record["table"]
-            data = record["data"]
+            data = dict(record["data"])
             rid = record.get("repo_id", store.repo_id)
-            _import_row(cur, table, rid, data)
+
+            if remap_ids:
+                # Remap any FK columns that reference tables we've already inserted.
+                for fk_col, ref_table in _IMPORT_FK_COLUMNS.get(table, []):
+                    old_ref = data.get(fk_col)
+                    if old_ref is not None and old_ref in id_maps[ref_table]:
+                        data[fk_col] = id_maps[ref_table][old_ref]
+                old_id = data.pop("id", None)
+                new_id = _import_row(cur, table, rid, data, returning_id=True)
+                if old_id is not None and new_id is not None:
+                    id_maps[table][old_id] = new_id
+            else:
+                _import_row(cur, table, rid, data)
+
             counts[table] = counts.get(table, 0) + 1
 
         # Advance sequences so next auto-generated IDs don't collide.
         for table in _EXPORT_TABLES:
             try:
-                cur.execute(
-                    f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
-                    f"COALESCE((SELECT MAX(id) FROM {table} WHERE repo_id = %s), 0) + 1, false)",
-                    (store.repo_id,),
-                )
+                seq_row = cur.execute(
+                    f"SELECT pg_get_serial_sequence('{table}', 'id') AS seq"
+                ).fetchone()
+                seq_name = seq_row["seq"] if seq_row else None
+                if seq_name:
+                    cur.execute(
+                        f"SELECT setval('{seq_name}',"
+                        f" COALESCE((SELECT MAX(id) FROM {table}), 0), true)",
+                    )
             except Exception:
                 pass
 
@@ -1542,7 +1616,14 @@ def import_ndjson(store: PgStore, records: list[dict], *, replace: bool = False)
     return counts
 
 
-def _import_row(cur: Any, table: str, repo_id: str, data: dict) -> None:
+def _import_row(
+    cur: Any,
+    table: str,
+    repo_id: str,
+    data: dict,
+    *,
+    returning_id: bool = False,
+) -> int | None:
     """Insert one row into the named table, using OVERRIDING SYSTEM VALUE for identity columns."""
     row = dict(data)
     row["repo_id"] = repo_id
@@ -1556,11 +1637,23 @@ def _import_row(cur: Any, table: str, repo_id: str, data: dict) -> None:
         row["payload"] = json.dumps(_contracts.canonicalize_event_payload(event_type, payload))
 
     cols = list(row.keys())
-    placeholders = ", ".join(["%s"] * len(cols))
     col_names = ", ".join(cols)
+    placeholders = ", ".join(["%s"] * len(cols))
     values = [row[c] for c in cols]
+    suffix = " RETURNING id" if returning_id else ""
 
-    cur.execute(
-        f"INSERT INTO {table} ({col_names}) OVERRIDING SYSTEM VALUE VALUES ({placeholders})",
-        values,
-    )
+    if "id" in row:
+        cur.execute(
+            f"INSERT INTO {table} ({col_names}) OVERRIDING SYSTEM VALUE VALUES ({placeholders}){suffix}",
+            values,
+        )
+    else:
+        cur.execute(
+            f"INSERT INTO {table} ({col_names}) VALUES ({placeholders}){suffix}",
+            values,
+        )
+
+    if returning_id:
+        result = cur.fetchone()
+        return result["id"] if result else None
+    return None
