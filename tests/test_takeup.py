@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 from sprintctl import db
 from sprintctl.cli import cli
@@ -74,6 +75,7 @@ def test_takeup_history_pairs_release_by_matched_event_id(conn, active_sprint):
             "instance_id": "inst-a",
             "hostname": "host-a",
             "pid": 111,
+            "runtime_session_id": None,
             "taken_up_at": history["released_takeups"][0]["taken_up_at"],
             "taken_up_event_id": first,
             "context": "cockpit-realign",
@@ -382,6 +384,98 @@ def test_takeup_list_cli_text_renders_active_table(runner, conn, active_sprint, 
     assert "Active takeups:" in result.output
     assert "agent-a" in result.output
     assert "devbox" in result.output
+
+
+def _fake_actionctl_sessions(monkeypatch, rows):
+    import sprintctl.cli as cli_module
+
+    def fake_run(args, **kwargs):
+        if args[:2] == ["actionctl", "sessions"]:
+            return subprocess.CompletedProcess(args, 0, stdout=json.dumps(rows), stderr="")
+        if args and args[0] == "auditctl":
+            return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
+        raise AssertionError(f"unexpected subprocess call: {args}")
+
+    monkeypatch.setattr(cli_module.subprocess, "run", fake_run)
+
+
+def test_takeup_sweep_releases_takeup_when_runtime_session_absent(
+    runner,
+    conn,
+    active_sprint,
+    db_path,
+    monkeypatch,
+):
+    _takeup(
+        conn,
+        active_sprint["id"],
+        "agent-a",
+        "inst-a",
+        runtime_session_id="aqs:missing",
+    )
+    _fake_actionctl_sessions(monkeypatch, [])
+
+    result = runner.invoke(cli, ["takeup", "sweep", "--sprint-id", str(active_sprint["id"]), "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["operation"] == "takeup_sweep"
+    assert data["released_takeups"][0]["reason"] == "session-not-active"
+    history = db.list_takeup_history(conn, active_sprint["id"])
+    assert history["active_takeups"] == []
+    assert history["released_takeups"][0]["actor"] == "agent-a"
+    assert history["released_takeups"][0]["matched_takeup_event_id"] is not None
+
+
+def test_takeup_sweep_keeps_takeup_when_runtime_session_active(
+    runner,
+    conn,
+    active_sprint,
+    db_path,
+    monkeypatch,
+):
+    _takeup(
+        conn,
+        active_sprint["id"],
+        "agent-a",
+        "inst-a",
+        runtime_session_id="aqs:active",
+    )
+    _fake_actionctl_sessions(monkeypatch, [{"session_id": "aqs:active", "status": "running"}])
+
+    result = runner.invoke(cli, ["takeup", "sweep", "--sprint-id", str(active_sprint["id"]), "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["released_takeups"] == []
+    assert data["skipped_takeups"][0]["reason"] == "session-active"
+    assert len(db.list_active_takeups(conn, active_sprint["id"])) == 1
+
+
+def test_takeup_sweep_stale_after_releases_old_takeup_without_runtime_session(
+    runner,
+    conn,
+    active_sprint,
+    db_path,
+    monkeypatch,
+):
+    event_id = _takeup(conn, active_sprint["id"], "agent-a", "inst-a")
+    conn.execute(
+        "UPDATE event SET created_at = ? WHERE id = ?",
+        ("2026-01-01T00:00:00Z", event_id),
+    )
+    conn.commit()
+    _fake_actionctl_sessions(monkeypatch, [])
+
+    result = runner.invoke(
+        cli,
+        ["takeup", "sweep", "--sprint-id", str(active_sprint["id"]), "--stale-after", "1", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["released_takeups"][0]["reason"] == "no-session-stale"
+    assert db.list_active_takeups(conn, active_sprint["id"]) == []
 
 
 def test_render_includes_active_takeup_section(runner, conn, active_sprint, db_path):

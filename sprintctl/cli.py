@@ -1428,6 +1428,158 @@ def _render_takeup_rows(rows: list[dict], *, released: bool = False) -> None:
         click.echo(f"  {line}")
 
 
+def _parse_utc_timestamp(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _load_active_actionq_session_ids(actionctl_bin: str) -> set[str]:
+    result = subprocess.run(
+        [actionctl_bin, "sessions", "--active"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise click.ClickException(f"actionctl sessions failed: {detail}")
+    try:
+        rows = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        raise click.ClickException("actionctl sessions returned invalid JSON") from exc
+    if not isinstance(rows, list):
+        raise click.ClickException("actionctl sessions output must be a JSON array")
+
+    active_statuses = {"running", "starting", "claimed", "active"}
+    session_ids: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        status = str(row.get("status") or "running")
+        if status not in active_statuses:
+            continue
+        for key in ("runtime_session_id", "session_id"):
+            value = row.get(key)
+            if value:
+                session_ids.add(str(value))
+    return session_ids
+
+
+def _release_takeup_from_sweep(store, m, row: dict, *, reason: str, detail: str) -> int:
+    return m.create_event(
+        store,
+        int(row["sprint_id"]),
+        "sweep",
+        "sprint-released",
+        payload=_takeup_payload(
+            actor_kind="agent",
+            hostname=_detect_hostname(None),
+            pid=_detect_pid(None),
+            instance_id=row.get("instance_id"),
+            runtime_session_id=row.get("runtime_session_id"),
+            summary="takeup sweep release",
+            detail=detail,
+            reason=reason,
+            matched_takeup_event_id=int(row["taken_up_event_id"]),
+        ),
+    )
+
+
+@takeup.command("sweep")
+@click.option("--sprint-id", type=int, default=None, help="Limit sweep to one sprint")
+@click.option("--actionctl-bin", default="actionctl", show_default=True, help="actionctl executable")
+@click.option(
+    "--stale-after",
+    type=int,
+    default=None,
+    help="Also release takeups without runtime_session_id older than N seconds",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.pass_obj
+def takeup_sweep_cmd(obj, sprint_id, actionctl_bin, stale_after, as_json) -> None:
+    """Release takeups whose actionq runtime sessions are no longer active."""
+    store, m = _get_store(obj)
+    if sprint_id is not None and m.get_sprint(store, sprint_id) is None:
+        click.echo(f"Sprint #{sprint_id} not found.", err=True)
+        sys.exit(1)
+
+    active_session_ids = _load_active_actionq_session_ids(actionctl_bin)
+    now = datetime.now(timezone.utc)
+    released: list[dict] = []
+    skipped: list[dict] = []
+
+    for row in m.list_active_takeups(store, sprint_id):
+        runtime_session_id = row.get("runtime_session_id")
+        reason: str | None = None
+        detail: str | None = None
+
+        if runtime_session_id:
+            if runtime_session_id in active_session_ids:
+                skipped.append({
+                    "taken_up_event_id": row["taken_up_event_id"],
+                    "sprint_id": row["sprint_id"],
+                    "actor": row["actor"],
+                    "reason": "session-active",
+                })
+                continue
+            reason = "session-not-active"
+            detail = f"runtime_session_id {runtime_session_id} is not active in actionctl sessions"
+        elif stale_after is not None:
+            age_seconds = (now - _parse_utc_timestamp(row["taken_up_at"])).total_seconds()
+            if age_seconds < stale_after:
+                skipped.append({
+                    "taken_up_event_id": row["taken_up_event_id"],
+                    "sprint_id": row["sprint_id"],
+                    "actor": row["actor"],
+                    "reason": "takeup-not-stale",
+                    "age_seconds": int(age_seconds),
+                })
+                continue
+            reason = "no-session-stale"
+            detail = f"takeup has no runtime_session_id and is older than {stale_after} seconds"
+        else:
+            skipped.append({
+                "taken_up_event_id": row["taken_up_event_id"],
+                "sprint_id": row["sprint_id"],
+                "actor": row["actor"],
+                "reason": "no-runtime-session-id",
+            })
+            continue
+
+        event_id = _release_takeup_from_sweep(
+            store,
+            m,
+            row,
+            reason=reason,
+            detail=detail,
+        )
+        released.append({
+            "released_event_id": event_id,
+            "matched_takeup_event_id": row["taken_up_event_id"],
+            "sprint_id": row["sprint_id"],
+            "actor": row["actor"],
+            "runtime_session_id": runtime_session_id,
+            "reason": reason,
+        })
+
+    payload = {
+        "operation": "takeup_sweep",
+        "sprint_id": sprint_id,
+        "active_session_count": len(active_session_ids),
+        "released_takeups": released,
+        "skipped_takeups": skipped,
+    }
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+        return
+
+    click.echo(f"Released {len(released)} takeup(s); skipped {len(skipped)}.")
+    for row in released:
+        click.echo(
+            f"  sprint #{row['sprint_id']} takeup #{row['matched_takeup_event_id']} "
+            f"released as #{row['released_event_id']} ({row['reason']})"
+        )
+
+
 @takeup.command("take")
 @click.option("--sprint-id", type=int, required=True, help="Sprint ID")
 @click.option("--actor", required=True, help="Actor name")
@@ -4266,6 +4418,7 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "  takeup release --sprint-id ID --actor NAME [--instance-id ID] [--reason TEXT] [--json]",
         "  takeup list    [--sprint-id ID] [--all-history] [--json]",
         "  takeup show    --sprint-id ID [--json]",
+        "  takeup sweep   [--sprint-id ID] [--stale-after SECONDS] [--json]",
         "",
         "MAINTAIN",
         "  maintain check    [--sprint-id ID] [--threshold Nh] [--json]",
@@ -4298,7 +4451,7 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "  handoff        [--sprint-id ID] [--output PATH] [--events N] [--format json|text]",
         "  render         [--sprint-id ID] [--output PATH]",
         "  next-work      [--sprint-id ID] [--json] [--explain]",
-        "  takeup         take|release|list|show",
+        "  takeup         take|release|list|show|sweep",
         "  session resume [--sprint-id ID] [--json]",
         "  git-context    [--json]",
         "  agent-protocol [--json]",

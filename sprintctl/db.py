@@ -652,6 +652,7 @@ def _serialize_takeup_row(row: dict, payload: dict) -> dict:
         "instance_id": payload.get("instance_id"),
         "hostname": payload.get("hostname"),
         "pid": payload.get("pid"),
+        "runtime_session_id": payload.get("runtime_session_id"),
         "taken_up_at": row["created_at"],
         "taken_up_event_id": row["id"],
         "context": payload.get("context"),

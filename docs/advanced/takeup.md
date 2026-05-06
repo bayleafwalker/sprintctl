@@ -54,6 +54,25 @@ sprintctl takeup show --sprint-id <id> --json
 `sprintctl render` and `sprintctl sprint show --detail` include active takeups
 when any exist.
 
+Release stale takeups whose actionq runtime session is no longer active:
+
+```sh
+sprintctl takeup sweep --json
+```
+
+By default, sweep only releases active takeups that recorded a
+`runtime_session_id` and whose session is absent from `actionctl sessions
+--active`. To clean up old pre-integration takeups that never recorded a runtime
+session, pass a conservative age threshold:
+
+```sh
+sprintctl takeup sweep --stale-after 86400 --json
+```
+
+Sweep is append-only. It records `sprint-released` events with `actor=sweep`,
+`reason=session-not-active` or `reason=no-session-stale`, and
+`matched_takeup_event_id` pointing at the takeup being released.
+
 ## Force
 
 `takeup take` rejects a second active takeup for the same actor and instance.
