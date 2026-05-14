@@ -1631,6 +1631,7 @@ def takeup_take_cmd(
         sprint_id=sprint_id,
         actor=actor,
         instance_id=instance_id,
+        m=m,
     )
     if active_matches and not force:
         click.echo(
@@ -1736,6 +1737,7 @@ def takeup_release_cmd(
         sprint_id=sprint_id,
         actor=actor,
         instance_id=instance_id,
+        m=m,
     )
     matched = matches[-1] if matches else None
     matched_takeup_event_id = matched["taken_up_event_id"] if matched else None
