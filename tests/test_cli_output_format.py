@@ -55,6 +55,8 @@ class TestNextWorkExplainTextFormatting:
                 "  ID  TRACK  ASSIGNEE  TITLE     ",
                 "  --  -----  --------  ----------",
                 f"  #{item_id}  eng    -         Ready task",
+                "  Refs:",
+                "    (none — ready items carry no doc refs; see 'item ref add --type doc')",
                 "",
                 "Dependency waiting items (0):",
                 "  (none)",

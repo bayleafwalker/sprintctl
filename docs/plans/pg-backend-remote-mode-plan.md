@@ -1,3 +1,9 @@
+---
+doc_id: pg-backend-remote-mode-plan
+status: ratified
+supersedes: null
+---
+
 # sprintctl pg backend and remote mode plan
 
 Workstream B of `/projects/dev/agentops/docs/plans/agentops/agent-ops-substrate-plan.md`. Workstream A is assumed shipped: the `sprint-taken-up` / `sprint-released` event model and canonical payloads from `contracts.py` are the contract this pg backend must preserve exactly.

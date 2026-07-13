@@ -1,3 +1,9 @@
+---
+doc_id: roadmap-reset
+status: ratified
+supersedes: null
+---
+
 # Roadmap Reset: sprintctl as Agent-Native Execution Memory
 
 ## Summary

@@ -738,6 +738,11 @@ def item_show(obj, item_id, as_json) -> None:
         for r in refs:
             label = f"  {r['label']}" if r["label"] else ""
             click.echo(f"  #{r['id']}  [{r['ref_type']}]  {r['url']}{label}")
+    else:
+        click.echo(
+            f"\nRefs: (none — attach the spec/plan doc with "
+            f"'sprintctl item ref add --id {item_id} --type doc --url docs/<path>')"
+        )
 
     if blocking:
         click.echo("\nBlocked by:")
@@ -1066,7 +1071,11 @@ def item_ref() -> None:
     type=click.Choice(["pr", "issue", "doc", "other"]),
     help="Reference type",
 )
-@click.option("--url", required=True, help="URL of the external reference")
+@click.option(
+    "--url",
+    required=True,
+    help="URL of the external reference (doc refs also accept a repo-relative path, e.g. docs/plans/my-plan.md)",
+)
 @click.option("--label", default="", help="Short human-readable label")
 @click.pass_obj
 def item_ref_add(obj, item_id, ref_type, url, label) -> None:
@@ -1963,6 +1972,23 @@ def _active_items_without_claims(active_items: list[dict], active_claims: list[d
     return [item for item in active_items if item["id"] not in claimed_item_ids]
 
 
+def _format_ref_line(ref: dict) -> str:
+    label = f"  {ref['label']}" if ref.get("label") else ""
+    return f"[{ref['ref_type']}]  {ref['url']}{label}"
+
+
+def _echo_item_refs(refs: list[dict], item_id: int) -> None:
+    if not refs:
+        click.echo(
+            f"Refs: (none — attach the spec/plan doc with "
+            f"'sprintctl item ref add --id {item_id} --type doc --url docs/<path>')"
+        )
+        return
+    click.echo(f"Refs on item #{item_id}:")
+    for r in refs:
+        click.echo(f"  {_format_ref_line(r)}")
+
+
 def _collect_next_work_explained_payload(
     *,
     conn,
@@ -2004,11 +2030,13 @@ def _collect_next_work_explained_payload(
         commands=recommended_commands,
         next_action=next_action,
     )
+    refs_by_ready_item = m.list_refs_for_items(conn, [item["id"] for item in ready_items])
     ready_with_reason = [
         {
             **item,
             "reason_code": "ready-unblocked",
             "reason": "No unresolved blocking dependencies.",
+            "refs": refs_by_ready_item.get(item["id"], []),
         }
         for item in ready_items
     ]
@@ -2087,6 +2115,18 @@ def _render_next_work_explained_text(payload: dict) -> str:
             )
         for line in _render_table(["ID", "TRACK", "ASSIGNEE", "TITLE"], rows):
             lines.append(f"  {line}")
+        items_with_refs = [item for item in ready_items if item.get("refs")]
+        lines.append("  Refs:")
+        if items_with_refs:
+            for item in items_with_refs:
+                for ref in item["refs"]:
+                    lines.append(f"    #{item['id']}  {_format_ref_line(ref)}")
+            without = [item for item in ready_items if not item.get("refs")]
+            if without:
+                ids = ", ".join(f"#{item['id']}" for item in without)
+                lines.append(f"    (no refs: {ids})")
+        else:
+            lines.append("    (none — ready items carry no doc refs; see 'item ref add --type doc')")
     else:
         lines.append("  (none)")
     lines.append("")
@@ -2203,17 +2243,23 @@ def _collect_session_resume_payload(*, conn, sprint: dict, now: datetime, m=None
         f"sprintctl next-work --sprint-id {sprint['id']} --json --explain",
         "sprintctl claim resume --json",
     ]
+    claimed_item_refs = m.list_refs_for_items(
+        conn, [claim["work_item_id"] for claim in context["active_claims"]]
+    )
     claim_recovery = {
         "current_identity": {
             "runtime_session_id": current_runtime_session_id,
             "instance_id": current_instance_id,
         },
         "active_claims": [
-            _claim_recovery_status(
-                claim,
-                current_runtime_session_id=current_runtime_session_id,
-                current_instance_id=current_instance_id,
-            )
+            {
+                **_claim_recovery_status(
+                    claim,
+                    current_runtime_session_id=current_runtime_session_id,
+                    current_instance_id=current_instance_id,
+                ),
+                "refs": claimed_item_refs.get(claim["work_item_id"], []),
+            }
             for claim in context["active_claims"]
         ],
     }
@@ -2280,6 +2326,12 @@ def _render_session_resume_text(payload: dict) -> str:
                 f"identity_match={'yes' if claim['plausible_identity_match'] else 'no'}"
             )
             lines.append(f"    path: {claim['recovery_token_path']}")
+            refs = claim.get("refs", [])
+            if refs:
+                for ref in refs:
+                    lines.append(f"    ref: {_format_ref_line(ref)}")
+            else:
+                lines.append("    ref: (none — no doc attached to this item)")
 
     lines.append("")
     lines.append("usage --context snapshot:")
@@ -3395,9 +3447,11 @@ def claim_create(
     claim = m.get_claim(store, cid, include_secret=True)
     assert claim is not None
     recovery_path = _write_claim_recovery_record(claim)
+    refs = m.list_refs(store, item_id)
     if as_json:
+        claim = dict(claim)
+        claim["refs"] = refs
         if recovery_path is not None:
-            claim = dict(claim)
             claim["local_recovery"] = {
                 "recovery_token_exists": True,
                 "recovery_token_path": str(recovery_path),
@@ -3408,6 +3462,7 @@ def claim_create(
     click.echo(f"Claim token: {claim['claim_token']}")
     if recovery_path is not None:
         click.echo(f"Recovery token file: {recovery_path}")
+    _echo_item_refs(refs, item_id)
 
 
 @claim.command("start")
@@ -3511,6 +3566,7 @@ def claim_start(
 
     updated_item = m.get_work_item(store, item_id)
     assert updated_item is not None
+    refs = m.list_refs(store, item_id)
     if as_json:
         click.echo(json.dumps({
             "operation": "claim_start",
@@ -3525,6 +3581,7 @@ def claim_start(
             "item_status_before": previous_status,
             "item_status_after": updated_item["status"],
             "status_transition_applied": transitioned,
+            "refs": refs,
         }, indent=2))
         return
 
@@ -3536,6 +3593,7 @@ def claim_start(
     click.echo(f"Claim token: {claim['claim_token']}")
     if recovery_path is not None:
         click.echo(f"Recovery token file: {recovery_path}")
+    _echo_item_refs(refs, item_id)
 
 
 @claim.command("heartbeat")

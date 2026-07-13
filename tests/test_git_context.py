@@ -152,6 +152,13 @@ class TestItemNoteGitContext:
 
 
 class TestGitContextCommand:
+    @pytest.fixture(autouse=True)
+    def _git_repo(self, tmp_path):
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "config", "user.name", "Tests"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "commit", "--allow-empty", "-qm", "initial"], cwd=tmp_path, check=True)
+
     def test_git_context_exits_zero_in_git_repo(self, runner, db_path):
         result = runner.invoke(cli, ["git-context"])
         assert result.exit_code == 0, result.output
@@ -205,7 +212,9 @@ class TestGitContextCommand:
         ]
 
     def test_git_context_outside_repo(self, runner, db_path, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
+        outside = tmp_path.parent / "outside"
+        outside.mkdir()
+        monkeypatch.chdir(outside)
         result = runner.invoke(cli, ["git-context"])
         # Should exit non-zero or show a clear "not a git repo" message
         assert result.exit_code != 0 or "not a git" in result.output.lower()

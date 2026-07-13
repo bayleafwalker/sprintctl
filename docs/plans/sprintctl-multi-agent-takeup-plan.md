@@ -1,3 +1,9 @@
+---
+doc_id: sprintctl-multi-agent-takeup-plan
+status: ratified
+supersedes: null
+---
+
 # sprintctl multi-agent takeup plan
 
 Workstream A of `/projects/dev/agentops/docs/plans/agentops/agent-ops-substrate-plan.md`. Sqlite-only. Adds a sprint-level "takeup" event-pair, removes any single-active-sprint assumption that survives in render/show paths, and surfaces takeup state in the per-sprint render. This plan is the prerequisite for everything else in the substrate plan; the event model defined here is the contract that workstream B's pg schema must mirror exactly.

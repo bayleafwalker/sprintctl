@@ -26,6 +26,12 @@ def _suppress_auditctl(monkeypatch):
     monkeypatch.setattr(_cli_module.subprocess, "run", _selective)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_cli_cwd(tmp_path, monkeypatch):
+    """Keep local-mode CLI tests out of this checkout's remote marker."""
+    monkeypatch.chdir(tmp_path)
+
+
 @pytest.fixture
 def db_path(tmp_path, monkeypatch):
     path = tmp_path / "test.db"

@@ -1260,7 +1260,7 @@ def find_claim_by_identity(
 def add_ref(store: PgStore, work_item_id: int, ref_type: str, url: str, label: str = "") -> int:
     if ref_type not in REF_TYPES:
         raise ValueError(f"Invalid ref_type '{ref_type}'. Must be one of: {', '.join(REF_TYPES)}")
-    _validate_ref_url(url)
+    _validate_ref_url(url, ref_type)
     item = get_work_item(store, work_item_id)
     if item is None:
         raise ValueError(f"Work item #{work_item_id} not found")
@@ -1286,6 +1286,26 @@ def list_refs(store: PgStore, work_item_id: int) -> list[dict]:
         )
         rows = cur.fetchall()
     return [_norm(r) for r in rows]
+
+
+def list_refs_for_items(store: PgStore, work_item_ids: list[int]) -> dict[int, list[dict]]:
+    if not work_item_ids:
+        return {}
+    with store.conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT * FROM ref
+            WHERE repo_id = %s AND work_item_id = ANY(%s)
+            ORDER BY created_at ASC, id ASC
+            """,
+            (store.repo_id, list(work_item_ids)),
+        )
+        rows = cur.fetchall()
+    refs_by_item: dict[int, list[dict]] = {}
+    for r in rows:
+        normed = _norm(r)
+        refs_by_item.setdefault(normed["work_item_id"], []).append(normed)
+    return refs_by_item
 
 
 def remove_ref(store: PgStore, ref_id: int, work_item_id: int) -> None:

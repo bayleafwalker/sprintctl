@@ -1,3 +1,9 @@
+---
+doc_id: operator-ux-roadmap
+status: ratified
+supersedes: null
+---
+
 # Operator UX roadmap
 
 sprintctl is a local-first CLI tool. This document defines the phased approach

@@ -173,10 +173,29 @@ _MIGRATIONS: list[str] = [
 REF_TYPES = ("pr", "issue", "doc", "other")
 
 
-def _validate_ref_url(url: str) -> None:
+def _is_repo_relative_doc_path(url: str) -> bool:
+    if not url or url != url.strip() or url.startswith(("/", "~")):
+        return False
+    if urlparse(url).scheme:
+        return False
+    if "/" not in url and not url.endswith(".md"):
+        return False
+    parts = url.split("/")
+    return ".." not in parts and "" not in parts
+
+
+def _validate_ref_url(url: str, ref_type: str = "other") -> None:
     parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("Invalid ref URL. Use an absolute http(s) URL.")
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return
+    if ref_type == "doc":
+        if _is_repo_relative_doc_path(url):
+            return
+        raise ValueError(
+            "Invalid ref URL. Doc refs accept an absolute http(s) URL "
+            "or a repo-relative path (e.g. docs/plans/my-plan.md)."
+        )
+    raise ValueError("Invalid ref URL. Use an absolute http(s) URL.")
 
 
 def get_db_path() -> Path:
@@ -1487,7 +1506,7 @@ def add_ref(
 ) -> int:
     if ref_type not in REF_TYPES:
         raise ValueError(f"Invalid ref_type '{ref_type}'. Must be one of: {', '.join(REF_TYPES)}")
-    _validate_ref_url(url)
+    _validate_ref_url(url, ref_type)
     item = get_work_item(conn, work_item_id)
     if item is None:
         raise ValueError(f"Work item #{work_item_id} not found")
@@ -1505,6 +1524,20 @@ def list_refs(conn: sqlite3.Connection, work_item_id: int) -> list[dict]:
         (work_item_id,),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def list_refs_for_items(conn: sqlite3.Connection, work_item_ids: list[int]) -> dict[int, list[dict]]:
+    if not work_item_ids:
+        return {}
+    placeholders = ",".join("?" for _ in work_item_ids)
+    rows = conn.execute(
+        f"SELECT * FROM ref WHERE work_item_id IN ({placeholders}) ORDER BY created_at ASC, id ASC",
+        list(work_item_ids),
+    ).fetchall()
+    refs_by_item: dict[int, list[dict]] = {}
+    for r in rows:
+        refs_by_item.setdefault(r["work_item_id"], []).append(dict(r))
+    return refs_by_item
 
 
 def remove_ref(conn: sqlite3.Connection, ref_id: int, work_item_id: int) -> None:
