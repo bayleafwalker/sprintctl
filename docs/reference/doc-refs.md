@@ -38,6 +38,10 @@ Status rules:
   its `supersedes` field. Never delete superseded docs; the refs pointing at
   them are execution history.
 
+The frontmatter `status` is editorial authority, not execution state. Item
+status, claims, and completion remain in sprintctl. Do not maintain a second
+pending/active/done field by hand in the document body.
+
 ## Attaching a doc ref to an item
 
 Doc refs accept a repo-relative path (preferred for repo docs) or an absolute
@@ -54,6 +58,31 @@ sprintctl item ref add \
 Convention: **every shaped item carries either a doc ref or an explicit
 "no doc" note** (`item note --type decision --summary "No doc: scope fits in
 the item title/notes."`). Absence of both means the item is not yet shaped.
+
+## Pinning the executed revision
+
+Stable identity answers which document; execution provenance also records
+which revision. An identity-only label is valid while shaping. Before
+implementation begins against a ratified doc, add a versioned ref whose label
+uses the full Git commit SHA:
+
+```bash
+sprintctl item ref add \
+  --id <item-id> \
+  --type doc \
+  --url docs/plans/my-feature-plan.md \
+  --label my-feature-plan@git:0123456789abcdef0123456789abcdef01234567
+```
+
+The path and SHA together identify the exact bytes (`git show
+<sha>:docs/plans/my-feature-plan.md`). Keep the identity-only shaping ref as
+history or remove it explicitly; do not mutate a ref behind an active claim.
+If scope moves to a newer revision, attach that revision and record the change
+as an item decision.
+
+Identity-only refs remain compatible with Phase 0, but an active or completed
+item without a pinned revision has incomplete execution provenance. Report it
+as a reconciliation finding rather than guessing which revision was used.
 
 ## Where refs surface
 
@@ -77,6 +106,9 @@ When you claim an item and its ref points at a repo doc:
    in the doc is the scope; the item title is just the handle.
 2. Check the doc's `status`. If `superseded`, follow the chain to the
    successor and flag the stale ref with a note on the item.
-3. When your work changes what the doc claims (e.g. a `Status:` field inside
-   the doc body), update the doc in the same commit — the reconciliation cost
-   of drifting docs is a whole sprint, not a diff.
+3. Resolve a versioned label from the pinned Git revision. If the item is
+   active but its governing ref has no revision, attach one before continuing
+   or record why provenance cannot be recovered.
+4. When implementation changes a semantic claim, update the doc through its
+   normal review lifecycle. Do not set `ratified` or mirror item completion in
+   the document automatically.

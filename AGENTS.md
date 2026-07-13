@@ -87,6 +87,9 @@ Save **both** `claim_id` and `claim_token` from the response.
 `claim_token` is a secret — store it for the entire session.
 sprintctl also writes a local recovery token file next to the active database
 so `claim recover` can restore the secret after context loss.
+The claim response also carries the item's refs. Read every governing doc ref
+before editing files, and pin the executed revision as described in
+`docs/reference/doc-refs.md`.
 
 **Coordinators** (orchestrators spawning sub-agents): claim with `--type coordinate`.
 Sub-agents then call `claim create` with `--coordinate-claim-id` and `--coordinate-claim-token`
@@ -209,10 +212,20 @@ sprintctl git-context [--json]
 
 ## Refs and deps
 
-After creating or claiming an item you can attach external references:
+An item is shaped only when it has a governing doc ref or an explicit `No doc:`
+decision note. Follow `docs/reference/doc-refs.md`; agents never set a doc to
+`ratified` themselves.
 
 ```bash
-# Attach a PR, issue, doc, or other URL
+# Attach a governing repo doc while shaping
+sprintctl item ref add --id <item-id> --type doc \
+  --url docs/plans/<plan>.md --label <doc-id>
+
+# Before implementation, pin the exact revision in a second ref label
+sprintctl item ref add --id <item-id> --type doc \
+  --url docs/plans/<plan>.md --label <doc-id>@git:<full-commit-sha>
+
+# Attach other evidence and inspect/remove refs
 sprintctl item ref add --id <item-id> --type pr --url <url> [--label <text>]
 sprintctl item ref list --id <item-id> [--json]
 sprintctl item ref remove --id <item-id> --ref-id <ref-id>
@@ -247,6 +260,15 @@ sprintctl item note --id <item-id> --type decision \
 `--worktree`, and `--pr-ref` to keep the claim record current as work progresses.
 
 ---
+
+## Stateful protocol verification
+
+Routing and hooks are declared in `sprintctl.dispatch.json`; closed subjects
+and escalation rules live in `.agents/overlays/sprintctl.state-protocols.md`.
+Use `verify-state-protocols` for claims, proof rotation, retries, projections,
+or SQLite/PostgreSQL parity. `survey` and `reconcile` are read-only; product
+repair requires separate authorization. Run concurrent histories only against
+temporary SQLite databases and disposable PostgreSQL repository scopes.
 
 ## Environment variables
 

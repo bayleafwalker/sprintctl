@@ -10,6 +10,9 @@ Sprint state is managed with `sprintctl`.
 - Load `.envrc` before using `sprintctl`; the project DB should resolve to `.sprintctl/sprintctl.db`, not a home-directory default.
 - For sprint-scoped work, consult live `sprintctl` state before repo docs when choosing or resuming work.
 - Inspect item status, recent events, and active claims before editing repo files.
+- Treat an item as shaped only when it has a governing doc ref or an explicit `No doc:` decision note.
+- Read the governing doc before editing, and never set its frontmatter `status` to `ratified` as an agent.
+- Before implementation, pin the executed revision with a `<doc-id>@git:<full-commit-sha>` ref label.
 - Claim sprint items before repo edits when parallel overlap is possible.
 - Use a strong live claim identity for each agent session: `runtime_session_id`, `instance_id`, and the returned `claim_token`.
 - Treat actor label, branch, worktree, commit SHA, hostname, and pid as advisory metadata only.
