@@ -50,7 +50,7 @@ conflicts, and a local next-step recommendation.
 - text mode (`next-work --explain`) renders a human-readable summary
 - JSON mode (`next-work --json --explain`) emits the full typed contract below
 
-Contract version: `2`
+Contract version: `1`
 
 Top-level shape:
 
@@ -73,7 +73,7 @@ Top-level shape:
 Field intent:
 
 - `summary.pending_total`: `ready + waiting_on_dependencies`
-- `ready_items`: pending items with no unresolved blockers, each with `reason_code=ready-unblocked`
+- `ready_items`: pending items with no unresolved blockers, each with `reason_code=ready-unblocked` and its `refs` array
 - `dependency_waiting_items`: pending items excluded from ready output due to unresolved blockers, each with `reason_code=waiting-on-dependencies`
 - `active_claims`: current active claim slice without claim secrets
 - `active_unclaimed_items`: active items with no live claim
@@ -117,7 +117,7 @@ Compatibility note:
 - `next-work --json --explain`
 - current git metadata from `git-context` when available
 
-Contract version: `1`
+Contract version: `2`
 
 Top-level shape:
 
@@ -141,7 +141,7 @@ Field intent:
 - `context`: embedded `usage --context --json` contract
 - `next_work`: embedded `next-work --json --explain` contract
 - `git_context`: current branch/SHA/worktree/dirty-files when in a git repo; otherwise `null`
-- `claim_recovery`: local token-recovery status for each active claim, including whether a sprintctl-managed recovery file exists, where it lives, and whether the current runtime/instance identity plausibly matches
+- `claim_recovery`: local token-recovery status and item `refs` for each active claim, including whether a sprintctl-managed recovery file exists, where it lives, and whether the current runtime/instance identity plausibly matches
 - `next_action`: primary recommendation for resume flows
 - `recommended_sequence`: explicit follow-up command sequence
 - `recommended_sequence_bundle`: structured metadata for `recommended_sequence`, using the same step schema as `next_work.recommended_command_bundle`

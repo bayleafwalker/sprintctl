@@ -1,0 +1,43 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.claim.backend-parity",
+  "owner_repo": "sprintctl",
+  "subject": "work-item-claim-set",
+  "contract_ref": {
+    "doc_id": "sprintctl.claim-ownership",
+    "revision": "sha256:6383fb5c86720a9ddf538356a1b13462e2f1e3a14013163ab89d61813d29b4c8"
+  },
+  "source_of_truth": "sqlite-or-repository-scoped-postgres",
+  "depth": 2,
+  "backends": ["sqlite", "postgres"],
+  "actors": ["worker-a", "worker-b", "coordinator"],
+  "initial_state": ["item=pending", "active-exclusive-claims=0"],
+  "operations": [
+    { "name": "create-exclusive-claim", "actors": ["worker-a", "worker-b"], "synchronization": "barrier-before-conflict-check" },
+    { "name": "handoff-rotate", "actors": ["worker-a", "worker-b"], "synchronization": "barrier-before-proof-bearing-write" },
+    { "name": "heartbeat-with-old-token", "actors": ["worker-a"], "synchronization": "after-handoff-commit" }
+  ],
+  "consistency": { "target": "application-invariant", "object": "exclusive-claim-ownership" },
+  "assumptions": { "isolation": "record-actual-backend-isolation", "clock": "backend-clock", "fairness": "none" },
+  "bounds": { "actors": 3, "iterations": 200, "claims_per_item": 2 },
+  "invariants": [
+    "at-most-one-live-exclusive-owner-outside-authorized-delegation",
+    "old-token-cannot-mutate-after-rotated-handoff",
+    "conflict-failure-does-not-create-requested-claim",
+    "accepted-and-rejected-histories-match-across-backends"
+  ],
+  "faults": [
+    "lost-response-after-create-commit",
+    "lost-response-after-handoff-commit",
+    "expiry-at-conflict-check",
+    "connection-close-before-response"
+  ],
+  "oracles": ["reference-model", "active-claim-invariant-query", "token-rotation-check", "backend-history-diff"],
+  "implementation_anchors": [
+    "sprintctl/db.py:create_claim",
+    "sprintctl/db.py:handoff_claim",
+    "sprintctl/pg.py:create_claim",
+    "sprintctl/pg.py:handoff_claim"
+  ],
+  "expansions": ["semantic-doc", "stateful-test", "concurrent-history", "fault-scenario"]
+}

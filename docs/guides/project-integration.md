@@ -3,6 +3,8 @@
 For the shortest path, start with [Start Here](start-here.md) and then use this
 guide once you are wiring `sprintctl` into a real repository. For the current
 read contracts, see [Context and Handoff Contracts](../reference/context-and-handoff.md).
+For governing-document identity, lifecycle, and item refs, see
+[Doc refs](../reference/doc-refs.md).
 If you need to integrate `sprintctl` with an external tracker, planner, or
 orchestrator, also read [Interoperability Patterns](interoperability.md).
 
@@ -26,6 +28,7 @@ Local-only, gitignored state:
 
 Committed shared artifacts:
 - `docs/sprint-snapshots/sprint-current.txt`
+- governing docs with `doc_id`, lifecycle `status`, and `supersedes` frontmatter
 - `AGENTS.md` guidance telling agents how to use `sprintctl`
 - optional runbooks describing the repo's sprint operating model
 
@@ -33,14 +36,16 @@ The database is the live control plane. The committed snapshot is the reviewable
 
 ## Source Of Truth Order
 
-When sources disagree, use this order:
+Authority is scoped by concern:
 
-1. live `sprintctl` state for item status, claims, and recent events
-2. committed `sprintctl render` output for the shared sprint view
-3. repo process docs such as `AGENTS.md` and runbooks
-4. sprint planning docs, briefs, and session notes
+1. live `sprintctl` state owns item status, claims, dependencies, and events
+2. the pinned, ratified governing doc revision owns intended scope and behavior
+3. implementation and executable evidence establish observed behavior
+4. committed `sprintctl render` output is a reviewable projection and may lag
+5. process docs, briefs, and session notes provide guidance, not live state
 
-This prevents stale markdown from overriding current execution state.
+This prevents stale Markdown from overriding execution state without treating
+a one-line backlog title as the full implementation contract.
 
 ## Baseline Setup
 
@@ -88,6 +93,9 @@ Put a short `sprintctl` section in `AGENTS.md` so agents know:
 
 - load `.envrc` before using the CLI
 - consult live `sprintctl` state before repo docs when resuming sprint work
+- require a governing doc ref or explicit `No doc:` decision while shaping
+- read and pin the governing doc revision before implementation
+- never let an agent set document `status: ratified`
 - claim sprint-scoped work before editing files when overlap is possible
 - treat `claim_id + claim_token` as the only ownership proof
 - refresh the shared snapshot after material sprint-state changes
@@ -103,6 +111,8 @@ When accepted work needs tracking:
 ```sh
 sprintctl sprint create --name "Sprint 4" --status active
 sprintctl item add --sprint-id 1 --track docs --title "Document claim handoff flow"
+sprintctl item ref add --id 1 --type doc \
+  --url docs/plans/claim-handoff.md --label claim-handoff-plan
 sprintctl render > docs/sprint-snapshots/sprint-current.txt
 ```
 
@@ -215,8 +225,9 @@ If you want the shortest useful integration, add only these:
 1. `.envrc` with `SPRINTCTL_DB`
 2. `.gitignore` entry for `.sprintctl/`
 3. `docs/sprint-snapshots/sprint-current.txt`
-4. one `AGENTS.md` section describing live-state and claim rules
-5. one `Makefile` target that renders the snapshot
+4. governing plan/sprint docs using the doc-ref frontmatter contract
+5. one `AGENTS.md` section describing live-state, doc-ref, and claim rules
+6. one `Makefile` target that renders the snapshot
 
 That is enough to reproduce the strongest parts of the reference usage without importing its entire documentation structure.
 

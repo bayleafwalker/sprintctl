@@ -30,6 +30,13 @@ sprintctl item show --id "$ITEM_ID"
 It surfaces active claims, conflicts, ready/blocked/stale work, recent
 decisions, and one explicit `next_action` in a single call.
 
+### Shape completeness
+
+Before claiming, inspect the selected item's refs. A shaped item has a governing
+doc ref or an explicit `No doc:` decision. Read the referenced doc and, for
+implementation against a ratified doc, attach a versioned label with the full
+Git SHA as described in `docs/reference/doc-refs.md`.
+
 ---
 
 ## 2. Claim — establish ownership before editing files
@@ -111,6 +118,12 @@ sprintctl item note \
   --id 7 --type blocker \
   --summary "Blocked on infra team rotating the signing key" \
   --actor claude-session-1
+
+# Attach the governing doc while shaping
+sprintctl item ref add \
+  --id 7 --type doc \
+  --url docs/plans/auth.md \
+  --label auth-plan
 
 # Attach a PR or issue ref
 sprintctl item ref add \
@@ -241,3 +254,4 @@ The SQLite database is live state only — it belongs in `.gitignore`.
 2. `sprintctl handoff --output handoff.json` — write bundle for next session
 3. `sprintctl render > docs/sprint-snapshots/sprint-current.txt` + commit snapshot
 4. `sprintctl maintain check` — confirm no stale or conflicted items
+5. Confirm the governing doc revision matches the work; use the read-only `reconcile-project-contracts` review for protocol or sprint-close changes
