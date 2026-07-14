@@ -30,6 +30,17 @@ def test_prepared_ingest_record_uses_a_stable_full_record_fingerprint(tmp_path):
     assert prepared.payload_json == '{"item":"ingest"}'
 
 
+def test_prepared_ingest_record_fingerprint_includes_producer_created_at(tmp_path):
+    record = _record(tmp_path)
+
+    original = pg._prepare_ingest_record(record)
+    changed = pg._prepare_ingest_record(
+        replace(record, created_at="2026-07-14T12:00:01Z")
+    )
+
+    assert original.record_sha256 != changed.record_sha256
+
+
 def test_remote_ingestion_rejects_non_observation_records(tmp_path):
     record = replace(_record(tmp_path), record_class="remote-decision")
 

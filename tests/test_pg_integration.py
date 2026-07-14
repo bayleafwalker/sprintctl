@@ -9,6 +9,7 @@ All tests are automatically skipped when the variable is unset or psycopg is una
 """
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import io
 import json
@@ -161,7 +162,18 @@ class TestProducerOutboxIngestion:
         assert [result.duplicate for result in retried] == [True, True]
         assert [result.ingest_offset for result in retried] == [result.ingest_offset for result in admitted]
         assert [result.ingest_offset for result in ordered] == [result.ingest_offset for result in admitted]
+        assert [result.record.created_at for result in ordered] == [first.created_at, second.created_at]
         assert ordered[1].ingest_offset > ordered[0].ingest_offset
+
+    def test_changed_producer_timestamp_conflicts_with_existing_origin_tuple(self, store, tmp_path):
+        first = self._records(tmp_path, count=1)[0]
+        pg.ingest_records(store, [first])
+
+        with pytest.raises(pg.IngestConflictError, match="different record"):
+            pg.ingest_records(
+                store,
+                [replace(first, created_at="2026-07-14T12:00:01Z")],
+            )
 
     def test_gap_rejects_whole_batch_without_advancing_stream(self, store, tmp_path):
         first, second = self._records(tmp_path)

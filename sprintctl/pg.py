@@ -227,6 +227,7 @@ CREATE TABLE IF NOT EXISTS ingest_record (
     payload            jsonb       NOT NULL,
     payload_sha256     text        NOT NULL,
     record_sha256      text        NOT NULL,
+    producer_created_at timestamptz NOT NULL,
     ingested_at        timestamptz NOT NULL DEFAULT now(),
     UNIQUE (repo_id, origin_stream_id, origin_seq),
     UNIQUE (repo_id, event_id),
@@ -351,6 +352,7 @@ def _prepare_ingest_record(record: outbox.OutboxRecord) -> _PreparedIngestRecord
     payload_sha256 = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
     if record.payload_sha256 != payload_sha256:
         raise ValueError("ingest payload_sha256 does not match the payload")
+    created_at = _required_ingest_text(record.created_at, "created_at")
 
     canonical = {
         "origin_stream_id": origin_stream_id,
@@ -367,6 +369,7 @@ def _prepare_ingest_record(record: outbox.OutboxRecord) -> _PreparedIngestRecord
         "causation_id": causation_id,
         "payload": record.payload,
         "payload_sha256": payload_sha256,
+        "created_at": created_at,
     }
     canonical_json = json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     record_sha256 = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
@@ -385,7 +388,7 @@ def _prepare_ingest_record(record: outbox.OutboxRecord) -> _PreparedIngestRecord
         causation_id=causation_id,
         payload=json.loads(payload_json),
         payload_sha256=payload_sha256,
-        created_at=_required_ingest_text(record.created_at, "created_at"),
+        created_at=created_at,
     )
     return _PreparedIngestRecord(normalized, payload_json, record_sha256)
 
@@ -409,7 +412,7 @@ def _ingested_record_from_row(row: dict) -> IngestedRecord:
         causation_id=row["causation_id"],
         payload=dict(payload),
         payload_sha256=row["payload_sha256"],
-        created_at=_iso(row["ingested_at"]) or str(row["ingested_at"]),
+        created_at=_iso(row["producer_created_at"]) or str(row["producer_created_at"]),
     )
     return IngestedRecord(record=record, ingest_offset=int(row["ingest_offset"]))
 
@@ -498,8 +501,8 @@ def ingest_records(store: PgStore, records: list[outbox.OutboxRecord]) -> list[I
                         repo_id, origin_stream_id, origin_seq, event_id, schema_version,
                         record_class, event_type, actor, runtime_session_id, occurred_at,
                         basis_revision, correlation_id, causation_id, payload, payload_sha256,
-                        record_sha256
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        record_sha256, producer_created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING *
                     """,
                     (
@@ -507,7 +510,7 @@ def ingest_records(store: PgStore, records: list[outbox.OutboxRecord]) -> list[I
                         record.schema_version, record.record_class, record.event_type, record.actor,
                         record.runtime_session_id, record.occurred_at, record.basis_revision,
                         record.correlation_id, record.causation_id, item.payload_json,
-                        record.payload_sha256, item.record_sha256,
+                        record.payload_sha256, item.record_sha256, record.created_at,
                     ),
                 )
                 inserted = cur.fetchone()
@@ -573,6 +576,22 @@ def _repo_id_from_cwd() -> str:
 def init_db(store: PgStore) -> None:
     with store.conn.cursor() as cur:
         cur.execute(_DDL)
+        # P1 ingestion originally persisted only the server receipt timestamp.
+        # Preserve producer authorship on upgrade as well as on fresh installs;
+        # old rows have no producer timestamp, so their historical receipt time
+        # is the only truthful fallback available.
+        cur.execute(
+            "ALTER TABLE ingest_record "
+            "ADD COLUMN IF NOT EXISTS producer_created_at timestamptz"
+        )
+        cur.execute(
+            "UPDATE ingest_record SET producer_created_at = ingested_at "
+            "WHERE producer_created_at IS NULL"
+        )
+        cur.execute(
+            "ALTER TABLE ingest_record "
+            "ALTER COLUMN producer_created_at SET NOT NULL"
+        )
         for table in ("sprint", "work_item"):
             cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS aggregate_uuid uuid")
             cur.execute(

@@ -125,3 +125,4 @@ def test_ingest_ledger_scopes_deduplication_and_cursor_to_the_repo():
     assert "GENERATED ALWAYS AS IDENTITY PRIMARY KEY" in record.group(1)
     assert "UNIQUE (repo_id, origin_stream_id, origin_seq)" in record.group(1)
     assert "UNIQUE (repo_id, event_id)" in record.group(1)
+    assert "producer_created_at timestamptz NOT NULL" in record.group(1)
