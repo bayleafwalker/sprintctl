@@ -42,8 +42,15 @@ def test_sprint_table_has_expected_columns():
     m = re.search(r"CREATE TABLE IF NOT EXISTS sprint\s*\((.*?)\);", PG_DDL, re.DOTALL)
     assert m, "sprint table not found"
     block = m.group(1)
-    for col in ("repo_id", "id", "name", "goal", "status", "kind", "created_at"):
+    for col in ("repo_id", "id", "name", "goal", "status", "kind", "created_at", "aggregate_uuid"):
         assert col in block, f"sprint table missing column: {col}"
+
+
+def test_portable_aggregate_uuids_are_unique_in_pg_schema():
+    for table in ("sprint", "work_item"):
+        m = re.search(rf"CREATE TABLE IF NOT EXISTS {table}\s*\((.*?)\);", PG_DDL, re.DOTALL)
+        assert m, f"{table} DDL missing"
+        assert re.search(r"aggregate_uuid\s+uuid\s+NOT NULL UNIQUE", m.group(1))
 
 
 def test_claim_table_has_token_and_identity_columns():

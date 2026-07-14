@@ -5,6 +5,7 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from . import contracts as _contracts
 
@@ -323,6 +324,34 @@ def _migration_9(conn: sqlite3.Connection) -> None:
     _execute_statements(conn, _MIGRATIONS[8])
 
 
+def _migration_10(conn: sqlite3.Connection) -> None:
+    """Add portable aggregate UUIDs without changing integer key semantics."""
+    for table in ("sprint", "work_item"):
+        _add_column_if_missing(conn, table, "aggregate_uuid", "aggregate_uuid TEXT")
+        rows = conn.execute(
+            f"SELECT id FROM {table} WHERE aggregate_uuid IS NULL OR aggregate_uuid = ''"
+        ).fetchall()
+        for row in rows:
+            conn.execute(
+                f"UPDATE {table} SET aggregate_uuid = ? WHERE id = ?",
+                (str(uuid4()), row[0]),
+            )
+        conn.execute(
+            f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_aggregate_uuid "
+            f"ON {table}(aggregate_uuid)"
+        )
+        conn.execute(
+            f"""
+            CREATE TRIGGER IF NOT EXISTS {table}_aggregate_uuid_required
+            BEFORE INSERT ON {table}
+            WHEN NEW.aggregate_uuid IS NULL OR NEW.aggregate_uuid = ''
+            BEGIN
+                SELECT RAISE(ABORT, '{table} aggregate_uuid is required');
+            END
+            """
+        )
+
+
 def _run_migration(
     conn: sqlite3.Connection,
     target_version: int,
@@ -362,6 +391,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     _run_migration(conn, 7, _migration_7)
     _run_migration(conn, 8, _migration_8)
     _run_migration(conn, 9, _migration_9)
+    _run_migration(conn, 10, _migration_10)
 
 
 # --- Sprint ---
@@ -376,8 +406,8 @@ def create_sprint(
     kind: str = "active_sprint",
 ) -> int:
     cur = conn.execute(
-        "INSERT INTO sprint (name, goal, start_date, end_date, status, kind) VALUES (?, ?, ?, ?, ?, ?)",
-        (name, goal, start_date, end_date, status, kind),
+        "INSERT INTO sprint (name, goal, start_date, end_date, status, kind, aggregate_uuid) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (name, goal, start_date, end_date, status, kind, str(uuid4())),
     )
     conn.commit()
     return cur.lastrowid
@@ -468,8 +498,8 @@ def create_work_item(
     assignee: str | None = None,
 ) -> int:
     cur = conn.execute(
-        "INSERT INTO work_item (sprint_id, track_id, title, description, assignee) VALUES (?, ?, ?, ?, ?)",
-        (sprint_id, track_id, title, description, assignee),
+        "INSERT INTO work_item (sprint_id, track_id, title, description, assignee, aggregate_uuid) VALUES (?, ?, ?, ?, ?, ?)",
+        (sprint_id, track_id, title, description, assignee, str(uuid4())),
     )
     conn.commit()
     return cur.lastrowid

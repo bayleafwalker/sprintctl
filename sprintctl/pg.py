@@ -20,6 +20,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 from urllib.parse import urlparse
 
 try:
@@ -80,6 +81,7 @@ CREATE TABLE IF NOT EXISTS sprint (
     created_at timestamptz NOT NULL DEFAULT now(),
     kind       text        NOT NULL DEFAULT 'active_sprint'
                            CHECK (kind IN ('active_sprint', 'backlog', 'archive')),
+    aggregate_uuid uuid     NOT NULL UNIQUE,
     UNIQUE (repo_id, id)
 );
 
@@ -109,6 +111,7 @@ CREATE TABLE IF NOT EXISTS work_item (
     assignee    text,
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
+    aggregate_uuid uuid     NOT NULL UNIQUE,
     UNIQUE (repo_id, id),
     FOREIGN KEY (repo_id, sprint_id)
         REFERENCES sprint(repo_id, id)
@@ -247,6 +250,18 @@ def _repo_id_from_cwd() -> str:
 def init_db(store: PgStore) -> None:
     with store.conn.cursor() as cur:
         cur.execute(_DDL)
+        for table in ("sprint", "work_item"):
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS aggregate_uuid uuid")
+            cur.execute(
+                f"UPDATE {table} SET aggregate_uuid = "
+                "md5(random()::text || clock_timestamp()::text || id::text)::uuid "
+                "WHERE aggregate_uuid IS NULL"
+            )
+            cur.execute(f"ALTER TABLE {table} ALTER COLUMN aggregate_uuid SET NOT NULL")
+            cur.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_aggregate_uuid "
+                f"ON {table}(aggregate_uuid)"
+            )
         # Advance identity sequences past any ids that were inserted via
         # OVERRIDING SYSTEM VALUE (which bypasses the sequence). Without this,
         # the next nextval call would return a value that conflicts with
@@ -311,11 +326,11 @@ def create_sprint(
     with store.conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO sprint (repo_id, name, goal, start_date, end_date, status, kind)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO sprint (repo_id, name, goal, start_date, end_date, status, kind, aggregate_uuid)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (store.repo_id, name, goal, start_date or None, end_date or None, status, kind),
+            (store.repo_id, name, goal, start_date or None, end_date or None, status, kind, str(uuid4())),
         )
         row = cur.fetchone()
     store.conn.commit()
@@ -466,11 +481,11 @@ def create_work_item(
     with store.conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO work_item (repo_id, sprint_id, track_id, title, description, assignee)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO work_item (repo_id, sprint_id, track_id, title, description, assignee, aggregate_uuid)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (store.repo_id, sprint_id, track_id, title, description, assignee),
+            (store.repo_id, sprint_id, track_id, title, description, assignee, str(uuid4())),
         )
         row = cur.fetchone()
     store.conn.commit()
