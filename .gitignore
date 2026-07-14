@@ -10,7 +10,13 @@ build/
 
 # sprintctl local operational state (do not commit)
 .sprintctl/
+.kctl/
 handoff.json
 handoff-*.json
 sprint-*.json
 claim-handoff*.json
+
+# kctl knowledge outputs — only the canonical committed render survives
+docs/knowledge/*
+!docs/knowledge/README.md
+!docs/knowledge/knowledge-base.md
