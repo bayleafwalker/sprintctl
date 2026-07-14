@@ -1,6 +1,7 @@
-from uuid import UUID
+import json
+from uuid import UUID, uuid4
 
-from sprintctl import db
+from sprintctl import db, pg
 
 
 def test_new_sprints_and_work_items_have_stable_portable_uuids(conn):
@@ -48,3 +49,12 @@ def test_aggregate_uuid_migration_backfills_existing_rows(tmp_path):
     assert UUID(db.get_sprint(conn, sprint_id)["aggregate_uuid"])
     assert UUID(db.get_work_item(conn, item_id)["aggregate_uuid"])
     conn.close()
+
+
+def test_postgres_row_normalization_keeps_aggregate_uuid_json_serializable():
+    aggregate_uuid = uuid4()
+
+    normalized = pg._norm({"aggregate_uuid": aggregate_uuid})
+
+    assert normalized["aggregate_uuid"] == str(aggregate_uuid)
+    assert json.loads(json.dumps(normalized))["aggregate_uuid"] == str(aggregate_uuid)

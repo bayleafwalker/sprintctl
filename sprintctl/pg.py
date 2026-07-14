@@ -20,7 +20,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 from urllib.parse import urlparse
 
 try:
@@ -297,7 +297,7 @@ def _iso(value: Any) -> str | None:
 
 
 def _norm(row: dict) -> dict:
-    """Normalise a pg row: datetimes → ISO strings, date → ISO string."""
+    """Normalise a pg row to the SQLite-compatible public value contract."""
     import datetime as _dt
     out: dict = {}
     for k, v in row.items():
@@ -305,6 +305,8 @@ def _norm(row: dict) -> dict:
             out[k] = _iso(v)
         elif isinstance(v, _dt.date):
             out[k] = v.isoformat()
+        elif isinstance(v, UUID):
+            out[k] = str(v)
         else:
             out[k] = v
     return out
