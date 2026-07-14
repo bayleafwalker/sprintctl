@@ -1308,6 +1308,28 @@ def _generate_claim_token() -> str:
     return secrets.token_urlsafe(24)
 
 
+def _lock_claim_arbitration_row(cur: Any, store: PgStore, work_item_id: int) -> None:
+    """Serialize claim admission for one repository-scoped work item.
+
+    PostgreSQL cannot express "at most one unexpired exclusive claim" as a
+    plain unique constraint because expiry depends on backend time and
+    coordinator delegation intentionally permits multiple exclusive rows.
+    Locking the authoritative work-item row gives every claim admission path a
+    stable transaction-scoped arbitration point before it reads the live claim
+    set.
+    """
+    cur.execute(
+        """
+        SELECT id FROM work_item
+        WHERE repo_id = %s AND id = %s
+        FOR UPDATE
+        """,
+        (store.repo_id, work_item_id),
+    )
+    if cur.fetchone() is None:
+        raise ValueError(f"Work item #{work_item_id} not found")
+
+
 # ---------------------------------------------------------------------------
 # Claim
 # ---------------------------------------------------------------------------
@@ -1354,6 +1376,7 @@ def create_claim(
         try:
             with store.conn.cursor() as cur:
                 if exclusive:
+                    _lock_claim_arbitration_row(cur, store, work_item_id)
                     conflict = _get_active_exclusive_claim_row(store, work_item_id)
                     if conflict:
                         if (

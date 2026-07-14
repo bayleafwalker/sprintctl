@@ -5,7 +5,7 @@
   "subject": "work-item-claim-set",
   "contract_ref": {
     "doc_id": "sprintctl.claim-ownership",
-    "revision": "sha256:6383fb5c86720a9ddf538356a1b13462e2f1e3a14013163ab89d61813d29b4c8"
+    "revision": "sha256:6a62b9e789943417da38698b9a7e3da6398b7f01b683035a316201b7b06d8a4f"
   },
   "source_of_truth": "sqlite-or-repository-scoped-postgres",
   "depth": 2,
@@ -13,14 +13,14 @@
   "actors": ["worker-a", "worker-b", "coordinator"],
   "initial_state": ["item=pending", "active-exclusive-claims=0"],
   "operations": [
-    { "name": "create-exclusive-claim", "actors": ["worker-a", "worker-b"], "synchronization": "barrier-before-conflict-check" },
+    { "name": "create-exclusive-claim", "actors": ["worker-a", "worker-b"], "synchronization": "independent connections overlap before SQLite BEGIN IMMEDIATE or PostgreSQL work-item SELECT FOR UPDATE arbitration" },
     { "name": "handoff-rotate", "actors": ["worker-a", "worker-b"], "synchronization": "barrier-before-proof-bearing-write" },
     { "name": "explicit-lost-proof-adoption", "actors": ["worker-b"], "synchronization": "after-local-recovery-token-is-unavailable" },
     { "name": "heartbeat-with-old-token", "actors": ["worker-a"], "synchronization": "after-handoff-commit" }
   ],
   "consistency": { "target": "application-invariant", "object": "exclusive-claim-ownership" },
-  "assumptions": { "isolation": "record-actual-backend-isolation", "clock": "backend-clock", "fairness": "none" },
-  "bounds": { "actors": 3, "iterations": 200, "claims_per_item": 2 },
+  "assumptions": { "isolation": "SQLite reserved writer transaction; PostgreSQL READ COMMITTED with SELECT FOR UPDATE on the repository-scoped work-item row", "clock": "backend-clock", "fairness": "a blocked PostgreSQL row-lock waiter runs after the holder commits or rolls back" },
+  "bounds": { "actors": 3, "iterations": 200, "claims_per_item": 2, "independent_connections": 2 },
   "invariants": [
     "at-most-one-live-exclusive-owner-outside-authorized-delegation",
     "old-token-cannot-mutate-after-rotated-handoff",
@@ -40,6 +40,7 @@
     "sprintctl/db.py:create_claim",
     "sprintctl/db.py:handoff_claim",
     "sprintctl/pg.py:create_claim",
+    "sprintctl/pg.py:_lock_claim_arbitration_row",
     "sprintctl/pg.py:handoff_claim"
   ],
   "expansions": ["semantic-doc", "stateful-test", "concurrent-history", "fault-scenario"]

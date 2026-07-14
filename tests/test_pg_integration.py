@@ -635,6 +635,67 @@ class TestClaim:
         with pytest.raises(ClaimConflict):
             pg.create_claim(store, iid, "ag-2", ttl_seconds=300)
 
+    def test_concurrent_exclusive_claims_serialize_on_work_item_row(
+        self, store, sprint_id, track_id, monkeypatch
+    ):
+        iid = pg.create_work_item(store, sprint_id, track_id, f"Cr-{_uid()}")
+        first_locked = threading.Event()
+        release_first = threading.Event()
+        second_attempted = threading.Event()
+        second_locked = threading.Event()
+        original_lock = pg._lock_claim_arbitration_row
+
+        def instrumented_lock(cur, independent_store, work_item_id):
+            if threading.current_thread().name == "claim-worker-b":
+                second_attempted.set()
+            original_lock(cur, independent_store, work_item_id)
+            if threading.current_thread().name == "claim-worker-a":
+                first_locked.set()
+                assert release_first.wait(timeout=5)
+            else:
+                second_locked.set()
+
+        monkeypatch.setattr(pg, "_lock_claim_arbitration_row", instrumented_lock)
+        outcomes = []
+        outcomes_lock = threading.Lock()
+
+        def worker(actor):
+            conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+            independent_store = pg.PgStore(conn=conn, repo_id=store.repo_id)
+            try:
+                claim_id = pg.create_claim(independent_store, iid, actor, ttl_seconds=300)
+                outcome = {"actor": actor, "result": "accepted", "claim_id": claim_id}
+            except ClaimConflict as exc:
+                outcome = {"actor": actor, "result": "rejected", "error": str(exc)}
+            finally:
+                conn.close()
+            with outcomes_lock:
+                outcomes.append(outcome)
+
+        first = threading.Thread(target=worker, args=("ag-a",), name="claim-worker-a")
+        second = threading.Thread(target=worker, args=("ag-b",), name="claim-worker-b")
+        first.start()
+        assert first_locked.wait(timeout=5)
+        second.start()
+        assert second_attempted.wait(timeout=5)
+        assert not second_locked.wait(timeout=0.1), "second claim bypassed the arbitration lock"
+        release_first.set()
+        first.join(timeout=5)
+        second.join(timeout=5)
+        assert not first.is_alive() and not second.is_alive()
+
+        assert sorted(outcome["result"] for outcome in outcomes) == ["accepted", "rejected"]
+        with store.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT count(*) AS count FROM claim
+                WHERE repo_id = %s AND work_item_id = %s AND exclusive = true
+                  AND expires_at > now()
+                """,
+                (store.repo_id, iid),
+            )
+            assert cur.fetchone()["count"] == 1
+
 
 # ---------------------------------------------------------------------------
 # Ref

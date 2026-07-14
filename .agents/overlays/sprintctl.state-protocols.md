@@ -32,7 +32,13 @@ Escalate to Depth 3 for lease/fencing redesign, irreversible multi-object transi
 
 ## Current limitation to preserve in reports
 
-SQLite serializes claim creation with `BEGIN IMMEDIATE`. PostgreSQL currently performs a conflict check followed by insert without a documented database constraint that closes the concurrent check-then-write window. Do not report cross-backend exclusive-claim linearizability until an independent-connection history establishes it or the product is repaired under separate authorization.
+SQLite serializes claim creation with `BEGIN IMMEDIATE`. PostgreSQL serializes
+claim admission per repository-scoped item by locking the authoritative
+`work_item` row before checking and inserting claims. Independent-connection
+histories establish the bounded invariant that two overlapping unrelated
+exclusive claim attempts produce one acceptance and one rejection. Report this
+as `concurrency-tested` application-invariant evidence, not as a general
+cross-operation linearizability or fencing guarantee.
 
 Document linkage is a workflow convention in this rollout, not an enforced claim gate. Do not claim the CLI blocks an undocumented or draft-governed item.
 

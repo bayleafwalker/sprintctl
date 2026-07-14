@@ -29,10 +29,22 @@ This document closes the verification boundary around claim creation, proof-bear
 
 - SQLite claim creation enters `BEGIN IMMEDIATE`, checks conflicts, inserts, then commits. The commit is the durable linearization point; the reserved write transaction serializes competing local writers.
 - SQLite handoff and proof-bearing mutations take effect at their update/delete commit.
-- PostgreSQL claim creation currently checks for a conflicting row and then inserts in the transaction. The schema has a token uniqueness index but no database constraint shown here that enforces at most one live exclusive claim per item.
+- PostgreSQL claim creation locks the repository-scoped `work_item` row with
+  `SELECT ... FOR UPDATE`, then checks the live exclusive claim set and inserts
+  within the same transaction. The work-item row lock is the arbitration point;
+  the transaction commit is the durable linearization point. A time-dependent
+  uniqueness constraint is not used because expiry is evaluated by backend time
+  and proof-authorized coordinator delegation intentionally permits multiple
+  exclusive rows.
 - PostgreSQL handoff and proof-bearing mutations take effect at their update/delete commit.
 
-The intended invariant is at most one live exclusive owner outside an authorized coordinator delegation. That invariant is not yet established for concurrent PostgreSQL claim creation: the present check-then-insert path requires an independent-connection history test and may require a lock, constraint, serializable transaction, or other repair. This document does not select or authorize that repair.
+The intended invariant is at most one live exclusive owner outside an
+authorized coordinator delegation. Independent-connection histories exercise
+two overlapping PostgreSQL claim attempts at `READ COMMITTED`: the second
+attempt waits at the work-item row lock and, after the first commits, rejects
+against the newly visible claim. SQLite retains its `BEGIN IMMEDIATE` writer
+serialization. This is bounded concurrency evidence for the application
+invariant; it is not a fencing-token or distributed lease claim.
 
 ## Token rotation and stale proof
 
@@ -42,4 +54,9 @@ Expiry is not a fencing token. An expired claim ceases to block according to bac
 
 ## Backend parity evidence
 
-Backend parity means equivalent accepted/rejected histories and public contract shapes for the bounded scenarios, not identical SQL. Record SQLite and PostgreSQL results separately. Until the concurrent PostgreSQL scenarios run, classify exclusivity parity as `unknown`, not linearizable or concurrency-tested.
+Backend parity means equivalent accepted/rejected histories and public
+contract shapes for the bounded scenarios, not identical SQL. SQLite uses a
+reserved writer transaction and PostgreSQL uses the work-item row lock; both
+accept exactly one of two overlapping unrelated exclusive claim attempts. The
+bounded exclusivity result is classified as `concurrency-tested`, not as a
+general cross-operation linearizability proof.

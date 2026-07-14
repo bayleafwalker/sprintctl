@@ -24,15 +24,17 @@ def test_claim_context_records_backend_parity_race_and_stale_proof():
     assert packet["schema_version"] == "test-context/v1"
     assert packet["backends"] == ["sqlite", "postgres"]
     assert packet["depth"] == 2
-    assert "barrier-before-conflict-check" == packet["operations"][0]["synchronization"]
+    assert "SELECT FOR UPDATE" in packet["operations"][0]["synchronization"]
+    assert packet["bounds"]["independent_connections"] == 2
     assert "old-token-cannot-mutate-after-rotated-handoff" in packet["invariants"]
 
 
-def test_claim_protocol_does_not_overstate_postgres_exclusivity():
+def test_claim_protocol_reports_bounded_postgres_exclusivity_evidence():
     protocol = (ROOT / "docs/protocols/claim-ownership.md").read_text(encoding="utf-8")
 
-    assert "not yet established for concurrent PostgreSQL claim creation" in protocol
-    assert "classify exclusivity parity as `unknown`" in protocol
+    assert "work-item row lock is the arbitration point" in protocol
+    assert "classified as `concurrency-tested`" in protocol
+    assert "general cross-operation linearizability proof" in protocol
 
 
 def test_remote_ingest_context_covers_retry_gap_and_cursor_protocol():
