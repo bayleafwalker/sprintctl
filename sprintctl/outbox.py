@@ -18,6 +18,8 @@ import sqlite3
 from typing import Any, Mapping
 from uuid import uuid4
 
+from . import contracts
+
 
 OUTBOX_SCHEMA_VERSION = 1
 OBSERVATION = "observation"
@@ -203,6 +205,12 @@ def append_observation(
     response.
     """
     event_type = _required_text(event_type, "event_type")
+    record_class = contracts.record_class_for_type(event_type)
+    if record_class is not contracts.RecordClass.OBSERVATION:
+        raise ValueError(
+            f"outbox event_type {event_type!r} is {record_class.value}; "
+            "only classified observations may be appended"
+        )
     actor = _required_text(actor, "actor")
     payload_value, payload_json, payload_sha256 = _canonical_payload(payload)
     event_id = event_id or str(uuid4())

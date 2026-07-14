@@ -76,6 +76,29 @@ def test_reused_event_id_for_different_observation_is_rejected(tmp_path):
     conn.close()
 
 
+@pytest.mark.parametrize(
+    ("event_type", "match"),
+    [
+        ("item.done", "authority-command"),
+        ("claim.granted", "remote-decision"),
+        ("unclassified.event", "not classified"),
+    ],
+)
+def test_append_rejects_authority_decision_and_unknown_event_types(tmp_path, event_type, match):
+    conn = outbox.open_outbox(tmp_path / "producer-outbox.db")
+
+    with pytest.raises(ValueError, match=match):
+        outbox.append_observation(
+            conn,
+            event_type=event_type,
+            actor="agent-a",
+            payload={"item": "outbox-foundation"},
+        )
+
+    assert outbox.list_records(conn) == []
+    conn.close()
+
+
 def test_failed_insert_rolls_back_stream_creation_and_sequence(tmp_path):
     conn = outbox.open_outbox(tmp_path / "producer-outbox.db")
     conn.execute(
@@ -128,7 +151,7 @@ def test_concurrent_appends_use_contiguous_single_stream_sequences(tmp_path):
             for index in range(12):
                 outbox.append_observation(
                     conn,
-                    event_type="work.progressed",
+                    event_type="work.completed",
                     actor=actor,
                     payload={"index": index},
                     event_id=f"{actor}-{index}",
