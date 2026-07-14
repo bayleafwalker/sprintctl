@@ -15,6 +15,7 @@ path is used for writes.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 from dataclasses import dataclass
@@ -32,6 +33,7 @@ except ImportError:  # pragma: no cover
     _PSYCOPG_AVAILABLE = False
 
 from . import contracts as _contracts
+from . import outbox
 from .db import (
     VALID_TRANSITIONS,
     SPRINT_TRANSITIONS,
@@ -196,6 +198,41 @@ CREATE TABLE IF NOT EXISTS dep (
     FOREIGN KEY (repo_id, blocked_item_id)
         REFERENCES work_item(repo_id, id)
         ON DELETE CASCADE
+    );
+
+CREATE TABLE IF NOT EXISTS ingest_stream (
+    repo_id            text        NOT NULL,
+    origin_stream_id   text        NOT NULL,
+    highest_origin_seq bigint      NOT NULL DEFAULT 0
+                                      CHECK (highest_origin_seq >= 0),
+    created_at         timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (repo_id, origin_stream_id)
+);
+
+CREATE TABLE IF NOT EXISTS ingest_record (
+    repo_id            text        NOT NULL,
+    ingest_offset      bigint      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    origin_stream_id   text        NOT NULL,
+    origin_seq         bigint      NOT NULL CHECK (origin_seq > 0),
+    event_id           text        NOT NULL,
+    schema_version     integer     NOT NULL CHECK (schema_version > 0),
+    record_class       text        NOT NULL CHECK (record_class = 'observation'),
+    event_type         text        NOT NULL,
+    actor              text        NOT NULL,
+    runtime_session_id text,
+    occurred_at        timestamptz NOT NULL,
+    basis_revision     text,
+    correlation_id     text,
+    causation_id       text,
+    payload            jsonb       NOT NULL,
+    payload_sha256     text        NOT NULL,
+    record_sha256      text        NOT NULL,
+    ingested_at        timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (repo_id, origin_stream_id, origin_seq),
+    UNIQUE (repo_id, event_id),
+    FOREIGN KEY (repo_id, origin_stream_id)
+        REFERENCES ingest_stream(repo_id, origin_stream_id)
+        ON DELETE CASCADE
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_claim_token
@@ -216,6 +253,9 @@ CREATE INDEX IF NOT EXISTS idx_track_repo_sprint
 
 CREATE INDEX IF NOT EXISTS idx_claim_repo_item_expires
     ON claim(repo_id, work_item_id, expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_ingest_record_repo_offset
+    ON ingest_record(repo_id, ingest_offset);
 """
 
 # The DDL text is importable for unit-level schema validation tests.
@@ -226,6 +266,289 @@ PG_DDL = _DDL
 class PgStore:
     conn: Any  # psycopg.Connection when psycopg is available
     repo_id: str
+
+
+# ---------------------------------------------------------------------------
+# Producer outbox ingestion
+# ---------------------------------------------------------------------------
+
+class IngestGapError(ValueError):
+    """A producer stream skipped the next required origin sequence."""
+
+    def __init__(self, origin_stream_id: str, expected: int, received: int):
+        super().__init__(
+            f"origin stream {origin_stream_id!r} expected sequence {expected}, received {received}"
+        )
+        self.origin_stream_id = origin_stream_id
+        self.expected = expected
+        self.received = received
+
+
+class IngestConflictError(ValueError):
+    """A producer identity was reused for a different immutable record."""
+
+
+@dataclass(frozen=True)
+class IngestedRecord:
+    """One immutable producer observation as ordered by the remote authority."""
+
+    record: outbox.OutboxRecord
+    ingest_offset: int
+
+
+@dataclass(frozen=True)
+class IngestResult(IngestedRecord):
+    """The remote admission result for one producer-authored observation."""
+
+    duplicate: bool
+
+
+@dataclass(frozen=True)
+class _PreparedIngestRecord:
+    record: outbox.OutboxRecord
+    payload_json: str
+    record_sha256: str
+
+
+def _required_ingest_text(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"ingest {field} must be a non-empty string")
+    return value
+
+
+def _optional_ingest_text(value: Any, field: str) -> str | None:
+    if value is None:
+        return None
+    return _required_ingest_text(value, field)
+
+
+def _prepare_ingest_record(record: outbox.OutboxRecord) -> _PreparedIngestRecord:
+    """Validate and canonically fingerprint one producer-owned observation."""
+    if not isinstance(record, outbox.OutboxRecord):
+        raise TypeError("ingest records must be sprintctl.outbox.OutboxRecord values")
+    if record.record_class != outbox.OBSERVATION:
+        raise ValueError("remote ingestion currently accepts producer observations only")
+    if isinstance(record.origin_seq, bool) or not isinstance(record.origin_seq, int) or record.origin_seq < 1:
+        raise ValueError("ingest origin_seq must be a positive integer")
+    if isinstance(record.schema_version, bool) or not isinstance(record.schema_version, int) or record.schema_version < 1:
+        raise ValueError("ingest schema_version must be a positive integer")
+
+    origin_stream_id = _required_ingest_text(record.origin_stream_id, "origin_stream_id")
+    event_id = _required_ingest_text(record.event_id, "event_id")
+    event_type = _required_ingest_text(record.event_type, "event_type")
+    actor = _required_ingest_text(record.actor, "actor")
+    occurred_at = _required_ingest_text(record.occurred_at, "occurred_at")
+    runtime_session_id = _optional_ingest_text(record.runtime_session_id, "runtime_session_id")
+    basis_revision = _optional_ingest_text(record.basis_revision, "basis_revision")
+    correlation_id = _optional_ingest_text(record.correlation_id, "correlation_id")
+    causation_id = _optional_ingest_text(record.causation_id, "causation_id")
+    if not isinstance(record.payload, dict):
+        raise ValueError("ingest payload must be a JSON object")
+    try:
+        payload_json = json.dumps(record.payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("ingest payload must be JSON serializable") from exc
+    payload_sha256 = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+    if record.payload_sha256 != payload_sha256:
+        raise ValueError("ingest payload_sha256 does not match the payload")
+
+    canonical = {
+        "origin_stream_id": origin_stream_id,
+        "origin_seq": record.origin_seq,
+        "event_id": event_id,
+        "schema_version": record.schema_version,
+        "record_class": record.record_class,
+        "event_type": event_type,
+        "actor": actor,
+        "runtime_session_id": runtime_session_id,
+        "occurred_at": occurred_at,
+        "basis_revision": basis_revision,
+        "correlation_id": correlation_id,
+        "causation_id": causation_id,
+        "payload": record.payload,
+        "payload_sha256": payload_sha256,
+    }
+    canonical_json = json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    record_sha256 = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+    normalized = outbox.OutboxRecord(
+        origin_stream_id=origin_stream_id,
+        origin_seq=record.origin_seq,
+        event_id=event_id,
+        schema_version=record.schema_version,
+        record_class=record.record_class,
+        event_type=event_type,
+        actor=actor,
+        runtime_session_id=runtime_session_id,
+        occurred_at=occurred_at,
+        basis_revision=basis_revision,
+        correlation_id=correlation_id,
+        causation_id=causation_id,
+        payload=json.loads(payload_json),
+        payload_sha256=payload_sha256,
+        created_at=_required_ingest_text(record.created_at, "created_at"),
+    )
+    return _PreparedIngestRecord(normalized, payload_json, record_sha256)
+
+
+def _ingested_record_from_row(row: dict) -> IngestedRecord:
+    payload = row["payload"]
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    record = outbox.OutboxRecord(
+        origin_stream_id=row["origin_stream_id"],
+        origin_seq=int(row["origin_seq"]),
+        event_id=row["event_id"],
+        schema_version=int(row["schema_version"]),
+        record_class=row["record_class"],
+        event_type=row["event_type"],
+        actor=row["actor"],
+        runtime_session_id=row["runtime_session_id"],
+        occurred_at=_iso(row["occurred_at"]) or str(row["occurred_at"]),
+        basis_revision=row["basis_revision"],
+        correlation_id=row["correlation_id"],
+        causation_id=row["causation_id"],
+        payload=dict(payload),
+        payload_sha256=row["payload_sha256"],
+        created_at=_iso(row["ingested_at"]) or str(row["ingested_at"]),
+    )
+    return IngestedRecord(record=record, ingest_offset=int(row["ingest_offset"]))
+
+
+def _lock_ingest_stream(cur: Any, store: PgStore, origin_stream_id: str) -> int:
+    """Create then lock one stream row, serializing its sequence admissions."""
+    cur.execute(
+        """
+        INSERT INTO ingest_stream (repo_id, origin_stream_id)
+        VALUES (%s, %s)
+        ON CONFLICT (repo_id, origin_stream_id) DO NOTHING
+        """,
+        (store.repo_id, origin_stream_id),
+    )
+    cur.execute(
+        """
+        SELECT highest_origin_seq FROM ingest_stream
+        WHERE repo_id = %s AND origin_stream_id = %s
+        FOR UPDATE
+        """,
+        (store.repo_id, origin_stream_id),
+    )
+    row = cur.fetchone()
+    assert row is not None
+    return int(row["highest_origin_seq"])
+
+
+def ingest_records(store: PgStore, records: list[outbox.OutboxRecord]) -> list[IngestResult]:
+    """Atomically admit contiguous producer records into the remote ledger.
+
+    The stream row is the sequence authority.  A retry of an already committed
+    identical record returns its original offset; a changed record using the
+    same origin tuple or event ID is rejected.  Any detected gap rolls back the
+    entire submitted batch, leaving neither a partial ledger append nor an
+    advanced stream high-water mark.
+    """
+    prepared = [_prepare_ingest_record(record) for record in records]
+    if not prepared:
+        return []
+    try:
+        with store.conn.cursor() as cur:
+            high_water = {
+                origin_stream_id: _lock_ingest_stream(cur, store, origin_stream_id)
+                for origin_stream_id in sorted({item.record.origin_stream_id for item in prepared})
+            }
+            results: list[IngestResult] = []
+            for item in prepared:
+                record = item.record
+                cur.execute(
+                    """
+                    SELECT * FROM ingest_record
+                    WHERE repo_id = %s AND origin_stream_id = %s AND origin_seq = %s
+                    """,
+                    (store.repo_id, record.origin_stream_id, record.origin_seq),
+                )
+                existing = cur.fetchone()
+                if existing is not None:
+                    if existing["record_sha256"] != item.record_sha256:
+                        raise IngestConflictError(
+                            "origin stream sequence already identifies a different record"
+                        )
+                    existing_record = _ingested_record_from_row(existing)
+                    results.append(
+                        IngestResult(
+                            existing_record.record,
+                            existing_record.ingest_offset,
+                            duplicate=True,
+                        )
+                    )
+                    continue
+
+                cur.execute(
+                    "SELECT record_sha256 FROM ingest_record WHERE repo_id = %s AND event_id = %s",
+                    (store.repo_id, record.event_id),
+                )
+                same_event = cur.fetchone()
+                if same_event is not None:
+                    raise IngestConflictError("event_id already identifies a different record")
+
+                expected = high_water[record.origin_stream_id] + 1
+                if record.origin_seq != expected:
+                    raise IngestGapError(record.origin_stream_id, expected, record.origin_seq)
+                cur.execute(
+                    """
+                    INSERT INTO ingest_record (
+                        repo_id, origin_stream_id, origin_seq, event_id, schema_version,
+                        record_class, event_type, actor, runtime_session_id, occurred_at,
+                        basis_revision, correlation_id, causation_id, payload, payload_sha256,
+                        record_sha256
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING *
+                    """,
+                    (
+                        store.repo_id, record.origin_stream_id, record.origin_seq, record.event_id,
+                        record.schema_version, record.record_class, record.event_type, record.actor,
+                        record.runtime_session_id, record.occurred_at, record.basis_revision,
+                        record.correlation_id, record.causation_id, item.payload_json,
+                        record.payload_sha256, item.record_sha256,
+                    ),
+                )
+                inserted = cur.fetchone()
+                cur.execute(
+                    """
+                    UPDATE ingest_stream SET highest_origin_seq = %s
+                    WHERE repo_id = %s AND origin_stream_id = %s
+                    """,
+                    (record.origin_seq, store.repo_id, record.origin_stream_id),
+                )
+                high_water[record.origin_stream_id] = record.origin_seq
+                result = _ingested_record_from_row(inserted)
+                results.append(IngestResult(result.record, result.ingest_offset, duplicate=False))
+        store.conn.commit()
+        return results
+    except Exception:
+        store.conn.rollback()
+        raise
+
+
+def list_ingested_records(
+    store: PgStore, *, after_offset: int = 0, limit: int | None = None
+) -> list[IngestedRecord]:
+    """Read remote records in server-assigned ingestion order."""
+    if isinstance(after_offset, bool) or not isinstance(after_offset, int) or after_offset < 0:
+        raise ValueError("after_offset must be a non-negative integer")
+    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit < 1):
+        raise ValueError("limit must be a positive integer")
+    query = """
+        SELECT * FROM ingest_record
+        WHERE repo_id = %s AND ingest_offset > %s
+        ORDER BY ingest_offset ASC
+    """
+    params: list[Any] = [store.repo_id, after_offset]
+    if limit is not None:
+        query += " LIMIT %s"
+        params.append(limit)
+    with store.conn.cursor() as cur:
+        cur.execute(query, params)
+        rows = cur.fetchall()
+    return [_ingested_record_from_row(row) for row in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -266,20 +589,28 @@ def init_db(store: PgStore) -> None:
         # OVERRIDING SYSTEM VALUE (which bypasses the sequence). Without this,
         # the next nextval call would return a value that conflicts with
         # already-imported data.
-        for _t in ("sprint", "track", "work_item", "event", "claim", "ref", "dep"):
-            try:
-                seq_row = cur.execute(
-                    f"SELECT pg_get_serial_sequence('{_t}', 'id') AS seq"
-                ).fetchone()
-                seq_name = seq_row["seq"] if seq_row else None
-                if seq_name:
-                    cur.execute(
-                        f"SELECT setval('{seq_name}',"
-                        f" COALESCE((SELECT MAX(id) FROM {_t}), 0), true)"
-                    )
-            except Exception:
-                pass
+        _advance_identity_sequences(cur, ("sprint", "track", "work_item", "event", "claim", "ref", "dep"))
     store.conn.commit()
+
+
+def _advance_identity_sequences(cur: Any, tables: tuple[str, ...]) -> None:
+    """Advance identity sequences without aborting on freshly empty tables."""
+    for table in tables:
+        seq_row = cur.execute(
+            f"SELECT pg_get_serial_sequence('{table}', 'id') AS seq"
+        ).fetchone()
+        seq_name = seq_row["seq"] if seq_row else None
+        if seq_name:
+            cur.execute(
+                f"""
+                SELECT setval(
+                    %s::regclass,
+                    COALESCE((SELECT MAX(id) FROM {table}), 1),
+                    EXISTS (SELECT 1 FROM {table})
+                )
+                """,
+                (seq_name,),
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1697,6 +2028,9 @@ def delete_repo(conn: Any, repo_id: str) -> dict[str, int]:
     """Delete all rows for repo_id across all tables. Returns deleted row counts per table."""
     counts: dict[str, int] = {}
     with conn.cursor() as cur:
+        for table in ("ingest_record", "ingest_stream"):
+            cur.execute(f"DELETE FROM {table} WHERE repo_id = %s", (repo_id,))  # noqa: S608
+            counts[table] = cur.rowcount
         for table in reversed(_EXPORT_TABLES):
             cur.execute(f"DELETE FROM {table} WHERE repo_id = %s", (repo_id,))  # noqa: S608
             counts[table] = cur.rowcount
@@ -1746,19 +2080,7 @@ def import_ndjson(
             # Advance every sequence past the current global max BEFORE any deletes,
             # so the max reflects all committed data. Running this after the replace
             # DELETE would lower the max and could reset the sequence back to 1.
-            for table in _EXPORT_TABLES:
-                try:
-                    seq_row = cur.execute(
-                        f"SELECT pg_get_serial_sequence('{table}', 'id') AS seq"
-                    ).fetchone()
-                    seq_name = seq_row["seq"] if seq_row else None
-                    if seq_name:
-                        cur.execute(
-                            f"SELECT setval('{seq_name}',"
-                            f" COALESCE((SELECT MAX(id) FROM {table}), 0), true)"
-                        )
-                except Exception:
-                    pass
+            _advance_identity_sequences(cur, tuple(_EXPORT_TABLES))
 
         if replace:
             for table in reversed(_EXPORT_TABLES):
@@ -1799,19 +2121,7 @@ def import_ndjson(
             counts[table] = counts.get(table, 0) + 1
 
         # Advance sequences so next auto-generated IDs don't collide.
-        for table in _EXPORT_TABLES:
-            try:
-                seq_row = cur.execute(
-                    f"SELECT pg_get_serial_sequence('{table}', 'id') AS seq"
-                ).fetchone()
-                seq_name = seq_row["seq"] if seq_row else None
-                if seq_name:
-                    cur.execute(
-                        f"SELECT setval('{seq_name}',"
-                        f" COALESCE((SELECT MAX(id) FROM {table}), 0), true)",
-                    )
-            except Exception:
-                pass
+        _advance_identity_sequences(cur, tuple(_EXPORT_TABLES))
 
     store.conn.commit()
     return counts
@@ -1830,6 +2140,12 @@ def _import_row(
     """Insert one row into the named table, using OVERRIDING SYSTEM VALUE for identity columns."""
     row = dict(data)
     row["repo_id"] = repo_id
+
+    # Current PostgreSQL rows require portable aggregate IDs, while old local
+    # exports predate that additive column.  Minting on import preserves their
+    # identity migration semantics without rejecting a supported archive.
+    if table in {"sprint", "work_item"} and row.get("aggregate_uuid") is None:
+        row["aggregate_uuid"] = str(uuid4())
 
     # SQLite stores booleans as integers; coerce to Python bool for psycopg.
     _BOOL_COLUMNS: dict[str, set[str]] = {"claim": {"exclusive"}}

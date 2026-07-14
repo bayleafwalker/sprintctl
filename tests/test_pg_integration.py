@@ -13,6 +13,7 @@ import hashlib
 import io
 import json
 import os
+import threading
 import uuid
 
 import pytest
@@ -37,6 +38,7 @@ pytestmark = pytest.mark.skipif(_SKIP, reason=_SKIP_REASON)
 
 # Safe unconditional imports: pg.py handles missing psycopg gracefully.
 from sprintctl import contracts, pg
+from sprintctl import outbox
 from sprintctl.db import ClaimConflict, InvalidTransition
 
 
@@ -55,7 +57,7 @@ def store():
     pg.init_db(s)
     yield s
     with conn.cursor() as cur:
-        for table in ("dep", "ref", "claim", "event", "work_item", "track", "sprint"):
+        for table in ("ingest_record", "ingest_stream", "dep", "ref", "claim", "event", "work_item", "track", "sprint"):
             cur.execute(f"DELETE FROM {table} WHERE repo_id = %s", (repo_id,))
     conn.commit()
     conn.close()
@@ -122,6 +124,90 @@ class TestInitDb:
     def test_idempotent(self, store):
         pg.init_db(store)
         pg.init_db(store)
+        sprint_id = pg.create_sprint(store, f"Init-{_uid()}", "G", status="active")
+        assert pg.get_sprint(store, sprint_id) is not None
+
+
+# ---------------------------------------------------------------------------
+# Producer outbox ingestion
+# ---------------------------------------------------------------------------
+
+class TestProducerOutboxIngestion:
+    def _records(self, tmp_path, count=2):
+        conn = outbox.open_outbox(tmp_path / "producer-outbox.db")
+        try:
+            return [
+                outbox.append_observation(
+                    conn,
+                    event_type="work.completed",
+                    actor="producer-a",
+                    payload={"index": index},
+                    event_id=f"ingest-{uuid.uuid4().hex}-{index}",
+                    occurred_at="2026-07-14T12:00:00Z",
+                )
+                for index in range(count)
+            ]
+        finally:
+            conn.close()
+
+    def test_retry_returns_original_offset_and_cursor_orders_new_records(self, store, tmp_path):
+        first, second = self._records(tmp_path)
+
+        admitted = pg.ingest_records(store, [first, second])
+        retried = pg.ingest_records(store, [first, second])
+        ordered = pg.list_ingested_records(store)
+
+        assert [result.duplicate for result in admitted] == [False, False]
+        assert [result.duplicate for result in retried] == [True, True]
+        assert [result.ingest_offset for result in retried] == [result.ingest_offset for result in admitted]
+        assert [result.ingest_offset for result in ordered] == [result.ingest_offset for result in admitted]
+        assert ordered[1].ingest_offset > ordered[0].ingest_offset
+
+    def test_gap_rejects_whole_batch_without_advancing_stream(self, store, tmp_path):
+        first, second = self._records(tmp_path)
+        before_offset = max(
+            (result.ingest_offset for result in pg.list_ingested_records(store)), default=0
+        )
+
+        with pytest.raises(pg.IngestGapError, match="expected sequence 1, received 2"):
+            pg.ingest_records(store, [second])
+        assert pg.list_ingested_records(store, after_offset=before_offset) == []
+
+        admitted = pg.ingest_records(store, [first, second])
+        assert [result.record.origin_seq for result in admitted] == [1, 2]
+
+    def test_concurrent_same_stream_retry_admits_once(self, store, tmp_path):
+        record = self._records(tmp_path, count=1)[0]
+        before_offset = max(
+            (result.ingest_offset for result in pg.list_ingested_records(store)), default=0
+        )
+        barrier = threading.Barrier(3)
+        outcomes = []
+        failures = []
+
+        def worker():
+            conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+            independent_store = pg.PgStore(conn=conn, repo_id=store.repo_id)
+            try:
+                barrier.wait()
+                outcomes.append(pg.ingest_records(independent_store, [record])[0])
+            except Exception as exc:  # pragma: no cover - asserted through failures
+                failures.append(exc)
+            finally:
+                conn.close()
+
+        workers = [threading.Thread(target=worker) for _ in range(2)]
+        for worker_thread in workers:
+            worker_thread.start()
+        barrier.wait()
+        for worker_thread in workers:
+            worker_thread.join()
+
+        assert failures == []
+        assert len(outcomes) == 2
+        assert {outcome.ingest_offset for outcome in outcomes} == {outcomes[0].ingest_offset}
+        assert sorted(outcome.duplicate for outcome in outcomes) == [False, True]
+        assert len(pg.list_ingested_records(store, after_offset=before_offset)) == 1
 
 
 # ---------------------------------------------------------------------------

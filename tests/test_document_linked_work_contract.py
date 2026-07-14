@@ -33,3 +33,15 @@ def test_claim_protocol_does_not_overstate_postgres_exclusivity():
 
     assert "not yet established for concurrent PostgreSQL claim creation" in protocol
     assert "classify exclusivity parity as `unknown`" in protocol
+
+
+def test_remote_ingest_context_covers_retry_gap_and_cursor_protocol():
+    packet = json.loads(
+        (ROOT / "verification/contexts/outbox-remote-ingestion.json").read_text(encoding="utf-8")
+    )
+
+    assert packet["schema_version"] == "test-context/v1"
+    assert packet["depth"] == 2
+    assert packet["backends"] == ["postgres"]
+    assert "same-stream-retry-after-lost-response" in [operation["name"] for operation in packet["operations"]]
+    assert "sequence-gaps-are-rejected-without-partial-batch-admission" in packet["invariants"]

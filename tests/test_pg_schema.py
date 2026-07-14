@@ -20,7 +20,10 @@ def _indexes_in_ddl(ddl: str) -> set[str]:
 
 def test_ddl_contains_required_tables():
     tables = _tables_in_ddl(PG_DDL)
-    required = {"schema_version", "sprint", "track", "work_item", "event", "claim", "ref", "dep"}
+    required = {
+        "schema_version", "sprint", "track", "work_item", "event", "claim", "ref", "dep",
+        "ingest_stream", "ingest_record",
+    }
     assert required <= tables, f"Missing tables: {required - tables}"
 
 
@@ -77,6 +80,7 @@ def test_required_indexes_present():
         "idx_work_item_repo_sprint_status",
         "idx_track_repo_sprint",
         "idx_claim_repo_item_expires",
+        "idx_ingest_record_repo_offset",
     }
     assert required <= indexes, f"Missing indexes: {required - indexes}"
 
@@ -111,3 +115,13 @@ def test_ddl_is_idempotent_if_not_exists():
     create_tables = re.findall(r"CREATE TABLE\s+(?:IF NOT EXISTS\s+)?(\w+)", PG_DDL)
     for t in create_tables:
         assert f"CREATE TABLE IF NOT EXISTS {t}" in PG_DDL, f"Table {t} missing IF NOT EXISTS"
+
+
+def test_ingest_ledger_scopes_deduplication_and_cursor_to_the_repo():
+    stream = re.search(r"CREATE TABLE IF NOT EXISTS ingest_stream\s*\((.*?)\);", PG_DDL, re.DOTALL)
+    record = re.search(r"CREATE TABLE IF NOT EXISTS ingest_record\s*\((.*?)\);", PG_DDL, re.DOTALL)
+    assert stream and record
+    assert "PRIMARY KEY (repo_id, origin_stream_id)" in stream.group(1)
+    assert "GENERATED ALWAYS AS IDENTITY PRIMARY KEY" in record.group(1)
+    assert "UNIQUE (repo_id, origin_stream_id, origin_seq)" in record.group(1)
+    assert "UNIQUE (repo_id, event_id)" in record.group(1)

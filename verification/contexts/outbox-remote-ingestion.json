@@ -1,0 +1,49 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.outbox.remote-ingestion",
+  "owner_repo": "sprintctl",
+  "subject": "remote-producer-observation-ingestion-ledger",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:be376029bd5204ce3023e119e796bc8f1f71338f"
+  },
+  "source_of_truth": "postgres-ingest-stream-and-ingest-record",
+  "depth": 2,
+  "backends": ["postgres"],
+  "actors": ["producer-a", "producer-b", "remote-authority"],
+  "initial_state": ["remote-ledger-empty", "producer-stream-unseen"],
+  "operations": [
+    {"name": "admit-contiguous-producer-batch", "actors": ["producer-a", "producer-b"], "synchronization": "independent PostgreSQL connections and per-stream row locks"},
+    {"name": "same-stream-retry-after-lost-response", "actors": ["producer-a"]},
+    {"name": "reject-origin-sequence-gap", "actors": ["producer-a"]},
+    {"name": "read-after-ingest-offset", "actors": ["remote-authority"]}
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "per-producer-stream sequence admission and remote ingest cursor"
+  },
+  "assumptions": {
+    "isolation": "PostgreSQL READ COMMITTED with SELECT FOR UPDATE on one ingest_stream row per producer stream",
+    "clock": "server-assigned ingest offsets; no cross-stream causal-clock claim",
+    "fairness": "blocked row-lock waiters eventually run once the lock holder commits or rolls back"
+  },
+  "bounds": {"streams": 2, "records_per_stream": 2, "retry_attempts": 2},
+  "invariants": [
+    "same-origin-stream-and-sequence-is-admitted-at-most-once",
+    "identical-retry-returns-the-original-ingest-offset",
+    "changed-record-at-an-existing-origin-tuple-is-rejected",
+    "sequence-gaps-are-rejected-without-partial-batch-admission",
+    "accepted-records-have-monotonically-increasing-server-assigned-ingest-offsets",
+    "remote-origin-records-are-not-written-to-producer-outboxes"
+  ],
+  "faults": [
+    "lost-response-after-remote-commit", "origin-sequence-gap", "duplicate-retry", "concurrent-same-stream-admission"],
+  "oracles": [
+    "ingest-record-query-by-origin-tuple", "stream-high-water-query", "ingest-offset-order-query", "independent-connection-history"],
+  "implementation_anchors": [
+    "sprintctl/pg.py:ingest_records",
+    "sprintctl/pg.py:list_ingested_records",
+    "sprintctl/pg.py:_lock_ingest_stream"
+  ],
+  "expansions": ["stateful-test", "concurrent-history", "fault-scenario"]
+}
