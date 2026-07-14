@@ -703,18 +703,31 @@ def item() -> None:
 @click.option("--sprint-id", type=int, required=True, help="Sprint ID")
 @click.option("--track", "track_name", required=True, help="Track name (created if absent)")
 @click.option("--title", required=True, help="Item title")
+@click.option("--description", default=None, help="Non-empty implementation scope or objective")
 @click.option("--assignee", default=None, help="Assignee name")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output created item as JSON")
 @click.pass_obj
-def item_add(obj, sprint_id, track_name, title, assignee, as_json) -> None:
+def item_add(obj, sprint_id, track_name, title, description, assignee, as_json) -> None:
     """Add a work item to a sprint track."""
+    if description is not None:
+        try:
+            _db.validate_work_item_description(description)
+        except ValueError as exc:
+            raise click.BadParameter(str(exc), param_hint="--description") from exc
     store, m = _get_store(obj)
     s = m.get_sprint(store, sprint_id)
     if s is None:
         click.echo(f"Sprint #{sprint_id} not found.", err=True)
         sys.exit(1)
     track_id = m.get_or_create_track(store, sprint_id, track_name)
-    item_id = m.create_work_item(store, sprint_id, track_id, title, assignee=assignee)
+    item_id = m.create_work_item(
+        store,
+        sprint_id,
+        track_id,
+        title,
+        description=description or "",
+        assignee=assignee,
+    )
     if as_json:
         item = m.get_work_item(store, item_id)
         assert item is not None
@@ -722,6 +735,33 @@ def item_add(obj, sprint_id, track_name, title, assignee, as_json) -> None:
         click.echo(json.dumps(payload, indent=2))
         return
     click.echo(f"Added item #{item_id}: {title}  [track: {track_name}]")
+
+
+@item.command("edit")
+@click.option("--id", "item_id", type=int, required=True, help="Item ID")
+@click.option("--description", required=True, help="Non-empty implementation scope or objective")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output updated item as JSON")
+@click.pass_obj
+def item_edit(obj, item_id, description, as_json) -> None:
+    """Replace a work item's description."""
+    try:
+        _db.validate_work_item_description(description)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="--description") from exc
+
+    store, m = _get_store(obj)
+    try:
+        m.update_work_item_description(store, item_id, description)
+    except ValueError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+    updated = m.get_work_item(store, item_id)
+    assert updated is not None
+    if as_json:
+        click.echo(json.dumps(updated, indent=2))
+        return
+    click.echo(f"Updated item #{item_id} description.")
 
 
 @item.command("show")
@@ -759,6 +799,8 @@ def item_show(obj, item_id, as_json) -> None:
         click.echo(f"  Track:    {track_name}")
     assignee = it.get("assignee") or "-"
     click.echo(f"  Assignee: {assignee}")
+    description = it.get("description") or "-"
+    click.echo(f"  Description: {description}")
     click.echo(f"  Updated:  {it['updated_at']}")
 
     if refs:
@@ -4779,7 +4821,9 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "  sprint kind    --id ID --kind active_sprint|backlog|archive",
         "",
         "ITEM",
-        "  item add       --sprint-id ID --track NAME --title TITLE [--assignee NAME] [--json]",
+        "  item add       --sprint-id ID --track NAME --title TITLE [--description TEXT]",
+        "                 [--assignee NAME] [--json]",
+        "  item edit      --id ID --description TEXT [--json]",
         "  item show      --id ID [--json]",
         "  item list      [--sprint-id ID] [--track NAME] [--status STATUS] [--fzf] [--json]",
         "  item note      --id ID --type TYPE --summary TEXT [--detail TEXT] [--tags T1,T2]",

@@ -110,7 +110,8 @@ When accepted work needs tracking:
 
 ```sh
 sprintctl sprint create --name "Sprint 4" --status active
-sprintctl item add --sprint-id 1 --track docs --title "Document claim handoff flow"
+sprintctl item add --sprint-id 1 --track docs --title "Document claim handoff flow" \
+  --description "Document claim creation, heartbeat, rotation, and recovery."
 sprintctl item ref add --id 1 --type doc \
   --url docs/plans/claim-handoff.md --label claim-handoff-plan
 sprintctl render > docs/sprint-snapshots/sprint-current.txt

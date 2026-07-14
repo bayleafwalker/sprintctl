@@ -34,7 +34,11 @@ of an existing task graph tool.
 ```sh
 # 1. Create a sprint and a few items
 sprintctl sprint create --name "Sprint 4" --status active
-sprintctl item add --sprint-id 1 --track docs --title "Write resume guide"
+sprintctl item add --sprint-id 1 --track docs --title "Write resume guide" \
+  --description "Document the claim recovery and handoff path."
+
+# Descriptions can be replaced after an item is reshaped.
+sprintctl item edit --id 1 --description "Document recovery, rotation, and handoff."
 
 # 2. Read live context
 sprintctl session resume --json

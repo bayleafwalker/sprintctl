@@ -489,6 +489,15 @@ def get_track(conn: sqlite3.Connection, track_id: int) -> dict | None:
 
 # --- WorkItem ---
 
+def validate_work_item_description(description: str) -> str:
+    """Validate a description supplied through the item mutation surface."""
+    if not isinstance(description, str) or not description.strip():
+        raise ValueError("work item description must contain non-whitespace text")
+    if "\x00" in description:
+        raise ValueError("work item description must not contain NUL bytes")
+    return description
+
+
 def create_work_item(
     conn: sqlite3.Connection,
     sprint_id: int,
@@ -508,6 +517,26 @@ def create_work_item(
 def get_work_item(conn: sqlite3.Connection, item_id: int) -> dict | None:
     row = conn.execute("SELECT * FROM work_item WHERE id = ?", (item_id,)).fetchone()
     return dict(row) if row else None
+
+
+def update_work_item_description(
+    conn: sqlite3.Connection,
+    item_id: int,
+    description: str,
+) -> None:
+    description = validate_work_item_description(description)
+    cur = conn.execute(
+        """
+        UPDATE work_item
+        SET description = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+        WHERE id = ?
+        """,
+        (description, item_id),
+    )
+    if cur.rowcount == 0:
+        conn.rollback()
+        raise ValueError(f"Item #{item_id} not found")
+    conn.commit()
 
 
 def list_work_items(

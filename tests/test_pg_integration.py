@@ -343,7 +343,28 @@ class TestWorkItem:
         item = pg.get_work_item(store, iid)
         assert item is not None
         assert item["title"] == "WI title"
+        assert item["description"] == "desc"
         assert item["status"] == "pending"
+
+    def test_update_description(self, store, sprint_id, track_id):
+        iid = pg.create_work_item(store, sprint_id, track_id, "Editable", "Old scope")
+
+        pg.update_work_item_description(store, iid, "New shaped scope")
+
+        assert pg.get_work_item(store, iid)["description"] == "New shaped scope"
+
+    def test_update_description_validation_and_missing_item(
+        self, store, sprint_id, track_id
+    ):
+        iid = pg.create_work_item(store, sprint_id, track_id, "Validated", "Keep scope")
+
+        with pytest.raises(ValueError, match="non-whitespace"):
+            pg.update_work_item_description(store, iid, "  \n  ")
+        with pytest.raises(ValueError, match="NUL"):
+            pg.update_work_item_description(store, iid, "invalid\x00scope")
+        with pytest.raises(ValueError, match="Item #999999999 not found"):
+            pg.update_work_item_description(store, 999_999_999, "Valid scope")
+        assert pg.get_work_item(store, iid)["description"] == "Keep scope"
 
     def test_get_missing_returns_none(self, store):
         assert pg.get_work_item(store, 9_999_999) is None

@@ -269,9 +269,131 @@ class TestItemCRUD:
         assert data["sprint_id"] == active_sprint["id"]
         assert data["track_name"] == "backend"
         assert data["title"] == "JSON item"
+        assert data["description"] == ""
         assert data["assignee"] == "alice"
         assert data["status"] == "pending"
         assert isinstance(data["id"], int)
+
+    def test_item_add_persists_description(self, runner, conn, active_sprint):
+        result = runner.invoke(
+            cli,
+            [
+                "item",
+                "add",
+                "--sprint-id",
+                str(active_sprint["id"]),
+                "--track",
+                "backend",
+                "--title",
+                "Described item",
+                "--description",
+                "Implement the API and its contract tests.",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["description"] == "Implement the API and its contract tests."
+        assert db.get_work_item(conn, data["id"])["description"] == data["description"]
+
+    @pytest.mark.parametrize("description", ["", "  \n\t  "])
+    def test_item_add_rejects_empty_explicit_description(
+        self, runner, conn, active_sprint, description
+    ):
+        result = runner.invoke(
+            cli,
+            [
+                "item",
+                "add",
+                "--sprint-id",
+                str(active_sprint["id"]),
+                "--track",
+                "backend",
+                "--title",
+                "Invalid description",
+                "--description",
+                description,
+            ],
+        )
+        assert result.exit_code == 2
+        assert "must contain non-whitespace text" in result.output
+        assert not db.list_work_items(conn, sprint_id=active_sprint["id"])
+
+    def test_item_edit_replaces_description_and_returns_item_json(
+        self, runner, conn, active_sprint
+    ):
+        track_id = db.get_or_create_track(conn, active_sprint["id"], "backend")
+        item_id = db.create_work_item(
+            conn,
+            active_sprint["id"],
+            track_id,
+            "Editable item",
+            "Old scope",
+        )
+
+        result = runner.invoke(
+            cli,
+            [
+                "item",
+                "edit",
+                "--id",
+                str(item_id),
+                "--description",
+                "New shaped scope",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["id"] == item_id
+        assert data["description"] == "New shaped scope"
+        assert db.get_work_item(conn, item_id)["description"] == "New shaped scope"
+
+    def test_item_edit_rejects_empty_description_without_mutation(
+        self, runner, conn, active_sprint
+    ):
+        track_id = db.get_or_create_track(conn, active_sprint["id"], "backend")
+        item_id = db.create_work_item(
+            conn,
+            active_sprint["id"],
+            track_id,
+            "Editable item",
+            "Keep this scope",
+        )
+
+        result = runner.invoke(
+            cli,
+            ["item", "edit", "--id", str(item_id), "--description", "   "],
+        )
+
+        assert result.exit_code == 2
+        assert "must contain non-whitespace text" in result.output
+        assert db.get_work_item(conn, item_id)["description"] == "Keep this scope"
+
+    def test_item_edit_unknown_item_fails(self, runner, db_path):
+        result = runner.invoke(
+            cli,
+            ["item", "edit", "--id", "9999", "--description", "Valid scope"],
+        )
+        assert result.exit_code == 1
+        assert "Item #9999 not found" in result.output
+
+    def test_update_work_item_description_validates_and_updates(
+        self, conn, active_sprint
+    ):
+        track_id = db.get_or_create_track(conn, active_sprint["id"], "backend")
+        item_id = db.create_work_item(conn, active_sprint["id"], track_id, "Direct API")
+
+        db.update_work_item_description(conn, item_id, "Directly updated scope")
+
+        assert db.get_work_item(conn, item_id)["description"] == "Directly updated scope"
+        with pytest.raises(ValueError, match="non-whitespace"):
+            db.update_work_item_description(conn, item_id, "\n\t")
+        with pytest.raises(ValueError, match="NUL"):
+            db.update_work_item_description(conn, item_id, "invalid\x00scope")
+        with pytest.raises(ValueError, match="Item #9999 not found"):
+            db.update_work_item_description(conn, 9999, "Valid scope")
 
 
 # ---------------------------------------------------------------------------
@@ -880,10 +1002,13 @@ class TestItemNote:
 class TestItemShow:
     def test_item_show_basic(self, runner, conn, active_sprint, db_path):
         tid = db.get_or_create_track(conn, active_sprint["id"], "backend")
-        iid = db.create_work_item(conn, active_sprint["id"], tid, "Build API")
+        iid = db.create_work_item(
+            conn, active_sprint["id"], tid, "Build API", "Implement the API"
+        )
         result = runner.invoke(cli, ["item", "show", "--id", str(iid)])
         assert result.exit_code == 0, result.output
         assert "Build API" in result.output
+        assert "Implement the API" in result.output
         assert "pending" in result.output
 
     def test_item_show_json(self, runner, conn, active_sprint, db_path):
@@ -928,7 +1053,7 @@ class TestUsageCommand:
 
     def test_usage_mentions_key_commands(self, runner, db_path):
         result = runner.invoke(cli, ["usage"])
-        for cmd in ("sprint create", "item add", "claim start", "claim create", "maintain check", "handoff", "render"):
+        for cmd in ("sprint create", "item add", "item edit", "claim start", "claim create", "maintain check", "handoff", "render"):
             assert cmd in result.output, f"Missing command: {cmd}"
 
     def test_usage_mentions_env_vars(self, runner, db_path):

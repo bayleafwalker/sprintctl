@@ -18,9 +18,15 @@ sprintctl sprint create --name "Sprint 4" --status active
 Add a few items:
 
 ```sh
-sprintctl item add --sprint-id 1 --track docs --title "Write resume guide"
-sprintctl item add --sprint-id 1 --track cli --title "Tighten handoff contract"
+sprintctl item add --sprint-id 1 --track docs --title "Write resume guide" \
+  --description "Document claim recovery and handoff."
+sprintctl item add --sprint-id 1 --track cli --title "Tighten handoff contract" \
+  --description "Define and verify token rotation semantics."
 ```
+
+Omitting `--description` remains supported for older scripts. New shaped work
+should provide a non-empty description. Replace stale scope with
+`sprintctl item edit --id <id> --description "<updated scope>"`.
 
 ## 2. Read live context
 

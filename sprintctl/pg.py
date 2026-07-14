@@ -56,6 +56,7 @@ from .db import (
     _takeup_actor_key,
     _decode_event_payload,
     process_takeup_events,
+    validate_work_item_description,
 )
 
 # ---------------------------------------------------------------------------
@@ -852,6 +853,29 @@ def get_work_item(store: PgStore, item_id: int) -> dict | None:
         )
         row = cur.fetchone()
     return _norm(row) if row else None
+
+
+def update_work_item_description(
+    store: PgStore,
+    item_id: int,
+    description: str,
+) -> None:
+    description = validate_work_item_description(description)
+    with store.conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE work_item
+            SET description = %s, updated_at = now()
+            WHERE repo_id = %s AND id = %s
+            RETURNING id
+            """,
+            (description, store.repo_id, item_id),
+        )
+        row = cur.fetchone()
+    if row is None:
+        store.conn.rollback()
+        raise ValueError(f"Item #{item_id} not found")
+    store.conn.commit()
 
 
 def list_work_items(
