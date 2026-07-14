@@ -8,6 +8,7 @@ link back to them via doc refs — see
 
 Primary plan documents:
 
+- [ADR: Outbox and Synchronization Model](adr-outbox-sync-model.md)
 - [Roadmap Reset](roadmap-reset.md)
 - [Operator UX Roadmap](operator-ux-roadmap.md)
 - [UX Plan Pack](ux/00-index.md)
