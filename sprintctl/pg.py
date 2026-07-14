@@ -1547,6 +1547,14 @@ def handoff_claim(
         raise ValueError("mode must be 'transfer' or 'rotate'")
     row = _norm(row)
     legacy_ambiguous = not bool(row["claim_token"])
+    # A remote claim row deliberately cannot reveal a lost token.  Explicit
+    # recovery adoption is therefore limited to calls that omit a token; an
+    # invalid supplied token must remain a rejected proof attempt.
+    lost_proof_adopted = (
+        not legacy_ambiguous
+        and allow_legacy_adopt
+        and claim_token is None
+    )
     if legacy_ambiguous:
         if not allow_legacy_adopt:
             _emit_claim_event(
@@ -1571,7 +1579,7 @@ def handoff_claim(
                 "Use allow_legacy_adopt to mint a new ownership proof."
             )
         mode = "rotate"
-    else:
+    elif not lost_proof_adopted:
         try:
             _db_require_claim_proof(row, claim_token)
         except ValueError as exc:
@@ -1632,12 +1640,18 @@ def handoff_claim(
             "detail": note or (
                 "A legacy ambiguous claim was adopted and re-issued."
                 if legacy_ambiguous
-                else f"Claim ownership transferred with mode={mode}."
+                else (
+                    "The previous proof was unavailable; explicit recovery adoption "
+                    "minted a replacement token."
+                    if lost_proof_adopted
+                    else f"Claim ownership transferred with mode={mode}."
+                )
             ),
             "tags": ["claims", "handoff", "coordination"],
             "operation": "handoff",
             "mode": mode,
             "legacy_adopted": legacy_ambiguous,
+            "lost_proof_adopted": lost_proof_adopted,
             "token_rotated": mode == "rotate" or legacy_ambiguous,
             "from_identity": from_identity,
             "to_identity": _claim_event_identity(updated),

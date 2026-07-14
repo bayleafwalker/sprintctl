@@ -15,6 +15,7 @@
   "operations": [
     { "name": "create-exclusive-claim", "actors": ["worker-a", "worker-b"], "synchronization": "barrier-before-conflict-check" },
     { "name": "handoff-rotate", "actors": ["worker-a", "worker-b"], "synchronization": "barrier-before-proof-bearing-write" },
+    { "name": "explicit-lost-proof-adoption", "actors": ["worker-b"], "synchronization": "after-local-recovery-token-is-unavailable" },
     { "name": "heartbeat-with-old-token", "actors": ["worker-a"], "synchronization": "after-handoff-commit" }
   ],
   "consistency": { "target": "application-invariant", "object": "exclusive-claim-ownership" },
@@ -23,12 +24,14 @@
   "invariants": [
     "at-most-one-live-exclusive-owner-outside-authorized-delegation",
     "old-token-cannot-mutate-after-rotated-handoff",
+    "explicit-lost-proof-adoption-requires-omitted-proof-and-an-explicit-flag",
     "conflict-failure-does-not-create-requested-claim",
     "accepted-and-rejected-histories-match-across-backends"
   ],
   "faults": [
     "lost-response-after-create-commit",
     "lost-response-after-handoff-commit",
+    "local-recovery-token-unavailable-after-claim-commit",
     "expiry-at-conflict-check",
     "connection-close-before-response"
   ],

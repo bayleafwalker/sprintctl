@@ -3764,7 +3764,7 @@ def claim_release(obj, claim_id, claim_token, actor) -> None:
 
 @claim.command("handoff")
 @click.option("--id", "claim_id", type=int, required=True, help="Claim ID")
-@click.option("--claim-token", default=None, help="Existing claim token (required unless adopting a legacy ambiguous claim)")
+@click.option("--claim-token", default=None, help="Existing claim token (required unless explicitly adopting a lost or legacy proof)")
 @click.option("--actor", "--agent", "actor", required=True, help="Recipient actor identifier")
 @click.option(
     "--mode",
@@ -3783,7 +3783,7 @@ def claim_release(obj, claim_id, claim_token, actor) -> None:
 @click.option("--pid", type=int, default=None, help="Recipient PID override (defaults to current process)")
 @click.option("--performed-by", default=None, help="Actor performing the handoff")
 @click.option("--note", default=None, help="Structured note to include in the handoff event")
-@click.option("--allow-legacy-adopt", is_flag=True, default=False, help="Adopt a legacy ambiguous claim with no token by minting a fresh proof")
+@click.option("--allow-legacy-adopt", is_flag=True, default=False, help="Explicitly adopt a lost or legacy claim proof and mint a fresh token")
 @click.option("--output", "output_path", default=None, help="Write the claim handoff bundle to a file instead of stdout")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Emit the claim handoff bundle as JSON")
 @click.pass_obj

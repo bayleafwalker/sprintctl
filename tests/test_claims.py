@@ -234,6 +234,39 @@ class TestClaimOwnership:
         events = db.list_events(conn, active_sprint["id"])
         assert events[-1]["event_type"] == "claim-ownership-corrected"
 
+    def test_lost_proof_can_be_explicitly_adopted_but_invalid_proof_is_rejected(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        claim = _claim(conn, iid, agent="agent-a")
+
+        with pytest.raises(ValueError, match="Invalid claim_token"):
+            db.handoff_claim(
+                conn,
+                claim["claim_id"],
+                "not-the-token",
+                actor="agent-b",
+                allow_legacy_adopt=True,
+            )
+
+        adopted = db.handoff_claim(
+            conn,
+            claim["claim_id"],
+            None,
+            actor="agent-b",
+            allow_legacy_adopt=True,
+            mode="rotate",
+        )
+
+        assert adopted["actor"] == "agent-b"
+        assert adopted["claim_token"] != claim["claim_token"]
+        events = [
+            event
+            for event in db.list_events(conn, active_sprint["id"])
+            if event["event_type"] == "claim-handoff"
+        ]
+        payload = json.loads(events[-1]["payload"])
+        assert payload["lost_proof_adopted"] is True
+        assert payload["legacy_adopted"] is False
+
 
 class TestClaimEnforcement:
     def test_transition_blocked_without_claim_proof(self, conn, active_sprint):

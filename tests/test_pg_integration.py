@@ -591,6 +591,26 @@ class TestClaim:
         assert new_claim["agent"] == "ag-to"
         assert new_claim["claim_token"] != old_token
 
+    def test_explicit_lost_proof_adoption_rotates_remote_claim_token(self, store, sprint_id, track_id):
+        iid = pg.create_work_item(store, sprint_id, track_id, f"Adopt-{_uid()}")
+        cid = pg.create_claim(store, iid, "ag-from", ttl_seconds=300)
+        claim = pg.get_claim(store, cid, include_secret=True)
+
+        with pytest.raises(ValueError, match="Invalid claim_token"):
+            pg.handoff_claim(
+                store, cid, "not-the-token", actor="ag-to", allow_legacy_adopt=True
+            )
+
+        adopted = pg.handoff_claim(
+            store, cid, None, actor="ag-to", allow_legacy_adopt=True, mode="rotate"
+        )
+        assert adopted["claim_token"] != claim["claim_token"]
+
+        events = pg.list_events(store, sprint_id)
+        handoff = [event for event in events if event["event_type"] == "claim-handoff"][-1]
+        payload = json.loads(handoff["payload"])
+        assert payload["lost_proof_adopted"] is True
+
     def test_find_claim_by_instance_id(self, store, sprint_id, track_id):
         iid = pg.create_work_item(store, sprint_id, track_id, f"Fi-{_uid()}")
         inst = f"inst-{_uid()}"
