@@ -83,4 +83,52 @@ def test_serializable_input_and_unapplied_watermark_age(tmp_path):
 
     conn = projection.open_cached_projection(tmp_path / "projection.db")
     assert projection.get_watermark(conn).age_seconds() is None
+
+
+def test_authority_decisions_advance_separate_sparse_watermark_atomically(tmp_path):
+    conn = projection.open_cached_projection(tmp_path / "projection.db")
+    decisions = [
+        projection.CachedAuthorityDecision(
+            decision_ingest_offset=3,
+            decision={"request_event_id": "request-1", "outcome": "accepted"},
+        ),
+        projection.CachedAuthorityDecision(
+            decision_ingest_offset=8,
+            decision={"request_event_id": "request-2", "outcome": "rejected"},
+        ),
+    ]
+
+    watermark = projection.apply_authority_decisions(
+        conn,
+        decisions,
+        advanced_at="2026-07-14T18:00:00Z",
+    )
+
+    assert watermark == projection.ProjectionWatermark(8, "2026-07-14T18:00:00Z")
+    assert projection.get_watermark(conn).ingest_offset == 0
+    assert projection.list_cached_authority_decisions(conn) == decisions
+
+
+def test_authority_decision_failure_rolls_back_rows_and_watermark(tmp_path):
+    conn = projection.open_cached_projection(tmp_path / "projection.db")
+    conn.executescript(
+        """
+        CREATE TRIGGER reject_second_authority_decision
+        BEFORE INSERT ON cached_authority_decision
+        WHEN NEW.decision_ingest_offset = 4
+        BEGIN
+            SELECT RAISE(ABORT, 'injected authority cache failure');
+        END;
+        """
+    )
+    decisions = [
+        projection.CachedAuthorityDecision(2, {"outcome": "accepted"}),
+        projection.CachedAuthorityDecision(4, {"outcome": "rejected"}),
+    ]
+
+    with pytest.raises(Exception, match="injected authority cache failure"):
+        projection.apply_authority_decisions(conn, decisions)
+
+    assert projection.list_cached_authority_decisions(conn) == []
+    assert projection.get_authority_watermark(conn).ingest_offset == 0
     conn.close()

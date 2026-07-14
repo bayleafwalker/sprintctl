@@ -10,8 +10,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import sqlite3
+from typing import Callable, Mapping
 
-from . import outbox, pg, projection
+from . import authority, outbox, pg, projection
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +22,10 @@ class SyncResult:
     uploaded: tuple[pg.IngestResult, ...]
     applied_count: int
     watermark: projection.ProjectionWatermark
+    command_decisions: tuple[authority.AuthorityDecision, ...] = ()
+    pending_command_event_ids: tuple[str, ...] = ()
+    decision_applied_count: int = 0
+    decision_watermark: projection.ProjectionWatermark | None = None
 
 
 def _validate_batch_size(batch_size: int) -> int:
@@ -60,31 +65,95 @@ def synchronize_outbox(
     projection_conn: sqlite3.Connection,
     *,
     batch_size: int = 100,
+    credential_resolver: Callable[[outbox.OutboxRecord], Mapping[str, str] | None]
+    | None = None,
+    apply_ingest_projection: bool = True,
 ) -> SyncResult:
-    """Upload local observations and atomically advance the local cache cursor.
+    """Upload producer records and atomically advance isolated cache cursors.
 
     Re-submitting every durable producer record is intentional: remote admission
     deduplicates on the producer stream tuple and returns original offsets after
-    a lost response.  If projection application fails, a later call repeats the
-    safe upload and resumes from the unchanged local watermark.
+    a lost response. Commands without transient credential material remain
+    pending and never mutate authority. If projection application fails, a
+    later call repeats safe admission and resumes from unchanged watermarks.
     """
     batch_size = _validate_batch_size(batch_size)
     records = outbox.list_records(outbox_conn)
     uploaded: list[pg.IngestResult] = []
-    for start in range(0, len(records), batch_size):
-        uploaded.extend(pg.ingest_records(remote_store, records[start : start + batch_size]))
+    decisions: list[authority.AuthorityDecision] = []
+    pending: list[str] = []
+    observations: list[outbox.OutboxRecord] = []
+
+    def flush_observations() -> None:
+        for start in range(0, len(observations), batch_size):
+            uploaded.extend(
+                pg.ingest_records(remote_store, observations[start : start + batch_size])
+            )
+        observations.clear()
+
+    for index, record in enumerate(records):
+        if record.record_class == outbox.OBSERVATION:
+            observations.append(record)
+            continue
+        flush_observations()
+        if record.record_class != outbox.AUTHORITY_COMMAND:
+            raise ValueError("producer outbox contains a non-producer record class")
+        credentials = credential_resolver(record) if credential_resolver is not None else None
+        if credentials is None:
+            pending.extend(
+                blocked.event_id
+                for blocked in records[index:]
+                if blocked.record_class == outbox.AUTHORITY_COMMAND
+            )
+            break
+        decisions.append(
+            authority.arbitrate_command(remote_store, record, credentials=credentials)
+        )
+    flush_observations()
 
     watermark = projection.get_watermark(projection_conn)
     applied_count = 0
-    while True:
-        remote_records = pg.list_ingested_records(
-            remote_store, after_offset=watermark.ingest_offset, limit=batch_size
-        )
-        if not remote_records:
-            break
-        watermark = projection.apply_ingested_records(
-            projection_conn, [_cached_record(record) for record in remote_records]
-        )
-        applied_count += len(remote_records)
+    if apply_ingest_projection:
+        while True:
+            remote_records = pg.list_ingested_records(
+                remote_store, after_offset=watermark.ingest_offset, limit=batch_size
+            )
+            if not remote_records:
+                break
+            watermark = projection.apply_ingested_records(
+                projection_conn, [_cached_record(record) for record in remote_records]
+            )
+            applied_count += len(remote_records)
 
-    return SyncResult(tuple(uploaded), applied_count, watermark)
+    decision_watermark = projection.get_authority_watermark(projection_conn)
+    decision_applied_count = 0
+    while True:
+        remote_decisions = authority.list_authority_decisions(
+            remote_store,
+            after_offset=decision_watermark.ingest_offset,
+            limit=batch_size,
+        )
+        if not remote_decisions:
+            break
+        cached = [
+            projection.CachedAuthorityDecision(
+                decision_ingest_offset=decision.decision_ingest_offset,
+                decision=decision.to_dict(),
+            )
+            for decision in remote_decisions
+        ]
+        decision_watermark = projection.apply_authority_decisions(
+            projection_conn,
+            cached,
+        )
+        decision_applied_count += len(cached)
+
+    return SyncResult(
+        tuple(uploaded),
+        applied_count,
+        watermark,
+        command_decisions=tuple(decisions),
+        pending_command_event_ids=tuple(pending),
+        decision_applied_count=decision_applied_count,
+        decision_watermark=decision_watermark,
+    )

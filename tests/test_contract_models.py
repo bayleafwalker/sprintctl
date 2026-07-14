@@ -7,7 +7,7 @@ from sprintctl import contracts
 
 
 def _record_kwargs(record_type: str) -> dict[str, object]:
-    return {
+    values = {
         "event_id": uuid4(),
         "record_type": record_type,
         "schema_version": "sprintctl-record/v1",
@@ -21,6 +21,15 @@ def _record_kwargs(record_type: str) -> dict[str, object]:
         "payload_digest": "a" * 64,
         "artifact_digest": "b" * 64,
     }
+    if record_type == "item.done":
+        values["refs"] = {
+            "repo_id": str(uuid4()),
+            "aggregate_type": "item",
+            "aggregate_uuid": str(uuid4()),
+            "aggregate_id": 1128,
+        }
+        values["payload"] = {"to_status": "done"}
+    return values
 
 
 class TestSemanticRecordContracts:

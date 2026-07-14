@@ -1,0 +1,100 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.authority.command-arbitration",
+  "owner_repo": "sprintctl",
+  "subject": "durable-authority-command-requests-and-remote-decisions",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:75d3c0c889a477ea56790371acae18f1dd7541b6"
+  },
+  "source_of_truth": "postgresql-authority-state-plus-immutable-ingest-ledger",
+  "depth": 2,
+  "backends": ["sqlite-producer-outbox", "postgresql-remote-authority"],
+  "actors": ["producer", "remote-authority", "competing-claim-owner"],
+  "initial_state": [
+    "authority-command-mode=off",
+    "producer-command-outbox-empty",
+    "remote-authority-aggregate-at-known-basis",
+    "remote-decision-ledger-empty"
+  ],
+  "operations": [
+    {
+      "name": "append-command-request",
+      "actors": ["producer"],
+      "synchronization": "SQLite BEGIN IMMEDIATE plus FULL synchronous commit"
+    },
+    {
+      "name": "arbitrate-current-command",
+      "actors": ["remote-authority"],
+      "synchronization": "PostgreSQL aggregate row lock and one transaction"
+    },
+    {
+      "name": "retry-identical-command",
+      "actors": ["producer", "remote-authority"],
+      "synchronization": "after accepted decision commit using identical stream identity"
+    },
+    {
+      "name": "submit-stale-or-expired-command",
+      "actors": ["producer", "competing-claim-owner", "remote-authority"],
+      "synchronization": "after remote basis or claim grant advances"
+    },
+    {
+      "name": "inject-decision-write-failure",
+      "actors": ["remote-authority"],
+      "synchronization": "before authority_decision insert in the effect transaction"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "request-effect-decision-atomicity-and-claim-grant-safety"
+  },
+  "assumptions": {
+    "isolation": "PostgreSQL READ COMMITTED with explicit aggregate row locks",
+    "clock": "PostgreSQL transaction clock for claim expiry",
+    "fairness": "none"
+  },
+  "bounds": {
+    "producer_streams": 1,
+    "remote_authorities": 1,
+    "command_types": 9,
+    "identical_retries": 1,
+    "competing_claim_owners": 2,
+    "injected_transaction_failures": 1
+  },
+  "invariants": [
+    "producer-outbox-never-contains-remote-decisions-or-raw-proofs",
+    "unaccepted-command-never-mutates-authority-state",
+    "accepted-effect-and-remote-decision-commit-atomically",
+    "identical-retry-returns-the-first-decision-without-a-second-effect",
+    "expired-grant-cannot-be-renewed-after-reassignment",
+    "semantic-rejection-retains-request-plus-remote-rejection",
+    "claim-proof-sidecars-are-private-digest-bound-and-restart-safe",
+    "cached-decision-watermark-never-authorizes-an-effect"
+  ],
+  "faults": [
+    "lost-response-and-identical-retry",
+    "stale-basis-after-remote-advance",
+    "expired-claim-after-reassignment",
+    "missing-transient-proof",
+    "unavailable-capability-artifact",
+    "decision-write-infrastructure-failure"
+  ],
+  "oracles": [
+    "outbox-record-and-fingerprint-query",
+    "authority-state-row-query",
+    "ingest-request-and-decision-query",
+    "authority-decision-binding-query",
+    "cached-decision-watermark-query",
+    "proof-sidecar-mode-and-digest-check"
+  ],
+  "implementation_anchors": [
+    "sprintctl/contracts.py:AuthorityCommand",
+    "sprintctl/outbox.py:append_authority_command",
+    "sprintctl/authority.py:arbitrate_command",
+    "sprintctl/authority_config.py:store_pending_authority_credentials",
+    "sprintctl/sync.py:synchronize_outbox",
+    "sprintctl/cli.py:authority_submit",
+    "tests/test_pg_integration.py:TestAuthorityCommandArbitration"
+  ],
+  "expansions": ["semantic-doc", "concurrent-history", "fault-scenario"]
+}

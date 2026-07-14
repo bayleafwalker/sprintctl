@@ -31,6 +31,29 @@ class ProjectionConflictError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class CachedAuthorityDecision:
+    """One redacted remote decision retained for offline evidence."""
+
+    decision_ingest_offset: int
+    decision: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.decision_ingest_offset, bool)
+            or not isinstance(self.decision_ingest_offset, int)
+            or self.decision_ingest_offset < 1
+        ):
+            raise ValueError("decision_ingest_offset must be a positive integer")
+        object.__setattr__(self, "decision", _canonical_record(self.decision))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "decision_ingest_offset": self.decision_ingest_offset,
+            "decision": _canonical_record(self.decision),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class CachedIngestRecord:
     """Serializable, immutable remote input for the local read-side cache."""
 
@@ -84,6 +107,19 @@ CREATE TABLE IF NOT EXISTS cached_ingest_watermark (
     ingest_offset INTEGER NOT NULL CHECK (ingest_offset >= 0),
     advanced_at   TEXT
 );
+
+CREATE TABLE IF NOT EXISTS cached_authority_decision (
+    decision_ingest_offset INTEGER PRIMARY KEY CHECK (decision_ingest_offset > 0),
+    decision_json          TEXT NOT NULL,
+    decision_sha256        TEXT NOT NULL,
+    received_at            TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS cached_authority_watermark (
+    singleton              INTEGER PRIMARY KEY CHECK (singleton = 1),
+    decision_ingest_offset INTEGER NOT NULL CHECK (decision_ingest_offset >= 0),
+    advanced_at            TEXT
+);
 """
 
 
@@ -126,6 +162,11 @@ def init_cached_projection(conn: sqlite3.Connection) -> None:
         "INSERT INTO cached_ingest_watermark (singleton, ingest_offset, advanced_at) "
         "VALUES (1, 0, NULL) ON CONFLICT(singleton) DO NOTHING"
     )
+    conn.execute(
+        "INSERT INTO cached_authority_watermark "
+        "(singleton, decision_ingest_offset, advanced_at) "
+        "VALUES (1, 0, NULL) ON CONFLICT(singleton) DO NOTHING"
+    )
     conn.commit()
 
 
@@ -145,6 +186,102 @@ def list_cached_records(conn: sqlite3.Connection) -> list[CachedIngestRecord]:
         "SELECT ingest_offset, record_json FROM cached_ingest_record ORDER BY ingest_offset"
     ).fetchall()
     return [CachedIngestRecord(ingest_offset=int(row[0]), record=json.loads(row[1])) for row in rows]
+
+
+def get_authority_watermark(conn: sqlite3.Connection) -> ProjectionWatermark:
+    row = conn.execute(
+        "SELECT decision_ingest_offset, advanced_at "
+        "FROM cached_authority_watermark WHERE singleton = 1"
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("cached authority projection is not initialized")
+    return ProjectionWatermark(ingest_offset=int(row[0]), advanced_at=row[1])
+
+
+def list_cached_authority_decisions(
+    conn: sqlite3.Connection,
+) -> list[CachedAuthorityDecision]:
+    rows = conn.execute(
+        "SELECT decision_ingest_offset, decision_json "
+        "FROM cached_authority_decision ORDER BY decision_ingest_offset"
+    ).fetchall()
+    return [
+        CachedAuthorityDecision(
+            decision_ingest_offset=int(row[0]),
+            decision=json.loads(row[1]),
+        )
+        for row in rows
+    ]
+
+
+def apply_authority_decisions(
+    conn: sqlite3.Connection,
+    decisions: list[CachedAuthorityDecision],
+    *,
+    advanced_at: str | None = None,
+) -> ProjectionWatermark:
+    """Atomically cache redacted decisions and advance their independent cursor.
+
+    Decision offsets share the remote ingest sequence with observations and
+    command requests, so they are strictly increasing but need not be
+    contiguous in this decision-only projection.
+    """
+    if advanced_at is not None:
+        _parse_timestamp(advanced_at)
+    previous = 0
+    prepared: list[tuple[CachedAuthorityDecision, str, str]] = []
+    for decision in decisions:
+        if decision.decision_ingest_offset <= previous:
+            raise ValueError("authority decisions must be supplied in strictly increasing order")
+        previous = decision.decision_ingest_offset
+        canonical = _canonical_record(decision.decision)
+        encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        prepared.append(
+            (decision, encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest())
+        )
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        watermark = get_authority_watermark(conn)
+        highest = watermark.ingest_offset
+        applied = False
+        for decision, encoded, digest in prepared:
+            offset = decision.decision_ingest_offset
+            row = conn.execute(
+                "SELECT decision_sha256 FROM cached_authority_decision "
+                "WHERE decision_ingest_offset = ?",
+                (offset,),
+            ).fetchone()
+            if row is not None:
+                if row[0] != digest:
+                    raise ProjectionConflictError(
+                        f"authority decision offset {offset} was replayed with different data"
+                    )
+                continue
+            if offset <= watermark.ingest_offset:
+                raise ProjectionConflictError(
+                    "uncached authority decision exists below the visible watermark"
+                )
+            received_at = advanced_at or _utc_now()
+            conn.execute(
+                "INSERT INTO cached_authority_decision "
+                "(decision_ingest_offset, decision_json, decision_sha256, received_at) "
+                "VALUES (?, ?, ?, ?)",
+                (offset, encoded, digest, received_at),
+            )
+            highest = max(highest, offset)
+            applied = True
+        if applied:
+            conn.execute(
+                "UPDATE cached_authority_watermark "
+                "SET decision_ingest_offset = ?, advanced_at = ? WHERE singleton = 1",
+                (highest, advanced_at or _utc_now()),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return get_authority_watermark(conn)
 
 
 def apply_ingested_records(

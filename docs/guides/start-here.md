@@ -97,6 +97,7 @@ you want a reviewable snapshot in git.
 - [Editor And Terminal Integration](../examples/editor-and-terminal-integration.md)
 - [Remote Mode](remote-mode.md)
 - [Shadow Projection Pilot](shadow-pilot.md)
+- [Remote Authority Commands](authority-commands.md)
 - [Coordinator Mode](../advanced/coordinator-mode.md)
 - [Claim Discipline](../advanced/claim-discipline.md)
 - [Context and Handoff Contracts](../reference/context-and-handoff.md)

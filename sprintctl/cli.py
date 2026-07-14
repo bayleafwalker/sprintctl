@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import secrets
 import sqlite3
 import socket
 import subprocess
@@ -15,6 +16,8 @@ import click
 
 from . import __version__
 from . import backend as _backend
+from . import authority as _authority
+from . import authority_config as _authority_config
 from . import contracts as _contracts
 from . import db as _db
 from . import doctor as _doctor
@@ -1485,6 +1488,431 @@ def event_add(obj, sprint_id, event_type, actor, work_item_id, source_type, payl
 def event_log(obj, sprint_id, event_type, actor, work_item_id, source_type, payload, as_json) -> None:
     """Alias for 'event add'."""
     _event_add_impl(obj, sprint_id, event_type, actor, work_item_id, source_type, payload, as_json)
+
+
+# ---------------------------------------------------------------------------
+# feature-flagged remote authority command path
+# ---------------------------------------------------------------------------
+
+_AUTHORITY_COMMAND_TYPES = (
+    "claim.acquire",
+    "claim.renew",
+    "claim.handoff",
+    "claim.release",
+    "item.transition",
+    "item.done",
+    "sprint.activate",
+    "sprint.close",
+    "capability-receipt.accept",
+)
+
+
+def _authority_repo_uuid(repo_root: Path) -> str:
+    manifest = repo_root / "sprintctl.dispatch.json"
+    try:
+        raw = json.loads(manifest.read_text(encoding="utf-8"))
+        return str(uuid.UUID(str(raw["repo_id"])))
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise _authority_config.AuthorityCommandConfigError(
+            "authority commands require a committed UUID repo_id in sprintctl.dispatch.json"
+        ) from exc
+
+
+def _authority_rollout_status() -> _authority_config.AuthorityCommandStatus:
+    try:
+        return _authority_config.authority_command_status(cwd=Path.cwd())
+    except _authority_config.AuthorityCommandConfigError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+def _authority_command_target(store, m, record_type: str, aggregate_id: int):
+    if record_type == "claim.acquire":
+        item = m.get_work_item(store, aggregate_id)
+        if item is None:
+            raise click.ClickException(f"Item #{aggregate_id} not found")
+        return "item", item, item["aggregate_uuid"]
+    if record_type in {"item.transition", "item.done"}:
+        item = m.get_work_item(store, aggregate_id)
+        if item is None:
+            raise click.ClickException(f"Item #{aggregate_id} not found")
+        return "item", item, item["aggregate_uuid"]
+    if record_type in {"claim.renew", "claim.handoff", "claim.release"}:
+        claim = m.get_claim(store, aggregate_id, include_secret=False)
+        if claim is None:
+            raise click.ClickException(f"Claim #{aggregate_id} not found")
+        return "claim", claim, None
+    sprint = m.get_sprint(store, aggregate_id)
+    if sprint is None:
+        raise click.ClickException(f"Sprint #{aggregate_id} not found")
+    return "sprint", sprint, sprint["aggregate_uuid"]
+
+
+def _authority_basis_revision(
+    store,
+    m,
+    record_type: str,
+    aggregate_id: int,
+    aggregate: dict,
+) -> str:
+    if record_type in {"item.transition", "item.done", "claim.acquire"}:
+        return _authority.item_revision(aggregate)
+    if record_type in {"sprint.activate", "sprint.close"}:
+        return _authority.sprint_revision(aggregate)
+    if record_type in {"claim.renew", "claim.handoff", "claim.release"}:
+        return _authority.claim_revision(aggregate)
+    events = [
+        event
+        for event in m.list_events(store, aggregate_id)
+        if event["event_type"] == _contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE
+    ]
+    if len(events) != 1:
+        raise click.ClickException(
+            "capability receipt acceptance requires exactly one sprint-close-boundary"
+        )
+    return f"event:{events[0]['id']}"
+
+
+@cli.group("authority")
+def authority_commands() -> None:
+    """Operate the feature-flagged remote authority command journal."""
+
+
+@authority_commands.command("status")
+@click.option("--json", "as_json", is_flag=True, default=False)
+def authority_status(as_json: bool) -> None:
+    """Show rollout mode and local durable command counts without secrets."""
+    status = _authority_rollout_status()
+    payload = status.to_dict()
+    payload["outbox_records"] = 0
+    payload["pending_credentials"] = 0
+    if status.paths.outbox_path.exists():
+        producer = _outbox.open_outbox(status.paths.outbox_path)
+        try:
+            payload["outbox_records"] = len(_outbox.list_records(producer))
+        finally:
+            producer.close()
+    if status.paths.credential_dir.exists():
+        payload["pending_credentials"] = len(
+            [path for path in status.paths.credential_dir.iterdir() if path.is_file()]
+        )
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+    else:
+        click.echo(f"Authority command mode: {payload['mode']}")
+        click.echo(f"Durable producer records: {payload['outbox_records']}")
+        click.echo(f"Pending proof sidecars: {payload['pending_credentials']}")
+
+
+@authority_commands.command("mode")
+@click.option(
+    "--set",
+    "mode",
+    type=click.Choice(["off", "shadow", "enforce"]),
+    required=True,
+)
+@click.option("--json", "as_json", is_flag=True, default=False)
+def authority_mode(mode: str, as_json: bool) -> None:
+    """Set the explicit per-repository authority rollout mode."""
+    try:
+        status = _authority_config.set_authority_command_mode(mode, cwd=Path.cwd())
+    except _authority_config.AuthorityCommandConfigError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if as_json:
+        click.echo(json.dumps(status.to_dict(), indent=2))
+    else:
+        click.echo(f"Authority command mode set to {status.mode.value}.")
+
+
+@authority_commands.command("submit")
+@click.option("--type", "record_type", type=click.Choice(_AUTHORITY_COMMAND_TYPES), required=True)
+@click.option("--aggregate-id", type=int, required=True, help="Item, sprint, or claim integer ID")
+@click.option("--payload", default="{}", help="Command payload JSON object")
+@click.option("--basis-revision", default=None, help="Expected authority revision (auto-detected by default)")
+@click.option("--event-id", default=None, help="Caller-supplied stable request UUID")
+@click.option("--actor", required=True)
+@click.option(
+    "--claim-token",
+    default=None,
+    envvar="SPRINTCTL_AUTHORITY_CLAIM_TOKEN",
+    help="Transient existing claim proof (prefer the environment variable)",
+)
+@click.option(
+    "--coordinate-claim-token",
+    default=None,
+    envvar="SPRINTCTL_AUTHORITY_COORDINATE_CLAIM_TOKEN",
+    help="Transient coordinator proof (prefer the environment variable)",
+)
+@click.option(
+    "--proposed-claim-token",
+    default=None,
+    envvar="SPRINTCTL_AUTHORITY_PROPOSED_CLAIM_TOKEN",
+    help="Transient pre-minted new proof (auto-generated when omitted)",
+)
+@click.option("--json", "as_json", is_flag=True, default=False)
+@click.pass_obj
+def authority_submit(
+    obj,
+    record_type,
+    aggregate_id,
+    payload,
+    basis_revision,
+    event_id,
+    actor,
+    claim_token,
+    coordinate_claim_token,
+    proposed_claim_token,
+    as_json,
+) -> None:
+    """Durably append and, in enforce mode, remotely arbitrate one command."""
+    rollout = _authority_rollout_status()
+    if rollout.mode is _authority_config.AuthorityCommandMode.OFF:
+        raise click.ClickException(
+            "authority command mode is off; use 'sprintctl authority mode --set shadow|enforce'"
+        )
+    store, m = _get_store(obj)
+    backend_config = obj["backend_config"]
+    if rollout.mode is _authority_config.AuthorityCommandMode.ENFORCE and backend_config.mode != "remote":
+        raise click.ClickException("authority enforce mode requires a remote PostgreSQL backend")
+    if backend_config.mode == "remote":
+        store.authority_repo_uuid = _authority_repo_uuid(rollout.paths.repo_root)
+    try:
+        command_payload = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise click.ClickException(f"invalid --payload JSON: {exc}") from exc
+    if not isinstance(command_payload, dict):
+        raise click.ClickException("--payload must be a JSON object")
+
+    aggregate_type, aggregate, aggregate_uuid = _authority_command_target(
+        store, m, record_type, aggregate_id
+    )
+    basis_revision = basis_revision or _authority_basis_revision(
+        store, m, record_type, aggregate_id, aggregate
+    )
+    credentials: dict[str, str] = {}
+    generated_secret: str | None = None
+    generated_ref: str | None = None
+
+    if claim_token is not None:
+        ref = _authority.credential_ref(claim_token)
+        command_payload.setdefault("credential_ref", ref)
+        credentials[ref] = claim_token
+    if coordinate_claim_token is not None:
+        ref = _authority.credential_ref(coordinate_claim_token)
+        command_payload.setdefault("coordinate_credential_ref", ref)
+        credentials[ref] = coordinate_claim_token
+    if record_type == "claim.acquire" or (
+        record_type == "claim.handoff" and command_payload.get("mode", "rotate") == "rotate"
+    ):
+        generated_secret = proposed_claim_token or secrets.token_urlsafe(24)
+        ref = _authority.credential_ref(generated_secret)
+        generated_ref = ref
+        target_field = "credential_ref" if record_type == "claim.acquire" else "proposed_credential_ref"
+        command_payload.setdefault(target_field, ref)
+        credentials[ref] = generated_secret
+    if record_type in {"claim.renew", "claim.handoff", "claim.release"}:
+        command_payload.setdefault("claim_id", aggregate_id)
+
+    refs: dict[str, object] = {
+        "repo_id": _authority_repo_uuid(rollout.paths.repo_root),
+        "aggregate_type": aggregate_type,
+        "aggregate_id": aggregate_id,
+    }
+    if aggregate_uuid is not None:
+        refs["aggregate_uuid"] = aggregate_uuid
+    if aggregate_type == "claim":
+        refs["claim_id"] = aggregate_id
+    try:
+        request = _contracts.AuthorityCommand(
+            event_id=event_id or str(uuid.uuid4()),
+            record_type=record_type,
+            schema_version="1",
+            actor=actor,
+            authored_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            refs=refs,
+            payload=command_payload,
+            basis_revision=basis_revision,
+            correlation_id=event_id or str(uuid.uuid4()),
+        )
+    except (TypeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if credentials:
+        _authority_config.store_pending_authority_credentials(
+            rollout.paths,
+            event_id=request.event_id,
+            credentials=credentials,
+            recovery_credential_ref=generated_ref,
+        )
+    producer = _outbox.open_outbox(rollout.paths.outbox_path)
+    try:
+        durable = _outbox.append_authority_command(
+            producer,
+            request,
+            runtime_session_id=_detect_runtime_session_id(None),
+        )
+    finally:
+        producer.close()
+
+    result: dict[str, object] = {
+        "request_event_id": durable.event_id,
+        "origin_stream_id": durable.origin_stream_id,
+        "origin_seq": durable.origin_seq,
+        "mode": rollout.mode.value,
+        "status": "pending-shadow",
+    }
+    exit_code = 0
+    if rollout.mode is _authority_config.AuthorityCommandMode.ENFORCE:
+        decision = _authority.arbitrate_command(store, durable, credentials=credentials)
+        result.update(decision.to_dict())
+        result["status"] = decision.outcome
+        if generated_secret is not None:
+            result["credential_recovery_event_id"] = request.event_id
+        if not decision.accepted or generated_secret is None:
+            _authority_config.remove_pending_authority_credential(
+                rollout.paths,
+                event_id=request.event_id,
+            )
+        if not decision.accepted:
+            exit_code = 2
+    if as_json:
+        click.echo(json.dumps(result, indent=2))
+    else:
+        click.echo(
+            f"Authority request {result['request_event_id']}: {result['status']} "
+            f"(origin sequence {result['origin_seq']})"
+        )
+        if generated_secret is not None:
+            click.echo(
+                "New proof retained in the private sidecar for recovery event "
+                f"{request.event_id}."
+            )
+        if result.get("reason_code"):
+            click.echo(f"Reason: {result['reason_code']}: {result.get('reason_detail')}", err=True)
+    if exit_code:
+        raise click.exceptions.Exit(exit_code)
+
+
+@authority_commands.command("sync")
+@click.option("--batch-size", default=100, type=int, show_default=True)
+@click.option("--json", "as_json", is_flag=True, default=False)
+@click.pass_obj
+def authority_sync(obj, batch_size: int, as_json: bool) -> None:
+    """Retry durable commands whose local proof sidecar is available."""
+    rollout = _authority_rollout_status()
+    if rollout.mode is not _authority_config.AuthorityCommandMode.ENFORCE:
+        raise click.ClickException("authority sync requires enforce mode")
+    store, _m = _get_store(obj)
+    if obj["backend_config"].mode != "remote":
+        raise click.ClickException("authority sync requires a remote PostgreSQL backend")
+    store.authority_repo_uuid = _authority_repo_uuid(rollout.paths.repo_root)
+    producer = _outbox.open_outbox(rollout.paths.outbox_path)
+    cache = _projection.open_cached_projection(
+        rollout.paths.state_dir / "authority-command-projection.db"
+    )
+
+    def resolve(record: _outbox.OutboxRecord) -> dict[str, str] | None:
+        envelope = _contracts.record_from_dict(record.payload)
+        required_refs = {
+            value
+            for key, value in envelope.payload.items()
+            if key.endswith("credential_ref") and isinstance(value, str)
+        }
+        pending = _authority_config.load_pending_authority_credential(
+            rollout.paths,
+            event_id=record.event_id,
+        )
+        if pending is None:
+            return None if required_refs else {}
+        credentials = dict(pending.credentials)
+        return credentials if required_refs <= set(credentials) else None
+
+    try:
+        result = _sync.synchronize_outbox(
+            producer,
+            store,
+            cache,
+            batch_size=batch_size,
+            credential_resolver=resolve,
+            apply_ingest_projection=False,
+        )
+        records_by_id = {
+            record.event_id: record for record in _outbox.list_records(producer)
+        }
+    finally:
+        producer.close()
+        cache.close()
+    for decision in result.command_decisions:
+        record = records_by_id.get(decision.request_event_id)
+        keep_for_recovery = (
+            decision.accepted
+            and record is not None
+            and (
+                record.event_type == "claim.acquire"
+                or (
+                    record.event_type == "claim.handoff"
+                    and record.payload.get("payload", {}).get("mode") == "rotate"
+                )
+            )
+        )
+        if not keep_for_recovery:
+            _authority_config.remove_pending_authority_credential(
+                rollout.paths,
+                event_id=decision.request_event_id,
+            )
+    payload = {
+        "decisions": [decision.to_dict() for decision in result.command_decisions],
+        "pending_command_event_ids": list(result.pending_command_event_ids),
+        "decision_applied_count": result.decision_applied_count,
+        "decision_watermark": (
+            result.decision_watermark.ingest_offset if result.decision_watermark else 0
+        ),
+    }
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+    else:
+        click.echo(
+            f"Authority sync: {len(payload['decisions'])} decisions, "
+            f"{len(payload['pending_command_event_ids'])} pending; "
+            f"decision watermark {payload['decision_watermark']}."
+        )
+
+
+@authority_commands.command("recover-proof")
+@click.option("--event-id", required=True, help="Authority request UUID")
+def authority_recover_proof(event_id: str) -> None:
+    """Recover a private pre-minted proof after an accepted/lost response."""
+    rollout = _authority_rollout_status()
+    try:
+        pending = _authority_config.load_pending_authority_credential(
+            rollout.paths,
+            event_id=event_id,
+        )
+    except _authority_config.AuthorityCommandConfigError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if pending is None:
+        raise click.ClickException(f"no pending authority proof for event {event_id}")
+    try:
+        secret = pending.secret
+    except _authority_config.AuthorityCommandConfigError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(secret)
+
+
+@authority_commands.command("clear-proof")
+@click.option("--event-id", required=True, help="Authority request UUID")
+def authority_clear_proof(event_id: str) -> None:
+    """Remove a private proof sidecar after the proof is stored elsewhere."""
+    rollout = _authority_rollout_status()
+    try:
+        removed = _authority_config.remove_pending_authority_credential(
+            rollout.paths,
+            event_id=event_id,
+        )
+    except _authority_config.AuthorityCommandConfigError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if not removed:
+        raise click.ClickException(f"no pending authority proof for event {event_id}")
+    click.echo(f"Removed pending authority proof for event {event_id}.")
 
 
 # ---------------------------------------------------------------------------

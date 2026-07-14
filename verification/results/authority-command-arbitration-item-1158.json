@@ -1,0 +1,100 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.authority.command-arbitration",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:75d3c0c889a477ea56790371acae18f1dd7541b6"
+  },
+  "implementation_sha": "working-tree:item-1158-base-32bc01c2c8c06e58c5f588405bdb8933bcbc2074",
+  "depth": 2,
+  "environment": {
+    "backend": "sqlite-producer-outbox-and-disposable-postgresql-17-alpine",
+    "isolation": "SQLite reserved writer transactions and PostgreSQL READ COMMITTED aggregate row locks",
+    "tool_versions": {
+      "python": "3.12.12",
+      "pytest": "9.0.2",
+      "postgresql": "17-alpine-container"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 11,
+    "bounds": {
+      "authority_command_types": 9,
+      "producer_streams_per_history": 1,
+      "competing_claim_owners": 2,
+      "identical_retries_per_request": 1,
+      "injected_decision_write_failures": 1,
+      "concurrent_outbox_openers": 2
+    },
+    "faults_exercised": [
+      "identical-retry-after-decision",
+      "stale-item-command-after-remote-advance",
+      "expired-grant-renew-after-reassignment",
+      "pending-proof-blocks-later-producer-sequence",
+      "malformed-embedded-command",
+      "repository-uuid-mismatch",
+      "unavailable-capability-artifact",
+      "decision-write-infrastructure-failure",
+      "concurrent-observation-only-outbox-migration"
+    ]
+  },
+  "claims": [
+    {
+      "property": "all nine shipped authority command types use strict envelopes and remote-authored accepted or rejected decisions",
+      "result": "exhaustively-checked-within-bound",
+      "evidence": [
+        "contract parameterization round-tripped all nine command types",
+        "PostgreSQL histories accepted item, sprint, claim, and receipt effects and retained semantic rejections"
+      ]
+    },
+    {
+      "property": "an accepted authority effect and its remote decision commit atomically",
+      "result": "concurrency-tested",
+      "evidence": [
+        "a PostgreSQL trigger injected failure at authority_decision insert",
+        "the item effect, command request, remote decision record, and decision binding were all absent after rollback"
+      ]
+    },
+    {
+      "property": "identical retry is idempotent while stale and malformed commands remain durable rejections",
+      "result": "concurrency-tested",
+      "evidence": [
+        "identical request retry returned the original decision without a second effect",
+        "stale basis, repository mismatch, and malformed envelope histories retained request plus command.rejected"
+      ]
+    },
+    {
+      "property": "an expired grant cannot be revived after a replacement owner is granted authority",
+      "result": "concurrency-tested",
+      "evidence": [
+        "PostgreSQL reassignment followed by stale renewal returned expired-grant",
+        "only the replacement claim remained active"
+      ]
+    },
+    {
+      "property": "raw proofs remain outside producer records, remote decisions, and cached decisions while restart-safe retry material stays private",
+      "result": "example-tested",
+      "evidence": [
+        "strict metadata allowlists and recursive secret-field checks rejected unstructured proof surfaces",
+        "claim lifecycle queries found neither original nor rotated proof in durable ledger and decision text",
+        "0600 event sidecars retained all handoff retry proofs and recovered only the proposed proof"
+      ]
+    },
+    {
+      "property": "pending proof cannot create an origin sequence gap and concurrent legacy outbox migration cannot discard an append",
+      "result": "concurrency-tested",
+      "evidence": [
+        "sync stopped at the first pending command and later resumed command then observation in producer order",
+        "two concurrent openers serialized migration and preserved the legacy row plus both appends"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "The retained direct backend and normal read paths remain unchanged; authority-command rollout defaults to off.",
+    "Non-PostgreSQL suite: 776 passed with 79 PostgreSQL tests deselected.",
+    "Disposable PostgreSQL suite: 78 passed and one production-guard probe skipped because its optional second URL was not configured.",
+    "Cleanup verified zero rows across all ten repository-scoped PostgreSQL tables."
+  ]
+}

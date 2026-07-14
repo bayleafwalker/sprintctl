@@ -9,7 +9,7 @@ from sprintctl import contracts, dualwrite, outbox
 
 
 def _event_kwargs(record_type: str) -> dict[str, object]:
-    return {
+    values = {
         "event_id": uuid4(),
         "record_type": record_type,
         "schema_version": "sprintctl-record/v1",
@@ -23,6 +23,15 @@ def _event_kwargs(record_type: str) -> dict[str, object]:
         "payload_digest": "a" * 64,
         "artifact_digest": "b" * 64,
     }
+    if record_type == "item.done":
+        values["refs"] = {
+            "repo_id": str(uuid4()),
+            "aggregate_type": "item",
+            "aggregate_uuid": str(uuid4()),
+            "aggregate_id": 1146,
+        }
+        values["payload"] = {"to_status": "done"}
+    return values
 
 
 def test_mirrors_a_classified_observation_with_full_canonical_envelope(tmp_path):

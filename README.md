@@ -83,6 +83,7 @@ Detailed guides:
 - [Daily Loop](docs/guides/daily-loop.md)
 - [Project Integration](docs/guides/project-integration.md)
 - [Shadow Projection Pilot](docs/guides/shadow-pilot.md)
+- [Remote Authority Commands](docs/guides/authority-commands.md)
 - [Customization Guide](docs/customization.md)
 - [Coordinator Mode](docs/advanced/coordinator-mode.md)
 - [Claim Discipline](docs/advanced/claim-discipline.md)
@@ -204,3 +205,4 @@ and gitignore that directory.
 - `handoff --format json` is the serialized working-memory contract
 - JSON and text surfaces should describe the same state in the same order
 - critical recovery ergonomics belong in the core binary; repo-local wrappers can build on top of them
+- the remote authority-command journal is opt-in and defaults to `off`; accepted remote decisions, never pending local requests, authorize its effects

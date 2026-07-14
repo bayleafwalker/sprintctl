@@ -43,7 +43,7 @@ pytestmark = [
 ]
 
 # Safe unconditional imports: pg.py handles missing psycopg gracefully.
-from sprintctl import contracts, pg
+from sprintctl import authority, contracts, pg, projection, sync
 from sprintctl import outbox
 from sprintctl.db import ClaimConflict, InvalidTransition
 from sprintctl.pg_testing import (
@@ -102,7 +102,12 @@ def store(pg_test_scope):
     """Create the module store only after the disposable-target preflight."""
     conn = psycopg.connect(_PG_URL, row_factory=dict_row)
     assert_disposable_connection(conn)
-    s = pg.PgStore(conn=conn, repo_id=pg_test_scope("module"))
+    repo_id = pg_test_scope("module")
+    s = pg.PgStore(
+        conn=conn,
+        repo_id=repo_id,
+        authority_repo_uuid=str(uuid.uuid5(uuid.NAMESPACE_URL, f"sprintctl-repo:{repo_id}")),
+    )
     pg.init_db(s)
     try:
         yield s
@@ -112,6 +117,43 @@ def store(pg_test_scope):
 
 def _uid() -> str:
     return uuid.uuid4().hex[:8]
+
+
+def _authority_repo_uuid(store) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"sprintctl-repo:{store.repo_id}"))
+
+
+def _append_authority_command(
+    conn,
+    store,
+    *,
+    record_type,
+    aggregate_type,
+    basis_revision,
+    payload,
+    aggregate_uuid=None,
+    claim_id=None,
+):
+    refs = {
+        "repo_id": _authority_repo_uuid(store),
+        "aggregate_type": aggregate_type,
+    }
+    if aggregate_uuid is not None:
+        refs["aggregate_uuid"] = aggregate_uuid
+    if claim_id is not None:
+        refs["claim_id"] = claim_id
+    command = contracts.AuthorityCommand(
+        event_id=str(uuid.uuid4()),
+        record_type=record_type,
+        schema_version="1",
+        actor="authority-test",
+        authored_at="2026-07-14T18:00:00Z",
+        refs=refs,
+        payload=payload,
+        basis_revision=basis_revision,
+        correlation_id=str(uuid.uuid4()),
+    )
+    return outbox.append_authority_command(conn, command)
 
 
 def _receipt_bytes(store, sprint_id, boundary_event_id, **overrides):
@@ -203,6 +245,89 @@ class TestInitDb:
             with store.conn.cursor() as cur:
                 cur.execute(f"REVOKE INSERT ON ingest_stream FROM {probe_role}")
             store.conn.commit()
+
+    def test_phase26_ingest_schema_upgrades_before_authority_foreign_keys(
+        self, pg_test_scope
+    ):
+        schema = "phase26_" + uuid.uuid4().hex
+        conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+        assert_disposable_connection(conn)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f'CREATE SCHEMA "{schema}"')
+                cur.execute(f'SET search_path TO "{schema}"')
+                cur.execute(
+                    """
+                    CREATE TABLE ingest_stream (
+                        repo_id text NOT NULL,
+                        origin_stream_id text NOT NULL,
+                        highest_origin_seq bigint NOT NULL DEFAULT 0,
+                        created_at timestamptz NOT NULL DEFAULT now(),
+                        PRIMARY KEY (repo_id, origin_stream_id)
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE ingest_record (
+                        ingest_offset bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
+                        repo_id text NOT NULL,
+                        origin_stream_id text NOT NULL,
+                        origin_seq bigint NOT NULL CHECK (origin_seq > 0),
+                        event_id text NOT NULL,
+                        schema_version integer NOT NULL CHECK (schema_version > 0),
+                        record_class text NOT NULL CHECK (record_class = 'observation'),
+                        event_type text NOT NULL,
+                        actor text NOT NULL,
+                        runtime_session_id text,
+                        occurred_at timestamptz NOT NULL,
+                        basis_revision text,
+                        correlation_id text,
+                        causation_id text,
+                        payload jsonb NOT NULL,
+                        payload_sha256 text NOT NULL,
+                        record_sha256 text NOT NULL,
+                        ingested_at timestamptz NOT NULL DEFAULT now(),
+                        UNIQUE (repo_id, origin_stream_id, origin_seq),
+                        UNIQUE (repo_id, event_id),
+                        FOREIGN KEY (repo_id, origin_stream_id)
+                            REFERENCES ingest_stream(repo_id, origin_stream_id)
+                            ON DELETE CASCADE
+                    )
+                    """
+                )
+            conn.commit()
+
+            upgraded = pg.PgStore(
+                conn=conn,
+                repo_id=pg_test_scope("phase26-upgrade"),
+                authority_repo_uuid=str(uuid.uuid4()),
+            )
+            pg.init_db(upgraded)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT conname FROM pg_constraint "
+                    "WHERE conname IN ('authority_decision_request_fk', "
+                    "'authority_decision_record_fk') "
+                    "AND conrelid = 'authority_decision'::regclass ORDER BY conname"
+                )
+                assert [row["conname"] for row in cur.fetchall()] == [
+                    "authority_decision_record_fk",
+                    "authority_decision_request_fk",
+                ]
+                cur.execute(
+                    "SELECT indexname FROM pg_indexes WHERE schemaname = %s "
+                    "AND indexname = 'idx_ingest_record_repo_offset_unique'",
+                    (schema,),
+                )
+                assert cur.fetchone() is not None
+        finally:
+            conn.rollback()
+            with conn.cursor() as cur:
+                cur.execute("SET search_path TO public")
+                cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            conn.commit()
+            conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1075,6 +1200,557 @@ class TestAuthorityFaultHistories:
             assert pg.get_sprint(actor_b, sprint_id)["status"] == "closed"
         finally:
             actor_b.conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Durable authority command arbitration
+# ---------------------------------------------------------------------------
+
+class TestAuthorityCommandArbitration:
+    def _independent_store(self, store):
+        conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+        assert_disposable_connection(conn)
+        return pg.PgStore(conn=conn, repo_id=store.repo_id)
+
+    def test_item_transition_retry_and_stale_rejection_are_durable(self, store, tmp_path):
+        sprint_id = pg.create_sprint(store, f"Command-{_uid()}", status="active")
+        track_id = pg.get_or_create_track(store, sprint_id, "authority")
+        item_id = pg.create_work_item(store, sprint_id, track_id, f"Command-item-{_uid()}")
+        item = pg.get_work_item(store, item_id)
+        producer = outbox.open_outbox(tmp_path / "authority-item.db")
+        try:
+            first = _append_authority_command(
+                producer,
+                store,
+                record_type="item.transition",
+                aggregate_type="item",
+                aggregate_uuid=item["aggregate_uuid"],
+                basis_revision=authority.item_revision(item),
+                payload={"to_status": "active"},
+            )
+            accepted = authority.arbitrate_command(store, first)
+            retried = authority.arbitrate_command(store, first)
+
+            assert accepted.accepted is True
+            assert accepted.decision_type == "item.transitioned"
+            assert retried.to_dict() == {**accepted.to_dict(), "duplicate": True}
+            assert pg.get_work_item(store, item_id)["status"] == "active"
+
+            stale = _append_authority_command(
+                producer,
+                store,
+                record_type="item.done",
+                aggregate_type="item",
+                aggregate_uuid=item["aggregate_uuid"],
+                basis_revision=authority.item_revision(item),
+                payload={"to_status": "done"},
+            )
+            rejected = authority.arbitrate_command(store, stale)
+
+            assert rejected.accepted is False
+            assert rejected.decision_type == "command.rejected"
+            assert rejected.reason_code == "stale-basis"
+            assert pg.get_work_item(store, item_id)["status"] == "active"
+            assert [decision.outcome for decision in authority.list_authority_decisions(store)][-2:] == [
+                "accepted",
+                "rejected",
+            ]
+
+            current = pg.get_work_item(store, item_id)
+            done = _append_authority_command(
+                producer,
+                store,
+                record_type="item.done",
+                aggregate_type="item",
+                aggregate_uuid=current["aggregate_uuid"],
+                basis_revision=authority.item_revision(current),
+                payload={"to_status": "done"},
+            )
+            completed = authority.arbitrate_command(store, done)
+            assert completed.accepted is True
+            assert completed.effect["status"] == "done"
+            assert pg.get_work_item(store, item_id)["status"] == "done"
+        finally:
+            producer.close()
+
+    def test_repository_uuid_mismatch_is_durably_rejected(self, store, tmp_path):
+        sprint_id = pg.create_sprint(store, f"Repo-mismatch-{_uid()}", status="active")
+        track_id = pg.get_or_create_track(store, sprint_id, "authority")
+        item_id = pg.create_work_item(store, sprint_id, track_id, f"Repo-item-{_uid()}")
+        item = pg.get_work_item(store, item_id)
+        producer = outbox.open_outbox(tmp_path / "authority-repo-mismatch.db")
+        try:
+            command = contracts.AuthorityCommand(
+                event_id=str(uuid.uuid4()),
+                record_type="item.transition",
+                schema_version="1",
+                actor="wrong-repository",
+                authored_at="2026-07-14T18:00:00Z",
+                refs={
+                    "repo_id": str(uuid.uuid4()),
+                    "aggregate_type": "item",
+                    "aggregate_uuid": item["aggregate_uuid"],
+                },
+                payload={"to_status": "active"},
+                basis_revision=authority.item_revision(item),
+            )
+            durable = outbox.append_authority_command(producer, command)
+            decision = authority.arbitrate_command(store, durable)
+            assert decision.accepted is False
+            assert decision.reason_code == "repository-mismatch"
+            assert pg.get_work_item(store, item_id)["status"] == "pending"
+        finally:
+            producer.close()
+
+    def test_malformed_embedded_command_is_durably_rejected(self, store, tmp_path):
+        sprint_id = pg.create_sprint(store, f"Malformed-command-{_uid()}", status="active")
+        track_id = pg.get_or_create_track(store, sprint_id, "authority")
+        item_id = pg.create_work_item(store, sprint_id, track_id, f"Malformed-item-{_uid()}")
+        item = pg.get_work_item(store, item_id)
+        producer = outbox.open_outbox(tmp_path / "authority-malformed.db")
+        try:
+            valid = _append_authority_command(
+                producer,
+                store,
+                record_type="item.transition",
+                aggregate_type="item",
+                aggregate_uuid=item["aggregate_uuid"],
+                basis_revision=authority.item_revision(item),
+                payload={"to_status": "active"},
+            )
+            malformed_payload = {"malformed": True}
+            encoded = json.dumps(
+                malformed_payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+            malformed = replace(
+                valid,
+                payload=malformed_payload,
+                payload_sha256=hashlib.sha256(encoded.encode()).hexdigest(),
+            )
+
+            decision = authority.arbitrate_command(store, malformed)
+            assert decision.accepted is False
+            assert decision.reason_code == "invalid-command"
+            assert pg.get_work_item(store, item_id)["status"] == "pending"
+            with store.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT count(*) AS count FROM ingest_record "
+                    "WHERE repo_id = %s AND event_id IN (%s, %s)",
+                    (store.repo_id, malformed.event_id, decision.decision_event_id),
+                )
+                assert cur.fetchone()["count"] == 2
+        finally:
+            producer.close()
+
+    def test_sync_stops_at_pending_command_then_resumes_stream_in_order(
+        self, store, tmp_path
+    ):
+        sprint_id = pg.create_sprint(store, f"Pending-sync-{_uid()}", status="active")
+        track_id = pg.get_or_create_track(store, sprint_id, "authority")
+        item_id = pg.create_work_item(store, sprint_id, track_id, f"Pending-item-{_uid()}")
+        item = pg.get_work_item(store, item_id)
+        producer = outbox.open_outbox(tmp_path / "authority-pending-sync.db")
+        cache = projection.open_cached_projection(tmp_path / "authority-pending-cache.db")
+        try:
+            command = _append_authority_command(
+                producer,
+                store,
+                record_type="item.transition",
+                aggregate_type="item",
+                aggregate_uuid=item["aggregate_uuid"],
+                basis_revision=authority.item_revision(item),
+                payload={"to_status": "active"},
+            )
+            observation = outbox.append_observation(
+                producer,
+                event_type="work.completed",
+                actor="producer-after-command",
+                payload={"item_id": item_id},
+                occurred_at="2026-07-14T18:00:01Z",
+            )
+
+            pending = sync.synchronize_outbox(
+                producer,
+                store,
+                cache,
+                apply_ingest_projection=False,
+            )
+            assert pending.pending_command_event_ids == (command.event_id,)
+            assert pending.uploaded == ()
+            with store.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT count(*) AS count FROM ingest_record "
+                    "WHERE repo_id = %s AND event_id IN (%s, %s)",
+                    (store.repo_id, command.event_id, observation.event_id),
+                )
+                assert cur.fetchone()["count"] == 0
+
+            resumed = sync.synchronize_outbox(
+                producer,
+                store,
+                cache,
+                credential_resolver=lambda _record: {},
+                apply_ingest_projection=False,
+            )
+            assert [decision.request_event_id for decision in resumed.command_decisions] == [
+                command.event_id
+            ]
+            assert [result.record.event_id for result in resumed.uploaded] == [
+                observation.event_id
+            ]
+            assert resumed.pending_command_event_ids == ()
+            assert pg.get_work_item(store, item_id)["status"] == "active"
+        finally:
+            producer.close()
+            cache.close()
+
+    def test_expired_claim_cannot_be_revived_after_reassignment(self, store, tmp_path):
+        sprint_id = pg.create_sprint(store, f"Claim-command-{_uid()}", status="active")
+        track_id = pg.get_or_create_track(store, sprint_id, "authority")
+        item_id = pg.create_work_item(store, sprint_id, track_id, f"Claim-item-{_uid()}")
+        item = pg.get_work_item(store, item_id)
+        producer = outbox.open_outbox(tmp_path / "authority-claim.db")
+        old_token = "old-" + uuid.uuid4().hex
+        new_token = "new-" + uuid.uuid4().hex
+        try:
+            first = _append_authority_command(
+                producer,
+                store,
+                record_type="claim.acquire",
+                aggregate_type="item",
+                aggregate_uuid=item["aggregate_uuid"],
+                basis_revision=authority.item_revision(item),
+                payload={
+                    "agent": "old-owner",
+                    "claim_type": "execute",
+                    "exclusive": True,
+                    "ttl_seconds": 300,
+                    "credential_ref": authority.credential_ref(old_token),
+                    "metadata": {},
+                },
+            )
+            granted = authority.arbitrate_command(
+                store,
+                first,
+                credentials={authority.credential_ref(old_token): old_token},
+            )
+            old_claim_id = granted.effect["claim_id"]
+            with store.conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE claim SET expires_at = now() - interval '1 second' "
+                    "WHERE repo_id = %s AND id = %s",
+                    (store.repo_id, old_claim_id),
+                )
+            store.conn.commit()
+            expired = pg.get_claim(store, old_claim_id, include_secret=True)
+
+            replacement = _append_authority_command(
+                producer,
+                store,
+                record_type="claim.acquire",
+                aggregate_type="item",
+                aggregate_uuid=item["aggregate_uuid"],
+                basis_revision=authority.item_revision(item),
+                payload={
+                    "agent": "new-owner",
+                    "claim_type": "execute",
+                    "exclusive": True,
+                    "ttl_seconds": 300,
+                    "credential_ref": authority.credential_ref(new_token),
+                    "metadata": {},
+                },
+            )
+            replacement_grant = authority.arbitrate_command(
+                store,
+                replacement,
+                credentials={authority.credential_ref(new_token): new_token},
+            )
+            assert replacement_grant.accepted is True
+
+            stale_renew = _append_authority_command(
+                producer,
+                store,
+                record_type="claim.renew",
+                aggregate_type="claim",
+                claim_id=old_claim_id,
+                basis_revision=authority.claim_revision(expired),
+                payload={
+                    "claim_id": old_claim_id,
+                    "ttl_seconds": 300,
+                    "credential_ref": authority.credential_ref(old_token),
+                },
+            )
+            rejected = authority.arbitrate_command(
+                store,
+                stale_renew,
+                credentials={authority.credential_ref(old_token): old_token},
+            )
+
+            assert rejected.accepted is False
+            assert rejected.reason_code == "expired-grant"
+            active_claims = pg.list_claims(store, item_id, active_only=True)
+            assert [claim["claim_id"] for claim in active_claims] == [
+                replacement_grant.effect["claim_id"]
+            ]
+        finally:
+            producer.close()
+
+    def test_claim_lifecycle_decisions_are_secret_safe(self, store, tmp_path):
+        sprint_id = pg.create_sprint(store, f"Claim-lifecycle-{_uid()}", status="active")
+        track_id = pg.get_or_create_track(store, sprint_id, "authority")
+        item_id = pg.create_work_item(store, sprint_id, track_id, f"Claim-life-item-{_uid()}")
+        item = pg.get_work_item(store, item_id)
+        producer = outbox.open_outbox(tmp_path / "authority-claim-lifecycle.db")
+        first_token = "first-" + uuid.uuid4().hex
+        rotated_token = "rotated-" + uuid.uuid4().hex
+        first_ref = authority.credential_ref(first_token)
+        rotated_ref = authority.credential_ref(rotated_token)
+        try:
+            acquire = _append_authority_command(
+                producer,
+                store,
+                record_type="claim.acquire",
+                aggregate_type="item",
+                aggregate_uuid=item["aggregate_uuid"],
+                basis_revision=authority.item_revision(item),
+                payload={
+                    "agent": "owner-a",
+                    "claim_type": "execute",
+                    "exclusive": True,
+                    "ttl_seconds": 300,
+                    "credential_ref": first_ref,
+                    "metadata": {"runtime_session_id": "session-a"},
+                },
+            )
+            granted = authority.arbitrate_command(
+                store, acquire, credentials={first_ref: first_token}
+            )
+            claim_id = granted.effect["claim_id"]
+
+            claim = pg.get_claim(store, claim_id, include_secret=True)
+            renew = _append_authority_command(
+                producer,
+                store,
+                record_type="claim.renew",
+                aggregate_type="claim",
+                claim_id=claim_id,
+                basis_revision=authority.claim_revision(claim),
+                payload={
+                    "claim_id": claim_id,
+                    "ttl_seconds": 600,
+                    "credential_ref": first_ref,
+                },
+            )
+            renewed = authority.arbitrate_command(
+                store, renew, credentials={first_ref: first_token}
+            )
+            assert renewed.decision_type == "claim.renewed"
+
+            claim = pg.get_claim(store, claim_id, include_secret=True)
+            handoff = _append_authority_command(
+                producer,
+                store,
+                record_type="claim.handoff",
+                aggregate_type="claim",
+                claim_id=claim_id,
+                basis_revision=authority.claim_revision(claim),
+                payload={
+                    "claim_id": claim_id,
+                    "to_actor": "owner-b",
+                    "mode": "rotate",
+                    "ttl_seconds": 600,
+                    "credential_ref": first_ref,
+                    "proposed_credential_ref": rotated_ref,
+                    "metadata": {"runtime_session_id": "session-b"},
+                },
+            )
+            handed_off = authority.arbitrate_command(
+                store,
+                handoff,
+                credentials={first_ref: first_token, rotated_ref: rotated_token},
+            )
+            assert handed_off.decision_type == "claim.handed-off"
+            assert handed_off.effect["actor"] == "owner-b"
+
+            claim = pg.get_claim(store, claim_id, include_secret=True)
+            release = _append_authority_command(
+                producer,
+                store,
+                record_type="claim.release",
+                aggregate_type="claim",
+                claim_id=claim_id,
+                basis_revision=authority.claim_revision(claim),
+                payload={"claim_id": claim_id, "credential_ref": rotated_ref},
+            )
+            released = authority.arbitrate_command(
+                store, release, credentials={rotated_ref: rotated_token}
+            )
+            assert released.decision_type == "claim.released"
+            assert released.effect["released"] is True
+            assert pg.get_claim(store, claim_id, include_secret=True) is None
+
+            with store.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT payload::text FROM ingest_record WHERE repo_id = %s",
+                    (store.repo_id,),
+                )
+                durable_text = "\n".join(row["payload"] for row in cur.fetchall())
+                cur.execute(
+                    "SELECT effect::text || coalesce(reason_detail, '') AS text "
+                    "FROM authority_decision WHERE repo_id = %s",
+                    (store.repo_id,),
+                )
+                durable_text += "\n" + "\n".join(row["text"] for row in cur.fetchall())
+            assert first_token not in durable_text
+            assert rotated_token not in durable_text
+        finally:
+            producer.close()
+
+    def test_sprint_activate_is_remotely_arbitrated(self, store, tmp_path):
+        sprint_id = pg.create_sprint(store, f"Activate-command-{_uid()}", status="planned")
+        sprint = pg.get_sprint(store, sprint_id)
+        producer = outbox.open_outbox(tmp_path / "authority-activate.db")
+        try:
+            command = _append_authority_command(
+                producer,
+                store,
+                record_type="sprint.activate",
+                aggregate_type="sprint",
+                aggregate_uuid=sprint["aggregate_uuid"],
+                basis_revision=authority.sprint_revision(sprint),
+                payload={},
+            )
+            decision = authority.arbitrate_command(store, command)
+            assert decision.accepted is True
+            assert decision.decision_type == "sprint-activated"
+            assert pg.get_sprint(store, sprint_id)["status"] == "active"
+        finally:
+            producer.close()
+
+    def test_decision_insert_failure_rolls_back_request_and_effect(self, store, tmp_path):
+        sprint_id = pg.create_sprint(store, f"Atomic-command-{_uid()}", status="active")
+        track_id = pg.get_or_create_track(store, sprint_id, "authority")
+        item_id = pg.create_work_item(store, sprint_id, track_id, f"Atomic-item-{_uid()}")
+        item = pg.get_work_item(store, item_id)
+        producer = outbox.open_outbox(tmp_path / "authority-atomic.db")
+        suffix = uuid.uuid4().hex
+        function_name = f"reject_authority_decision_{suffix}"
+        trigger_name = f"reject_authority_decision_{suffix}"
+        command = _append_authority_command(
+            producer,
+            store,
+            record_type="item.transition",
+            aggregate_type="item",
+            aggregate_uuid=item["aggregate_uuid"],
+            basis_revision=authority.item_revision(item),
+            payload={"to_status": "active"},
+        )
+        try:
+            with store.conn.cursor() as cur:
+                cur.execute(
+                    f"CREATE FUNCTION {function_name}() RETURNS trigger LANGUAGE plpgsql "
+                    "AS $$ BEGIN RAISE EXCEPTION 'injected decision failure'; END $$"
+                )
+                cur.execute(
+                    f"CREATE TRIGGER {trigger_name} BEFORE INSERT ON authority_decision "
+                    f"FOR EACH ROW WHEN (NEW.repo_id = '{store.repo_id}') "
+                    f"EXECUTE FUNCTION {function_name}()"
+                )
+            store.conn.commit()
+
+            with pytest.raises(psycopg.Error, match="injected decision failure"):
+                authority.arbitrate_command(store, command)
+
+            assert pg.get_work_item(store, item_id)["status"] == "pending"
+            with store.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT count(*) AS count FROM ingest_record "
+                    "WHERE repo_id = %s AND event_id = %s",
+                    (store.repo_id, command.event_id),
+                )
+                assert cur.fetchone()["count"] == 0
+                cur.execute(
+                    "SELECT count(*) AS count FROM authority_decision "
+                    "WHERE repo_id = %s AND request_event_id = %s",
+                    (store.repo_id, command.event_id),
+                )
+                assert cur.fetchone()["count"] == 0
+        finally:
+            store.conn.rollback()
+            with store.conn.cursor() as cur:
+                cur.execute(f"DROP TRIGGER IF EXISTS {trigger_name} ON authority_decision")
+                cur.execute(f"DROP FUNCTION IF EXISTS {function_name}()")
+            store.conn.commit()
+            producer.close()
+
+    def test_sprint_close_boundary_and_decision_commit_atomically(self, store, tmp_path):
+        sprint_id = pg.create_sprint(store, f"Close-command-{_uid()}", status="active")
+        sprint = pg.get_sprint(store, sprint_id)
+        producer = outbox.open_outbox(tmp_path / "authority-close.db")
+        try:
+            command = _append_authority_command(
+                producer,
+                store,
+                record_type="sprint.close",
+                aggregate_type="sprint",
+                aggregate_uuid=sprint["aggregate_uuid"],
+                basis_revision=authority.sprint_revision(sprint),
+                payload={},
+            )
+            decision = authority.arbitrate_command(store, command)
+            retried = authority.arbitrate_command(store, command)
+
+            assert decision.accepted is True
+            assert decision.decision_type == "sprint-closed"
+            assert retried.duplicate is True
+            assert pg.get_sprint(store, sprint_id)["status"] == "closed"
+            boundaries = [
+                event
+                for event in pg.list_events(store, sprint_id)
+                if event["event_type"] == contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE
+            ]
+            assert [event["id"] for event in boundaries] == [decision.effect["boundary_event_id"]]
+        finally:
+            producer.close()
+
+    def test_capability_receipt_acceptance_is_a_remote_decision(
+        self, store, tmp_path, monkeypatch
+    ):
+        sprint_id = pg.create_sprint(store, f"Receipt-command-{_uid()}", status="active")
+        boundary_id = pg.close_sprint_with_boundary_event(store, sprint_id, "operator")
+        sprint = pg.get_sprint(store, sprint_id)
+        receipt_bytes = _receipt_bytes(store, sprint_id, boundary_id)
+        pointer = _receipt_payload(store, receipt_bytes)
+        producer = outbox.open_outbox(tmp_path / "authority-receipt.db")
+        monkeypatch.setattr(
+            contracts,
+            "verify_capability_receipt_draft_pointer",
+            lambda payload, *, sprint_id, boundary_event_id: payload,
+        )
+        try:
+            command = _append_authority_command(
+                producer,
+                store,
+                record_type="capability-receipt.accept",
+                aggregate_type="sprint",
+                aggregate_uuid=sprint["aggregate_uuid"],
+                basis_revision=f"event:{boundary_id}",
+                payload={"pointer": pointer},
+            )
+            decision = authority.arbitrate_command(store, command)
+            assert decision.accepted is True
+            assert decision.decision_type == "capability-receipt.accepted"
+            assert decision.effect["boundary_revision"] == f"event:{boundary_id}"
+            event_types = [event["event_type"] for event in pg.list_events(store, sprint_id)]
+            assert event_types == [
+                contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE,
+                contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE,
+            ]
+        finally:
+            producer.close()
 
     def test_unavailable_capability_artifact_rejects_pointer_without_event(
         self,

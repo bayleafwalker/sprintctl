@@ -217,7 +217,13 @@ CREATE TABLE IF NOT EXISTS ingest_record (
     origin_seq         bigint      NOT NULL CHECK (origin_seq > 0),
     event_id           text        NOT NULL,
     schema_version     integer     NOT NULL CHECK (schema_version > 0),
-    record_class       text        NOT NULL CHECK (record_class = 'observation'),
+    record_class       text        NOT NULL CHECK (
+                                      record_class IN (
+                                        'observation',
+                                        'authority-command',
+                                        'remote-decision'
+                                      )
+                                    ),
     event_type         text        NOT NULL,
     actor              text        NOT NULL,
     runtime_session_id text,
@@ -232,9 +238,26 @@ CREATE TABLE IF NOT EXISTS ingest_record (
     ingested_at        timestamptz NOT NULL DEFAULT now(),
     UNIQUE (repo_id, origin_stream_id, origin_seq),
     UNIQUE (repo_id, event_id),
+    UNIQUE (repo_id, ingest_offset),
     FOREIGN KEY (repo_id, origin_stream_id)
         REFERENCES ingest_stream(repo_id, origin_stream_id)
         ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS authority_decision (
+    repo_id              text        NOT NULL,
+    request_event_id     text        NOT NULL,
+    request_record_sha256 text       NOT NULL,
+    decision_event_id    text        NOT NULL,
+    decision_ingest_offset bigint    NOT NULL,
+    outcome              text        NOT NULL CHECK (outcome IN ('accepted', 'rejected')),
+    reason_code          text,
+    reason_detail        text,
+    effect               jsonb       NOT NULL DEFAULT '{}'::jsonb,
+    decided_at           timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (repo_id, request_event_id),
+    UNIQUE (repo_id, decision_event_id),
+    UNIQUE (repo_id, decision_ingest_offset)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_claim_token
@@ -258,6 +281,39 @@ CREATE INDEX IF NOT EXISTS idx_claim_repo_item_expires
 
 CREATE INDEX IF NOT EXISTS idx_ingest_record_repo_offset
     ON ingest_record(repo_id, ingest_offset);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_record_repo_offset_unique
+    ON ingest_record(repo_id, ingest_offset);
+
+CREATE INDEX IF NOT EXISTS idx_authority_decision_repo_offset
+    ON authority_decision(repo_id, decision_ingest_offset);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'authority_decision_request_fk'
+          AND conrelid = 'authority_decision'::regclass
+    ) THEN
+        ALTER TABLE authority_decision
+            ADD CONSTRAINT authority_decision_request_fk
+            FOREIGN KEY (repo_id, request_event_id)
+            REFERENCES ingest_record(repo_id, event_id)
+            ON DELETE CASCADE;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'authority_decision_record_fk'
+          AND conrelid = 'authority_decision'::regclass
+    ) THEN
+        ALTER TABLE authority_decision
+            ADD CONSTRAINT authority_decision_record_fk
+            FOREIGN KEY (repo_id, decision_ingest_offset)
+            REFERENCES ingest_record(repo_id, ingest_offset)
+            ON DELETE CASCADE;
+    END IF;
+END
+$$;
 
 CREATE OR REPLACE FUNCTION sprintctl_guard_integration_test_scope()
 RETURNS trigger
@@ -313,7 +369,7 @@ DECLARE
 BEGIN
     FOREACH table_name IN ARRAY ARRAY[
         'sprint', 'track', 'work_item', 'event', 'claim', 'ref', 'dep',
-        'ingest_stream', 'ingest_record'
+        'ingest_stream', 'ingest_record', 'authority_decision'
     ]
     LOOP
         trigger_name := 'guard_integration_test_scope_' || table_name;
@@ -344,6 +400,7 @@ PG_DDL = _DDL
 class PgStore:
     conn: Any  # psycopg.Connection when psycopg is available
     repo_id: str
+    authority_repo_uuid: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -400,12 +457,34 @@ def _optional_ingest_text(value: Any, field: str) -> str | None:
     return _required_ingest_text(value, field)
 
 
-def _prepare_ingest_record(record: outbox.OutboxRecord) -> _PreparedIngestRecord:
-    """Validate and canonically fingerprint one producer-owned observation."""
+def _prepare_ingest_record(
+    record: outbox.OutboxRecord,
+    *,
+    allowed_classes: frozenset[str] = frozenset({"observation"}),
+) -> _PreparedIngestRecord:
+    """Validate and canonically fingerprint one portable ledger record.
+
+    The public producer-ingestion path keeps its observation-only default.
+    The remote authority arbiter opts into authority-command and
+    remote-decision records explicitly so a producer cannot smuggle a command
+    through the observation synchronization endpoint.
+    """
     if not isinstance(record, outbox.OutboxRecord):
         raise TypeError("ingest records must be sprintctl.outbox.OutboxRecord values")
-    if record.record_class != outbox.OBSERVATION:
-        raise ValueError("remote ingestion currently accepts producer observations only")
+    if record.record_class not in allowed_classes:
+        if allowed_classes == frozenset({"observation"}):
+            raise ValueError("remote ingestion currently accepts producer observations only")
+        allowed = ", ".join(sorted(allowed_classes))
+        raise ValueError(f"remote ingestion accepts only these record classes: {allowed}")
+    try:
+        classified = _contracts.record_class_for_type(record.event_type).value
+    except ValueError as exc:
+        raise ValueError(f"ingest event_type is not classified: {record.event_type}") from exc
+    if classified != record.record_class:
+        raise ValueError(
+            f"ingest event_type {record.event_type!r} is {classified}, "
+            f"not {record.record_class}"
+        )
     if isinstance(record.origin_seq, bool) or not isinstance(record.origin_seq, int) or record.origin_seq < 1:
         raise ValueError("ingest origin_seq must be a positive integer")
     if isinstance(record.schema_version, bool) or not isinstance(record.schema_version, int) or record.schema_version < 1:
@@ -653,6 +732,21 @@ def _repo_id_from_cwd() -> str:
 def init_db(store: PgStore) -> None:
     with store.conn.cursor() as cur:
         cur.execute(_DDL)
+        # Phase 26 created this constraint as observation-only.  Authority
+        # commands and remote decisions share the immutable remote ledger, but
+        # are admitted only by their dedicated arbiter path.
+        cur.execute(
+            "ALTER TABLE ingest_record "
+            "DROP CONSTRAINT IF EXISTS ingest_record_record_class_check"
+        )
+        cur.execute(
+            "ALTER TABLE ingest_record ADD CONSTRAINT ingest_record_record_class_check "
+            "CHECK (record_class IN ('observation', 'authority-command', 'remote-decision'))"
+        )
+        cur.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_record_repo_offset_unique "
+            "ON ingest_record(repo_id, ingest_offset)"
+        )
         # P1 ingestion originally persisted only the server receipt timestamp.
         # Preserve producer authorship on upgrade as well as on fresh installs;
         # old rows have no producer timestamp, so their historical receipt time

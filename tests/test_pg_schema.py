@@ -22,7 +22,7 @@ def test_ddl_contains_required_tables():
     tables = _tables_in_ddl(PG_DDL)
     required = {
         "schema_version", "sprint", "track", "work_item", "event", "claim", "ref", "dep",
-        "ingest_stream", "ingest_record",
+        "ingest_stream", "ingest_record", "authority_decision",
     }
     assert required <= tables, f"Missing tables: {required - tables}"
 
@@ -81,6 +81,7 @@ def test_required_indexes_present():
         "idx_track_repo_sprint",
         "idx_claim_repo_item_expires",
         "idx_ingest_record_repo_offset",
+        "idx_authority_decision_repo_offset",
     }
     assert required <= indexes, f"Missing indexes: {required - indexes}"
 
@@ -99,6 +100,13 @@ def test_foreign_keys_reference_repo_id():
     fk_blocks = re.findall(r"FOREIGN KEY\s*\([^)]+\)\s*REFERENCES\s*\w+\s*\([^)]+\)", PG_DDL)
     for fk in fk_blocks:
         assert "repo_id" in fk, f"FK without repo_id: {fk}"
+
+
+def test_authority_decisions_bind_request_and_decision_rows_to_same_tenant():
+    assert "FOREIGN KEY (repo_id, request_event_id)" in PG_DDL
+    assert "REFERENCES ingest_record(repo_id, event_id)" in PG_DDL
+    assert "FOREIGN KEY (repo_id, decision_ingest_offset)" in PG_DDL
+    assert "REFERENCES ingest_record(repo_id, ingest_offset)" in PG_DDL
 
 
 def test_dep_table_has_unique_constraint():

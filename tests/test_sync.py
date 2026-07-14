@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+import uuid
 
 import pytest
 
-from sprintctl import outbox, pg, projection, sync
+from sprintctl import authority, contracts, outbox, pg, projection, sync
 
 
 class _FakeRemote:
@@ -54,6 +55,7 @@ def transport(tmp_path, monkeypatch):
     remote = _FakeRemote()
     monkeypatch.setattr(sync.pg, "ingest_records", remote.ingest)
     monkeypatch.setattr(sync.pg, "list_ingested_records", remote.list)
+    monkeypatch.setattr(sync.authority, "list_authority_decisions", lambda *_args, **_kwargs: [])
     yield producer, cache, remote
     producer.close()
     cache.close()
@@ -100,6 +102,84 @@ def test_sync_recovers_after_lost_response_or_projection_apply_failure(transport
     assert [outcome.duplicate for outcome in retried.uploaded] == [True]
     assert retried.applied_count == 1
     assert retried.watermark.ingest_offset == 1
+
+
+def test_authority_command_remains_pending_without_proof_then_caches_decision(
+    transport, monkeypatch
+):
+    producer, cache, _remote = transport
+    token = "transient-claim-proof"
+    ref = authority.credential_ref(token)
+    command = contracts.AuthorityCommand(
+        event_id=str(uuid.uuid4()),
+        record_type="claim.acquire",
+        schema_version="1",
+        actor="sync-test",
+        authored_at="2026-07-14T12:00:00Z",
+        refs={
+            "repo_id": str(uuid.uuid4()),
+            "aggregate_type": "item",
+            "aggregate_uuid": str(uuid.uuid4()),
+        },
+        payload={
+            "agent": "worker-a",
+            "claim_type": "execute",
+            "exclusive": True,
+            "ttl_seconds": 300,
+            "credential_ref": ref,
+            "metadata": {},
+        },
+        basis_revision="item:pending",
+    )
+    durable = outbox.append_authority_command(producer, command)
+    later_observation = _append(producer, "after-pending-command", 2)
+    calls = []
+    decision = authority.AuthorityDecision(
+        request_event_id=durable.event_id,
+        decision_event_id=str(uuid.uuid4()),
+        decision_ingest_offset=7,
+        decision_type="claim.granted",
+        outcome="accepted",
+        reason_code=None,
+        reason_detail=None,
+        effect={"claim_id": 42, "actor": "worker-a"},
+    )
+
+    def arbitrate(_store, record, *, credentials):
+        calls.append((record.event_id, credentials))
+        return decision
+
+    monkeypatch.setattr(sync.authority, "arbitrate_command", arbitrate)
+    monkeypatch.setattr(
+        sync.authority,
+        "list_authority_decisions",
+        lambda _store, *, after_offset=0, limit=None: [decision]
+        if after_offset < decision.decision_ingest_offset
+        else [],
+    )
+
+    pending = sync.synchronize_outbox(producer, object(), cache)
+    assert pending.pending_command_event_ids == (durable.event_id,)
+    assert calls == []
+    assert pending.uploaded == ()
+    assert _remote.records == []
+
+    accepted = sync.synchronize_outbox(
+        producer,
+        object(),
+        cache,
+        credential_resolver=lambda _record: {ref: token},
+    )
+    assert accepted.command_decisions == (decision,)
+    assert accepted.pending_command_event_ids == ()
+    assert calls == [(durable.event_id, {ref: token})]
+    assert [result.record.event_id for result in accepted.uploaded] == [
+        later_observation.event_id
+    ]
+    assert accepted.decision_watermark.ingest_offset == 7
+    cached = projection.list_cached_authority_decisions(cache)
+    assert [entry.decision["request_event_id"] for entry in cached] == [durable.event_id]
+    assert token not in str(cached[0].decision)
 
 
 @pytest.mark.parametrize("batch_size", [0, -1, True])

@@ -7,10 +7,10 @@ supersedes: null
 # Authority fault verification boundary
 
 This document defines the depth-2 verification boundary for four authority
-faults required by `adr-outbox-sync-model`. It separates current direct-backend
-behavior from the remote command and decision protocol that is not implemented
-yet. The executable histories are verification evidence, not authorization to
-change product semantics.
+faults required by `adr-outbox-sync-model`. It separates retained direct-backend
+behavior from the opt-in remote command and decision protocol. The executable
+histories are verification evidence, not authorization to change product
+semantics.
 
 ## Partition and claim expiry
 
@@ -34,8 +34,12 @@ independent-connection history demonstrates this counterexample:
 4. owner A reconnects and heartbeats the old token;
 5. both exclusive claims are now active.
 
-This is a confirmed application-invariant failure, not a general fencing or
-linearizability result. Repair belongs to a separately authorized item.
+This remains a confirmed application-invariant failure in the retained direct
+backend, not a general fencing or linearizability result. The feature-flagged
+remote arbiter repairs this bounded history: renewal locks the grant, compares
+its basis and proof, checks remote expiry, and durably rejects the stale owner
+with `expired-grant`. It does not claim fencing for work performed outside the
+claim protocol.
 
 ## Stale item and sprint commands
 
@@ -44,10 +48,11 @@ transition after item completion and a second close after sprint close raise an
 invalid-transition error and do not apply a second mutation. The sprint close
 path also retains exactly one close-boundary event.
 
-The ADR requires more for the future transport: the immutable command request
-and a remote-authored rejection decision must remain visible. No current
-command ledger or decision handler exists, so durable stale-command rejection
-history remains `unknown` even though direct-backend mutation safety is tested.
+The remote transport now retains the immutable command request and a
+remote-authored `command.rejected` decision when its basis is stale. Identical
+retry returns the first decision without a second effect. The retained direct
+commands still provide only mutation safety and do not manufacture journal
+history.
 
 ## Unavailable capability artifacts
 
@@ -56,10 +61,11 @@ one local close boundary exists, and the referenced private artifact can be
 read and validated. SQLite and PostgreSQL both reject a missing artifact before
 appending the pointer event.
 
-This proves process-local validation and no-event-on-failure. It does not prove
-that a future remote authority can fetch an artifact that exists only on the
-producer filesystem. Remote artifact availability and retry semantics remain
-`unknown` until the command arbiter defines its artifact transport boundary.
+This proves process-local validation and no-event-on-failure. The remote
+arbiter now performs the same validation within its effect savepoint and
+retains `artifact-unavailable` as a semantic rejection. Artifact transport is
+still outside sprintctl: the authority must be able to resolve the canonical
+private pointer from its own runtime.
 
 ## Duplicate and conflicting proposals
 
@@ -73,16 +79,16 @@ The bounded reference model uses a stable proposal ID plus payload digest:
 - retrying an invalid proposal returns the same rejection.
 
 The model is exhaustively exercised for all length-three histories over two
-payload digests, plus repeated invalid input. Sprintctl has no proposal store or
-proposal acceptance handler, so there is deliberately no implementation
-refinement mapping yet. The future authority implementation must run the same
-history oracle against durable backend state.
+payload digests, plus repeated invalid input. The authority request identity
+and full-record fingerprint now implement that retry/conflict boundary for
+shipped sprintctl command types. A broader proposal store remains outside this
+tract.
 
 ## Evidence classification
 
 | Boundary | Current evidence | Residual strength limit |
 |---|---|---|
-| Partition / expiry / stale heartbeat | `concurrency-tested` bounded independent-connection counterexample on SQLite and PostgreSQL | No fencing or general distributed claim |
-| Stale direct transitions | `concurrency-tested` bounded stale-reader histories on both backends | Durable request plus rejection is `unknown` |
-| Missing capability artifact | `example-tested` on both backends | Remote availability is `unknown` |
-| Proposal idempotency | `exhaustively-checked-within-bound` for the reference model | Product refinement is `unknown` |
+| Partition / expiry / stale heartbeat | Direct-backend counterexample retained; remote renewal/reassignment history `concurrency-tested` | No fencing or general distributed claim |
+| Stale transitions | Direct mutation safety on both backends plus remote request/rejection history `concurrency-tested` | Retained direct commands do not emit journal decisions |
+| Missing capability artifact | Direct validation plus remote semantic rejection `example-tested` | Artifact distribution remains external |
+| Proposal idempotency | Reference model and shipped command identity/fingerprint path checked within bound | No generic cross-domain proposal store |
