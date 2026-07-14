@@ -1,0 +1,40 @@
+{
+  "schema_version": "sprintctl-doctor/v1",
+  "provenance": {
+    "executable": {"path": "/tools/sprintctl", "version": "0.2.0", "probe_error": null},
+    "package": {
+      "code_version": "0.2.0",
+      "metadata_version": "0.2.0",
+      "location": "/tools/site-packages",
+      "module_path": "/tools/site-packages/sprintctl",
+      "capabilities": ["portable-aggregate-uuid-json/v1", "remote-backend/v1"]
+    },
+    "source": {
+      "present": true,
+      "root": "/src/sprintctl",
+      "version": "0.2.0",
+      "capabilities": ["portable-aggregate-uuid-json/v1", "remote-backend/v1"],
+      "schema": {"local": 10, "remote": 1}
+    }
+  },
+  "extras": {"remote": {"enabled": true, "requirement": "psycopg[binary]>=3.1"}},
+  "backend": {
+    "environment_mode": "remote",
+    "url_configured": true,
+    "database_path": "/src/sprintctl/.sprintctl/sprintctl.db",
+    "valid": true,
+    "resolved_mode": "remote",
+    "repo_root": "/src/sprintctl",
+    "repo_id": "sprintctl",
+    "marker": {"path": "/src/sprintctl/.sprintctl/backend.json", "backend": "remote", "repo_id": "sprintctl"},
+    "error": null
+  },
+  "schema": {
+    "backend": "remote",
+    "expected_version": 1,
+    "actual_version": 1,
+    "compatible": true,
+    "status": "current",
+    "error": null
+  }
+}

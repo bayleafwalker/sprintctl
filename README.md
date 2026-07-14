@@ -164,6 +164,20 @@ If your global install drifts from the checked-out source command surface,
 prefer the module entrypoint for `sprintctl` and refresh global tools with
 `pipx upgrade sprintctl && pipx upgrade kctl` (or `uv tool upgrade sprintctl kctl`).
 
+Run the read-only doctor before changing an installation or backend:
+
+```sh
+sprintctl doctor
+sprintctl doctor --json
+```
+
+The report compares the executable found on `PATH`, imported package metadata,
+and a checked-out source version. It also reports the `remote` extra, effective
+backend marker/configuration, and the configured database's schema capability.
+Remote URLs are never printed. Schema probes are read-only and the command does
+not install packages, migrate a database, or otherwise repair findings. Follow
+the emitted `pipx`, `uv`, or editable-source reinstall guidance explicitly.
+
 The source-tree entrypoint should expose the same command surface as the
 console script, including `next-work --explain` and `session resume`.
 

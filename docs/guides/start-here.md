@@ -8,6 +8,8 @@ checkout.
 
 When available, refresh global installs before starting work:
 `pipx upgrade sprintctl && pipx upgrade kctl` (or `uv tool upgrade sprintctl kctl`).
+If source, package, extras, or backend capabilities may disagree, run
+`sprintctl doctor --json` first; it is read-only and emits remediation guidance.
 
 ## 1. Create a sprint
 

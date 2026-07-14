@@ -81,12 +81,19 @@ At startup, sprintctl evaluates the backend in this order:
    directory containing `.sprintctl/sprintctl.db`, or from `.git`. Required for
    remote mode; used as the tenant discriminator in every PostgreSQL query.
 
-To inspect the resolved config without running a command:
+Use the read-only doctor to inspect provenance, the resolved configuration,
+whether the remote extra is enabled, and the remote schema capability:
 
 ```sh
-cat .sprintctl/backend.json          # if migrated
-echo $SPRINTCTL_BACKEND $SPRINTCTL_URL
+sprintctl doctor
+sprintctl doctor --json
 ```
+
+The JSON contract is `sprintctl-doctor/v1`. It reports only whether
+`SPRINTCTL_URL` is configured, never its value. The schema probe connects with
+PostgreSQL's read-only transaction setting and never initializes or migrates
+the schema. An error report includes explicit reinstall or operator guidance;
+doctor itself never upgrades packages or changes backend state.
 
 ---
 

@@ -5,6 +5,7 @@ import sys
 import tomllib
 
 from sprintctl import __version__
+from sprintctl import doctor
 from sprintctl.cli import cli
 
 
@@ -23,10 +24,18 @@ class TestReleaseIntegrity:
             pyproject = tomllib.load(fh)
         assert pyproject["project"]["scripts"]["sprintctl"] == "sprintctl.cli:cli"
 
+    def test_pyproject_doctor_capabilities_match_runtime(self):
+        with (ROOT / "pyproject.toml").open("rb") as fh:
+            pyproject = tomllib.load(fh)
+        settings = pyproject["tool"]["sprintctl"]
+        assert pyproject["project"]["version"] == __version__
+        assert settings["sqlite-schema-version"] == doctor.SQLITE_SCHEMA_VERSION
+        assert settings["remote-schema-version"] == doctor.REMOTE_SCHEMA_VERSION
+
     def test_help_lists_current_resume_surface(self, runner, db_path):
         result = runner.invoke(cli, ["--help"])
         assert result.exit_code == 0, result.output
-        for command in ("usage", "handoff", "next-work", "session", "git-context", "claim", "maintain"):
+        for command in ("doctor", "usage", "handoff", "next-work", "session", "git-context", "claim", "maintain"):
             assert command in result.output
 
     def test_module_entrypoint_exposes_cli_help(self, db_path):
@@ -42,7 +51,7 @@ class TestReleaseIntegrity:
         )
         assert result.returncode == 0, result.stderr
         assert "Usage: python -m sprintctl" in result.stdout
-        for command in ("usage", "handoff", "next-work", "session", "git-context", "claim", "maintain"):
+        for command in ("doctor", "usage", "handoff", "next-work", "session", "git-context", "claim", "maintain"):
             assert command in result.stdout
 
     def test_module_entrypoint_reports_package_version(self, db_path):
@@ -94,6 +103,7 @@ class TestReleaseIntegrity:
         assert result.exit_code == 0, result.output
         assert f"sprintctl v{__version__}" in result.output
         for fragment in (
+            "doctor         [--json]",
             "usage          [--context] [--sprint-id ID] [--json]",
             "handoff        [--sprint-id ID] [--output PATH] [--events N] [--format json|text]",
             "next-work      [--sprint-id ID] [--json] [--explain]",

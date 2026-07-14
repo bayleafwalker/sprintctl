@@ -17,6 +17,7 @@ from . import __version__
 from . import backend as _backend
 from . import contracts as _contracts
 from . import db as _db
+from . import doctor as _doctor
 from . import dualwrite as _dualwrite
 from . import maintain as _maintain
 from . import outbox as _outbox
@@ -93,6 +94,16 @@ def _detect_pid(explicit: int | None) -> int:
 def cli(ctx: click.Context) -> None:
     ctx.ensure_object(dict)
     ctx.obj.setdefault("conn", None)
+
+
+@cli.command("doctor")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit deterministic JSON diagnostics")
+def doctor_cmd(as_json: bool) -> None:
+    """Diagnose install provenance, extras, backend config, and schema compatibility."""
+    report = _doctor.collect_report()
+    click.echo(_doctor.dumps(report) if as_json else _doctor.render_text(report))
+    if report["status"] == "error":
+        raise click.exceptions.Exit(1)
 
 
 def _get_conn(obj: dict) -> sqlite3.Connection:
@@ -4811,6 +4822,7 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
 
     lines = [
         f"sprintctl v{__version__} — agent-centric sprint coordination CLI",
+        "  doctor         [--json]  # read-only provenance/backend/schema diagnostics",
         "",
         "SPRINT",
         "  sprint create  --name NAME [--goal GOAL] [--start YYYY-MM-DD] [--end YYYY-MM-DD]",
