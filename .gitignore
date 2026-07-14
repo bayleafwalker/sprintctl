@@ -11,6 +11,7 @@ build/
 # sprintctl local operational state (do not commit)
 .sprintctl/
 .kctl/
+.auditctl/
 handoff.json
 handoff-*.json
 sprint-*.json
