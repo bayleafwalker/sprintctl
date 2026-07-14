@@ -1,0 +1,15 @@
+SPRINT: Phase 26: Outbox Transport Foundations  [closed]
+Goal:   Deliver additive P1 producer-outbox foundations from the ratified outbox and synchronization ADR while retaining current SQLite/PostgreSQL backends as authority.
+ID:     404
+Items:  2 total — 2 done, 0 active, 0 pending, 0 blocked
+
+--- Track: transport-foundations ---
+  health: 2 items — 2 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #1136  Add durable producer outbox schema with crash-safe per-stream sequence allocation  (assignee: codex)
+    ref [doc] adr-outbox-sync-model: docs/plans/adr-outbox-sync-model.md
+    ref [doc] adr-outbox-sync-model@git:50cf3ee4d0da4fe14814b49b86173dc57782b0d2: docs/plans/adr-outbox-sync-model.md
+  [done    ] #1139  Implement remote ingestion ledger: idempotent deduplication, sequence-gap detection, and ingest cursor  (assignee: -)
+    ref [doc] adr-outbox-sync-model: docs/plans/adr-outbox-sync-model.md
+    ref [doc] adr-outbox-sync-model@git:be376029bd5204ce3023e119e796bc8f1f71338f: docs/plans/adr-outbox-sync-model.md
+
+Rendered: 2026-07-14T14:37:21Z
