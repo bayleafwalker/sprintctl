@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "repo_id": "sprintctl",
+  "repo_id": "2be118eb-8e89-433a-8d32-ada157624f95",
   "adoption_level": "guidance-only",
   "routing": {
     "default_harness": "codex",
