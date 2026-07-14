@@ -17,7 +17,13 @@ from . import __version__
 from . import backend as _backend
 from . import contracts as _contracts
 from . import db as _db
+from . import dualwrite as _dualwrite
 from . import maintain as _maintain
+from . import outbox as _outbox
+from . import pilot as _pilot
+from . import projection as _projection
+from . import shadow as _shadow
+from . import sync as _sync
 from .render import render_sprint_doc
 
 
@@ -1219,6 +1225,112 @@ def item_dep_remove(obj, item_id, dep_id) -> None:
 # event
 # ---------------------------------------------------------------------------
 
+def _shadow_observation_envelope(event: dict, repo_id: str) -> _contracts.RecordEnvelope | None:
+    """Translate one persisted authority event into a pilot observation.
+
+    The current event table remains authoritative.  The pilot therefore uses a
+    deterministic UUID derived from its stable repository identity and the
+    backend event ID, rather than introducing another identifier allocation
+    path.  Only record types classified as observations are eligible.
+    """
+    event_type = event["event_type"]
+    try:
+        if _contracts.record_class_for_type(event_type) is not _contracts.RecordClass.OBSERVATION:
+            return None
+    except ValueError:
+        return None
+    raw_payload = event.get("payload")
+    payload = json.loads(raw_payload) if isinstance(raw_payload, str) else dict(raw_payload or {})
+    event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"sprintctl:{repo_id}:event:{event['id']}"))
+    return _contracts.Observation(
+        event_id=event_id,
+        record_type=event_type,
+        schema_version="1",
+        actor=event["actor"],
+        authored_at=event["created_at"],
+        refs={
+            "repo_id": repo_id,
+            "sprint_id": event["sprint_id"],
+            "work_item_id": event.get("work_item_id"),
+            "authority_event_id": event["id"],
+        },
+        payload={"source_type": event["source_type"], "event_payload": payload},
+    )
+
+
+def _shadow_source(envelope: _contracts.RecordEnvelope) -> dict:
+    """Return the outbox-shaped record used by parity comparison."""
+    return {
+        "record_class": envelope.record_class.value,
+        "event_id": envelope.event_id,
+        "event_type": envelope.record_type,
+        "actor": envelope.actor,
+        "occurred_at": envelope.authored_at,
+        "payload": envelope.to_dict(),
+        "runtime_session_id": None,
+        "basis_revision": envelope.basis_revision,
+        "correlation_id": envelope.correlation_id,
+        "causation_id": envelope.causation_id,
+    }
+
+
+def _mirror_shadow_event(event: dict, *, repo_id: str) -> dict:
+    """Best-effort, post-commit observation mirror for the opt-in pilot.
+
+    A mirror failure never rolls back or hides the already committed authority
+    event.  The structured outcome is instead returned to the operator so a
+    pilot defect is observable and retryable without changing normal writes.
+    """
+    try:
+        status = _pilot.shadow_pilot_status(cwd=Path.cwd())
+    except _pilot.ShadowPilotConfigError as exc:
+        return {"status": "unavailable", "detail": str(exc)}
+    if not status.enabled:
+        return {"status": "disabled"}
+    envelope = _shadow_observation_envelope(event, repo_id)
+    if envelope is None:
+        return {"status": "unsupported", "event_type": event["event_type"]}
+    producer = _outbox.open_outbox(status.paths.outbox_path)
+    try:
+        result = _dualwrite.mirror_event(
+            producer,
+            envelope,
+        )
+    except Exception as exc:  # Authority write already committed; surface, do not undo it.
+        return {"status": "error", "detail": str(exc)}
+    finally:
+        producer.close()
+    return {
+        "status": result.disposition.value,
+        "event_id": result.event_id,
+        "event_type": result.record_type,
+    }
+
+
+def _pilot_status_payload() -> dict:
+    """Collect non-mutating operator status and optional local cache facts."""
+    status = _pilot.shadow_pilot_status(cwd=Path.cwd())
+    result = status.to_dict()
+    result["outbox_records"] = None
+    result["watermark"] = None
+    if status.paths.outbox_path.exists():
+        producer = _outbox.open_outbox(status.paths.outbox_path)
+        try:
+            result["outbox_records"] = len(_outbox.list_records(producer))
+        finally:
+            producer.close()
+    if status.paths.projection_path.exists():
+        cache = _projection.open_cached_projection(status.paths.projection_path)
+        try:
+            watermark = _projection.get_watermark(cache)
+            result["watermark"] = {
+                "ingest_offset": watermark.ingest_offset,
+                "advanced_at": watermark.advanced_at,
+            }
+        finally:
+            cache.close()
+    return result
+
 @cli.group()
 def event() -> None:
     """Manage events."""
@@ -1257,6 +1369,14 @@ def _event_add_impl(
     except (TypeError, ValueError) as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+    backend_config = obj.get("backend_config")
+    repo_id = backend_config.repo_id if backend_config is not None else Path.cwd().name
+    persisted = next((event for event in m.list_events(store, sprint_id) if event["id"] == eid), None)
+    shadow_result = (
+        _mirror_shadow_event(persisted, repo_id=repo_id)
+        if persisted is not None
+        else {"status": "unavailable", "detail": "created event could not be read back"}
+    )
     if as_json:
         click.echo(json.dumps({
             "operation": "event_add",
@@ -1266,9 +1386,12 @@ def _event_add_impl(
             "type": event_type,
             "actor": actor,
             "source": source_type,
+            "shadow_pilot": shadow_result,
         }, indent=2))
         return
     click.echo(f"Recorded event #{eid}: {event_type}  (actor: {actor})")
+    if shadow_result["status"] not in {"disabled", "unsupported"}:
+        click.echo(f"Shadow pilot: {shadow_result['status']}")
 
 
 @event.command("add")
@@ -1309,6 +1432,140 @@ def event_add(obj, sprint_id, event_type, actor, work_item_id, source_type, payl
 def event_log(obj, sprint_id, event_type, actor, work_item_id, source_type, payload, as_json) -> None:
     """Alias for 'event add'."""
     _event_add_impl(obj, sprint_id, event_type, actor, work_item_id, source_type, payload, as_json)
+
+
+# ---------------------------------------------------------------------------
+# observation-only shadow pilot
+# ---------------------------------------------------------------------------
+
+@cli.group()
+def pilot() -> None:
+    """Operate the opt-in, observation-only shadow projection pilot."""
+
+
+@pilot.command("status")
+@click.option("--json", "as_json", is_flag=True, default=False)
+def pilot_status(as_json: bool) -> None:
+    """Show pilot opt-in state, local outbox size, and cached watermark."""
+    try:
+        payload = _pilot_status_payload()
+    except _pilot.ShadowPilotConfigError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+        return
+    click.echo(f"Shadow pilot: {payload['state']}")
+    click.echo(f"Outbox records: {payload['outbox_records'] if payload['outbox_records'] is not None else 0}")
+    watermark = payload["watermark"]
+    click.echo(
+        "Remote watermark: "
+        + (str(watermark["ingest_offset"]) if watermark is not None else "not synchronized")
+    )
+
+
+def _set_pilot_enabled(enabled: bool, *, as_json: bool) -> None:
+    try:
+        status = _pilot.set_shadow_pilot_enabled(enabled, cwd=Path.cwd())
+    except _pilot.ShadowPilotConfigError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    payload = status.to_dict()
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+    else:
+        click.echo(f"Shadow pilot {payload['state']}.")
+
+
+@pilot.command("enable")
+@click.option("--json", "as_json", is_flag=True, default=False)
+def pilot_enable(as_json: bool) -> None:
+    """Explicitly opt this repository into observation-only shadow writes."""
+    _set_pilot_enabled(True, as_json=as_json)
+
+
+@pilot.command("disable")
+@click.option("--json", "as_json", is_flag=True, default=False)
+def pilot_disable(as_json: bool) -> None:
+    """Stop future shadow writes without changing authority data."""
+    _set_pilot_enabled(False, as_json=as_json)
+
+
+@pilot.command("verify")
+@click.option("--sprint-id", type=int, required=True)
+@click.option("--json", "as_json", is_flag=True, default=False)
+@click.pass_obj
+def pilot_verify(obj, sprint_id: int, as_json: bool) -> None:
+    """Compare mirrored observations with current authoritative event history."""
+    try:
+        status = _pilot.shadow_pilot_status(cwd=Path.cwd())
+    except _pilot.ShadowPilotConfigError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    if not status.enabled:
+        click.echo("Error: shadow pilot is disabled; run 'sprintctl pilot enable' first.", err=True)
+        sys.exit(1)
+    store, m = _get_store(obj)
+    config = obj["backend_config"]
+    authoritative = [
+        _shadow_source(envelope)
+        for event in m.list_events(store, sprint_id)
+        if (envelope := _shadow_observation_envelope(event, config.repo_id)) is not None
+    ]
+    producer = _outbox.open_outbox(status.paths.outbox_path)
+    try:
+        report = _shadow.compare_parity(authoritative, _outbox.list_records(producer))
+    finally:
+        producer.close()
+    payload = {"sprint_id": sprint_id, **report.to_dict()}
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+    else:
+        click.echo("Shadow parity: " + ("equal" if report.is_equal else "diverged"))
+        click.echo(json.dumps(report.counts, sort_keys=True))
+
+
+@pilot.command("sync")
+@click.option("--batch-size", default=100, type=int, show_default=True)
+@click.option("--json", "as_json", is_flag=True, default=False)
+@click.pass_obj
+def pilot_sync(obj, batch_size: int, as_json: bool) -> None:
+    """Synchronize the local observation outbox into the configured remote ledger."""
+    try:
+        status = _pilot.shadow_pilot_status(cwd=Path.cwd())
+    except _pilot.ShadowPilotConfigError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    if not status.enabled:
+        click.echo("Error: shadow pilot is disabled; run 'sprintctl pilot enable' first.", err=True)
+        sys.exit(1)
+    store, _m = _get_store(obj)
+    if obj["backend_config"].mode != "remote":
+        click.echo("Error: pilot synchronization requires a remote sprintctl backend.", err=True)
+        sys.exit(1)
+    producer = _outbox.open_outbox(status.paths.outbox_path)
+    cache = _projection.open_cached_projection(status.paths.projection_path)
+    try:
+        result = _sync.synchronize_outbox(producer, store, cache, batch_size=batch_size)
+    except (TypeError, ValueError) as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    finally:
+        producer.close()
+        cache.close()
+    payload = {
+        "uploaded": len(result.uploaded),
+        "duplicates": sum(outcome.duplicate for outcome in result.uploaded),
+        "applied_count": result.applied_count,
+        "watermark": {
+            "ingest_offset": result.watermark.ingest_offset,
+            "advanced_at": result.watermark.advanced_at,
+        },
+    }
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+    else:
+        click.echo(f"Synchronized {payload['uploaded']} observation records; watermark {result.watermark.ingest_offset}.")
 
 
 @event.command("list")

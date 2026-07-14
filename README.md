@@ -78,6 +78,7 @@ Detailed guides:
 - [Work Loop](docs/guides/work-loop.md)
 - [Daily Loop](docs/guides/daily-loop.md)
 - [Project Integration](docs/guides/project-integration.md)
+- [Shadow Projection Pilot](docs/guides/shadow-pilot.md)
 - [Customization Guide](docs/customization.md)
 - [Coordinator Mode](docs/advanced/coordinator-mode.md)
 - [Claim Discipline](docs/advanced/claim-discipline.md)

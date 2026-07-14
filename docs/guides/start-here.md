@@ -88,6 +88,7 @@ you want a reviewable snapshot in git.
 - [Agent Prompt Snippets](../examples/agent-prompt-snippets.md)
 - [Editor And Terminal Integration](../examples/editor-and-terminal-integration.md)
 - [Remote Mode](remote-mode.md)
+- [Shadow Projection Pilot](shadow-pilot.md)
 - [Coordinator Mode](../advanced/coordinator-mode.md)
 - [Claim Discipline](../advanced/claim-discipline.md)
 - [Context and Handoff Contracts](../reference/context-and-handoff.md)
