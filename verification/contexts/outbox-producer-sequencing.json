@@ -1,0 +1,49 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.outbox.producer-sequencing",
+  "owner_repo": "sprintctl",
+  "subject": "producer-authored-observation-outbox",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:50cf3ee4d0da4fe14814b49b86173dc57782b0d2"
+  },
+  "source_of_truth": "local-producer-sqlite-outbox",
+  "depth": 1,
+  "backends": ["sqlite"],
+  "actors": ["producer-a", "producer-b"],
+  "initial_state": ["outbox-empty", "origin-stream-unminted"],
+  "operations": [
+    {"name": "append-observation", "actors": ["producer-a", "producer-b"], "synchronization": "bounded concurrent writers"},
+    {"name": "retry-after-lost-local-response", "actors": ["producer-a"]},
+    {"name": "reopen-after-committed-append", "actors": ["producer-a"]}
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "single-producer-stream-sequence"
+  },
+  "assumptions": {
+    "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+    "clock": "producer process UTC clock",
+    "fairness": "SQLite lock acquisition eventually succeeds within connection timeout"
+  },
+  "bounds": {"writers": 2, "appends_per_writer": 12},
+  "invariants": [
+    "committed-observations-survive-producer-restart",
+    "origin-sequences-are-contiguous-within-the-stream",
+    "same-event-id-does-not-consume-an-additional-sequence",
+    "failed-insert-does-not-mint-a-visible-stream-or-consume-a-sequence",
+    "outbox-records-are-immutable"
+  ],
+  "faults": [
+    "insert-failure-before-commit",
+    "lost-response-after-local-commit",
+    "producer-restart-after-local-commit"
+  ],
+  "oracles": [
+    "outbox-record-query", "stream-sequence-contiguity", "immutable-trigger-check"],
+  "implementation_anchors": [
+    "sprintctl/outbox.py:append_observation",
+    "sprintctl/outbox.py:init_outbox"
+  ],
+  "expansions": ["stateful-test", "fault-scenario"]
+}
