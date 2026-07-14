@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
+from enum import StrEnum
 import hashlib
 import json
 from pathlib import Path
 import re
-from typing import Any, Mapping, Sequence
+from typing import Any, ClassVar, Mapping, Sequence
+from uuid import UUID
 
 CONTEXT_CONTRACT_VERSION = "1"
 HANDOFF_BUNDLE_TYPE = "handoff"
@@ -31,6 +34,239 @@ _CAPABILITY_RECEIPT_REQUIRED_FIELDS = {
 }
 _CAPABILITY_RECEIPT_OPTIONAL_FIELDS = {"boundary_summary"}
 _BOUNDARY_SUMMARY_MAX_LENGTH = 280
+_RECORD_TYPE = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
+
+
+class RecordClass(StrEnum):
+    """The three protocol-level meanings a portable record can carry."""
+
+    OBSERVATION = "observation"
+    AUTHORITY_COMMAND = "authority-command"
+    REMOTE_DECISION = "remote-decision"
+
+
+# This is deliberately a taxonomy, not a transport registry.  Adding a record
+# here does not write it to an outbox or teach a backend how to arbitrate it.
+SPRINTCTL_RECORD_TYPE_CLASSES: dict[str, RecordClass] = {
+    "note.recorded": RecordClass.OBSERVATION,
+    "decision.recorded": RecordClass.OBSERVATION,
+    "work.completed": RecordClass.OBSERVATION,
+    "doc-ref.added": RecordClass.OBSERVATION,
+    "command.requested": RecordClass.AUTHORITY_COMMAND,
+    "item.done": RecordClass.AUTHORITY_COMMAND,
+    "item.transition": RecordClass.AUTHORITY_COMMAND,
+    "sprint.activate": RecordClass.AUTHORITY_COMMAND,
+    "sprint.close": RecordClass.AUTHORITY_COMMAND,
+    "claim.acquire": RecordClass.AUTHORITY_COMMAND,
+    "claim.renew": RecordClass.AUTHORITY_COMMAND,
+    "claim.handoff": RecordClass.AUTHORITY_COMMAND,
+    "claim.release": RecordClass.AUTHORITY_COMMAND,
+    "capability-receipt.accept": RecordClass.AUTHORITY_COMMAND,
+    "item.transitioned": RecordClass.REMOTE_DECISION,
+    "sprint-activated": RecordClass.REMOTE_DECISION,
+    "sprint-closed": RecordClass.REMOTE_DECISION,
+    "claim.granted": RecordClass.REMOTE_DECISION,
+    "claim.renewed": RecordClass.REMOTE_DECISION,
+    "claim.expired": RecordClass.REMOTE_DECISION,
+    "claim.denied": RecordClass.REMOTE_DECISION,
+    "capability-receipt.accepted": RecordClass.REMOTE_DECISION,
+    "command.rejected": RecordClass.REMOTE_DECISION,
+}
+
+
+def record_class_for_type(record_type: str) -> RecordClass:
+    """Return the matrix-defined semantic class for a sprintctl record type."""
+    if not isinstance(record_type, str) or not _RECORD_TYPE.fullmatch(record_type):
+        raise ValueError("record_type must be a lowercase dotted, dashed, or underscored name")
+    try:
+        return SPRINTCTL_RECORD_TYPE_CLASSES[record_type]
+    except KeyError as exc:
+        raise ValueError(f"record_type is not classified by the sprintctl matrix: {record_type}") from exc
+
+
+def _canonical_uuid(value: str | UUID | None, field: str) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"{field} must be a UUID")
+    try:
+        return str(UUID(str(value)))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise ValueError(f"{field} must be a UUID") from exc
+
+
+def _required_string(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError(f"{field} must be a non-empty string without surrounding whitespace")
+    return value
+
+
+def _optional_string(value: Any, field: str) -> str | None:
+    if value is None:
+        return None
+    return _required_string(value, field)
+
+
+def _canonical_timestamp(value: Any) -> str:
+    timestamp = _required_string(value, "authored_at")
+    try:
+        parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("authored_at must be an ISO 8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise ValueError("authored_at must include a timezone")
+    return timestamp
+
+
+def _canonical_json_object(value: Any, field: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{field} must be a JSON object")
+    try:
+        canonical = json.loads(json.dumps(dict(value), separators=(",", ":")))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must contain JSON-compatible values") from exc
+    if not isinstance(canonical, dict):  # Defensive; json.loads above always returns a dict here.
+        raise ValueError(f"{field} must be a JSON object")
+    return canonical
+
+
+def _optional_sha256(value: Any, field: str) -> str | None:
+    value = _optional_string(value, field)
+    if value is not None and not _LOWERCASE_SHA256.fullmatch(value):
+        raise ValueError(f"{field} must be 64 lowercase hexadecimal characters")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class RecordEnvelope:
+    """Portable record fields common to observations, commands, and decisions."""
+
+    event_id: str | UUID
+    record_type: str
+    schema_version: str
+    actor: str
+    authored_at: str
+    refs: Mapping[str, Any]
+    payload: Mapping[str, Any]
+    basis_revision: str | None = None
+    correlation_id: str | UUID | None = None
+    causation_id: str | UUID | None = None
+    payload_digest: str | None = None
+    artifact_digest: str | None = None
+
+    record_class: ClassVar[RecordClass]
+
+    def __post_init__(self) -> None:
+        expected_class = record_class_for_type(self.record_type)
+        if expected_class != self.record_class:
+            raise ValueError(
+                f"record_type {self.record_type!r} is {expected_class.value}, "
+                f"not {self.record_class.value}"
+            )
+        event_id = _canonical_uuid(self.event_id, "event_id")
+        assert event_id is not None
+        object.__setattr__(self, "event_id", event_id)
+        object.__setattr__(self, "schema_version", _required_string(self.schema_version, "schema_version"))
+        object.__setattr__(self, "actor", _required_string(self.actor, "actor"))
+        object.__setattr__(self, "authored_at", _canonical_timestamp(self.authored_at))
+        object.__setattr__(self, "refs", _canonical_json_object(self.refs, "refs"))
+        object.__setattr__(self, "payload", _canonical_json_object(self.payload, "payload"))
+        object.__setattr__(self, "basis_revision", _optional_string(self.basis_revision, "basis_revision"))
+        object.__setattr__(self, "correlation_id", _canonical_uuid(self.correlation_id, "correlation_id"))
+        object.__setattr__(self, "causation_id", _canonical_uuid(self.causation_id, "causation_id"))
+        object.__setattr__(self, "payload_digest", _optional_sha256(self.payload_digest, "payload_digest"))
+        object.__setattr__(self, "artifact_digest", _optional_sha256(self.artifact_digest, "artifact_digest"))
+
+    @property
+    def offline_bufferable(self) -> bool:
+        return self.record_class is RecordClass.OBSERVATION
+
+    @property
+    def requires_remote_arbitration(self) -> bool:
+        return self.record_class is RecordClass.AUTHORITY_COMMAND
+
+    @property
+    def remote_authored(self) -> bool:
+        return self.record_class is RecordClass.REMOTE_DECISION
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a defensively copied, stable-order JSON-ready envelope."""
+        return {
+            "event_id": self.event_id,
+            "record_type": self.record_type,
+            "record_class": self.record_class.value,
+            "schema_version": self.schema_version,
+            "actor": self.actor,
+            "authored_at": self.authored_at,
+            "refs": _canonical_json_object(self.refs, "refs"),
+            "payload": _canonical_json_object(self.payload, "payload"),
+            "basis_revision": self.basis_revision,
+            "correlation_id": self.correlation_id,
+            "causation_id": self.causation_id,
+            "payload_digest": self.payload_digest,
+            "artifact_digest": self.artifact_digest,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class Observation(RecordEnvelope):
+    """A union/dedup-safe fact that a producer may append offline."""
+
+    record_class: ClassVar[RecordClass] = RecordClass.OBSERVATION
+
+
+@dataclass(frozen=True, slots=True)
+class AuthorityCommand(RecordEnvelope):
+    """A request that cannot take effect without remote arbitration."""
+
+    record_class: ClassVar[RecordClass] = RecordClass.AUTHORITY_COMMAND
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteDecision(RecordEnvelope):
+    """An outcome that only the owning remote authority may author."""
+
+    record_class: ClassVar[RecordClass] = RecordClass.REMOTE_DECISION
+
+
+_RECORD_CLASS_TYPES: dict[RecordClass, type[RecordEnvelope]] = {
+    RecordClass.OBSERVATION: Observation,
+    RecordClass.AUTHORITY_COMMAND: AuthorityCommand,
+    RecordClass.REMOTE_DECISION: RemoteDecision,
+}
+_RECORD_ENVELOPE_FIELDS = {
+    "event_id",
+    "record_type",
+    "record_class",
+    "schema_version",
+    "actor",
+    "authored_at",
+    "refs",
+    "payload",
+    "basis_revision",
+    "correlation_id",
+    "causation_id",
+    "payload_digest",
+    "artifact_digest",
+}
+
+
+def record_from_dict(value: Mapping[str, Any]) -> RecordEnvelope:
+    """Parse a JSON envelope and reject a class that conflicts with its type."""
+    if not isinstance(value, Mapping):
+        raise ValueError("record envelope must be an object")
+    source = dict(value)
+    unknown = sorted(set(source) - _RECORD_ENVELOPE_FIELDS)
+    missing = sorted(_RECORD_ENVELOPE_FIELDS - set(source))
+    if unknown:
+        raise ValueError("record envelope has unknown fields: " + ", ".join(unknown))
+    if missing:
+        raise ValueError("record envelope is missing fields: " + ", ".join(missing))
+    try:
+        record_class = RecordClass(source.pop("record_class"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("record_class must be observation, authority-command, or remote-decision") from exc
+    return _RECORD_CLASS_TYPES[record_class](**source)
 
 
 def _copy_mapping(value: Mapping[str, Any]) -> dict[str, Any]:

@@ -1,6 +1,86 @@
 import json
+from uuid import uuid4
+
+import pytest
 
 from sprintctl import contracts
+
+
+def _record_kwargs(record_type: str) -> dict[str, object]:
+    return {
+        "event_id": uuid4(),
+        "record_type": record_type,
+        "schema_version": "sprintctl-record/v1",
+        "actor": "codex",
+        "authored_at": "2026-07-14T12:00:00Z",
+        "refs": {"work_item_id": "1128"},
+        "payload": {"summary": "typed record"},
+        "basis_revision": "item:1128@3",
+        "correlation_id": uuid4(),
+        "causation_id": uuid4(),
+        "payload_digest": "a" * 64,
+        "artifact_digest": "b" * 64,
+    }
+
+
+class TestSemanticRecordContracts:
+    def test_observation_round_trips_with_stable_json_order(self):
+        record = contracts.Observation(**_record_kwargs("work.completed"))
+
+        payload = record.to_dict()
+        assert list(payload) == [
+            "event_id",
+            "record_type",
+            "record_class",
+            "schema_version",
+            "actor",
+            "authored_at",
+            "refs",
+            "payload",
+            "basis_revision",
+            "correlation_id",
+            "causation_id",
+            "payload_digest",
+            "artifact_digest",
+        ]
+        restored = contracts.record_from_dict(json.loads(json.dumps(payload)))
+        assert restored == record
+        assert restored.offline_bufferable is True
+        assert restored.requires_remote_arbitration is False
+        assert restored.remote_authored is False
+
+    def test_taxonomy_prevents_an_authority_command_from_being_bufferable(self):
+        command = contracts.AuthorityCommand(**_record_kwargs("item.done"))
+        assert command.offline_bufferable is False
+        assert command.requires_remote_arbitration is True
+
+        with pytest.raises(ValueError, match="authority-command"):
+            contracts.Observation(**_record_kwargs("item.done"))
+
+    def test_remote_decision_must_use_a_remote_decision_type(self):
+        decision = contracts.RemoteDecision(**_record_kwargs("claim.granted"))
+        assert decision.remote_authored is True
+
+        payload = decision.to_dict()
+        payload["record_class"] = "observation"
+        with pytest.raises(ValueError, match="remote-decision"):
+            contracts.record_from_dict(payload)
+
+    def test_envelope_validation_rejects_unknown_type_and_invalid_digest(self):
+        with pytest.raises(ValueError, match="not classified"):
+            contracts.Observation(**_record_kwargs("unclassified.record"))
+
+        invalid = _record_kwargs("work.completed")
+        invalid["artifact_digest"] = "not-a-digest"
+        with pytest.raises(ValueError, match="artifact_digest"):
+            contracts.Observation(**invalid)
+
+    def test_to_dict_is_defensive(self):
+        record = contracts.Observation(**_record_kwargs("work.completed"))
+        first = record.to_dict()
+        first["payload"]["summary"] = "mutated"
+
+        assert record.to_dict()["payload"]["summary"] == "typed record"
 
 
 class TestContextContractModel:
