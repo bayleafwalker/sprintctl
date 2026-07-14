@@ -1,0 +1,45 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.authority.capability-artifact",
+  "owner_repo": "sprintctl",
+  "subject": "capability-receipt-pointer-with-unavailable-artifact",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:75d3c0c889a477ea56790371acae18f1dd7541b6"
+  },
+  "source_of_truth": "backend-close-boundary-and-validated-private-artifact-pointer",
+  "depth": 2,
+  "backends": ["sqlite", "postgres", "producer-filesystem"],
+  "actors": ["operator", "drafting-agent", "remote-authority"],
+  "initial_state": ["sprint=active", "receipt-pointer-events=0", "artifact=unavailable"],
+  "operations": [
+    {"name": "close-sprint", "actors": ["operator"]},
+    {"name": "submit-capability-pointer", "actors": ["drafting-agent"], "synchronization": "independent connection after close boundary commit"},
+    {"name": "validate-artifact-availability", "actors": ["remote-authority"], "synchronization": "before pointer event append"}
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "validation-bearing-capability-receipt-pointer"
+  },
+  "assumptions": {
+    "isolation": "backend transaction plus synchronous artifact read before event commit",
+    "clock": "none",
+    "fairness": "none"
+  },
+  "bounds": {"backends": 2, "independent_connections": 2, "missing_artifacts": 1},
+  "invariants": [
+    "unavailable-artifact-pointer-is-not-accepted",
+    "failed-artifact-validation-appends-no-pointer-event",
+    "future-remote-authority-defines-retryable-artifact-availability-boundary"
+  ],
+  "faults": ["artifact-pointer-target-is-unavailable-to-authority"],
+  "oracles": ["validation-exception", "receipt-pointer-event-count", "backend-parity-diff"],
+  "implementation_anchors": [
+    "sprintctl/contracts.py:verify_capability_receipt_draft_pointer",
+    "sprintctl/db.py:create_event",
+    "sprintctl/pg.py:create_event",
+    "tests/test_authority_fault_protocol.py:test_sqlite_unavailable_capability_artifact_rejects_pointer_without_event",
+    "tests/test_pg_integration.py:TestAuthorityFaultHistories"
+  ],
+  "expansions": ["semantic-doc", "concurrent-history", "fault-scenario"]
+}

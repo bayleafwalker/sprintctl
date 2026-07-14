@@ -1,0 +1,69 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.authority.claim-partition-expiry",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:75d3c0c889a477ea56790371acae18f1dd7541b6"
+  },
+  "implementation_sha": "working-tree:item-1157-base-ddc608bddc8e4312e78a1a4ac52df5f815569d66",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary-sqlite-and-disposable-postgresql-17-alpine",
+    "isolation": "two independent connections with deterministic expiry between commits",
+    "tool_versions": {
+      "python": "3.12.12",
+      "pytest": "9.0.2",
+      "postgresql": "17-alpine-container"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 2,
+    "bounds": {
+      "backends": 2,
+      "actors": 2,
+      "claims_per_item": 2,
+      "independent_connections": 2,
+      "partitions": 1
+    },
+    "faults_exercised": [
+      "claim-expires-while-owner-is-partitioned",
+      "old-owner-heartbeats-after-reassignment"
+    ]
+  },
+  "claims": [
+    {
+      "property": "expired claims are absent from active projections before a stale heartbeat",
+      "result": "concurrency-tested",
+      "evidence": [
+        "SQLite and PostgreSQL independent-connection histories both observed zero active claims after forced backend expiry"
+      ]
+    },
+    {
+      "property": "a replacement grant prevents an old proof from reviving exclusive authority",
+      "result": "concurrency-tested",
+      "evidence": [
+        "both backends accepted the old token heartbeat after replacement and then exposed two active exclusive claims",
+        "tests/test_authority_fault_protocol.py SQLite counterexample",
+        "tests/test_pg_integration.py TestAuthorityFaultHistories PostgreSQL counterexample"
+      ]
+    },
+    {
+      "property": "claim expiry provides fencing against stale external actors",
+      "result": "unknown",
+      "evidence": [
+        "no fencing epoch exists and the bounded stale-heartbeat history is a counterexample to treating expiry as fencing"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "after claim A expires and claim B is granted, heartbeat with A's still-stored token revives A, leaving two active exclusive claims",
+      "trace_ref": "tests/test_authority_fault_protocol.py:test_sqlite_partition_expiry_reassignment_then_stale_heartbeat_is_a_counterexample"
+    }
+  ],
+  "notes": [
+    "This result reports current behavior only; item 1157 did not repair heartbeat or claim semantics.",
+    "The PostgreSQL history ran against a disposable dedicated-role database and cleanup proved zero rows in all nine repo-scoped tables."
+  ]
+}

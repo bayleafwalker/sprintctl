@@ -1,0 +1,52 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.authority.capability-artifact",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:75d3c0c889a477ea56790371acae18f1dd7541b6"
+  },
+  "implementation_sha": "working-tree:item-1157-base-ddc608bddc8e4312e78a1a4ac52df5f815569d66",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary-sqlite-and-disposable-postgresql-17-alpine-plus-test-filesystem-fault",
+    "isolation": "independent drafting connection after close commit; synchronous artifact read before pointer event append",
+    "tool_versions": {
+      "python": "3.12.12",
+      "pytest": "9.0.2",
+      "postgresql": "17-alpine-container"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 2,
+    "bounds": {
+      "backends": 2,
+      "independent_connections": 2,
+      "missing_artifacts": 1
+    },
+    "faults_exercised": [
+      "capability-receipt-path-is-unavailable-at-validation"
+    ]
+  },
+  "claims": [
+    {
+      "property": "an unavailable capability artifact is rejected before its pointer event is accepted",
+      "result": "example-tested",
+      "evidence": [
+        "SQLite and PostgreSQL both raised the missing-file validation error",
+        "both event histories retained only the prior sprint-close-boundary event"
+      ]
+    },
+    {
+      "property": "future remote authority can fetch and retry producer-local capability artifacts",
+      "result": "unknown",
+      "evidence": [
+        "current verification reads from the sprintctl process filesystem and no remote artifact transport contract is implemented"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "This result establishes fail-closed local validation, not remote artifact availability."
+  ]
+}

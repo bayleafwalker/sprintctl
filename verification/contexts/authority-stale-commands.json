@@ -1,0 +1,49 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.authority.stale-commands",
+  "owner_repo": "sprintctl",
+  "subject": "stale-item-completion-and-sprint-close-commands",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:75d3c0c889a477ea56790371acae18f1dd7541b6"
+  },
+  "source_of_truth": "backend-item-sprint-and-append-only-event-rows",
+  "depth": 2,
+  "backends": ["sqlite", "postgres"],
+  "actors": ["actor-a", "actor-b", "remote-authority"],
+  "initial_state": ["item=active", "sprint=active", "close-boundary-events=0"],
+  "operations": [
+    {"name": "read-command-basis", "actors": ["actor-a", "actor-b"], "synchronization": "independent connections before first transition"},
+    {"name": "complete-item", "actors": ["actor-a"]},
+    {"name": "submit-stale-item-completion", "actors": ["actor-b"], "synchronization": "after first item commit using the earlier basis"},
+    {"name": "close-sprint", "actors": ["actor-a"]},
+    {"name": "submit-stale-sprint-close", "actors": ["actor-b"], "synchronization": "after first close commit using the earlier basis"}
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "item-and-sprint-authority-transitions"
+  },
+  "assumptions": {
+    "isolation": "SQLite transaction commits or PostgreSQL READ COMMITTED transactions",
+    "clock": "backend clock",
+    "fairness": "none"
+  },
+  "bounds": {"actors": 2, "independent_connections": 2, "item_commands": 2, "sprint_commands": 2},
+  "invariants": [
+    "stale-item-command-does-not-apply-a-second-transition",
+    "stale-sprint-command-does-not-apply-a-second-transition",
+    "explicit-close-retains-exactly-one-boundary-event",
+    "future-command-ledger-retains-immutable-request-and-remote-rejection"
+  ],
+  "faults": ["remote-state-advances-after-command-basis", "stale-item-completion", "stale-sprint-close"],
+  "oracles": ["item-status-query", "sprint-status-query", "close-boundary-event-count", "accepted-rejected-operation-history"],
+  "implementation_anchors": [
+    "sprintctl/db.py:set_work_item_status",
+    "sprintctl/db.py:close_sprint_with_boundary_event",
+    "sprintctl/pg.py:set_work_item_status",
+    "sprintctl/pg.py:close_sprint_with_boundary_event",
+    "tests/test_authority_fault_protocol.py:test_sqlite_stale_item_and_sprint_commands_reject_without_second_mutation",
+    "tests/test_pg_integration.py:TestAuthorityFaultHistories"
+  ],
+  "expansions": ["semantic-doc", "concurrent-history", "fault-scenario"]
+}

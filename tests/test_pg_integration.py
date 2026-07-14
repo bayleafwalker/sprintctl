@@ -1004,6 +1004,109 @@ class TestMaintain:
 
 
 # ---------------------------------------------------------------------------
+# Authority fault histories
+# ---------------------------------------------------------------------------
+
+class TestAuthorityFaultHistories:
+    def _independent_store(self, store):
+        conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+        assert_disposable_connection(conn)
+        return pg.PgStore(conn=conn, repo_id=store.repo_id)
+
+    def test_partition_expiry_reassignment_then_stale_heartbeat_is_a_counterexample(
+        self,
+        store,
+    ):
+        sprint_id = pg.create_sprint(store, f"Partition-{_uid()}", status="active")
+        track_id = pg.get_or_create_track(store, sprint_id, "protocol")
+        item_id = pg.create_work_item(store, sprint_id, track_id, f"Lease-{_uid()}")
+        old_claim_id = pg.create_claim(store, item_id, "partitioned-owner")
+        old_claim = pg.get_claim(store, old_claim_id, include_secret=True)
+        replacement = self._independent_store(store)
+        try:
+            with replacement.conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE claim SET expires_at = now() - interval '1 second' "
+                    "WHERE repo_id = %s AND id = %s",
+                    (store.repo_id, old_claim_id),
+                )
+            replacement.conn.commit()
+            assert pg.list_claims(store, item_id, active_only=True) == []
+
+            new_claim_id = pg.create_claim(replacement, item_id, "replacement-owner")
+            pg.heartbeat_claim(
+                store,
+                old_claim_id,
+                old_claim["claim_token"],
+                actor="partitioned-owner",
+            )
+
+            active_ids = {
+                claim["claim_id"] for claim in pg.list_claims(replacement, item_id, active_only=True)
+            }
+            assert active_ids == {old_claim_id, new_claim_id}
+        finally:
+            replacement.conn.close()
+
+    def test_stale_item_and_sprint_commands_reject_without_second_mutation(self, store):
+        sprint_id = pg.create_sprint(store, f"Stale-{_uid()}", status="active")
+        track_id = pg.get_or_create_track(store, sprint_id, "protocol")
+        item_id = pg.create_work_item(store, sprint_id, track_id, f"Stale-item-{_uid()}")
+        pg.set_work_item_status(store, item_id, "active")
+        actor_b = self._independent_store(store)
+        try:
+            assert pg.get_work_item(actor_b, item_id)["status"] == "active"
+            assert pg.get_sprint(actor_b, sprint_id)["status"] == "active"
+
+            pg.set_work_item_status(store, item_id, "done")
+            with pytest.raises(InvalidTransition, match="done -> done"):
+                pg.set_work_item_status(actor_b, item_id, "done")
+            assert pg.get_work_item(actor_b, item_id)["status"] == "done"
+
+            boundary_id = pg.close_sprint_with_boundary_event(store, sprint_id, "actor-a")
+            with pytest.raises(InvalidTransition, match="sprint closed -> closed"):
+                pg.close_sprint_with_boundary_event(actor_b, sprint_id, "actor-b")
+            boundaries = [
+                event
+                for event in pg.list_events(actor_b, sprint_id)
+                if event["event_type"] == contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE
+            ]
+            assert [event["id"] for event in boundaries] == [boundary_id]
+            assert pg.get_sprint(actor_b, sprint_id)["status"] == "closed"
+        finally:
+            actor_b.conn.close()
+
+    def test_unavailable_capability_artifact_rejects_pointer_without_event(
+        self,
+        store,
+        monkeypatch,
+    ):
+        sprint_id = pg.create_sprint(store, f"Artifact-{_uid()}", status="active")
+        boundary_id = pg.close_sprint_with_boundary_event(store, sprint_id, "operator")
+        receipt_bytes = _receipt_bytes(store, sprint_id, boundary_id)
+        payload = _receipt_payload(store, receipt_bytes)
+
+        def missing(receipt_path):
+            raise ValueError(f"capability receipt file does not exist: {receipt_path}")
+
+        monkeypatch.setattr(contracts, "_read_capability_receipt_bytes", missing)
+        drafting_agent = self._independent_store(store)
+        try:
+            with pytest.raises(ValueError, match="file does not exist"):
+                pg.create_event(
+                    drafting_agent,
+                    sprint_id,
+                    "drafting-agent",
+                    contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE,
+                    payload=payload,
+                )
+            event_types = [event["event_type"] for event in pg.list_events(store, sprint_id)]
+            assert event_types == [contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE]
+        finally:
+            drafting_agent.conn.close()
+
+
+# ---------------------------------------------------------------------------
 # Takeup
 # ---------------------------------------------------------------------------
 

@@ -1,0 +1,61 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.authority.stale-commands",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:75d3c0c889a477ea56790371acae18f1dd7541b6"
+  },
+  "implementation_sha": "working-tree:item-1157-base-ddc608bddc8e4312e78a1a4ac52df5f815569d66",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary-sqlite-and-disposable-postgresql-17-alpine",
+    "isolation": "two independent connections with stale reads before authoritative commits",
+    "tool_versions": {
+      "python": "3.12.12",
+      "pytest": "9.0.2",
+      "postgresql": "17-alpine-container"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 4,
+    "bounds": {
+      "backends": 2,
+      "independent_connections": 2,
+      "item_commands_per_backend": 2,
+      "sprint_commands_per_backend": 2
+    },
+    "faults_exercised": [
+      "stale-item-completion-after-item-done",
+      "stale-sprint-close-after-close-boundary-commit"
+    ]
+  },
+  "claims": [
+    {
+      "property": "stale direct item and sprint transitions do not apply a second authority mutation",
+      "result": "concurrency-tested",
+      "evidence": [
+        "SQLite and PostgreSQL stale-reader histories rejected done-to-done and closed-to-closed transitions",
+        "both backends retained final done and closed state"
+      ]
+    },
+    {
+      "property": "stale sprint close retains exactly one local close-boundary event",
+      "result": "concurrency-tested",
+      "evidence": [
+        "both backend histories found only the first close-boundary event after the stale close rejection"
+      ]
+    },
+    {
+      "property": "stale authority commands remain as immutable requests plus remote-authored rejection decisions",
+      "result": "unknown",
+      "evidence": [
+        "current direct backend calls raise InvalidTransition and have no durable command request or rejection ledger"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "Mutation safety of current direct calls does not establish the future command transport's history or retry semantics."
+  ]
+}

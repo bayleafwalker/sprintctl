@@ -1,0 +1,45 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.authority.proposal-idempotency",
+  "owner_repo": "sprintctl",
+  "subject": "duplicate-and-conflicting-reconciliation-proposal-acceptance",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:75d3c0c889a477ea56790371acae18f1dd7541b6"
+  },
+  "source_of_truth": "bounded-reference-model-pending-product-proposal-store",
+  "depth": 2,
+  "backends": ["reference-model"],
+  "actors": ["scribe-a", "scribe-b", "remote-authority"],
+  "initial_state": ["proposal-decisions=0", "authority-effects=0"],
+  "operations": [
+    {"name": "submit-valid-proposal", "actors": ["scribe-a", "scribe-b"], "synchronization": "enumerated ordered histories over one stable proposal ID"},
+    {"name": "retry-identical-proposal", "actors": ["scribe-a"]},
+    {"name": "reuse-proposal-id-with-conflicting-digest", "actors": ["scribe-b"]},
+    {"name": "retry-invalid-proposal", "actors": ["scribe-a"]}
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "proposal-decision-and-authority-effect"
+  },
+  "assumptions": {
+    "isolation": "reference-model operation is atomic; product isolation is undefined",
+    "clock": "none",
+    "fairness": "none"
+  },
+  "bounds": {"proposal_ids": 2, "payload_digests": 2, "history_length": 3, "enumerated_histories": 8},
+  "invariants": [
+    "identical-proposal-retry-returns-the-same-decision",
+    "accepted-proposal-applies-at-most-one-authority-effect",
+    "conflicting-digest-for-an-accepted-proposal-id-is-rejected",
+    "rejected-proposal-retry-is-idempotent",
+    "product-handler-refines-the-bounded-reference-model"
+  ],
+  "faults": ["duplicate-proposal", "conflicting-proposal-id-reuse", "repeated-invalid-proposal"],
+  "oracles": ["reference-model-decision-map", "authority-effect-count", "decision-identity-equality", "future-backend-history-diff"],
+  "implementation_anchors": [
+    "tests/test_authority_fault_protocol.py:_ProposalAcceptanceReferenceModel",
+    "tests/test_authority_fault_protocol.py:test_bounded_proposal_model_is_idempotent_and_rejects_conflicting_payloads"
+  ],
+  "expansions": ["semantic-doc", "stateful-test", "concurrent-history", "fault-scenario"]
+}

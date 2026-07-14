@@ -1,0 +1,56 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.authority.proposal-idempotency",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:75d3c0c889a477ea56790371acae18f1dd7541b6"
+  },
+  "implementation_sha": "working-tree:item-1157-base-ddc608bddc8e4312e78a1a4ac52df5f815569d66",
+  "depth": 2,
+  "environment": {
+    "backend": "in-process-bounded-reference-model",
+    "isolation": "one atomic reference-model step per proposal operation",
+    "tool_versions": {
+      "python": "3.12.12",
+      "pytest": "9.0.2"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 9,
+    "bounds": {
+      "valid_histories": 8,
+      "invalid_histories": 1,
+      "history_length": 3,
+      "payload_digests": 2
+    },
+    "faults_exercised": [
+      "duplicate-proposal",
+      "conflicting-proposal-id-reuse",
+      "repeated-invalid-proposal"
+    ]
+  },
+  "claims": [
+    {
+      "property": "the bounded reference model applies at most one effect and returns stable duplicate decisions",
+      "result": "exhaustively-checked-within-bound",
+      "evidence": [
+        "all eight length-three histories over two valid digests passed",
+        "one repeated-invalid-proposal history passed",
+        "tests/test_authority_fault_protocol.py bounded proposal reference model"
+      ]
+    },
+    {
+      "property": "a durable sprintctl proposal handler refines the bounded model",
+      "result": "unknown",
+      "evidence": [
+        "sprintctl has no proposal store, acceptance handler, or durable proposal decision implementation"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "The checked model proves only the bounded model; it is not evidence about an implementation that does not yet exist.",
+    "Item 1158 must add a product refinement history rather than treating this model result as implementation proof."
+  ]
+}

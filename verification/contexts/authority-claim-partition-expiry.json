@@ -1,0 +1,48 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.authority.claim-partition-expiry",
+  "owner_repo": "sprintctl",
+  "subject": "exclusive-claim-expiry-reassignment-and-stale-owner-return",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:75d3c0c889a477ea56790371acae18f1dd7541b6"
+  },
+  "source_of_truth": "sqlite-or-repository-scoped-postgres-claim-rows-and-backend-time",
+  "depth": 2,
+  "backends": ["sqlite", "postgres"],
+  "actors": ["partitioned-owner", "replacement-owner", "remote-authority"],
+  "initial_state": ["item=pending", "active-exclusive-claims=0"],
+  "operations": [
+    {"name": "acquire-exclusive-claim", "actors": ["partitioned-owner"]},
+    {"name": "expire-during-partition", "actors": ["remote-authority"], "synchronization": "deterministic backend-time fault hook after first claim commit"},
+    {"name": "reassign-exclusive-claim", "actors": ["replacement-owner"], "synchronization": "independent connection after expiry is visible"},
+    {"name": "heartbeat-stale-proof", "actors": ["partitioned-owner"], "synchronization": "independent connection after replacement claim commit"}
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "time-bounded-exclusive-claim-validity"
+  },
+  "assumptions": {
+    "isolation": "SQLite reserved writer transactions or PostgreSQL READ COMMITTED transactions",
+    "clock": "backend clock determines expiry",
+    "fairness": "none"
+  },
+  "bounds": {"actors": 2, "claims_per_item": 2, "independent_connections": 2, "partitions": 1},
+  "invariants": [
+    "expired-grant-is-not-presented-as-valid",
+    "replacement-grant-prevents-stale-proof-from-reviving-exclusive-authority",
+    "at-most-one-live-exclusive-owner-outside-authorized-delegation",
+    "expiry-is-not-reported-as-a-fencing-token"
+  ],
+  "faults": ["claim-expires-while-owner-is-partitioned", "old-owner-returns-after-reassignment"],
+  "oracles": ["active-claim-query", "accepted-rejected-operation-history", "backend-parity-diff"],
+  "implementation_anchors": [
+    "sprintctl/db.py:create_claim",
+    "sprintctl/db.py:heartbeat_claim",
+    "sprintctl/pg.py:create_claim",
+    "sprintctl/pg.py:heartbeat_claim",
+    "tests/test_authority_fault_protocol.py:test_sqlite_partition_expiry_reassignment_then_stale_heartbeat_is_a_counterexample",
+    "tests/test_pg_integration.py:TestAuthorityFaultHistories"
+  ],
+  "expansions": ["semantic-doc", "concurrent-history", "fault-scenario"]
+}
