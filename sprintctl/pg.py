@@ -390,6 +390,81 @@ BEGIN
     END LOOP;
 END;
 $$;
+
+-- Domain-owned command handler for sprint activation (agentops item #1105).
+-- Every write surface (CLI, cockpit API) calls this one function instead of
+-- reimplementing the transition rule, the kind flip, and the ledger event.
+-- Mirrors SPRINT_TRANSITIONS: planned -> active only; archives are rejected.
+-- Errors use stable custom SQLSTATEs so remote callers can branch without
+-- parsing message text: SP404 = sprint not found, SP409 = invalid transition.
+CREATE OR REPLACE FUNCTION sprintctl_sprint_activate(
+    p_repo_id text,
+    p_sprint_id bigint,
+    p_actor text,
+    p_context text DEFAULT 'sprintctl:sprint-activate'
+)
+RETURNS TABLE (
+    id bigint,
+    repo_id text,
+    name text,
+    status text,
+    kind text,
+    previous_status text,
+    previous_kind text,
+    actor text,
+    event_id bigint
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    current_row sprint%ROWTYPE;
+    new_event_id bigint;
+BEGIN
+    SELECT * INTO current_row
+    FROM sprint s
+    WHERE s.repo_id = p_repo_id AND s.id = p_sprint_id
+    FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Sprint % not found for repo %', p_sprint_id, p_repo_id
+            USING ERRCODE = 'SP404';
+    END IF;
+    IF current_row.kind = 'archive' THEN
+        RAISE EXCEPTION 'cannot activate sprint %: kind is archive', p_sprint_id
+            USING ERRCODE = 'SP409';
+    END IF;
+    IF current_row.status <> 'planned' THEN
+        RAISE EXCEPTION 'cannot transition sprint % -> active. Allowed: planned -> active',
+            current_row.status
+            USING ERRCODE = 'SP409';
+    END IF;
+
+    UPDATE sprint s
+    SET status = 'active', kind = 'active_sprint'
+    WHERE s.repo_id = p_repo_id AND s.id = p_sprint_id;
+
+    INSERT INTO event (repo_id, sprint_id, source_type, actor, event_type, payload)
+    VALUES (
+        p_repo_id,
+        p_sprint_id,
+        'actor',
+        p_actor,
+        'sprint-activated',
+        jsonb_build_object(
+            'summary', format('sprint %s activated via %s', p_sprint_id, p_context),
+            'previous_status', current_row.status,
+            'previous_kind', current_row.kind,
+            'context', p_context
+        )
+    )
+    RETURNING event.id INTO new_event_id;
+
+    RETURN QUERY
+    SELECT s.id, s.repo_id, s.name, s.status, s.kind,
+           current_row.status, current_row.kind, p_actor, new_event_id
+    FROM sprint s
+    WHERE s.repo_id = p_repo_id AND s.id = p_sprint_id;
+END;
+$$;
 """
 
 # The DDL text is importable for unit-level schema validation tests.
@@ -939,6 +1014,34 @@ def set_sprint_status(store: PgStore, sprint_id: int, new_status: str) -> None:
             (new_status, store.repo_id, sprint_id),
         )
     store.conn.commit()
+
+
+def activate_sprint(store: PgStore, sprint_id: int, actor: str, context: str = "sprintctl:sprint-activate") -> dict:
+    """Activate a planned sprint through the domain-owned SQL command handler.
+
+    The transition rule (planned -> active only, archives rejected), the kind
+    flip to active_sprint, and the sprint-activated ledger event live in
+    sprintctl_sprint_activate() in the schema, so every write surface (this
+    wrapper, the cockpit API) shares one implementation.
+    """
+    try:
+        with store.conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM sprintctl_sprint_activate(%s, %s, %s, %s)",
+                (store.repo_id, sprint_id, actor, context),
+            )
+            row = cur.fetchone()
+    except Exception as exc:
+        sqlstate = getattr(exc, "sqlstate", None)
+        store.conn.rollback()
+        message = getattr(getattr(exc, "diag", None), "message_primary", None) or str(exc)
+        if sqlstate == "SP404":
+            raise ValueError(message) from exc
+        if sqlstate == "SP409":
+            raise InvalidTransition(message) from exc
+        raise
+    store.conn.commit()
+    return _norm(row)
 
 
 # ---------------------------------------------------------------------------
