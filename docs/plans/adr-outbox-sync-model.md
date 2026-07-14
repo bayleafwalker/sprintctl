@@ -1,6 +1,6 @@
 ---
 doc_id: adr-outbox-sync-model
-status: draft
+status: ratified
 supersedes: adr-001-orchestration-boundary
 ---
 
