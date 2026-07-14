@@ -1,0 +1,34 @@
+SPRINT: Phase 28: Shadow Projection Dogfood Pilot  [closed]
+Goal:   Deliver a feature-flagged, observation-only dual-record pilot that mirrors selected sprintctl observations into a durable producer outbox, synchronizes a cached remote projection, reports parity and freshness, and leaves SQLite/PostgreSQL authority paths unchanged.
+ID:     406
+Items:  5 total — 5 done, 0 active, 0 pending, 0 blocked
+
+--- Track: pilot-configuration ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #1144  Add validated per-repo shadow-pilot configuration and status model  (assignee: shadow-config)
+    ref [doc] adr-outbox-sync-model: docs/plans/adr-outbox-sync-model.md
+    ref [doc] adr-outbox-sync-model@git:de55e65eb9cb7f410af33e482b259beab3edbc60: docs/plans/adr-outbox-sync-model.md
+
+--- Track: shadow-parity ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #1145  Build deterministic shadow projection and parity comparison evidence  (assignee: shadow-parity)
+    ref [doc] adr-outbox-sync-model: docs/plans/adr-outbox-sync-model.md
+    ref [doc] adr-outbox-sync-model@git:de55e65eb9cb7f410af33e482b259beab3edbc60: docs/plans/adr-outbox-sync-model.md
+
+--- Track: dual-record ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #1146  Mirror supported generic observations into the durable producer outbox  (assignee: dual-record)
+    ref [doc] adr-outbox-sync-model: docs/plans/adr-outbox-sync-model.md
+    ref [doc] adr-outbox-sync-model@git:de55e65eb9cb7f410af33e482b259beab3edbc60: docs/plans/adr-outbox-sync-model.md
+
+--- Track: operator-surface ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #1147  Provide guarded pilot CLI operations, operator documentation, and end-to-end verification  (assignee: operator-surface)
+    ref [doc] adr-outbox-sync-model: docs/plans/adr-outbox-sync-model.md
+    ref [doc] adr-outbox-sync-model@git:de55e65eb9cb7f410af33e482b259beab3edbc60: docs/plans/adr-outbox-sync-model.md
+
+--- Track: protocol-recovery ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #1148  Repair documented remote lost-proof adoption for active claims  (assignee: root-protocol)
+
+Rendered: 2026-07-14T15:22:00Z
