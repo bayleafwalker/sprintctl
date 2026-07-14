@@ -1,0 +1,73 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.postgres-test-isolation",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:75d3c0c889a477ea56790371acae18f1dd7541b6"
+  },
+  "implementation_sha": "working-tree:item-1151-base-75d3c0c889a477ea56790371acae18f1dd7541b6",
+  "depth": 1,
+  "environment": {
+    "backend": "disposable-local-postgresql-container",
+    "isolation": "single PostgreSQL transaction for cleanup and residue verification",
+    "tool_versions": {
+      "postgresql": "17.10",
+      "python": "3.12.12",
+      "pytest": "9.0.2"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 62,
+    "bounds": {
+      "database_instances": 1,
+      "dedicated_test_roles": 1,
+      "production_probe_roles": 1,
+      "registered_repo_scopes": 3
+    },
+    "faults_exercised": [
+      "production-like-role-attempts-itest-scope-write",
+      "module-finalizer-deletes-all-registered-test-scopes"
+    ]
+  },
+  "claims": [
+    {
+      "property": "unsafe role and database identities are rejected before test schema mutation",
+      "result": "example-tested",
+      "evidence": [
+        "24 targeted pg identity and schema tests passed",
+        "tests/test_pg_testing.py unsafe-server-fact parameterization"
+      ]
+    },
+    {
+      "property": "a production-like role cannot create an itest repository scope",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_pg_integration.py production-like server-side guard probe passed on PostgreSQL 17.10"
+      ]
+    },
+    {
+      "property": "ordinary module teardown deletes registered scopes and proves zero residue",
+      "result": "example-tested",
+      "evidence": [
+        "62 PostgreSQL integration tests passed",
+        "sprintctl-pg-cleanup/v1 reported zero remaining rows in all nine repo-scoped tables",
+        "independent post-run itest prefix query returned zero rows in all nine tables"
+      ]
+    },
+    {
+      "property": "hard process termination cannot leave durable CI test data",
+      "result": "documented-only",
+      "evidence": [
+        ".github/workflows/ci.yml provisions a job-scoped PostgreSQL service",
+        "docs/guides/postgres-integration-tests.md states the client-finalizer interruption boundary"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "The live database was an explicitly disposable local container provided for item 1151; the repository remote backend was not used.",
+    "No production data cleanup or mutation was attempted.",
+    "implementation_sha identifies the governed base plus the item-1151 working tree because this result is committed atomically with the implementation."
+  ]
+}

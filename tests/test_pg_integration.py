@@ -1,7 +1,9 @@
 """
 PostgreSQL integration tests for sprintctl.pg.
 
-Requires a real PostgreSQL instance. Set SPRINTCTL_TEST_PG_URL to run:
+Requires a disposable PostgreSQL database owned by a dedicated, unprivileged
+test role. See docs/guides/postgres-integration-tests.md for the contract.
+Set SPRINTCTL_TEST_PG_URL to run:
 
     SPRINTCTL_TEST_PG_URL=postgresql://localhost/testdb pytest tests/test_pg_integration.py -v
 
@@ -35,12 +37,21 @@ _SKIP_REASON = (
     else "psycopg not installed — run: pip install 'sprintctl[remote]'"
 )
 
-pytestmark = pytest.mark.skipif(_SKIP, reason=_SKIP_REASON)
+pytestmark = [
+    pytest.mark.pg,
+    pytest.mark.skipif(_SKIP, reason=_SKIP_REASON),
+]
 
 # Safe unconditional imports: pg.py handles missing psycopg gracefully.
 from sprintctl import contracts, pg
 from sprintctl import outbox
 from sprintctl.db import ClaimConflict, InvalidTransition
+from sprintctl.pg_testing import (
+    assert_disposable_connection,
+    cleanup_test_repositories,
+    new_test_repo_id,
+    write_cleanup_report,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -48,20 +59,55 @@ from sprintctl.db import ClaimConflict, InvalidTransition
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def store():
-    """Create a PgStore with a unique repo_id; clean up all rows at module teardown."""
+def pg_test_scope():
+    """Register test scopes, then clean and report them from one finalizer."""
     if _SKIP:
         pytest.skip(_SKIP_REASON)
-    repo_id = f"itest-{uuid.uuid4().hex[:12]}"
     conn = psycopg.connect(_PG_URL, row_factory=dict_row)
-    s = pg.PgStore(conn=conn, repo_id=repo_id)
+    assert_disposable_connection(conn)
+    repo_ids: set[str] = set()
+
+    def register(label: str = "scope") -> str:
+        repo_id = new_test_repo_id(label)
+        repo_ids.add(repo_id)
+        return repo_id
+
+    try:
+        yield register
+    finally:
+        report_path = os.environ.get("SPRINTCTL_TEST_PG_CLEANUP_REPORT")
+        try:
+            report = cleanup_test_repositories(conn, repo_ids)
+        except Exception as exc:
+            if report_path:
+                write_cleanup_report(
+                    report_path,
+                    {
+                        "schema_version": "sprintctl-pg-cleanup/v1",
+                        "cleanup_completed": False,
+                        "error_type": type(exc).__name__,
+                        "repo_ids": sorted(repo_ids),
+                    },
+                )
+            raise
+        else:
+            if report_path:
+                write_cleanup_report(report_path, report)
+        finally:
+            conn.close()
+
+
+@pytest.fixture(scope="module")
+def store(pg_test_scope):
+    """Create the module store only after the disposable-target preflight."""
+    conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+    assert_disposable_connection(conn)
+    s = pg.PgStore(conn=conn, repo_id=pg_test_scope("module"))
     pg.init_db(s)
-    yield s
-    with conn.cursor() as cur:
-        for table in ("ingest_record", "ingest_stream", "dep", "ref", "claim", "event", "work_item", "track", "sprint"):
-            cur.execute(f"DELETE FROM {table} WHERE repo_id = %s", (repo_id,))
-    conn.commit()
-    conn.close()
+    try:
+        yield s
+    finally:
+        conn.close()
 
 
 def _uid() -> str:
@@ -127,6 +173,36 @@ class TestInitDb:
         pg.init_db(store)
         sprint_id = pg.create_sprint(store, f"Init-{_uid()}", "G", status="active")
         assert pg.get_sprint(store, sprint_id) is not None
+
+    def test_production_like_role_is_rejected_server_side(self, store):
+        guard_url = os.environ.get("SPRINTCTL_TEST_PG_PRODUCTION_GUARD_URL")
+        if not guard_url:
+            pytest.skip("SPRINTCTL_TEST_PG_PRODUCTION_GUARD_URL not set")
+
+        probe_role = "sprintctl_production_probe"
+        with store.conn.cursor() as cur:
+            cur.execute(f"GRANT INSERT ON ingest_stream TO {probe_role}")
+        store.conn.commit()
+        try:
+            probe = psycopg.connect(guard_url, row_factory=dict_row)
+            try:
+                with pytest.raises(
+                    psycopg.errors.InsufficientPrivilege,
+                    match="dedicated disposable sprintctl test role and database",
+                ):
+                    with probe.cursor() as cur:
+                        cur.execute(
+                            "INSERT INTO ingest_stream "
+                            "(repo_id, origin_stream_id) VALUES (%s, %s)",
+                            (new_test_repo_id("production-guard"), uuid.uuid4().hex),
+                        )
+                probe.rollback()
+            finally:
+                probe.close()
+        finally:
+            with store.conn.cursor() as cur:
+                cur.execute(f"REVOKE INSERT ON ingest_stream FROM {probe_role}")
+            store.conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -840,14 +916,14 @@ class TestNdjsonRoundTrip:
                 trusted_state_transfer=True,
             )
 
-    def test_sqlite_to_pg_full_round_trip(self, store, tmp_path):
+    def test_sqlite_to_pg_full_round_trip(self, store, pg_test_scope, tmp_path):
         """Export from a fresh sqlite db, import into pg, verify data survives."""
         from sprintctl import db as _db
 
         sqlite_path = tmp_path / "rt.db"
         conn = _db.get_connection(sqlite_path)
         _db.init_db(conn)
-        rt_repo_id = f"rt-{_uid()}"
+        rt_repo_id = pg_test_scope("round-trip")
         sid = _db.create_sprint(conn, "RT Sprint", "G", "2026-01-01", "2026-12-31", "active")
         tid = _db.get_or_create_track(conn, sid, "eng")
         iid = _db.create_work_item(conn, sid, tid, "RT Item")
@@ -878,20 +954,16 @@ class TestNdjsonRoundTrip:
             items = pg.list_work_items(rt_store)
             assert any(i["title"] == "RT Item" for i in items)
         finally:
-            with rt_store.conn.cursor() as cur:
-                for table in ("dep", "ref", "claim", "event", "work_item", "track", "sprint"):
-                    cur.execute(f"DELETE FROM {table} WHERE repo_id = %s", (rt_repo_id,))
-            rt_store.conn.commit()
             rt_store.conn.close()
 
-    def test_import_with_replace_clears_existing_data(self, store, tmp_path):
+    def test_import_with_replace_clears_existing_data(self, store, pg_test_scope, tmp_path):
         """import_ndjson with replace=True should delete existing rows first."""
         from sprintctl import db as _db
 
         sqlite_path = tmp_path / "rep.db"
         conn = _db.get_connection(sqlite_path)
         _db.init_db(conn)
-        repl_repo_id = f"repl-{_uid()}"
+        repl_repo_id = pg_test_scope("replace")
         sid = _db.create_sprint(conn, "Repl Sprint", "G", "2026-01-01", "2026-12-31", "active")
         conn.commit()
 
@@ -909,10 +981,6 @@ class TestNdjsonRoundTrip:
             pg.import_ndjson(repl_store, records, replace=True, remap_ids=True)
             assert len(pg.list_sprints(repl_store)) == 1
         finally:
-            with repl_store.conn.cursor() as cur:
-                for table in ("dep", "ref", "claim", "event", "work_item", "track", "sprint"):
-                    cur.execute(f"DELETE FROM {table} WHERE repo_id = %s", (repl_repo_id,))
-            repl_store.conn.commit()
             repl_store.conn.close()
 
 

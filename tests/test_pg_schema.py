@@ -126,3 +126,16 @@ def test_ingest_ledger_scopes_deduplication_and_cursor_to_the_repo():
     assert "UNIQUE (repo_id, origin_stream_id, origin_seq)" in record.group(1)
     assert "UNIQUE (repo_id, event_id)" in record.group(1)
     assert "producer_created_at timestamptz NOT NULL" in record.group(1)
+
+
+def test_server_guard_covers_every_repo_scoped_table():
+    assert "CREATE OR REPLACE FUNCTION sprintctl_guard_integration_test_scope()" in PG_DDL
+    assert "NEW.repo_id LIKE 'itest-%'" in PG_DDL
+    assert "current_database() NOT LIKE 'sprintctl\\_test\\_%'" in PG_DDL
+    assert "current_user NOT LIKE 'sprintctl\\_test\\_%'" in PG_DDL
+    assert "sprintctl:disposable-integration-test" in PG_DDL
+    for table in (
+        "sprint", "track", "work_item", "event", "claim", "ref", "dep",
+        "ingest_stream", "ingest_record",
+    ):
+        assert f"'{table}'" in PG_DDL

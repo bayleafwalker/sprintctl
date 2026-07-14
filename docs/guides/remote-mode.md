@@ -197,6 +197,7 @@ will not be in the reverted sqlite database.
 
 ## Related
 
+- [Disposable PostgreSQL Integration Tests](postgres-integration-tests.md)
 - [Resume Work](resume-work.md)
 - [Schema Migration Guide](../reference/migration-guide.md)
 - [Claim Discipline](../advanced/claim-discipline.md)

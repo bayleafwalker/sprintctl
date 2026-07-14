@@ -258,6 +258,82 @@ CREATE INDEX IF NOT EXISTS idx_claim_repo_item_expires
 
 CREATE INDEX IF NOT EXISTS idx_ingest_record_repo_offset
     ON ingest_record(repo_id, ingest_offset);
+
+CREATE OR REPLACE FUNCTION sprintctl_guard_integration_test_scope()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    database_row record;
+    role_row record;
+BEGIN
+    IF NEW.repo_id LIKE 'itest-%' THEN
+        SELECT
+            datdba,
+            shobj_description(oid, 'pg_database') AS database_comment
+        INTO database_row
+        FROM pg_database
+        WHERE datname = current_database();
+
+        SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls
+        INTO role_row
+        FROM pg_roles
+        WHERE rolname = current_user;
+
+        IF (
+               current_database() <> 'sprintctl_test'
+               AND current_database() NOT LIKE 'sprintctl\\_test\\_%' ESCAPE '\\'
+           )
+           OR (
+               current_user <> 'sprintctl_test'
+               AND current_user NOT LIKE 'sprintctl\\_test\\_%' ESCAPE '\\'
+           )
+           OR pg_get_userbyid(database_row.datdba) <> current_user
+           OR COALESCE(database_row.database_comment, '')
+              <> 'sprintctl:disposable-integration-test'
+           OR role_row.rolsuper
+           OR role_row.rolcreatedb
+           OR role_row.rolcreaterole
+           OR role_row.rolreplication
+           OR role_row.rolbypassrls
+        THEN
+            RAISE EXCEPTION
+                'itest-* repository scopes require a dedicated disposable sprintctl test role and database'
+                USING ERRCODE = '42501';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DO $$
+DECLARE
+    table_name text;
+    trigger_name text;
+BEGIN
+    FOREACH table_name IN ARRAY ARRAY[
+        'sprint', 'track', 'work_item', 'event', 'claim', 'ref', 'dep',
+        'ingest_stream', 'ingest_record'
+    ]
+    LOOP
+        trigger_name := 'guard_integration_test_scope_' || table_name;
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_trigger
+            WHERE tgname = trigger_name
+              AND tgrelid = to_regclass(table_name)
+              AND NOT tgisinternal
+        ) THEN
+            EXECUTE format(
+                'CREATE TRIGGER %I BEFORE INSERT OR UPDATE OF repo_id ON %I '
+                'FOR EACH ROW EXECUTE FUNCTION sprintctl_guard_integration_test_scope()',
+                trigger_name,
+                table_name
+            );
+        END IF;
+    END LOOP;
+END;
+$$;
 """
 
 # The DDL text is importable for unit-level schema validation tests.

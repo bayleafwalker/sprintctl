@@ -1,0 +1,76 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.postgres-test-isolation",
+  "owner_repo": "sprintctl",
+  "subject": "destructive-postgresql-integration-test-scope",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:75d3c0c889a477ea56790371acae18f1dd7541b6"
+  },
+  "source_of_truth": "postgres-server-role-database-identity-and-repo-scope-triggers",
+  "depth": 1,
+  "backends": ["postgres"],
+  "actors": ["dedicated-test-role", "production-like-probe-role", "ci-runner"],
+  "initial_state": [
+    "ephemeral-database-empty",
+    "dedicated-test-role-is-unprivileged-database-owner",
+    "production-like-probe-role-has-no-test-role-identity"
+  ],
+  "operations": [
+    {
+      "name": "preflight-disposable-server-identity",
+      "actors": ["dedicated-test-role"],
+      "synchronization": "before-schema-or-data-mutation"
+    },
+    {
+      "name": "reject-production-like-itest-scope",
+      "actors": ["production-like-probe-role"],
+      "synchronization": "server-before-row-trigger"
+    },
+    {
+      "name": "cleanup-registered-test-scopes",
+      "actors": ["ci-runner"],
+      "synchronization": "module-finalizer-before-ephemeral-service-disposal"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "integration-test-repository-scope"
+  },
+  "assumptions": {
+    "isolation": "single PostgreSQL transaction for cleanup and residue query",
+    "clock": "none",
+    "fairness": "pytest finalizers run unless the process or host is forcibly terminated"
+  },
+  "bounds": {
+    "database_instances": 1,
+    "test_roles": 1,
+    "production_probe_roles": 1
+  },
+  "invariants": [
+    "destructive-tests-start-only-after-server-identity-preflight",
+    "production-like-role-cannot-create-itest-repository-scope",
+    "cleanup-never-accepts-a-non-itest-repository-scope",
+    "successful-cleanup-evidence-reports-zero-remaining-rows",
+    "hard-termination-residue-is-contained-to-an-ephemeral-database"
+  ],
+  "faults": [
+    "production-url-supplied-as-test-url",
+    "elevated-role-supplied-as-test-role",
+    "test-failure-before-module-teardown",
+    "hard-process-termination-before-client-cleanup"
+  ],
+  "oracles": [
+    "server-catalog-identity-query",
+    "production-probe-trigger-error",
+    "per-table-zero-residue-query",
+    "cleanup-evidence-artifact"
+  ],
+  "implementation_anchors": [
+    "sprintctl/pg_testing.py:assert_disposable_connection",
+    "sprintctl/pg_testing.py:cleanup_test_repositories",
+    "sprintctl/pg.py:sprintctl_guard_integration_test_scope",
+    "tests/test_pg_integration.py:pg_test_scope"
+  ],
+  "expansions": ["stateful-test", "fault-scenario"]
+}

@@ -30,3 +30,6 @@ remote-schema-version = 1
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "pg: requires an explicitly disposable PostgreSQL integration-test database",
+]
