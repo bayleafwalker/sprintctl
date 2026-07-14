@@ -1,0 +1,44 @@
+SPRINT: Phase 25: Remote Mode Foundations  [closed]
+Goal:   Stand up Workstream B for direct-postgres remote mode: backend preflight, pg storage scaffolding, migration tooling, test harness, and operator contract docs without overlapping the in-flight cli.py audit/routing slice.
+Dates:  2026-04-28 to 2026-05-12
+ID:     379
+Items:  14 total — 14 done, 0 active, 0 pending, 0 blocked
+
+--- Track: Core backend ---
+  health: 3 items — 3 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #937  pg.py storage scaffold and schema init  (assignee: -)
+    ref [doc] pg backend remote mode plan: https://github.com/bayleafwalker/sprintctl/blob/main/docs/plans/pg-backend-remote-mode-plan.md
+  [done    ] #936  Backend resolver and .sprintctl/backend.json guard  (assignee: -)
+    ref [doc] pg backend remote mode plan: https://github.com/bayleafwalker/sprintctl/blob/main/docs/plans/pg-backend-remote-mode-plan.md
+  [done    ] #938  Postgres integration test harness  (assignee: -)
+    ref [doc] pg backend remote mode plan: https://github.com/bayleafwalker/sprintctl/blob/main/docs/plans/pg-backend-remote-mode-plan.md
+
+--- Track: Migration ---
+  health: 2 items — 2 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #939  NDJSON export/import helpers and fixtures  (assignee: -)
+    ref [doc] pg backend remote mode plan: https://github.com/bayleafwalker/sprintctl/blob/main/docs/plans/pg-backend-remote-mode-plan.md
+  [done    ] #940  migrate-to-remote command flow  (assignee: -)
+    ref [doc] pg backend remote mode plan: https://github.com/bayleafwalker/sprintctl/blob/main/docs/plans/pg-backend-remote-mode-plan.md
+
+--- Track: Docs and rollout ---
+  health: 1 items — 1 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #941  Remote/local resume contract docs  (assignee: -)
+    ref [doc] pg backend remote mode plan: https://github.com/bayleafwalker/sprintctl/blob/main/docs/plans/pg-backend-remote-mode-plan.md
+    ref [doc] context and handoff contract: https://github.com/bayleafwalker/sprintctl/blob/main/docs/reference/context-and-handoff.md
+
+--- Track: dispatch-smoke ---
+  health: 5 items — 5 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #942  actionq dispatcher smoke: docs-only fake worker  (assignee: -)
+  [done    ] #943  actionq dispatcher smoke 2: docs-only fake worker  (assignee: -)
+  [done    ] #944  actionq dispatcher smoke 3: docs-only fake worker  (assignee: -)
+  [done    ] #945  actionq dispatcher smoke 4: docs-only fake worker  (assignee: -)
+  [done    ] #946  actionq live-harness smoke: claude-sonnet scope-iterate disposable  (assignee: -)
+
+--- Track: Resilience ---
+  health: 3 items — 3 done (100%), 0 active, 0 pending, 0 blocked (0%)
+  [done    ] #990  sprintctl takeup sweep: release stale takeups cross-referencing actionq session state  (assignee: -)
+    ref [doc] sprintctl-multi-agent-takeup-plan: docs/plans/sprintctl-multi-agent-takeup-plan.md
+  [done    ] #991  daemon startup recovery: classify in-flight sessions on restart, emit session.exited for dead sessions, release stale takeups  (assignee: -)
+  [done    ] #992  tmux enforcement: daemon refuses to start outside tmux; AGENTS.md devbox workflow update  (assignee: -)
+
+Rendered: 2026-07-14T11:37:59Z
