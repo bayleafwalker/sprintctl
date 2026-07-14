@@ -594,23 +594,26 @@ def set_work_item_status(
     conn.commit()
 
 
-def set_sprint_status(conn: sqlite3.Connection, sprint_id: int, new_status: str) -> None:
-    sprint = get_sprint(conn, sprint_id)
-    if sprint is None:
-        raise ValueError(f"Sprint #{sprint_id} not found")
-    current = sprint["status"]
+def _validate_sprint_transition(current: str, new_status: str) -> None:
     if new_status not in SPRINT_TRANSITIONS[current]:
         allowed = sorted(SPRINT_TRANSITIONS[current]) or "none (terminal)"
         raise InvalidTransition(
             f"cannot transition sprint {current} -> {new_status}. Allowed: {allowed}"
         )
+
+
+def set_sprint_status(conn: sqlite3.Connection, sprint_id: int, new_status: str) -> None:
+    sprint = get_sprint(conn, sprint_id)
+    if sprint is None:
+        raise ValueError(f"Sprint #{sprint_id} not found")
+    _validate_sprint_transition(sprint["status"], new_status)
     conn.execute("UPDATE sprint SET status = ? WHERE id = ?", (new_status, sprint_id))
     conn.commit()
 
 
 # --- Event ---
 
-def create_event(
+def _insert_event(
     conn: sqlite3.Connection,
     sprint_id: int,
     actor: str,
@@ -625,8 +628,133 @@ def create_event(
         "INSERT INTO event (sprint_id, work_item_id, source_type, actor, event_type, payload) VALUES (?, ?, ?, ?, ?, ?)",
         (sprint_id, work_item_id, source_type, actor, event_type, payload_str),
     )
-    conn.commit()
-    return cur.lastrowid
+    return int(cur.lastrowid)
+
+
+def create_event(
+    conn: sqlite3.Connection,
+    sprint_id: int,
+    actor: str,
+    event_type: str,
+    source_type: str = "actor",
+    work_item_id: int | None = None,
+    payload: dict | None = None,
+    expected_project: str | None = None,
+) -> int:
+    try:
+        _contracts.require_generic_event_write_allowed(event_type)
+        canonical_payload = _contracts.canonicalize_event_payload(event_type, payload)
+        if event_type == _contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE:
+            if (
+                expected_project is not None
+                and canonical_payload["project"] != expected_project
+            ):
+                raise ValueError(
+                    "capability receipt project must match the owning repository "
+                    f"{expected_project!r}"
+                )
+            boundary_event_id = _require_receipt_close_boundary(conn, sprint_id)
+            _contracts.verify_capability_receipt_draft_pointer(
+                canonical_payload,
+                sprint_id=sprint_id,
+                boundary_event_id=boundary_event_id,
+            )
+        event_id = _insert_event(
+            conn,
+            sprint_id,
+            actor,
+            event_type,
+            source_type=source_type,
+            work_item_id=work_item_id,
+            payload=canonical_payload,
+        )
+        conn.commit()
+        return event_id
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def _require_receipt_close_boundary(conn: sqlite3.Connection, sprint_id: int) -> int:
+    sprint = get_sprint(conn, sprint_id)
+    if sprint is None:
+        raise ValueError(f"Sprint #{sprint_id} not found")
+    if sprint["status"] != "closed":
+        raise ValueError("capability-receipt-drafted requires a closed sprint")
+    rows = conn.execute(
+        "SELECT id FROM event WHERE sprint_id = ? AND event_type = ? ORDER BY id",
+        (sprint_id, _contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE),
+    ).fetchall()
+    if len(rows) != 1:
+        raise ValueError(
+            "capability-receipt-drafted requires exactly one local sprint-close-boundary"
+        )
+    return int(rows[0]["id"])
+
+
+def create_archive_import_event(
+    conn: sqlite3.Connection,
+    sprint_id: int,
+    actor: str,
+    event_type: str,
+    source_event_id: int,
+    work_item_id: int | None = None,
+    payload: dict | None = None,
+) -> int:
+    """Insert a typed event as explicit non-authoritative imported history."""
+    imported_type, imported_payload = _contracts.canonicalize_event_for_archive_import(
+        event_type,
+        payload,
+        source_event_id,
+    )
+    if imported_type == event_type and not _contracts.is_archive_only_event_type(event_type):
+        raise ValueError(f"{event_type} is not a reserved typed import event")
+    try:
+        event_id = _insert_event(
+            conn,
+            sprint_id,
+            actor,
+            imported_type,
+            source_type="system",
+            work_item_id=work_item_id,
+            payload=imported_payload,
+        )
+        conn.commit()
+        return event_id
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def close_sprint_with_boundary_event(
+    conn: sqlite3.Connection,
+    sprint_id: int,
+    actor: str,
+) -> int:
+    """Atomically close an active sprint and append its local boundary event."""
+    if not isinstance(actor, str) or not actor.strip():
+        raise ValueError("actor must be a non-empty string")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT status FROM sprint WHERE id = ?", (sprint_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"Sprint #{sprint_id} not found")
+        current = row["status"]
+        _validate_sprint_transition(current, "closed")
+        conn.execute("UPDATE sprint SET status = 'closed' WHERE id = ?", (sprint_id,))
+        event_id = _insert_event(
+            conn,
+            sprint_id,
+            actor.strip(),
+            _contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE,
+            source_type="actor",
+            payload={"previous_status": current, "status": "closed"},
+        )
+        conn.commit()
+        return event_id
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def list_events(conn: sqlite3.Connection, sprint_id: int) -> list[dict]:

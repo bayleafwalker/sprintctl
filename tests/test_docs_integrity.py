@@ -146,6 +146,51 @@ def test_readme_links_phase3_docs():
     )
 
 
+def test_capability_receipt_reference_is_linked_from_operator_surfaces():
+    _assert_markdown_link_declared_and_resolves(
+        "README.md",
+        "Capability Receipts",
+        "docs/reference/capability-receipts.md",
+    )
+    _assert_markdown_link_declared_and_resolves(
+        "AGENTS.md",
+        "Capability receipts at sprint close",
+        "docs/reference/capability-receipts.md",
+    )
+
+
+def test_capability_receipt_reference_pins_private_draft_and_human_ratification():
+    reference = _read("docs/reference/capability-receipts.md")
+    normalized_reference = " ".join(reference.split())
+    manifest = json.loads(_read("sprintctl.dispatch.json"))
+
+    assert "capability-receipt" in manifest["skills"]["selected"]
+    for fragment in (
+        "capability-receipt/v1",
+        "/projects/dev/_artifacts/<repo-id>/capability/receipts/<receipt-id>.json",
+        "sprint-close-boundary",
+        "boundary_revision: event:<id>",
+        "capability-receipt-drafted",
+        "project",
+        "receipt_id",
+        "receipt_path",
+        "receipt_sha256",
+        "Any unknown field is rejected",
+        "agents must not ratify it",
+        "sprintctl maintain sweep --auto-close",
+        "does not count as a ratified capability boundary",
+    ):
+        assert fragment in normalized_reference
+
+    close_position = normalized_reference.index(
+        "sprintctl sprint status --id <id> --status closed --actor <actor> --json"
+    )
+    draft_position = normalized_reference.index(
+        "For a supported delta, run the `capability-receipt` dispatch skill"
+    )
+    assert close_position < draft_position
+
+
 def test_start_here_links_phase4_docs():
     _assert_markdown_link_declared_and_resolves(
         "docs/guides/start-here.md", "Customization Guide", "../customization.md"
@@ -267,6 +312,7 @@ def test_readme_docs_map_links_resolve():
     links = _iter_local_markdown_links_in_section("README.md", "Docs Map")
     required = {
         ("Daily Loop", "docs/guides/daily-loop.md"),
+        ("Capability Receipts", "docs/reference/capability-receipts.md"),
         ("alias-pack.md", "docs/examples/alias-pack.md"),
         ("agent-prompt-snippets.md", "docs/examples/agent-prompt-snippets.md"),
         ("editor-and-terminal-integration.md", "docs/examples/editor-and-terminal-integration.md"),

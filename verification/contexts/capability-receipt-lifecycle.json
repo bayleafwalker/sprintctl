@@ -1,0 +1,93 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.capability-receipt.lifecycle",
+  "owner_repo": "sprintctl",
+  "subject": "explicit-sprint-close-and-capability-receipt-pointer",
+  "contract_ref": {
+    "doc_id": "sprintctl.capability-receipt-lifecycle",
+    "revision": "sha256:b4760e4b30533cbf704f9e967177d956d86be7115878ca87abc5d504e06a8821"
+  },
+  "source_of_truth": "backend-sprint-and-append-only-event-rows",
+  "depth": 2,
+  "backends": ["sqlite", "postgres"],
+  "actors": ["operator", "drafting-agent", "maintain-sweep"],
+  "initial_state": [
+    "sprint=active",
+    "sprint-close-boundary-events=0",
+    "private-receipt-body-rows=0"
+  ],
+  "operations": [
+    {
+      "name": "explicit-close",
+      "actors": ["operator"],
+      "synchronization": "transaction-boundary-before-status-update"
+    },
+    {
+      "name": "append-capability-receipt-draft-pointer",
+      "actors": ["drafting-agent"],
+      "synchronization": "after-private-draft-validation"
+    },
+    {
+      "name": "auto-close",
+      "actors": ["maintain-sweep"],
+      "synchronization": "none"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "sprint-close-boundary-and-private-receipt-pointer"
+  },
+  "assumptions": {
+    "isolation": "backend transaction with locked sprint row or SQLite immediate writer lock",
+    "clock": "backend clock",
+    "fairness": "none"
+  },
+  "bounds": {
+    "explicit_close_attempts": 2,
+    "draft_pointer_attempts": 2,
+    "backends": 2
+  },
+  "invariants": [
+    "explicit-close-commits-status-and-exactly-one-boundary-event-atomically",
+    "boundary-reference-is-local-event-id-and-not-migration-stable",
+    "event-insert-failure-leaves-sprint-active",
+    "generic-event-api-cannot-forge-close-boundary",
+    "draft-pointer-requires-closed-sprint-and-exactly-one-local-boundary",
+    "draft-event-contains-no-receipt-body-or-unknown-fields",
+    "project-receipt-id-path-and-lowercase-sha256-agree",
+    "referenced-file-digest-draft-identity-and-boundary-reference-agree",
+    "archive-import-is-non-authoritative-and-trusted-migration-preserves-ids",
+    "auto-close-emits-no-capability-boundary",
+    "sqlite-and-postgres-accept-and-reject-the-same-pointer-payloads"
+  ],
+  "faults": [
+    "boundary-event-insert-fails-after-status-update",
+    "draft-pointer-path-does-not-match-project-or-id",
+    "private-body-field-is-present",
+    "digest-is-uppercase-or-wrong-length",
+    "receipt-file-is-missing-or-does-not-match-digest-or-boundary",
+    "generic-api-attempts-reserved-or-misspelled-lifecycle-event",
+    "trusted-migration-attempts-id-remap-with-local-boundary-events"
+  ],
+  "oracles": [
+    "sqlite-status-and-event-query",
+    "postgres-status-and-event-query",
+    "canonical-payload-equality",
+    "private-file-digest-and-minimal-field-check",
+    "archive-imported-event-type-query",
+    "cli-json-boundary-id-and-revision",
+    "rollback-injection"
+  ],
+  "implementation_anchors": [
+    "sprintctl/contracts.py:canonicalize_capability_receipt_drafted_payload",
+    "sprintctl/db.py:close_sprint_with_boundary_event",
+    "sprintctl/pg.py:close_sprint_with_boundary_event",
+    "sprintctl/cli.py:sprint_status"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "stateful-test",
+    "concurrent-history",
+    "fault-scenario"
+  ]
+}

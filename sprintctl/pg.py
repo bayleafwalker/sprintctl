@@ -44,6 +44,7 @@ from .db import (
     CLAIM_IDENTITY_STATUS_PROVEN,
     CLAIM_IDENTITY_STATUS_LEGACY,
     MAX_CLAIM_TOKEN_INSERT_RETRIES,
+    _validate_sprint_transition,
     _validate_ref_url,
     _claim_identity_status,
     _claim_event_identity,
@@ -606,7 +607,7 @@ def force_item_done_for_carryover(store: PgStore, item_id: int) -> None:
 # Event
 # ---------------------------------------------------------------------------
 
-def create_event(
+def _insert_event(
     store: PgStore,
     sprint_id: int,
     actor: str,
@@ -627,8 +628,117 @@ def create_event(
              json.dumps(canonical_payload)),
         )
         row = cur.fetchone()
-    store.conn.commit()
     return row["id"]
+
+
+def create_event(
+    store: PgStore,
+    sprint_id: int,
+    actor: str,
+    event_type: str,
+    source_type: str = "actor",
+    work_item_id: int | None = None,
+    payload: dict | None = None,
+    expected_project: str | None = None,
+) -> int:
+    try:
+        _contracts.require_generic_event_write_allowed(event_type)
+        canonical_payload = _contracts.canonicalize_event_payload(event_type, payload)
+        if event_type == _contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE:
+            if canonical_payload["project"] != store.repo_id:
+                raise ValueError(
+                    "capability receipt project must match the owning repository "
+                    f"{store.repo_id!r}"
+                )
+            if expected_project is not None and expected_project != store.repo_id:
+                raise ValueError(
+                    f"expected project {expected_project!r} does not match {store.repo_id!r}"
+                )
+            boundary_event_id = _require_receipt_close_boundary(store, sprint_id)
+            _contracts.verify_capability_receipt_draft_pointer(
+                canonical_payload,
+                sprint_id=sprint_id,
+                boundary_event_id=boundary_event_id,
+            )
+        event_id = _insert_event(
+            store,
+            sprint_id,
+            actor,
+            event_type,
+            source_type=source_type,
+            work_item_id=work_item_id,
+            payload=canonical_payload,
+        )
+        store.conn.commit()
+        return event_id
+    except Exception:
+        store.conn.rollback()
+        raise
+
+
+def _require_receipt_close_boundary(store: PgStore, sprint_id: int) -> int:
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT status FROM sprint WHERE repo_id = %s AND id = %s",
+            (store.repo_id, sprint_id),
+        )
+        sprint = cur.fetchone()
+        if sprint is None:
+            raise ValueError(f"Sprint #{sprint_id} not found")
+        if sprint["status"] != "closed":
+            raise ValueError("capability-receipt-drafted requires a closed sprint")
+        cur.execute(
+            """
+            SELECT id FROM event
+            WHERE repo_id = %s AND sprint_id = %s AND event_type = %s
+            ORDER BY id
+            """,
+            (store.repo_id, sprint_id, _contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE),
+        )
+        rows = cur.fetchall()
+    if len(rows) != 1:
+        raise ValueError(
+            "capability-receipt-drafted requires exactly one local sprint-close-boundary"
+        )
+    return int(rows[0]["id"])
+
+
+def close_sprint_with_boundary_event(
+    store: PgStore,
+    sprint_id: int,
+    actor: str,
+) -> int:
+    """Atomically close an active sprint and append its local boundary event."""
+    if not isinstance(actor, str) or not actor.strip():
+        raise ValueError("actor must be a non-empty string")
+    try:
+        with store.conn.cursor() as cur:
+            cur.execute(
+                "SELECT status FROM sprint WHERE repo_id = %s AND id = %s FOR UPDATE",
+                (store.repo_id, sprint_id),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise ValueError(f"Sprint #{sprint_id} not found")
+            current = row["status"]
+            _validate_sprint_transition(current, "closed")
+            cur.execute(
+                "UPDATE sprint SET status = 'closed' WHERE repo_id = %s AND id = %s",
+                (store.repo_id, sprint_id),
+            )
+        event_id = _insert_event(
+            store,
+            sprint_id,
+            actor.strip(),
+            _contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE,
+            source_type="actor",
+            payload={"previous_status": current, "status": "closed"},
+        )
+        store.conn.commit()
+        return event_id
+    except Exception:
+        store.conn.rollback()
+        raise
 
 
 def _events_query(store: PgStore, sprint_id: int, *, order: str = "ASC", limit: int | None = None) -> list[dict]:
@@ -1518,6 +1628,10 @@ def export_ndjson(sqlite_conn: Any, repo_id: str, out: Any) -> dict[str, int]:
                 d["payload"] = json.loads(payload_raw) if isinstance(payload_raw, str) else payload_raw
             except json.JSONDecodeError:
                 d["payload"] = {}
+            d["payload"] = _contracts.canonicalize_event_payload(
+                d.get("event_type", ""),
+                d["payload"],
+            )
             result.append(d)
         return result
 
@@ -1579,6 +1693,7 @@ def import_ndjson(
     *,
     replace: bool = False,
     remap_ids: bool = False,
+    trusted_state_transfer: bool = False,
 ) -> dict[str, int]:
     """Import NDJSON records into pg, preserving original sqlite integer IDs.
 
@@ -1586,8 +1701,25 @@ def import_ndjson(
     If remap_ids=True, drops explicit ids and lets the sequence assign fresh ones,
     remapping FK columns accordingly. Use this when importing into a shared database
     where global sequence ids may already be taken by other repos.
+    trusted_state_transfer preserves reserved typed events as local authority and
+    is only safe when IDs are preserved as part of a backend move. Ordinary
+    imports demote them to explicit non-authoritative imported history.
     All work done in a single transaction.
     """
+    authority_event_types = {
+        _contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE,
+        _contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE,
+    }
+    contains_authority_events = any(
+        record.get("table") == "event"
+        and record.get("data", {}).get("event_type") in authority_event_types
+        for record in records
+    )
+    if trusted_state_transfer and remap_ids and contains_authority_events:
+        raise ValueError(
+            "trusted state transfer cannot remap IDs when local capability boundary "
+            "events are present"
+        )
     counts: dict[str, int] = {t: 0 for t in _EXPORT_TABLES}
     # old sqlite id → new postgres id, per table (only populated when remap_ids=True)
     id_maps: dict[str, dict[int, int]] = {t: {} for t in _EXPORT_TABLES}
@@ -1627,11 +1759,25 @@ def import_ndjson(
                     if old_ref is not None and old_ref in id_maps[ref_table]:
                         data[fk_col] = id_maps[ref_table][old_ref]
                 old_id = data.pop("id", None)
-                new_id = _import_row(cur, table, rid, data, returning_id=True)
+                new_id = _import_row(
+                    cur,
+                    table,
+                    rid,
+                    data,
+                    returning_id=True,
+                    source_event_id=old_id if table == "event" else None,
+                    preserve_typed_authority=trusted_state_transfer,
+                )
                 if old_id is not None and new_id is not None:
                     id_maps[table][old_id] = new_id
             else:
-                _import_row(cur, table, rid, data)
+                _import_row(
+                    cur,
+                    table,
+                    rid,
+                    data,
+                    preserve_typed_authority=trusted_state_transfer,
+                )
 
             counts[table] = counts.get(table, 0) + 1
 
@@ -1661,6 +1807,8 @@ def _import_row(
     data: dict,
     *,
     returning_id: bool = False,
+    source_event_id: int | None = None,
+    preserve_typed_authority: bool = False,
 ) -> int | None:
     """Insert one row into the named table, using OVERRIDING SYSTEM VALUE for identity columns."""
     row = dict(data)
@@ -1678,7 +1826,20 @@ def _import_row(
         if isinstance(payload, str):
             payload = json.loads(payload)
         event_type = row.get("event_type", "")
-        row["payload"] = json.dumps(_contracts.canonicalize_event_payload(event_type, payload))
+        original_event_id = source_event_id if source_event_id is not None else row.get("id")
+        if preserve_typed_authority:
+            imported_type = event_type
+            imported_payload = _contracts.canonicalize_event_payload(event_type, payload)
+        else:
+            imported_type, imported_payload = _contracts.canonicalize_event_for_archive_import(
+                event_type,
+                payload,
+                original_event_id,
+            )
+        row["event_type"] = imported_type
+        row["payload"] = json.dumps(imported_payload)
+        if imported_type != event_type:
+            row["source_type"] = "system"
 
     cols = list(row.keys())
     col_names = ", ".join(cols)

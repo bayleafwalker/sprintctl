@@ -112,6 +112,7 @@ def _get_store(obj: dict):
     except _backend.BackendConfigError as e:
         click.echo(str(e), err=True)
         sys.exit(1)
+    obj["backend_config"] = config
 
     if config.mode == "local":
         conn = obj.get("conn")
@@ -530,9 +531,10 @@ def sprint_show(obj, sprint_id, detail, watch_mode, interval, as_json) -> None:
     type=click.Choice(["planned", "active", "closed"]),
     help="New status",
 )
+@click.option("--actor", default=None, help="Actor name (defaults to the current OS user)")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
-def sprint_status(obj, sprint_id, new_status, as_json) -> None:
+def sprint_status(obj, sprint_id, new_status, actor, as_json) -> None:
     """Update a sprint's status (enforces allowed transitions)."""
     store, m = _get_store(obj)
     s = m.get_sprint(store, sprint_id)
@@ -540,9 +542,14 @@ def sprint_status(obj, sprint_id, new_status, as_json) -> None:
         click.echo(f"Sprint #{sprint_id} not found.", err=True)
         sys.exit(1)
     current = s["status"]
+    boundary_event_id = None
+    actor = (actor or os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown").strip()
     try:
-        m.set_sprint_status(store, sprint_id, new_status)
-    except _db.InvalidTransition as e:
+        if new_status == "closed":
+            boundary_event_id = m.close_sprint_with_boundary_event(store, sprint_id, actor)
+        else:
+            m.set_sprint_status(store, sprint_id, new_status)
+    except (_db.InvalidTransition, ValueError) as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
     if new_status == "active":
@@ -557,12 +564,27 @@ def sprint_status(obj, sprint_id, new_status, as_json) -> None:
             "sprint.closed",
             summary=f"Sprint {sprint_id} closed",
             refs=[f"sprint:{sprint_id}"],
-            metadata={"sprint_id": sprint_id, "event_type": "sprint-closed"},
+            metadata={
+                "sprint_id": sprint_id,
+                "event_type": "sprint-closed",
+                "boundary_event_id": boundary_event_id,
+                "boundary_revision": f"event:{boundary_event_id}",
+                "actor": actor,
+            },
         )
     if as_json:
-        click.echo(json.dumps({"sprint_id": sprint_id, "previous": current, "status": new_status}, indent=2))
+        payload = {"sprint_id": sprint_id, "previous": current, "status": new_status}
+        if boundary_event_id is not None:
+            payload["boundary_event_id"] = boundary_event_id
+            payload["boundary_revision"] = f"event:{boundary_event_id}"
+        click.echo(json.dumps(payload, indent=2))
         return
     click.echo(f"Sprint #{sprint_id} status: {current} -> {new_status}")
+    if boundary_event_id is not None:
+        click.echo(
+            f"Sprint-close boundary event #{boundary_event_id} "
+            f"(revision event:{boundary_event_id})"
+        )
 
 
 @sprint.command("list")
@@ -1226,10 +1248,15 @@ def _event_add_impl(
         except json.JSONDecodeError as e:
             click.echo(f"Invalid JSON payload: {e}", err=True)
             sys.exit(1)
-    eid = m.create_event(
-        store, sprint_id, actor, event_type,
-        source_type=source_type, work_item_id=work_item_id, payload=payload_dict,
-    )
+    try:
+        eid = m.create_event(
+            store, sprint_id, actor, event_type,
+            source_type=source_type, work_item_id=work_item_id, payload=payload_dict,
+            expected_project=(obj.get("backend_config").repo_id if obj.get("backend_config") else None),
+        )
+    except (TypeError, ValueError) as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
     if as_json:
         click.echo(json.dumps({
             "operation": "event_add",
@@ -3288,6 +3315,38 @@ def import_cmd(obj, input_path) -> None:
             click.echo(m, err=True)
         sys.exit(1)
 
+    # Validate and prepare every event before creating any rows. Local-authority
+    # events are retained under explicit imported event types rather than replayed.
+    prepared_events: list[dict] = []
+    imported_history_count = 0
+    try:
+        for ev in envelope.get("events", []):
+            try:
+                payload = json.loads(ev.get("payload", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                payload = {}
+            event_type = ev["event_type"]
+            source_event_id = ev["id"]
+            archive_only = _contracts.requires_archive_import_handling(event_type)
+            if archive_only:
+                _contracts.canonicalize_event_for_archive_import(
+                    event_type,
+                    payload,
+                    source_event_id,
+                )
+                imported_history_count += 1
+            else:
+                payload["source_id"] = source_event_id
+                payload = _contracts.canonicalize_event_payload(event_type, payload)
+            prepared_events.append({
+                "event": ev,
+                "payload": payload,
+                "archive_only": archive_only,
+            })
+    except (KeyError, TypeError, ValueError) as exc:
+        click.echo(f"Import aborted — invalid event history: {exc}", err=True)
+        sys.exit(1)
+
     new_sprint_id = _db.create_sprint(
         conn,
         name=src_sprint["name"],
@@ -3325,24 +3384,32 @@ def import_cmd(obj, input_path) -> None:
             )
         item_id_map[it["id"]] = new_iid
 
-    # Re-insert events, preserving source_id in payload
-    for ev in envelope.get("events", []):
+    # Re-insert generic events with source_id. Reserved typed events use an
+    # explicit non-authoritative imported representation with an exact wrapper.
+    for prepared in prepared_events:
+        ev = prepared["event"]
         old_item_id = ev.get("work_item_id")
         new_item_id = item_id_map.get(old_item_id) if old_item_id is not None else None
-        try:
-            payload = json.loads(ev.get("payload", "{}"))
-        except (json.JSONDecodeError, TypeError):
-            payload = {}
-        payload["source_id"] = ev["id"]
-        _db.create_event(
-            conn,
-            new_sprint_id,
-            actor=ev["actor"],
-            event_type=ev["event_type"],
-            source_type=ev.get("source_type", "system"),
-            work_item_id=new_item_id,
-            payload=payload,
-        )
+        if prepared["archive_only"]:
+            _db.create_archive_import_event(
+                conn,
+                new_sprint_id,
+                actor=ev["actor"],
+                event_type=ev["event_type"],
+                source_event_id=ev["id"],
+                work_item_id=new_item_id,
+                payload=prepared["payload"],
+            )
+        else:
+            _db.create_event(
+                conn,
+                new_sprint_id,
+                actor=ev["actor"],
+                event_type=ev["event_type"],
+                source_type=ev.get("source_type", "system"),
+                work_item_id=new_item_id,
+                payload=prepared["payload"],
+            )
 
     # Re-insert refs, remapping old item IDs to new item IDs
     refs_by_item = envelope.get("refs", {})
@@ -3358,6 +3425,11 @@ def import_cmd(obj, input_path) -> None:
         f"Imported sprint '{src_sprint['name']}' as #{new_sprint_id} "
         f"({len(item_id_map)} items, {len(envelope.get('events', []))} events)"
     )
+    if imported_history_count:
+        click.echo(
+            f"Retained {imported_history_count} reserved typed event(s) as "
+            "non-authoritative imported history."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -4445,7 +4517,7 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "  sprint create  --name NAME [--goal GOAL] [--start YYYY-MM-DD] [--end YYYY-MM-DD]",
         "                 [--status planned|active|closed] [--kind active_sprint|backlog|archive] [--json]",
         "  sprint show    [--id ID] [--detail] [--watch] [--interval SECONDS] [--json]",
-        "  sprint status  --id ID --status planned|active|closed",
+        "  sprint status  --id ID --status planned|active|closed [--actor NAME] [--json]",
         "  sprint list    [--include-backlog] [--include-archive] [--json]",
         "  sprint kind    --id ID --kind active_sprint|backlog|archive",
         "",
@@ -4749,7 +4821,13 @@ def migrate_to_remote_cmd(
 
     # 3. Import to pg
     try:
-        _pg.import_ndjson(pg_store, records, replace=replace, remap_ids=remap_ids)
+        _pg.import_ndjson(
+            pg_store,
+            records,
+            replace=replace,
+            remap_ids=remap_ids,
+            trusted_state_transfer=True,
+        )
     except Exception as e:
         click.echo(f"Error: import failed: {e}", err=True)
         click.echo("Sqlite has NOT been modified. Fix the error and retry (use --replace if pg now has partial data).")

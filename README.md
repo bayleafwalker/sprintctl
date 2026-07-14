@@ -85,6 +85,7 @@ Detailed guides:
 Reference:
 
 - [Context and Handoff Contracts](docs/reference/context-and-handoff.md)
+- [Capability Receipts](docs/reference/capability-receipts.md)
 - [Knowledge Review Flow](docs/reference/knowledge-review-flow.md)
 - [Migration Guide](docs/reference/migration-guide.md)
 

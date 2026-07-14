@@ -235,3 +235,36 @@ class TestFreezeArtifacts:
         assert db_path.is_file(), "sqlite should not have been renamed on dry-run"
         # backend.json must not exist
         assert not (repo_dir / ".sprintctl" / "backend.json").exists()
+
+    def test_real_migration_uses_explicit_trusted_state_transfer(
+        self,
+        repo_dir,
+        runner,
+        monkeypatch,
+    ):
+        db_path = repo_dir / ".sprintctl" / "sprintctl.db"
+        conn = db.get_connection(db_path)
+        db.init_db(conn)
+        db.create_sprint(conn, "Migration", status="active")
+        conn.close()
+        monkeypatch.setenv("SPRINTCTL_DB", str(db_path))
+        monkeypatch.chdir(repo_dir)
+
+        import sprintctl.pg as _pg
+        from unittest.mock import MagicMock, patch
+
+        mock_store = MagicMock()
+        mock_cursor = mock_store.conn.cursor.return_value.__enter__.return_value
+        mock_cursor.fetchone.return_value = {"cnt": 0}
+        mock_store.repo_id = "myrepo"
+
+        with patch.object(_pg, "get_connection", return_value=mock_store), \
+             patch.object(_pg, "init_db"), \
+             patch.object(_pg, "import_ndjson", return_value={}) as import_mock:
+            result = runner.invoke(
+                cli,
+                ["migrate-to-remote", "--url", "postgresql://localhost/test", "--yes"],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert import_mock.call_args.kwargs["trusted_state_transfer"] is True

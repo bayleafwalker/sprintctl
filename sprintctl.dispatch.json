@@ -25,6 +25,7 @@
       "item-done",
       "sprint-snapshot",
       "sprint-close",
+      "capability-receipt",
       "verify-state-protocols",
       "reconcile-project-contracts"
     ],
@@ -48,6 +49,22 @@
       "skills": ["reconcile-project-contracts"],
       "default_depth": 1,
       "required_on_change": false
+    },
+    {
+      "id": "capability-receipt-lifecycle",
+      "paths": [
+        "sprintctl/contracts.py",
+        "sprintctl/db.py",
+        "sprintctl/pg.py",
+        "sprintctl/cli.py",
+        "tests/test_capability_receipts.py",
+        "tests/test_pg_integration.py",
+        "docs/reference/capability-receipts.md"
+      ],
+      "skills": ["verify-state-protocols", "reconcile-project-contracts"],
+      "context_ids": ["sprintctl.capability-receipt.lifecycle"],
+      "default_depth": 2,
+      "required_on_change": true
     }
   ],
   "verification": {

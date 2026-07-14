@@ -9,6 +9,7 @@ All tests are automatically skipped when the variable is unset or psycopg is una
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -35,7 +36,7 @@ _SKIP_REASON = (
 pytestmark = pytest.mark.skipif(_SKIP, reason=_SKIP_REASON)
 
 # Safe unconditional imports: pg.py handles missing psycopg gracefully.
-from sprintctl import pg
+from sprintctl import contracts, pg
 from sprintctl.db import ClaimConflict, InvalidTransition
 
 
@@ -62,6 +63,40 @@ def store():
 
 def _uid() -> str:
     return uuid.uuid4().hex[:8]
+
+
+def _receipt_bytes(store, sprint_id, boundary_event_id, **overrides):
+    receipt_id = f"{store.repo_id}.2026-07-13.boundary"
+    receipt = {
+        "schema_version": "capability-receipt/v1",
+        "id": receipt_id,
+        "project": store.repo_id,
+        "status": "draft",
+        "publication": "private",
+        "boundary": {
+            "kind": "sprint-close",
+            "ref": {
+                "kind": "sprint-event",
+                "source": f"sprintctl:{store.repo_id}:sprint:{sprint_id}",
+                "revision": f"event:{boundary_event_id}",
+            },
+        },
+    }
+    receipt.update(overrides)
+    return json.dumps(receipt, sort_keys=True).encode()
+
+
+def _receipt_payload(store, receipt_bytes):
+    receipt_id = f"{store.repo_id}.2026-07-13.boundary"
+    return {
+        "project": store.repo_id,
+        "receipt_id": receipt_id,
+        "receipt_path": (
+            f"/projects/dev/_artifacts/{store.repo_id}/capability/receipts/"
+            f"{receipt_id}.json"
+        ),
+        "receipt_sha256": hashlib.sha256(receipt_bytes).hexdigest(),
+    }
 
 
 @pytest.fixture
@@ -123,6 +158,49 @@ class TestSprint:
         sid = pg.create_sprint(store, f"St-{_uid()}", "G", "2026-01-01", "2026-12-31", "active")
         pg.set_sprint_status(store, sid, "closed")
         assert pg.get_sprint(store, sid)["status"] == "closed"
+
+    def test_explicit_close_appends_boundary_event_atomically(self, store):
+        sid = pg.create_sprint(
+            store,
+            f"Cb-{_uid()}",
+            "G",
+            "2026-01-01",
+            "2026-12-31",
+            "active",
+        )
+
+        event_id = pg.close_sprint_with_boundary_event(store, sid, "operator")
+
+        assert pg.get_sprint(store, sid)["status"] == "closed"
+        event = next(
+            event for event in pg.list_events(store, sid) if event["id"] == event_id
+        )
+        assert event["event_type"] == "sprint-close-boundary"
+        assert event["actor"] == "operator"
+        assert json.loads(event["payload"]) == {
+            "previous_status": "active",
+            "status": "closed",
+        }
+
+    def test_explicit_close_rolls_back_when_boundary_insert_fails(self, store, monkeypatch):
+        sid = pg.create_sprint(
+            store,
+            f"Cr-{_uid()}",
+            "G",
+            "2026-01-01",
+            "2026-12-31",
+            "active",
+        )
+
+        def fail_insert(*args, **kwargs):
+            raise RuntimeError("injected event failure")
+
+        monkeypatch.setattr(pg, "_insert_event", fail_insert)
+        with pytest.raises(RuntimeError, match="injected event failure"):
+            pg.close_sprint_with_boundary_event(store, sid, "operator")
+
+        assert pg.get_sprint(store, sid)["status"] == "active"
+        assert pg.list_events(store, sid) == []
 
     def test_set_sprint_kind(self, store):
         sid = pg.create_sprint(store, f"Sk-{_uid()}", "G", "2026-01-01", "2026-12-31", "active")
@@ -207,6 +285,31 @@ class TestWorkItem:
 # ---------------------------------------------------------------------------
 
 class TestEvent:
+    def test_generic_api_cannot_forge_close_boundary(self, store, sprint_id):
+        with pytest.raises(ValueError, match="reserved; use the atomic sprint close"):
+            pg.create_event(
+                store,
+                sprint_id,
+                "forger",
+                contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE,
+                payload={"previous_status": "active", "status": "closed"},
+            )
+
+    def test_capability_pointer_requires_closed_sprint_and_local_boundary(
+        self,
+        store,
+        sprint_id,
+    ):
+        receipt_bytes = _receipt_bytes(store, sprint_id, 1)
+        with pytest.raises(ValueError, match="requires a closed sprint"):
+            pg.create_event(
+                store,
+                sprint_id,
+                "drafting-agent",
+                contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE,
+                payload=_receipt_payload(store, receipt_bytes),
+            )
+
     def test_create_and_list(self, store, sprint_id):
         pg.create_event(store, sprint_id, "ag", "note", source_type="actor",
                         payload={"summary": "hi"})
@@ -220,6 +323,116 @@ class TestEvent:
         note = next(e for e in reversed(events) if e["event_type"] == "note")
         assert isinstance(note["payload"], str)
         assert json.loads(note["payload"])["summary"] is not None
+
+    def test_capability_receipt_pointer_matches_sqlite_contract(
+        self,
+        store,
+        sprint_id,
+        monkeypatch,
+    ):
+        boundary_event_id = pg.close_sprint_with_boundary_event(store, sprint_id, "operator")
+        receipt_bytes = _receipt_bytes(store, sprint_id, boundary_event_id)
+        payload = _receipt_payload(store, receipt_bytes)
+        monkeypatch.setattr(
+            contracts,
+            "_read_capability_receipt_bytes",
+            lambda receipt_path: receipt_bytes,
+        )
+
+        event_id = pg.create_event(
+            store,
+            sprint_id,
+            "drafting-agent",
+            "capability-receipt-drafted",
+            payload=payload,
+        )
+
+        event = next(
+            event
+            for event in pg.list_events(store, sprint_id)
+            if event["id"] == event_id
+        )
+        assert json.loads(event["payload"]) == payload
+
+    @pytest.mark.parametrize(
+        ("mutate", "message"),
+        [
+            (lambda payload: payload.update(receipt_id="other.receipt"), "must start"),
+            (lambda payload: payload.update(receipt_path="/tmp/receipt.json"), "must be exactly"),
+            (lambda payload: payload.update(receipt_sha256="A" * 64), "lowercase hexadecimal"),
+            (lambda payload: payload.update(receipt_body={"private": True}), "unknown fields"),
+            (
+                lambda payload: payload.update(
+                    project="other",
+                    receipt_id="other.receipt",
+                    receipt_path=(
+                        "/projects/dev/_artifacts/other/capability/receipts/"
+                        "other.receipt.json"
+                    ),
+                ),
+                "owning repository",
+            ),
+        ],
+    )
+    def test_malformed_capability_pointer_matches_sqlite_rejection(
+        self,
+        store,
+        sprint_id,
+        mutate,
+        message,
+    ):
+        receipt_bytes = _receipt_bytes(store, sprint_id, 1)
+        payload = _receipt_payload(store, receipt_bytes)
+        mutate(payload)
+
+        with pytest.raises(ValueError, match=message):
+            pg.create_event(
+                store,
+                sprint_id,
+                "drafting-agent",
+                contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE,
+                payload=payload,
+            )
+
+    def test_capability_pointer_file_and_boundary_are_verified_before_insert(
+        self,
+        store,
+        sprint_id,
+        monkeypatch,
+    ):
+        boundary_event_id = pg.close_sprint_with_boundary_event(store, sprint_id, "operator")
+        wrong_revision_bytes = _receipt_bytes(
+            store,
+            sprint_id,
+            boundary_event_id,
+            boundary={
+                "kind": "sprint-close",
+                "ref": {
+                    "kind": "sprint-event",
+                    "source": f"sprintctl:{store.repo_id}:sprint:{sprint_id}",
+                    "revision": f"event:{boundary_event_id + 1}",
+                },
+            },
+        )
+        payload = _receipt_payload(store, wrong_revision_bytes)
+        monkeypatch.setattr(
+            contracts,
+            "_read_capability_receipt_bytes",
+            lambda receipt_path: wrong_revision_bytes,
+        )
+
+        with pytest.raises(ValueError, match="boundary.ref.revision"):
+            pg.create_event(
+                store,
+                sprint_id,
+                "drafting-agent",
+                contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE,
+                payload=payload,
+            )
+        assert not any(
+            event["event_type"] == contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE
+            for event in pg.list_events(store, sprint_id)
+        )
 
     def test_list_events_limited(self, store, sprint_id):
         for _ in range(4):
@@ -360,6 +573,73 @@ class TestDep:
 # ---------------------------------------------------------------------------
 
 class TestNdjsonRoundTrip:
+    def test_trusted_state_transfer_preserves_typed_event_ids_exactly(self, store):
+        sprint_id = 2_000_000_000 + int(uuid.uuid4().hex[:6], 16)
+        boundary_event_id = sprint_id + 1
+        receipt_event_id = sprint_id + 2
+        receipt_id = f"{store.repo_id}.2026-07-13.migration"
+        receipt_payload = {
+            "project": store.repo_id,
+            "receipt_id": receipt_id,
+            "receipt_path": (
+                f"/projects/dev/_artifacts/{store.repo_id}/capability/receipts/"
+                f"{receipt_id}.json"
+            ),
+            "receipt_sha256": "c" * 64,
+        }
+        records = [
+            {
+                "table": "sprint",
+                "repo_id": store.repo_id,
+                "data": {
+                    "id": sprint_id,
+                    "name": f"Trusted-{_uid()}",
+                    "goal": "G",
+                    "status": "closed",
+                },
+            },
+            {
+                "table": "event",
+                "repo_id": store.repo_id,
+                "data": {
+                    "id": boundary_event_id,
+                    "sprint_id": sprint_id,
+                    "work_item_id": None,
+                    "source_type": "actor",
+                    "actor": "operator",
+                    "event_type": contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE,
+                    "payload": {"previous_status": "active", "status": "closed"},
+                },
+            },
+            {
+                "table": "event",
+                "repo_id": store.repo_id,
+                "data": {
+                    "id": receipt_event_id,
+                    "sprint_id": sprint_id,
+                    "work_item_id": None,
+                    "source_type": "actor",
+                    "actor": "drafting-agent",
+                    "event_type": contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE,
+                    "payload": receipt_payload,
+                },
+            },
+        ]
+
+        pg.import_ndjson(store, records, trusted_state_transfer=True)
+
+        events = {event["id"]: event for event in pg.list_events(store, sprint_id)}
+        assert events[boundary_event_id]["event_type"] == contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE
+        assert events[receipt_event_id]["event_type"] == contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE
+        assert json.loads(events[receipt_event_id]["payload"]) == receipt_payload
+        with pytest.raises(ValueError, match="cannot remap IDs"):
+            pg.import_ndjson(
+                store,
+                records,
+                remap_ids=True,
+                trusted_state_transfer=True,
+            )
+
     def test_sqlite_to_pg_full_round_trip(self, store, tmp_path):
         """Export from a fresh sqlite db, import into pg, verify data survives."""
         from sprintctl import db as _db

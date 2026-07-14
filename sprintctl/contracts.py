@@ -1,11 +1,36 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
+from pathlib import Path
+import re
 from typing import Any, Mapping, Sequence
 
 CONTEXT_CONTRACT_VERSION = "1"
 HANDOFF_BUNDLE_TYPE = "handoff"
 HANDOFF_BUNDLE_VERSION = "1"
+CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE = "capability-receipt-drafted"
+CAPABILITY_RECEIPT_DRAFTED_IMPORTED_EVENT_TYPE = "capability-receipt-drafted-imported"
+SPRINT_CLOSE_BOUNDARY_EVENT_TYPE = "sprint-close-boundary"
+SPRINT_CLOSE_BOUNDARY_IMPORTED_EVENT_TYPE = "sprint-close-boundary-imported"
+
+_CAPABILITY_RECEIPT_EVENT_PREFIX = "capability-receipt-"
+_IMPORT_ONLY_EVENT_TYPES = {
+    CAPABILITY_RECEIPT_DRAFTED_IMPORTED_EVENT_TYPE,
+    SPRINT_CLOSE_BOUNDARY_IMPORTED_EVENT_TYPE,
+}
+
+_PORTABLE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_LOWERCASE_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_CAPABILITY_RECEIPT_REQUIRED_FIELDS = {
+    "project",
+    "receipt_id",
+    "receipt_path",
+    "receipt_sha256",
+}
+_CAPABILITY_RECEIPT_OPTIONAL_FIELDS = {"boundary_summary"}
+_BOUNDARY_SUMMARY_MAX_LENGTH = 280
 
 
 def _copy_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -121,6 +146,104 @@ def canonicalize_sprint_released_payload(payload: Mapping[str, Any] | None) -> d
     return result
 
 
+def _require_typed_string(source: Mapping[str, Any], field: str) -> str:
+    value = source.get(field)
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError(f"{field} must be a non-empty string without surrounding whitespace")
+    return value
+
+
+def canonicalize_capability_receipt_drafted_payload(
+    payload: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Validate the privacy-preserving pointer stored for a private receipt draft."""
+    if not isinstance(payload, Mapping):
+        raise ValueError("capability-receipt-drafted payload must be an object")
+    source = dict(payload)
+    allowed = _CAPABILITY_RECEIPT_REQUIRED_FIELDS | _CAPABILITY_RECEIPT_OPTIONAL_FIELDS
+    unknown = sorted(set(source) - allowed)
+    if unknown:
+        raise ValueError(
+            "capability-receipt-drafted payload has unknown fields: " + ", ".join(unknown)
+        )
+    missing = sorted(_CAPABILITY_RECEIPT_REQUIRED_FIELDS - set(source))
+    if missing:
+        raise ValueError(
+            "capability-receipt-drafted payload is missing fields: " + ", ".join(missing)
+        )
+
+    project = _require_typed_string(source, "project")
+    receipt_id = _require_typed_string(source, "receipt_id")
+    if not _PORTABLE_IDENTIFIER.fullmatch(project):
+        raise ValueError("project must be a portable identifier")
+    if not _PORTABLE_IDENTIFIER.fullmatch(receipt_id):
+        raise ValueError("receipt_id must be a portable identifier")
+    if not receipt_id.startswith(f"{project}."):
+        raise ValueError("receipt_id must start with '<project>.'")
+
+    receipt_path = _require_typed_string(source, "receipt_path")
+    expected_path = (
+        f"/projects/dev/_artifacts/{project}/capability/receipts/{receipt_id}.json"
+    )
+    if receipt_path != expected_path:
+        raise ValueError(f"receipt_path must be exactly {expected_path}")
+
+    receipt_sha256 = _require_typed_string(source, "receipt_sha256")
+    if not _LOWERCASE_SHA256.fullmatch(receipt_sha256):
+        raise ValueError("receipt_sha256 must be 64 lowercase hexadecimal characters")
+
+    result = {
+        "project": project,
+        "receipt_id": receipt_id,
+        "receipt_path": receipt_path,
+        "receipt_sha256": receipt_sha256,
+    }
+    if "boundary_summary" in source:
+        summary = _require_typed_string(source, "boundary_summary")
+        if "\n" in summary or "\r" in summary or len(summary) > _BOUNDARY_SUMMARY_MAX_LENGTH:
+            raise ValueError("boundary_summary must be one line of at most 280 characters")
+        result["boundary_summary"] = summary
+    return result
+
+
+def canonicalize_sprint_close_boundary_payload(
+    payload: Mapping[str, Any] | None,
+) -> dict[str, str]:
+    if payload != {"previous_status": "active", "status": "closed"}:
+        raise ValueError(
+            "sprint-close-boundary payload must be exactly "
+            "{'previous_status': 'active', 'status': 'closed'}"
+        )
+    return {"previous_status": "active", "status": "closed"}
+
+
+def _canonicalize_imported_typed_event_payload(
+    payload: Mapping[str, Any] | None,
+    *,
+    original_event_type: str,
+) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"{original_event_type}-imported payload must be an object")
+    source = dict(payload)
+    expected_fields = {"source_event_id", "source_event_type", "source_payload"}
+    if set(source) != expected_fields:
+        raise ValueError(
+            f"{original_event_type}-imported payload must contain exactly "
+            "source_event_id, source_event_type, and source_payload"
+        )
+    source_event_id = source["source_event_id"]
+    if isinstance(source_event_id, bool) or not isinstance(source_event_id, int) or source_event_id < 1:
+        raise ValueError("source_event_id must be a positive integer")
+    if source["source_event_type"] != original_event_type:
+        raise ValueError(f"source_event_type must be {original_event_type}")
+    source_payload = canonicalize_event_payload(original_event_type, source["source_payload"])
+    return {
+        "source_event_id": source_event_id,
+        "source_event_type": original_event_type,
+        "source_payload": source_payload,
+    }
+
+
 def canonicalize_event_payload(event_type: str, payload: Mapping[str, Any] | None) -> dict[str, Any]:
     if event_type == "decision":
         return canonicalize_decision_payload(payload)
@@ -130,7 +253,129 @@ def canonicalize_event_payload(event_type: str, payload: Mapping[str, Any] | Non
         return canonicalize_sprint_taken_up_payload(payload)
     if event_type == "sprint-released":
         return canonicalize_sprint_released_payload(payload)
+    if event_type == CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE:
+        return canonicalize_capability_receipt_drafted_payload(payload)
+    if event_type == SPRINT_CLOSE_BOUNDARY_EVENT_TYPE:
+        return canonicalize_sprint_close_boundary_payload(payload)
+    if event_type == CAPABILITY_RECEIPT_DRAFTED_IMPORTED_EVENT_TYPE:
+        return _canonicalize_imported_typed_event_payload(
+            payload,
+            original_event_type=CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE,
+        )
+    if event_type == SPRINT_CLOSE_BOUNDARY_IMPORTED_EVENT_TYPE:
+        return _canonicalize_imported_typed_event_payload(
+            payload,
+            original_event_type=SPRINT_CLOSE_BOUNDARY_EVENT_TYPE,
+        )
+    if event_type.startswith(_CAPABILITY_RECEIPT_EVENT_PREFIX):
+        raise ValueError(f"unsupported reserved capability receipt event type: {event_type}")
     return dict(payload or {})
+
+
+def require_generic_event_write_allowed(event_type: str) -> None:
+    """Reject event names whose provenance requires an internal workflow."""
+    if event_type == SPRINT_CLOSE_BOUNDARY_EVENT_TYPE:
+        raise ValueError(
+            "sprint-close-boundary is reserved; use the atomic sprint close operation"
+        )
+    if event_type in _IMPORT_ONLY_EVENT_TYPES:
+        raise ValueError(f"{event_type} is reserved for archive import")
+    if (
+        event_type.startswith(_CAPABILITY_RECEIPT_EVENT_PREFIX)
+        and event_type != CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE
+    ):
+        raise ValueError(f"unsupported reserved capability receipt event type: {event_type}")
+
+
+def is_archive_only_event_type(event_type: str) -> bool:
+    return event_type in _IMPORT_ONLY_EVENT_TYPES
+
+
+def requires_archive_import_handling(event_type: str) -> bool:
+    return event_type in {
+        CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE,
+        SPRINT_CLOSE_BOUNDARY_EVENT_TYPE,
+        CAPABILITY_RECEIPT_DRAFTED_IMPORTED_EVENT_TYPE,
+        SPRINT_CLOSE_BOUNDARY_IMPORTED_EVENT_TYPE,
+    }
+
+
+def canonicalize_event_for_archive_import(
+    event_type: str,
+    payload: Mapping[str, Any] | None,
+    source_event_id: int,
+) -> tuple[str, dict[str, Any]]:
+    """Demote local-authority events to explicit non-authoritative history."""
+    canonical_payload = canonicalize_event_payload(event_type, payload)
+    imported_types = {
+        CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE: CAPABILITY_RECEIPT_DRAFTED_IMPORTED_EVENT_TYPE,
+        SPRINT_CLOSE_BOUNDARY_EVENT_TYPE: SPRINT_CLOSE_BOUNDARY_IMPORTED_EVENT_TYPE,
+    }
+    imported_type = imported_types.get(event_type)
+    if imported_type is None:
+        return event_type, canonical_payload
+    imported_payload = {
+        "source_event_id": source_event_id,
+        "source_event_type": event_type,
+        "source_payload": canonical_payload,
+    }
+    return imported_type, canonicalize_event_payload(imported_type, imported_payload)
+
+
+def _read_capability_receipt_bytes(receipt_path: str) -> bytes:
+    path = Path(receipt_path)
+    if not path.is_file():
+        raise ValueError(f"capability receipt file does not exist: {receipt_path}")
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        raise ValueError(f"cannot read capability receipt file: {receipt_path}: {exc}") from exc
+
+
+def verify_capability_receipt_draft_pointer(
+    payload: Mapping[str, Any],
+    *,
+    sprint_id: int,
+    boundary_event_id: int,
+) -> None:
+    """Verify local pointer facts without replacing Agentops semantic validation."""
+    canonical = canonicalize_capability_receipt_drafted_payload(payload)
+    receipt_bytes = _read_capability_receipt_bytes(canonical["receipt_path"])
+    digest = hashlib.sha256(receipt_bytes).hexdigest()
+    if digest != canonical["receipt_sha256"]:
+        raise ValueError("receipt_sha256 does not match the referenced file")
+    try:
+        receipt = json.loads(receipt_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("capability receipt file must contain valid UTF-8 JSON") from exc
+    if not isinstance(receipt, Mapping):
+        raise ValueError("capability receipt file must contain a JSON object")
+
+    expected_fields = {
+        "schema_version": "capability-receipt/v1",
+        "id": canonical["receipt_id"],
+        "project": canonical["project"],
+        "status": "draft",
+        "publication": "private",
+    }
+    for field, expected in expected_fields.items():
+        if receipt.get(field) != expected:
+            raise ValueError(f"capability receipt {field} must be {expected!r}")
+
+    boundary = receipt.get("boundary")
+    if not isinstance(boundary, Mapping) or boundary.get("kind") != "sprint-close":
+        raise ValueError("capability receipt boundary.kind must be 'sprint-close'")
+    boundary_ref = boundary.get("ref")
+    if not isinstance(boundary_ref, Mapping) or boundary_ref.get("kind") != "sprint-event":
+        raise ValueError("capability receipt boundary.ref.kind must be 'sprint-event'")
+    expected_source = f"sprintctl:{canonical['project']}:sprint:{sprint_id}"
+    if boundary_ref.get("source") != expected_source:
+        raise ValueError(f"capability receipt boundary.ref.source must be {expected_source!r}")
+    expected_revision = f"event:{boundary_event_id}"
+    if boundary_ref.get("revision") != expected_revision:
+        raise ValueError(
+            f"capability receipt boundary.ref.revision must be {expected_revision!r}"
+        )
 
 
 @dataclass(frozen=True, slots=True)
