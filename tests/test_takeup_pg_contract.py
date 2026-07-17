@@ -12,6 +12,7 @@ import json
 import pytest
 
 from sprintctl import db, contracts
+from sprintctl import pg
 from sprintctl.pg import export_ndjson
 
 
@@ -35,6 +36,61 @@ def _export_events(conn, repo_id="myrepo"):
     export_ndjson(conn, repo_id, buf)
     lines = [json.loads(l) for l in buf.getvalue().splitlines() if l.strip()]
     return [r["data"] for r in lines if r["table"] == "event"]
+
+
+class _TakeupCursor:
+    def __init__(self, rows):
+        self.rows = rows
+        self.query = None
+        self.params = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def execute(self, query, params):
+        self.query = query
+        self.params = params
+
+    def fetchall(self):
+        return self.rows
+
+
+class _TakeupConnection:
+    def __init__(self, rows):
+        self.cursor_instance = _TakeupCursor(rows)
+
+    def cursor(self):
+        return self.cursor_instance
+
+
+def test_pg_takeup_history_queries_the_connection_not_pg_store():
+    """Keep remote history off SQLite helpers, which require ``conn.execute``."""
+    conn = _TakeupConnection([
+        {
+            "id": 41,
+            "sprint_id": 7,
+            "actor": "agent-1",
+            "event_type": "sprint-taken-up",
+            "payload": {
+                "actor_kind": "agent",
+                "instance_id": "instance-1",
+                "hostname": "host",
+                "pid": 123,
+                "runtime_session_id": None,
+            },
+            "created_at": "2026-07-17T12:00:00Z",
+        }
+    ])
+    store = pg.PgStore(conn=conn, repo_id="test-repo")
+
+    history = pg.list_takeup_history(store, sprint_id=7)
+
+    assert [row["taken_up_event_id"] for row in history["active_takeups"]] == [41]
+    assert conn.cursor_instance.params == ["test-repo", "sprint-taken-up", "sprint-released", 7]
+    assert "repo_id = %s" in conn.cursor_instance.query
 
 
 class TestTakeupPayloadRoundTrip:
