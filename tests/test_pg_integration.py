@@ -216,6 +216,37 @@ class TestInitDb:
         sprint_id = pg.create_sprint(store, f"Init-{_uid()}", "G", status="active")
         assert pg.get_sprint(store, sprint_id) is not None
 
+    def test_concurrent_bootstrap_serializes_on_disposable_postgres(self, pg_test_scope):
+        """Two normal startup paths must wait, not deadlock on catalog DDL."""
+        connections = [psycopg.connect(_PG_URL, row_factory=dict_row) for _ in range(2)]
+        for conn in connections:
+            assert_disposable_connection(conn)
+
+        barrier = threading.Barrier(3)
+        errors = []
+
+        def initialize(conn, repo_id):
+            try:
+                barrier.wait(timeout=15)
+                pg.init_db(pg.PgStore(conn=conn, repo_id=repo_id))
+            except BaseException as exc:  # Preserve a worker failure for assertion.
+                errors.append(exc)
+            finally:
+                conn.close()
+
+        threads = [
+            threading.Thread(target=initialize, args=(conn, pg_test_scope("bootstrap")))
+            for conn in connections
+        ]
+        for thread in threads:
+            thread.start()
+        barrier.wait(timeout=15)
+        for thread in threads:
+            thread.join(timeout=30)
+
+        assert not any(thread.is_alive() for thread in threads)
+        assert not errors
+
     def test_production_like_role_is_rejected_server_side(self, store):
         guard_url = os.environ.get("SPRINTCTL_TEST_PG_PRODUCTION_GUARD_URL")
         if not guard_url:

@@ -470,6 +470,12 @@ $$;
 # The DDL text is importable for unit-level schema validation tests.
 PG_DDL = _DDL
 
+# All remote CLI processes run bootstrap before serving a command. PostgreSQL's
+# normal DDL locks do not make this multi-statement path safe when two
+# processes replace functions and alter the same tables at once, so serialize
+# it for the whole shared remote schema rather than per repository.
+_SCHEMA_BOOTSTRAP_LOCK_KEYS = (0x53505249, 0x4E544354)  # "SPRI", "NTCT"
+
 
 @dataclass
 class PgStore:
@@ -805,7 +811,21 @@ def _repo_id_from_cwd() -> str:
 
 
 def init_db(store: PgStore) -> None:
+    """Apply the idempotent remote bootstrap under one transaction lock."""
+    try:
+        _init_db_locked(store)
+        store.conn.commit()
+    except Exception:
+        store.conn.rollback()
+        raise
+
+
+def _init_db_locked(store: PgStore) -> None:
     with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT pg_advisory_xact_lock(%s, %s)",
+            _SCHEMA_BOOTSTRAP_LOCK_KEYS,
+        )
         cur.execute(_DDL)
         # Phase 26 created this constraint as observation-only.  Authority
         # commands and remote decisions share the immutable remote ledger, but
@@ -855,7 +875,6 @@ def init_db(store: PgStore) -> None:
         # the next nextval call would return a value that conflicts with
         # already-imported data.
         _advance_identity_sequences(cur, ("sprint", "track", "work_item", "event", "claim", "ref", "dep"))
-    store.conn.commit()
 
 
 def _advance_identity_sequences(cur: Any, tables: tuple[str, ...]) -> None:
