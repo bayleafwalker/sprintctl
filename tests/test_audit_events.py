@@ -5,12 +5,15 @@ and that auditctl failures do not block the primary sprintctl operation.
 """
 
 import json
+import os
+from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 
 from sprintctl import db
-from sprintctl.cli import cli
+from sprintctl.cli import cli, _emit_audit_event
 
 
 def _item(conn, sprint_id, title="Task"):
@@ -34,6 +37,56 @@ def _captured_calls(monkeypatch):
 def _audit_calls(calls):
     """Filter captured calls to only auditctl add invocations."""
     return [c for c in calls if c and c[0] == "auditctl" and len(c) > 1 and c[1] == "add"]
+
+
+def test_fake_auditctl_binary_receives_stable_subprocess_contract(tmp_path, monkeypatch):
+    capture = tmp_path / "captured.json"
+    binary = tmp_path / "auditctl"
+    binary.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "with open(os.environ['AUDITCTL_ARGV_CAPTURE'], 'w', encoding='utf-8') as handle:\n"
+        "    json.dump(sys.argv[1:], handle)\n",
+        encoding="utf-8",
+    )
+    binary.chmod(0o755)
+    monkeypatch.setenv("AUDITCTL_ARGV_CAPTURE", str(capture))
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("USER", "publisher-user")
+
+    def run_real_binary(args, **kwargs):
+        process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, stderr = process.communicate(timeout=kwargs.get("timeout"))
+        return subprocess.CompletedProcess(args, process.returncode, stdout=stdout, stderr=stderr)
+
+    import sprintctl.cli as cli_module
+    monkeypatch.setattr(cli_module.subprocess, "run", run_real_binary)
+
+    _emit_audit_event(
+        "sprint.closed",
+        summary="Sprint 42 closed",
+        refs=["sprint:42", "ka:7"],
+        metadata={
+            "sprint_id": 42,
+            "event_type": "sprint-closed",
+            "boundary_revision": "event:9",
+        },
+    )
+
+    args = json.loads(capture.read_text(encoding="utf-8"))
+    assert args[:2] == ["add", "--type"]
+    assert args[args.index("--type") + 1] == "sprint.closed"
+    assert args[args.index("--source") + 1] == "sprintctl"
+    assert args[args.index("--actor") + 1] == "publisher-user"
+    assert [args[index + 1] for index, value in enumerate(args) if value == "--ref"] == [
+        "sprint:42",
+        "ka:7",
+    ]
+    assert json.loads(args[args.index("--metadata") + 1]) == {
+        "sprint_id": 42,
+        "event_type": "sprint-closed",
+        "boundary_revision": "event:9",
+    }
 
 
 # ---------------------------------------------------------------------------
