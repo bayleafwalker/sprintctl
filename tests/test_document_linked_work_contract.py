@@ -47,3 +47,22 @@ def test_remote_ingest_context_covers_retry_gap_and_cursor_protocol():
     assert packet["backends"] == ["postgres"]
     assert "same-stream-retry-after-lost-response" in [operation["name"] for operation in packet["operations"]]
     assert "sequence-gaps-are-rejected-without-partial-batch-admission" in packet["invariants"]
+
+
+def test_projection_fault_context_covers_rebuild_offline_and_retention_outcomes():
+    packet = json.loads(
+        (ROOT / "verification/contexts/projection-fault-recovery.json").read_text(encoding="utf-8")
+    )
+
+    operations = {operation["name"] for operation in packet["operations"]}
+    assert packet["schema_version"] == "test-context/v1"
+    assert packet["depth"] == 2
+    assert packet["backends"] == ["sqlite", "postgres"]
+    assert operations == {
+        "crash-mid-projection-apply",
+        "rebuild-projection-schema-from-remote-log",
+        "advance-remote-while-reader-is-offline",
+        "detect-retention-gap-before-snapshot-recovery",
+    }
+    assert "retention-gap-is-rejected-before-any-record-or-watermark-advance" in packet["invariants"]
+    assert "snapshot-recovery-remains-an-explicit-validated-install-boundary" in packet["invariants"]

@@ -458,6 +458,36 @@ class TestProducerOutboxIngestion:
         assert sorted(outcome.duplicate for outcome in outcomes) == [False, True]
         assert len(pg.list_ingested_records(store, after_offset=before_offset)) == 1
 
+    def test_disposable_remote_history_rebuilds_projection(
+        self, pg_test_scope, tmp_path
+    ):
+        repo_id = pg_test_scope("projection-rebuild")
+        rebuild_store = pg.PgStore(
+            conn=psycopg.connect(_PG_URL, row_factory=dict_row),
+            repo_id=repo_id,
+        )
+        pg.init_db(rebuild_store)
+        try:
+            records = self._records(tmp_path, count=4)
+            admitted = pg.ingest_records(rebuild_store, records)
+            remote_history = pg.list_ingested_records(rebuild_store)
+            cache = projection.open_cached_projection(tmp_path / "remote-rebuild.db")
+            try:
+                projection.apply_ingested_records(
+                    cache,
+                    [sync._cached_record(record) for record in remote_history],
+                )
+
+                assert projection.get_watermark(cache).ingest_offset == admitted[-1].ingest_offset
+                assert [
+                    record.record["event_id"]
+                    for record in projection.list_cached_records(cache)
+                ] == [record.event_id for record in records]
+            finally:
+                cache.close()
+        finally:
+            rebuild_store.conn.close()
+
 
 # ---------------------------------------------------------------------------
 # Sprint

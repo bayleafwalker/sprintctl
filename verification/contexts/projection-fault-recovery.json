@@ -1,0 +1,90 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.projection.fault-recovery",
+  "owner_repo": "sprintctl",
+  "subject": "local-cached-projection-and-remote-ingest-retention-boundary",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:f96484d"
+  },
+  "source_of_truth": "postgres-ingest-ledger-with-local-sqlite-projection-watermark",
+  "depth": 2,
+  "backends": ["sqlite", "postgres"],
+  "actors": ["remote-authority", "projection-reader", "offline-reader", "rebuild-operator"],
+  "initial_state": [
+    "remote-ingest-ledger-is-contiguous-from-offset-one",
+    "projection-watermark-is-zero-or-a-fully-applied-offset",
+    "projection-cache-is-disposable-but-remote-history-is-authoritative"
+  ],
+  "operations": [
+    {
+      "name": "crash-mid-projection-apply",
+      "actors": ["projection-reader"],
+      "synchronization": "inject failure after one row insert and before the SQLite transaction commits"
+    },
+    {
+      "name": "rebuild-projection-schema-from-remote-log",
+      "actors": ["rebuild-operator", "remote-authority"],
+      "synchronization": "initialize an empty cache and replay the complete retained log from offset one"
+    },
+    {
+      "name": "advance-remote-while-reader-is-offline",
+      "actors": ["remote-authority", "offline-reader"],
+      "synchronization": "hold the local watermark fixed while the remote ledger commits later offsets, then catch up from watermark plus one"
+    },
+    {
+      "name": "detect-retention-gap-before-snapshot-recovery",
+      "actors": ["rebuild-operator", "remote-authority"],
+      "synchronization": "offer an empty cache a retained suffix whose first offset is greater than one"
+    }
+  ],
+  "consistency": {
+    "target": "projection-convergence",
+    "object": "cached remote ingestion envelopes and fully-applied watermark"
+  },
+  "assumptions": {
+    "isolation": "one SQLite BEGIN IMMEDIATE transaction covers record inserts and watermark advancement; remote records are read from a disposable PostgreSQL scope",
+    "clock": "server ingest offsets order ingestion only; watermark age uses an explicit UTC observation time",
+    "fairness": "a retry or rebuild eventually runs while the required remote log or a separately validated snapshot remains available"
+  },
+  "bounds": {
+    "remote_records": 4,
+    "projection_connections": 2,
+    "injected_failures": 1,
+    "retained_suffix_start": 3
+  },
+  "invariants": [
+    "mid-apply-failure-retains-the-prior-watermark-and-no-partial-records",
+    "retry-after-mid-apply-failure-converges-with-the-remote-log",
+    "offline-remote-advance-remains-visible-as-local-watermark-staleness",
+    "catch-up-applies-every-offset-after-the-visible-watermark-in-order",
+    "schema-rebuild-from-complete-history-reproduces-records-and-watermark",
+    "retention-gap-is-rejected-before-any-record-or-watermark-advance",
+    "snapshot-recovery-remains-an-explicit-validated-install-boundary"
+  ],
+  "faults": [
+    "cursor-application-crash",
+    "projection-schema-upgrade-and-rebuild",
+    "remote-state-advance-while-local-offline",
+    "remote-log-retention-before-local-watermark"
+  ],
+  "oracles": [
+    "cached-record-query",
+    "projection-watermark-query",
+    "remote-ingest-offset-order-query",
+    "projection-gap-exception",
+    "fresh-cache-replay-equivalence"
+  ],
+  "implementation_anchors": [
+    "sprintctl/projection.py:apply_ingested_records",
+    "sprintctl/projection.py:ProjectionGapError",
+    "sprintctl/sync.py:synchronize_outbox",
+    "sprintctl/pg.py:list_ingested_records",
+    "tests/test_projection.py:test_failed_record_application_rolls_back_records_and_watermark",
+    "tests/test_sync.py:test_sync_recovers_after_lost_response_or_projection_apply_failure",
+    "tests/test_projection.py:test_offline_catch_up_and_full_log_rebuild_converge",
+    "tests/test_projection.py:test_retained_suffix_cannot_advance_an_empty_projection",
+    "tests/test_pg_integration.py:test_disposable_remote_history_rebuilds_projection"
+  ],
+  "expansions": ["semantic-doc", "stateful-test", "fault-scenario"]
+}

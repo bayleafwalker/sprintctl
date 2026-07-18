@@ -132,3 +132,46 @@ def test_authority_decision_failure_rolls_back_rows_and_watermark(tmp_path):
     assert projection.list_cached_authority_decisions(conn) == []
     assert projection.get_authority_watermark(conn).ingest_offset == 0
     conn.close()
+
+
+def test_offline_catch_up_and_full_log_rebuild_converge(tmp_path):
+    remote_history = [_record(1), _record(2), _record(3), _record(4)]
+    offline_cache = projection.open_cached_projection(tmp_path / "offline.db")
+    projection.apply_ingested_records(
+        offline_cache,
+        remote_history[:1],
+        advanced_at="2026-07-14T12:00:00Z",
+    )
+
+    # The remote commits later offsets while this reader remains offline.
+    assert projection.get_watermark(offline_cache).ingest_offset == 1
+    assert projection.list_cached_records(offline_cache) == remote_history[:1]
+
+    projection.apply_ingested_records(
+        offline_cache,
+        remote_history[1:],
+        advanced_at="2026-07-14T12:05:00Z",
+    )
+    rebuilt_cache = projection.open_cached_projection(tmp_path / "rebuilt.db")
+    projection.apply_ingested_records(
+        rebuilt_cache,
+        remote_history,
+        advanced_at="2026-07-14T12:05:00Z",
+    )
+
+    assert projection.list_cached_records(offline_cache) == remote_history
+    assert projection.list_cached_records(rebuilt_cache) == remote_history
+    assert projection.get_watermark(offline_cache) == projection.get_watermark(rebuilt_cache)
+    offline_cache.close()
+    rebuilt_cache.close()
+
+
+def test_retained_suffix_cannot_advance_an_empty_projection(tmp_path):
+    conn = projection.open_cached_projection(tmp_path / "retained-suffix.db")
+
+    with pytest.raises(projection.ProjectionGapError, match="expected 1, received 3"):
+        projection.apply_ingested_records(conn, [_record(3), _record(4)])
+
+    assert projection.list_cached_records(conn) == []
+    assert projection.get_watermark(conn) == projection.ProjectionWatermark(0, None)
+    conn.close()
