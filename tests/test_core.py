@@ -592,7 +592,7 @@ class TestEdgeCases:
     def test_init_db_idempotent(self, conn):
         db.init_db(conn)  # second call
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 13
+        assert version == 14
 
     def test_init_db_handles_concurrent_version_lag_after_upgrade(self, tmp_path):
         db_path = tmp_path / "lagged.db"
@@ -628,7 +628,7 @@ class TestEdgeCases:
         finally:
             conn.close()
 
-        assert version == 13
+        assert version == 14
         assert index_row is not None
 
     def test_db_path_from_env(self, tmp_path, monkeypatch):

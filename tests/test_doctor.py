@@ -54,7 +54,7 @@ def test_local_schema_probe_is_read_only_and_reports_mismatch(tmp_path):
 
     assert result == {
         "backend": "local",
-        "expected_version": 10,
+        "expected_version": 11,
         "actual_version": 9,
         "compatible": False,
         "status": "mismatch",

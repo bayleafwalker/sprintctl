@@ -4,7 +4,7 @@ import subprocess
 import sys
 import tomllib
 
-from sprintctl import __version__
+from sprintctl import CLI_CAPABILITIES, __version__
 from sprintctl import doctor
 from sprintctl.cli import cli
 
@@ -29,6 +29,7 @@ class TestReleaseIntegrity:
             pyproject = tomllib.load(fh)
         settings = pyproject["tool"]["sprintctl"]
         assert pyproject["project"]["version"] == __version__
+        assert sorted(settings["capabilities"]) == sorted(CLI_CAPABILITIES)
         assert settings["sqlite-schema-version"] == doctor.SQLITE_SCHEMA_VERSION
         assert settings["remote-schema-version"] == doctor.REMOTE_SCHEMA_VERSION
 

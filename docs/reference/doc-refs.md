@@ -8,6 +8,27 @@ declare identity, and how items point at docs.
 This is a convention on top of the existing `ref` primitive — no new tables,
 no new commands.
 
+## Repository scope refs
+
+Items may also declare deterministic repository scope for context ranking:
+
+```bash
+sprintctl item ref add --id <item-id> --type file \
+  --url sprintctl/context.py --label "Exact implementation file"
+sprintctl item ref add --id <item-id> --type glob \
+  --url 'tests/**/*.py' --label "Verification scope"
+sprintctl item ref add --id <item-id> --type manifest \
+  --url sprintctl.dispatch.json --label "Repository manifest"
+```
+
+`file` and `manifest` targets are exact repo-relative paths. `glob` targets
+must contain a glob expression. All three use POSIX separators, reject parent
+traversal and absolute paths, and render a portable JSON object such as
+`{"scope":{"kind":"glob","value":"tests/**/*.py"}}`. Repo-relative `doc`
+refs expose the same `scope` shape while remote doc URLs keep their existing
+URL-only representation. Existing `pr`, `issue`, `doc`, and `other` refs are
+unchanged.
+
 ## Doc frontmatter contract
 
 Every plan or sprint doc that work items will reference starts with YAML

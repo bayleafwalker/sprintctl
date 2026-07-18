@@ -1210,13 +1210,14 @@ def item_ref() -> None:
 @click.option(
     "--type", "ref_type",
     required=True,
-    type=click.Choice(["pr", "issue", "doc", "other"]),
+    type=click.Choice(["pr", "issue", "doc", "other", "file", "glob", "manifest"]),
     help="Reference type",
 )
 @click.option(
     "--url",
     required=True,
-    help="URL of the external reference (doc refs also accept a repo-relative path, e.g. docs/plans/my-plan.md)",
+    help=("Reference target. Doc refs accept URLs or repo-relative paths; "
+          "file, glob, and manifest refs require repo-relative POSIX paths."),
 )
 @click.option("--label", default="", help="Short human-readable label")
 @click.pass_obj

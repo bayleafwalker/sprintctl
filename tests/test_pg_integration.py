@@ -971,6 +971,12 @@ class TestRef:
         with pytest.raises(ValueError):
             pg.add_ref(store, work_item_id, "tweet", "https://example.com")
 
+    def test_scope_ref_round_trip(self, store, work_item_id):
+        rid = pg.add_ref(store, work_item_id, "glob", "src/**/*.py", "Python sources")
+        ref = next(ref for ref in pg.list_refs(store, work_item_id) if ref["id"] == rid)
+        assert ref["url"] == "src/**/*.py"
+        assert ref["scope"] == {"kind": "glob", "value": "src/**/*.py"}
+
 
 # ---------------------------------------------------------------------------
 # Dep

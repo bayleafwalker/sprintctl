@@ -1,10 +1,11 @@
 import json
 import os
+import posixpath
 import re
 import secrets
 import sqlite3
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -172,7 +173,9 @@ _MIGRATIONS: list[str] = [
     """,
 ]
 
-REF_TYPES = ("pr", "issue", "doc", "other")
+SCOPE_REF_TYPES = ("file", "glob", "manifest")
+REF_TYPES = ("pr", "issue", "doc", "other", *SCOPE_REF_TYPES)
+_GLOB_MAGIC = frozenset("*?[")
 
 
 def _is_repo_relative_doc_path(url: str) -> bool:
@@ -186,18 +189,77 @@ def _is_repo_relative_doc_path(url: str) -> bool:
     return ".." not in parts and "" not in parts
 
 
-def _validate_ref_url(url: str, ref_type: str = "other") -> None:
+def _normalize_scope_path(value: str, *, require_glob: bool = False) -> str:
+    if not value or value != value.strip() or value.startswith(("/", "~")):
+        raise ValueError("Scope refs require a non-empty repo-relative path.")
+    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        raise ValueError("Scope refs must not contain control characters.")
+    if "\\" in value or urlparse(value).scheme:
+        raise ValueError("Scope refs require portable POSIX repo-relative paths.")
+    parts = value.split("/")
+    if ".." in parts or any(not part for part in parts):
+        raise ValueError("Scope refs must not contain empty or parent path segments.")
+    normalized = posixpath.normpath(value)
+    if normalized in {"", "."} or normalized.startswith("../"):
+        raise ValueError("Scope refs require a path below the repository root.")
+    has_glob = any(char in normalized for char in _GLOB_MAGIC)
+    if require_glob and not has_glob:
+        raise ValueError("Glob refs must contain at least one glob expression (*, ?, or []).")
+    if not require_glob and has_glob:
+        raise ValueError("File and manifest refs must be exact paths without glob expressions.")
+    return normalized
+
+
+def _normalize_ref_target(url: str, ref_type: str = "other") -> str:
     parsed = urlparse(url)
     if parsed.scheme in {"http", "https"} and parsed.netloc:
-        return
+        if ref_type in SCOPE_REF_TYPES:
+            raise ValueError("Scope refs require repo-relative paths, not remote URLs.")
+        return url
+    if ref_type in {"file", "manifest"}:
+        return _normalize_scope_path(url)
+    if ref_type == "glob":
+        return _normalize_scope_path(url, require_glob=True)
     if ref_type == "doc":
         if _is_repo_relative_doc_path(url):
-            return
+            return posixpath.normpath(url)
         raise ValueError(
             "Invalid ref URL. Doc refs accept an absolute http(s) URL "
             "or a repo-relative path (e.g. docs/plans/my-plan.md)."
         )
     raise ValueError("Invalid ref URL. Use an absolute http(s) URL.")
+
+
+def _validate_ref_url(url: str, ref_type: str = "other") -> None:
+    _normalize_ref_target(url, ref_type)
+
+
+def _serialize_ref(row: sqlite3.Row | dict) -> dict:
+    ref = dict(row)
+    ref_type = ref["ref_type"]
+    url = ref["url"]
+    if ref_type in SCOPE_REF_TYPES or (ref_type == "doc" and _is_repo_relative_doc_path(url)):
+        ref["scope"] = {"kind": ref_type, "value": _normalize_ref_target(url, ref_type)}
+    return ref
+
+
+def scope_ref_matches_path(ref: dict, candidate_path: str) -> bool:
+    """Return whether a normalized scope ref overlaps one repository path."""
+    try:
+        candidate = _normalize_scope_path(candidate_path)
+    except ValueError:
+        return False
+    scope = ref.get("scope")
+    if not isinstance(scope, dict):
+        try:
+            scope = _serialize_ref(ref).get("scope")
+        except (KeyError, ValueError):
+            return False
+    if not isinstance(scope, dict):
+        return False
+    if scope.get("kind") == "glob":
+        return PurePosixPath(candidate).match(scope["value"])
+    return candidate == scope.get("value")
 
 
 def get_db_path() -> Path:
@@ -380,6 +442,31 @@ def _migration_13(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_14(conn: sqlite3.Connection) -> None:
+    """Add explicit scope-ref kinds while retaining every legacy ref row."""
+    _execute_statements(
+        conn,
+        """
+        CREATE TABLE ref_new (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            work_item_id INTEGER NOT NULL REFERENCES work_item(id) ON DELETE CASCADE,
+            ref_type     TEXT    NOT NULL DEFAULT 'other'
+                                 CHECK (ref_type IN (
+                                     'pr', 'issue', 'doc', 'other',
+                                     'file', 'glob', 'manifest'
+                                 )),
+            url          TEXT    NOT NULL,
+            label        TEXT    NOT NULL DEFAULT '',
+            created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+        );
+        INSERT INTO ref_new (id, work_item_id, ref_type, url, label, created_at)
+        SELECT id, work_item_id, ref_type, url, label, created_at FROM ref;
+        DROP TABLE ref;
+        ALTER TABLE ref_new RENAME TO ref;
+        """,
+    )
+
+
 def _run_migration(
     conn: sqlite3.Connection,
     target_version: int,
@@ -423,6 +510,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     _run_migration(conn, 11, _migration_11)
     _run_migration(conn, 12, _migration_12)
     _run_migration(conn, 13, _migration_13)
+    _run_migration(conn, 14, _migration_14, foreign_keys_off=True)
 
 
 # --- Sprint ---
@@ -1795,7 +1883,7 @@ def add_ref(
 ) -> int:
     if ref_type not in REF_TYPES:
         raise ValueError(f"Invalid ref_type '{ref_type}'. Must be one of: {', '.join(REF_TYPES)}")
-    _validate_ref_url(url, ref_type)
+    url = _normalize_ref_target(url, ref_type)
     item = get_work_item(conn, work_item_id)
     if item is None:
         raise ValueError(f"Work item #{work_item_id} not found")
@@ -1812,7 +1900,7 @@ def list_refs(conn: sqlite3.Connection, work_item_id: int) -> list[dict]:
         "SELECT * FROM ref WHERE work_item_id = ? ORDER BY created_at ASC",
         (work_item_id,),
     ).fetchall()
-    return [dict(r) for r in rows]
+    return [_serialize_ref(r) for r in rows]
 
 
 def list_refs_for_items(conn: sqlite3.Connection, work_item_ids: list[int]) -> dict[int, list[dict]]:
@@ -1825,7 +1913,7 @@ def list_refs_for_items(conn: sqlite3.Connection, work_item_ids: list[int]) -> d
     ).fetchall()
     refs_by_item: dict[int, list[dict]] = {}
     for r in rows:
-        refs_by_item.setdefault(r["work_item_id"], []).append(dict(r))
+        refs_by_item.setdefault(r["work_item_id"], []).append(_serialize_ref(r))
     return refs_by_item
 
 

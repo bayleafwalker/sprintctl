@@ -98,6 +98,85 @@ class TestRefDB:
         refs = db.list_refs(conn, iid)
         assert len(refs) == 4
 
+    def test_scope_ref_types_are_normalized_and_portable(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        db.add_ref(conn, iid, "file", "./src/context.py", "Context reader")
+        db.add_ref(conn, iid, "glob", "tests/**/*.py", "Context tests")
+        db.add_ref(conn, iid, "manifest", "sprintctl.dispatch.json", "Dispatch manifest")
+        db.add_ref(conn, iid, "doc", "docs/plans/context.md", "Plan")
+
+        refs = db.list_refs(conn, iid)
+        assert [(ref["ref_type"], ref["url"]) for ref in refs] == [
+            ("file", "src/context.py"),
+            ("glob", "tests/**/*.py"),
+            ("manifest", "sprintctl.dispatch.json"),
+            ("doc", "docs/plans/context.md"),
+        ]
+        assert [ref["scope"] for ref in refs] == [
+            {"kind": "file", "value": "src/context.py"},
+            {"kind": "glob", "value": "tests/**/*.py"},
+            {"kind": "manifest", "value": "sprintctl.dispatch.json"},
+            {"kind": "doc", "value": "docs/plans/context.md"},
+        ]
+
+    @pytest.mark.parametrize(
+        ("ref_type", "target", "message"),
+        [
+            ("file", "../outside.py", "parent"),
+            ("file", "src/*.py", "exact paths"),
+            ("glob", "src/context.py", "glob expression"),
+            ("manifest", "https://example.com/manifest.json", "repo-relative"),
+            ("manifest", r"config\\manifest.json", "POSIX"),
+            ("file", "src/control\nname.py", "control"),
+        ],
+    )
+    def test_scope_ref_validation(self, conn, active_sprint, ref_type, target, message):
+        iid = _item(conn, active_sprint["id"])
+        with pytest.raises(ValueError, match=message):
+            db.add_ref(conn, iid, ref_type, target)
+
+    def test_scope_ref_path_overlap_inputs_are_deterministic(self):
+        exact = {"ref_type": "file", "url": "src/context.py"}
+        manifest = {"ref_type": "manifest", "url": "sprintctl.dispatch.json"}
+        glob = {"ref_type": "glob", "url": "tests/**/*.py"}
+        remote_doc = {"ref_type": "doc", "url": "https://example.com/plan"}
+
+        assert db.scope_ref_matches_path(exact, "./src/context.py")
+        assert not db.scope_ref_matches_path(exact, "src/other.py")
+        assert db.scope_ref_matches_path(manifest, "sprintctl.dispatch.json")
+        assert db.scope_ref_matches_path(glob, "tests/unit/test_context.py")
+        assert not db.scope_ref_matches_path(glob, "src/test_context.py")
+        assert not db.scope_ref_matches_path(remote_doc, "docs/plan.md")
+
+    def test_schema_11_migration_preserves_legacy_refs(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        conn.execute("DROP TABLE ref")
+        conn.execute(
+            """
+            CREATE TABLE ref (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                work_item_id INTEGER NOT NULL REFERENCES work_item(id) ON DELETE CASCADE,
+                ref_type TEXT NOT NULL CHECK (ref_type IN ('pr', 'issue', 'doc', 'other')),
+                url TEXT NOT NULL,
+                label TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO ref (work_item_id, ref_type, url, label) VALUES (?, 'doc', ?, ?)",
+            (iid, "docs/plans/legacy.md", "Legacy plan"),
+        )
+        conn.execute("UPDATE schema_version SET version = 10")
+        conn.commit()
+
+        db.init_db(conn)
+
+        refs = db.list_refs(conn, iid)
+        assert refs[0]["label"] == "Legacy plan"
+        assert refs[0]["scope"] == {"kind": "doc", "value": "docs/plans/legacy.md"}
+        db.add_ref(conn, iid, "file", "src/context.py")
+
 
 # ---------------------------------------------------------------------------
 # CLI layer
@@ -171,6 +250,22 @@ class TestRefCLI:
         assert isinstance(data, list)
         assert data[0]["ref_type"] == "pr"
         assert data[0]["url"] == "https://github.com/org/repo/pull/1"
+
+    def test_item_ref_list_json_includes_normalized_scope(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        result = runner.invoke(cli, [
+            "item", "ref", "add",
+            "--id", str(iid),
+            "--type", "glob",
+            "--url", "src/**/*.py",
+            "--label", "Python sources",
+        ])
+        assert result.exit_code == 0, result.output
+
+        result = runner.invoke(cli, ["item", "ref", "list", "--id", str(iid), "--json"])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data[0]["scope"] == {"kind": "glob", "value": "src/**/*.py"}
 
     def test_item_ref_list_empty(self, runner, conn, active_sprint, db_path):
         iid = _item(conn, active_sprint["id"])

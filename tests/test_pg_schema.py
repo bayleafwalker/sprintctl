@@ -74,6 +74,14 @@ def test_claim_upgrade_is_additive_for_existing_remote_tables():
     assert "ADD COLUMN IF NOT EXISTS lease_epoch" in PG_DDL
 
 
+def test_ref_table_accepts_normalized_scope_kinds():
+    m = re.search(r"CREATE TABLE IF NOT EXISTS ref\s*\((.*?)\);", PG_DDL, re.DOTALL)
+    assert m, "ref table not found"
+    block = m.group(1)
+    for ref_type in ("pr", "issue", "doc", "other", "file", "glob", "manifest"):
+        assert f"'{ref_type}'" in block
+
+
 def test_event_table_uses_jsonb_payload():
     m = re.search(r"CREATE TABLE IF NOT EXISTS event\s*\((.*?)\);", PG_DDL, re.DOTALL)
     assert m, "event table not found"

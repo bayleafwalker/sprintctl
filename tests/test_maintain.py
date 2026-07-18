@@ -324,9 +324,9 @@ class TestMigration2:
         }
         assert "claim" in tables
 
-    def test_schema_version_is_13(self, conn):
+    def test_schema_version_is_14(self, conn):
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 13
+        assert version == 14
 
     def test_claim_retention_columns_have_parity_defaults(self, conn):
         columns = {

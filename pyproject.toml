@@ -22,10 +22,11 @@ packages = ["sprintctl"]
 
 [tool.sprintctl]
 capabilities = [
+    "normalized-scope-refs/v1",
     "portable-aggregate-uuid-json/v1",
     "remote-backend/v1",
 ]
-sqlite-schema-version = 10
+sqlite-schema-version = 11
 remote-schema-version = 1
 
 [tool.pytest.ini_options]
