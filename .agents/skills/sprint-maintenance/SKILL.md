@@ -40,7 +40,7 @@ Keep sprintctl execution state trustworthy by diagnosing health, claim expiry, t
    - `sprintctl maintain sweep --sprint-id <sprint-id> --json` for approved stale-item cleanup.
    - Add `--auto-close` only with explicit operator approval because it can close an overdue sprint.
 7. At a real sprint boundary, use `sprintctl maintain carryover --from-sprint <source-id> --to-sprint <target-id> --json`, then verify the result and refresh the repository's shared sprint artifact if appropriate.
-8. When recurring maintenance limitations surface, file a clearly scoped tooling-backlog request rather than inventing local workarounds. Current candidates include a native mutable priority field and explicit database vacuum/integrity maintenance support.
+8. Run database maintenance when warranted: `sprintctl db integrity` (read-only structural and referential check; nonzero exit on failure) routinely, and `sprintctl db vacuum` after large deletions or sweeps. When recurring maintenance limitations surface, file a clearly scoped tooling-backlog request rather than inventing local workarounds.
 
 ## Output contract
 

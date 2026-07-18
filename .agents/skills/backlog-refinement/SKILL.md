@@ -23,7 +23,7 @@ Turn ratified scope into a non-duplicated, prioritized sprintctl backlog whose i
    Inspect matching sprint names, existing titles, refs, dependencies, status, and recent notes. Live state wins over a stale committed snapshot.
 2. Classify each candidate as one of: already represented, must-do-now, should-do-soon, later, or reject. Also record its stability stratum or repository-specific change boundary when that distinction matters.
 3. For every candidate, choose a dispatch posture: `dispatch-plan` when a boundary decision remains, `dispatch-build` only when scope and acceptance are ready, or park/reject when it should not enter the execution queue.
-4. Use the visible title prefix convention for priority: `[p1] ` for must-do-now, `[p2] ` for should-do-soon, and `[p3] ` for later. The prefix must match `^\[p[1-3]\]\s+` and is the single current priority state.
+4. Set priority with the native field: `item add --priority N` on registration or `item priority --id N --set N` when refining (1 = must-do-now, 2 = should-do-soon, 3 = later; 1 = highest). The legacy `[p1] `/`[p2] `/`[p3] ` title prefix is still recognized as a fallback on items without a native priority, but new refinement should use the field.
 5. Add only candidates absent from live state. For a new item, include an outcome-oriented title and a useful description; then enrich it with the relevant commands:
    ```bash
    sprintctl item note --id <item-id> --type decision --summary "<scope and done condition>" --actor <actor>
@@ -42,7 +42,7 @@ Turn ratified scope into a non-duplicated, prioritized sprintctl backlog whose i
 
 - Every accepted candidate is either linked to one live sprintctl item or explicitly recorded as parked/rejected.
 - No duplicate sprint or item was created for work already represented in live state.
-- Runnable items have visible `[p1] `, `[p2] `, or `[p3] ` priority where applicable, a governing reference or explicit decision note, dependencies, and a dispatch posture.
+- Runnable items have a native priority (visible in the `PRI` column) where applicable, a governing reference or explicit decision note, dependencies, and a dispatch posture.
 - The backlog can be read by `item list` and selected by `next-work` without relying on append-only history tags.
 
 ## Do not

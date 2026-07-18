@@ -30,7 +30,7 @@ Choose one executable item from live sprintctl state without duplicating work, b
    ```bash
    sprintctl next-work --sprint-id <sprint-id> --json --explain
    ```
-5. Order otherwise-ready candidates by the title prefix convention: `[p1] ` first, then `[p2] `, then `[p3] `. A valid priority prefix matches `^\[p[1-3]\]\s+`; unprefixed items follow the repository's ordinary queue order.
+5. `next-work` orders ready candidates by the native priority field (`item add --priority N`, `item priority --id N --set N`; 1 = highest, unprioritized last), falling back to the legacy `[pN] ` title prefix when no native priority is set. Trust its order; refine only when two candidates tie.
 6. Read the chosen item's details, refs, and dependencies before claiming it. Resolve a blocking dependency or choose another ready item instead of claiming around it.
 7. Start the claim with the current identity and retain the returned `claim_id` and `claim_token` in the local recovery location:
    ```bash
@@ -42,7 +42,7 @@ Choose one executable item from live sprintctl state without duplicating work, b
 ## Output contract
 
 - One selected item is traceable to live `next-work` output or an explicit repository-approved promotion decision.
-- The item's priority is visible in its title when it uses the `[p1] `, `[p2] `, or `[p3] ` convention.
+- The item's priority is visible in the `PRI` column of `item list` and `next-work` (native `priority` field, or legacy `[pN] ` title prefix as fallback).
 - Active work is protected by a claim whose `claim_id` and `claim_token` belong to the current identity.
 - Any inability to choose safely is reported as a blocker with the relevant claim, dependency, or sprint state.
 
