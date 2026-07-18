@@ -12,6 +12,7 @@ All tests are automatically skipped when the variable is unset or psycopg is una
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timezone
 import hashlib
 import io
 import json
@@ -43,7 +44,7 @@ pytestmark = [
 ]
 
 # Safe unconditional imports: pg.py handles missing psycopg gracefully.
-from sprintctl import authority, contracts, pg, projection, sync
+from sprintctl import authority, contracts, maintain, pg, projection, sync
 from sprintctl import outbox
 from sprintctl.db import ClaimConflict, InvalidTransition
 from sprintctl.pg_testing import (
@@ -1200,6 +1201,29 @@ class TestMaintain:
         assert [claim["claim_id"] for claim in history] == [old_id, new_id]
         assert [claim["status"] for claim in history] == ["expired", "active"]
         assert [claim["lease_epoch"] for claim in history] == [2, 3]
+
+    def test_truth_findings_match_remote_backend(self, store, sprint_id, track_id):
+        item_id = pg.create_work_item(store, sprint_id, track_id, f"Drift-{_uid()}")
+        pg.set_work_item_status(store, item_id, "active")
+        event_id = pg.create_event(
+            store,
+            sprint_id,
+            actor="wrapper",
+            event_type="session.ended",
+            source_type="daemon",
+            payload={"git": {"commits": ["abc123"]}},
+        )
+
+        report = maintain.check(
+            store,
+            sprint_id,
+            datetime.now(timezone.utc),
+            _m=pg,
+        )
+
+        findings = {finding["reason_code"]: finding for finding in report["findings"]}
+        assert findings["active-item-without-live-claim"]["item_ids"] == [item_id]
+        assert findings["code-evidence-without-item-link"]["event_ids"] == [event_id]
 
 
 # ---------------------------------------------------------------------------

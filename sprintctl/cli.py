@@ -3276,6 +3276,7 @@ def _derive_conflicts(
         conflicts.append(
             {
                 "kind": "unclaimed-active-work",
+                "reason_code": "active-item-without-live-claim",
                 "severity": "warning",
                 "summary": (
                     f"{len(active_unclaimed_items)} active item(s) have no live claim "
@@ -3601,6 +3602,11 @@ def _collect_context_contract(conn, sprint: dict, now: datetime, *, m=None) -> d
         stale_items=stale_items,
         dependency_waiting_items=dependency_waiting_items,
         now=now,
+    )
+    conflicts.extend(
+        finding
+        for finding in report["findings"]
+        if finding["reason_code"] != "active-item-without-live-claim"
     )
     next_action = _derive_next_action(
         active_claims=active_claims,
@@ -3965,6 +3971,7 @@ def maintain_check(obj, sprint_id, threshold, as_json) -> None:
             "risk": report["risk"],
             "stale_items": report["stale_items"],
             "track_health": report["track_health"],
+            "findings": report["findings"],
             "threshold_hours": report["threshold"].total_seconds() / 3600,
             "pending_threshold_hours": pt.total_seconds() / 3600 if pt else None,
         }
@@ -3975,6 +3982,7 @@ def maintain_check(obj, sprint_id, threshold, as_json) -> None:
     risk = report["risk"]
     stale = report["stale_items"]
     track_health = report["track_health"]
+    findings = report["findings"]
     threshold_hours = report["threshold"].total_seconds() / 3600
     pending_threshold = report["pending_threshold"]
 
@@ -4001,6 +4009,14 @@ def maintain_check(obj, sprint_id, threshold, as_json) -> None:
             m = rem // 60
             idle = f"{h}h{m:02d}m"
             click.echo(f"  #{it['id']}  [{it['status']:8}]  {it['title']}  — idle {idle}  (track: {it['track_name']})")
+    else:
+        click.echo("  (none)")
+    click.echo("")
+
+    click.echo(f"Truth findings ({len(findings)}):")
+    if findings:
+        for finding in findings:
+            click.echo(f"  [{finding['reason_code']}]  {finding['summary']}")
     else:
         click.echo("  (none)")
     click.echo("")

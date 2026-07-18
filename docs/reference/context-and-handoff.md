@@ -33,7 +33,9 @@ Field intent:
 - `summary`: counts for total, done, active, pending, blocked, stale, ready, waiting-on-dependencies, active-claims, and active-unclaimed items
 - `active_claims`: proof-aware active claim state
 - `active_unclaimed_items`: active items with no live claim, usually indicating interrupted work that needs resume, handoff, or status triage
-- `conflicts`: claim, unclaimed-active-work, dependency, blocked-work, or stale-work issues that should change operator behavior
+- `conflicts`: claim, unclaimed-active-work, dependency, blocked-work, stale-work,
+  or reason-coded truth findings (overdue/all-done sprint and unlinked
+  code-evidence drift) that should change operator behavior
 - `ready_items`: pending items with no unresolved blockers
 - `blocked_items`: items in explicit `blocked` status
 - `stale_items`: items that are drifting based on configured thresholds
@@ -41,6 +43,14 @@ Field intent:
 - `next_action`: one concise recommendation explaining what matters now
 
 Text output mirrors the same section order so human and agent paths stay aligned.
+
+`maintain check --json` exposes the source diagnostics in `findings[]`. Each
+finding has a stable `reason_code`: `active-sprint-overdue`,
+`active-sprint-all-items-done`, `active-item-without-live-claim`, or
+`code-evidence-without-item-link`. The check is read-only: these findings do
+not close sprints, transition items, or discard unlinked evidence. Context
+surfaces mirror them through `conflicts[]` without changing the frozen
+top-level contract.
 
 ## `next-work --explain`
 

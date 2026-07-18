@@ -5,6 +5,7 @@ All functions are side-effectful (they write to the DB).
 The check() function is the only read-only path.
 """
 
+import json
 import os
 from datetime import datetime, timedelta
 
@@ -30,6 +31,13 @@ def _force_item_done_for_carryover(conn, item_id: int, *, _m=None) -> None:
     )
 
 DEFAULT_STALE_THRESHOLD = timedelta(hours=4)
+_CODE_EVIDENCE_EVENT_TYPES = frozenset({
+    "commit",
+    "commit.created",
+    "git.commit",
+    "work.completed",
+})
+_SESSION_END_EVENT_TYPES = frozenset({"session.ended", "session.end-inferred"})
 
 
 def _stale_threshold() -> timedelta:
@@ -45,6 +53,129 @@ def _pending_stale_threshold() -> "timedelta | None":
     if raw:
         return timedelta(hours=float(raw))
     return None
+
+
+def _event_payload(event: dict) -> dict:
+    raw = event.get("payload") or {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    nested = raw.get("payload")
+    return nested if isinstance(nested, dict) else raw
+
+
+def _event_has_item_link(event: dict, payload: dict) -> bool:
+    if event.get("work_item_id") is not None:
+        return True
+    if payload.get("work_item_id") is not None or payload.get("item_id") is not None:
+        return True
+    target = payload.get("target")
+    if isinstance(target, dict) and str(target.get("ref", "")).startswith("wi:"):
+        return True
+    claim = payload.get("claim")
+    if isinstance(claim, dict) and claim.get("work_item_id") is not None:
+        return True
+    refs = payload.get("refs")
+    if isinstance(refs, dict) and refs.get("work_item_id") is not None:
+        return True
+    if isinstance(refs, list) and any(str(ref).startswith("wi:") for ref in refs):
+        return True
+    return False
+
+
+def _event_has_code_evidence(event: dict, payload: dict) -> bool:
+    event_type = event.get("event_type")
+    if event_type in _CODE_EVIDENCE_EVENT_TYPES:
+        return True
+    if event_type not in _SESSION_END_EVENT_TYPES:
+        return False
+    git = payload.get("git")
+    if not isinstance(git, dict):
+        git = payload
+    if git.get("commits") or git.get("touched_paths") or git.get("diff_stat"):
+        return True
+    base = git.get("base_commit")
+    head = git.get("head_commit")
+    return bool(base and head and base != head)
+
+
+def _truth_findings(
+    sprint: dict,
+    items: list[dict],
+    active_claims: list[dict],
+    events: list[dict],
+    risk: dict,
+) -> list[dict]:
+    findings: list[dict] = []
+    if risk["overdue"]:
+        days_overdue = abs(risk["days_remaining"])
+        findings.append({
+            "kind": "sprint-overdue",
+            "reason_code": "active-sprint-overdue",
+            "severity": "warning",
+            "sprint_id": sprint["id"],
+            "days_overdue": days_overdue,
+            "summary": (
+                f"Active sprint #{sprint['id']} is {days_overdue} day(s) overdue; "
+                "review it explicitly rather than auto-closing."
+            ),
+        })
+    if sprint["status"] == "active" and items and all(item["status"] == "done" for item in items):
+        findings.append({
+            "kind": "all-items-done",
+            "reason_code": "active-sprint-all-items-done",
+            "severity": "warning",
+            "sprint_id": sprint["id"],
+            "item_ids": sorted(item["id"] for item in items),
+            "summary": (
+                f"Active sprint #{sprint['id']} has all {len(items)} item(s) done; "
+                "completion still requires an explicit sprint-close decision."
+            ),
+        })
+    claimed_item_ids = {claim["work_item_id"] for claim in active_claims}
+    unclaimed_item_ids = sorted(
+        item["id"] for item in items
+        if item["status"] == "active" and item["id"] not in claimed_item_ids
+    )
+    if unclaimed_item_ids:
+        findings.append({
+            "kind": "unclaimed-active-work",
+            "reason_code": "active-item-without-live-claim",
+            "severity": "warning",
+            "sprint_id": sprint["id"],
+            "item_ids": unclaimed_item_ids,
+            "summary": (
+                f"{len(unclaimed_item_ids)} active item(s) have no live claim and need "
+                "resume, handoff, or status triage."
+            ),
+        })
+    unlinked_evidence = []
+    for event in events:
+        payload = _event_payload(event)
+        if _event_has_code_evidence(event, payload) and not _event_has_item_link(event, payload):
+            unlinked_evidence.append({
+                "event_id": event["id"],
+                "event_type": event["event_type"],
+            })
+    if unlinked_evidence:
+        unlinked_evidence.sort(key=lambda evidence: evidence["event_id"])
+        findings.append({
+            "kind": "unlinked-code-evidence",
+            "reason_code": "code-evidence-without-item-link",
+            "severity": "warning",
+            "sprint_id": sprint["id"],
+            "event_ids": [evidence["event_id"] for evidence in unlinked_evidence],
+            "evidence": unlinked_evidence,
+            "summary": (
+                f"{len(unlinked_evidence)} code-bearing event(s) have no work-item link; "
+                "retain them for explicit reconciliation."
+            ),
+        })
+    return findings
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +213,8 @@ def check(
 
     active_items = [it for it in items if it["status"] == "active"]
     risk = _calc.sprint_overrun_risk(sprint, len(active_items), now)
+    active_claims = m.list_claims_by_sprint(conn, sprint_id, active_only=True)
+    events = m.list_events(conn, sprint_id)
 
     stale = [
         it for it in items
@@ -106,6 +239,7 @@ def check(
         "risk": risk,
         "stale_items": stale_details,
         "track_health": track_health,
+        "findings": _truth_findings(sprint, items, active_claims, events, risk),
         "threshold": threshold,
         "pending_threshold": pending_threshold,
     }

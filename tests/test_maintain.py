@@ -2,6 +2,7 @@
 Tests for Phase 2: maintain commands (check, sweep, carryover) and sprint status CLI.
 """
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -109,6 +110,66 @@ class TestMaintainCheck:
     def test_check_invalid_sprint(self, conn):
         with pytest.raises(ValueError, match="not found"):
             maint.check(conn, 9999, datetime.now(timezone.utc))
+
+    def test_check_emits_reason_coded_truth_findings_without_writes(self, conn):
+        sid = db.create_sprint(conn, "Drifted", "", "2025-01-01", "2025-01-31", "active")
+        iid = _add_item(conn, sid, "backend", "Already shipped")
+        db.set_work_item_status(conn, iid, "active")
+        db.set_work_item_status(conn, iid, "done")
+        unlinked_event_id = db.create_event(
+            conn,
+            sid,
+            actor="wrapper",
+            event_type="session.ended",
+            source_type="daemon",
+            payload={"git": {"commits": ["abc123"], "touched_paths": ["src/core.py"]}},
+        )
+        db.create_event(
+            conn,
+            sid,
+            actor="wrapper",
+            event_type="session.ended",
+            source_type="daemon",
+            payload={"target": {"rank": "explicit", "ref": f"wi:{iid}"}, "git": {"commits": ["def456"]}},
+        )
+        db.create_event(
+            conn,
+            sid,
+            actor="wrapper",
+            event_type="session.ended",
+            source_type="daemon",
+            payload={"git": {"commits": [], "touched_paths": []}},
+        )
+        events_before = db.list_events(conn, sid)
+
+        report = maint.check(conn, sid, datetime.now(timezone.utc))
+
+        findings = {finding["reason_code"]: finding for finding in report["findings"]}
+        assert set(findings) == {
+            "active-sprint-overdue",
+            "active-sprint-all-items-done",
+            "code-evidence-without-item-link",
+        }
+        assert findings["active-sprint-all-items-done"]["item_ids"] == [iid]
+        assert findings["code-evidence-without-item-link"]["event_ids"] == [unlinked_event_id]
+        assert db.get_sprint(conn, sid)["status"] == "active"
+        assert db.list_events(conn, sid) == events_before
+
+    def test_check_flags_only_active_items_without_live_claims(self, conn):
+        sid = db.create_sprint(conn, "Claims", "", None, None, "active")
+        unclaimed = _add_item(conn, sid, "backend", "Interrupted")
+        claimed = _add_item(conn, sid, "backend", "Owned")
+        db.set_work_item_status(conn, unclaimed, "active")
+        db.set_work_item_status(conn, claimed, "active")
+        db.create_claim(conn, claimed, agent="agent-a", ttl_seconds=600)
+
+        report = maint.check(conn, sid, datetime.now(timezone.utc))
+
+        finding = next(
+            finding for finding in report["findings"]
+            if finding["reason_code"] == "active-item-without-live-claim"
+        )
+        assert finding["item_ids"] == [unclaimed]
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +318,22 @@ class TestMaintainCLI:
         assert result.exit_code == 0, result.output
         assert "Sprint #" in result.output
         assert "Stale items" in result.output
+        assert "Truth findings" in result.output
         assert "Track health" in result.output
+
+    def test_check_cmd_json_exposes_reason_codes(self, runner, conn):
+        sid = db.create_sprint(conn, "Past", "", "2025-01-01", "2025-01-31", "active")
+        result = runner.invoke(cli, ["maintain", "check", "--sprint-id", str(sid), "--json"])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert [finding["reason_code"] for finding in payload["findings"]] == [
+            "active-sprint-overdue"
+        ]
+        assert db.get_sprint(conn, sid)["status"] == "active"
+        assert not any(
+            event["event_type"] == "auto-closed-overdue"
+            for event in db.list_events(conn, sid)
+        )
 
     def test_check_cmd_no_active_sprint(self, runner, db_path):
         result = runner.invoke(cli, ["maintain", "check"])

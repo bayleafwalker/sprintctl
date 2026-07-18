@@ -112,8 +112,29 @@ class TestUsageContext:
             {"id": iid, "title": "Interrupted task", "track": "eng"}
         ]
         assert data["conflicts"][0]["kind"] == "unclaimed-active-work"
+        assert data["conflicts"][0]["reason_code"] == "active-item-without-live-claim"
         assert data["next_action"]["kind"] == "resume-unclaimed-active-item"
         assert data["next_action"]["item_id"] == iid
+
+    def test_context_json_surfaces_reason_coded_unlinked_code_evidence(self, runner, conn, active_sprint):
+        event_id = db.create_event(
+            conn,
+            sprint_id=active_sprint["id"],
+            actor="wrapper",
+            event_type="session.end-inferred",
+            source_type="daemon",
+            payload={"git": {"base_commit": "abc", "head_commit": "def"}},
+        )
+
+        result = runner.invoke(cli, ["usage", "--context", "--json"])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        finding = next(
+            conflict for conflict in data["conflicts"]
+            if conflict.get("reason_code") == "code-evidence-without-item-link"
+        )
+        assert finding["event_ids"] == [event_id]
 
     def test_context_json_includes_recent_decisions_and_summary(self, runner, conn, active_sprint):
         iid = _add_item(conn, active_sprint["id"], "Item")
