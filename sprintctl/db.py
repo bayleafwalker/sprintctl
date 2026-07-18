@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import secrets
 import sqlite3
 from collections.abc import Callable
@@ -352,6 +353,17 @@ def _migration_10(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migration_11(conn: sqlite3.Connection) -> None:
+    """Native work item priority (1 = highest). NULL = unprioritized, which
+    sorts after any explicit priority in next-work ordering."""
+    _add_column_if_missing(
+        conn,
+        "work_item",
+        "priority",
+        "priority INTEGER CHECK (priority IS NULL OR (priority >= 1 AND priority <= 9))",
+    )
+
+
 def _run_migration(
     conn: sqlite3.Connection,
     target_version: int,
@@ -392,6 +404,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     _run_migration(conn, 8, _migration_8)
     _run_migration(conn, 9, _migration_9)
     _run_migration(conn, 10, _migration_10)
+    _run_migration(conn, 11, _migration_11)
 
 
 # --- Sprint ---
@@ -498,6 +511,33 @@ def validate_work_item_description(description: str) -> str:
     return description
 
 
+PRIORITY_MIN = 1
+PRIORITY_MAX = 9
+
+_PRIORITY_TITLE_RE = re.compile(r"^\[p([1-9])\]\s")
+
+
+def validate_priority(priority: int | None) -> int | None:
+    """Validate a work item priority: None (unprioritized) or an int in 1..9."""
+    if priority is None:
+        return None
+    if isinstance(priority, bool) or not isinstance(priority, int):
+        raise ValueError("priority must be an integer between 1 and 9")
+    if not (PRIORITY_MIN <= priority <= PRIORITY_MAX):
+        raise ValueError(
+            f"priority must be between {PRIORITY_MIN} and {PRIORITY_MAX} (1 = highest)"
+        )
+    return priority
+
+
+def effective_priority(item: dict) -> int | None:
+    """Native priority column, falling back to the legacy [pN] title prefix."""
+    if item.get("priority") is not None:
+        return item["priority"]
+    match = _PRIORITY_TITLE_RE.match(item.get("title") or "")
+    return int(match.group(1)) if match else None
+
+
 def create_work_item(
     conn: sqlite3.Connection,
     sprint_id: int,
@@ -505,13 +545,35 @@ def create_work_item(
     title: str,
     description: str = "",
     assignee: str | None = None,
+    priority: int | None = None,
 ) -> int:
+    priority = validate_priority(priority)
     cur = conn.execute(
-        "INSERT INTO work_item (sprint_id, track_id, title, description, assignee, aggregate_uuid) VALUES (?, ?, ?, ?, ?, ?)",
-        (sprint_id, track_id, title, description, assignee, str(uuid4())),
+        "INSERT INTO work_item (sprint_id, track_id, title, description, assignee, priority, aggregate_uuid) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (sprint_id, track_id, title, description, assignee, priority, str(uuid4())),
     )
     conn.commit()
     return cur.lastrowid
+
+
+def set_work_item_priority(
+    conn: sqlite3.Connection,
+    item_id: int,
+    priority: int | None,
+) -> None:
+    priority = validate_priority(priority)
+    cur = conn.execute(
+        """
+        UPDATE work_item
+        SET priority = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+        WHERE id = ?
+        """,
+        (priority, item_id),
+    )
+    if cur.rowcount == 0:
+        conn.rollback()
+        raise ValueError(f"Item #{item_id} not found")
+    conn.commit()
 
 
 def get_work_item(conn: sqlite3.Connection, item_id: int) -> dict | None:
@@ -1841,7 +1903,12 @@ def get_ready_items(
         blockers = list_deps_blocking(conn, item["id"])
         unresolved = [b for b in blockers if b["blocker_status"] != "done"]
         if not unresolved:
-            ready.append({**item, "blockers_resolved": len(blockers), "unresolved_blockers": 0})
+            ready.append({
+                **item,
+                "blockers_resolved": len(blockers),
+                "unresolved_blockers": 0,
+                "effective_priority": effective_priority(item),
+            })
         else:
             # Include items with unresolved blockers so caller can inspect
             item_with_deps = {
@@ -1851,6 +1918,14 @@ def get_ready_items(
                 "unresolved_blocker_ids": [b["item_id"] for b in unresolved],
             }
             _ = item_with_deps  # not included in ready list
+    ready.sort(
+        key=lambda it: (
+            it["effective_priority"] is None,
+            it["effective_priority"] or 0,
+            it["created_at"],
+            it["id"],
+        )
+    )
     return ready
 
 
@@ -1918,3 +1993,45 @@ def backlog_seed_from_candidates(
         )
         seeded.append(get_work_item(conn, item_id))
     return seeded
+
+
+# --- Database maintenance ---
+
+def vacuum_database(conn: sqlite3.Connection) -> dict:
+    """Run VACUUM and report page counts and reclaimed bytes."""
+    page_size = conn.execute("PRAGMA page_size").fetchone()[0]
+    pages_before = conn.execute("PRAGMA page_count").fetchone()[0]
+    freelist_before = conn.execute("PRAGMA freelist_count").fetchone()[0]
+    conn.commit()  # VACUUM cannot run inside a transaction
+    conn.execute("VACUUM")
+    pages_after = conn.execute("PRAGMA page_count").fetchone()[0]
+    return {
+        "backend": "local",
+        "page_size": page_size,
+        "pages_before": pages_before,
+        "pages_after": pages_after,
+        "freelist_pages_before": freelist_before,
+        "bytes_reclaimed": max(0, (pages_before - pages_after) * page_size),
+    }
+
+
+def check_integrity(conn: sqlite3.Connection) -> dict:
+    """Run integrity_check and foreign_key_check; report structural health."""
+    integrity_rows = [r[0] for r in conn.execute("PRAGMA integrity_check").fetchall()]
+    fk_rows = [
+        {"table": r[0], "rowid": r[1], "parent": r[2], "fk_index": r[3]}
+        for r in conn.execute("PRAGMA foreign_key_check").fetchall()
+    ]
+    table_counts = {}
+    for table in ("sprint", "track", "work_item", "event", "claim", "ref", "dep"):
+        table_counts[table] = conn.execute(
+            f"SELECT COUNT(*) FROM {table}"  # noqa: S608 — fixed identifier set
+        ).fetchone()[0]
+    ok = integrity_rows == ["ok"] and not fk_rows
+    return {
+        "backend": "local",
+        "ok": ok,
+        "integrity_check": integrity_rows,
+        "foreign_key_violations": fk_rows,
+        "table_counts": table_counts,
+    }

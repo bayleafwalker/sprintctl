@@ -57,6 +57,8 @@ from .db import (
     _decode_event_payload,
     process_takeup_events,
     validate_work_item_description,
+    validate_priority,
+    effective_priority,
 )
 
 # ---------------------------------------------------------------------------
@@ -112,6 +114,7 @@ CREATE TABLE IF NOT EXISTS work_item (
     status      text        NOT NULL DEFAULT 'pending'
                             CHECK (status IN ('pending', 'active', 'done', 'blocked')),
     assignee    text,
+    priority    integer     CHECK (priority IS NULL OR (priority >= 1 AND priority <= 9)),
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
     aggregate_uuid uuid     NOT NULL UNIQUE,
@@ -287,6 +290,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_record_repo_offset_unique
 
 CREATE INDEX IF NOT EXISTS idx_authority_decision_repo_offset
     ON authority_decision(repo_id, decision_ingest_offset);
+
+ALTER TABLE work_item ADD COLUMN IF NOT EXISTS priority integer;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'work_item_priority_check'
+          AND conrelid = 'work_item'::regclass
+    ) THEN
+        ALTER TABLE work_item
+            ADD CONSTRAINT work_item_priority_check
+            CHECK (priority IS NULL OR (priority >= 1 AND priority <= 9));
+    END IF;
+END
+$$;
 
 DO $$
 BEGIN
@@ -1122,19 +1141,44 @@ def create_work_item(
     title: str,
     description: str = "",
     assignee: str | None = None,
+    priority: int | None = None,
 ) -> int:
+    priority = validate_priority(priority)
     with store.conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO work_item (repo_id, sprint_id, track_id, title, description, assignee, aggregate_uuid)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO work_item (repo_id, sprint_id, track_id, title, description, assignee, priority, aggregate_uuid)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (store.repo_id, sprint_id, track_id, title, description, assignee, str(uuid4())),
+            (store.repo_id, sprint_id, track_id, title, description, assignee, priority, str(uuid4())),
         )
         row = cur.fetchone()
     store.conn.commit()
     return row["id"]
+
+
+def set_work_item_priority(
+    store: PgStore,
+    item_id: int,
+    priority: int | None,
+) -> None:
+    priority = validate_priority(priority)
+    with store.conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE work_item
+            SET priority = %s, updated_at = now()
+            WHERE repo_id = %s AND id = %s
+            RETURNING id
+            """,
+            (priority, store.repo_id, item_id),
+        )
+        row = cur.fetchone()
+    if row is None:
+        store.conn.rollback()
+        raise ValueError(f"Item #{item_id} not found")
+    store.conn.commit()
 
 
 def get_work_item(store: PgStore, item_id: int) -> dict | None:
@@ -2239,7 +2283,20 @@ def get_ready_items(store: PgStore, sprint_id: int) -> list[dict]:
         blockers = list_deps_blocking(store, item["id"])
         unresolved = [b for b in blockers if b["blocker_status"] != "done"]
         if not unresolved:
-            ready.append({**item, "blockers_resolved": len(blockers), "unresolved_blockers": 0})
+            ready.append({
+                **item,
+                "blockers_resolved": len(blockers),
+                "unresolved_blockers": 0,
+                "effective_priority": effective_priority(item),
+            })
+    ready.sort(
+        key=lambda it: (
+            it["effective_priority"] is None,
+            it["effective_priority"] or 0,
+            it["created_at"],
+            it["id"],
+        )
+    )
     return ready
 
 
@@ -2567,3 +2624,84 @@ def _import_row(
         result = cur.fetchone()
         return result["id"] if result else None
     return None
+
+
+# ---------------------------------------------------------------------------
+# Database maintenance
+# ---------------------------------------------------------------------------
+
+_MAINTENANCE_TABLES = ("sprint", "track", "work_item", "event", "claim", "ref", "dep")
+
+
+def vacuum_database(store: PgStore) -> dict:
+    """Run VACUUM (ANALYZE) on sprintctl tables. Requires autocommit."""
+    store.conn.commit()
+    previous_autocommit = store.conn.autocommit
+    vacuumed = []
+    try:
+        store.conn.autocommit = True
+        with store.conn.cursor() as cur:
+            for table in _MAINTENANCE_TABLES:
+                cur.execute(f"VACUUM (ANALYZE) {table}")  # noqa: S608 — fixed identifier set
+                vacuumed.append(table)
+    finally:
+        store.conn.autocommit = previous_autocommit
+    return {
+        "backend": "remote",
+        "repo_id": store.repo_id,
+        "vacuumed_tables": vacuumed,
+    }
+
+
+def check_integrity(store: PgStore) -> dict:
+    """Report repo-scoped row counts and orphan checks.
+
+    PostgreSQL enforces the foreign keys natively; the orphan queries confirm
+    the repo-scoped composite references still hold and give the same report
+    shape as the local backend's foreign_key_check.
+    """
+    orphan_queries = {
+        "work_item->sprint": (
+            "SELECT COUNT(*) AS n FROM work_item wi"
+            " LEFT JOIN sprint s ON wi.repo_id = s.repo_id AND wi.sprint_id = s.id"
+            " WHERE wi.repo_id = %s AND s.id IS NULL"
+        ),
+        "work_item->track": (
+            "SELECT COUNT(*) AS n FROM work_item wi"
+            " LEFT JOIN track t ON wi.repo_id = t.repo_id AND wi.track_id = t.id"
+            " WHERE wi.repo_id = %s AND t.id IS NULL"
+        ),
+        "claim->work_item": (
+            "SELECT COUNT(*) AS n FROM claim c"
+            " LEFT JOIN work_item wi ON c.repo_id = wi.repo_id AND c.work_item_id = wi.id"
+            " WHERE c.repo_id = %s AND wi.id IS NULL"
+        ),
+        "dep->work_item": (
+            "SELECT COUNT(*) AS n FROM dep d"
+            " LEFT JOIN work_item wi ON d.repo_id = wi.repo_id AND d.item_id = wi.id"
+            " WHERE d.repo_id = %s AND wi.id IS NULL"
+        ),
+    }
+    violations = []
+    table_counts = {}
+    with store.conn.cursor() as cur:
+        for label, query in orphan_queries.items():
+            cur.execute(query, (store.repo_id,))
+            count = cur.fetchone()["n"]
+            if count:
+                violations.append({"reference": label, "orphans": count})
+        for table in _MAINTENANCE_TABLES:
+            cur.execute(
+                f"SELECT COUNT(*) AS n FROM {table} WHERE repo_id = %s",  # noqa: S608
+                (store.repo_id,),
+            )
+            table_counts[table] = cur.fetchone()["n"]
+    store.conn.commit()
+    return {
+        "backend": "remote",
+        "repo_id": store.repo_id,
+        "ok": not violations,
+        "integrity_check": ["ok"] if not violations else ["orphaned references found"],
+        "foreign_key_violations": violations,
+        "table_counts": table_counts,
+    }

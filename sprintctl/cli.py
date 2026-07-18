@@ -297,6 +297,11 @@ def _style_status(status: str) -> str:
     return click.style(status, fg=palette.get(status, "white"), bold=True)
 
 
+def _format_priority(item: dict) -> str:
+    priority = _db.effective_priority(item)
+    return f"p{priority}" if priority is not None else "-"
+
+
 def _pad_styled(value: str, width: int) -> str:
     visible = len(click.unstyle(value))
     if visible >= width:
@@ -719,15 +724,24 @@ def item() -> None:
 @click.option("--title", required=True, help="Item title")
 @click.option("--description", default=None, help="Non-empty implementation scope or objective")
 @click.option("--assignee", default=None, help="Assignee name")
+@click.option(
+    "--priority", type=int, default=None,
+    help="Priority 1-9 (1 = highest; omit for unprioritized)",
+)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output created item as JSON")
 @click.pass_obj
-def item_add(obj, sprint_id, track_name, title, description, assignee, as_json) -> None:
+def item_add(obj, sprint_id, track_name, title, description, assignee, priority, as_json) -> None:
     """Add a work item to a sprint track."""
     if description is not None:
         try:
             _db.validate_work_item_description(description)
         except ValueError as exc:
             raise click.BadParameter(str(exc), param_hint="--description") from exc
+    if priority is not None:
+        try:
+            _db.validate_priority(priority)
+        except ValueError as exc:
+            raise click.BadParameter(str(exc), param_hint="--priority") from exc
     store, m = _get_store(obj)
     s = m.get_sprint(store, sprint_id)
     if s is None:
@@ -741,6 +755,7 @@ def item_add(obj, sprint_id, track_name, title, description, assignee, as_json) 
         title,
         description=description or "",
         assignee=assignee,
+        priority=priority,
     )
     if as_json:
         item = m.get_work_item(store, item_id)
@@ -776,6 +791,46 @@ def item_edit(obj, item_id, description, as_json) -> None:
         click.echo(json.dumps(updated, indent=2))
         return
     click.echo(f"Updated item #{item_id} description.")
+
+
+@item.command("priority")
+@click.option("--id", "item_id", type=int, required=True, help="Item ID")
+@click.option("--set", "priority", type=int, default=None, help="Priority 1-9 (1 = highest)")
+@click.option("--clear", is_flag=True, default=False, help="Clear the priority (unprioritized)")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output updated item as JSON")
+@click.pass_obj
+def item_priority(obj, item_id, priority, clear, as_json) -> None:
+    """Set or clear a work item's native priority.
+
+    Priority orders next-work suggestions (1 first, unprioritized last) and
+    replaces the legacy [pN] title-prefix convention, which remains recognized
+    as a fallback when no native priority is set.
+    """
+    if (priority is None) == (not clear):
+        click.echo("Error: pass exactly one of --set N or --clear.", err=True)
+        sys.exit(1)
+    if priority is not None:
+        try:
+            _db.validate_priority(priority)
+        except ValueError as exc:
+            raise click.BadParameter(str(exc), param_hint="--set") from exc
+
+    store, m = _get_store(obj)
+    try:
+        m.set_work_item_priority(store, item_id, None if clear else priority)
+    except ValueError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+    updated = m.get_work_item(store, item_id)
+    assert updated is not None
+    if as_json:
+        click.echo(json.dumps(updated, indent=2))
+        return
+    if clear:
+        click.echo(f"Cleared priority on item #{item_id}.")
+    else:
+        click.echo(f"Set item #{item_id} priority to p{priority}.")
 
 
 @item.command("show")
@@ -903,12 +958,14 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, as_json) -> None:
     if as_fzf:
         for it in items:
             assignee = it.get("assignee") or "-"
+            priority = _format_priority(it)
             click.echo(
                 f"#{it['id']}\t"
                 f"{_escape_fzf_field(it['status'])}\t"
                 f"{_escape_fzf_field(it['track_name'])}\t"
                 f"{_escape_fzf_field(assignee)}\t"
-                f"{_escape_fzf_field(it['title'])}"
+                f"{_escape_fzf_field(it['title'])}\t"
+                f"{_escape_fzf_field(priority)}"
             )
         return
     if not items:
@@ -921,12 +978,13 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, as_json) -> None:
             [
                 f"#{it['id']}",
                 _style_status(it["status"]),
+                _format_priority(it),
                 it["track_name"],
                 assignee,
                 it["title"],
             ]
         )
-    for line in _render_table(["ID", "STATUS", "TRACK", "ASSIGNEE", "TITLE"], rows):
+    for line in _render_table(["ID", "STATUS", "PRI", "TRACK", "ASSIGNEE", "TITLE"], rows):
         click.echo(line)
 
 
@@ -2644,6 +2702,57 @@ def takeup_show_cmd(obj, sprint_id, as_json) -> None:
 @cli.group()
 def maintain() -> None:
     """Maintenance commands (check, sweep, carryover)."""
+
+
+@cli.group("db")
+def db_group() -> None:
+    """Database maintenance (vacuum, integrity)."""
+
+
+@db_group.command("vacuum")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.pass_obj
+def db_vacuum(obj, as_json) -> None:
+    """Reclaim space: VACUUM the local sqlite DB or the remote repo tables."""
+    store, m = _get_store(obj)
+    report = m.vacuum_database(store)
+    if as_json:
+        click.echo(json.dumps(report, indent=2))
+        return
+    if report["backend"] == "local":
+        click.echo(
+            f"VACUUM complete: {report['pages_before']} -> {report['pages_after']} pages"
+            f" ({report['bytes_reclaimed']} bytes reclaimed)."
+        )
+    else:
+        click.echo(
+            "VACUUM (ANALYZE) complete on: " + ", ".join(report["vacuumed_tables"])
+        )
+
+
+@db_group.command("integrity")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.pass_obj
+def db_integrity(obj, as_json) -> None:
+    """Check structural integrity and referential consistency (read-only)."""
+    store, m = _get_store(obj)
+    report = m.check_integrity(store)
+    if as_json:
+        click.echo(json.dumps(report, indent=2))
+        if not report["ok"]:
+            sys.exit(1)
+        return
+    status = "ok" if report["ok"] else "FAILED"
+    click.echo(f"Integrity: {status}")
+    for line in report["integrity_check"]:
+        if line != "ok":
+            click.echo(f"  {line}")
+    for violation in report["foreign_key_violations"]:
+        click.echo(f"  fk violation: {violation}")
+    counts = ", ".join(f"{t}={n}" for t, n in report["table_counts"].items())
+    click.echo(f"Rows: {counts}")
+    if not report["ok"]:
+        sys.exit(1)
 
 
 def _resolve_sprint(conn, sprint_id: int | None, *, m=None) -> dict:
@@ -5194,8 +5303,8 @@ def next_work_cmd(obj, sprint_id, as_json, explain) -> None:
     rows: list[list[str]] = []
     for it in ready:
         assignee = it.get("assignee") or "-"
-        rows.append([f"#{it['id']}", it["track_name"], assignee, it["title"]])
-    for line in _render_table(["ID", "TRACK", "ASSIGNEE", "TITLE"], rows):
+        rows.append([f"#{it['id']}", _format_priority(it), it["track_name"], assignee, it["title"]])
+    for line in _render_table(["ID", "PRI", "TRACK", "ASSIGNEE", "TITLE"], rows):
         click.echo(f"  {line}")
 
 
@@ -5262,8 +5371,9 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "",
         "ITEM",
         "  item add       --sprint-id ID --track NAME --title TITLE [--description TEXT]",
-        "                 [--assignee NAME] [--json]",
+        "                 [--assignee NAME] [--priority N] [--json]",
         "  item edit      --id ID --description TEXT [--json]",
+        "  item priority  --id ID (--set N | --clear) [--json]",
         "  item show      --id ID [--json]",
         "  item list      [--sprint-id ID] [--track NAME] [--status STATUS] [--fzf] [--json]",
         "  item note      --id ID --type TYPE --summary TEXT [--detail TEXT] [--tags T1,T2]",
@@ -5297,6 +5407,8 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "  maintain check    [--sprint-id ID] [--threshold Nh] [--json]",
         "  maintain sweep    [--sprint-id ID] [--threshold Nh] [--auto-close]",
         "  maintain carryover --from-sprint ID --to-sprint ID",
+        "  db vacuum         [--json]",
+        "  db integrity      [--json]",
         "",
         "CLAIM",
         "  claim start    --item-id ID --actor NAME [--ttl N] [--branch B] [--worktree PATH]",

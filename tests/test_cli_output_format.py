@@ -148,7 +148,7 @@ class TestCliFzfOutput:
         )
         assert result.exit_code == 0, result.output
         lines = [line for line in result.output.splitlines() if line.strip()]
-        assert lines == [f"#{item_id}\tpending\tdocs\talice\tWrite docs"]
+        assert lines == [f"#{item_id}\tpending\tdocs\talice\tWrite docs\t-"]
 
     def test_item_list_fzf_disables_colorized_table_output(self, runner, conn, active_sprint):
         _item(conn, active_sprint["id"], "Task", track="eng", assignee="alice")
@@ -198,4 +198,5 @@ class TestCliFzfOutput:
             "eng\\tops\\ncore",
             "al\\nice\\t\\\\",
             "Fix\\tbad\\nline\\\\path",
+            "-",
         ]
