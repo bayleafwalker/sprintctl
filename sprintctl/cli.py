@@ -4739,7 +4739,7 @@ def claim_list(obj, item_id, show_all, as_json) -> None:
         proof = c["identity_status"]
         click.echo(
             f"#{c['claim_id']}  {c['actor']}  [{c['claim_type']}]  {excl}  "
-            f"status={c['status']}  proof={proof}  "
+            f"status={c['status']}  epoch={c['lease_epoch']}  proof={proof}  "
             f"expires={c['expires_at']}  heartbeat={c['heartbeat']}"
         )
 
@@ -4782,7 +4782,7 @@ def claim_list_sprint(obj, sprint_id, show_all, expiring_within, as_json) -> Non
         click.echo(
             f"  #{c['claim_id']}  item #{c['work_item_id']} ({c['item_title']})  "
             f"{c['actor']}  [{c['claim_type']}]  {excl}  "
-            f"status={c['status']}  "
+            f"status={c['status']}  epoch={c['lease_epoch']}  "
             f"proof={c['identity_status']}  expires={c['expires_at']}"
         )
 
@@ -4813,7 +4813,7 @@ def claim_show(obj, claim_id, claim_token, as_json) -> None:
         return
     click.echo(f"Claim #{claim_id}  actor={claim['actor']}  type={claim['claim_type']}")
     click.echo(
-        f"  status={claim['status']}  "
+        f"  status={claim['status']}  lease_epoch={claim['lease_epoch']}  "
         f"expires={claim['expires_at']}  identity_status={claim['identity_status']}"
     )
     click.echo(f"  claim_token: {claim['claim_token']}")

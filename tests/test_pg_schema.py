@@ -62,14 +62,16 @@ def test_claim_table_has_token_identity_and_retention_columns():
     block = m.group(1)
     for col in (
         "claim_token", "instance_id", "runtime_session_id", "hostname", "pid",
-        "status",
+        "status", "lease_epoch",
     ):
         assert col in block, f"claim table missing column: {col}"
     assert "status IN ('active', 'expired')" in block
+    assert "lease_epoch >= 1" in block
 
 
 def test_claim_upgrade_is_additive_for_existing_remote_tables():
     assert "ADD COLUMN IF NOT EXISTS status" in PG_DDL
+    assert "ADD COLUMN IF NOT EXISTS lease_epoch" in PG_DDL
 
 
 def test_event_table_uses_jsonb_payload():

@@ -169,6 +169,8 @@ CREATE TABLE IF NOT EXISTS claim (
     pid                integer,
     status             text        NOT NULL DEFAULT 'active'
                                       CHECK (status IN ('active', 'expired')),
+    lease_epoch        integer     NOT NULL DEFAULT 1
+                                      CHECK (lease_epoch >= 1),
     UNIQUE (repo_id, id),
     FOREIGN KEY (repo_id, work_item_id)
         REFERENCES work_item(repo_id, id)
@@ -178,6 +180,9 @@ CREATE TABLE IF NOT EXISTS claim (
 ALTER TABLE claim
     ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'
         CHECK (status IN ('active', 'expired'));
+ALTER TABLE claim
+    ADD COLUMN IF NOT EXISTS lease_epoch integer NOT NULL DEFAULT 1
+        CHECK (lease_epoch >= 1);
 
 CREATE TABLE IF NOT EXISTS ref (
     repo_id      text        NOT NULL,
@@ -1779,15 +1784,20 @@ def create_claim(
                     INSERT INTO claim
                         (repo_id, work_item_id, agent, claim_type, exclusive, expires_at,
                          branch, worktree_path, commit_sha, pr_ref,
-                         claim_token, runtime_session_id, instance_id, hostname, pid)
+                         claim_token, runtime_session_id, instance_id, hostname, pid,
+                         lease_epoch)
                     VALUES (%s, %s, %s, %s, %s,
                             now() + (%s || ' seconds')::interval,
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            COALESCE((SELECT MAX(lease_epoch) FROM claim
+                                      WHERE repo_id = %s AND work_item_id = %s
+                                        AND status = 'expired'), 0) + 1)
                     RETURNING id
                     """,
                     (store.repo_id, work_item_id, agent, claim_type, exclusive, ttl_seconds,
                      branch, worktree_path, commit_sha, pr_ref,
-                     claim_token, runtime_session_id, instance_id, hostname, pid),
+                     claim_token, runtime_session_id, instance_id, hostname, pid,
+                     store.repo_id, work_item_id),
                 )
                 row = cur.fetchone()
             store.conn.commit()
@@ -2012,13 +2022,14 @@ def handoff_claim(
             """
             UPDATE claim
             SET agent = %s, claim_token = %s,
+                lease_epoch = lease_epoch + CASE WHEN %s THEN 1 ELSE 0 END,
                 expires_at = now() + (%s || ' seconds')::interval,
                 runtime_session_id = %s, instance_id = %s, branch = %s,
                 worktree_path = %s, commit_sha = %s, pr_ref = %s,
                 hostname = %s, pid = %s, heartbeat = now()
             WHERE repo_id = %s AND id = %s
             """,
-            (actor, next_claim_token, ttl_seconds,
+            (actor, next_claim_token, mode == "rotate" or legacy_ambiguous, ttl_seconds,
              runtime_session_id, instance_id, branch, worktree_path, commit_sha, pr_ref,
              hostname, pid, store.repo_id, claim_id),
         )

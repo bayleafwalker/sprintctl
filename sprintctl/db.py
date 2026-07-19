@@ -372,6 +372,14 @@ def _migration_12(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_13(conn: sqlite3.Connection) -> None:
+    """Add the future fencing epoch without changing local claim behavior."""
+    _add_column_if_missing(
+        conn, "claim", "lease_epoch",
+        "lease_epoch INTEGER NOT NULL DEFAULT 1 CHECK (lease_epoch >= 1)",
+    )
+
+
 def _run_migration(
     conn: sqlite3.Connection,
     target_version: int,
@@ -414,6 +422,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     _run_migration(conn, 10, _migration_10)
     _run_migration(conn, 11, _migration_11)
     _run_migration(conn, 12, _migration_12)
+    _run_migration(conn, 13, _migration_13)
 
 
 # --- Sprint ---
@@ -1128,6 +1137,7 @@ def _claim_event_identity(row: sqlite3.Row | dict) -> dict:
         "claim_token_present": bool(row["claim_token"]),
         "identity_status": _claim_identity_status(row),
         "status": row["status"],
+        "lease_epoch": row["lease_epoch"],
     }
 
 

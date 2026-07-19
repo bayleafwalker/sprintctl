@@ -350,6 +350,7 @@ def _claim_effect(row: Mapping[str, Any]) -> dict[str, Any]:
         "heartbeat": _iso(row["heartbeat"]),
         "expires_at": _iso(row["expires_at"]),
         "status": row["status"],
+        "lease_epoch": int(row["lease_epoch"]),
         "runtime_session_id": row.get("runtime_session_id"),
         "instance_id": row.get("instance_id"),
     }
@@ -545,10 +546,13 @@ def _handle_claim_acquire(
         INSERT INTO claim (
             repo_id, work_item_id, agent, claim_type, exclusive, expires_at,
             branch, worktree_path, commit_sha, pr_ref, claim_token,
-            runtime_session_id, instance_id, hostname, pid
+            runtime_session_id, instance_id, hostname, pid, lease_epoch
         ) VALUES (
             %s, %s, %s, %s, %s, now() + (%s || ' seconds')::interval,
-            %s, %s, %s, %s, %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            COALESCE((SELECT MAX(lease_epoch) FROM claim
+                      WHERE repo_id = %s AND work_item_id = %s
+                        AND status = 'expired'), 0) + 1
         ) RETURNING *
         """,
         (
@@ -565,6 +569,8 @@ def _handle_claim_acquire(
             metadata.get("instance_id"),
             metadata.get("hostname"),
             metadata.get("pid"),
+            store.repo_id,
+            item["id"],
             store.repo_id,
             item["id"],
         ),
@@ -626,6 +632,7 @@ def _handle_claim_mutation(
     cur.execute(
         """
         UPDATE claim SET agent = %s, claim_token = %s,
+            lease_epoch = lease_epoch + CASE WHEN %s THEN 1 ELSE 0 END,
             heartbeat = now(), expires_at = now() + (%s || ' seconds')::interval,
             runtime_session_id = %s, instance_id = %s, branch = %s,
             worktree_path = %s, commit_sha = %s, pr_ref = %s,
@@ -635,6 +642,7 @@ def _handle_claim_mutation(
         (
             str(_required_payload(envelope, "to_actor")),
             token,
+            mode == "rotate",
             ttl,
             metadata.get("runtime_session_id"),
             metadata.get("instance_id"),

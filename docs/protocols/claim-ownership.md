@@ -13,7 +13,7 @@ This document closes the verification boundary around claim creation, proof-bear
 | Field | Contract |
 |---|---|
 | Subject | One claim set for one repository-scoped work item |
-| State variables | claim ID, item ID, type, exclusive flag, status, expiry, token, owner metadata, coordinator claim |
+| State variables | claim ID, item ID, type, exclusive flag, status, expiry, lease epoch, token, owner metadata, coordinator claim |
 | Operations | create/start, heartbeat, status mutation, release, handoff, resume, recover |
 | Claim precondition | Item exists; no conflicting live exclusive claim, except a proof-authorized coordinator delegation |
 | Proof precondition | `claim_id + claim_token`; identity and Git metadata are advisory |
@@ -57,6 +57,14 @@ keeps its existing purge behavior; it carries the same columns for schema
 parity.
 
 TTL expiry alone is still not a fencing token.
+
+`lease_epoch` is the future fencing value for a claim lineage. It starts at 1,
+advances when remote ownership proof rotates, and advances again when a new
+remote claim reacquires an item after expiry. It is exposed now so retained
+history has the right shape, but no command accepts an expected epoch and no
+downstream fencing enforcement is implemented in the single-operator path.
+Local SQLite carries the column for schema parity without changing its claim
+behavior.
 
 ## Backend parity evidence
 

@@ -31,7 +31,7 @@ Each `_run_migration` call:
 **The migration is idempotent for the caller**: running `init_db` on an
 already-migrated database is a no-op for every version already applied.
 
-Current SQLite schema version: **12**.
+Current SQLite schema version: **13**.
 
 ---
 
@@ -51,6 +51,7 @@ Current SQLite schema version: **12**.
 | 10 | Added portable aggregate UUIDs to sprints and work items |
 | 11 | Added native work item priority (1–9, nullable) |
 | 12 | Added claim `status` (`active|expired`) with a parity default |
+| 13 | Added claim `lease_epoch` with an initial value of 1 |
 
 ---
 

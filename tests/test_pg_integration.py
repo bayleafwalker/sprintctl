@@ -1161,11 +1161,22 @@ class TestMaintain:
         assert claim is not None
         assert claim["status"] == "expired"
 
-    def test_expiry_reacquire_retains_both_rows(
+    def test_expiry_reacquire_retains_both_rows_and_increments_epoch(
         self, store, sprint_id, track_id
     ):
         iid = pg.create_work_item(store, sprint_id, track_id, f"Epoch-{_uid()}")
         old_id = pg.create_claim(store, iid, "old-owner")
+        old = pg.get_claim(store, old_id, include_secret=True)
+        assert old["lease_epoch"] == 1
+
+        rotated = pg.handoff_claim(
+            store,
+            old_id,
+            old["claim_token"],
+            actor="rotated-owner",
+            mode="rotate",
+        )
+        assert rotated["lease_epoch"] == 2
         with store.conn.cursor() as cur:
             cur.execute(
                 "UPDATE claim SET expires_at = now() - interval '1 second' "
@@ -1178,6 +1189,7 @@ class TestMaintain:
         history = pg.list_claims(store, iid, active_only=False)
         assert [claim["claim_id"] for claim in history] == [old_id, new_id]
         assert [claim["status"] for claim in history] == ["expired", "active"]
+        assert [claim["lease_epoch"] for claim in history] == [2, 3]
 
 
 # ---------------------------------------------------------------------------
