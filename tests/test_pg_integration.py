@@ -216,8 +216,12 @@ class TestInitDb:
         sprint_id = pg.create_sprint(store, f"Init-{_uid()}", "G", status="active")
         assert pg.get_sprint(store, sprint_id) is not None
 
-    def test_concurrent_bootstrap_serializes_on_disposable_postgres(self, pg_test_scope):
+    def test_concurrent_bootstrap_serializes_on_disposable_postgres(self, pg_test_scope, store):
         """Two normal startup paths must wait, not deadlock on catalog DDL."""
+        # The preceding read-only assertion opens a transaction on the
+        # module-scoped store. Release its catalog locks before exercising
+        # concurrent DDL bootstrap from independent connections.
+        store.conn.rollback()
         connections = [psycopg.connect(_PG_URL, row_factory=dict_row) for _ in range(2)]
         for conn in connections:
             assert_disposable_connection(conn)
@@ -1202,7 +1206,7 @@ class TestAuthorityFaultHistories:
         assert_disposable_connection(conn)
         return pg.PgStore(conn=conn, repo_id=store.repo_id)
 
-    def test_partition_expiry_reassignment_then_stale_heartbeat_is_a_counterexample(
+    def test_partition_expiry_reassignment_then_stale_heartbeat_is_rejected(
         self,
         store,
     ):
@@ -1223,17 +1227,21 @@ class TestAuthorityFaultHistories:
             assert pg.list_claims(store, item_id, active_only=True) == []
 
             new_claim_id = pg.create_claim(replacement, item_id, "replacement-owner")
-            pg.heartbeat_claim(
-                store,
-                old_claim_id,
-                old_claim["claim_token"],
-                actor="partitioned-owner",
-            )
+            with pytest.raises(ValueError, match="expired and is no longer active"):
+                pg.heartbeat_claim(
+                    store,
+                    old_claim_id,
+                    old_claim["claim_token"],
+                    actor="partitioned-owner",
+                )
 
             active_ids = {
                 claim["claim_id"] for claim in pg.list_claims(replacement, item_id, active_only=True)
             }
-            assert active_ids == {old_claim_id, new_claim_id}
+            assert active_ids == {new_claim_id}
+            history = pg.list_claims(replacement, item_id, active_only=False)
+            assert [claim["claim_id"] for claim in history] == [old_claim_id, new_claim_id]
+            assert [claim["status"] for claim in history] == ["expired", "active"]
         finally:
             replacement.conn.close()
 

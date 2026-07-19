@@ -556,6 +556,8 @@ def _handle_claim_acquire(
         ) RETURNING *
         """,
         (
+            store.repo_id,
+            item["id"],
             str(_required_payload(envelope, "agent")),
             claim_type,
             exclusive,
@@ -569,8 +571,6 @@ def _handle_claim_acquire(
             metadata.get("instance_id"),
             metadata.get("hostname"),
             metadata.get("pid"),
-            store.repo_id,
-            item["id"],
             store.repo_id,
             item["id"],
         ),
