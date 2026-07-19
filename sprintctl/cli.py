@@ -1741,76 +1741,122 @@ def authority_submit(
     if not isinstance(command_payload, dict):
         raise click.ClickException("--payload must be a JSON object")
 
-    aggregate_type, aggregate, aggregate_uuid = _authority_command_target(
-        store, m, record_type, aggregate_id
-    )
-    basis_revision = basis_revision or _authority_basis_revision(
-        store, m, record_type, aggregate_id, aggregate
-    )
-    credentials: dict[str, str] = {}
     generated_secret: str | None = None
-    generated_ref: str | None = None
-
-    if claim_token is not None:
-        ref = _authority.credential_ref(claim_token)
-        command_payload.setdefault("credential_ref", ref)
-        credentials[ref] = claim_token
-    if coordinate_claim_token is not None:
-        ref = _authority.credential_ref(coordinate_claim_token)
-        command_payload.setdefault("coordinate_credential_ref", ref)
-        credentials[ref] = coordinate_claim_token
-    if record_type == "claim.acquire" or (
-        record_type == "claim.handoff" and command_payload.get("mode", "rotate") == "rotate"
-    ):
-        generated_secret = proposed_claim_token or secrets.token_urlsafe(24)
-        ref = _authority.credential_ref(generated_secret)
-        generated_ref = ref
-        target_field = "credential_ref" if record_type == "claim.acquire" else "proposed_credential_ref"
-        command_payload.setdefault(target_field, ref)
-        credentials[ref] = generated_secret
-    if record_type in {"claim.renew", "claim.handoff", "claim.release"}:
-        command_payload.setdefault("claim_id", aggregate_id)
-
-    refs: dict[str, object] = {
-        "repo_id": _authority_repo_uuid(rollout.paths.repo_root),
-        "aggregate_type": aggregate_type,
-        "aggregate_id": aggregate_id,
-    }
-    if aggregate_uuid is not None:
-        refs["aggregate_uuid"] = aggregate_uuid
-    if aggregate_type == "claim":
-        refs["claim_id"] = aggregate_id
-    try:
-        request = _contracts.AuthorityCommand(
-            event_id=event_id or str(uuid.uuid4()),
-            record_type=record_type,
-            schema_version="1",
-            actor=actor,
-            authored_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            refs=refs,
-            payload=command_payload,
-            basis_revision=basis_revision,
-            correlation_id=event_id or str(uuid.uuid4()),
-        )
-    except (TypeError, ValueError) as exc:
-        raise click.ClickException(str(exc)) from exc
-
-    if credentials:
-        _authority_config.store_pending_authority_credentials(
-            rollout.paths,
-            event_id=request.event_id,
-            credentials=credentials,
-            recovery_credential_ref=generated_ref,
-        )
     producer = _outbox.open_outbox(rollout.paths.outbox_path)
     try:
-        durable = _outbox.append_authority_command(
-            producer,
-            request,
-            runtime_session_id=_detect_runtime_session_id(None),
-        )
+        durable = _outbox.get_record(producer, event_id) if event_id else None
     finally:
         producer.close()
+
+    if durable is not None:
+        try:
+            request = _contracts.record_from_dict(durable.payload)
+        except (TypeError, ValueError) as exc:
+            raise click.ClickException(
+                f"durable authority request {durable.event_id!r} is invalid: {exc}"
+            ) from exc
+        if not isinstance(request, _contracts.AuthorityCommand):
+            raise click.ClickException(
+                f"event_id {durable.event_id!r} already identifies a non-authority producer record"
+            )
+        if request.record_type != record_type:
+            raise click.ClickException(
+                f"event_id {durable.event_id!r} already identifies {request.record_type!r}"
+            )
+        if request.actor != actor:
+            raise click.ClickException(
+                f"event_id {durable.event_id!r} already identifies a command from a different actor"
+            )
+        if request.refs.get("aggregate_id") != aggregate_id:
+            raise click.ClickException(
+                f"event_id {durable.event_id!r} already identifies a different aggregate"
+            )
+        if basis_revision is not None and request.basis_revision != basis_revision:
+            raise click.ClickException(
+                f"event_id {durable.event_id!r} already identifies a different basis revision"
+            )
+        if any(request.payload.get(key) != value for key, value in command_payload.items()):
+            raise click.ClickException(
+                f"event_id {durable.event_id!r} already identifies a command with a different payload"
+            )
+        try:
+            pending = _authority_config.load_pending_authority_credential(
+                rollout.paths,
+                event_id=durable.event_id,
+            )
+        except _authority_config.AuthorityCommandConfigError as exc:
+            raise click.ClickException(str(exc)) from exc
+        credentials = dict(pending.credentials) if pending is not None else {}
+    else:
+        aggregate_type, aggregate, aggregate_uuid = _authority_command_target(
+            store, m, record_type, aggregate_id
+        )
+        basis_revision = basis_revision or _authority_basis_revision(
+            store, m, record_type, aggregate_id, aggregate
+        )
+        credentials: dict[str, str] = {}
+        generated_ref: str | None = None
+
+        if claim_token is not None:
+            ref = _authority.credential_ref(claim_token)
+            command_payload.setdefault("credential_ref", ref)
+            credentials[ref] = claim_token
+        if coordinate_claim_token is not None:
+            ref = _authority.credential_ref(coordinate_claim_token)
+            command_payload.setdefault("coordinate_credential_ref", ref)
+            credentials[ref] = coordinate_claim_token
+        if record_type == "claim.acquire" or (
+            record_type == "claim.handoff" and command_payload.get("mode", "rotate") == "rotate"
+        ):
+            generated_secret = proposed_claim_token or secrets.token_urlsafe(24)
+            ref = _authority.credential_ref(generated_secret)
+            generated_ref = ref
+            target_field = "credential_ref" if record_type == "claim.acquire" else "proposed_credential_ref"
+            command_payload.setdefault(target_field, ref)
+            credentials[ref] = generated_secret
+        if record_type in {"claim.renew", "claim.handoff", "claim.release"}:
+            command_payload.setdefault("claim_id", aggregate_id)
+
+        refs: dict[str, object] = {
+            "repo_id": _authority_repo_uuid(rollout.paths.repo_root),
+            "aggregate_type": aggregate_type,
+            "aggregate_id": aggregate_id,
+        }
+        if aggregate_uuid is not None:
+            refs["aggregate_uuid"] = aggregate_uuid
+        if aggregate_type == "claim":
+            refs["claim_id"] = aggregate_id
+        try:
+            request = _contracts.AuthorityCommand(
+                event_id=event_id or str(uuid.uuid4()),
+                record_type=record_type,
+                schema_version="1",
+                actor=actor,
+                authored_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                refs=refs,
+                payload=command_payload,
+                basis_revision=basis_revision,
+                correlation_id=event_id or str(uuid.uuid4()),
+            )
+        except (TypeError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+
+        if credentials:
+            _authority_config.store_pending_authority_credentials(
+                rollout.paths,
+                event_id=request.event_id,
+                credentials=credentials,
+                recovery_credential_ref=generated_ref,
+            )
+        producer = _outbox.open_outbox(rollout.paths.outbox_path)
+        try:
+            durable = _outbox.append_authority_command(
+                producer,
+                request,
+                runtime_session_id=_detect_runtime_session_id(None),
+            )
+        finally:
+            producer.close()
 
     result: dict[str, object] = {
         "request_event_id": durable.event_id,
@@ -1824,12 +1870,16 @@ def authority_submit(
         decision = _authority.arbitrate_command(store, durable, credentials=credentials)
         result.update(decision.to_dict())
         result["status"] = decision.outcome
-        if generated_secret is not None:
+        retains_recovery_proof = request.record_type == "claim.acquire" or (
+            request.record_type == "claim.handoff"
+            and request.payload.get("mode", "rotate") == "rotate"
+        )
+        if retains_recovery_proof:
             result["credential_recovery_event_id"] = request.event_id
-        if not decision.accepted or generated_secret is None:
+        if not decision.accepted or not retains_recovery_proof:
             _authority_config.remove_pending_authority_credential(
                 rollout.paths,
-                event_id=request.event_id,
+                event_id=durable.event_id,
             )
         if not decision.accepted:
             exit_code = 2

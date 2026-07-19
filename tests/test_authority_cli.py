@@ -160,6 +160,73 @@ def test_authority_enforce_appends_then_returns_remote_decision(
         producer.close()
 
 
+def test_authority_enforce_retries_stable_event_id_through_remote_duplicate(
+    runner, conn, tmp_path, monkeypatch
+):
+    import sprintctl.cli as cli_module
+
+    _configure_repo(tmp_path)
+    sprint_id = db.create_sprint(conn, "Authority duplicate", status="active")
+    track_id = db.get_or_create_track(conn, sprint_id, "authority")
+    item_id = db.create_work_item(conn, sprint_id, track_id, "Duplicate item")
+    item = db.get_work_item(conn, item_id)
+    fake_store = SimpleNamespace(authority_repo_uuid=None)
+    fake_module = SimpleNamespace(get_work_item=lambda _store, _id: item)
+    calls = []
+    event_id = str(uuid4())
+
+    def fake_get_store(obj):
+        obj["backend_config"] = SimpleNamespace(mode="remote")
+        return fake_store, fake_module
+
+    def fake_arbitrate(store, record, *, credentials):
+        calls.append((store, record, credentials))
+        return authority.AuthorityDecision(
+            request_event_id=record.event_id,
+            decision_event_id="a57ad11d-5425-4bd1-b1fe-a2432d6c97e8",
+            decision_ingest_offset=17,
+            decision_type="item.transitioned",
+            outcome="accepted",
+            reason_code=None,
+            reason_detail=None,
+            effect={"item_id": item_id, "status": "active"},
+            duplicate=len(calls) > 1,
+        )
+
+    monkeypatch.setattr(cli_module, "_get_store", fake_get_store)
+    monkeypatch.setattr(cli_module._authority, "arbitrate_command", fake_arbitrate)
+    assert runner.invoke(cli, ["authority", "mode", "--set", "enforce"]).exit_code == 0
+    command = [
+        "authority",
+        "submit",
+        "--type",
+        "item.transition",
+        "--aggregate-id",
+        str(item_id),
+        "--payload",
+        '{"to_status":"active"}',
+        "--event-id",
+        event_id,
+        "--actor",
+        "operator",
+        "--json",
+    ]
+
+    first = runner.invoke(cli, command)
+    assert first.exit_code == 0, first.output
+    second = runner.invoke(cli, command)
+    assert second.exit_code == 0, second.output
+    assert json.loads(second.output)["duplicate"] is True
+    assert [record.event_id for _store, record, _credentials in calls] == [event_id, event_id]
+    assert calls[0][1] == calls[1][1]
+
+    producer = outbox.open_outbox(tmp_path / ".sprintctl" / "authority-command-outbox.db")
+    try:
+        assert [record.event_id for record in outbox.list_records(producer)] == [event_id]
+    finally:
+        producer.close()
+
+
 def test_shadow_claim_acquire_persists_private_recoverable_proof(runner, conn, tmp_path):
     _configure_repo(tmp_path)
     sprint_id = db.create_sprint(conn, "Authority proof", status="active")

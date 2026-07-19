@@ -307,6 +307,15 @@ def list_records(conn: sqlite3.Connection) -> list[OutboxRecord]:
     return [_record_from_row(row) for row in rows]
 
 
+def get_record(conn: sqlite3.Connection, event_id: str) -> OutboxRecord | None:
+    """Return one durable producer record by its stable event identity."""
+    event_id = _required_text(event_id, "event_id")
+    row = conn.execute(
+        "SELECT * FROM outbox_record WHERE event_id = ?", (event_id,)
+    ).fetchone()
+    return _record_from_row(row) if row is not None else None
+
+
 def _get_or_create_stream(conn: sqlite3.Connection, created_at: str) -> tuple[str, int]:
     row = conn.execute(
         "SELECT origin_stream_id, next_origin_seq FROM outbox_stream WHERE singleton = 1"
