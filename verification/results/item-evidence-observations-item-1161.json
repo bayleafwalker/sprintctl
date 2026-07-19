@@ -1,0 +1,82 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.item-evidence.observations",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:75d3c0c889a477ea56790371acae18f1dd7541b6"
+  },
+  "implementation_sha": "working-tree:item-1161-base-8c970b30a560112618962c344f14cd25c6c3bf2c",
+  "depth": 2,
+  "environment": {
+    "backend": "tmpfs-sqlite-producer-and-cache-plus-disposable-postgresql-18.4",
+    "isolation": "repository-local pilot paths under pytest tmp roots; dedicated unprivileged PostgreSQL test role and disposable database with zero shared-backend access",
+    "tool_versions": {
+      "python": "3.14.6",
+      "pytest": "9.0.2",
+      "postgresql": "18.4"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 7,
+    "bounds": {
+      "backends": 2,
+      "producer_streams": 1,
+      "work_items": 1,
+      "runtime_sessions": 1,
+      "identical_retries": 1,
+      "basis_advances": 1,
+      "cached_replays": 1
+    },
+    "faults_exercised": [
+      "authority-backend-unavailable-during-append",
+      "lost-response-followed-by-identical-retry",
+      "item-authority-advances-after-observation-authorship",
+      "same-observation-visible-in-local-and-cached-ingest-stores",
+      "untyped-session-capsule-payload-at-remote-ingest"
+    ]
+  },
+  "claims": [
+    {
+      "property": "work.completed and session-capsule.recorded append offline with item and runtime-session linkage but no authority mutation",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_item_evidence_observations.py validated both typed contracts and direct producer append",
+        "the CLI history retained active item status and an unchanged authoritative event list",
+        "generic event writes cannot bypass the capsule-pointer contract"
+      ]
+    },
+    {
+      "property": "identical event retry and local-plus-ingested replay converge to one visible immutable observation",
+      "result": "example-tested",
+      "evidence": [
+        "SQLite producer retry retained one origin sequence",
+        "local and cached projection copies rendered once with both storage flags",
+        "disposable PostgreSQL returned the original ingest offset with duplicate=true"
+      ]
+    },
+    {
+      "property": "an observation authored against a stale basis is retained and classified anachronistic without applying item.done",
+      "result": "example-tested",
+      "evidence": [
+        "SQLite CLI history rendered the old and current opaque revisions as anachronistic",
+        "disposable PostgreSQL history advanced the item to done before ingest and observed no further status change"
+      ]
+    },
+    {
+      "property": "session-capsule/v1 content remains external and only an immutable artifact pointer crosses the sprintctl observation boundary",
+      "result": "example-tested",
+      "evidence": [
+        "capsule ref requires artifact kind and sha256 revision",
+        "unknown fields such as embedded raw transcript material are rejected",
+        "remote ingest rejects untyped session-capsule.recorded payloads"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "The final focused contract, outbox, CLI, ingest, doctor, and regression set passed 40 tests; the disposable PostgreSQL item history passed independently.",
+    "The consolidated non-PostgreSQL suite passed 872 of 873 tests; the sole concurrent SQLite migration flake passed repeatedly in isolation. Four filesystem-sensitive performance cases passed on tmpfs in 0.18 seconds.",
+    "A full PostgreSQL sweep was not used as evidence because an existing read transaction blocks the independent projection-rebuild migration test; this item did not broaden into transaction-lifecycle repair."
+  ]
+}

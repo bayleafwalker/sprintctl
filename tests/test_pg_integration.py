@@ -44,7 +44,7 @@ pytestmark = [
 ]
 
 # Safe unconditional imports: pg.py handles missing psycopg gracefully.
-from sprintctl import authority, contracts, maintain, pg, projection, sync
+from sprintctl import authority, contracts, maintain, observations, pg, projection, sync
 from sprintctl import outbox
 from sprintctl.db import ClaimConflict, InvalidTransition
 from sprintctl.pg_testing import (
@@ -401,6 +401,55 @@ class TestProducerOutboxIngestion:
         assert [result.ingest_offset for result in ordered] == [result.ingest_offset for result in admitted]
         assert [result.record.created_at for result in ordered] == [first.created_at, second.created_at]
         assert ordered[1].ingest_offset > ordered[0].ingest_offset
+
+    def test_item_evidence_ingest_deduplicates_stale_basis_without_status_mutation(
+        self, store, tmp_path
+    ):
+        sprint_id = pg.create_sprint(store, f"Evidence-ingest-{_uid()}", status="active")
+        track_id = pg.get_or_create_track(store, sprint_id, "protocol")
+        item_id = pg.create_work_item(store, sprint_id, track_id, f"Evidence-item-{_uid()}")
+        pg.set_work_item_status(store, item_id, "active")
+        item_before = pg.get_work_item(store, item_id)
+
+        producer = outbox.open_outbox(tmp_path / "item-evidence.db")
+        try:
+            record = observations.append_item_evidence_observation(
+                producer,
+                event_type=observations.WORK_COMPLETED,
+                actor="session-wrapper",
+                repo_id=store.repo_id,
+                sprint_id=sprint_id,
+                work_item_id=item_id,
+                runtime_session_id="session-pg-evidence",
+                summary="Work completed while offline",
+                evidence_refs=[
+                    {
+                        "kind": "git-commit",
+                        "source": f"repo:{store.repo_id}",
+                        "revision": "a" * 40,
+                    }
+                ],
+                basis_revision=authority.item_revision(item_before),
+                authored_at="2026-07-19T12:00:00Z",
+            )
+        finally:
+            producer.close()
+
+        pg.set_work_item_status(store, item_id, "done")
+        current = pg.get_work_item(store, item_id)
+        admitted = pg.ingest_records(store, [record])
+        retried = pg.ingest_records(store, [record])
+        projected = observations.project_item_evidence(
+            retried[0].record,
+            current_revision=authority.item_revision(current),
+        )
+
+        assert admitted[0].duplicate is False
+        assert retried[0].duplicate is True
+        assert retried[0].ingest_offset == admitted[0].ingest_offset
+        assert projected.basis.classification is observations.BasisClassification.ANACHRONISTIC
+        assert projected.runtime_session_id == "session-pg-evidence"
+        assert pg.get_work_item(store, item_id)["status"] == "done"
 
     def test_changed_producer_timestamp_conflicts_with_existing_origin_tuple(self, store, tmp_path):
         first = self._records(tmp_path, count=1)[0]

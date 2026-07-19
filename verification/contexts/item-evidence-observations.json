@@ -1,0 +1,117 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.item-evidence.observations",
+  "owner_repo": "sprintctl",
+  "subject": "offline-item-linked-session-capsule-and-work-completed-observations",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:75d3c0c889a477ea56790371acae18f1dd7541b6"
+  },
+  "source_of_truth": "immutable-producer-outbox-and-remote-ingest-ledger-not-item-status",
+  "depth": 2,
+  "backends": [
+    "sqlite-producer-outbox",
+    "sqlite-cached-ingest-projection",
+    "disposable-postgresql-18-ingest-ledger"
+  ],
+  "actors": [
+    "session-wrapper",
+    "observation-sync",
+    "evidence-reader",
+    "item-authority"
+  ],
+  "initial_state": [
+    "pilot-is-explicitly-enabled-for-the-repository",
+    "work-item-is-active-at-an-observed-basis-revision",
+    "producer-outbox-and-cached-projection-contain-no-item-evidence"
+  ],
+  "operations": [
+    {
+      "name": "append-work-completed-with-item-session-and-immutable-evidence-refs",
+      "actors": ["session-wrapper"],
+      "synchronization": "while-authority-backend-is-unopened"
+    },
+    {
+      "name": "retry-identical-observation-event-id",
+      "actors": ["session-wrapper"],
+      "synchronization": "after-first-local-commit"
+    },
+    {
+      "name": "append-session-capsule-artifact-pointer",
+      "actors": ["session-wrapper"],
+      "synchronization": "after-agentops-session-capsule-v1-is-finalized"
+    },
+    {
+      "name": "advance-item-authority-after-observation-basis",
+      "actors": ["item-authority"],
+      "synchronization": "before-evidence-read"
+    },
+    {
+      "name": "ingest-and-retry-observation-in-disposable-remote-ledger",
+      "actors": ["observation-sync"],
+      "synchronization": "after-local-append-and-after-item-authority-advance"
+    },
+    {
+      "name": "union-local-and-ingested-evidence-by-event-id",
+      "actors": ["observation-sync", "evidence-reader"],
+      "synchronization": "after-cached-ingest-apply"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "item-linked-observation-evidence-and-authority-separation"
+  },
+  "assumptions": {
+    "isolation": "SQLite BEGIN IMMEDIATE serializes producer sequence allocation; PostgreSQL remote admission locks the producer stream in a disposable database",
+    "clock": "authored timestamps are UTC; basis classification compares explicit opaque revision strings",
+    "fairness": "a later sync may ingest durable observations but is not required for offline append"
+  },
+  "bounds": {
+    "backends": 2,
+    "producer_streams": 1,
+    "work_items": 1,
+    "runtime_sessions": 1,
+    "identical_retries": 1,
+    "basis_advances": 1,
+    "cached_replays": 1
+  },
+  "invariants": [
+    "work-completed-and-session-capsule-recorded-are-observations-not-authority-commands",
+    "every-supported-observation-carries-a-positive-sprint-and-item-link-and-runtime-session-id",
+    "session-capsules-are-represented-only-by-immutable-artifact-pointers",
+    "identical-event-id-retry-does-not-allocate-another-producer-sequence",
+    "stale-basis-observation-is-retained-and-rendered-as-anachronistic",
+    "local-and-ingested-copies-union-to-one-visible-observation",
+    "observation-append-and-read-do-not-transition-item-status-or-write-authority-events"
+  ],
+  "faults": [
+    "authority-backend-unavailable-during-append",
+    "lost-response-followed-by-identical-retry",
+    "item-authority-advances-after-observation-authorship",
+    "same-observation-visible-in-local-and-cached-ingest-stores",
+    "raw-or-mutable-capsule-material-supplied-instead-of-an-immutable-pointer"
+  ],
+  "oracles": [
+    "producer-origin-sequence-query",
+    "typed-item-evidence-projection",
+    "explicit-basis-classification",
+    "local-and-cached-storage-flags",
+    "authoritative-item-status-and-event-history-query"
+  ],
+  "implementation_anchors": [
+    "sprintctl/observations.py:append_item_evidence_observation",
+    "sprintctl/observations.py:project_item_evidence",
+    "sprintctl/observations.py:classify_basis",
+    "sprintctl/pg.py:_prepare_ingest_record",
+    "sprintctl/pg.py:_iso",
+    "sprintctl/cli.py:event_observation_add",
+    "sprintctl/cli.py:event_observation_list",
+    "tests/test_item_evidence_observations.py",
+    "tests/test_pg_integration.py:test_item_evidence_ingest_deduplicates_stale_basis_without_status_mutation"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "stateful-test",
+    "fault-scenario"
+  ]
+}

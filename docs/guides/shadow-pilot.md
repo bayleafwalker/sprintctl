@@ -36,6 +36,43 @@ Authority commands, remote decisions, and unclassified generic events are not
 mirrored. A shadow error is reported to the command result but never rolls back
 an already committed authority event.
 
+## Append item-linked session evidence offline
+
+When the pilot is enabled, a producer can append typed evidence directly to
+the local outbox without opening either authority backend:
+
+```sh
+sprintctl event observation add \
+  --type work.completed \
+  --sprint-id 407 \
+  --item-id 1161 \
+  --actor session-wrapper \
+  --runtime-session-id session-1161 \
+  --summary "Implementation and verification completed" \
+  --evidence-ref '{"kind":"git-commit","source":"repo:sprintctl","revision":"<commit>"}' \
+  --basis-revision 'item:<uuid>@status:active'
+```
+
+`session-capsule.recorded` accepts the same item/session linkage plus a
+`--capsule-ref` whose kind is `artifact` and whose revision is a SHA-256
+digest. The AgentOps-owned `session-capsule/v1` remains external; sprintctl
+stores only its immutable pointer and never raw prompt or transcript content.
+
+Retries should reuse `--event-id`; the producer outbox returns the existing
+immutable record instead of allocating another sequence. Inspect local and
+already-ingested evidence with an explicit comparison basis:
+
+```sh
+sprintctl event observation list \
+  --item-id 1161 \
+  --current-basis-revision 'item:<uuid>@status:done' \
+  --json
+```
+
+The list classifies a mismatched retained basis as `anachronistic`. It does
+not discard the observation or issue `item.done`; every result reports
+`authority_mutated: false`.
+
 ## Compare and synchronize
 
 ```sh

@@ -23,6 +23,7 @@ from . import db as _db
 from . import doctor as _doctor
 from . import dualwrite as _dualwrite
 from . import maintain as _maintain
+from . import observations as _observations
 from . import outbox as _outbox
 from . import pilot as _pilot
 from . import project as _project
@@ -1632,6 +1633,257 @@ def _pilot_status_payload() -> dict:
 @cli.group()
 def event() -> None:
     """Manage events."""
+
+
+@event.group("observation")
+def event_observation() -> None:
+    """Manage offline, item-linked evidence observations."""
+
+
+def _parse_evidence_ref_option(value: str, option_name: str) -> dict:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise click.ClickException(f"{option_name} must be a JSON object: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise click.ClickException(f"{option_name} must be a JSON object")
+    return parsed
+
+
+def _item_evidence_pilot_status(*, require_enabled: bool) -> _pilot.ShadowPilotStatus:
+    try:
+        status = _pilot.shadow_pilot_status(cwd=Path.cwd())
+    except _pilot.ShadowPilotConfigError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if require_enabled and not status.enabled:
+        raise click.ClickException(
+            "shadow pilot is disabled; run 'sprintctl pilot enable' before appending observations"
+        )
+    return status
+
+
+@event_observation.command("add")
+@click.option(
+    "--type",
+    "event_type",
+    type=click.Choice(_observations.ITEM_EVIDENCE_EVENT_TYPES),
+    required=True,
+)
+@click.option("--sprint-id", type=int, required=True, help="Linked sprint ID")
+@click.option("--item-id", "work_item_id", type=int, required=True, help="Linked work item ID")
+@click.option("--actor", required=True, help="Observation author")
+@click.option("--repo-id", default=None, help="Repository scope; defaults to the current repo")
+@click.option(
+    "--runtime-session-id",
+    default=None,
+    help="Runtime session correlation; defaults from SPRINTCTL_RUNTIME_SESSION_ID or CODEX_THREAD_ID",
+)
+@click.option("--summary", default=None, help="Required summary for work.completed")
+@click.option(
+    "--evidence-ref",
+    "evidence_ref_values",
+    multiple=True,
+    help='Immutable ref JSON: {"kind":"git-commit","source":"repo:name","revision":"..."}',
+)
+@click.option(
+    "--capsule-ref",
+    default=None,
+    help='session-capsule/v1 artifact ref JSON with an artifact kind and sha256 revision',
+)
+@click.option("--basis-revision", default=None, help="Aggregate revision observed by the producer")
+@click.option("--event-id", default=None, help="Stable observation UUID for idempotent retry")
+@click.option("--occurred-at", default=None, help="ISO 8601 observation time; defaults to now")
+@click.option("--correlation-id", default=None, help="Optional correlation UUID")
+@click.option("--causation-id", default=None, help="Optional causation UUID")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output JSON")
+def event_observation_add(
+    event_type,
+    sprint_id,
+    work_item_id,
+    actor,
+    repo_id,
+    runtime_session_id,
+    summary,
+    evidence_ref_values,
+    capsule_ref,
+    basis_revision,
+    event_id,
+    occurred_at,
+    correlation_id,
+    causation_id,
+    as_json,
+) -> None:
+    """Append evidence without reading or mutating authoritative item state."""
+    status = _item_evidence_pilot_status(require_enabled=True)
+    runtime_session_id = _detect_runtime_session_id(runtime_session_id)
+    if runtime_session_id is None:
+        raise click.ClickException(
+            "runtime session identity is required; pass --runtime-session-id or set "
+            "SPRINTCTL_RUNTIME_SESSION_ID"
+        )
+    if repo_id is None:
+        try:
+            _root, repo_id, _marker = _backend.resolve_repo_identity(Path.cwd())
+        except _backend.BackendConfigError as exc:
+            raise click.ClickException(str(exc)) from exc
+        if repo_id is None:
+            raise click.ClickException("cannot resolve repo_id; pass --repo-id explicitly")
+    evidence_refs = [
+        _parse_evidence_ref_option(value, "--evidence-ref")
+        for value in evidence_ref_values
+    ]
+    capsule = (
+        _parse_evidence_ref_option(capsule_ref, "--capsule-ref")
+        if capsule_ref is not None
+        else None
+    )
+    producer = _outbox.open_outbox(status.paths.outbox_path)
+    try:
+        existing = _outbox.get_record(producer, event_id) if event_id is not None else None
+        duplicate = existing is not None
+        occurred_at = occurred_at or (
+            existing.occurred_at
+            if existing is not None
+            else datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
+                "+00:00", "Z"
+            )
+        )
+        record = _observations.append_item_evidence_observation(
+            producer,
+            event_type=event_type,
+            actor=actor,
+            repo_id=repo_id,
+            sprint_id=sprint_id,
+            work_item_id=work_item_id,
+            evidence_refs=evidence_refs,
+            summary=summary,
+            capsule_ref=capsule,
+            basis_revision=basis_revision,
+            event_id=event_id,
+            authored_at=occurred_at,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            runtime_session_id=runtime_session_id,
+        )
+        projected = _observations.project_item_evidence(record)
+    except (TypeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        producer.close()
+
+    payload = {
+        "operation": "event_observation_add",
+        "disposition": "duplicate" if duplicate else "appended",
+        "observation": projected.to_dict(),
+        "outbox_path": str(status.paths.outbox_path),
+    }
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+    else:
+        click.echo(
+            f"{payload['disposition'].capitalize()} {event_type} observation "
+            f"{record.event_id} for item #{work_item_id}; authority unchanged."
+        )
+
+
+@event_observation.command("list")
+@click.option("--item-id", "work_item_id", type=int, default=None, help="Filter by work item ID")
+@click.option(
+    "--type",
+    "event_type",
+    type=click.Choice(_observations.ITEM_EVIDENCE_EVENT_TYPES),
+    default=None,
+)
+@click.option(
+    "--current-basis-revision",
+    default=None,
+    help="Current aggregate revision used to classify retained observations",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output JSON")
+def event_observation_list(work_item_id, event_type, current_basis_revision, as_json) -> None:
+    """List local and ingested evidence with explicit stale-basis visibility."""
+    status = _item_evidence_pilot_status(require_enabled=False)
+    records_by_id: dict[str, dict] = {}
+
+    if status.paths.outbox_path.exists():
+        producer = _outbox.open_outbox(status.paths.outbox_path)
+        try:
+            for record in _outbox.list_records(producer):
+                records_by_id[record.event_id] = {
+                    "record": record,
+                    "local": True,
+                    "ingested": False,
+                    "ingest_offset": None,
+                }
+        finally:
+            producer.close()
+
+    watermark = None
+    if status.paths.projection_path.exists():
+        cache = _projection.open_cached_projection(status.paths.projection_path)
+        try:
+            projected_watermark = _projection.get_watermark(cache)
+            watermark = {
+                "ingest_offset": projected_watermark.ingest_offset,
+                "advanced_at": projected_watermark.advanced_at,
+            }
+            for cached in _projection.list_cached_records(cache):
+                record = _observations.transport_record_from_mapping(cached.record)
+                entry = records_by_id.setdefault(
+                    record.event_id,
+                    {
+                        "record": record,
+                        "local": False,
+                        "ingested": True,
+                        "ingest_offset": cached.ingest_offset,
+                    },
+                )
+                if entry["record"] != record:
+                    raise click.ClickException(
+                        f"local and cached observation {record.event_id} disagree"
+                    )
+                entry["ingested"] = True
+                entry["ingest_offset"] = cached.ingest_offset
+        finally:
+            cache.close()
+
+    rendered = []
+    try:
+        observations = _observations.list_item_evidence(
+            (entry["record"] for entry in records_by_id.values()),
+            work_item_id=work_item_id,
+            event_type=event_type,
+            current_revision=current_basis_revision,
+        )
+    except (TypeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    for observation in observations:
+        value = observation.to_dict()
+        storage = records_by_id[observation.event_id]
+        value["storage"] = {
+            "local": storage["local"],
+            "ingested": storage["ingested"],
+            "ingest_offset": storage["ingest_offset"],
+        }
+        rendered.append(value)
+
+    payload = {
+        "observations": rendered,
+        "count": len(rendered),
+        "watermark": watermark,
+        "authority_mutated": False,
+    }
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+        return
+    if not rendered:
+        click.echo("No item evidence observations found.")
+        return
+    for value in rendered:
+        click.echo(
+            f"{value['event_id']}  {value['event_type']}  item #{value['work_item_id']}  "
+            f"basis={value['basis']['classification']}  session={value['runtime_session_id']}"
+        )
 
 
 def _event_add_impl(

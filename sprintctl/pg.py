@@ -661,6 +661,15 @@ def _prepare_ingest_record(
         payload_sha256=payload_sha256,
         created_at=created_at,
     )
+    if (
+        event_type == _contracts.SESSION_CAPSULE_RECORDED_EVENT_TYPE
+        or record.payload.get("schema_version") == "sprintctl-item-evidence/v1"
+    ):
+        # Import lazily: the typed observation module depends on the producer
+        # outbox, while this ingest module is imported by synchronization.
+        from . import observations as _observations
+
+        _observations.project_item_evidence(normalized)
     return _PreparedIngestRecord(normalized, payload_json, record_sha256)
 
 
@@ -947,6 +956,8 @@ def _iso(value: Any) -> str | None:
     if isinstance(value, datetime):
         if value.tzinfo is None:
             value = value.replace(tzinfo=timezone.utc)
+        else:
+            value = value.astimezone(timezone.utc)
         return value.strftime("%Y-%m-%dT%H:%M:%SZ")
     return str(value)
 

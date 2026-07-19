@@ -17,6 +17,7 @@ CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE = "capability-receipt-drafted"
 CAPABILITY_RECEIPT_DRAFTED_IMPORTED_EVENT_TYPE = "capability-receipt-drafted-imported"
 SPRINT_CLOSE_BOUNDARY_EVENT_TYPE = "sprint-close-boundary"
 SPRINT_CLOSE_BOUNDARY_IMPORTED_EVENT_TYPE = "sprint-close-boundary-imported"
+SESSION_CAPSULE_RECORDED_EVENT_TYPE = "session-capsule.recorded"
 
 _CAPABILITY_RECEIPT_EVENT_PREFIX = "capability-receipt-"
 _IMPORT_ONLY_EVENT_TYPES = {
@@ -66,6 +67,7 @@ SPRINTCTL_RECORD_TYPE_CLASSES: dict[str, RecordClass] = {
     "note.recorded": RecordClass.OBSERVATION,
     "decision.recorded": RecordClass.OBSERVATION,
     "work.completed": RecordClass.OBSERVATION,
+    SESSION_CAPSULE_RECORDED_EVENT_TYPE: RecordClass.OBSERVATION,
     "doc-ref.added": RecordClass.OBSERVATION,
     "command.requested": RecordClass.AUTHORITY_COMMAND,
     "item.done": RecordClass.AUTHORITY_COMMAND,
@@ -806,6 +808,10 @@ def canonicalize_event_payload(event_type: str, payload: Mapping[str, Any] | Non
 
 def require_generic_event_write_allowed(event_type: str) -> None:
     """Reject event names whose provenance requires an internal workflow."""
+    if event_type == SESSION_CAPSULE_RECORDED_EVENT_TYPE:
+        raise ValueError(
+            "session-capsule.recorded is reserved; use event observation add"
+        )
     if event_type == SPRINT_CLOSE_BOUNDARY_EVENT_TYPE:
         raise ValueError(
             "sprint-close-boundary is reserved; use the atomic sprint close operation"

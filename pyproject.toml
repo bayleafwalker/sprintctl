@@ -22,6 +22,7 @@ packages = ["sprintctl"]
 
 [tool.sprintctl]
 capabilities = [
+    "item-evidence-observations/v1",
     "normalized-scope-refs/v1",
     "portable-aggregate-uuid-json/v1",
     "remote-backend/v1",
