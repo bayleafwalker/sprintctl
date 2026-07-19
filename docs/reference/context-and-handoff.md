@@ -119,6 +119,29 @@ Compatibility note:
 
 - `next-work --json` (without `--explain`) preserves the legacy list-only output shape.
 
+## Opt-in project union contracts
+
+The `--project PROJECT_TOML` option adds a read-only multi-repository form to
+`usage --context`, `next-work`, `item list`, and `sprint list`. It selects only
+project members whose binding has `backlog = true` and adds `origin_repo` to
+every returned row or nested record. See the
+[multi-repository project scope guide](../guides/project-scope.md) for binding
+resolution, sprint selection, and the local-mode boundary.
+
+Project scope does not change the contracts above when the option is absent.
+In particular:
+
+- a nearby `project.toml` never activates implicitly;
+- `usage --context --json` remains contract version `1`;
+- `next-work --json --explain` remains contract version `1`;
+- `next-work --json` remains the legacy list-only shape.
+
+With `--project`, the list-only views remain lists and add `origin_repo` per
+row. The richer context and explain views use contract version `project-1` and
+wrap per-repository version-1 payloads in `repositories[]`, together with an
+attributed union and aggregate summary. This wrapper is opt-in and therefore
+does not widen the standalone contract.
+
 ## `session resume --json`
 
 `session resume --json` is a convenience resume contract that bundles:

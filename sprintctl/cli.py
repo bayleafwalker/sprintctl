@@ -25,6 +25,7 @@ from . import dualwrite as _dualwrite
 from . import maintain as _maintain
 from . import outbox as _outbox
 from . import pilot as _pilot
+from . import project as _project
 from . import projection as _projection
 from . import shadow as _shadow
 from . import sync as _sync
@@ -157,6 +158,140 @@ def _get_store(obj: dict):
         obj["pg_store"] = store
         click.get_current_context().call_on_close(store.conn.close)
     return store, _pg
+
+
+def _get_project_stores(obj: dict, project_value: str | Path):
+    """Return a validated project plus one read-only store per backlog member."""
+    try:
+        project_path = _project.resolve_project_path(project_value)
+        project = _project.load_project(project_path)
+    except _project.ProjectConfigError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    store, m = _get_store(obj)
+    config = obj["backend_config"]
+    members = project.backlog_members
+    if config.mode == "local":
+        if len(members) != 1:
+            raise click.ClickException(
+                "multi-repository --project views require the remote backend; "
+                "local SQLite supports one backlog member only"
+            )
+        member = members[0]
+        if config.repo_id is not None and member.repo_id != config.repo_id:
+            raise click.ClickException(
+                f"local project backlog member {member.repo_id!r} does not match "
+                f"the current repository {config.repo_id!r}"
+            )
+        return project, [(member.repo_id, store, m)]
+
+    scopes = [
+        (member.repo_id, m.PgStore(conn=store.conn, repo_id=member.repo_id), m)
+        for member in members
+    ]
+    return project, scopes
+
+
+def _with_origin(value: dict, repo_id: str) -> dict:
+    return {**value, "origin_repo": repo_id}
+
+
+def _project_sprints(scopes: list[tuple[str, object, object]], sprint_id: int | None):
+    resolved: list[tuple[str, object, object, dict]] = []
+    unavailable: list[dict] = []
+    for repo_id, store, m in scopes:
+        if sprint_id is not None:
+            sprint = m.get_sprint(store, sprint_id)
+            if sprint is None:
+                unavailable.append(
+                    {
+                        "origin_repo": repo_id,
+                        "reason_code": "sprint-not-found",
+                        "message": f"Sprint #{sprint_id} not found.",
+                    }
+                )
+                continue
+        else:
+            backlog_sprints = [
+                sprint
+                for sprint in m.list_sprints(store)
+                if sprint.get("kind") == "backlog" and sprint.get("status") != "closed"
+            ]
+            if len(backlog_sprints) > 1:
+                candidates = ", ".join(f"#{sprint['id']}" for sprint in backlog_sprints)
+                unavailable.append(
+                    {
+                        "origin_repo": repo_id,
+                        "reason_code": "ambiguous-backlog-sprints",
+                        "message": f"Multiple backlog sprints ({candidates}).",
+                    }
+                )
+                continue
+            if backlog_sprints:
+                sprint = backlog_sprints[0]
+                resolved.append((repo_id, store, m, sprint))
+                continue
+
+            active = m.list_active_sprints(store)
+            if not active:
+                unavailable.append(
+                    {
+                        "origin_repo": repo_id,
+                        "reason_code": "no-backlog-or-active-sprint",
+                        "message": "No backlog or active sprint found.",
+                    }
+                )
+                continue
+            if len(active) > 1:
+                candidates = ", ".join(f"#{sprint['id']}" for sprint in active)
+                unavailable.append(
+                    {
+                        "origin_repo": repo_id,
+                        "reason_code": "ambiguous-active-sprints",
+                        "message": f"Multiple active sprints ({candidates}).",
+                    }
+                )
+                continue
+            sprint = active[0]
+        resolved.append((repo_id, store, m, sprint))
+    if not resolved:
+        detail = "; ".join(
+            f"{entry['origin_repo']}: {entry['message']}" for entry in unavailable
+        )
+        raise click.ClickException(f"project scope has no resolvable sprint ({detail})")
+    return resolved, unavailable
+
+
+def _tag_next_work_payload(payload: dict, repo_id: str) -> dict:
+    tagged = dict(payload)
+    tagged["sprint"] = _with_origin(payload["sprint"], repo_id)
+    for key in (
+        "ready_items",
+        "dependency_waiting_items",
+        "active_claims",
+        "active_unclaimed_items",
+        "conflicts",
+    ):
+        tagged[key] = [_with_origin(value, repo_id) for value in payload[key]]
+    tagged["next_action"] = _with_origin(payload["next_action"], repo_id)
+    return tagged
+
+
+def _tag_context_payload(payload: dict, repo_id: str) -> dict:
+    tagged = dict(payload)
+    tagged["sprint"] = _with_origin(payload["sprint"], repo_id)
+    for key in (
+        "active_claims",
+        "active_unclaimed_items",
+        "conflicts",
+        "ready_items",
+        "blocked_items",
+        "stale_items",
+        "recent_decisions",
+    ):
+        tagged[key] = [_with_origin(value, repo_id) for value in payload[key]]
+    tagged["next_action"] = _with_origin(payload["next_action"], repo_id)
+    return tagged
 
 
 def _local_recovery_available() -> bool:
@@ -616,15 +751,34 @@ def sprint_status(obj, sprint_id, new_status, actor, as_json) -> None:
 @click.option("--include-backlog", is_flag=True, default=False, help="Include backlog sprints")
 @click.option("--include-archive", is_flag=True, default=False, help="Include archive sprints")
 @click.option("--active", "active_only", is_flag=True, default=False, help="Show active active_sprint sprints")
+@click.option(
+    "--project",
+    "project_path",
+    type=click.Path(path_type=Path),
+    is_flag=False,
+    flag_value=Path("."),
+    help="Union backlog repositories from project.toml (a directory resolves upward).",
+)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
-def sprint_list(obj, include_backlog, include_archive, active_only, as_json) -> None:
+def sprint_list(obj, include_backlog, include_archive, active_only, project_path, as_json) -> None:
     """List sprints (active_sprint kind by default; use flags to include others)."""
-    store, m = _get_store(obj)
-    if active_only:
-        sprints = m.list_active_sprints(store)
+    if project_path is None:
+        scopes = [(None, *_get_store(obj))]
     else:
-        sprints = m.list_sprints(store)
+        _binding, scopes = _get_project_stores(obj, project_path)
+
+    sprints: list[dict] = []
+    for repo_id, store, m in scopes:
+        if active_only:
+            scoped_sprints = m.list_active_sprints(store)
+        else:
+            scoped_sprints = m.list_sprints(store)
+        if repo_id is not None:
+            scoped_sprints = [_with_origin(sprint, repo_id) for sprint in scoped_sprints]
+        sprints.extend(scoped_sprints)
+
+    if not active_only:
         visible_kinds = {"active_sprint"}
         if include_backlog:
             visible_kinds.add("backlog")
@@ -648,13 +802,18 @@ def sprint_list(obj, include_backlog, include_archive, active_only, as_json) -> 
         rows.append(
             [
                 f"#{s['id']}",
+                *([s["origin_repo"]] if project_path is not None else []),
                 _style_status(s["status"]),
                 kind,
                 s["name"],
                 dates,
             ]
         )
-    for line in _render_table(["ID", "STATUS", "KIND", "NAME", "DATES"], rows):
+    headers = ["ID"]
+    if project_path is not None:
+        headers.append("ORIGIN_REPO")
+    headers.extend(["STATUS", "KIND", "NAME", "DATES"])
+    for line in _render_table(headers, rows):
         click.echo(line)
 
 
@@ -942,16 +1101,34 @@ def item_show(obj, item_id, as_json) -> None:
     default=False,
     help="Output one tab-separated item per line for fzf/pipe workflows",
 )
+@click.option(
+    "--project",
+    "project_path",
+    type=click.Path(path_type=Path),
+    is_flag=False,
+    flag_value=Path("."),
+    help="Union backlog repositories from project.toml (a directory resolves upward).",
+)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
-def item_list(obj, sprint_id, track_name, status, as_fzf, as_json) -> None:
+def item_list(obj, sprint_id, track_name, status, as_fzf, project_path, as_json) -> None:
     """List work items."""
     if as_json and as_fzf:
         click.echo("Error: --fzf cannot be combined with --json.", err=True)
         sys.exit(1)
 
-    store, m = _get_store(obj)
-    items = m.list_work_items(store, sprint_id=sprint_id, track_name=track_name, status=status)
+    if project_path is None:
+        scopes = [(None, *_get_store(obj))]
+    else:
+        _binding, scopes = _get_project_stores(obj, project_path)
+    items: list[dict] = []
+    for repo_id, store, m in scopes:
+        scoped_items = m.list_work_items(
+            store, sprint_id=sprint_id, track_name=track_name, status=status
+        )
+        if repo_id is not None:
+            scoped_items = [_with_origin(item, repo_id) for item in scoped_items]
+        items.extend(scoped_items)
     if as_json:
         click.echo(json.dumps(items, indent=2))
         return
@@ -959,8 +1136,9 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, as_json) -> None:
         for it in items:
             assignee = it.get("assignee") or "-"
             priority = _format_priority(it)
+            origin = f"{_escape_fzf_field(it['origin_repo'])}\t" if project_path is not None else ""
             click.echo(
-                f"#{it['id']}\t"
+                f"{origin}#{it['id']}\t"
                 f"{_escape_fzf_field(it['status'])}\t"
                 f"{_escape_fzf_field(it['track_name'])}\t"
                 f"{_escape_fzf_field(assignee)}\t"
@@ -977,6 +1155,7 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, as_json) -> None:
         rows.append(
             [
                 f"#{it['id']}",
+                *([it["origin_repo"]] if project_path is not None else []),
                 _style_status(it["status"]),
                 _format_priority(it),
                 it["track_name"],
@@ -984,7 +1163,11 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, as_json) -> None:
                 it["title"],
             ]
         )
-    for line in _render_table(["ID", "STATUS", "PRI", "TRACK", "ASSIGNEE", "TITLE"], rows):
+    headers = ["ID"]
+    if project_path is not None:
+        headers.append("ORIGIN_REPO")
+    headers.extend(["STATUS", "PRI", "TRACK", "ASSIGNEE", "TITLE"])
+    for line in _render_table(headers, rows):
         click.echo(line)
 
 
@@ -5324,6 +5507,14 @@ def agent_protocol_cmd(as_json) -> None:
 
 @cli.command("next-work")
 @click.option("--sprint-id", type=int, default=None, help="Sprint ID (defaults to active)")
+@click.option(
+    "--project",
+    "project_path",
+    type=click.Path(path_type=Path),
+    is_flag=False,
+    flag_value=Path("."),
+    help="Union backlog repositories from project.toml (a directory resolves upward).",
+)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.option(
     "--explain",
@@ -5332,52 +5523,139 @@ def agent_protocol_cmd(as_json) -> None:
     help="Include exclusion reasons, conflicts, and next_action (detailed in --json mode).",
 )
 @click.pass_obj
-def next_work_cmd(obj, sprint_id, as_json, explain) -> None:
+def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
     """Suggest pending items that are ready to start (no unresolved blocking deps).
 
     Items are listed in creation order. Items blocked by incomplete predecessors
     are excluded from the suggestion.
     """
-    store, m = _get_store(obj)
-    if sprint_id is not None:
-        s = m.get_sprint(store, sprint_id)
-        if s is None:
-            click.echo(f"Sprint #{sprint_id} not found.", err=True)
-            sys.exit(1)
-    else:
-        s = _resolve_implicit_sprint(store, m=m)
-        if s is None:
-            click.echo("No active sprint found. Use --sprint-id to specify one.", err=True)
-            sys.exit(1)
-    ready = m.get_ready_items(store, s["id"])
-    payload = None
-    if explain:
-        payload = _collect_next_work_explained_payload(
-            conn=store,
-            sprint=s,
-            ready_items=ready,
-            now=datetime.now(timezone.utc),
-            m=m,
-        )
-    if as_json:
+    if project_path is None:
+        store, m = _get_store(obj)
+        if sprint_id is not None:
+            s = m.get_sprint(store, sprint_id)
+            if s is None:
+                click.echo(f"Sprint #{sprint_id} not found.", err=True)
+                sys.exit(1)
+        else:
+            s = _resolve_implicit_sprint(store, m=m)
+            if s is None:
+                click.echo("No active sprint found. Use --sprint-id to specify one.", err=True)
+                sys.exit(1)
+        ready = m.get_ready_items(store, s["id"])
+        payload = None
         if explain:
-            click.echo(json.dumps(payload, indent=2))
+            payload = _collect_next_work_explained_payload(
+                conn=store,
+                sprint=s,
+                ready_items=ready,
+                now=datetime.now(timezone.utc),
+                m=m,
+            )
+        if as_json:
+            if explain:
+                click.echo(json.dumps(payload, indent=2))
+                return
+            click.echo(json.dumps(ready, indent=2))
             return
-        click.echo(json.dumps(ready, indent=2))
+        if explain:
+            click.echo(_render_next_work_explained_text(payload))
+            return
+        if not ready:
+            click.echo(f"No pending items ready to start in sprint #{s['id']} ({s['name']}).")
+            return
+        click.echo(f"Ready to start in sprint #{s['id']} ({s['name']}):")
+        rows: list[list[str]] = []
+        for it in ready:
+            assignee = it.get("assignee") or "-"
+            rows.append(
+                [f"#{it['id']}", _format_priority(it), it["track_name"], assignee, it["title"]]
+            )
+        for line in _render_table(["ID", "PRI", "TRACK", "ASSIGNEE", "TITLE"], rows):
+            click.echo(f"  {line}")
         return
-    if explain:
-        click.echo(_render_next_work_explained_text(payload))
+
+    project, scopes = _get_project_stores(obj, project_path)
+    resolved, unavailable = _project_sprints(scopes, sprint_id)
+    now = datetime.now(timezone.utc)
+    ready_items: list[dict] = []
+    repositories: list[dict] = []
+    for repo_id, store, m, sprint_row in resolved:
+        ready = m.get_ready_items(store, sprint_row["id"])
+        tagged_ready = [_with_origin(item, repo_id) for item in ready]
+        ready_items.extend(tagged_ready)
+        entry: dict = {
+            "origin_repo": repo_id,
+            "sprint": _with_origin(
+                {
+                    "id": sprint_row["id"],
+                    "name": sprint_row["name"],
+                    "status": sprint_row["status"],
+                },
+                repo_id,
+            ),
+            "ready_items": tagged_ready,
+        }
+        if explain:
+            detailed = _collect_next_work_explained_payload(
+                conn=store,
+                sprint=sprint_row,
+                ready_items=ready,
+                now=now,
+                m=m,
+            )
+            entry["next_work"] = _tag_next_work_payload(detailed, repo_id)
+        repositories.append(entry)
+    repositories.extend({**entry, "status": "unavailable"} for entry in unavailable)
+
+    if as_json and not explain:
+        click.echo(json.dumps(ready_items, indent=2))
         return
-    if not ready:
-        click.echo(f"No pending items ready to start in sprint #{s['id']} ({s['name']}).")
+    if as_json:
+        union_payload = {
+            "contract_version": "project-1",
+            "project": project.summary(),
+            "summary": {
+                "repositories": len(scopes),
+                "repositories_with_sprints": len(resolved),
+                "ready": len(ready_items),
+            },
+            "ready_items": ready_items,
+            "repositories": repositories,
+        }
+        click.echo(json.dumps(union_payload, indent=2))
         return
-    click.echo(f"Ready to start in sprint #{s['id']} ({s['name']}):")
-    rows: list[list[str]] = []
-    for it in ready:
-        assignee = it.get("assignee") or "-"
-        rows.append([f"#{it['id']}", _format_priority(it), it["track_name"], assignee, it["title"]])
-    for line in _render_table(["ID", "PRI", "TRACK", "ASSIGNEE", "TITLE"], rows):
-        click.echo(f"  {line}")
+
+    click.echo(f"Project {project.display_name} ({project.project_id})")
+    for entry in repositories:
+        repo_id = entry["origin_repo"]
+        click.echo(f"\n=== {repo_id} ===")
+        if entry.get("status") == "unavailable":
+            click.echo(f"  Unavailable: {entry['message']}")
+            continue
+        if explain:
+            click.echo(_render_next_work_explained_text(entry["next_work"]))
+            continue
+        tagged_ready = entry["ready_items"]
+        sprint_row = entry["sprint"]
+        if not tagged_ready:
+            click.echo(
+                f"No pending items ready to start in sprint #{sprint_row['id']} "
+                f"({sprint_row['name']})."
+            )
+            continue
+        rows = []
+        for item_row in tagged_ready:
+            rows.append(
+                [
+                    f"#{item_row['id']}",
+                    _format_priority(item_row),
+                    item_row["track_name"],
+                    item_row.get("assignee") or "-",
+                    item_row["title"],
+                ]
+            )
+        for line in _render_table(["ID", "PRI", "TRACK", "ASSIGNEE", "TITLE"], rows):
+            click.echo(f"  {line}")
 
 
 @cli.group()
@@ -5414,11 +5692,97 @@ def session_resume_cmd(obj, sprint_id, as_json) -> None:
     help="Emit current sprint context (active claims, stale/blocked items, ready work, recent decisions)",
 )
 @click.option("--sprint-id", type=int, default=None, help="Sprint ID for --context (defaults to active)")
+@click.option(
+    "--project",
+    "project_path",
+    type=click.Path(path_type=Path),
+    is_flag=False,
+    flag_value=Path("."),
+    help="Union backlog repositories from project.toml for --context.",
+)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output --context as JSON")
 @click.pass_obj
-def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
+def usage_cmd(obj, as_context, sprint_id, project_path, as_json) -> None:
     """Print a compact command reference, or current sprint context with --context."""
+    if project_path is not None and not as_context:
+        raise click.ClickException("--project requires --context")
     if as_context:
+        if project_path is not None:
+            project, scopes = _get_project_stores(obj, project_path)
+            resolved, unavailable = _project_sprints(scopes, sprint_id)
+            now = datetime.now(timezone.utc)
+            repositories: list[dict] = []
+            snapshots: list[dict] = []
+            for repo_id, store, m, sprint_row in resolved:
+                snapshot = _tag_context_payload(
+                    _collect_context_contract(store, sprint_row, now, m=m), repo_id
+                )
+                snapshots.append(snapshot)
+                repositories.append(
+                    {
+                        "origin_repo": repo_id,
+                        "status": "ok",
+                        "context": snapshot,
+                    }
+                )
+            repositories.extend({**entry, "status": "unavailable"} for entry in unavailable)
+            summary_keys = (
+                "total",
+                "done",
+                "active",
+                "pending",
+                "blocked",
+                "stale",
+                "ready",
+                "waiting_on_dependencies",
+                "active_claims",
+                "active_unclaimed",
+            )
+            union_payload = {
+                "contract_version": "project-1",
+                "project": project.summary(),
+                "summary": {
+                    key: sum(snapshot["summary"][key] for snapshot in snapshots)
+                    for key in summary_keys
+                },
+                "sprints": [snapshot["sprint"] for snapshot in snapshots],
+                "active_claims": [
+                    value for snapshot in snapshots for value in snapshot["active_claims"]
+                ],
+                "active_unclaimed_items": [
+                    value
+                    for snapshot in snapshots
+                    for value in snapshot["active_unclaimed_items"]
+                ],
+                "conflicts": [
+                    value for snapshot in snapshots for value in snapshot["conflicts"]
+                ],
+                "ready_items": [
+                    value for snapshot in snapshots for value in snapshot["ready_items"]
+                ],
+                "blocked_items": [
+                    value for snapshot in snapshots for value in snapshot["blocked_items"]
+                ],
+                "stale_items": [
+                    value for snapshot in snapshots for value in snapshot["stale_items"]
+                ],
+                "recent_decisions": [
+                    value for snapshot in snapshots for value in snapshot["recent_decisions"]
+                ],
+                "next_actions": [snapshot["next_action"] for snapshot in snapshots],
+                "repositories": repositories,
+            }
+            if as_json:
+                click.echo(json.dumps(union_payload, indent=2))
+                return
+            click.echo(f"Project {project.display_name} ({project.project_id})")
+            for entry in repositories:
+                click.echo(f"\n=== {entry['origin_repo']} ===")
+                if entry["status"] == "unavailable":
+                    click.echo(f"  Unavailable: {entry['message']}")
+                else:
+                    click.echo(_render_context_text(entry["context"]))
+            return
         store, m = _get_store(obj)
         s = _resolve_sprint(store, sprint_id, m=m)
         now = datetime.now(timezone.utc)
@@ -5439,6 +5803,7 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "  sprint show    [--id ID] [--detail] [--watch] [--interval SECONDS] [--json]",
         "  sprint status  --id ID --status planned|active|closed [--actor NAME] [--json]",
         "  sprint list    [--include-backlog] [--include-archive] [--json]",
+        "                 [--project PROJECT_TOML]",
         "  sprint kind    --id ID --kind active_sprint|backlog|archive",
         "",
         "ITEM",
@@ -5448,6 +5813,7 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "  item priority  --id ID (--set N | --clear) [--json]",
         "  item show      --id ID [--json]",
         "  item list      [--sprint-id ID] [--track NAME] [--status STATUS] [--fzf] [--json]",
+        "                 [--project PROJECT_TOML]",
         "  item note      --id ID --type TYPE --summary TEXT [--detail TEXT] [--tags T1,T2]",
         "                 [--actor NAME]",
         "  item status    --id ID --status pending|active|done|blocked [--actor NAME] [--json]",
@@ -5508,11 +5874,13 @@ def usage_cmd(obj, as_context, sprint_id, as_json) -> None:
         "  handoff        [--sprint-id ID] [--output PATH] [--events N] [--format json|text]",
         "  render         [--sprint-id ID] [--output PATH]",
         "  next-work      [--sprint-id ID] [--json] [--explain]",
+        "                 [--project PROJECT_TOML]",
         "  takeup         take|release|list|show|sweep",
         "  session resume [--sprint-id ID] [--json]",
         "  git-context    [--json]",
         "  agent-protocol [--json]",
         "  usage          [--context] [--sprint-id ID] [--json]",
+        "                 [--project PROJECT_TOML]",
         "",
         "ENV",
         "  SPRINTCTL_DB                    Database path (default: ~/.sprintctl/sprintctl.db)",

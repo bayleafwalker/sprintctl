@@ -82,6 +82,7 @@ Detailed guides:
 - [Work Loop](docs/guides/work-loop.md)
 - [Daily Loop](docs/guides/daily-loop.md)
 - [Project Integration](docs/guides/project-integration.md)
+- [Multi-repository Project Scope](docs/guides/project-scope.md)
 - [Shadow Projection Pilot](docs/guides/shadow-pilot.md)
 - [Remote Authority Commands](docs/guides/authority-commands.md)
 - [Customization Guide](docs/customization.md)
