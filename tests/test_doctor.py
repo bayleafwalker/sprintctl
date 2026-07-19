@@ -2,6 +2,8 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from sprintctl import doctor
 from sprintctl.cli import cli
 
@@ -66,7 +68,7 @@ def test_local_schema_probe_is_read_only_and_reports_mismatch(tmp_path):
 
 
 def test_remote_schema_probe_enforces_read_only_connection(monkeypatch):
-    import psycopg
+    psycopg = pytest.importorskip("psycopg")
 
     observed = {}
 
@@ -106,7 +108,7 @@ def test_remote_schema_probe_enforces_read_only_connection(monkeypatch):
 
 
 def test_remote_schema_error_redacts_credentials(monkeypatch):
-    import psycopg
+    psycopg = pytest.importorskip("psycopg")
 
     url = "postgresql://user:password@example.invalid/db"
     monkeypatch.setattr(doctor.importlib.util, "find_spec", lambda name: object())
