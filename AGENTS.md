@@ -298,3 +298,7 @@ temporary SQLite databases and disposable PostgreSQL repository scopes.
 | `SPRINTCTL_INSTANCE_ID` | Stable per-process UUID — set once and reuse across every claim call |
 | `SPRINTCTL_RUNTIME_SESSION_ID` | Runtime session ID (auto-detected from `CODEX_THREAD_ID`) |
 | `SPRINTCTL_DB` | Override the database path |
+
+<!-- agentops-project-pointer:start -->
+See `.agents/project.generated.md` for cross-repo project context (agentops-managed; do not hand-edit).
+<!-- agentops-project-pointer:end -->
