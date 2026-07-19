@@ -31,7 +31,7 @@ Each `_run_migration` call:
 **The migration is idempotent for the caller**: running `init_db` on an
 already-migrated database is a no-op for every version already applied.
 
-Current schema version: **8** (ref and dep tables, claim token fields, sprint kind, git context on events).
+Current SQLite schema version: **12**.
 
 ---
 
@@ -47,6 +47,10 @@ Current schema version: **8** (ref and dep tables, claim token fields, sprint ki
 | 6 | Added `claim_token`, `runtime_session_id`, `instance_id`, `hostname`, `pid` to claim |
 | 7 | Added `ref` table (typed external references on items) |
 | 8 | Added `dep` table (item-to-item blocking dependencies) |
+| 9 | Added the sprint takeup event lookup index |
+| 10 | Added portable aggregate UUIDs to sprints and work items |
+| 11 | Added native work item priority (1–9, nullable) |
+| 12 | Added claim `status` (`active|expired`) with a parity default |
 
 ---
 

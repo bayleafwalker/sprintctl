@@ -364,6 +364,14 @@ def _migration_11(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_12(conn: sqlite3.Connection) -> None:
+    """Add explicit claim status for retained remote expiry history."""
+    _add_column_if_missing(
+        conn, "claim", "status",
+        "status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'expired'))",
+    )
+
+
 def _run_migration(
     conn: sqlite3.Connection,
     target_version: int,
@@ -405,6 +413,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     _run_migration(conn, 9, _migration_9)
     _run_migration(conn, 10, _migration_10)
     _run_migration(conn, 11, _migration_11)
+    _run_migration(conn, 12, _migration_12)
 
 
 # --- Sprint ---
@@ -1118,6 +1127,7 @@ def _claim_event_identity(row: sqlite3.Row | dict) -> dict:
         "pid": row["pid"],
         "claim_token_present": bool(row["claim_token"]),
         "identity_status": _claim_identity_status(row),
+        "status": row["status"],
     }
 
 
@@ -1212,7 +1222,7 @@ def _get_active_exclusive_claim_row(
     return conn.execute(
         """
         SELECT * FROM claim
-        WHERE work_item_id = ? AND exclusive = 1
+        WHERE work_item_id = ? AND exclusive = 1 AND status = 'active'
           AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
         ORDER BY created_at ASC
         LIMIT 1
@@ -1244,6 +1254,8 @@ def _emit_claim_event(
 
 
 def _require_claim_proof(row: sqlite3.Row | dict, claim_token: str | None) -> None:
+    if row["status"] != "active":
+        raise ValueError(f"Claim #{row['id']} is {row['status']} and is no longer active")
     if not row["claim_token"]:
         raise ValueError(
             f"Claim #{row['id']} is a legacy ambiguous claim with no claim_token. "
@@ -1672,7 +1684,7 @@ def list_claims_by_sprint(
     """
     params: list = [sprint_id]
     if active_only:
-        base += " AND c.expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')"
+        base += " AND c.status = 'active' AND c.expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')"
     if expiring_within_seconds is not None:
         base += " AND c.expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds')"
         params.append(expiring_within_seconds)
@@ -1687,7 +1699,8 @@ def list_claims(conn: sqlite3.Connection, work_item_id: int, active_only: bool =
         rows = conn.execute(
             """
             SELECT * FROM claim
-            WHERE work_item_id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
+            WHERE work_item_id = ? AND status = 'active'
+              AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
             ORDER BY created_at ASC
             """,
             (work_item_id,),
@@ -1724,6 +1737,7 @@ def find_claim_by_identity(
     conditions = []
     params: list = []
     if active_only:
+        conditions.append("status = 'active'")
         conditions.append("expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')")
     if instance_id:
         conditions.append("instance_id = ?")
@@ -1751,6 +1765,7 @@ def _get_active_coordinate_claim_row(
         """
         SELECT * FROM claim
         WHERE work_item_id = ? AND exclusive = 1 AND claim_type = 'coordinate'
+          AND status = 'active'
           AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
         ORDER BY created_at ASC
         LIMIT 1

@@ -349,6 +349,7 @@ def _claim_effect(row: Mapping[str, Any]) -> dict[str, Any]:
         "exclusive": bool(row["exclusive"]),
         "heartbeat": _iso(row["heartbeat"]),
         "expires_at": _iso(row["expires_at"]),
+        "status": row["status"],
         "runtime_session_id": row.get("runtime_session_id"),
         "instance_id": row.get("instance_id"),
     }
@@ -364,7 +365,7 @@ def _verify_claim_secret(row: Mapping[str, Any], ref: Any, credentials: Mapping[
 def _require_live_claim(cur: Any, row: Mapping[str, Any]) -> None:
     cur.execute("SELECT now() AS now")
     now = cur.fetchone()["now"]
-    if row["expires_at"] <= now:
+    if row["status"] != "active" or row["expires_at"] <= now:
         raise _RejectedCommand("expired-grant", "claim grant has expired")
 
 
@@ -390,7 +391,8 @@ def _handle_item(
 
     cur.execute(
         "SELECT * FROM claim WHERE repo_id = %s AND work_item_id = %s "
-        "AND exclusive = true AND expires_at > now() ORDER BY id LIMIT 1 FOR UPDATE",
+        "AND exclusive = true AND status = 'active' AND expires_at > now() "
+        "ORDER BY id LIMIT 1 FOR UPDATE",
         (store.repo_id, item["id"]),
     )
     active_claim = cur.fetchone()
@@ -507,10 +509,16 @@ def _handle_claim_acquire(
     exclusive = bool(payload.get("exclusive", True))
     ttl = _positive_int(payload.get("ttl_seconds", 300), "ttl_seconds")
     proposed_token = _resolve_credential(payload.get("credential_ref"), credentials)
+    cur.execute(
+        "UPDATE claim SET status = 'expired' WHERE repo_id = %s "
+        "AND work_item_id = %s AND status = 'active' AND expires_at <= now()",
+        (store.repo_id, item["id"]),
+    )
     if exclusive:
         cur.execute(
             "SELECT * FROM claim WHERE repo_id = %s AND work_item_id = %s "
-            "AND exclusive = true AND expires_at > now() ORDER BY id LIMIT 1 FOR UPDATE",
+            "AND exclusive = true AND status = 'active' AND expires_at > now() "
+            "ORDER BY id LIMIT 1 FOR UPDATE",
             (store.repo_id, item["id"]),
         )
         conflict = cur.fetchone()
@@ -544,8 +552,6 @@ def _handle_claim_acquire(
         ) RETURNING *
         """,
         (
-            store.repo_id,
-            item["id"],
             str(_required_payload(envelope, "agent")),
             claim_type,
             exclusive,
@@ -559,6 +565,8 @@ def _handle_claim_acquire(
             metadata.get("instance_id"),
             metadata.get("hostname"),
             metadata.get("pid"),
+            store.repo_id,
+            item["id"],
         ),
     )
     return _claim_effect(cur.fetchone())

@@ -324,9 +324,15 @@ class TestMigration2:
         }
         assert "claim" in tables
 
-    def test_schema_version_is_11(self, conn):
+    def test_schema_version_is_12(self, conn):
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 11
+        assert version == 12
+
+    def test_claim_retention_columns_have_parity_defaults(self, conn):
+        columns = {
+            row[1]: row for row in conn.execute("PRAGMA table_info(claim)").fetchall()
+        }
+        assert columns["status"][4] == "'active'"
 
     def test_ref_table_exists_after_init(self, conn):
         tables = {

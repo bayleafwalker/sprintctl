@@ -877,6 +877,7 @@ class TestClaimShow:
         assert data["claim_token"] == claim["claim_token"]
         assert data["claim_id"] == claim["claim_id"]
         assert data["identity_status"] == "proven"
+        assert data["status"] == "active"
 
     def test_claim_show_fails_with_wrong_token(self, runner, conn, active_sprint, db_path):
         iid = _item(conn, active_sprint["id"])

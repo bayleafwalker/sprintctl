@@ -1145,7 +1145,7 @@ class TestNdjsonRoundTrip:
 # ---------------------------------------------------------------------------
 
 class TestMaintain:
-    def test_purge_expired_claims(self, store, sprint_id, track_id):
+    def test_purge_expired_claims_marks_and_retains_history(self, store, sprint_id, track_id):
         iid = pg.create_work_item(store, sprint_id, track_id, f"Pu-{_uid()}")
         cid = pg.create_claim(store, iid, "ag-pu", ttl_seconds=300)
         with store.conn.cursor() as cur:
@@ -1155,8 +1155,29 @@ class TestMaintain:
                 (store.repo_id, cid),
             )
         store.conn.commit()
-        deleted = pg.purge_expired_claims(store, sprint_id)
-        assert deleted >= 1
+        expired = pg.purge_expired_claims(store, sprint_id)
+        assert expired >= 1
+        claim = pg.get_claim(store, cid)
+        assert claim is not None
+        assert claim["status"] == "expired"
+
+    def test_expiry_reacquire_retains_both_rows(
+        self, store, sprint_id, track_id
+    ):
+        iid = pg.create_work_item(store, sprint_id, track_id, f"Epoch-{_uid()}")
+        old_id = pg.create_claim(store, iid, "old-owner")
+        with store.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE claim SET expires_at = now() - interval '1 second' "
+                "WHERE repo_id = %s AND id = %s",
+                (store.repo_id, old_id),
+            )
+        store.conn.commit()
+
+        new_id = pg.create_claim(store, iid, "new-owner")
+        history = pg.list_claims(store, iid, active_only=False)
+        assert [claim["claim_id"] for claim in history] == [old_id, new_id]
+        assert [claim["status"] for claim in history] == ["expired", "active"]
 
 
 # ---------------------------------------------------------------------------

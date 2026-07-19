@@ -155,8 +155,10 @@ def sweep_stale_items(
 
 def purge_expired_claims(conn, sprint_id: int, *, _m=None) -> int:
     """
-    Delete all expired claims for items in the given sprint.
-    Returns the number of claims deleted.
+    Expire claims for items in the given sprint.
+
+    SQLite preserves its established delete behavior. The remote backend
+    marks rows expired and retains them.
     """
     if _m is not None and _m is not _db:
         return _m.purge_expired_claims(conn, sprint_id)
@@ -186,7 +188,7 @@ def sweep(
 
     Actions:
     - Stale active items → blocked (with system event)
-    - Expired claims deleted
+    - Expired claims removed locally or marked expired and retained remotely
     - Auto-close overdue sprint with no active items (opt-in via auto_close)
     """
     m = _m if _m is not None else _db

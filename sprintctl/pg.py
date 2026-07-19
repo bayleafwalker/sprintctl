@@ -167,11 +167,17 @@ CREATE TABLE IF NOT EXISTS claim (
     instance_id        text,
     hostname           text,
     pid                integer,
+    status             text        NOT NULL DEFAULT 'active'
+                                      CHECK (status IN ('active', 'expired')),
     UNIQUE (repo_id, id),
     FOREIGN KEY (repo_id, work_item_id)
         REFERENCES work_item(repo_id, id)
         ON DELETE CASCADE
 );
+
+ALTER TABLE claim
+    ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'expired'));
 
 CREATE TABLE IF NOT EXISTS ref (
     repo_id      text        NOT NULL,
@@ -1611,6 +1617,7 @@ def _get_active_exclusive_claim_row(store: PgStore, work_item_id: int) -> dict |
             """
             SELECT * FROM claim
             WHERE repo_id = %s AND work_item_id = %s AND exclusive = true
+              AND status = 'active'
               AND expires_at > now()
             ORDER BY created_at ASC
             LIMIT 1
@@ -1627,6 +1634,7 @@ def _get_active_coordinate_claim_row(store: PgStore, work_item_id: int) -> dict 
             """
             SELECT * FROM claim
             WHERE repo_id = %s AND work_item_id = %s AND exclusive = true
+              AND status = 'active'
               AND claim_type = 'coordinate' AND expires_at > now()
             ORDER BY created_at ASC
             LIMIT 1
@@ -1737,6 +1745,15 @@ def create_claim(
             with store.conn.cursor() as cur:
                 if exclusive:
                     _lock_claim_arbitration_row(cur, store, work_item_id)
+                cur.execute(
+                    """
+                    UPDATE claim SET status = 'expired'
+                    WHERE repo_id = %s AND work_item_id = %s
+                      AND status = 'active' AND expires_at <= now()
+                    """,
+                    (store.repo_id, work_item_id),
+                )
+                if exclusive:
                     conflict = _get_active_exclusive_claim_row(store, work_item_id)
                     if conflict:
                         if (
@@ -2057,7 +2074,7 @@ def list_claims_by_sprint(
     """
     params: list = [store.repo_id, sprint_id]
     if active_only:
-        query += " AND c.expires_at > now()"
+        query += " AND c.status = 'active' AND c.expires_at > now()"
     if expiring_within_seconds is not None:
         query += " AND c.expires_at <= now() + (%s || ' seconds')::interval"
         params.append(expiring_within_seconds)
@@ -2074,7 +2091,8 @@ def list_claims(store: PgStore, work_item_id: int, active_only: bool = True) -> 
             cur.execute(
                 """
                 SELECT * FROM claim
-                WHERE repo_id = %s AND work_item_id = %s AND expires_at > now()
+                WHERE repo_id = %s AND work_item_id = %s
+                  AND status = 'active' AND expires_at > now()
                 ORDER BY created_at ASC
                 """,
                 (store.repo_id, work_item_id),
@@ -2107,6 +2125,7 @@ def find_claim_by_identity(
     conditions: list[str] = ["repo_id = %s"]
     params: list = [store.repo_id]
     if active_only:
+        conditions.append("status = 'active'")
         conditions.append("expires_at > now()")
     if instance_id:
         conditions.append("instance_id = %s")
@@ -2358,16 +2377,16 @@ def backlog_seed_from_candidates(
 # ---------------------------------------------------------------------------
 
 def purge_expired_claims(store: PgStore, sprint_id: int) -> int:
-    """Delete all expired claims for items in the given sprint. Returns count deleted."""
+    """Mark expired claims while retaining their history. Returns count changed."""
     with store.conn.cursor() as cur:
         cur.execute(
             """
-            DELETE FROM claim
+            UPDATE claim SET status = 'expired'
             WHERE repo_id = %s
               AND work_item_id IN (
                 SELECT id FROM work_item WHERE repo_id = %s AND sprint_id = %s
               )
-              AND expires_at <= now()
+              AND status = 'active' AND expires_at <= now()
             """,
             (store.repo_id, store.repo_id, sprint_id),
         )

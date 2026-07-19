@@ -56,12 +56,20 @@ def test_portable_aggregate_uuids_are_unique_in_pg_schema():
         assert re.search(r"aggregate_uuid\s+uuid\s+NOT NULL UNIQUE", m.group(1))
 
 
-def test_claim_table_has_token_and_identity_columns():
+def test_claim_table_has_token_identity_and_retention_columns():
     m = re.search(r"CREATE TABLE IF NOT EXISTS claim\s*\((.*?)\);", PG_DDL, re.DOTALL)
     assert m, "claim table not found"
     block = m.group(1)
-    for col in ("claim_token", "instance_id", "runtime_session_id", "hostname", "pid"):
+    for col in (
+        "claim_token", "instance_id", "runtime_session_id", "hostname", "pid",
+        "status",
+    ):
         assert col in block, f"claim table missing column: {col}"
+    assert "status IN ('active', 'expired')" in block
+
+
+def test_claim_upgrade_is_additive_for_existing_remote_tables():
+    assert "ADD COLUMN IF NOT EXISTS status" in PG_DDL
 
 
 def test_event_table_uses_jsonb_payload():

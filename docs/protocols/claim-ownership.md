@@ -13,11 +13,11 @@ This document closes the verification boundary around claim creation, proof-bear
 | Field | Contract |
 |---|---|
 | Subject | One claim set for one repository-scoped work item |
-| State variables | claim ID, item ID, type, exclusive flag, expiry, token, owner metadata, coordinator claim |
+| State variables | claim ID, item ID, type, exclusive flag, status, expiry, token, owner metadata, coordinator claim |
 | Operations | create/start, heartbeat, status mutation, release, handoff, resume, recover |
 | Claim precondition | Item exists; no conflicting live exclusive claim, except a proof-authorized coordinator delegation |
 | Proof precondition | `claim_id + claim_token`; identity and Git metadata are advisory |
-| Success effect | The backend commit durably creates, updates, rotates, or removes the claim |
+| Success effect | The backend commit durably creates, updates, rotates, expires, or removes the claim |
 | Failure effect | Validation and conflict failures must not apply the requested claim mutation; diagnostic events are separate history effects |
 | Unknown outcome | A lost response after commit may leave a created, refreshed, released, or token-rotated claim even though the caller did not receive success |
 | Idempotency | Claim creation and token rotation are not idempotent requests; retry only after observing current state |
@@ -50,7 +50,13 @@ invariant; it is not a fencing-token or distributed lease claim.
 
 Successful rotate-mode handoff mints a new token. After the handoff commit, the old token must fail heartbeat, release, status mutation, and further handoff. If the response containing the new token is lost, the outcome is unknown to the caller; observing claim state and using the documented recovery path is required before retry.
 
-Expiry is not a fencing token. An expired claim ceases to block according to backend time, but downstream systems cannot use its age as proof against a stale actor. Any future lease-based external side effect requires an explicit epoch or fencing design.
+Remote-mode expiry is append-only: maintenance and reacquisition mark a claim
+`expired` and retain its row instead of deleting it. Active-claim projections
+require both `status=active` and an expiry later than backend time. Local SQLite
+keeps its existing purge behavior; it carries the same columns for schema
+parity.
+
+TTL expiry alone is still not a fencing token.
 
 ## Backend parity evidence
 
