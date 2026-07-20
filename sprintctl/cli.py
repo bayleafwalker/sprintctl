@@ -28,6 +28,7 @@ from . import outbox as _outbox
 from . import pilot as _pilot
 from . import project as _project
 from . import projection as _projection
+from . import projection_reads as _projection_reads
 from . import shadow as _shadow
 from . import sync as _sync
 from .render import render_sprint_doc
@@ -993,6 +994,167 @@ def item_priority(obj, item_id, priority, clear, as_json) -> None:
         click.echo(f"Set item #{item_id} priority to p{priority}.")
 
 
+# ---------------------------------------------------------------------------
+# guarded projection-backed reads
+#
+# Feature-flagged read path: when enabled per repository, some CLI read
+# surfaces are served from the cached projection populated by the shadow
+# pilot sync path (sprintctl/pilot.py, sprintctl/sync.py) instead of hitting
+# backend (SQLite/PostgreSQL) directly.  A surface only actually reads from
+# the projection when (a) the flag is enabled, (b) the cache is healthy
+# (matching schema version, synchronized at least once, not stale), and
+# (c) that specific surface has a projection-backed implementation.  Any
+# other case falls back to backend mode explicitly and says so in both
+# --json and text output, never silently.
+#
+# Only sprintctl/projection.py's existing cached ingest records are used as
+# the data source; this module builds no new authoritative state and cannot
+# write anything.  Rollback is always available per repository:
+#   sprintctl projection-reads disable
+# or by unsetting SPRINTCTL_PROJECTION_READS -- either returns every read
+# surface below to its current backend-only behavior.
+# ---------------------------------------------------------------------------
+
+_PROJECTION_STALE_SECONDS_ENV = "SPRINTCTL_PROJECTION_STALE_SECONDS"
+
+
+def _projection_stale_after_seconds() -> int:
+    raw = os.environ.get(_PROJECTION_STALE_SECONDS_ENV)
+    if raw is None:
+        return _projection.DEFAULT_STALE_AFTER_SECONDS
+    try:
+        value = int(raw)
+    except ValueError:
+        return _projection.DEFAULT_STALE_AFTER_SECONDS
+    return value if value > 0 else _projection.DEFAULT_STALE_AFTER_SECONDS
+
+
+def _projection_health(*, cwd: Path | None = None) -> dict:
+    """Resolve whether projection reads are enabled and, if so, the cached
+    projection's freshness -- independent of any particular read surface.
+
+    Returned ``health`` is one of: "disabled", "missing",
+    "schema-upgrade-required", "never-synchronized", "stale", "healthy".
+    """
+    cwd = cwd or Path.cwd()
+    base = {
+        "enabled": False,
+        "health": "disabled",
+        "watermark_offset": None,
+        "watermark_age_seconds": None,
+        "schema_version": None,
+        "stale_after_seconds": _projection_stale_after_seconds(),
+        "projection_path": None,
+    }
+    try:
+        reads_status = _projection_reads.projection_reads_status(cwd=cwd)
+    except _projection_reads.ProjectionReadsConfigError:
+        return base
+    if not reads_status.enabled:
+        return base
+    base["enabled"] = True
+    try:
+        pilot_status = _pilot.shadow_pilot_status(cwd=cwd)
+    except _pilot.ShadowPilotConfigError:
+        base["health"] = "missing"
+        return base
+    path = pilot_status.paths.projection_path
+    base["projection_path"] = str(path)
+    if not path.exists():
+        base["health"] = "missing"
+        return base
+    conn = _projection.open_cached_projection(path)
+    try:
+        freshness = _projection.assess_freshness(conn, stale_after_seconds=base["stale_after_seconds"])
+    finally:
+        conn.close()
+    base["watermark_offset"] = freshness.watermark.ingest_offset
+    base["watermark_age_seconds"] = freshness.age_seconds
+    base["schema_version"] = freshness.schema_version
+    base["health"] = "healthy" if freshness.healthy else freshness.fallback_reason
+    return base
+
+
+def _projection_surface_status(health: dict, *, supported: bool) -> dict:
+    """Combine cache health with whether this read surface is wired to it.
+
+    ``source`` is "projection" only when the flag is on, the cache is
+    healthy, and this surface has projection-backed content implemented.
+    Every other combination reports "backend" plus an explicit
+    ``fallback_reason`` -- never a silent fallback.
+    """
+    status = {
+        "enabled": health["enabled"],
+        "source": "backend",
+        "fallback_reason": None,
+        "watermark_offset": health["watermark_offset"],
+        "watermark_age_seconds": health["watermark_age_seconds"],
+        "schema_version": health["schema_version"],
+    }
+    if not health["enabled"]:
+        return status
+    if health["health"] != "healthy":
+        status["fallback_reason"] = health["health"]
+        return status
+    if not supported:
+        status["fallback_reason"] = "unsupported-read-surface"
+        return status
+    status["source"] = "projection"
+    return status
+
+
+def _projection_status_line(status: dict) -> str | None:
+    """One human-readable disclosure line, or None if the flag is off."""
+    if not status["enabled"]:
+        return None
+    if status["source"] == "projection":
+        age = status["watermark_age_seconds"]
+        age_text = f"{age:.0f}s" if age is not None else "unknown"
+        return (
+            f"Projection: source=projection watermark_offset={status['watermark_offset']} "
+            f"age={age_text}"
+        )
+    return f"Projection: source=backend fallback={status['fallback_reason']}"
+
+
+def _projection_item_events(projection_path: Path, item_id: int) -> list[dict]:
+    """Reconstruct one item's observation-event history from the cache.
+
+    Only observation-classified events mirrored via the shadow pilot (see
+    ``_shadow_observation_envelope``) are present here; authority-changing
+    fields on the item itself (status, title, assignee, ...) are never
+    mirrored and are never reconstructed by this function.  Ordering and
+    field shape match ``db.list_events`` / ``pg.list_events`` filtered to one
+    item, so a healthy cache produces the same events a backend read would.
+    """
+    conn = _projection.open_cached_projection(projection_path)
+    try:
+        cached_records = _projection.list_cached_records(conn)
+    finally:
+        conn.close()
+    events: list[dict] = []
+    for cached in cached_records:
+        envelope = cached.record.get("payload")
+        if not isinstance(envelope, dict):
+            continue
+        refs = envelope.get("refs") or {}
+        if refs.get("work_item_id") != item_id:
+            continue
+        inner_payload = envelope.get("payload") or {}
+        events.append({
+            "id": refs.get("authority_event_id"),
+            "sprint_id": refs.get("sprint_id"),
+            "work_item_id": refs.get("work_item_id"),
+            "source_type": inner_payload.get("source_type"),
+            "actor": envelope.get("actor"),
+            "event_type": envelope.get("record_type"),
+            "payload": inner_payload.get("event_payload"),
+            "created_at": envelope.get("authored_at"),
+        })
+    events.sort(key=lambda e: (e["created_at"] or "", e["id"] or 0))
+    return events
+
+
 @item.command("show")
 @click.option("--id", "item_id", type=int, required=True, help="Item ID")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
@@ -1004,8 +1166,21 @@ def item_show(obj, item_id, as_json) -> None:
     if it is None:
         click.echo(f"Item #{item_id} not found.", err=True)
         sys.exit(1)
-    events = m.list_events(store, it["sprint_id"])
-    item_events = [e for e in events if e.get("work_item_id") == item_id]
+
+    # Item core fields (status, title, assignee, ...) only ever change via
+    # authority commands, which the shadow pilot never mirrors -- so they
+    # always come from backend regardless of the flag. The event/notes
+    # history below is the one sub-section the cached projection can
+    # honestly reconstruct, because item note/event observations are what
+    # gets mirrored.
+    projection_health = _projection_health()
+    projection_status = _projection_surface_status(projection_health, supported=True)
+    if projection_status["source"] == "projection":
+        item_events = _projection_item_events(Path(projection_health["projection_path"]), item_id)
+    else:
+        events = m.list_events(store, it["sprint_id"])
+        item_events = [e for e in events if e.get("work_item_id") == item_id]
+
     claims = m.list_claims(store, item_id, active_only=True)
     refs = m.list_refs(store, item_id)
     blocking = m.list_deps_blocking(store, item_id)
@@ -1018,10 +1193,14 @@ def item_show(obj, item_id, as_json) -> None:
             "active_claims": claims,
             "refs": refs,
             "deps": {"blocked_by": blocking, "blocks": blocked_by_me},
+            "projection": projection_status,
         }, indent=2))
         return
 
     click.echo(f"#{it['id']}  [{it['status']}]  {it['title']}")
+    status_line = _projection_status_line(projection_status)
+    if status_line:
+        click.echo(f"  {status_line}")
     click.echo(f"  Sprint:   #{it['sprint_id']}")
     track_name = it.get("track_name", "")
     if track_name:
@@ -1131,6 +1310,13 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, project_path, as_json)
             scoped_items = [_with_origin(item, repo_id) for item in scoped_items]
         items.extend(scoped_items)
     if as_json:
+        # NOTE: this endpoint's JSON shape is a bare array and is relied on
+        # by existing consumers (fzf pipelines, other tooling). Item listings
+        # are not projection-backed (see module note above item_show) and
+        # adding a "projection" key would change this into an incompatible
+        # object shape, so freshness is intentionally not surfaced here.
+        # Use `sprintctl projection-reads status --json` to check freshness
+        # instead.
         click.echo(json.dumps(items, indent=2))
         return
     if as_fzf:
@@ -1147,6 +1333,12 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, project_path, as_json)
                 f"{_escape_fzf_field(priority)}"
             )
         return
+    if project_path is None:
+        status_line = _projection_status_line(
+            _projection_surface_status(_projection_health(), supported=False)
+        )
+        if status_line:
+            click.echo(status_line)
     if not items:
         click.echo("No items found.")
         return
@@ -2591,6 +2783,78 @@ def pilot_sync(obj, batch_size: int, as_json: bool) -> None:
         click.echo(json.dumps(payload, indent=2))
     else:
         click.echo(f"Synchronized {payload['uploaded']} observation records; watermark {result.watermark.ingest_offset}.")
+
+
+# ---------------------------------------------------------------------------
+# guarded projection-backed reads: per-repo operator toggle
+# ---------------------------------------------------------------------------
+
+@cli.group("projection-reads")
+def projection_reads_group() -> None:
+    """Operate the opt-in, guarded projection-backed read path.
+
+    When enabled, some CLI read surfaces (currently `item show`'s event
+    history) are served from the cached projection populated by
+    `sprintctl pilot sync` instead of backend, with explicit freshness
+    disclosure and automatic fallback to backend whenever the cache is
+    missing, stale, on an old schema, or never synchronized. Disabling this
+    (or leaving it disabled, the default) returns all reads to the current
+    backend-only behavior -- this is the rollback path.
+    """
+
+
+@projection_reads_group.command("status")
+@click.option("--json", "as_json", is_flag=True, default=False)
+def projection_reads_status_cmd(as_json: bool) -> None:
+    """Show whether projection reads are enabled and the cache's freshness."""
+    try:
+        reads_status = _projection_reads.projection_reads_status(cwd=Path.cwd())
+    except _projection_reads.ProjectionReadsConfigError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    health = _projection_health()
+    payload = reads_status.to_dict()
+    payload["health"] = health["health"]
+    payload["watermark_offset"] = health["watermark_offset"]
+    payload["watermark_age_seconds"] = health["watermark_age_seconds"]
+    payload["schema_version"] = health["schema_version"]
+    payload["stale_after_seconds"] = health["stale_after_seconds"]
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+        return
+    click.echo(f"Projection reads: {'enabled' if payload['enabled'] else 'disabled'} (source={payload['source']})")
+    click.echo(f"Cache health: {payload['health']}")
+    if payload["watermark_offset"] is not None:
+        age = payload["watermark_age_seconds"]
+        age_text = f"{age:.0f}s" if age is not None else "unknown"
+        click.echo(f"Watermark: offset={payload['watermark_offset']} age={age_text}")
+
+
+def _set_projection_reads_enabled(enabled: bool, *, as_json: bool) -> None:
+    try:
+        status = _projection_reads.set_projection_reads_enabled(enabled, cwd=Path.cwd())
+    except _projection_reads.ProjectionReadsConfigError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    payload = status.to_dict()
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+    else:
+        click.echo(f"Projection reads {'enabled' if payload['enabled'] else 'disabled'}.")
+
+
+@projection_reads_group.command("enable")
+@click.option("--json", "as_json", is_flag=True, default=False)
+def projection_reads_enable(as_json: bool) -> None:
+    """Opt this repository into guarded projection-backed reads."""
+    _set_projection_reads_enabled(True, as_json=as_json)
+
+
+@projection_reads_group.command("disable")
+@click.option("--json", "as_json", is_flag=True, default=False)
+def projection_reads_disable(as_json: bool) -> None:
+    """Rollback: return every read surface to backend-only reads."""
+    _set_projection_reads_enabled(False, as_json=as_json)
 
 
 @event.command("list")
@@ -5795,6 +6059,11 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
                 sys.exit(1)
         ready = m.get_ready_items(store, s["id"])
         payload = None
+        # next-work suggestions require current item/dependency state, which
+        # the cached projection never materializes (only observation events
+        # are mirrored) -- always backend-sourced; only freshness disclosure
+        # is flag-gated here, same rationale as item_list.
+        projection_status = _projection_surface_status(_projection_health(), supported=False)
         if explain:
             payload = _collect_next_work_explained_payload(
                 conn=store,
@@ -5803,15 +6072,23 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
                 now=datetime.now(timezone.utc),
                 m=m,
             )
+            payload["projection"] = projection_status
         if as_json:
             if explain:
                 click.echo(json.dumps(payload, indent=2))
                 return
+            # NOTE: bare-array JSON shape preserved for compatibility, same as
+            # item_list --json; use `projection-reads status --json` instead.
             click.echo(json.dumps(ready, indent=2))
             return
+        status_line = _projection_status_line(projection_status)
         if explain:
+            if status_line:
+                click.echo(status_line)
             click.echo(_render_next_work_explained_text(payload))
             return
+        if status_line:
+            click.echo(status_line)
         if not ready:
             click.echo(f"No pending items ready to start in sprint #{s['id']} ({s['name']}).")
             return
@@ -6039,9 +6316,21 @@ def usage_cmd(obj, as_context, sprint_id, project_path, as_json) -> None:
         s = _resolve_sprint(store, sprint_id, m=m)
         now = datetime.now(timezone.utc)
         snapshot = _collect_context_contract(store, s, now, m=m)
+        # usage --context aggregates sprint/claim/item state that the cached
+        # projection never materializes (only observation events are
+        # mirrored) -- always backend-sourced; only freshness disclosure is
+        # flag-gated here, same rationale as item_list/next-work. The
+        # "projection" key is added only when the flag is enabled so the
+        # default --json shape stays byte-for-byte unchanged.
+        projection_status = _projection_surface_status(_projection_health(), supported=False)
+        if projection_status["enabled"]:
+            snapshot["projection"] = projection_status
         if as_json:
             click.echo(json.dumps(snapshot, indent=2))
             return
+        status_line = _projection_status_line(projection_status)
+        if status_line:
+            click.echo(status_line)
         click.echo(_render_context_text(snapshot))
         return
 
@@ -6134,12 +6423,19 @@ def usage_cmd(obj, as_context, sprint_id, project_path, as_json) -> None:
         "  usage          [--context] [--sprint-id ID] [--json]",
         "                 [--project PROJECT_TOML]",
         "",
+        "PROJECTION-READS (guarded projection-backed reads, default off)",
+        "  projection-reads status  [--json]",
+        "  projection-reads enable  [--json]",
+        "  projection-reads disable [--json]   # rollback: returns all reads to backend",
+        "",
         "ENV",
         "  SPRINTCTL_DB                    Database path (default: ~/.sprintctl/sprintctl.db)",
         "  SPRINTCTL_STALE_THRESHOLD       Active item staleness in hours (default: 4)",
         "  SPRINTCTL_PENDING_STALE_THRESHOLD  Pending item staleness threshold (default: off)",
         "  SPRINTCTL_RUNTIME_SESSION_ID    Runtime session ID (auto-detected from CODEX_THREAD_ID)",
         "  SPRINTCTL_INSTANCE_ID           Stable per-process instance UUID",
+        "  SPRINTCTL_PROJECTION_READS      Override projection-reads enable/disable for one invocation",
+        "  SPRINTCTL_PROJECTION_STALE_SECONDS  Projection staleness threshold in seconds (default: 300)",
     ]
     click.echo("\n".join(lines))
 

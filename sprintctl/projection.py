@@ -120,7 +120,24 @@ CREATE TABLE IF NOT EXISTS cached_authority_watermark (
     decision_ingest_offset INTEGER NOT NULL CHECK (decision_ingest_offset >= 0),
     advanced_at            TEXT
 );
+
+CREATE TABLE IF NOT EXISTS cached_projection_meta (
+    singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),
+    schema_version INTEGER NOT NULL
+);
 """
+
+PROJECTION_SCHEMA_VERSION = 1
+"""On-disk schema version this build of ``projection.py`` writes and expects.
+
+Guarded projection-backed readers (see ``sprintctl/cli.py``) compare this
+against :func:`get_schema_version` and refuse to read a mismatched cache,
+falling back to backend mode explicitly rather than misinterpreting an
+incompatible on-disk layout.
+"""
+
+DEFAULT_STALE_AFTER_SECONDS = 300
+"""Default staleness threshold used by :func:`assess_freshness`."""
 
 
 def _utc_now() -> str:
@@ -167,7 +184,28 @@ def init_cached_projection(conn: sqlite3.Connection) -> None:
         "(singleton, decision_ingest_offset, advanced_at) "
         "VALUES (1, 0, NULL) ON CONFLICT(singleton) DO NOTHING"
     )
+    conn.execute(
+        "INSERT INTO cached_projection_meta (singleton, schema_version) "
+        "VALUES (1, ?) ON CONFLICT(singleton) DO NOTHING",
+        (PROJECTION_SCHEMA_VERSION,),
+    )
     conn.commit()
+
+
+def get_schema_version(conn: sqlite3.Connection) -> int:
+    """Return the schema version recorded when this cache file was created.
+
+    A cache created before schema versioning existed still gets a row here
+    the first time :func:`init_cached_projection` runs against it (every
+    caller of :func:`open_cached_projection` runs it), so this only raises
+    for a connection that never went through initialization at all.
+    """
+    row = conn.execute(
+        "SELECT schema_version FROM cached_projection_meta WHERE singleton = 1"
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("cached ingestion projection is not initialized")
+    return int(row[0])
 
 
 def get_watermark(conn: sqlite3.Connection) -> ProjectionWatermark:
@@ -357,3 +395,79 @@ def _parse_timestamp(value: str) -> datetime:
     if parsed.tzinfo is None:
         raise ValueError("advanced_at must include a timezone")
     return parsed
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectionFreshness:
+    """A guarded reader's health assessment of one cached projection.
+
+    ``healthy`` is ``True`` only when the schema version matches this build,
+    the watermark has advanced at least once, and its age is within
+    ``stale_after_seconds``.  Any other outcome carries an explicit
+    ``fallback_reason`` a caller can disclose instead of silently serving a
+    cache that may not reflect current remote state.
+    """
+
+    watermark: ProjectionWatermark
+    schema_version: int
+    age_seconds: float | None
+    stale_after_seconds: int
+    healthy: bool
+    fallback_reason: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "watermark_offset": self.watermark.ingest_offset,
+            "watermark_advanced_at": self.watermark.advanced_at,
+            "age_seconds": self.age_seconds,
+            "schema_version": self.schema_version,
+            "stale_after_seconds": self.stale_after_seconds,
+            "healthy": self.healthy,
+            "fallback_reason": self.fallback_reason,
+        }
+
+
+def assess_freshness(
+    conn: sqlite3.Connection,
+    *,
+    now: datetime | None = None,
+    stale_after_seconds: int = DEFAULT_STALE_AFTER_SECONDS,
+) -> ProjectionFreshness:
+    """Assess whether ``conn`` is safe for a guarded read-only consumer.
+
+    Three independent conditions can make a cache unsafe to read as current:
+    an incompatible on-disk schema version (``schema-upgrade-required``), a
+    watermark that has never advanced past zero (``never-synchronized``), and
+    a watermark whose age exceeds ``stale_after_seconds`` (``stale``).  Only
+    one reason is reported, in that priority order, since a schema mismatch
+    makes the other two moot and an unsynchronized cache has no meaningful
+    age.
+    """
+    if (
+        isinstance(stale_after_seconds, bool)
+        or not isinstance(stale_after_seconds, int)
+        or stale_after_seconds < 1
+    ):
+        raise ValueError("stale_after_seconds must be a positive integer")
+
+    watermark = get_watermark(conn)
+    schema_version = get_schema_version(conn)
+    age = watermark.age_seconds(now)
+
+    if schema_version != PROJECTION_SCHEMA_VERSION:
+        fallback_reason: str | None = "schema-upgrade-required"
+    elif watermark.advanced_at is None:
+        fallback_reason = "never-synchronized"
+    elif age is not None and age > stale_after_seconds:
+        fallback_reason = "stale"
+    else:
+        fallback_reason = None
+
+    return ProjectionFreshness(
+        watermark=watermark,
+        schema_version=schema_version,
+        age_seconds=age,
+        stale_after_seconds=stale_after_seconds,
+        healthy=fallback_reason is None,
+        fallback_reason=fallback_reason,
+    )
