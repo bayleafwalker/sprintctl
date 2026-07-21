@@ -7,4 +7,5 @@ CLI_CAPABILITIES = (
     "normalized-scope-refs/v1",
     "portable-aggregate-uuid-json/v1",
     "remote-backend/v1",
+    "remote-schema-compatibility/v1",
 )

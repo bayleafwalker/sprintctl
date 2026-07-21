@@ -217,40 +217,56 @@ class TestInitDb:
         sprint_id = pg.create_sprint(store, f"Init-{_uid()}", "G", status="active")
         assert pg.get_sprint(store, sprint_id) is not None
 
-    def test_concurrent_bootstrap_serializes_on_disposable_postgres(self, pg_test_scope, store):
-        """Two normal startup paths must wait, not deadlock on catalog DDL."""
-        # The preceding read-only assertion opens a transaction on the
-        # module-scoped store. Release its catalog locks before exercising
-        # concurrent DDL bootstrap from independent connections.
-        store.conn.rollback()
+    def test_concurrent_migration_serializes_on_disposable_postgres(self, pg_test_scope, store):
+        """Two migration jobs admit one v1 -> v2 transition without deadlock."""
+        schema = "migration_" + uuid.uuid4().hex
+        with store.conn.cursor() as cur:
+            cur.execute(f'CREATE SCHEMA "{schema}"')
+            cur.execute(f'CREATE TABLE "{schema}".schema_version (version integer NOT NULL)')
+            cur.execute(f'INSERT INTO "{schema}".schema_version VALUES (1)')
+        store.conn.commit()
         connections = [psycopg.connect(_PG_URL, row_factory=dict_row) for _ in range(2)]
         for conn in connections:
             assert_disposable_connection(conn)
+            with conn.cursor() as cur:
+                cur.execute(f'SET search_path TO "{schema}"')
+            conn.commit()
 
         barrier = threading.Barrier(3)
         errors = []
+        results = []
 
-        def initialize(conn, repo_id):
+        def migrate(conn, repo_id):
             try:
                 barrier.wait(timeout=15)
-                pg.init_db(pg.PgStore(conn=conn, repo_id=repo_id))
+                results.append(pg.migrate_schema(pg.PgStore(conn=conn, repo_id=repo_id)))
             except BaseException as exc:  # Preserve a worker failure for assertion.
                 errors.append(exc)
             finally:
                 conn.close()
 
         threads = [
-            threading.Thread(target=initialize, args=(conn, pg_test_scope("bootstrap")))
+            threading.Thread(target=migrate, args=(conn, pg_test_scope("migration")))
             for conn in connections
         ]
-        for thread in threads:
-            thread.start()
-        barrier.wait(timeout=15)
-        for thread in threads:
-            thread.join(timeout=30)
+        try:
+            for thread in threads:
+                thread.start()
+            barrier.wait(timeout=15)
+            for thread in threads:
+                thread.join(timeout=60)
 
-        assert not any(thread.is_alive() for thread in threads)
-        assert not errors
+            assert not any(thread.is_alive() for thread in threads)
+            assert not errors
+            assert sorted(result["applied_versions"] for result in results) == [[], [2]]
+            with store.conn.cursor() as cur:
+                cur.execute(f'SELECT version FROM "{schema}".schema_version')
+                assert cur.fetchone()["version"] == 2
+            store.conn.rollback()
+        finally:
+            with store.conn.cursor() as cur:
+                cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            store.conn.commit()
 
     def test_production_like_role_is_rejected_server_side(self, store):
         guard_url = os.environ.get("SPRINTCTL_TEST_PG_PRODUCTION_GUARD_URL")
@@ -259,11 +275,23 @@ class TestInitDb:
 
         probe_role = "sprintctl_production_probe"
         with store.conn.cursor() as cur:
+            cur.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
+            cur.execute(f"GRANT USAGE ON SCHEMA public TO {probe_role}")
+            cur.execute(f"GRANT SELECT ON schema_version TO {probe_role}")
             cur.execute(f"GRANT INSERT ON ingest_stream TO {probe_role}")
         store.conn.commit()
         try:
             probe = psycopg.connect(guard_url, row_factory=dict_row)
             try:
+                handshake = pg.require_compatible_schema(
+                    pg.PgStore(conn=probe, repo_id="runtime-probe")
+                )
+                assert handshake["compatible"] is True
+                probe.rollback()
+                with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                    with probe.cursor() as cur:
+                        cur.execute("CREATE TABLE runtime_role_must_not_create_tables (id integer)")
+                probe.rollback()
                 with pytest.raises(
                     psycopg.errors.InsufficientPrivilege,
                     match="dedicated disposable sprintctl test role and database",
@@ -280,6 +308,8 @@ class TestInitDb:
         finally:
             with store.conn.cursor() as cur:
                 cur.execute(f"REVOKE INSERT ON ingest_stream FROM {probe_role}")
+                cur.execute(f"REVOKE SELECT ON schema_version FROM {probe_role}")
+                cur.execute(f"REVOKE USAGE ON SCHEMA public FROM {probe_role}")
             store.conn.commit()
 
     def test_phase26_ingest_schema_upgrades_before_authority_foreign_keys(

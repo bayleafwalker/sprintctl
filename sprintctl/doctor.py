@@ -17,10 +17,10 @@ from typing import Any, Mapping
 
 from . import CLI_CAPABILITIES, __version__
 from . import backend as _backend
+from .pg_migrations import CURRENT_SCHEMA_VERSION as REMOTE_SCHEMA_VERSION
 
 
 SQLITE_SCHEMA_VERSION = 11
-REMOTE_SCHEMA_VERSION = 1
 _VERSION_RE = re.compile(r"\bversion\s+([^\s]+)")
 _POSTGRES_CREDENTIAL_RE = re.compile(r"(postgres(?:ql)?://)[^\s@]+@", re.IGNORECASE)
 

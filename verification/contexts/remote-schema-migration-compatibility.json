@@ -1,0 +1,89 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.remote-schema-migration-compatibility",
+  "owner_repo": "sprintctl",
+  "subject": "deployment-owned-postgresql-schema-migration-and-runtime-compatibility",
+  "contract_ref": {
+    "doc_id": "sprintctl-vuoro-served-authority-alignment",
+    "revision": "git:142d5ccccd68d589a17de7e8ed3c4bed0361bb56"
+  },
+  "source_of_truth": "postgresql-schema-version-ledger-under-global-migration-advisory-lock",
+  "depth": 2,
+  "backends": ["postgres", "sqlite"],
+  "actors": ["migration-job-a", "migration-job-b", "runtime-service", "local-sqlite-client"],
+  "initial_state": [
+    "missing-remote-schema",
+    "legacy-remote-schema-version-1",
+    "current-remote-schema-version-2",
+    "newer-remote-schema-version-3",
+    "local-sqlite-schema-version-11"
+  ],
+  "operations": [
+    {
+      "name": "read-runtime-compatibility-handshake",
+      "actors": ["runtime-service"],
+      "synchronization": "before-serving-any-work-operation"
+    },
+    {
+      "name": "apply-serialized-idempotent-migration",
+      "actors": ["migration-job-a", "migration-job-b"],
+      "synchronization": "global-postgresql-transaction-advisory-lock"
+    },
+    {
+      "name": "deny-runtime-ddl",
+      "actors": ["runtime-service"],
+      "synchronization": "server-privilege-check-before-ddl"
+    },
+    {
+      "name": "self-migrate-local-sqlite",
+      "actors": ["local-sqlite-client"],
+      "synchronization": "sqlite-begin-immediate-per-migration"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "shared-work-schema-version-ledger"
+  },
+  "assumptions": {
+    "isolation": "one PostgreSQL transaction per migration job; independent connections for concurrency history",
+    "clock": "none",
+    "fairness": "a waiting migration transaction eventually acquires the advisory lock"
+  },
+  "bounds": {
+    "postgresql_instances": 1,
+    "concurrent_migration_jobs": 2,
+    "remote_schema_versions": 4,
+    "sqlite_instances": 1
+  },
+  "invariants": [
+    "runtime-startup-executes-no-ddl",
+    "only-remote-schema-version-2-serves-sprintctl-work-v1",
+    "missing-old-and-new-remote-schemas-fail-closed",
+    "two-concurrent-migration-jobs-admit-one-version-advance",
+    "failed-migration-does-not-advance-the-ledger",
+    "runtime-role-can-read-compatibility-and-cannot-create-schema-objects",
+    "local-sqlite-authority-remains-self-migrating"
+  ],
+  "faults": [
+    "migration-response-retry-after-commit",
+    "migration-statement-failure-before-ledger-advance",
+    "runtime-starts-before-migration",
+    "runtime-starts-against-newer-schema",
+    "runtime-credential-attempts-ddl"
+  ],
+  "oracles": [
+    "read-only-query-history",
+    "migration-ledger-version",
+    "serialized-independent-connection-history",
+    "postgresql-insufficient-privilege-error",
+    "existing-sqlite-migration-suite"
+  ],
+  "implementation_anchors": [
+    "sprintctl/pg_migrations.py:startup_schema_handshake",
+    "sprintctl/pg_migrations.py:migrate_schema",
+    "sprintctl/cli.py:_get_store",
+    "tests/test_pg_bootstrap.py:test_runtime_compatibility_probe_is_read_only_and_publishes_work_api",
+    "tests/test_pg_integration.py:TestInitDb.test_concurrent_migration_serializes_on_disposable_postgres"
+  ],
+  "expansions": ["semantic-doc", "stateful-test", "concurrent-history", "fault-scenario"]
+}

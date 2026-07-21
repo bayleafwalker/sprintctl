@@ -34,6 +34,7 @@ except ImportError:  # pragma: no cover
 
 from . import contracts as _contracts
 from . import outbox
+from . import pg_migrations as _pg_migrations
 from .db import (
     VALID_TRANSITIONS,
     SPRINT_TRANSITIONS,
@@ -504,11 +505,9 @@ $$;
 # The DDL text is importable for unit-level schema validation tests.
 PG_DDL = _DDL
 
-# All remote CLI processes run bootstrap before serving a command. PostgreSQL's
-# normal DDL locks do not make this multi-statement path safe when two
-# processes replace functions and alter the same tables at once, so serialize
-# it for the whole shared remote schema rather than per repository.
-_SCHEMA_BOOTSTRAP_LOCK_KEYS = (0x53505249, 0x4E544354)  # "SPRI", "NTCT"
+# Backwards-compatible import alias.  Migration admission and version
+# negotiation are owned by pg_migrations; runtime code below owns work data.
+_SCHEMA_BOOTSTRAP_LOCK_KEYS = _pg_migrations.SCHEMA_MIGRATION_LOCK_KEYS
 
 
 @dataclass
@@ -854,76 +853,81 @@ def _repo_id_from_cwd() -> str:
 
 
 def init_db(store: PgStore) -> None:
-    """Apply the idempotent remote bootstrap under one transaction lock."""
-    try:
-        _init_db_locked(store)
-        store.conn.commit()
-    except Exception:
-        store.conn.rollback()
-        raise
+    """Run deployment-owned migrations (legacy explicit-operator alias)."""
+    _pg_migrations.migrate_schema(store)
 
 
-def _init_db_locked(store: PgStore) -> None:
-    with store.conn.cursor() as cur:
+def _apply_schema_version_2(cur: Any) -> None:
+    """Normalize every legacy v1 deployment before advancing to schema v2."""
+    # Phase 26 created this constraint as observation-only.  Authority
+    # commands and remote decisions share the immutable remote ledger, but
+    # are admitted only by their dedicated arbiter path.
+    cur.execute(
+        "ALTER TABLE ingest_record "
+        "DROP CONSTRAINT IF EXISTS ingest_record_record_class_check"
+    )
+    cur.execute(
+        "ALTER TABLE ingest_record ADD CONSTRAINT ingest_record_record_class_check "
+        "CHECK (record_class IN ('observation', 'authority-command', 'remote-decision'))"
+    )
+    cur.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_record_repo_offset_unique "
+        "ON ingest_record(repo_id, ingest_offset)"
+    )
+    # P1 ingestion originally persisted only the server receipt timestamp.
+    # Preserve producer authorship on upgrade as well as on fresh installs;
+    # old rows have no producer timestamp, so their historical receipt time
+    # is the only truthful fallback available.
+    cur.execute(
+        "ALTER TABLE ingest_record "
+        "ADD COLUMN IF NOT EXISTS producer_created_at timestamptz"
+    )
+    cur.execute(
+        "UPDATE ingest_record SET producer_created_at = ingested_at "
+        "WHERE producer_created_at IS NULL"
+    )
+    cur.execute(
+        "ALTER TABLE ingest_record "
+        "ALTER COLUMN producer_created_at SET NOT NULL"
+    )
+    for table in ("sprint", "work_item"):
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS aggregate_uuid uuid")
         cur.execute(
-            "SELECT pg_advisory_xact_lock(%s, %s)",
-            _SCHEMA_BOOTSTRAP_LOCK_KEYS,
+            f"UPDATE {table} SET aggregate_uuid = "
+            "md5(random()::text || clock_timestamp()::text || id::text)::uuid "
+            "WHERE aggregate_uuid IS NULL"
         )
-        cur.execute(_DDL)
-        # Phase 26 created this constraint as observation-only.  Authority
-        # commands and remote decisions share the immutable remote ledger, but
-        # are admitted only by their dedicated arbiter path.
+        cur.execute(f"ALTER TABLE {table} ALTER COLUMN aggregate_uuid SET NOT NULL")
         cur.execute(
-            "ALTER TABLE ingest_record "
-            "DROP CONSTRAINT IF EXISTS ingest_record_record_class_check"
+            f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_aggregate_uuid "
+            f"ON {table}(aggregate_uuid)"
         )
-        cur.execute(
-            "ALTER TABLE ingest_record ADD CONSTRAINT ingest_record_record_class_check "
-            "CHECK (record_class IN ('observation', 'authority-command', 'remote-decision'))"
-        )
-        cur.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_record_repo_offset_unique "
-            "ON ingest_record(repo_id, ingest_offset)"
-        )
-        # P1 ingestion originally persisted only the server receipt timestamp.
-        # Preserve producer authorship on upgrade as well as on fresh installs;
-        # old rows have no producer timestamp, so their historical receipt time
-        # is the only truthful fallback available.
-        cur.execute(
-            "ALTER TABLE ingest_record "
-            "ADD COLUMN IF NOT EXISTS producer_created_at timestamptz"
-        )
-        cur.execute(
-            "UPDATE ingest_record SET producer_created_at = ingested_at "
-            "WHERE producer_created_at IS NULL"
-        )
-        cur.execute(
-            "ALTER TABLE ingest_record "
-            "ALTER COLUMN producer_created_at SET NOT NULL"
-        )
-        for table in ("sprint", "work_item"):
-            cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS aggregate_uuid uuid")
-            cur.execute(
-                f"UPDATE {table} SET aggregate_uuid = "
-                "md5(random()::text || clock_timestamp()::text || id::text)::uuid "
-                "WHERE aggregate_uuid IS NULL"
-            )
-            cur.execute(f"ALTER TABLE {table} ALTER COLUMN aggregate_uuid SET NOT NULL")
-            cur.execute(
-                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_aggregate_uuid "
-                f"ON {table}(aggregate_uuid)"
-            )
-        cur.execute("ALTER TABLE ref DROP CONSTRAINT IF EXISTS ref_ref_type_check")
-        cur.execute(
-            "ALTER TABLE ref ADD CONSTRAINT ref_ref_type_check "
-            "CHECK (ref_type IN ('pr', 'issue', 'doc', 'other', "
-            "'file', 'glob', 'manifest'))"
-        )
-        # Advance identity sequences past any ids that were inserted via
-        # OVERRIDING SYSTEM VALUE (which bypasses the sequence). Without this,
-        # the next nextval call would return a value that conflicts with
-        # already-imported data.
-        _advance_identity_sequences(cur, ("sprint", "track", "work_item", "event", "claim", "ref", "dep"))
+    cur.execute("ALTER TABLE ref DROP CONSTRAINT IF EXISTS ref_ref_type_check")
+    cur.execute(
+        "ALTER TABLE ref ADD CONSTRAINT ref_ref_type_check "
+        "CHECK (ref_type IN ('pr', 'issue', 'doc', 'other', "
+        "'file', 'glob', 'manifest'))"
+    )
+    # Advance identity sequences past any ids that were inserted via
+    # OVERRIDING SYSTEM VALUE (which bypasses the sequence). Without this,
+    # the next nextval call would return a value that conflicts with
+    # already-imported data.
+    _advance_identity_sequences(cur, ("sprint", "track", "work_item", "event", "claim", "ref", "dep"))
+
+
+def compatibility_handshake(store: PgStore) -> dict[str, Any]:
+    """Return the public read-only work API/schema handshake."""
+    return _pg_migrations.compatibility_handshake(store)
+
+
+def require_compatible_schema(store: PgStore) -> dict[str, Any]:
+    """Fail closed on missing, older, or newer remote schemas."""
+    return _pg_migrations.require_compatible_schema(store)
+
+
+def migrate_schema(store: PgStore) -> dict[str, Any]:
+    """Run the serialized deployment migration package."""
+    return _pg_migrations.migrate_schema(store)
 
 
 def _advance_identity_sequences(cur: Any, tables: tuple[str, ...]) -> None:

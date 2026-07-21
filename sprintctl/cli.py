@@ -130,6 +130,18 @@ def _get_conn(obj: dict) -> sqlite3.Connection:
     return conn
 
 
+def _redacted_postgres_error(exc: Exception, url: str | None) -> str:
+    message = str(exc)
+    if url:
+        message = message.replace(url, "<redacted SPRINTCTL_URL>")
+    return re.sub(
+        r"(postgres(?:ql)?://)[^\s@]+@",
+        r"\1<redacted>@",
+        message,
+        flags=re.IGNORECASE,
+    )
+
+
 def _get_store(obj: dict):
     """Return (store, db_module) for the configured backend. Exits on error."""
     try:
@@ -155,9 +167,19 @@ def _get_store(obj: dict):
     if store is None:
         try:
             store = _pg.get_connection(config.url)
-            _pg.init_db(store)
+            from . import pg_migrations as _pg_migrations  # noqa: PLC0415
+            obj["remote_compatibility"] = _pg_migrations.startup_schema_handshake(
+                store,
+                os.environ,
+            )
         except Exception as e:
-            click.echo(f"Error: could not connect to postgres from SPRINTCTL_URL: {e}", err=True)
+            if store is not None:
+                store.conn.close()
+            detail = _redacted_postgres_error(e, config.url)
+            click.echo(
+                f"Error: could not connect to postgres from SPRINTCTL_URL: {detail}",
+                err=True,
+            )
             sys.exit(1)
         obj["pg_store"] = store
         click.get_current_context().call_on_close(store.conn.close)
@@ -6758,7 +6780,81 @@ def render_cmd(obj, sprint_id, output_path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# migrate-to-remote
+# remote-schema — deployment migration and service compatibility
+# ---------------------------------------------------------------------------
+
+@cli.group("remote-schema")
+def remote_schema() -> None:
+    """Check or migrate the shared PostgreSQL work schema."""
+
+
+def _remote_schema_store(pg_url: str | None):
+    from . import pg as _pg  # noqa: PLC0415
+
+    url = pg_url or os.environ.get("SPRINTCTL_URL")
+    if not url:
+        raise click.ClickException(
+            "Postgres URL required. Pass --url or set SPRINTCTL_URL."
+        )
+    try:
+        return _pg.get_connection(url)
+    except Exception as exc:
+        detail = _redacted_postgres_error(exc, url)
+        raise click.ClickException(
+            f"could not connect to PostgreSQL for remote schema operation: {detail}"
+        ) from exc
+
+
+@remote_schema.command("check")
+@click.option("--url", "pg_url", default=None, help="Postgres URL (default: $SPRINTCTL_URL)")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit the compatibility handshake as JSON")
+def remote_schema_check_cmd(pg_url: str | None, as_json: bool) -> None:
+    """Read the work API/schema handshake without attempting DDL."""
+    from . import pg_migrations as _pg_migrations  # noqa: PLC0415
+
+    store = _remote_schema_store(pg_url)
+    try:
+        handshake = _pg_migrations.compatibility_handshake(store)
+        store.conn.rollback()
+    finally:
+        store.conn.close()
+    if as_json:
+        click.echo(json.dumps(handshake, indent=2, sort_keys=True))
+    else:
+        actual = handshake["remote_schema"]["actual"]
+        click.echo(
+            f"work_api={handshake['work_api_version']} "
+            f"remote_schema={actual if actual is not None else 'missing'} "
+            f"compatible={'yes' if handshake['compatible'] else 'no'}"
+        )
+    if not handshake["compatible"]:
+        raise click.exceptions.Exit(1)
+
+
+@remote_schema.command("migrate")
+@click.option("--url", "pg_url", default=None, help="Migration-role Postgres URL (default: $SPRINTCTL_URL)")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit the migration result as JSON")
+def remote_schema_migrate_cmd(pg_url: str | None, as_json: bool) -> None:
+    """Apply serialized idempotent migrations with a migration-role credential."""
+    from . import pg_migrations as _pg_migrations  # noqa: PLC0415
+
+    store = _remote_schema_store(pg_url)
+    try:
+        result = _pg_migrations.migrate_schema(store)
+    finally:
+        store.conn.close()
+    if as_json:
+        click.echo(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        versions = ",".join(str(value) for value in result["applied_versions"])
+        click.echo(
+            f"remote schema {result['from_version']} -> {result['to_version']}; "
+            f"applied={versions or 'none'}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# migrate-to-remote — explicit SQLite-to-PostgreSQL state transfer
 # ---------------------------------------------------------------------------
 
 @cli.command("migrate-to-remote")

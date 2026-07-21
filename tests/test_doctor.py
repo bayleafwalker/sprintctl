@@ -83,7 +83,7 @@ def test_remote_schema_probe_enforces_read_only_connection(monkeypatch):
             observed["query"] = query
 
         def fetchone(self):
-            return (1,)
+            return (2,)
 
     class Connection:
         def cursor(self):
