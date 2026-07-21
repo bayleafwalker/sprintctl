@@ -131,10 +131,9 @@ def build_context_candidates(
         selected_ids.add(item["id"])
 
     explicit_found = explicit_item is not None
-    if explicit_item_id is not None:
+    if explicit_item_id is not None and explicit_found:
         pool_ids.add(explicit_item_id)
-        if explicit_found:
-            _add(explicit_item, RANK_EXPLICIT_TARGET, "Explicit item reference supplied by caller.")
+        _add(explicit_item, RANK_EXPLICIT_TARGET, "Explicit item reference supplied by caller.")
 
     def _remaining_pool() -> list[dict]:
         return [item for item in ready_items if item["id"] not in selected_ids]

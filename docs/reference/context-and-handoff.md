@@ -119,6 +119,58 @@ Compatibility note:
 
 - `next-work --json` (without `--explain`) preserves the legacy list-only output shape.
 
+## `context-candidates --json`
+
+`context-candidates` emits a bounded, deterministically ranked Tier-1
+context-candidate packet -- a small advisory list instead of the full
+backlog, for a consumer (e.g. actionq Tier-1 session start) that must not
+turn an inferred candidate into an unreviewed claim. See
+`docs/ops-upgrade-plan.md` Tier 1 for the design rationale.
+
+Contract version: `1`
+
+```json
+{
+  "contract_version": "1",
+  "sprint": {"id": 1, "name": "..."},
+  "explicit_target": {"item_id": 123, "found": true},
+  "bound": 5,
+  "truncated": false,
+  "watermark": {"ingest_offset": 42, "age_seconds": 12.3},
+  "projection": {},
+  "candidates": [
+    {
+      "item_id": 123,
+      "rank": 1,
+      "rank_reason": "Explicit item reference supplied by caller.",
+      "claim_eligible": true
+    }
+  ]
+}
+```
+
+Ranking order (first match wins, ties keep stable incoming order):
+
+1. `--item-id` explicit target (only rank ever `claim_eligible: true`)
+2. `--path` (repeatable) overlap against item file/manifest/glob/doc scope refs
+3. items carrying other linked documentation
+4. `--query` deterministic lexical token overlap
+5. remaining repo-level candidates, in the caller's incoming ready-item order
+
+`explicit_target` is `null` when `--item-id` was not supplied, and
+`{"item_id": N, "found": false}` when the given item does not exist --
+never raises. A not-found explicit target is never counted toward
+`truncated`: it was not a real candidate, so its absence must not make an
+otherwise-complete packet look cut off.
+
+`truncated` is `true` only when strictly more real candidates existed in
+the pool (ready items, plus a found explicit target) than fit within
+`bound` (`min(--limit, `command's configured max`)`).
+
+`watermark` mirrors the cached-projection watermark/age used elsewhere in
+this doc (`null` if no projection watermark is available); `--limit`
+caps at the command's configured maximum regardless of the value passed.
+
 ## Opt-in project union contracts
 
 The `--project PROJECT_TOML` option adds a read-only multi-repository form to

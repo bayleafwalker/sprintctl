@@ -64,6 +64,30 @@ class TestBuildContextCandidates:
         assert payload["explicit_target"] == {"item_id": 999, "found": False}
         assert payload["candidates"] == []
 
+    def test_explicit_target_not_found_does_not_report_truncated(self):
+        # A not-found explicit target was never a real candidate, so it must
+        # not inflate the truncation pool -- regression for a bug where
+        # `truncated` was true even with zero real candidates in the pool.
+        payload = cc.build_context_candidates(
+            ready_items=[],
+            refs_by_item={},
+            explicit_item_id=999999,
+            explicit_item=None,
+        )
+        assert payload["truncated"] is False
+
+    def test_explicit_target_not_found_with_small_pool_not_truncated(self):
+        items = [{"id": 1, "title": "A", "status": "pending", "track_name": "eng"}]
+        payload = cc.build_context_candidates(
+            ready_items=items,
+            refs_by_item={},
+            explicit_item_id=999999,
+            explicit_item=None,
+            limit=5,
+        )
+        assert payload["explicit_target"] == {"item_id": 999999, "found": False}
+        assert payload["truncated"] is False
+
     def test_only_rank_one_is_ever_claim_eligible(self):
         items = [{"id": 1, "title": "A", "status": "pending", "track_name": "eng"}]
         payload = cc.build_context_candidates(ready_items=items, refs_by_item={})
