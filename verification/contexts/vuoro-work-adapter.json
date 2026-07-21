@@ -39,6 +39,11 @@
       "synchronization": "PostgreSQL aggregate row lock and atomic request-effect-decision transaction"
     },
     {
+      "name": "start-claim-and-activate-item",
+      "actors": ["authenticated-vuoro-client", "work-adapter"],
+      "synchronization": "canonical claim creation followed by proof-bound item transition with automatic claim release on transition failure"
+    },
+    {
       "name": "retry-identical-record-or-batch",
       "actors": ["authenticated-vuoro-client", "work-adapter"],
       "synchronization": "immutable event identity, stream position and content-bound invocation key"
@@ -69,7 +74,7 @@
     "fairness": "a waiting claim arbitration transaction eventually acquires the work-item row lock"
   },
   "bounds": {
-    "catalog_operations": 12,
+    "catalog_operations": 13,
     "concurrent_claim_clients": 2,
     "identical_retries_per_operation": 1,
     "project_members_per_unit_history": 2,
@@ -77,8 +82,10 @@
   },
   "invariants": [
     "catalog-operations-have-domain-qualified-unique-names-and-valid-json-schema-2020-12-contracts",
-    "authenticated-identity-not-request-body-controls-actor-and-authority",
+    "outer-record-actor-nested-command-actor-authenticated-identity-and-claim-agent-are-bound-before-arbitration",
     "claim-proofs-never-enter-catalog-invocation-arguments",
+    "claim-start-uses-the-authenticated-actor-and-releases-the-created-claim-when-activation-fails",
+    "claim-start-forbids-idempotency-keys-and-durable-retries-use-claim-arbitrate",
     "identical-command-retry-returns-the-original-durable-decision-without-a-second-effect",
     "stale-basis-is-a-durable-rejection-without-target-mutation",
     "two-overlapping-unrelated-exclusive-claim-commands-produce-one-acceptance-and-one-rejection",
@@ -91,6 +98,8 @@
     "lost-response-followed-by-identical-command-retry",
     "stale-basis-after-authority-aggregate-advance",
     "two-independent-exclusive-claim-invocations",
+    "nested-command-actor-or-claim-agent-attempts-impersonation",
+    "claim-start-activation-fails-after-claim-creation",
     "batch-idempotency-key-reused-for-different-content",
     "project-members-supplied-out-of-order",
     "client-catalog-cached-before-new-operation-registration"
@@ -111,8 +120,13 @@
     "sprintctl/vuoro_adapter.py:WORK_OPERATION_CONTRACTS",
     "sprintctl/vuoro_adapter.py:register_work_catalog",
     "tests/test_work_application.py:test_batch_is_content_bound_idempotent_and_preserves_producer_order",
+    "tests/test_work_application.py:test_authority_actor_binding_rejects_single_and_batch_before_backend",
+    "tests/test_work_application.py:test_click_free_claim_start_matches_cli_state_flow",
     "tests/test_work_application_pg.py:test_concurrent_served_claims_have_one_durable_acceptance",
-    "tests/test_vuoro_work_adapter_integration.py:test_preexisting_generic_client_discovers_cutover_evidence"
+    "tests/test_work_application_pg.py:test_authenticated_actor_binding_rejects_before_pg_mutation",
+    "tests/test_work_application_pg.py:test_served_claim_start_activates_or_releases_on_dependency_failure",
+    "tests/test_vuoro_work_adapter_integration.py:test_preexisting_generic_client_discovers_cutover_evidence",
+    "tests/test_vuoro_work_adapter_integration.py:test_generic_client_invokes_click_free_claim_start"
   ],
   "expansions": [
     "semantic-doc",

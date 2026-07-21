@@ -17,8 +17,11 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
+import socket
 from typing import Any, Protocol
+from uuid import uuid4
 
 from . import contracts, cutover, outbox
 
@@ -253,6 +256,7 @@ class WorkApplication:
             "work.read.next-work": self._read_next_work,
             "work.read.records": self._read_records,
             "work.read.decisions": self._read_decisions,
+            "work.claim.start": self._claim_start,
             "work.claim.arbitrate": self._claim_arbitrate,
             "work.lifecycle.arbitrate": self._lifecycle_arbitrate,
             "work.evidence.ingest": self._evidence_ingest,
@@ -395,6 +399,120 @@ class WorkApplication:
     ) -> dict[str, Any]:
         return self._arbitrate_one(arguments, context, CLAIM_COMMAND_TYPES)
 
+    def _claim_start(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        """Create an execute claim and activate its item as one served flow.
+
+        This mirrors the legacy ``claim start`` orchestration while remaining
+        independent of Click.  The flow is deliberately not retry-safe: the
+        catalog forbids an idempotency key, and durable callers should use an
+        immutable ``claim.acquire`` command through ``work.claim.arbitrate``.
+        """
+
+        item_id = _positive_int(arguments.get("item_id"), "item_id")
+        ttl_seconds = _positive_int(arguments.get("ttl_seconds", 300), "ttl_seconds")
+        item = self.backend.get_work_item(self.store, item_id)
+        if item is None:
+            raise ApplicationRejection(
+                "item-not-found", f"Item #{item_id} not found", 404
+            )
+
+        actor = context.identity.actor
+        runtime_session_id = (
+            _optional_text(arguments.get("runtime_session_id"), "runtime_session_id")
+            or os.environ.get("SPRINTCTL_RUNTIME_SESSION_ID")
+            or os.environ.get("CODEX_THREAD_ID")
+        )
+        instance_id = (
+            _optional_text(arguments.get("instance_id"), "instance_id")
+            or os.environ.get("SPRINTCTL_INSTANCE_ID")
+            or str(uuid4())
+        )
+        hostname = (
+            _optional_text(arguments.get("hostname"), "hostname")
+            or socket.gethostname()
+        )
+        pid = _optional_positive_int(arguments.get("pid"), "pid") or os.getpid()
+        previous_status = item["status"]
+
+        try:
+            claim_id = self.backend.create_claim(
+                self.store,
+                work_item_id=item_id,
+                agent=actor,
+                claim_type="execute",
+                exclusive=True,
+                ttl_seconds=ttl_seconds,
+                branch=_optional_text(arguments.get("branch"), "branch"),
+                worktree_path=_optional_text(
+                    arguments.get("worktree_path"), "worktree_path"
+                ),
+                commit_sha=_optional_text(arguments.get("commit_sha"), "commit_sha"),
+                pr_ref=_optional_text(arguments.get("pr_ref"), "pr_ref"),
+                runtime_session_id=runtime_session_id,
+                instance_id=instance_id,
+                hostname=hostname,
+                pid=pid,
+            )
+        except ValueError as exc:
+            raise ApplicationRejection("claim-start-rejected", str(exc)) from exc
+
+        claim = self.backend.get_claim(self.store, claim_id, include_secret=True)
+        if claim is None or not claim.get("claim_token"):
+            raise ApplicationRejection(
+                "claim-start-result-invalid",
+                "created claim is unavailable or has no ownership proof",
+                500,
+            )
+
+        transitioned = False
+        if previous_status != "active":
+            try:
+                self.backend.set_work_item_status(
+                    self.store,
+                    item_id,
+                    "active",
+                    actor=actor,
+                    claim_id=claim_id,
+                    claim_token=claim["claim_token"],
+                )
+                transitioned = True
+            except Exception as transition_error:
+                try:
+                    self.backend.release_claim(
+                        self.store, claim_id, claim["claim_token"], actor=actor
+                    )
+                except Exception as release_error:
+                    raise ApplicationRejection(
+                        "claim-start-rollback-failed",
+                        "claim was created, activation failed, and automatic release failed",
+                        500,
+                    ) from release_error
+                raise ApplicationRejection(
+                    "claim-start-transition-failed",
+                    "claim was released after the item could not be moved to active",
+                ) from transition_error
+
+        updated_item = self.backend.get_work_item(self.store, item_id)
+        if updated_item is None:
+            raise ApplicationRejection(
+                "claim-start-result-invalid",
+                "claimed item is unavailable after claim start",
+                500,
+            )
+        return {
+            "operation": "claim_start",
+            "claim_id": claim_id,
+            "claim_token": claim["claim_token"],
+            "claim": claim,
+            "item_id": item_id,
+            "item_status_before": previous_status,
+            "item_status_after": updated_item["status"],
+            "status_transition_applied": transitioned,
+            "refs": self.backend.list_refs(self.store, item_id),
+        }
+
     def _lifecycle_arbitrate(
         self, arguments: dict[str, Any], context: InvocationContext
     ) -> dict[str, Any]:
@@ -407,7 +525,7 @@ class WorkApplication:
         allowed_types: frozenset[str],
     ) -> dict[str, Any]:
         record = record_from_dict(_required_mapping(arguments.get("record"), "record"))
-        self._validate_record(record, context, allowed_types)
+        record = self._validate_record(record, context, allowed_types)
         if context.basis_revision != record.basis_revision:
             raise ApplicationRejection(
                 "basis-revision-mismatch",
@@ -489,16 +607,16 @@ class WorkApplication:
         records = [
             record_from_dict(_required_mapping(value, "record")) for value in raw
         ]
-        for record in records:
-            self._validate_record(record, context, allowed_types)
-        return records
+        return [
+            self._validate_record(record, context, allowed_types) for record in records
+        ]
 
     def _validate_record(
         self,
         record: outbox.OutboxRecord,
         context: InvocationContext,
         allowed_types: frozenset[str],
-    ) -> None:
+    ) -> outbox.OutboxRecord:
         if record.event_type not in allowed_types:
             raise ApplicationRejection(
                 "record-type-not-allowed",
@@ -512,12 +630,77 @@ class WorkApplication:
                 f"record type {record.event_type!r} must use class {expected_class!r}",
                 422,
             )
+        encoded_payload = json.dumps(
+            record.payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        if (
+            hashlib.sha256(encoded_payload.encode("utf-8")).hexdigest()
+            != record.payload_sha256
+        ):
+            raise ApplicationRejection(
+                "payload-digest-mismatch",
+                "record payload digest does not match its canonical payload",
+                422,
+            )
         if record.actor != context.identity.actor:
             raise ApplicationRejection(
                 "actor-mismatch",
                 "record actor must match the authenticated identity",
                 403,
             )
+        if record.record_class == contracts.RecordClass.AUTHORITY_COMMAND.value:
+            try:
+                envelope = contracts.record_from_dict(record.payload)
+            except (TypeError, ValueError) as exc:
+                raise ApplicationRejection(
+                    "invalid-command-envelope",
+                    "record payload is not a valid authority-command envelope",
+                    422,
+                ) from exc
+            if not isinstance(envelope, contracts.AuthorityCommand):
+                raise ApplicationRejection(
+                    "invalid-command-envelope",
+                    "record payload must be an authority-command envelope",
+                    422,
+                )
+            if envelope.to_dict() != record.payload:
+                raise ApplicationRejection(
+                    "noncanonical-command-envelope",
+                    "authority-command envelope must use its canonical form",
+                    422,
+                )
+            if envelope.actor != context.identity.actor:
+                raise ApplicationRejection(
+                    "actor-mismatch",
+                    "outer record, command actor, and authenticated identity must match",
+                    403,
+                )
+            if (
+                envelope.record_type == "claim.acquire"
+                and envelope.payload["agent"] != context.identity.actor
+            ):
+                raise ApplicationRejection(
+                    "claim-agent-mismatch",
+                    "claim agent must match the authenticated identity",
+                    403,
+                )
+            if (
+                envelope.event_id != record.event_id
+                or envelope.record_type != record.event_type
+                or envelope.basis_revision != record.basis_revision
+                or envelope.correlation_id != record.correlation_id
+                or envelope.causation_id != record.causation_id
+                or envelope.authored_at != record.occurred_at
+            ):
+                raise ApplicationRejection(
+                    "noncanonical-command-envelope",
+                    "authority-command envelope differs from its outer record",
+                    422,
+                )
         if (
             record.record_class == contracts.RecordClass.AUTHORITY_COMMAND.value
             and context.basis_revision is not None
@@ -528,6 +711,7 @@ class WorkApplication:
                 "invocation basis revision must equal each command basis revision",
                 422,
             )
+        return record
 
     def _require_batch_key(
         self, records: Sequence[outbox.OutboxRecord], context: InvocationContext
@@ -674,11 +858,17 @@ class ProjectWorkApplication:
                 "idempotency key must equal the canonical project-batch digest",
                 422,
             )
-        results = []
+        validated_units = []
         for origin_repo, records in units:
             application = by_repo[origin_repo]
-            for record in records:
+            validated_records = [
                 application._validate_record(record, context, SUPPORTED_BATCH_TYPES)
+                for record in records
+            ]
+            validated_units.append((origin_repo, application, validated_records))
+
+        results = []
+        for origin_repo, application, records in validated_units:
             results.append(
                 {
                     "origin_repo": origin_repo,
@@ -713,6 +903,22 @@ def _pagination(arguments: Mapping[str, Any]) -> tuple[int, int | None]:
     raw_limit = arguments.get("limit")
     limit = None if raw_limit is None else _positive_int(raw_limit, "limit")
     return after, limit
+
+
+def _optional_text(value: Any, field: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ApplicationRejection(
+            "invalid-arguments", f"{field} must be a non-empty string or null", 422
+        )
+    return value
+
+
+def _optional_positive_int(value: Any, field: str) -> int | None:
+    if value is None:
+        return None
+    return _positive_int(value, field)
 
 
 def _required_mapping(value: Any, field: str) -> Mapping[str, Any]:

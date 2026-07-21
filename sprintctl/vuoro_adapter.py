@@ -233,6 +233,51 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         )
     ),
     WorkOperationContract(
+        "work.claim.start",
+        _object_schema(
+            {
+                "item_id": {"type": "integer", "minimum": 1},
+                "ttl_seconds": {"type": "integer", "minimum": 1, "default": 300},
+                "branch": {"type": ["string", "null"], "minLength": 1},
+                "worktree_path": {"type": ["string", "null"], "minLength": 1},
+                "commit_sha": {"type": ["string", "null"], "minLength": 1},
+                "pr_ref": {"type": ["string", "null"], "minLength": 1},
+                "runtime_session_id": {"type": ["string", "null"], "minLength": 1},
+                "instance_id": {"type": ["string", "null"], "minLength": 1},
+                "hostname": {"type": ["string", "null"], "minLength": 1},
+                "pid": {"type": ["integer", "null"], "minimum": 1},
+            },
+            required=("item_id",),
+        ),
+        _result_schema(
+            (
+                "operation",
+                "claim_id",
+                "claim_token",
+                "claim",
+                "item_id",
+                "item_status_before",
+                "item_status_after",
+                "status_transition_applied",
+                "refs",
+            ),
+            {
+                "operation": {"const": "claim_start"},
+                "claim_id": {"type": "integer", "minimum": 1},
+                "claim_token": {"type": "string", "minLength": 1},
+                "claim": {"type": "object"},
+                "item_id": {"type": "integer", "minimum": 1},
+                "item_status_before": {"type": "string"},
+                "item_status_after": {"type": "string"},
+                "status_transition_applied": {"type": "boolean"},
+                "refs": {"type": "array", "items": {"type": "object"}},
+            },
+        ),
+        "work:claim",
+        "write",
+        "not-allowed",
+    ),
+    WorkOperationContract(
         "work.claim.arbitrate",
         _RECORD_INPUT,
         _DECISION_RESULT,
@@ -369,7 +414,11 @@ LEGACY_REMOTE_COMMAND_PARITY: tuple[dict[str, str], ...] = (
     {"legacy": "sprintctl item show --id ID --json", "operation": "work.read.item"},
     {"legacy": "sprintctl next-work --json", "operation": "work.read.next-work"},
     {
-        "legacy": "sprintctl claim start|heartbeat|handoff|release",
+        "legacy": "sprintctl claim start",
+        "operation": "work.claim.start",
+    },
+    {
+        "legacy": "sprintctl claim heartbeat|handoff|release",
         "operation": "work.claim.arbitrate",
     },
     {

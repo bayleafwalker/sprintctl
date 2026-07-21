@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import threading
 import uuid
+from dataclasses import replace
 
 import pytest
 
@@ -29,7 +30,12 @@ pytestmark = [
 ]
 
 from sprintctl import authority, contracts, outbox, pg
-from sprintctl.application import WorkApplication, record_to_dict
+from sprintctl.application import (
+    ApplicationRejection,
+    WorkApplication,
+    batch_idempotency_key,
+    record_to_dict,
+)
 from sprintctl.pg_testing import (
     assert_disposable_connection,
     cleanup_test_repositories,
@@ -108,7 +114,7 @@ def _application(store, credentials):
     )
 
 
-def _claim_command(store, item, actor, token, event_id):
+def _claim_command(store, item, actor, token, event_id, *, claim_agent=None):
     reference = authority.credential_ref(token)
     command = contracts.AuthorityCommand(
         event_id=event_id,
@@ -122,7 +128,7 @@ def _claim_command(store, item, actor, token, event_id):
             "aggregate_uuid": item["aggregate_uuid"],
         },
         payload={
-            "agent": actor,
+            "agent": claim_agent or actor,
             "claim_type": "execute",
             "exclusive": True,
             "ttl_seconds": 300,
@@ -132,6 +138,101 @@ def _claim_command(store, item, actor, token, event_id):
         basis_revision=authority.item_revision(item),
     )
     return command, {reference: token}
+
+
+@pytest.mark.parametrize(
+    ("operation", "mismatch", "expected_code"),
+    [
+        ("work.claim.arbitrate", "nested-actor", "actor-mismatch"),
+        ("work.claim.arbitrate", "claim-agent", "claim-agent-mismatch"),
+        ("work.batch.apply", "nested-actor", "actor-mismatch"),
+        ("work.batch.apply", "claim-agent", "claim-agent-mismatch"),
+    ],
+)
+def test_authenticated_actor_binding_rejects_before_pg_mutation(
+    store_factory, tmp_path, operation, mismatch, expected_code
+):
+    store = store_factory(f"actor-binding-{operation}-{mismatch}")
+    sprint_id = pg.create_sprint(store, "Actor binding", status="active")
+    track_id = pg.get_or_create_track(store, sprint_id, "work")
+    item_id = pg.create_work_item(store, sprint_id, track_id, "Do not claim")
+    item = pg.get_work_item(store, item_id)
+    authenticated_actor = "authenticated-worker"
+    command_actor = (
+        "nested-impersonator" if mismatch == "nested-actor" else authenticated_actor
+    )
+    claim_agent = "claim-impersonator" if mismatch == "claim-agent" else command_actor
+    command, credentials = _claim_command(
+        store,
+        item,
+        command_actor,
+        "actor-binding-proof",
+        str(uuid.uuid4()),
+        claim_agent=claim_agent,
+    )
+    record = _command_record(tmp_path / f"{operation}-{mismatch}-producer.db", command)
+    if mismatch == "nested-actor":
+        record = replace(record, actor=authenticated_actor)
+
+    if operation == "work.claim.arbitrate":
+        arguments = {"record": record_to_dict(record)}
+        key = record.event_id
+    else:
+        arguments = {"records": [record_to_dict(record)]}
+        key = batch_idempotency_key([record])
+    context = _context(authenticated_actor, record.basis_revision, key)
+
+    with pytest.raises(ApplicationRejection) as rejected:
+        _application(store, credentials).invoke(operation, arguments, context)
+
+    assert rejected.value.code == expected_code
+    assert pg.list_claims(store, item_id, active_only=False) == []
+    assert authority.list_authority_decisions(store, after_offset=0, limit=None) == []
+    store.conn.close()
+
+
+def test_served_claim_start_activates_or_releases_on_dependency_failure(
+    store_factory,
+):
+    store = store_factory("served-claim-start")
+    sprint_id = pg.create_sprint(store, "Served claim start", status="active")
+    track_id = pg.get_or_create_track(store, sprint_id, "work")
+    ready_id = pg.create_work_item(store, sprint_id, track_id, "Ready")
+    blocker_id = pg.create_work_item(store, sprint_id, track_id, "Blocker")
+    blocked_id = pg.create_work_item(store, sprint_id, track_id, "Blocked")
+    pg.add_dep(store, blocker_id, blocked_id)
+    app = _application(store, {})
+
+    started = app.invoke(
+        "work.claim.start",
+        {
+            "item_id": ready_id,
+            "ttl_seconds": 900,
+            "runtime_session_id": "pg-thread",
+            "instance_id": "pg-process",
+            "hostname": "pg-host",
+            "pid": 4242,
+        },
+        _context("served-starter", None, None),
+    )
+
+    assert started["item_status_before"] == "pending"
+    assert started["item_status_after"] == "active"
+    assert started["status_transition_applied"] is True
+    assert started["claim"]["agent"] == "served-starter"
+    assert started["claim_token"] == started["claim"]["claim_token"]
+    assert len(pg.list_claims(store, ready_id, active_only=True)) == 1
+
+    with pytest.raises(ApplicationRejection) as rejected:
+        app.invoke(
+            "work.claim.start",
+            {"item_id": blocked_id},
+            _context("served-starter", None, None),
+        )
+    assert rejected.value.code == "claim-start-transition-failed"
+    assert pg.get_work_item(store, blocked_id)["status"] == "pending"
+    assert pg.list_claims(store, blocked_id, active_only=False) == []
+    store.conn.close()
 
 
 def test_concurrent_served_claims_have_one_durable_acceptance(store_factory, tmp_path):

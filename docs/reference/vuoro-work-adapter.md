@@ -19,7 +19,8 @@ no migration or DDL.
 | Surface | Operations | Idempotency |
 | --- | --- | --- |
 | Reads | `work.read.sprints`, `work.read.item`, `work.read.next-work`, `work.read.records`, `work.read.decisions` | key forbidden |
-| Claims | `work.claim.arbitrate` | key equals immutable command `event_id` |
+| Claim start | `work.claim.start` | key forbidden; one-shot create plus activation flow |
+| Durable claims | `work.claim.arbitrate` | key equals immutable command `event_id` |
 | Lifecycle | `work.lifecycle.arbitrate` | key equals immutable command `event_id` |
 | Evidence | `work.evidence.ingest` | key equals canonical record-batch digest |
 | Batching | `work.batch.apply` | key equals canonical record-batch digest |
@@ -36,11 +37,22 @@ refresh discovery and invoke it.
 ## Authority and retry semantics
 
 Claims and lifecycle transitions accept the existing immutable
-authority-command producer record. The authenticated identity supplies the
-actor; an argument cannot impersonate a different actor. A single-command
-invocation's basis revision and idempotency key must match the canonical
-record. Claim proof bytes are resolved by service composition and are never
-accepted in the invocation body or catalog.
+authority-command producer record. Before arbitration, the application
+reparses the nested command and requires its canonical form. The outer record
+actor, nested command actor and authenticated identity must match; for
+`claim.acquire`, the requested claim agent must match them too. A
+single-command invocation's basis revision and idempotency key must match the
+canonical record. Claim proof bytes are resolved by service composition and
+are never accepted in authority-command invocation arguments or the catalog.
+
+`work.claim.start` is the transitional Click-free equivalent of the legacy
+one-shot command: it creates an exclusive execute claim for the authenticated
+actor, moves a non-active item to active with that proof, and releases the new
+claim if the transition fails. Its response necessarily returns the new claim
+proof to its authenticated caller. Because this composition has no durable
+request ledger, its catalog contract forbids idempotency keys and callers must
+not retry an unknown outcome. Retry-safe shared-authority clients use an
+immutable `claim.acquire` record with `work.claim.arbitrate` instead.
 
 The application delegates arbitration to `sprintctl.authority`. PostgreSQL
 records the request and accepted or rejected decision atomically. Repeating an
@@ -77,7 +89,8 @@ record contracts and authority handlers during rollout:
 | `sprintctl sprint list --json` | `work.read.sprints` |
 | `sprintctl item show --id ID --json` | `work.read.item` |
 | `sprintctl next-work --json` | `work.read.next-work` |
-| claim start, heartbeat, handoff and release | `work.claim.arbitrate` |
+| claim start | `work.claim.start` |
+| claim heartbeat, handoff and release | `work.claim.arbitrate` |
 | item and sprint status transitions | `work.lifecycle.arbitrate` |
 | observation upload | `work.evidence.ingest` |
 | authority synchronization | `work.batch.apply` |

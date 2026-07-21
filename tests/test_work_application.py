@@ -53,15 +53,31 @@ def _record(
     actor: str = "served-test",
     basis_revision: str | None = None,
 ) -> outbox.OutboxRecord:
-    payload = {
-        "event_id": f"00000000-0000-4000-8000-{sequence:012d}",
-        "record_type": event_type,
-    }
+    event_id = f"00000000-0000-4000-8000-{sequence:012d}"
+    if record_class == contracts.RecordClass.AUTHORITY_COMMAND.value:
+        assert event_type == "item.transition"
+        command = contracts.AuthorityCommand(
+            event_id=event_id,
+            record_type=event_type,
+            schema_version="1",
+            actor=actor,
+            authored_at="2026-07-21T12:00:00Z",
+            refs={
+                "repo_id": "10000000-0000-4000-8000-000000000001",
+                "aggregate_type": "item",
+                "aggregate_uuid": "20000000-0000-4000-8000-000000000001",
+            },
+            payload={"to_status": "active"},
+            basis_revision=basis_revision,
+        )
+        payload = command.to_dict()
+    else:
+        payload = {"event_id": event_id, "record_type": event_type}
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return outbox.OutboxRecord(
         origin_stream_id="00000000-0000-4000-8000-000000000001",
         origin_seq=sequence,
-        event_id=f"00000000-0000-4000-8000-{sequence:012d}",
+        event_id=event_id,
         schema_version=1,
         record_class=record_class,
         event_type=event_type,
@@ -69,6 +85,56 @@ def _record(
         runtime_session_id="session-1",
         occurred_at="2026-07-21T12:00:00Z",
         basis_revision=basis_revision,
+        correlation_id=None,
+        causation_id=None,
+        payload=payload,
+        payload_sha256=hashlib.sha256(encoded.encode()).hexdigest(),
+        created_at="2026-07-21T12:00:00Z",
+    )
+
+
+def _claim_record(
+    *,
+    sequence: int,
+    command_actor: str,
+    claim_agent: str,
+    outer_actor: str | None = None,
+) -> outbox.OutboxRecord:
+    event_id = f"00000000-0000-4000-8000-{sequence:012d}"
+    command = contracts.AuthorityCommand(
+        event_id=event_id,
+        record_type="claim.acquire",
+        schema_version="1",
+        actor=command_actor,
+        authored_at="2026-07-21T12:00:00Z",
+        refs={
+            "repo_id": "10000000-0000-4000-8000-000000000001",
+            "aggregate_type": "item",
+            "aggregate_uuid": "20000000-0000-4000-8000-000000000001",
+        },
+        payload={
+            "agent": claim_agent,
+            "claim_type": "execute",
+            "exclusive": True,
+            "ttl_seconds": 300,
+            "credential_ref": "sha256:" + "1" * 64,
+            "metadata": {},
+        },
+        basis_revision="item:1:pending",
+    )
+    payload = command.to_dict()
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return outbox.OutboxRecord(
+        origin_stream_id="00000000-0000-4000-8000-000000000001",
+        origin_seq=sequence,
+        event_id=event_id,
+        schema_version=1,
+        record_class=contracts.RecordClass.AUTHORITY_COMMAND.value,
+        event_type="claim.acquire",
+        actor=outer_actor or command_actor,
+        runtime_session_id="session-1",
+        occurred_at="2026-07-21T12:00:00Z",
+        basis_revision="item:1:pending",
         correlation_id=None,
         causation_id=None,
         payload=payload,
@@ -150,6 +216,7 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
     assert len(names) == len(set(names))
     assert {
         "work.read.next-work",
+        "work.claim.start",
         "work.claim.arbitrate",
         "work.lifecycle.arbitrate",
         "work.evidence.ingest",
@@ -176,6 +243,12 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         "work.batch.apply",
         "work.project.batch",
     }
+    claim_start = next(
+        contract
+        for contract in WORK_OPERATION_CONTRACTS
+        if contract.name == "work.claim.start"
+    )
+    assert claim_start.idempotency == "not-allowed"
 
 
 def test_click_next_work_and_application_handler_share_backend_semantics(
@@ -263,6 +336,122 @@ def test_authority_handlers_enforce_actor_basis_and_idempotency_before_backend()
     assert accepted["outcome"] == "accepted"
     assert accepted["duplicate"] is False
     assert retried == {**accepted, "duplicate": True}
+
+
+@pytest.mark.parametrize("operation", ["work.claim.arbitrate", "work.batch.apply"])
+@pytest.mark.parametrize(
+    ("record", "expected_code"),
+    [
+        (
+            _claim_record(
+                sequence=10,
+                command_actor="nested-actor",
+                claim_agent="nested-actor",
+                outer_actor="served-test",
+            ),
+            "actor-mismatch",
+        ),
+        (
+            _claim_record(
+                sequence=11,
+                command_actor="served-test",
+                claim_agent="different-agent",
+            ),
+            "claim-agent-mismatch",
+        ),
+    ],
+)
+def test_authority_actor_binding_rejects_single_and_batch_before_backend(
+    operation, record, expected_code
+):
+    calls = []
+    app = _application(calls=calls)
+    if operation == "work.claim.arbitrate":
+        arguments = {"record": record_to_dict(record)}
+        key = record.event_id
+    else:
+        arguments = {"records": [record_to_dict(record)]}
+        key = batch_idempotency_key([record])
+
+    with pytest.raises(ApplicationRejection) as rejected:
+        app.invoke(
+            operation,
+            arguments,
+            _context(basis_revision=record.basis_revision, idempotency_key=key),
+        )
+
+    assert rejected.value.code == expected_code
+    assert calls == []
+
+
+def test_click_free_claim_start_matches_cli_state_flow(conn, runner, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "claim-start")
+    app_item = db.create_work_item(conn, active_sprint["id"], track, "Application")
+    cli_item = db.create_work_item(conn, active_sprint["id"], track, "CLI")
+    app = _application(store=conn, backend=db)
+    shared = {
+        "ttl_seconds": 900,
+        "runtime_session_id": "thread-1",
+        "instance_id": "process-1",
+        "branch": "feat/served",
+        "hostname": "test-host",
+        "pid": 4242,
+    }
+
+    served = app.invoke(
+        "work.claim.start", {"item_id": app_item, **shared}, _context(actor="worker")
+    )
+    cli_result = runner.invoke(
+        cli,
+        [
+            "claim",
+            "start",
+            "--item-id",
+            str(cli_item),
+            "--actor",
+            "worker",
+            "--ttl",
+            "900",
+            "--runtime-session-id",
+            "thread-1",
+            "--instance-id",
+            "process-1",
+            "--branch",
+            "feat/served",
+            "--hostname",
+            "test-host",
+            "--pid",
+            "4242",
+            "--json",
+        ],
+    )
+
+    assert cli_result.exit_code == 0, cli_result.output
+    legacy = json.loads(cli_result.output)
+    for result in (served, legacy):
+        assert result["operation"] == "claim_start"
+        assert result["item_status_before"] == "pending"
+        assert result["item_status_after"] == "active"
+        assert result["status_transition_applied"] is True
+        assert result["claim_token"] == result["claim"]["claim_token"]
+        assert result["claim"]["agent"] == "worker"
+        assert result["claim"]["claim_type"] == "execute"
+        assert result["claim"]["exclusive"] in (1, True)
+        assert result["claim"]["runtime_session_id"] == "thread-1"
+        assert result["claim"]["instance_id"] == "process-1"
+        assert result["claim"]["branch"] == "feat/served"
+        assert result["claim"]["hostname"] == "test-host"
+        assert result["claim"]["pid"] == 4242
+
+    failing_item = db.create_work_item(conn, active_sprint["id"], track, "Rollback")
+    db.set_work_item_status(conn, failing_item, "active", actor="seed")
+    db.set_work_item_status(conn, failing_item, "done", actor="seed")
+    with pytest.raises(ApplicationRejection) as failed:
+        app.invoke(
+            "work.claim.start", {"item_id": failing_item}, _context(actor="worker")
+        )
+    assert failed.value.code == "claim-start-transition-failed"
+    assert db.list_claims(conn, failing_item, active_only=False) == []
 
 
 def test_batch_is_content_bound_idempotent_and_preserves_producer_order():
@@ -381,6 +570,50 @@ def test_project_batch_requires_declared_order_and_retries_member_units():
             _context(idempotency_key=project_batch_idempotency_key(reversed_units)),
         )
     assert order.value.code == "project-order-mismatch"
+
+
+def test_project_batch_validates_all_actor_bindings_before_any_member_mutation():
+    calls = []
+    first = _application(repo_id="agentops", calls=calls)
+    second = _application(repo_id="sprintctl", calls=calls)
+    project = ProjectWorkApplication(
+        "vuoro",
+        (
+            ProjectMemberApplication("agentops", first),
+            ProjectMemberApplication("sprintctl", second),
+        ),
+    )
+    observation = _record(
+        "note.recorded",
+        sequence=20,
+        record_class=contracts.RecordClass.OBSERVATION.value,
+    )
+    impersonated = _claim_record(
+        sequence=21,
+        command_actor="nested-actor",
+        claim_agent="nested-actor",
+        outer_actor="served-test",
+    )
+    units = [("agentops", [observation]), ("sprintctl", [impersonated])]
+    arguments = {
+        "units": [
+            {
+                "origin_repo": origin_repo,
+                "records": [record_to_dict(record) for record in records],
+            }
+            for origin_repo, records in units
+        ]
+    }
+
+    with pytest.raises(ApplicationRejection) as rejected:
+        project.invoke(
+            "work.project.batch",
+            arguments,
+            _context(idempotency_key=project_batch_idempotency_key(units)),
+        )
+
+    assert rejected.value.code == "actor-mismatch"
+    assert calls == []
 
 
 def test_cutover_evidence_handler_is_the_same_domain_core(monkeypatch, tmp_path):
