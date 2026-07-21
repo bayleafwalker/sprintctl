@@ -20,6 +20,7 @@ from . import authority as _authority
 from . import authority_config as _authority_config
 from . import context_candidates as _context_candidates
 from . import contracts as _contracts
+from . import cutover as _cutover
 from . import db as _db
 from . import doctor as _doctor
 from . import dualwrite as _dualwrite
@@ -2784,6 +2785,122 @@ def pilot_sync(obj, batch_size: int, as_json: bool) -> None:
         click.echo(json.dumps(payload, indent=2))
     else:
         click.echo(f"Synchronized {payload['uploaded']} observation records; watermark {result.watermark.ingest_offset}.")
+
+
+@pilot.command("cutover-evidence")
+@click.option(
+    "--sprint-id",
+    type=int,
+    default=None,
+    help="Sprint ID to compute parity evidence for (defaults to active).",
+)
+@click.option(
+    "--skip-parity",
+    is_flag=True,
+    default=False,
+    help="Omit parity computation (e.g. before the pilot has ever synchronized).",
+)
+@click.option(
+    "--max-watermark-age-seconds",
+    type=int,
+    default=_cutover.DEFAULT_MAX_WATERMARK_AGE_SECONDS,
+    show_default=True,
+    help="Reconciliation-lag bound the promotion gate checks the cached watermark against.",
+)
+@click.option(
+    "--skip-rollback-rehearsal",
+    is_flag=True,
+    default=False,
+    help="Skip the rollback round-trip rehearsal (not recommended before a promotion decision).",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.pass_obj
+def pilot_cutover_evidence(
+    obj, sprint_id, skip_parity, max_watermark_age_seconds, skip_rollback_rehearsal, as_json
+) -> None:
+    """Assemble per-repo authority + projection cutover dogfood evidence.
+
+    Combines shadow-pilot parity, cached-projection watermark/reconciliation
+    lag, sprintctl-doctor stale-tool-incident findings, and a rollback
+    round-trip rehearsal into one evidence packet with an explicit
+    promotion gate (``promotable`` + ``blockers``). This never performs a
+    fleet cutover, never deletes a backend, and never itself promotes a
+    repository -- it only assembles evidence for an operator-directed
+    decision. See docs/reference/cutover-dogfood.md.
+    """
+    parity_payload = None
+    if not skip_parity:
+        try:
+            status = _pilot.shadow_pilot_status(cwd=Path.cwd())
+        except _pilot.ShadowPilotConfigError as exc:
+            click.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
+        if status.enabled:
+            store, m = _get_store(obj)
+            config = obj["backend_config"]
+            if sprint_id is not None:
+                s = m.get_sprint(store, sprint_id)
+                if s is None:
+                    click.echo(f"Sprint #{sprint_id} not found.", err=True)
+                    sys.exit(1)
+            else:
+                s = _resolve_implicit_sprint(store, m=m)
+            if s is not None:
+                authoritative = [
+                    _shadow_source(envelope)
+                    for event in m.list_events(store, s["id"])
+                    if (envelope := _shadow_observation_envelope(event, config.repo_id)) is not None
+                ]
+                producer = _outbox.open_outbox(status.paths.outbox_path)
+                try:
+                    report = _shadow.compare_parity(authoritative, _outbox.list_records(producer))
+                finally:
+                    producer.close()
+                parity_payload = report.to_dict()
+
+    try:
+        payload = _cutover.build_cutover_evidence(
+            cwd=Path.cwd(),
+            parity=parity_payload,
+            max_watermark_age_seconds=max_watermark_age_seconds,
+            rehearse=not skip_rollback_rehearsal,
+        )
+    except _cutover.CutoverEvidenceError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+        return
+
+    click.echo(f"Cutover dogfood evidence (contract v{payload['contract_version']}):")
+    cfg = payload["config"]
+    click.echo(
+        f"  Config: pilot={cfg['pilot_enabled']} authority_mode={cfg['authority_command_mode']} "
+        f"projection_reads={cfg['projection_reads_enabled']}"
+    )
+    if payload["parity"] is not None:
+        click.echo(
+            "  Parity: "
+            + ("equal" if payload["parity"]["is_equal"] else "diverged")
+            + f" {payload['parity']['counts']}"
+        )
+    else:
+        click.echo("  Parity: not evaluated")
+    watermark = payload["watermark"]
+    click.echo(
+        f"  Watermark: healthy={watermark.get('healthy')} age={watermark.get('age_seconds')} "
+        f"(max {watermark.get('max_age_seconds')}s)"
+    )
+    click.echo(f"  Stale-tool incidents: {len(payload['stale_tools']['incidents'])}")
+    if payload["rollback_rehearsal"] is not None:
+        rehearsal_ok = payload["rollback_rehearsal"]["rollback_ok"]
+        click.echo(f"  Rollback rehearsal: {'ok' if rehearsal_ok else 'FAILED'}")
+    else:
+        click.echo("  Rollback rehearsal: skipped")
+    click.echo(f"  Promotable: {payload['promotable']}")
+    if payload["blockers"]:
+        click.echo("  Blockers: " + ", ".join(payload["blockers"]))
 
 
 # ---------------------------------------------------------------------------
