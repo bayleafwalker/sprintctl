@@ -13,6 +13,7 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
+import time
 from typing import Any, Mapping
 from uuid import uuid4
 
@@ -23,6 +24,7 @@ OUTBOX_SCHEMA_VERSION = 1
 OBSERVATION = contracts.RecordClass.OBSERVATION.value
 AUTHORITY_COMMAND = contracts.RecordClass.AUTHORITY_COMMAND.value
 _PRODUCER_RECORD_CLASSES = {OBSERVATION, AUTHORITY_COMMAND}
+_WAL_BUSY_RETRY_DELAYS_SECONDS = (0.01, 0.02, 0.04, 0.08)
 
 
 class OutboxIdempotencyError(ValueError):
@@ -158,20 +160,17 @@ def _required_text(value: str, field: str) -> str:
     return value
 
 
-def open_outbox(path: Path) -> sqlite3.Connection:
-    """Open and initialize a local producer outbox at ``path``."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout = 30000")
-    init_outbox(conn)
-    return conn
+def _is_busy_or_locked(exc: Exception) -> bool:
+    if not isinstance(exc, sqlite3.OperationalError):
+        return False
+    error_code = getattr(exc, "sqlite_errorcode", None)
+    return isinstance(error_code, int) and error_code & 0xFF in {
+        sqlite3.SQLITE_BUSY,
+        sqlite3.SQLITE_LOCKED,
+    }
 
 
-def init_outbox(conn: sqlite3.Connection) -> None:
-    """Initialize or safely migrate the version-1 producer outbox schema."""
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
+def _initialize_schema_after_wal(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA synchronous = FULL")
     conn.execute(_STREAM_SCHEMA)
     conn.commit()
@@ -195,6 +194,46 @@ def init_outbox(conn: sqlite3.Connection) -> None:
         conn.execute(_UPDATE_TRIGGER)
         conn.execute(_DELETE_TRIGGER)
         conn.commit()
+
+
+def open_outbox(path: Path) -> sqlite3.Connection:
+    """Open and initialize a local producer outbox at ``path``."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for attempt in range(len(_WAL_BUSY_RETRY_DELAYS_SECONDS) + 1):
+        conn = sqlite3.connect(str(path), timeout=30)
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout = 30000")
+            conn.execute("PRAGMA foreign_keys = ON")
+        except Exception:
+            conn.close()
+            raise
+
+        try:
+            conn.execute("PRAGMA journal_mode = WAL")
+        except Exception as exc:
+            conn.close()
+            if not _is_busy_or_locked(exc) or attempt == len(
+                _WAL_BUSY_RETRY_DELAYS_SECONDS
+            ):
+                raise
+            time.sleep(_WAL_BUSY_RETRY_DELAYS_SECONDS[attempt])
+            continue
+
+        try:
+            _initialize_schema_after_wal(conn)
+        except Exception:
+            conn.close()
+            raise
+        return conn
+    raise AssertionError("unreachable WAL initialization retry state")
+
+
+def init_outbox(conn: sqlite3.Connection) -> None:
+    """Initialize or safely migrate the version-1 producer outbox schema."""
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    _initialize_schema_after_wal(conn)
 
 
 def _migrate_observation_only_schema(conn: sqlite3.Connection) -> None:

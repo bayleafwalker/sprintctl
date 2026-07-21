@@ -87,6 +87,115 @@ def test_append_record_rejects_remote_decisions(tmp_path):
     assert outbox.list_records(conn) == []
 
 
+class _StubConnection:
+    def __init__(self, wal_error: Exception | None = None) -> None:
+        self.row_factory = None
+        self.wal_error = wal_error
+        self.closed = False
+        self.statements: list[str] = []
+
+    def execute(self, statement: str):
+        self.statements.append(statement)
+        if statement == "PRAGMA journal_mode = WAL" and self.wal_error is not None:
+            raise self.wal_error
+        return self
+
+    def close(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.parametrize("error_code", [sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED])
+def test_open_retries_busy_or_locked_wal_and_closes_failed_connection(
+    tmp_path, monkeypatch, error_code
+):
+    retryable = sqlite3.OperationalError("database is locked")
+    retryable.sqlite_errorcode = error_code
+    first = _StubConnection(retryable)
+    second = _StubConnection()
+    connections = iter((first, second))
+    delays = []
+    monkeypatch.setattr(
+        outbox.sqlite3, "connect", lambda *_args, **_kwargs: next(connections)
+    )
+    monkeypatch.setattr(outbox, "_initialize_schema_after_wal", lambda _conn: None)
+    monkeypatch.setattr(outbox.time, "sleep", delays.append)
+
+    connected = outbox.open_outbox(tmp_path / "producer.db")
+
+    assert connected is second
+    assert first.closed is True
+    assert second.closed is False
+    assert delays == [outbox._WAL_BUSY_RETRY_DELAYS_SECONDS[0]]
+
+
+def test_open_stops_after_bounded_busy_wal_retries(tmp_path, monkeypatch):
+    failures = []
+    connections = []
+    for _ in range(len(outbox._WAL_BUSY_RETRY_DELAYS_SECONDS) + 1):
+        busy = sqlite3.OperationalError("database is locked")
+        busy.sqlite_errorcode = sqlite3.SQLITE_BUSY
+        failures.append(busy)
+        connections.append(_StubConnection(busy))
+    pending_connections = iter(connections)
+    delays = []
+    monkeypatch.setattr(
+        outbox.sqlite3, "connect", lambda *_args, **_kwargs: next(pending_connections)
+    )
+    monkeypatch.setattr(outbox.time, "sleep", delays.append)
+
+    with pytest.raises(sqlite3.OperationalError) as caught:
+        outbox.open_outbox(tmp_path / "producer.db")
+
+    assert caught.value is failures[-1]
+    assert all(connection.closed for connection in connections)
+    assert delays == list(outbox._WAL_BUSY_RETRY_DELAYS_SECONDS)
+
+
+def test_open_propagates_non_busy_wal_error_without_retry(tmp_path, monkeypatch):
+    non_busy = sqlite3.OperationalError("not a busy failure")
+    non_busy.sqlite_errorcode = sqlite3.SQLITE_READONLY
+    failed = _StubConnection(non_busy)
+    connect_calls = 0
+
+    def failing_connect(*_args, **_kwargs):
+        nonlocal connect_calls
+        connect_calls += 1
+        return failed
+
+    monkeypatch.setattr(outbox.sqlite3, "connect", failing_connect)
+
+    with pytest.raises(sqlite3.OperationalError) as caught:
+        outbox.open_outbox(tmp_path / "producer.db")
+
+    assert caught.value is non_busy
+    assert connect_calls == 1
+    assert failed.closed is True
+
+
+def test_open_closes_schema_failure_without_retry(tmp_path, monkeypatch):
+    failed = _StubConnection()
+    connect_calls = 0
+    schema_failure = RuntimeError("schema migration failed")
+
+    def connect(*_args, **_kwargs):
+        nonlocal connect_calls
+        connect_calls += 1
+        return failed
+
+    def fail_schema(_conn):
+        raise schema_failure
+
+    monkeypatch.setattr(outbox.sqlite3, "connect", connect)
+    monkeypatch.setattr(outbox, "_initialize_schema_after_wal", fail_schema)
+
+    with pytest.raises(RuntimeError) as caught:
+        outbox.open_outbox(tmp_path / "producer.db")
+
+    assert caught.value is schema_failure
+    assert connect_calls == 1
+    assert failed.closed is True
+
+
 def _create_legacy_outbox(path):
     conn = sqlite3.connect(path)
     payload_json = json.dumps({"legacy": True}, sort_keys=True, separators=(",", ":"))
@@ -155,7 +264,10 @@ def test_existing_observation_only_v1_database_migrates_without_data_loss(tmp_pa
     assert command.origin_seq == 2
 
 
-def test_concurrent_openers_serialize_migration_and_append_without_loss(tmp_path):
+@pytest.mark.parametrize("_history", range(16))
+def test_concurrent_openers_serialize_migration_and_append_without_loss(
+    tmp_path, _history
+):
     path = tmp_path / "producer.db"
     _create_legacy_outbox(path)
     barrier = threading.Barrier(2)

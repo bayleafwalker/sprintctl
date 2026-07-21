@@ -2,18 +2,19 @@
   "schema_version": "test-context/v1",
   "id": "sprintctl.outbox.producer-sequencing",
   "owner_repo": "sprintctl",
-  "subject": "producer-authored-observation-outbox",
+  "subject": "producer-authored-observation-and-authority-command-outbox",
   "contract_ref": {
     "doc_id": "adr-outbox-sync-model",
     "revision": "git:50cf3ee4d0da4fe14814b49b86173dc57782b0d2"
   },
   "source_of_truth": "local-producer-sqlite-outbox",
-  "depth": 1,
+  "depth": 2,
   "backends": ["sqlite"],
-  "actors": ["producer-a", "producer-b"],
-  "initial_state": ["outbox-empty", "origin-stream-unminted"],
+  "actors": ["producer-a", "producer-b", "legacy-migration-opener-a", "legacy-migration-opener-b"],
+  "initial_state": ["outbox-empty", "origin-stream-unminted", "legacy-observation-only-outbox"],
   "operations": [
     {"name": "append-observation", "actors": ["producer-a", "producer-b"], "synchronization": "bounded concurrent writers"},
+    {"name": "open-migrate-and-append", "actors": ["legacy-migration-opener-a", "legacy-migration-opener-b"], "synchronization": "barrier-before-independent-connections-initialize-wal"},
     {"name": "retry-after-lost-local-response", "actors": ["producer-a"]},
     {"name": "reopen-after-committed-append", "actors": ["producer-a"]}
   ],
@@ -26,16 +27,20 @@
     "clock": "producer process UTC clock",
     "fairness": "SQLite lock acquisition eventually succeeds within connection timeout"
   },
-  "bounds": {"writers": 2, "appends_per_writer": 12},
+  "bounds": {"writers": 2, "appends_per_writer": 12, "concurrent_legacy_migration_histories": 32, "wal_initialization_attempts": 5, "wal_retry_delays_seconds": "0.01,0.02,0.04,0.08"},
   "invariants": [
     "committed-observations-survive-producer-restart",
     "origin-sequences-are-contiguous-within-the-stream",
     "same-event-id-does-not-consume-an-additional-sequence",
     "failed-insert-does-not-mint-a-visible-stream-or-consume-a-sequence",
-    "outbox-records-are-immutable"
+    "outbox-records-are-immutable",
+    "bounded-busy-or-locked-wal-initialization-does-not-discard-a-legacy-row-or-concurrent-append",
+    "failed-wal-initialization-connections-are-closed",
+    "non-busy-wal-initialization-errors-propagate-without-retry"
   ],
   "faults": [
     "insert-failure-before-commit",
+    "sqlite-busy-or-locked-during-concurrent-wal-initialization",
     "lost-response-after-local-commit",
     "producer-restart-after-local-commit"
   ],
