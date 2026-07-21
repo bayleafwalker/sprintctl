@@ -1,5 +1,13 @@
 # Remote Mode
 
+> **Current transitional interface:** this guide documents the installed
+> direct-PostgreSQL client that exists today. The ratified target removes
+> shared-schema migration and database credentials from workstation clients;
+> see
+> [`vuoro-served-authority-alignment.md`](../plans/vuoro-served-authority-alignment.md).
+> Do not extend direct-client bootstrap as the design for new shared
+> capabilities.
+
 sprintctl runs in one of two backend modes:
 
 | Mode | Storage | Multi-session | Setup cost |

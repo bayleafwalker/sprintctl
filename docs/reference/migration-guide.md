@@ -1,5 +1,11 @@
 # Schema migration guide
 
+> This guide governs local SQLite authority. It is not the target procedure for
+> the shared PostgreSQL authority. Shared-schema migrations are moving to a
+> deployment-controlled job under
+> [`vuoro-served-authority-alignment.md`](../plans/vuoro-served-authority-alignment.md);
+> network clients must not run them.
+
 sprintctl uses a sequential, numbered migration system backed by a
 `schema_version` table in the SQLite database. Migrations run automatically on
 `init_db()` — every CLI invocation calls this before any other DB operation,

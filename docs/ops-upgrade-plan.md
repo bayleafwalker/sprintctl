@@ -1,5 +1,15 @@
 # Task: Reconcile agent-ops documentation and build the implementation backlog
 
+> **Ratified target update (2026-07-21):** installation provenance remains a
+> useful diagnostic, but the `pilot cutover-evidence` rollout demonstrated the
+> deeper problem: shared substrate capability is distributed through
+> machine-local packages. The target is now the served operation catalog and
+> deployment-owned schema contract in
+> [`docs/plans/vuoro-served-authority-alignment.md`](plans/vuoro-served-authority-alignment.md).
+> This task remains historical input for the outbox and session-mechanization
+> work; its caution against assuming an HTTP service is superseded for shared
+> authority delivery.
+
 You are a documentation and backlog reconciliation agent operating across the `bayleafwalker` agent-ops ecosystem.
 
 Your job is to turn the ratified product direction below into:
