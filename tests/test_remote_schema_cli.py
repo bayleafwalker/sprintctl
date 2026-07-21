@@ -78,8 +78,8 @@ def test_remote_schema_migrate_command_returns_bounded_result(
         lambda _store: {
             "schema_version": "sprintctl-remote-migration-result/v1",
             "from_version": 1,
-            "to_version": 2,
-            "applied_versions": [2],
+            "to_version": 3,
+            "applied_versions": [2, 3],
             "compatibility": {"compatible": True},
         },
     )
@@ -89,8 +89,8 @@ def test_remote_schema_migrate_command_returns_bounded_result(
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["from_version"] == 1
-    assert payload["to_version"] == 2
-    assert payload["applied_versions"] == [2]
+    assert payload["to_version"] == 3
+    assert payload["applied_versions"] == [2, 3]
     assert conn.closed is True
 
 

@@ -12,9 +12,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import sqlite3
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
+from uuid import uuid4
 
 
 class ProjectionGapError(ValueError):
@@ -96,38 +98,43 @@ class ProjectionWatermark:
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS cached_ingest_record (
-    ingest_offset INTEGER PRIMARY KEY CHECK (ingest_offset > 0),
+    repo_id       TEXT NOT NULL,
+    ingest_offset INTEGER NOT NULL CHECK (ingest_offset > 0),
     record_json   TEXT NOT NULL,
     record_sha256 TEXT NOT NULL,
-    received_at   TEXT NOT NULL
+    received_at   TEXT NOT NULL,
+    PRIMARY KEY (repo_id, ingest_offset)
 );
 
 CREATE TABLE IF NOT EXISTS cached_ingest_watermark (
-    singleton     INTEGER PRIMARY KEY CHECK (singleton = 1),
+    repo_id       TEXT PRIMARY KEY,
     ingest_offset INTEGER NOT NULL CHECK (ingest_offset >= 0),
     advanced_at   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS cached_authority_decision (
-    decision_ingest_offset INTEGER PRIMARY KEY CHECK (decision_ingest_offset > 0),
+    repo_id                TEXT NOT NULL,
+    decision_ingest_offset INTEGER NOT NULL CHECK (decision_ingest_offset > 0),
     decision_json          TEXT NOT NULL,
     decision_sha256        TEXT NOT NULL,
-    received_at            TEXT NOT NULL
+    received_at            TEXT NOT NULL,
+    PRIMARY KEY (repo_id, decision_ingest_offset)
 );
 
 CREATE TABLE IF NOT EXISTS cached_authority_watermark (
-    singleton              INTEGER PRIMARY KEY CHECK (singleton = 1),
+    repo_id                 TEXT PRIMARY KEY,
     decision_ingest_offset INTEGER NOT NULL CHECK (decision_ingest_offset >= 0),
     advanced_at            TEXT
 );
 
 CREATE TABLE IF NOT EXISTS cached_projection_meta (
     singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),
-    schema_version INTEGER NOT NULL
+    schema_version INTEGER NOT NULL,
+    repo_id        TEXT NOT NULL
 );
 """
 
-PROJECTION_SCHEMA_VERSION = 1
+PROJECTION_SCHEMA_VERSION = 2
 """On-disk schema version this build of ``projection.py`` writes and expects.
 
 Guarded projection-backed readers (see ``sprintctl/cli.py``) compare this
@@ -163,31 +170,84 @@ def _encoded_record(record: Mapping[str, Any]) -> tuple[dict[str, Any], str, str
     return canonical, encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def open_cached_projection(path: Path) -> sqlite3.Connection:
+def open_cached_projection(
+    path: Path, *, repo_id: str | None = None
+) -> sqlite3.Connection:
     """Open an isolated SQLite cached-ingestion projection at ``path``."""
+    if repo_id is not None and (not isinstance(repo_id, str) or not repo_id.strip()):
+        raise ValueError("projection repo_id must be a non-empty string")
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
-    init_cached_projection(conn)
+    existing = _existing_schema_version(conn)
+    if existing is None:
+        init_cached_projection(conn, repo_id=repo_id or "local")
+    elif existing == PROJECTION_SCHEMA_VERSION:
+        bound = _bound_repo_id(conn)
+        if repo_id is not None and bound != repo_id:
+            conn.close()
+            raise ValueError(
+                f"cached projection belongs to repository {bound!r}, not {repo_id!r}"
+            )
     return conn
 
 
-def init_cached_projection(conn: sqlite3.Connection) -> None:
+def _existing_schema_version(conn: sqlite3.Connection) -> int | None:
+    table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+        "AND name = 'cached_projection_meta'"
+    ).fetchone()
+    if table is None:
+        return None
+    row = conn.execute(
+        "SELECT schema_version FROM cached_projection_meta WHERE singleton = 1"
+    ).fetchone()
+    return None if row is None else int(row[0])
+
+
+def _bound_repo_id(conn: sqlite3.Connection) -> str:
+    row = conn.execute(
+        "SELECT repo_id FROM cached_projection_meta WHERE singleton = 1"
+    ).fetchone()
+    if row is None or not row[0]:
+        raise RuntimeError("cached ingestion projection has no repository binding")
+    return str(row[0])
+
+
+def _require_current_schema(conn: sqlite3.Connection) -> str:
+    version = get_schema_version(conn)
+    if version != PROJECTION_SCHEMA_VERSION:
+        raise RuntimeError(
+            f"cached projection schema {version} requires an atomic rebuild to "
+            f"schema {PROJECTION_SCHEMA_VERSION}"
+        )
+    return _bound_repo_id(conn)
+
+
+def _table_has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    return column in {
+        str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+
+
+def init_cached_projection(conn: sqlite3.Connection, *, repo_id: str = "local") -> None:
     """Create the cache schema and its persisted initial visible watermark."""
     conn.executescript(_SCHEMA)
     conn.execute(
-        "INSERT INTO cached_ingest_watermark (singleton, ingest_offset, advanced_at) "
-        "VALUES (1, 0, NULL) ON CONFLICT(singleton) DO NOTHING"
+        "INSERT INTO cached_ingest_watermark (repo_id, ingest_offset, advanced_at) "
+        "VALUES (?, 0, NULL) ON CONFLICT(repo_id) DO NOTHING",
+        (repo_id,),
     )
     conn.execute(
         "INSERT INTO cached_authority_watermark "
-        "(singleton, decision_ingest_offset, advanced_at) "
-        "VALUES (1, 0, NULL) ON CONFLICT(singleton) DO NOTHING"
+        "(repo_id, decision_ingest_offset, advanced_at) "
+        "VALUES (?, 0, NULL) ON CONFLICT(repo_id) DO NOTHING",
+        (repo_id,),
     )
     conn.execute(
-        "INSERT INTO cached_projection_meta (singleton, schema_version) "
-        "VALUES (1, ?) ON CONFLICT(singleton) DO NOTHING",
-        (PROJECTION_SCHEMA_VERSION,),
+        "INSERT INTO cached_projection_meta (singleton, schema_version, repo_id) "
+        "VALUES (1, ?, ?) ON CONFLICT(singleton) DO NOTHING",
+        (PROJECTION_SCHEMA_VERSION, repo_id),
     )
     conn.commit()
 
@@ -210,8 +270,18 @@ def get_schema_version(conn: sqlite3.Connection) -> int:
 
 def get_watermark(conn: sqlite3.Connection) -> ProjectionWatermark:
     """Expose the remote watermark and its age through ``ProjectionWatermark``."""
+    if not _table_has_column(conn, "cached_ingest_watermark", "repo_id"):
+        row = conn.execute(
+            "SELECT ingest_offset, advanced_at FROM cached_ingest_watermark "
+            "WHERE singleton = 1"
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("cached ingestion projection is not initialized")
+        return ProjectionWatermark(ingest_offset=int(row[0]), advanced_at=row[1])
+    repo_id = _bound_repo_id(conn)
     row = conn.execute(
-        "SELECT ingest_offset, advanced_at FROM cached_ingest_watermark WHERE singleton = 1"
+        "SELECT ingest_offset, advanced_at FROM cached_ingest_watermark WHERE repo_id = ?",
+        (repo_id,),
     ).fetchone()
     if row is None:
         raise RuntimeError("cached ingestion projection is not initialized")
@@ -220,16 +290,29 @@ def get_watermark(conn: sqlite3.Connection) -> ProjectionWatermark:
 
 def list_cached_records(conn: sqlite3.Connection) -> list[CachedIngestRecord]:
     """Read cached remote envelopes in their server-assigned ingestion order."""
+    repo_id = _require_current_schema(conn)
     rows = conn.execute(
-        "SELECT ingest_offset, record_json FROM cached_ingest_record ORDER BY ingest_offset"
+        "SELECT ingest_offset, record_json FROM cached_ingest_record "
+        "WHERE repo_id = ? ORDER BY ingest_offset",
+        (repo_id,),
     ).fetchall()
     return [CachedIngestRecord(ingest_offset=int(row[0]), record=json.loads(row[1])) for row in rows]
 
 
 def get_authority_watermark(conn: sqlite3.Connection) -> ProjectionWatermark:
+    if not _table_has_column(conn, "cached_authority_watermark", "repo_id"):
+        row = conn.execute(
+            "SELECT decision_ingest_offset, advanced_at "
+            "FROM cached_authority_watermark WHERE singleton = 1"
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("cached authority projection is not initialized")
+        return ProjectionWatermark(ingest_offset=int(row[0]), advanced_at=row[1])
+    repo_id = _bound_repo_id(conn)
     row = conn.execute(
         "SELECT decision_ingest_offset, advanced_at "
-        "FROM cached_authority_watermark WHERE singleton = 1"
+        "FROM cached_authority_watermark WHERE repo_id = ?",
+        (repo_id,),
     ).fetchone()
     if row is None:
         raise RuntimeError("cached authority projection is not initialized")
@@ -239,9 +322,12 @@ def get_authority_watermark(conn: sqlite3.Connection) -> ProjectionWatermark:
 def list_cached_authority_decisions(
     conn: sqlite3.Connection,
 ) -> list[CachedAuthorityDecision]:
+    repo_id = _require_current_schema(conn)
     rows = conn.execute(
         "SELECT decision_ingest_offset, decision_json "
-        "FROM cached_authority_decision ORDER BY decision_ingest_offset"
+        "FROM cached_authority_decision WHERE repo_id = ? "
+        "ORDER BY decision_ingest_offset",
+        (repo_id,),
     ).fetchall()
     return [
         CachedAuthorityDecision(
@@ -266,6 +352,7 @@ def apply_authority_decisions(
     """
     if advanced_at is not None:
         _parse_timestamp(advanced_at)
+    repo_id = _require_current_schema(conn)
     previous = 0
     prepared: list[tuple[CachedAuthorityDecision, str, str]] = []
     for decision in decisions:
@@ -287,8 +374,8 @@ def apply_authority_decisions(
             offset = decision.decision_ingest_offset
             row = conn.execute(
                 "SELECT decision_sha256 FROM cached_authority_decision "
-                "WHERE decision_ingest_offset = ?",
-                (offset,),
+                "WHERE repo_id = ? AND decision_ingest_offset = ?",
+                (repo_id, offset),
             ).fetchone()
             if row is not None:
                 if row[0] != digest:
@@ -303,17 +390,17 @@ def apply_authority_decisions(
             received_at = advanced_at or _utc_now()
             conn.execute(
                 "INSERT INTO cached_authority_decision "
-                "(decision_ingest_offset, decision_json, decision_sha256, received_at) "
-                "VALUES (?, ?, ?, ?)",
-                (offset, encoded, digest, received_at),
+                "(repo_id, decision_ingest_offset, decision_json, decision_sha256, received_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (repo_id, offset, encoded, digest, received_at),
             )
             highest = max(highest, offset)
             applied = True
         if applied:
             conn.execute(
                 "UPDATE cached_authority_watermark "
-                "SET decision_ingest_offset = ?, advanced_at = ? WHERE singleton = 1",
-                (highest, advanced_at or _utc_now()),
+                "SET decision_ingest_offset = ?, advanced_at = ? WHERE repo_id = ?",
+                (highest, advanced_at or _utc_now(), repo_id),
             )
         conn.commit()
     except Exception:
@@ -337,6 +424,7 @@ def apply_ingested_records(
     """
     if advanced_at is not None:
         _parse_timestamp(advanced_at)
+    repo_id = _require_current_schema(conn)
     prepared = [(record, *_encoded_record(record.record)) for record in records]
     previous = 0
     for record, *_ in prepared:
@@ -351,8 +439,9 @@ def apply_ingested_records(
         applied = False
         for record, _canonical, encoded, digest in prepared:
             row = conn.execute(
-                "SELECT record_sha256 FROM cached_ingest_record WHERE ingest_offset = ?",
-                (record.ingest_offset,),
+                "SELECT record_sha256 FROM cached_ingest_record "
+                "WHERE repo_id = ? AND ingest_offset = ?",
+                (repo_id, record.ingest_offset),
             ).fetchone()
             if row is not None:
                 if row[0] != digest:
@@ -366,23 +455,84 @@ def apply_ingested_records(
                 raise ProjectionGapError(expected, record.ingest_offset)
             received_at = advanced_at or _utc_now()
             conn.execute(
-                "INSERT INTO cached_ingest_record (ingest_offset, record_json, record_sha256, received_at) "
-                "VALUES (?, ?, ?, ?)",
-                (record.ingest_offset, encoded, digest, received_at),
+                "INSERT INTO cached_ingest_record "
+                "(repo_id, ingest_offset, record_json, record_sha256, received_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (repo_id, record.ingest_offset, encoded, digest, received_at),
             )
             expected += 1
             applied = True
         if applied:
             new_offset = expected - 1
             conn.execute(
-                "UPDATE cached_ingest_watermark SET ingest_offset = ?, advanced_at = ? WHERE singleton = 1",
-                (new_offset, advanced_at or _utc_now()),
+                "UPDATE cached_ingest_watermark SET ingest_offset = ?, advanced_at = ? "
+                "WHERE repo_id = ?",
+                (new_offset, advanced_at or _utc_now(), repo_id),
             )
         conn.commit()
     except Exception:
         conn.rollback()
         raise
     return get_watermark(conn)
+
+
+def rebuild_cached_projection(
+    path: Path,
+    *,
+    repo_id: str,
+    captured_high_water: int,
+    fetch_page: Callable[[int, int], list[CachedIngestRecord]],
+    batch_size: int = 100,
+) -> ProjectionWatermark:
+    """Rebuild through a captured repository high-water, then replace atomically.
+
+    The live cache is never truncated in place. A retained suffix or an empty
+    page below the captured high-water fails the sibling build and leaves the
+    original file untouched.
+    """
+    if (
+        isinstance(captured_high_water, bool)
+        or not isinstance(captured_high_water, int)
+        or captured_high_water < 0
+    ):
+        raise ValueError("captured_high_water must be a non-negative integer")
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
+        raise ValueError("batch_size must be a positive integer")
+    sibling = path.with_name(f".{path.name}.rebuild-{uuid4().hex}")
+    cache: sqlite3.Connection | None = None
+    try:
+        cache = open_cached_projection(sibling, repo_id=repo_id)
+        watermark = get_watermark(cache)
+        while watermark.ingest_offset < captured_high_water:
+            previous_offset = watermark.ingest_offset
+            page = fetch_page(watermark.ingest_offset, batch_size)
+            bounded = [
+                record
+                for record in page
+                if record.ingest_offset <= captured_high_water
+            ]
+            if not bounded:
+                raise ProjectionGapError(
+                    watermark.ingest_offset + 1,
+                    page[0].ingest_offset if page else captured_high_water,
+                )
+            watermark = apply_ingested_records(cache, bounded)
+            if watermark.ingest_offset == previous_offset:
+                raise ProjectionGapError(
+                    previous_offset + 1,
+                    bounded[0].ingest_offset,
+                )
+        if watermark.ingest_offset != captured_high_water:
+            raise ProjectionGapError(captured_high_water, watermark.ingest_offset)
+        cache.close()
+        cache = None
+        os.replace(sibling, path)
+        return watermark
+    except Exception:
+        if cache is not None:
+            cache.close()
+        sibling.unlink(missing_ok=True)
+        raise
 
 
 def _parse_timestamp(value: str) -> datetime:

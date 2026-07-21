@@ -13,8 +13,8 @@
       "present": true,
       "root": "/src/sprintctl",
       "version": "0.2.0",
-      "capabilities": ["portable-aggregate-uuid-json/v1", "remote-backend/v1", "remote-schema-compatibility/v1"],
-      "schema": {"local": 10, "remote": 2}
+      "capabilities": ["portable-aggregate-uuid-json/v1", "remote-backend/v1", "remote-schema-compatibility/v1", "sprintctl-repository-ingest-cursor/v1"],
+      "schema": {"local": 11, "remote": 3}
     }
   },
   "extras": {"remote": {"enabled": false, "requirement": "psycopg[binary]>=3.1"}},
@@ -31,7 +31,7 @@
   },
   "schema": {
     "backend": "remote",
-    "expected_version": 2,
+    "expected_version": 3,
     "actual_version": 1,
     "compatible": false,
     "status": "mismatch",

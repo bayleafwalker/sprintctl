@@ -2565,10 +2565,25 @@ def authority_sync(obj, batch_size: int, as_json: bool) -> None:
     if obj["backend_config"].mode != "remote":
         raise click.ClickException("authority sync requires a remote PostgreSQL backend")
     store.authority_repo_uuid = _authority_repo_uuid(rollout.paths.repo_root)
-    producer = _outbox.open_outbox(rollout.paths.outbox_path)
+    projection_path = rollout.paths.state_dir / "authority-command-projection.db"
+    if projection_path.exists():
+        existing = _projection.open_cached_projection(projection_path)
+        try:
+            needs_rebuild = (
+                _projection.get_schema_version(existing)
+                != _projection.PROJECTION_SCHEMA_VERSION
+            )
+        finally:
+            existing.close()
+        if needs_rebuild:
+            _sync.rebuild_ingest_projection(
+                store, projection_path, batch_size=batch_size
+            )
     cache = _projection.open_cached_projection(
-        rollout.paths.state_dir / "authority-command-projection.db"
+        projection_path,
+        repo_id=store.repo_id,
     )
+    producer = _outbox.open_outbox(rollout.paths.outbox_path)
 
     def resolve(record: _outbox.OutboxRecord) -> dict[str, str] | None:
         envelope = _contracts.record_from_dict(record.payload)
@@ -2785,7 +2800,23 @@ def pilot_sync(obj, batch_size: int, as_json: bool) -> None:
         click.echo("Error: pilot synchronization requires a remote sprintctl backend.", err=True)
         sys.exit(1)
     producer = _outbox.open_outbox(status.paths.outbox_path)
-    cache = _projection.open_cached_projection(status.paths.projection_path)
+    if status.paths.projection_path.exists():
+        existing = _projection.open_cached_projection(status.paths.projection_path)
+        try:
+            needs_rebuild = (
+                _projection.get_schema_version(existing)
+                != _projection.PROJECTION_SCHEMA_VERSION
+            )
+        finally:
+            existing.close()
+        if needs_rebuild:
+            _sync.rebuild_ingest_projection(
+                store, status.paths.projection_path, batch_size=batch_size
+            )
+    cache = _projection.open_cached_projection(
+        status.paths.projection_path,
+        repo_id=store.repo_id,
+    )
     try:
         result = _sync.synchronize_outbox(producer, store, cache, batch_size=batch_size)
     except (TypeError, ValueError) as exc:

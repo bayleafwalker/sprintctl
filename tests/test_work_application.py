@@ -553,6 +553,14 @@ def test_project_batch_requires_declared_order_and_retries_member_units():
         "agentops",
         "sprintctl",
     ]
+    assert [row["repo_id"] for row in result["results"]] == [
+        "agentops",
+        "sprintctl",
+    ]
+    assert [row["results"][0]["ingest_offset"] for row in result["results"]] == [
+        1,
+        1,
+    ]
     assert [call[0] for call in calls] == [
         "agentops",
         "sprintctl",

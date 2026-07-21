@@ -42,11 +42,13 @@ class _SchemaCursor:
             }
         if "pg_get_serial_sequence" in self._query:
             return {"seq": None}
+        if "column_name = 'ingest_id'" in self._query:
+            return {"ingest_id_exists": False}
         raise AssertionError(f"unexpected fetch for query: {self._query}")
 
 
 class _SchemaConnection:
-    def __init__(self, version=2, *, version_rows=1, fail_on=None):
+    def __init__(self, version=3, *, version_rows=1, fail_on=None):
         self.calls = []
         self.version = version
         self.version_rows = version_rows if version is not None else 0
@@ -64,22 +66,29 @@ class _SchemaConnection:
         self.rollbacks += 1
 
 
-def _store(version=2, **kwargs):
+def _store(version=3, **kwargs):
     conn = _SchemaConnection(version, **kwargs)
     return pg.PgStore(conn=conn, repo_id="test-repo"), conn
 
 
 def test_runtime_compatibility_probe_is_read_only_and_publishes_work_api():
-    store, conn = _store(2)
+    store, conn = _store(3)
 
     handshake = pg.require_compatible_schema(store)
 
     assert handshake == {
         "schema_version": "sprintctl-work-compatibility/v1",
         "work_api_version": "sprintctl-work/v1",
-        "remote_schema": {"actual": 2, "minimum": 2, "maximum": 2},
+        "remote_schema": {"actual": 3, "minimum": 3, "maximum": 3},
         "compatible": True,
         "reason": None,
+        "capabilities": {
+            "repository_ingest_cursor": {
+                "schema_version": "sprintctl-repository-ingest-cursor/v1",
+                "scope": "repository",
+                "contiguous": True,
+            }
+        },
     }
     assert [query for query, _ in conn.calls] == [
         "SELECT to_regclass('schema_version') AS relation",
@@ -90,7 +99,12 @@ def test_runtime_compatibility_probe_is_read_only_and_publishes_work_api():
 
 @pytest.mark.parametrize(
     ("version", "reason"),
-    [(None, "schema-version-table-missing"), (1, "schema-too-old"), (3, "schema-too-new")],
+    [
+        (None, "schema-version-table-missing"),
+        (1, "schema-too-old"),
+        (2, "schema-too-old"),
+        (4, "schema-too-new"),
+    ],
 )
 def test_runtime_startup_fails_closed_for_missing_old_and_new_schema(version, reason):
     store, _conn = _store(version)
@@ -100,7 +114,7 @@ def test_runtime_startup_fails_closed_for_missing_old_and_new_schema(version, re
 
 
 def test_runtime_startup_rejects_ambiguous_schema_ledger():
-    store, _conn = _store(2, version_rows=2)
+    store, _conn = _store(3, version_rows=2)
 
     with pytest.raises(
         pg_migrations.RemoteSchemaMigrationError,
@@ -120,12 +134,13 @@ def test_migration_serializes_and_advances_legacy_schema_once():
     )
     assert sum(query == pg.PG_DDL for query, _ in conn.calls) == 1
     assert ("UPDATE schema_version SET version = %s", (2,)) in conn.calls
-    assert conn.version == 2
+    assert ("UPDATE schema_version SET version = %s", (3,)) in conn.calls
+    assert conn.version == 3
     assert conn.commits == 1
     assert conn.rollbacks == 1  # release the post-migration read transaction
     assert result["from_version"] == 1
-    assert result["to_version"] == 2
-    assert result["applied_versions"] == [2]
+    assert result["to_version"] == 3
+    assert result["applied_versions"] == [2, 3]
 
 
 def test_migration_bootstraps_a_missing_schema_before_advancing():
@@ -135,12 +150,12 @@ def test_migration_bootstraps_a_missing_schema_before_advancing():
 
     assert sum(query == pg.PG_DDL for query, _ in conn.calls) == 2
     assert result["from_version"] is None
-    assert result["applied_versions"] == [2]
-    assert conn.version == 2
+    assert result["applied_versions"] == [2, 3]
+    assert conn.version == 3
 
 
 def test_migration_is_idempotent_at_current_schema():
-    store, conn = _store(2)
+    store, conn = _store(3)
 
     first = pg.migrate_schema(store)
     second = pg.migrate_schema(store)
@@ -166,8 +181,19 @@ def test_migration_rolls_back_if_upgrade_fails_after_lock_acquisition():
     assert conn.version == 1
 
 
+def test_version_2_migration_rolls_back_without_advancing_cursor_schema():
+    store, conn = _store(2, fail_on="RENAME COLUMN ingest_offset")
+
+    with pytest.raises(RuntimeError, match="migration failed"):
+        pg.migrate_schema(store)
+
+    assert conn.rollbacks == 1
+    assert conn.commits == 0
+    assert conn.version == 2
+
+
 def test_normal_startup_mode_never_enters_migration(monkeypatch):
-    store, conn = _store(2)
+    store, conn = _store(3)
     monkeypatch.setattr(
         pg_migrations,
         "migrate_schema",
@@ -181,7 +207,7 @@ def test_normal_startup_mode_never_enters_migration(monkeypatch):
 
 
 def test_operator_compatibility_mode_is_explicit(monkeypatch):
-    store, conn = _store(2)
+    store, conn = _store(3)
     calls = []
     monkeypatch.setattr(pg_migrations, "migrate_schema", lambda value: calls.append(value))
 
@@ -195,7 +221,7 @@ def test_operator_compatibility_mode_is_explicit(monkeypatch):
 
 
 def test_unknown_startup_mode_fails_before_any_database_query():
-    store, conn = _store(2)
+    store, conn = _store(3)
 
     with pytest.raises(pg_migrations.RemoteSchemaCompatibilityError, match="invalid"):
         pg_migrations.startup_schema_handshake(

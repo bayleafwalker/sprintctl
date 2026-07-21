@@ -23,6 +23,7 @@ REPO_TABLES = (
     "authority_decision",
     "ingest_record",
     "ingest_stream",
+    "ingest_repo_cursor",
     "dep",
     "ref",
     "claim",

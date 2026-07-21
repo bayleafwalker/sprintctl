@@ -22,7 +22,7 @@ def test_ddl_contains_required_tables():
     tables = _tables_in_ddl(PG_DDL)
     required = {
         "schema_version", "sprint", "track", "work_item", "event", "claim", "ref", "dep",
-        "ingest_stream", "ingest_record", "authority_decision",
+        "ingest_stream", "ingest_repo_cursor", "ingest_record", "authority_decision",
     }
     assert required <= tables, f"Missing tables: {required - tables}"
 
@@ -148,7 +148,10 @@ def test_ingest_ledger_scopes_deduplication_and_cursor_to_the_repo():
     record = re.search(r"CREATE TABLE IF NOT EXISTS ingest_record\s*\((.*?)\);", PG_DDL, re.DOTALL)
     assert stream and record
     assert "PRIMARY KEY (repo_id, origin_stream_id)" in stream.group(1)
+    assert "ingest_id" in record.group(1)
     assert "GENERATED ALWAYS AS IDENTITY PRIMARY KEY" in record.group(1)
+    assert "ingest_offset" in record.group(1)
+    assert "UNIQUE (repo_id, ingest_offset)" in record.group(1)
     assert "UNIQUE (repo_id, origin_stream_id, origin_seq)" in record.group(1)
     assert "UNIQUE (repo_id, event_id)" in record.group(1)
     assert "producer_created_at timestamptz NOT NULL" in record.group(1)
@@ -162,6 +165,6 @@ def test_server_guard_covers_every_repo_scoped_table():
     assert "sprintctl:disposable-integration-test" in PG_DDL
     for table in (
         "sprint", "track", "work_item", "event", "claim", "ref", "dep",
-        "ingest_stream", "ingest_record",
+        "ingest_repo_cursor", "ingest_stream", "ingest_record",
     ):
         assert f"'{table}'" in PG_DDL

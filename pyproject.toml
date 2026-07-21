@@ -27,9 +27,10 @@ capabilities = [
     "portable-aggregate-uuid-json/v1",
     "remote-backend/v1",
     "remote-schema-compatibility/v1",
+    "sprintctl-repository-ingest-cursor/v1",
 ]
 sqlite-schema-version = 11
-remote-schema-version = 2
+remote-schema-version = 3
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

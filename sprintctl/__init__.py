@@ -8,4 +8,5 @@ CLI_CAPABILITIES = (
     "portable-aggregate-uuid-json/v1",
     "remote-backend/v1",
     "remote-schema-compatibility/v1",
+    "sprintctl-repository-ingest-cursor/v1",
 )

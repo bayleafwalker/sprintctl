@@ -72,6 +72,9 @@ Project batches follow the project binding's declared member order. Each
 member stays repository-scoped and writes only the work domain. The response
 retains `origin_repo` and exposes each member result. The operation is
 retry-safe at the record level, not a cross-repository transaction.
+Repository-local ingestion cursors mean two member results may carry the same
+numeric `ingest_offset`; the enclosing member `origin_repo` / `repo_id` is part
+of that cursor identity and must be retained by clients.
 
 Concurrency evidence is deliberately bounded: PostgreSQL claim arbitration
 locks the authoritative work-item row. Independent connections demonstrate

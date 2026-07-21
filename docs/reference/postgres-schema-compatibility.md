@@ -16,11 +16,18 @@ create, alter, or repair schema objects.
 work API as `sprintctl-work/v1`, reports the actual remote schema version, and
 reports the minimum and maximum versions this runtime supports.
 
-Schema version 2 is the only supported version in this rollout. A missing
-ledger, version 1, and any version greater than 2 fail closed before a runtime
+Schema version 3 is the only supported version in this rollout. A missing
+ledger, versions 1 or 2, and any version greater than 3 fail closed before a runtime
 command is served. The check executes only `SELECT to_regclass(...)` and a
 `SELECT` over `schema_version`; it never attempts repair. Package version
 strings are not protocol compatibility evidence.
+
+The handshake also publishes
+`sprintctl-repository-ingest-cursor/v1` with `scope=repository` and
+`contiguous=true`. Numeric `ingest_offset` values are meaningful only together
+with their repository identity; different repositories may validly expose the
+same offset. The internal identity-backed `ingest_id` remains globally unique
+inside the shared schema and is not a public paging cursor.
 
 ## Deployment migration job
 
@@ -40,6 +47,21 @@ schema newer than the migration package is never downgraded.
 Migration version 2 normalizes every known legacy version-1 deployment before
 advancing the ledger. This is necessary because the old client bootstrap
 accumulated idempotent DDL while leaving the ledger at version 1.
+
+Migration version 3 retains the old global identity as `ingest_id`, backfills
+`ingest_offset` with `row_number()` per repository in internal-ingest order,
+translates authority-decision offsets, and installs repository-bound uniqueness
+and foreign keys. It seeds one locked `ingest_repo_cursor` row per repository.
+The advisory lock, table lock, DDL, data translation, cursor seed, and ledger
+advance share one transaction; a fault cannot publish version 3 early. Runtime
+append transactions lock the repository cursor before any producer-stream row,
+and retries or rollbacks do not consume public offsets.
+
+Projection cache schema version 2 records its owning repository. A version-1
+cache is never interpreted as current: synchronization captures the repository
+high-water, builds contiguous pages from offset zero into a sibling SQLite
+file, and atomically replaces the live cache only after reaching that exact
+high-water. A retained suffix offered to an empty rebuild remains a gap error.
 
 ## Role contract
 

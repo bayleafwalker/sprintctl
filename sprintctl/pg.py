@@ -229,9 +229,15 @@ CREATE TABLE IF NOT EXISTS ingest_stream (
     PRIMARY KEY (repo_id, origin_stream_id)
 );
 
+CREATE TABLE IF NOT EXISTS ingest_repo_cursor (
+    repo_id        text   PRIMARY KEY,
+    highest_offset bigint NOT NULL DEFAULT 0 CHECK (highest_offset >= 0)
+);
+
 CREATE TABLE IF NOT EXISTS ingest_record (
     repo_id            text        NOT NULL,
-    ingest_offset      bigint      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    ingest_id          bigint      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    ingest_offset      bigint      NOT NULL CHECK (ingest_offset > 0),
     origin_stream_id   text        NOT NULL,
     origin_seq         bigint      NOT NULL CHECK (origin_seq > 0),
     event_id           text        NOT NULL,
@@ -404,7 +410,7 @@ DECLARE
 BEGIN
     FOREACH table_name IN ARRAY ARRAY[
         'sprint', 'track', 'work_item', 'event', 'claim', 'ref', 'dep',
-        'ingest_stream', 'ingest_record', 'authority_decision'
+        'ingest_repo_cursor', 'ingest_stream', 'ingest_record', 'authority_decision'
     ]
     LOOP
         trigger_name := 'guard_integration_test_scope_' || table_name;
@@ -719,6 +725,36 @@ def _lock_ingest_stream(cur: Any, store: PgStore, origin_stream_id: str) -> int:
     return int(row["highest_origin_seq"])
 
 
+def _lock_ingest_repo_cursor(cur: Any, store: PgStore) -> int:
+    """Create and lock the repository cursor before any producer stream lock."""
+    cur.execute(
+        """
+        INSERT INTO ingest_repo_cursor (repo_id, highest_offset)
+        VALUES (%s, 0)
+        ON CONFLICT (repo_id) DO NOTHING
+        """,
+        (store.repo_id,),
+    )
+    cur.execute(
+        """
+        SELECT highest_offset FROM ingest_repo_cursor
+        WHERE repo_id = %s
+        FOR UPDATE
+        """,
+        (store.repo_id,),
+    )
+    row = cur.fetchone()
+    assert row is not None
+    return int(row["highest_offset"])
+
+
+def _advance_ingest_repo_cursor(cur: Any, store: PgStore, highest_offset: int) -> None:
+    cur.execute(
+        "UPDATE ingest_repo_cursor SET highest_offset = %s WHERE repo_id = %s",
+        (highest_offset, store.repo_id),
+    )
+
+
 def ingest_records(store: PgStore, records: list[outbox.OutboxRecord]) -> list[IngestResult]:
     """Atomically admit contiguous producer records into the remote ledger.
 
@@ -733,6 +769,8 @@ def ingest_records(store: PgStore, records: list[outbox.OutboxRecord]) -> list[I
         return []
     try:
         with store.conn.cursor() as cur:
+            cursor_start = _lock_ingest_repo_cursor(cur, store)
+            next_offset = cursor_start
             high_water = {
                 origin_stream_id: _lock_ingest_stream(cur, store, origin_stream_id)
                 for origin_stream_id in sorted({item.record.origin_stream_id for item in prepared})
@@ -774,18 +812,19 @@ def ingest_records(store: PgStore, records: list[outbox.OutboxRecord]) -> list[I
                 expected = high_water[record.origin_stream_id] + 1
                 if record.origin_seq != expected:
                     raise IngestGapError(record.origin_stream_id, expected, record.origin_seq)
+                next_offset += 1
                 cur.execute(
                     """
                     INSERT INTO ingest_record (
-                        repo_id, origin_stream_id, origin_seq, event_id, schema_version,
+                        repo_id, ingest_offset, origin_stream_id, origin_seq, event_id, schema_version,
                         record_class, event_type, actor, runtime_session_id, occurred_at,
                         basis_revision, correlation_id, causation_id, payload, payload_sha256,
                         record_sha256, producer_created_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING *
                     """,
                     (
-                        store.repo_id, record.origin_stream_id, record.origin_seq, record.event_id,
+                        store.repo_id, next_offset, record.origin_stream_id, record.origin_seq, record.event_id,
                         record.schema_version, record.record_class, record.event_type, record.actor,
                         record.runtime_session_id, record.occurred_at, record.basis_revision,
                         record.correlation_id, record.causation_id, item.payload_json,
@@ -803,6 +842,8 @@ def ingest_records(store: PgStore, records: list[outbox.OutboxRecord]) -> list[I
                 high_water[record.origin_stream_id] = record.origin_seq
                 result = _ingested_record_from_row(inserted)
                 results.append(IngestResult(result.record, result.ingest_offset, duplicate=False))
+            if next_offset != cursor_start:
+                _advance_ingest_repo_cursor(cur, store, next_offset)
         store.conn.commit()
         return results
     except Exception:
@@ -831,6 +872,17 @@ def list_ingested_records(
         cur.execute(query, params)
         rows = cur.fetchall()
     return [_ingested_record_from_row(row) for row in rows]
+
+
+def get_ingest_high_water(store: PgStore) -> int:
+    """Return the captured public high-water mark for this repository."""
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT highest_offset FROM ingest_repo_cursor WHERE repo_id = %s",
+            (store.repo_id,),
+        )
+        row = cur.fetchone()
+    return int(row["highest_offset"]) if row is not None else 0
 
 
 # ---------------------------------------------------------------------------
@@ -913,6 +965,93 @@ def _apply_schema_version_2(cur: Any) -> None:
     # the next nextval call would return a value that conflicts with
     # already-imported data.
     _advance_identity_sequences(cur, ("sprint", "track", "work_item", "event", "claim", "ref", "dep"))
+
+
+def _apply_schema_version_3(cur: Any) -> None:
+    """Replace the global public offset with a contiguous repository cursor.
+
+    The old identity value remains as ``ingest_id`` for internal uniqueness.
+    Public offsets and every reference to them are translated in one locked
+    migration transaction before the schema ledger can advance to version 3.
+    """
+    cur.execute("LOCK TABLE ingest_record, authority_decision IN ACCESS EXCLUSIVE MODE")
+    cur.execute(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = 'ingest_record' "
+        "AND column_name = 'ingest_id') AS ingest_id_exists"
+    )
+    column = cur.fetchone()
+    if column and bool(column["ingest_id_exists"]):
+        return
+    cur.execute(
+        "ALTER TABLE authority_decision "
+        "DROP CONSTRAINT IF EXISTS authority_decision_record_fk"
+    )
+    cur.execute("DROP INDEX IF EXISTS idx_ingest_record_repo_offset")
+    cur.execute("DROP INDEX IF EXISTS idx_ingest_record_repo_offset_unique")
+    cur.execute("ALTER TABLE ingest_record RENAME COLUMN ingest_offset TO ingest_id")
+    cur.execute("ALTER TABLE ingest_record ADD COLUMN ingest_offset bigint")
+    cur.execute(
+        """
+        WITH translated AS (
+            SELECT ingest_id,
+                   row_number() OVER (
+                       PARTITION BY repo_id ORDER BY ingest_id
+                   )::bigint AS repository_offset
+            FROM ingest_record
+        )
+        UPDATE ingest_record AS record
+        SET ingest_offset = translated.repository_offset
+        FROM translated
+        WHERE record.ingest_id = translated.ingest_id
+        """
+    )
+    cur.execute("ALTER TABLE ingest_record ALTER COLUMN ingest_offset SET NOT NULL")
+    cur.execute(
+        "ALTER TABLE ingest_record ADD CONSTRAINT ingest_record_ingest_offset_check "
+        "CHECK (ingest_offset > 0)"
+    )
+    cur.execute(
+        "CREATE UNIQUE INDEX idx_ingest_record_repo_offset_unique "
+        "ON ingest_record(repo_id, ingest_offset)"
+    )
+    cur.execute(
+        "CREATE INDEX idx_ingest_record_repo_offset "
+        "ON ingest_record(repo_id, ingest_offset)"
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ingest_repo_cursor (
+            repo_id text PRIMARY KEY,
+            highest_offset bigint NOT NULL DEFAULT 0 CHECK (highest_offset >= 0)
+        )
+        """
+    )
+    cur.execute(
+        """
+        INSERT INTO ingest_repo_cursor (repo_id, highest_offset)
+        SELECT repo_id, MAX(ingest_offset)
+        FROM ingest_record
+        GROUP BY repo_id
+        ON CONFLICT (repo_id) DO UPDATE
+        SET highest_offset = EXCLUDED.highest_offset
+        """
+    )
+    cur.execute(
+        """
+        UPDATE authority_decision AS decision
+        SET decision_ingest_offset = record.ingest_offset
+        FROM ingest_record AS record
+        WHERE record.repo_id = decision.repo_id
+          AND record.ingest_id = decision.decision_ingest_offset
+        """
+    )
+    cur.execute(
+        "ALTER TABLE authority_decision "
+        "ADD CONSTRAINT authority_decision_record_fk "
+        "FOREIGN KEY (repo_id, decision_ingest_offset) "
+        "REFERENCES ingest_record(repo_id, ingest_offset) ON DELETE CASCADE"
+    )
 
 
 def compatibility_handshake(store: PgStore) -> dict[str, Any]:
@@ -2512,7 +2651,12 @@ def delete_repo(conn: Any, repo_id: str) -> dict[str, int]:
     """Delete all rows for repo_id across all tables. Returns deleted row counts per table."""
     counts: dict[str, int] = {}
     with conn.cursor() as cur:
-        for table in ("ingest_record", "ingest_stream"):
+        for table in (
+            "authority_decision",
+            "ingest_record",
+            "ingest_stream",
+            "ingest_repo_cursor",
+        ):
             cur.execute(f"DELETE FROM {table} WHERE repo_id = %s", (repo_id,))  # noqa: S608
             counts[table] = cur.rowcount
         for table in reversed(_EXPORT_TABLES):

@@ -2,20 +2,31 @@
   "schema_version": "test-context/v1",
   "id": "sprintctl.remote-schema-migration-compatibility",
   "owner_repo": "sprintctl",
-  "subject": "deployment-owned-postgresql-schema-migration-and-runtime-compatibility",
+  "subject": "deployment-owned-postgresql-schema-migration-repository-ingest-cursor-and-runtime-compatibility",
   "contract_ref": {
     "doc_id": "sprintctl-vuoro-served-authority-alignment",
     "revision": "git:142d5ccccd68d589a17de7e8ed3c4bed0361bb56"
   },
-  "source_of_truth": "postgresql-schema-version-ledger-under-global-migration-advisory-lock",
+  "source_of_truth": "postgresql-schema-version-ledger-under-global-migration-advisory-lock-plus-locked-per-repository-ingest-cursor-rows",
   "depth": 2,
   "backends": ["postgres", "sqlite"],
-  "actors": ["migration-job-a", "migration-job-b", "runtime-service", "local-sqlite-client"],
+  "actors": [
+    "migration-job-a",
+    "migration-job-b",
+    "runtime-service",
+    "repository-a-producer",
+    "repository-b-producer",
+    "projection-rebuilder",
+    "local-sqlite-client"
+  ],
   "initial_state": [
     "missing-remote-schema",
     "legacy-remote-schema-version-1",
-    "current-remote-schema-version-2",
-    "newer-remote-schema-version-3",
+    "legacy-remote-schema-version-2-with-global-public-offsets",
+    "current-remote-schema-version-3-with-repository-public-offsets",
+    "newer-remote-schema-version-4",
+    "projection-schema-version-1",
+    "projection-schema-version-2",
     "local-sqlite-schema-version-11"
   ],
   "operations": [
@@ -35,6 +46,21 @@
       "synchronization": "server-privilege-check-before-ddl"
     },
     {
+      "name": "allocate-repository-ingest-offset",
+      "actors": ["repository-a-producer", "repository-b-producer"],
+      "synchronization": "lock-repository-cursor-before-sorted-producer-stream-locks-and-commit-with-records"
+    },
+    {
+      "name": "page-repository-history-after-offset",
+      "actors": ["runtime-service", "projection-rebuilder"],
+      "synchronization": "every-offset-query-is-bound-by-repo-id"
+    },
+    {
+      "name": "rebuild-projection-to-captured-high-water",
+      "actors": ["projection-rebuilder"],
+      "synchronization": "contiguous-pages-to-sibling-cache-followed-by-atomic-replace"
+    },
+    {
       "name": "self-migrate-local-sqlite",
       "actors": ["local-sqlite-client"],
       "synchronization": "sqlite-begin-immediate-per-migration"
@@ -42,31 +68,46 @@
   ],
   "consistency": {
     "target": "application-invariant",
-    "object": "shared-work-schema-version-ledger"
+    "object": "shared-work-schema-version-ledger-and-repository-ingest-cursor"
   },
   "assumptions": {
-    "isolation": "one PostgreSQL transaction per migration job; independent connections for concurrency history",
+    "isolation": "one PostgreSQL transaction per migration job or ingest batch; independent connections for concurrency histories; one SQLite transaction per projection page",
     "clock": "none",
     "fairness": "a waiting migration transaction eventually acquires the advisory lock"
   },
   "bounds": {
     "postgresql_instances": 1,
+    "repositories": 2,
+    "depth_2_histories": 10,
     "concurrent_migration_jobs": 2,
-    "remote_schema_versions": 4,
-    "sqlite_instances": 1
+    "remote_schema_versions": 5,
+    "sqlite_instances": 2
   },
   "invariants": [
     "runtime-startup-executes-no-ddl",
-    "only-remote-schema-version-2-serves-sprintctl-work-v1",
+    "only-remote-schema-version-3-serves-sprintctl-work-v1",
     "missing-old-and-new-remote-schemas-fail-closed",
     "two-concurrent-migration-jobs-admit-one-version-advance",
     "failed-migration-does-not-advance-the-ledger",
+    "migration-retains-global-ingest-id-and-backfills-contiguous-offsets-per-repository",
+    "every-offset-reference-query-and-foreign-key-is-repository-bound",
+    "same-repository-concurrent-appends-serialize-to-distinct-contiguous-offsets",
+    "different-repositories-may-publish-equal-offsets-with-distinct-global-ingest-ids",
+    "duplicate-retry-and-rolled-back-append-do-not-advance-the-repository-cursor",
+    "authority-request-and-decision-offsets-are-consecutive",
+    "repository-pages-after-n-begin-at-n-plus-one",
+    "projection-schema-v1-fails-closed-and-rebuild-never-weakens-prefix-gap-detection",
+    "captured-high-water-rebuild-replaces-the-live-cache-only-after-complete-contiguous-application",
     "runtime-role-can-read-compatibility-and-cannot-create-schema-objects",
     "local-sqlite-authority-remains-self-migrating"
   ],
   "faults": [
     "migration-response-retry-after-commit",
     "migration-statement-failure-before-ledger-advance",
+    "migration-failure-while-a-concurrent-retry-waits-on-the-global-lock",
+    "append-failure-after-repository-offset-selection",
+    "lost-response-retry-after-record-commit",
+    "retained-history-suffix-offered-to-empty-projection",
     "runtime-starts-before-migration",
     "runtime-starts-against-newer-schema",
     "runtime-credential-attempts-ddl"
@@ -74,6 +115,10 @@
   "oracles": [
     "read-only-query-history",
     "migration-ledger-version",
+    "repository-cursor-high-water-and-public-offset-history",
+    "retained-global-ingest-id-history",
+    "repository-bound-authority-decision-foreign-key",
+    "projection-sibling-path-and-atomic-replacement",
     "serialized-independent-connection-history",
     "postgresql-insufficient-privilege-error",
     "existing-sqlite-migration-suite"
@@ -81,9 +126,16 @@
   "implementation_anchors": [
     "sprintctl/pg_migrations.py:startup_schema_handshake",
     "sprintctl/pg_migrations.py:migrate_schema",
+    "sprintctl/pg.py:_apply_schema_version_3",
+    "sprintctl/pg.py:_lock_ingest_repo_cursor",
+    "sprintctl/authority.py:arbitrate_command",
+    "sprintctl/projection.py:rebuild_cached_projection",
     "sprintctl/cli.py:_get_store",
     "tests/test_pg_bootstrap.py:test_runtime_compatibility_probe_is_read_only_and_publishes_work_api",
-    "tests/test_pg_integration.py:TestInitDb.test_concurrent_migration_serializes_on_disposable_postgres"
+    "tests/test_pg_integration.py:TestInitDb.test_concurrent_migration_serializes_on_disposable_postgres",
+    "tests/test_pg_integration.py:TestInitDb.test_interleaved_legacy_offsets_backfill_per_repository_and_translate_fk",
+    "tests/test_pg_integration.py:TestProducerOutboxIngestion.test_concurrent_first_appends_use_public_one_and_distinct_internal_ids",
+    "tests/test_projection.py:test_high_water_rebuild_rejects_suffix_and_preserves_live_cache"
   ],
   "expansions": ["semantic-doc", "stateful-test", "concurrent-history", "fault-scenario"]
 }

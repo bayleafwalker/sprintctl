@@ -218,7 +218,7 @@ class TestInitDb:
         assert pg.get_sprint(store, sprint_id) is not None
 
     def test_concurrent_migration_serializes_on_disposable_postgres(self, pg_test_scope, store):
-        """Two migration jobs admit one v1 -> v2 transition without deadlock."""
+        """Two migration jobs admit one v1 -> v3 transition without deadlock."""
         schema = "migration_" + uuid.uuid4().hex
         with store.conn.cursor() as cur:
             cur.execute(f'CREATE SCHEMA "{schema}"')
@@ -258,13 +258,86 @@ class TestInitDb:
 
             assert not any(thread.is_alive() for thread in threads)
             assert not errors
-            assert sorted(result["applied_versions"] for result in results) == [[], [2]]
+            assert sorted(result["applied_versions"] for result in results) == [[], [2, 3]]
             with store.conn.cursor() as cur:
                 cur.execute(f'SELECT version FROM "{schema}".schema_version')
-                assert cur.fetchone()["version"] == 2
+                assert cur.fetchone()["version"] == 3
             store.conn.rollback()
         finally:
             with store.conn.cursor() as cur:
+                cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            store.conn.commit()
+
+    def test_failed_migration_releases_lock_for_concurrent_retry(self, store):
+        schema = "migration_fault_" + uuid.uuid4().hex
+        with store.conn.cursor() as cur:
+            cur.execute(f'CREATE SCHEMA "{schema}"')
+            cur.execute(f'SET search_path TO "{schema}"')
+            cur.execute(pg.PG_DDL)
+            cur.execute("UPDATE schema_version SET version = 2")
+        store.conn.commit()
+        connections = [psycopg.connect(_PG_URL, row_factory=dict_row) for _ in range(2)]
+        for conn in connections:
+            assert_disposable_connection(conn)
+            with conn.cursor() as cur:
+                cur.execute(f'SET search_path TO "{schema}"')
+            conn.commit()
+        lock_acquired = threading.Event()
+        retry_invoked = threading.Event()
+        failures = []
+        results = []
+
+        def fail_after_schema_work():
+            conn = connections[0]
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT pg_advisory_xact_lock(%s, %s)",
+                        pg._SCHEMA_BOOTSTRAP_LOCK_KEYS,
+                    )
+                    lock_acquired.set()
+                    assert retry_invoked.wait(timeout=15)
+                    pg._apply_schema_version_3(cur)
+                    raise RuntimeError("injected failure before ledger advance")
+            except RuntimeError as exc:
+                failures.append(exc)
+                conn.rollback()
+            finally:
+                conn.close()
+
+        def retry_migration():
+            conn = connections[1]
+            retry_invoked.set()
+            try:
+                results.append(pg.migrate_schema(pg.PgStore(conn, "migration-retry")))
+            finally:
+                conn.close()
+
+        failing = threading.Thread(target=fail_after_schema_work)
+        retrying = threading.Thread(target=retry_migration)
+        try:
+            failing.start()
+            assert lock_acquired.wait(timeout=15)
+            retrying.start()
+            failing.join(timeout=30)
+            retrying.join(timeout=30)
+
+            assert not failing.is_alive()
+            assert not retrying.is_alive()
+            assert [str(exc) for exc in failures] == [
+                "injected failure before ledger advance"
+            ]
+            assert [result["applied_versions"] for result in results] == [[3]]
+            with store.conn.cursor() as cur:
+                cur.execute(f'SELECT version FROM "{schema}".schema_version')
+                assert cur.fetchone()["version"] == 3
+            store.conn.rollback()
+        finally:
+            for conn in connections:
+                if not conn.closed:
+                    conn.close()
+            with store.conn.cursor() as cur:
+                cur.execute("SET search_path TO public")
                 cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
             store.conn.commit()
 
@@ -395,6 +468,166 @@ class TestInitDb:
             conn.commit()
             conn.close()
 
+    @pytest.mark.parametrize(
+        ("legacy_version", "applied_versions"),
+        [(1, [2, 3]), (2, [3])],
+    )
+    def test_interleaved_legacy_offsets_backfill_per_repository_and_translate_fk(
+        self, pg_test_scope, legacy_version, applied_versions
+    ):
+        schema = "cursor_backfill_" + uuid.uuid4().hex
+        conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+        assert_disposable_connection(conn)
+        repo_a = pg_test_scope(f"cursor-backfill-v{legacy_version}-a")
+        repo_b = pg_test_scope(f"cursor-backfill-v{legacy_version}-b")
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f'CREATE SCHEMA "{schema}"')
+                cur.execute(f'SET search_path TO "{schema}"')
+                cur.execute("CREATE TABLE schema_version (version integer NOT NULL)")
+                cur.execute("INSERT INTO schema_version VALUES (%s)", (legacy_version,))
+                cur.execute(
+                    """
+                    CREATE TABLE ingest_stream (
+                        repo_id text NOT NULL,
+                        origin_stream_id text NOT NULL,
+                        highest_origin_seq bigint NOT NULL DEFAULT 0,
+                        created_at timestamptz NOT NULL DEFAULT now(),
+                        PRIMARY KEY (repo_id, origin_stream_id)
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE ingest_record (
+                        repo_id text NOT NULL,
+                        ingest_offset bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                        origin_stream_id text NOT NULL,
+                        origin_seq bigint NOT NULL,
+                        event_id text NOT NULL,
+                        schema_version integer NOT NULL DEFAULT 1,
+                        record_class text NOT NULL DEFAULT 'observation',
+                        event_type text NOT NULL DEFAULT 'note.recorded',
+                        actor text NOT NULL DEFAULT 'legacy',
+                        runtime_session_id text,
+                        occurred_at timestamptz NOT NULL DEFAULT now(),
+                        basis_revision text,
+                        correlation_id text,
+                        causation_id text,
+                        payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+                        payload_sha256 text NOT NULL DEFAULT 'payload',
+                        record_sha256 text NOT NULL,
+                        producer_created_at timestamptz NOT NULL DEFAULT now(),
+                        ingested_at timestamptz NOT NULL DEFAULT now(),
+                        UNIQUE (repo_id, origin_stream_id, origin_seq),
+                        UNIQUE (repo_id, event_id),
+                        UNIQUE (repo_id, ingest_offset),
+                        FOREIGN KEY (repo_id, origin_stream_id)
+                            REFERENCES ingest_stream(repo_id, origin_stream_id)
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE authority_decision (
+                        repo_id text NOT NULL,
+                        request_event_id text NOT NULL,
+                        request_record_sha256 text NOT NULL,
+                        decision_event_id text NOT NULL,
+                        decision_ingest_offset bigint NOT NULL,
+                        outcome text NOT NULL,
+                        reason_code text,
+                        reason_detail text,
+                        effect jsonb NOT NULL DEFAULT '{}'::jsonb,
+                        decided_at timestamptz NOT NULL DEFAULT now(),
+                        PRIMARY KEY (repo_id, request_event_id),
+                        UNIQUE (repo_id, decision_event_id),
+                        UNIQUE (repo_id, decision_ingest_offset)
+                    )
+                    """
+                )
+                for repo_id in (repo_a, repo_b):
+                    cur.execute(
+                        "INSERT INTO ingest_stream "
+                        "(repo_id, origin_stream_id, highest_origin_seq) "
+                        "VALUES (%s, %s, 2)",
+                        (repo_id, f"stream:{repo_id}"),
+                    )
+                for repo_id, sequence in (
+                    (repo_a, 1),
+                    (repo_b, 1),
+                    (repo_a, 2),
+                    (repo_b, 2),
+                ):
+                    cur.execute(
+                        "INSERT INTO ingest_record "
+                        "(repo_id, origin_stream_id, origin_seq, event_id, record_sha256) "
+                        "VALUES (%s, %s, %s, %s, %s)",
+                        (
+                            repo_id,
+                            f"stream:{repo_id}",
+                            sequence,
+                            f"event:{repo_id}:{sequence}",
+                            f"digest:{repo_id}:{sequence}",
+                        ),
+                    )
+                cur.execute(
+                    "INSERT INTO authority_decision "
+                    "(repo_id, request_event_id, request_record_sha256, "
+                    "decision_event_id, decision_ingest_offset, outcome) "
+                    "VALUES (%s, %s, 'request-digest', %s, 4, 'accepted')",
+                    (repo_b, f"event:{repo_b}:1", f"event:{repo_b}:2"),
+                )
+            conn.commit()
+
+            migrated = pg.migrate_schema(pg.PgStore(conn, repo_a))
+
+            assert migrated["applied_versions"] == applied_versions
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT repo_id, ingest_id, ingest_offset FROM ingest_record "
+                    "ORDER BY ingest_id"
+                )
+                rows = cur.fetchall()
+                assert [int(row["ingest_id"]) for row in rows] == [1, 2, 3, 4]
+                assert [
+                    int(row["ingest_offset"])
+                    for row in rows
+                    if row["repo_id"] == repo_a
+                ] == [1, 2]
+                assert [
+                    int(row["ingest_offset"])
+                    for row in rows
+                    if row["repo_id"] == repo_b
+                ] == [1, 2]
+                cur.execute(
+                    "SELECT decision_ingest_offset FROM authority_decision "
+                    "WHERE repo_id = %s",
+                    (repo_b,),
+                )
+                assert int(cur.fetchone()["decision_ingest_offset"]) == 2
+                cur.execute(
+                    "SELECT highest_offset FROM ingest_repo_cursor "
+                    "WHERE repo_id = %s",
+                    (repo_a,),
+                )
+                assert int(cur.fetchone()["highest_offset"]) == 2
+            with pytest.raises(psycopg.errors.ForeignKeyViolation):
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE authority_decision SET decision_ingest_offset = 3 "
+                        "WHERE repo_id = %s",
+                        (repo_b,),
+                    )
+            conn.rollback()
+        finally:
+            conn.rollback()
+            with conn.cursor() as cur:
+                cur.execute("SET search_path TO public")
+                cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            conn.commit()
+            conn.close()
+
 
 # ---------------------------------------------------------------------------
 # Producer outbox ingestion
@@ -431,6 +664,159 @@ class TestProducerOutboxIngestion:
         assert [result.ingest_offset for result in ordered] == [result.ingest_offset for result in admitted]
         assert [result.record.created_at for result in ordered] == [first.created_at, second.created_at]
         assert ordered[1].ingest_offset > ordered[0].ingest_offset
+
+    def test_interleaved_repositories_each_publish_contiguous_offsets(
+        self, pg_test_scope, store, tmp_path
+    ):
+        repo_a = pg.PgStore(store.conn, pg_test_scope("cursor-interleaved-a"))
+        repo_b = pg.PgStore(store.conn, pg_test_scope("cursor-interleaved-b"))
+        first_a, second_a = self._records(tmp_path / "repo-a")
+        first_b, second_b = self._records(tmp_path / "repo-b")
+
+        outcomes = [
+            pg.ingest_records(repo_a, [first_a])[0],
+            pg.ingest_records(repo_b, [first_b])[0],
+            pg.ingest_records(repo_a, [second_a])[0],
+            pg.ingest_records(repo_b, [second_b])[0],
+        ]
+
+        assert [outcomes[index].ingest_offset for index in (0, 2)] == [1, 2]
+        assert [outcomes[index].ingest_offset for index in (1, 3)] == [1, 2]
+        assert pg.get_ingest_high_water(repo_a) == 2
+        assert pg.get_ingest_high_water(repo_b) == 2
+
+    def test_concurrent_streams_in_one_repository_allocate_offsets_one_and_two(
+        self, pg_test_scope, store, tmp_path
+    ):
+        repo_id = pg_test_scope("cursor-concurrent-same-repo")
+        records = [
+            self._records(tmp_path / f"same-repo-{index}", count=1)[0]
+            for index in range(2)
+        ]
+        barrier = threading.Barrier(3)
+        outcomes = []
+        failures = []
+
+        def worker(record):
+            conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+            independent = pg.PgStore(conn, repo_id)
+            try:
+                barrier.wait(timeout=15)
+                outcomes.append(pg.ingest_records(independent, [record])[0])
+            except BaseException as exc:
+                failures.append(exc)
+            finally:
+                conn.close()
+
+        threads = [threading.Thread(target=worker, args=(record,)) for record in records]
+        for thread in threads:
+            thread.start()
+        barrier.wait(timeout=15)
+        for thread in threads:
+            thread.join(timeout=30)
+
+        assert not any(thread.is_alive() for thread in threads)
+        assert failures == []
+        assert {outcome.ingest_offset for outcome in outcomes} == {1, 2}
+
+    def test_concurrent_first_appends_use_public_one_and_distinct_internal_ids(
+        self, pg_test_scope, store, tmp_path
+    ):
+        repo_ids = [
+            pg_test_scope("cursor-concurrent-repo-a"),
+            pg_test_scope("cursor-concurrent-repo-b"),
+        ]
+        records = [
+            self._records(tmp_path / f"first-repo-{index}", count=1)[0]
+            for index in range(2)
+        ]
+        barrier = threading.Barrier(3)
+        outcomes = []
+        failures = []
+
+        def worker(repo_id, record):
+            conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+            independent = pg.PgStore(conn, repo_id)
+            try:
+                barrier.wait(timeout=15)
+                outcome = pg.ingest_records(independent, [record])[0]
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT ingest_id FROM ingest_record "
+                        "WHERE repo_id = %s AND event_id = %s",
+                        (repo_id, record.event_id),
+                    )
+                    ingest_id = int(cur.fetchone()["ingest_id"])
+                outcomes.append((repo_id, outcome.ingest_offset, ingest_id))
+            except BaseException as exc:
+                failures.append(exc)
+            finally:
+                conn.close()
+
+        threads = [
+            threading.Thread(target=worker, args=pair)
+            for pair in zip(repo_ids, records, strict=True)
+        ]
+        for thread in threads:
+            thread.start()
+        barrier.wait(timeout=15)
+        for thread in threads:
+            thread.join(timeout=30)
+
+        assert not any(thread.is_alive() for thread in threads)
+        assert failures == []
+        assert [offset for _repo, offset, _ingest_id in outcomes] == [1, 1]
+        assert len({ingest_id for _repo, _offset, ingest_id in outcomes}) == 2
+
+    def test_lost_response_retry_does_not_advance_repository_cursor(
+        self, pg_test_scope, store, tmp_path
+    ):
+        isolated = pg.PgStore(store.conn, pg_test_scope("cursor-lost-response"))
+        first, second = self._records(tmp_path / "lost-response")
+
+        admitted = pg.ingest_records(isolated, [first])[0]
+        retried = pg.ingest_records(isolated, [first])[0]
+        following = pg.ingest_records(isolated, [second])[0]
+
+        assert (admitted.ingest_offset, retried.ingest_offset) == (1, 1)
+        assert retried.duplicate is True
+        assert following.ingest_offset == 2
+        assert pg.get_ingest_high_water(isolated) == 2
+
+    def test_failure_after_offset_allocation_rolls_back_cursor_and_record(
+        self, pg_test_scope, store, tmp_path
+    ):
+        repo_id = pg_test_scope("cursor-rollback")
+        isolated = pg.PgStore(store.conn, repo_id)
+        first = self._records(tmp_path / "cursor-rollback", count=1)[0]
+        suffix = uuid.uuid4().hex
+        function_name = f"reject_cursor_record_{suffix}"
+        trigger_name = f"reject_cursor_record_{suffix}"
+        with store.conn.cursor() as cur:
+            cur.execute(
+                f"CREATE FUNCTION {function_name}() RETURNS trigger "
+                "LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION "
+                "'injected post-allocation failure'; END; $$"
+            )
+            cur.execute(
+                f"CREATE TRIGGER {trigger_name} AFTER INSERT ON ingest_record "
+                f"FOR EACH ROW WHEN (NEW.repo_id = '{repo_id}') "
+                f"EXECUTE FUNCTION {function_name}()"
+            )
+        store.conn.commit()
+        try:
+            with pytest.raises(Exception, match="injected post-allocation failure"):
+                pg.ingest_records(isolated, [first])
+            assert pg.get_ingest_high_water(isolated) == 0
+            assert pg.list_ingested_records(isolated) == []
+        finally:
+            with store.conn.cursor() as cur:
+                cur.execute(f"DROP TRIGGER IF EXISTS {trigger_name} ON ingest_record")
+                cur.execute(f"DROP FUNCTION IF EXISTS {function_name}()")
+            store.conn.commit()
+
+        admitted = pg.ingest_records(isolated, [first])[0]
+        assert admitted.ingest_offset == 1
 
     def test_item_evidence_ingest_deduplicates_stale_basis_without_status_mutation(
         self, store, tmp_path
@@ -1422,6 +1808,42 @@ class TestAuthorityCommandArbitration:
         conn = psycopg.connect(_PG_URL, row_factory=dict_row)
         assert_disposable_connection(conn)
         return pg.PgStore(conn=conn, repo_id=store.repo_id)
+
+    def test_request_and_decision_receive_consecutive_repository_offsets(
+        self, pg_test_scope, store, tmp_path
+    ):
+        isolated = pg.PgStore(
+            conn=store.conn,
+            repo_id=pg_test_scope("cursor-command-pair"),
+        )
+        isolated.authority_repo_uuid = _authority_repo_uuid(isolated)
+        sprint_id = pg.create_sprint(isolated, f"Cursor-command-{_uid()}", status="active")
+        track_id = pg.get_or_create_track(isolated, sprint_id, "authority")
+        item_id = pg.create_work_item(isolated, sprint_id, track_id, "Cursor command")
+        item = pg.get_work_item(isolated, item_id)
+        producer = outbox.open_outbox(tmp_path / "cursor-command-pair.db")
+        try:
+            command = _append_authority_command(
+                producer,
+                isolated,
+                record_type="item.transition",
+                aggregate_type="item",
+                aggregate_uuid=item["aggregate_uuid"],
+                basis_revision=authority.item_revision(item),
+                payload={"to_status": "active"},
+            )
+            decision = authority.arbitrate_command(isolated, command)
+        finally:
+            producer.close()
+
+        history = pg.list_ingested_records(isolated)
+        assert [entry.record.event_id for entry in history] == [
+            command.event_id,
+            decision.decision_event_id,
+        ]
+        assert [entry.ingest_offset for entry in history] == [1, 2]
+        assert decision.decision_ingest_offset == 2
+        assert pg.get_ingest_high_water(isolated) == 2
 
     def test_item_transition_retry_and_stale_rejection_are_durable(self, store, tmp_path):
         sprint_id = pg.create_sprint(store, f"Command-{_uid()}", status="active")

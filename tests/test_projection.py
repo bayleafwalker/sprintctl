@@ -175,3 +175,83 @@ def test_retained_suffix_cannot_advance_an_empty_projection(tmp_path):
     assert projection.list_cached_records(conn) == []
     assert projection.get_watermark(conn) == projection.ProjectionWatermark(0, None)
     conn.close()
+
+
+def test_schema_v1_cache_fails_closed_until_atomic_rebuild(tmp_path):
+    path = tmp_path / "schema-v1.db"
+    legacy = sqlite3.connect(path)
+    legacy.executescript(
+        """
+        CREATE TABLE cached_ingest_watermark (
+            singleton INTEGER PRIMARY KEY,
+            ingest_offset INTEGER NOT NULL,
+            advanced_at TEXT
+        );
+        INSERT INTO cached_ingest_watermark VALUES (1, 7, '2026-07-21T12:00:00Z');
+        CREATE TABLE cached_projection_meta (
+            singleton INTEGER PRIMARY KEY,
+            schema_version INTEGER NOT NULL
+        );
+        INSERT INTO cached_projection_meta VALUES (1, 1);
+        """
+    )
+    legacy.commit()
+    legacy.close()
+
+    reopened = projection.open_cached_projection(path, repo_id="repo-a")
+    try:
+        health = projection.assess_freshness(reopened)
+        assert health.schema_version == 1
+        assert health.fallback_reason == "schema-upgrade-required"
+        with pytest.raises(RuntimeError, match="requires an atomic rebuild"):
+            projection.apply_ingested_records(reopened, [_record(8)])
+    finally:
+        reopened.close()
+
+
+def test_high_water_rebuild_rejects_suffix_and_preserves_live_cache(tmp_path):
+    path = tmp_path / "projection.db"
+    live = projection.open_cached_projection(path, repo_id="repo-a")
+    projection.apply_ingested_records(live, [_record(1, "live")])
+    live.close()
+
+    with pytest.raises(projection.ProjectionGapError, match="expected 1, received 3"):
+        projection.rebuild_cached_projection(
+            path,
+            repo_id="repo-a",
+            captured_high_water=3,
+            fetch_page=lambda _after, _limit: [_record(3), _record(4)],
+        )
+
+    reopened = projection.open_cached_projection(path, repo_id="repo-a")
+    try:
+        assert projection.get_watermark(reopened).ingest_offset == 1
+        assert projection.list_cached_records(reopened) == [_record(1, "live")]
+    finally:
+        reopened.close()
+    assert list(tmp_path.glob(".projection.db.rebuild-*")) == []
+
+
+def test_high_water_rebuild_replaces_cache_only_after_contiguous_capture(tmp_path):
+    path = tmp_path / "projection.db"
+    old = projection.open_cached_projection(path, repo_id="repo-a")
+    projection.apply_ingested_records(old, [_record(1, "old")])
+    old.close()
+    remote = [_record(1, "new"), _record(2, "new")]
+
+    rebuilt = projection.rebuild_cached_projection(
+        path,
+        repo_id="repo-a",
+        captured_high_water=2,
+        fetch_page=lambda after, limit: [
+            record for record in remote if record.ingest_offset > after
+        ][:limit],
+        batch_size=1,
+    )
+
+    assert rebuilt.ingest_offset == 2
+    reopened = projection.open_cached_projection(path, repo_id="repo-a")
+    try:
+        assert projection.list_cached_records(reopened) == remote
+    finally:
+        reopened.close()

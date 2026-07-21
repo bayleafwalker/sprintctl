@@ -9,6 +9,7 @@ authority-changing CLI paths or treat cached records as authoritative state.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 import sqlite3
 from typing import Callable, Mapping
 
@@ -56,6 +57,29 @@ def _cached_record(value: pg.IngestedRecord) -> projection.CachedIngestRecord:
             "payload_sha256": record.payload_sha256,
             "created_at": record.created_at,
         },
+    )
+
+
+def rebuild_ingest_projection(
+    remote_store: pg.PgStore,
+    projection_path: Path,
+    *,
+    batch_size: int = 100,
+) -> projection.ProjectionWatermark:
+    """Rebuild one repository cache to a captured server high-water."""
+    batch_size = _validate_batch_size(batch_size)
+    captured = pg.get_ingest_high_water(remote_store)
+    return projection.rebuild_cached_projection(
+        projection_path,
+        repo_id=remote_store.repo_id,
+        captured_high_water=captured,
+        batch_size=batch_size,
+        fetch_page=lambda after, limit: [
+            _cached_record(record)
+            for record in pg.list_ingested_records(
+                remote_store, after_offset=after, limit=limit
+            )
+        ],
     )
 
 

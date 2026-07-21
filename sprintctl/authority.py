@@ -216,20 +216,22 @@ def _insert_prepared(
     cur: Any,
     store: pg.PgStore,
     prepared: pg._PreparedIngestRecord,
+    ingest_offset: int,
 ) -> pg.IngestedRecord:
     record = prepared.record
     cur.execute(
         """
         INSERT INTO ingest_record (
-            repo_id, origin_stream_id, origin_seq, event_id, schema_version,
+            repo_id, ingest_offset, origin_stream_id, origin_seq, event_id, schema_version,
             record_class, event_type, actor, runtime_session_id, occurred_at,
             basis_revision, correlation_id, causation_id, payload, payload_sha256,
             record_sha256, producer_created_at
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING *
         """,
         (
             store.repo_id,
+            ingest_offset,
             record.origin_stream_id,
             record.origin_seq,
             record.event_id,
@@ -261,6 +263,7 @@ def _admit_request(
     cur: Any,
     store: pg.PgStore,
     prepared: pg._PreparedIngestRecord,
+    ingest_offset: int,
 ) -> tuple[pg.IngestedRecord, bool]:
     record = prepared.record
     high_water = pg._lock_ingest_stream(cur, store, record.origin_stream_id)
@@ -290,7 +293,7 @@ def _admit_request(
     expected = high_water + 1
     if record.origin_seq != expected:
         raise pg.IngestGapError(record.origin_stream_id, expected, record.origin_seq)
-    return _insert_prepared(cur, store, prepared), False
+    return _insert_prepared(cur, store, prepared, ingest_offset), False
 
 
 def _decision_type(command_type: str) -> str:
@@ -758,6 +761,7 @@ def _decision_record(
     reason_code: str | None,
     reason_detail: str | None,
     effect: Mapping[str, Any],
+    ingest_offset: int,
 ) -> tuple[pg.IngestedRecord, contracts.RemoteDecision]:
     if outcome == "accepted" and envelope is None:
         raise AuthorityProtocolError("an accepted command requires a valid command envelope")
@@ -813,7 +817,7 @@ def _decision_record(
         record,
         allowed_classes=frozenset({REMOTE_DECISION}),
     )
-    return _insert_prepared(cur, store, prepared), decision
+    return _insert_prepared(cur, store, prepared, ingest_offset), decision
 
 
 def _decision_from_row(row: Mapping[str, Any], *, duplicate: bool) -> AuthorityDecision:
@@ -852,12 +856,16 @@ def arbitrate_command(
     )
     try:
         with store.conn.cursor() as cur:
-            request, duplicate = _admit_request(cur, store, prepared)
+            cursor_start = pg._lock_ingest_repo_cursor(cur, store)
+            request, duplicate = _admit_request(
+                cur, store, prepared, cursor_start + 1
+            )
             if duplicate:
                 cur.execute(
                     "SELECT d.*, r.event_type AS decision_type "
                     "FROM authority_decision d "
-                    "JOIN ingest_record r ON r.ingest_offset = d.decision_ingest_offset "
+                    "JOIN ingest_record r ON r.repo_id = d.repo_id "
+                    "AND r.ingest_offset = d.decision_ingest_offset "
                     "WHERE d.repo_id = %s AND d.request_event_id = %s",
                     (store.repo_id, request.record.event_id),
                 )
@@ -911,7 +919,9 @@ def arbitrate_command(
                 reason_code=reason_code,
                 reason_detail=reason_detail,
                 effect=effect,
+                ingest_offset=cursor_start + 2,
             )
+            pg._advance_ingest_repo_cursor(cur, store, cursor_start + 2)
             cur.execute(
                 """
                 INSERT INTO authority_decision (
@@ -960,7 +970,8 @@ def list_authority_decisions(
         raise ValueError("limit must be a positive integer")
     query = (
         "SELECT d.*, r.event_type AS decision_type FROM authority_decision d "
-        "JOIN ingest_record r ON r.ingest_offset = d.decision_ingest_offset "
+        "JOIN ingest_record r ON r.repo_id = d.repo_id "
+        "AND r.ingest_offset = d.decision_ingest_offset "
         "WHERE d.repo_id = %s AND d.decision_ingest_offset > %s "
         "ORDER BY d.decision_ingest_offset"
     )
