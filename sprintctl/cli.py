@@ -18,6 +18,7 @@ from . import __version__
 from . import backend as _backend
 from . import authority as _authority
 from . import authority_config as _authority_config
+from . import context_candidates as _context_candidates
 from . import contracts as _contracts
 from . import db as _db
 from . import doctor as _doctor
@@ -6185,6 +6186,137 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
             )
         for line in _render_table(["ID", "PRI", "TRACK", "ASSIGNEE", "TITLE"], rows):
             click.echo(f"  {line}")
+
+
+@cli.command("context-candidates")
+@click.option("--sprint-id", type=int, default=None, help="Sprint ID (defaults to active)")
+@click.option(
+    "--item-id",
+    "explicit_item_id",
+    type=int,
+    default=None,
+    help="Explicit item reference (rank 1). Only this rank is ever claim_eligible.",
+)
+@click.option(
+    "--path",
+    "target_paths",
+    multiple=True,
+    help=(
+        "Repo-relative path to match against item file/manifest/glob/doc scope "
+        "refs (rank 2). Repeatable."
+    ),
+)
+@click.option(
+    "--query",
+    default=None,
+    help="Free text tokenized for deterministic lexical fallback matching (rank 4).",
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=_context_candidates.DEFAULT_CANDIDATE_LIMIT,
+    show_default=True,
+    help=f"Bound the packet to at most this many candidates (capped at {_context_candidates.MAX_CANDIDATE_LIMIT}).",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.pass_obj
+def context_candidates_cmd(obj, sprint_id, explicit_item_id, target_paths, query, limit, as_json) -> None:
+    """Emit a bounded, deterministically ranked Tier-1 context-candidate packet.
+
+    Ranks, in preference order: an explicit --item-id target, path/manifest/doc
+    scope overlap (--path, repeatable), items carrying other linked
+    documentation, deterministic lexical overlap (--query), then remaining
+    repo-level candidates -- see docs/ops-upgrade-plan.md Tier 1. Only the
+    explicit target (rank 1) is ever marked claim_eligible; inferred candidates
+    (ranks 2-5) are advisory context only. This command never claims anything
+    itself. Includes the cached projection watermark and its age so a
+    consumer knows how stale its view is.
+    """
+    if limit <= 0:
+        click.echo("Error: --limit must be a positive integer.", err=True)
+        sys.exit(1)
+    store, m = _get_store(obj)
+    if sprint_id is not None:
+        s = m.get_sprint(store, sprint_id)
+        if s is None:
+            click.echo(f"Sprint #{sprint_id} not found.", err=True)
+            sys.exit(1)
+    else:
+        s = _resolve_implicit_sprint(store, m=m)
+        if s is None:
+            click.echo("No active sprint found. Use --sprint-id to specify one.", err=True)
+            sys.exit(1)
+
+    ready_items = m.get_ready_items(store, s["id"])
+    refs_by_item = m.list_refs_for_items(store, [item["id"] for item in ready_items])
+
+    explicit_item = None
+    if explicit_item_id is not None:
+        explicit_item = m.get_work_item(store, explicit_item_id)
+
+    # next-work-style read: current item/dependency state is never mirrored
+    # into the cached projection (only observation events are), so ranking
+    # itself always reads backend directly; only freshness disclosure is
+    # flag-gated, matching next_work_cmd's rationale above.
+    projection_status = _projection_surface_status(_projection_health(), supported=False)
+    watermark = None
+    if projection_status["watermark_offset"] is not None:
+        watermark = {
+            "ingest_offset": projection_status["watermark_offset"],
+            "age_seconds": projection_status["watermark_age_seconds"],
+        }
+
+    try:
+        payload = _context_candidates.build_context_candidates(
+            ready_items=ready_items,
+            refs_by_item=refs_by_item,
+            explicit_item_id=explicit_item_id,
+            explicit_item=explicit_item,
+            target_paths=target_paths,
+            query=query,
+            limit=limit,
+            watermark=watermark,
+        )
+    except _context_candidates.ContextCandidatesError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+    payload["sprint"] = {"id": s["id"], "name": s["name"]}
+    payload["projection"] = projection_status
+
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+        return
+
+    click.echo(f"Context candidates for sprint #{s['id']} ({s['name']}):")
+    status_line = _projection_status_line(projection_status)
+    if status_line:
+        click.echo(status_line)
+    if watermark is not None:
+        age = watermark["age_seconds"]
+        age_text = f"{age:.0f}s" if age is not None else "unknown"
+        click.echo(f"Watermark: offset={watermark['ingest_offset']} age={age_text}")
+    explicit_target = payload["explicit_target"]
+    if explicit_target is not None and not explicit_target["found"]:
+        click.echo(f"Explicit target #{explicit_item_id} not found.")
+    if not payload["candidates"]:
+        click.echo("No candidates.")
+        return
+    rows = []
+    for candidate in payload["candidates"]:
+        rows.append(
+            [
+                f"#{candidate['item_id']}",
+                str(candidate["rank"]),
+                candidate["rank_reason"],
+                "yes" if candidate["claim_eligible"] else "no",
+                candidate["title"] or "",
+            ]
+        )
+    for line in _render_table(["ID", "RANK", "REASON", "CLAIM-OK", "TITLE"], rows):
+        click.echo(f"  {line}")
+    if payload["truncated"]:
+        click.echo(f"(truncated to {payload['bound']} candidates)")
 
 
 @cli.group()
