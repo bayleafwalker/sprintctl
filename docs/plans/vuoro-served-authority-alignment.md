@@ -71,3 +71,13 @@ from the server catalog without reinstalling sprintctl.
 - catalog invocation and the legacy CLI produce equivalent accepted/rejected
   histories while the compatibility path exists;
 - a pre-existing generic client invokes a newly deployed work operation.
+
+## Backlog registration
+
+- **#1193** — deployment-owned shared-schema migration and compatibility gate.
+- **#1194** — sprintctl application core and Vuoro work adapter/catalog.
+- **#1195** — endpoint/identity workstation cutover; blocked by #1193/#1194.
+- **#1164** — P3 retirement gate; now also blocked by #1195.
+
+Done **#1163** remains the capability-distribution exhibit. Historical #912
+remains local migration-safety scope and is not the shared-authority item.
