@@ -1,0 +1,123 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.vuoro-work-adapter",
+  "owner_repo": "sprintctl",
+  "subject": "served-work-operation-catalog-and-domain-application-core",
+  "contract_ref": {
+    "doc_id": "sprintctl-vuoro-served-authority-alignment",
+    "revision": "git:142d5ccccd68d589a17de7e8ed3c4bed0361bb56"
+  },
+  "source_of_truth": "sprintctl-postgresql-authority-state-plus-immutable-ingest-and-decision-ledgers",
+  "depth": 2,
+  "backends": [
+    "vuoro-protocol-v1-service-shell",
+    "postgresql-work-authority",
+    "legacy-cli-over-sprintctl-domain-core"
+  ],
+  "actors": [
+    "authenticated-vuoro-client",
+    "work-adapter",
+    "competing-claim-client",
+    "legacy-sprintctl-cli"
+  ],
+  "initial_state": [
+    "service-compatibility-gate-passed-without-runtime-ddl",
+    "catalog-may-be-cached-before-work-operation-registration",
+    "work-aggregate-at-known-basis-revision",
+    "producer-records-have-contiguous-stream-identities",
+    "project-members-have-declared-order"
+  ],
+  "operations": [
+    {
+      "name": "discover-and-invoke-work-operation",
+      "actors": ["authenticated-vuoro-client", "work-adapter"],
+      "synchronization": "catalog revision and ETag refresh before schema-validated invocation"
+    },
+    {
+      "name": "arbitrate-claim-or-lifecycle-command",
+      "actors": ["authenticated-vuoro-client", "competing-claim-client", "work-adapter"],
+      "synchronization": "PostgreSQL aggregate row lock and atomic request-effect-decision transaction"
+    },
+    {
+      "name": "retry-identical-record-or-batch",
+      "actors": ["authenticated-vuoro-client", "work-adapter"],
+      "synchronization": "immutable event identity, stream position and content-bound invocation key"
+    },
+    {
+      "name": "apply-ordered-record-batch",
+      "actors": ["authenticated-vuoro-client", "work-adapter"],
+      "synchronization": "adjacent observation transaction followed by each authority decision in producer order"
+    },
+    {
+      "name": "apply-ordered-project-batch",
+      "actors": ["authenticated-vuoro-client", "work-adapter"],
+      "synchronization": "declared repository-member order with repository-scoped durable retries"
+    },
+    {
+      "name": "compare-legacy-cli-and-application-read",
+      "actors": ["legacy-sprintctl-cli", "work-adapter"],
+      "synchronization": "same sprintctl backend and domain functions"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "catalog-validation-durable-decision-and-ordered-batch-semantics"
+  },
+  "assumptions": {
+    "isolation": "PostgreSQL READ COMMITTED with explicit authoritative row locks; Vuoro validates input and result schemas",
+    "clock": "PostgreSQL transaction clock for claim expiry",
+    "fairness": "a waiting claim arbitration transaction eventually acquires the work-item row lock"
+  },
+  "bounds": {
+    "catalog_operations": 12,
+    "concurrent_claim_clients": 2,
+    "identical_retries_per_operation": 1,
+    "project_members_per_unit_history": 2,
+    "generic_client_versions": 1
+  },
+  "invariants": [
+    "catalog-operations-have-domain-qualified-unique-names-and-valid-json-schema-2020-12-contracts",
+    "authenticated-identity-not-request-body-controls-actor-and-authority",
+    "claim-proofs-never-enter-catalog-invocation-arguments",
+    "identical-command-retry-returns-the-original-durable-decision-without-a-second-effect",
+    "stale-basis-is-a-durable-rejection-without-target-mutation",
+    "two-overlapping-unrelated-exclusive-claim-commands-produce-one-acceptance-and-one-rejection",
+    "record-batches-preserve-producer-order-and-bind-idempotency-to-content",
+    "project-batches-preserve-declared-member-order-and-origin-repo",
+    "preexisting-protocol-client-discovers-new-cutover-evidence-operation-without-reinstallation",
+    "adapter-import-and-registration-perform-no-ddl-or-migration"
+  ],
+  "faults": [
+    "lost-response-followed-by-identical-command-retry",
+    "stale-basis-after-authority-aggregate-advance",
+    "two-independent-exclusive-claim-invocations",
+    "batch-idempotency-key-reused-for-different-content",
+    "project-members-supplied-out-of-order",
+    "client-catalog-cached-before-new-operation-registration"
+  ],
+  "oracles": [
+    "vuoro-catalog-registry-schema-validation",
+    "generic-client-dynamic-catalog-refresh",
+    "authority-decision-ledger-query",
+    "active-claim-row-query",
+    "ordered-operation-call-history",
+    "legacy-cli-json-and-application-result-comparison",
+    "disposable-postgresql-repository-cleanup-report"
+  ],
+  "implementation_anchors": [
+    "sprintctl/application.py:WorkApplication",
+    "sprintctl/application.py:WorkApplication.apply_records",
+    "sprintctl/application.py:ProjectWorkApplication",
+    "sprintctl/vuoro_adapter.py:WORK_OPERATION_CONTRACTS",
+    "sprintctl/vuoro_adapter.py:register_work_catalog",
+    "tests/test_work_application.py:test_batch_is_content_bound_idempotent_and_preserves_producer_order",
+    "tests/test_work_application_pg.py:test_concurrent_served_claims_have_one_durable_acceptance",
+    "tests/test_vuoro_work_adapter_integration.py:test_preexisting_generic_client_discovers_cutover_evidence"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "stateful-test",
+    "concurrent-history",
+    "fault-scenario"
+  ]
+}

@@ -1,0 +1,90 @@
+# Vuoro work adapter and application core
+
+The sprintctl work adapter exposes sprintctl-owned state semantics through the
+Vuoro protocol-v1 catalog. The reusable Vuoro shell supplies transport,
+identity, authority checks, schema validation and envelopes; sprintctl keeps
+work reads, claim arbitration, lifecycle transitions, evidence ingestion,
+batch ordering and project behavior in its own application package.
+
+`sprintctl.application` is Click-independent. `sprintctl.vuoro_adapter` has no
+import-time dependency on `vuoro-service`; service composition imports the
+pinned domain release and calls `register_work_catalog`. Standalone and marked
+recovery SQLite authorities continue using the legacy CLI. Normal shared
+service composition uses `WorkApplication.postgres()` only after the service
+compatibility gate has passed; importing or registering the adapter performs
+no migration or DDL.
+
+## Catalog v1
+
+| Surface | Operations | Idempotency |
+| --- | --- | --- |
+| Reads | `work.read.sprints`, `work.read.item`, `work.read.next-work`, `work.read.records`, `work.read.decisions` | key forbidden |
+| Claims | `work.claim.arbitrate` | key equals immutable command `event_id` |
+| Lifecycle | `work.lifecycle.arbitrate` | key equals immutable command `event_id` |
+| Evidence | `work.evidence.ingest` | key equals canonical record-batch digest |
+| Batching | `work.batch.apply` | key equals canonical record-batch digest |
+| Project | `work.project.next-work`, `work.project.batch` | writes use canonical ordered-project-batch digest |
+| Cutover evidence | `work.pilot.cutover-evidence` | key forbidden |
+
+Every operation declares JSON Schema 2020-12 input and result contracts,
+authority, execution semantics, idempotency behavior and required client
+schema features. Record schemas use local `$defs` references only.
+`work.pilot.cutover-evidence` is intentionally catalog-described rather than
+hard-coded into the client, so an already-installed protocol-v1 client can
+refresh discovery and invoke it.
+
+## Authority and retry semantics
+
+Claims and lifecycle transitions accept the existing immutable
+authority-command producer record. The authenticated identity supplies the
+actor; an argument cannot impersonate a different actor. A single-command
+invocation's basis revision and idempotency key must match the canonical
+record. Claim proof bytes are resolved by service composition and are never
+accepted in the invocation body or catalog.
+
+The application delegates arbitration to `sprintctl.authority`. PostgreSQL
+records the request and accepted or rejected decision atomically. Repeating an
+identical record returns the original decision with `duplicate=true`; reusing
+its stream position or event ID for different content is rejected. Stale basis
+is a durable domain rejection and never mutates the target.
+
+Evidence ingestion delegates to `sprintctl.pg.ingest_records`. A record batch
+keeps producer order: adjacent observations are admitted atomically, each
+authority command is decided at its position, then the next observation run
+is admitted. Batch keys are content-bound, and record-level admission makes a
+retry after a partial or lost response safe. A batch may carry multiple
+command basis revisions by omitting the invocation-level basis; each immutable
+command retains its own required basis revision.
+
+Project batches follow the project binding's declared member order. Each
+member stays repository-scoped and writes only the work domain. The response
+retains `origin_repo` and exposes each member result. The operation is
+retry-safe at the record level, not a cross-repository transaction.
+
+Concurrency evidence is deliberately bounded: PostgreSQL claim arbitration
+locks the authoritative work-item row. Independent connections demonstrate
+that two unrelated overlapping exclusive claim commands produce one accepted
+and one rejected decision. This is `concurrency-tested` application-invariant
+evidence, not a general fencing or cross-operation linearizability claim.
+
+## Transitional CLI parity inventory
+
+The legacy command surface remains available over the same sprintctl backend,
+record contracts and authority handlers during rollout:
+
+| Legacy surface | Served operation |
+| --- | --- |
+| `sprintctl sprint list --json` | `work.read.sprints` |
+| `sprintctl item show --id ID --json` | `work.read.item` |
+| `sprintctl next-work --json` | `work.read.next-work` |
+| claim start, heartbeat, handoff and release | `work.claim.arbitrate` |
+| item and sprint status transitions | `work.lifecycle.arbitrate` |
+| observation upload | `work.evidence.ingest` |
+| authority synchronization | `work.batch.apply` |
+| project next-work and dispatch ordering | `work.project.next-work`, `work.project.batch` |
+| `sprintctl pilot cutover-evidence` | `work.pilot.cutover-evidence` |
+
+The inventory is also machine-readable as
+`sprintctl.vuoro_adapter.LEGACY_REMOTE_COMMAND_PARITY`. It is retirement parity
+evidence, not authorization to remove direct mode. Endpoint/identity cutover
+and backend retirement remain separate governed items.
