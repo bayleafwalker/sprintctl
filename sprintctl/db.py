@@ -37,7 +37,7 @@ SPRINT_KINDS = ("active_sprint", "backlog", "archive")
 
 # Single source of truth for the local schema version; init_db() must end by
 # migrating to exactly this version, and doctor compares databases against it.
-CURRENT_SCHEMA_VERSION = 14
+CURRENT_SCHEMA_VERSION = 15
 
 _MIGRATIONS: list[str] = [
     # Migration 1: initial schema
@@ -182,7 +182,7 @@ _MIGRATIONS: list[str] = [
 ]
 
 SCOPE_REF_TYPES = ("file", "glob", "manifest")
-REF_TYPES = ("pr", "issue", "doc", "other", *SCOPE_REF_TYPES)
+REF_TYPES = ("pr", "issue", "doc", "other", *SCOPE_REF_TYPES, "command")
 _GLOB_MAGIC = frozenset("*?[")
 
 
@@ -218,7 +218,17 @@ def _normalize_scope_path(value: str, *, require_glob: bool = False) -> str:
     return normalized
 
 
+def _normalize_command_target(command: str) -> str:
+    if not isinstance(command, str) or not command.strip():
+        raise ValueError("Command refs require a non-empty shell command.")
+    if "\x00" in command:
+        raise ValueError("Command refs must not contain NUL bytes.")
+    return command.strip()
+
+
 def _normalize_ref_target(url: str, ref_type: str = "other") -> str:
+    if ref_type == "command":
+        return _normalize_command_target(url)
     parsed = urlparse(url)
     if parsed.scheme in {"http", "https"} and parsed.netloc:
         if ref_type in SCOPE_REF_TYPES:
@@ -501,6 +511,31 @@ def _migration_14(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_15(conn: sqlite3.Connection) -> None:
+    """Add the 'command' ref kind (validation-command refs) to the ref table."""
+    _execute_statements(
+        conn,
+        """
+        CREATE TABLE ref_new (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            work_item_id INTEGER NOT NULL REFERENCES work_item(id) ON DELETE CASCADE,
+            ref_type     TEXT    NOT NULL DEFAULT 'other'
+                                 CHECK (ref_type IN (
+                                     'pr', 'issue', 'doc', 'other',
+                                     'file', 'glob', 'manifest', 'command'
+                                 )),
+            url          TEXT    NOT NULL,
+            label        TEXT    NOT NULL DEFAULT '',
+            created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+        );
+        INSERT INTO ref_new (id, work_item_id, ref_type, url, label, created_at)
+        SELECT id, work_item_id, ref_type, url, label, created_at FROM ref;
+        DROP TABLE ref;
+        ALTER TABLE ref_new RENAME TO ref;
+        """,
+    )
+
+
 def _run_migration(
     conn: sqlite3.Connection,
     target_version: int,
@@ -544,7 +579,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     _run_migration(conn, 11, _migration_11)
     _run_migration(conn, 12, _migration_12)
     _run_migration(conn, 13, _migration_13)
-    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_14, foreign_keys_off=True)
+    _run_migration(conn, 14, _migration_14, foreign_keys_off=True)
+    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_15, foreign_keys_off=True)
 
 
 # --- Sprint ---

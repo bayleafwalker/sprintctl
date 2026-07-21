@@ -601,7 +601,7 @@ class TestEdgeCases:
     def test_init_db_idempotent(self, conn):
         db.init_db(conn)  # second call
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 14
+        assert version == 15
 
     @pytest.mark.parametrize("_history", range(32))
     def test_init_db_handles_concurrent_version_lag_after_upgrade(
@@ -657,7 +657,7 @@ class TestEdgeCases:
         finally:
             conn.close()
 
-        assert version == 14
+        assert version == 15
         assert tables == {
             "claim",
             "dep",

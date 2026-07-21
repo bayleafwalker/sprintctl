@@ -1912,14 +1912,15 @@ def item_ref() -> None:
 @click.option(
     "--type", "ref_type",
     required=True,
-    type=click.Choice(["pr", "issue", "doc", "other", "file", "glob", "manifest"]),
+    type=click.Choice(["pr", "issue", "doc", "other", "file", "glob", "manifest", "command"]),
     help="Reference type",
 )
 @click.option(
     "--url",
     required=True,
     help=("Reference target. Doc refs accept URLs or repo-relative paths; "
-          "file, glob, and manifest refs require repo-relative POSIX paths."),
+          "file, glob, and manifest refs require repo-relative POSIX paths; "
+          "command refs hold a non-empty runnable shell command."),
 )
 @click.option("--label", default="", help="Short human-readable label")
 @click.pass_obj
