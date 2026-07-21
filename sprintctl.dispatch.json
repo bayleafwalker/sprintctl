@@ -36,7 +36,7 @@
     "overlays": [".agents/overlays/sprintctl.state-protocols.md"]
   },
   "scope": {
-    "allowed_path_roots": ["sprintctl/", "tests/", "docs/", "verification/", ".agents/"],
+    "allowed_path_roots": ["sprintctl/", "tests/", "docs/", "verification/", ".agents/", "pyproject.toml"],
     "out_of_scope": ["shared sprint backends during concurrency or fault verification"]
   },
   "risk_surfaces": [
