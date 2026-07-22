@@ -3,7 +3,7 @@
   "repo_id": "2be118eb-8e89-433a-8d32-ada157624f95",
   "adoption_level": "guidance-only",
   "routing": {
-    "default_harness": "codex",
+    "default_harness": "caller",
     "default_model_alias": "fast-build",
     "action_classes": {
       "plan": { "enabled": true, "model_alias": "frontier-plan" },
