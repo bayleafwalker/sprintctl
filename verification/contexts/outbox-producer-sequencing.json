@@ -51,6 +51,9 @@
     "immutable-trigger-check"
   ],
   "implementation_anchors": [
+    "sprintctl/outbox.py:_is_busy_or_locked",
+    "sprintctl/outbox.py:open_outbox",
+    "sprintctl/outbox.py:_initialize_schema_after_wal",
     "sprintctl/outbox.py:append_observation",
     "sprintctl/outbox.py:init_outbox"
   ],
