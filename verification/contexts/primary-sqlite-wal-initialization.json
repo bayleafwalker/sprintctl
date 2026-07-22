@@ -1,0 +1,89 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.primary-sqlite.wal-initialization",
+  "owner_repo": "sprintctl",
+  "subject": "primary-local-sqlite-wal-initialization-and-versioned-schema-open",
+  "contract_ref": {
+    "doc_id": "migration-guide",
+    "revision": "git:f61bbb6cf380abf2d2dac262062b9e2a387d90a1"
+  },
+  "source_of_truth": "repository-local-primary-sqlite-database",
+  "depth": 2,
+  "backends": ["sqlite"],
+  "actors": [
+    "migration-opener-1",
+    "migration-opener-2",
+    "migration-opener-3",
+    "migration-opener-4",
+    "migration-opener-5",
+    "migration-opener-6",
+    "migration-opener-7",
+    "migration-opener-8"
+  ],
+  "initial_state": [
+    "primary-database-at-schema-version-5",
+    "wal-initialization-not-yet-complete-for-new-connections"
+  ],
+  "operations": [
+    {
+      "name": "open-enable-foreign-keys-and-initialize-wal",
+      "actors": "*",
+      "synchronization": "bounded barrier immediately before eight independent connection opens"
+    },
+    {
+      "name": "migrate-version-5-to-current",
+      "actors": "*",
+      "synchronization": "existing BEGIN IMMEDIATE migration serialization"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "bounded concurrent primary SQLite initialization and schema migration"
+  },
+  "assumptions": {
+    "isolation": "independent SQLite connections with WAL initialization followed by existing BEGIN IMMEDIATE migrations",
+    "clock": "monotonic clock only for bounded test joins and fixed retry delays",
+    "fairness": "a transient SQLite BUSY or LOCKED result clears within five WAL initialization attempts"
+  },
+  "bounds": {
+    "histories": 32,
+    "openers_per_history": 8,
+    "wal_initialization_attempts": 5,
+    "wal_retry_delays_seconds": "0.01,0.02,0.04,0.08",
+    "barrier_timeout_seconds": 5,
+    "history_join_timeout_seconds": 30
+  },
+  "invariants": [
+    "only primary or extended SQLITE_BUSY and SQLITE_LOCKED WAL initialization failures are retried",
+    "every failed connection attempt is closed",
+    "non-busy WAL and foreign-key setup failures propagate without retry",
+    "every successful returned connection has foreign-key enforcement enabled and WAL mode selected",
+    "concurrent version-5 openers reach exact schema version 14 with the expected tables and explicit indexes",
+    "no worker remains blocked at a test barrier or join deadline"
+  ],
+  "faults": [
+    "primary-SQLITE_BUSY-during-WAL-initialization",
+    "extended-SQLITE_BUSY-during-WAL-initialization",
+    "primary-SQLITE_LOCKED-during-WAL-initialization",
+    "extended-SQLITE_LOCKED-during-WAL-initialization",
+    "non-busy-WAL-initialization-failure",
+    "foreign-key-setup-failure"
+  ],
+  "oracles": [
+    "all eight workers terminate without recorded exceptions",
+    "schema_version is exactly 14",
+    "user table and explicit index name sets exactly match the version-14 schema",
+    "PRAGMA foreign_keys returns 1 and PRAGMA journal_mode returns wal",
+    "stub connections record cleanup, retry count, delay sequence, and unchanged exception identity"
+  ],
+  "implementation_anchors": [
+    "sprintctl/db.py:_is_busy_or_locked",
+    "sprintctl/db.py:get_connection",
+    "tests/test_core.py:TestEdgeCases.test_init_db_handles_concurrent_version_lag_after_upgrade",
+    "tests/test_core.py:TestEdgeCases.test_connection_retries_primary_and_extended_busy_or_locked_wal_errors",
+    "tests/test_core.py:TestEdgeCases.test_connection_stops_after_bounded_busy_wal_retries",
+    "tests/test_core.py:TestEdgeCases.test_connection_propagates_non_busy_wal_error_without_retry",
+    "tests/test_core.py:TestEdgeCases.test_connection_closes_foreign_key_setup_failure_without_retry"
+  ],
+  "expansions": ["concurrent-history", "fault-scenario"]
+}

@@ -3,6 +3,7 @@ import json
 import os
 import sqlite3
 import threading
+import time
 
 import pytest
 
@@ -594,7 +595,10 @@ class TestEdgeCases:
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
         assert version == 14
 
-    def test_init_db_handles_concurrent_version_lag_after_upgrade(self, tmp_path):
+    @pytest.mark.parametrize("_history", range(32))
+    def test_init_db_handles_concurrent_version_lag_after_upgrade(
+        self, tmp_path, _history
+    ):
         db_path = tmp_path / "lagged.db"
         _seed_version_5_schema_with_claim_identity_columns(db_path)
 
@@ -602,34 +606,210 @@ class TestEdgeCases:
         barrier = threading.Barrier(8)
 
         def worker():
-            conn = db.get_connection(db_path)
+            conn = None
             try:
-                barrier.wait()
+                barrier.wait(timeout=5)
+                conn = db.get_connection(db_path)
                 db.init_db(conn)
             except Exception as exc:  # pragma: no cover - exercised on failure
                 errors.append(exc)
             finally:
-                conn.close()
+                if conn is not None:
+                    conn.close()
 
         threads = [threading.Thread(target=worker) for _ in range(8)]
         for thread in threads:
             thread.start()
+        deadline = time.monotonic() + 30
         for thread in threads:
-            thread.join()
+            thread.join(timeout=max(0, deadline - time.monotonic()))
 
+        assert all(not thread.is_alive() for thread in threads)
         assert not errors, [repr(exc) for exc in errors]
 
         conn = db.get_connection(db_path)
         try:
             version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-            index_row = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_claim_token'"
-            ).fetchone()
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+                )
+            }
+            indexes = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'index' AND sql IS NOT NULL"
+                )
+            }
+            foreign_keys = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+            journal_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
         finally:
             conn.close()
 
         assert version == 14
-        assert index_row is not None
+        assert tables == {
+            "claim",
+            "dep",
+            "event",
+            "ref",
+            "schema_version",
+            "sprint",
+            "track",
+            "work_item",
+        }
+        assert indexes == {
+            "idx_claim_token",
+            "idx_event_sprint_type_ts",
+            "idx_sprint_aggregate_uuid",
+            "idx_work_item_aggregate_uuid",
+        }
+        assert foreign_keys == 1
+        assert journal_mode == "wal"
+
+    class _StubConnection:
+        def __init__(
+            self,
+            wal_error: Exception | None = None,
+            foreign_key_error: Exception | None = None,
+        ) -> None:
+            self.row_factory = None
+            self.wal_error = wal_error
+            self.foreign_key_error = foreign_key_error
+            self.closed = False
+            self.statements: list[str] = []
+
+        def execute(self, statement: str):
+            self.statements.append(statement)
+            if (
+                statement == "PRAGMA foreign_keys = ON"
+                and self.foreign_key_error is not None
+            ):
+                raise self.foreign_key_error
+            if statement == "PRAGMA journal_mode = WAL" and self.wal_error is not None:
+                raise self.wal_error
+            return self
+
+        def close(self) -> None:
+            self.closed = True
+
+    @staticmethod
+    def _sqlite_error(error_code: int) -> sqlite3.OperationalError:
+        error = sqlite3.OperationalError("database is locked")
+        error.sqlite_errorcode = error_code
+        return error
+
+    @pytest.mark.parametrize(
+        "error_code",
+        [
+            sqlite3.SQLITE_BUSY,
+            sqlite3.SQLITE_BUSY_RECOVERY,
+            sqlite3.SQLITE_BUSY_SNAPSHOT,
+            sqlite3.SQLITE_BUSY_TIMEOUT,
+            sqlite3.SQLITE_LOCKED,
+            sqlite3.SQLITE_LOCKED_SHAREDCACHE,
+        ],
+    )
+    def test_connection_retries_primary_and_extended_busy_or_locked_wal_errors(
+        self, tmp_path, monkeypatch, error_code
+    ):
+        first = self._StubConnection(self._sqlite_error(error_code))
+        second = self._StubConnection()
+        connections = iter((first, second))
+        delays = []
+        monkeypatch.setattr(
+            db.sqlite3, "connect", lambda *_args, **_kwargs: next(connections)
+        )
+        monkeypatch.setattr(db.time, "sleep", delays.append)
+
+        connected = db.get_connection(tmp_path / "sprintctl.db")
+
+        assert connected is second
+        assert first.closed is True
+        assert second.closed is False
+        assert first.statements == [
+            "PRAGMA foreign_keys = ON",
+            "PRAGMA journal_mode = WAL",
+        ]
+        assert second.statements == first.statements
+        assert delays == [db._WAL_BUSY_RETRY_DELAYS_SECONDS[0]]
+
+    def test_connection_stops_after_bounded_busy_wal_retries(
+        self, tmp_path, monkeypatch
+    ):
+        failures = [
+            self._sqlite_error(sqlite3.SQLITE_BUSY)
+            for _ in range(len(db._WAL_BUSY_RETRY_DELAYS_SECONDS) + 1)
+        ]
+        connections = [self._StubConnection(failure) for failure in failures]
+        pending_connections = iter(connections)
+        delays = []
+        monkeypatch.setattr(
+            db.sqlite3,
+            "connect",
+            lambda *_args, **_kwargs: next(pending_connections),
+        )
+        monkeypatch.setattr(db.time, "sleep", delays.append)
+
+        with pytest.raises(sqlite3.OperationalError) as caught:
+            db.get_connection(tmp_path / "sprintctl.db")
+
+        assert caught.value is failures[-1]
+        assert all(connection.closed for connection in connections)
+        assert delays == list(db._WAL_BUSY_RETRY_DELAYS_SECONDS)
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            sqlite3.OperationalError("read-only database"),
+            RuntimeError("unexpected WAL failure"),
+        ],
+    )
+    def test_connection_propagates_non_busy_wal_error_without_retry(
+        self, tmp_path, monkeypatch, failure
+    ):
+        if isinstance(failure, sqlite3.OperationalError):
+            failure.sqlite_errorcode = sqlite3.SQLITE_READONLY
+        failed = self._StubConnection(failure)
+        connect_calls = 0
+
+        def connect(*_args, **_kwargs):
+            nonlocal connect_calls
+            connect_calls += 1
+            return failed
+
+        monkeypatch.setattr(db.sqlite3, "connect", connect)
+
+        with pytest.raises(type(failure)) as caught:
+            db.get_connection(tmp_path / "sprintctl.db")
+
+        assert caught.value is failure
+        assert connect_calls == 1
+        assert failed.closed is True
+
+    def test_connection_closes_foreign_key_setup_failure_without_retry(
+        self, tmp_path, monkeypatch
+    ):
+        failure = RuntimeError("foreign key setup failed")
+        failed = self._StubConnection(foreign_key_error=failure)
+        connect_calls = 0
+
+        def connect(*_args, **_kwargs):
+            nonlocal connect_calls
+            connect_calls += 1
+            return failed
+
+        monkeypatch.setattr(db.sqlite3, "connect", connect)
+
+        with pytest.raises(RuntimeError) as caught:
+            db.get_connection(tmp_path / "sprintctl.db")
+
+        assert caught.value is failure
+        assert connect_calls == 1
+        assert failed.closed is True
+        assert failed.statements == ["PRAGMA foreign_keys = ON"]
 
     def test_db_path_from_env(self, tmp_path, monkeypatch):
         custom = str(tmp_path / "custom.db")

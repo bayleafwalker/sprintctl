@@ -4,12 +4,16 @@ import posixpath
 import re
 import secrets
 import sqlite3
+import time
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 from uuid import uuid4
 
 from . import contracts as _contracts
+
+
+_WAL_BUSY_RETRY_DELAYS_SECONDS = (0.01, 0.02, 0.04, 0.08)
 
 
 class InvalidTransition(ValueError):
@@ -269,15 +273,41 @@ def get_db_path() -> Path:
     return Path.home() / ".sprintctl" / "sprintctl.db"
 
 
+def _is_busy_or_locked(exc: Exception) -> bool:
+    if not isinstance(exc, sqlite3.OperationalError):
+        return False
+    error_code = getattr(exc, "sqlite_errorcode", None)
+    return isinstance(error_code, int) and error_code & 0xFF in {
+        sqlite3.SQLITE_BUSY,
+        sqlite3.SQLITE_LOCKED,
+    }
+
+
 def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     if db_path is None:
         db_path = get_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    return conn
+    for attempt in range(len(_WAL_BUSY_RETRY_DELAYS_SECONDS) + 1):
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+        except Exception:
+            conn.close()
+            raise
+
+        try:
+            conn.execute("PRAGMA journal_mode = WAL")
+        except Exception as exc:
+            conn.close()
+            if not _is_busy_or_locked(exc) or attempt == len(
+                _WAL_BUSY_RETRY_DELAYS_SECONDS
+            ):
+                raise
+            time.sleep(_WAL_BUSY_RETRY_DELAYS_SECONDS[attempt])
+            continue
+        return conn
+    raise AssertionError("unreachable WAL initialization retry state")
 
 
 def _execute_statements(conn: sqlite3.Connection, sql: str) -> None:
