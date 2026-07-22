@@ -1,0 +1,91 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.vuoro-work-adapter",
+  "contract_ref": {
+    "doc_id": "sprintctl-vuoro-served-authority-alignment",
+    "revision": "git:142d5ccccd68d589a17de7e8ed3c4bed0361bb56"
+  },
+  "implementation_sha": "2668258a230e1060a26995c9abf09f14f01f54bb",
+  "depth": 2,
+  "environment": {
+    "backend": "released-local-vuoro-client-and-service-packages-plus-disposable-native-postgresql-18.4",
+    "isolation": "the generic client and service were installed from the current Vuoro checkout; the served-work PostgreSQL histories used one disposable cluster, dedicated unprivileged test role/database, and independent connections",
+    "tool_versions": {
+      "postgresql": "18.4",
+      "python": "3.14.6",
+      "pytest": "9.0.2",
+      "uv": "0.11.28"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 10,
+    "bounds": {
+      "catalog_operations": 13,
+      "concurrent_claim_clients": 2,
+      "identical_retries_per_operation": 1,
+      "project_members_per_unit_history": 2,
+      "generic_client_versions": 1,
+      "postgresql_instances": 1
+    },
+    "faults_exercised": [
+      "lost-response-followed-by-identical-command-retry",
+      "stale-basis-after-authority-aggregate-advance",
+      "two-independent-exclusive-claim-invocations",
+      "nested-command-actor-or-claim-agent-attempts-impersonation",
+      "claim-start-activation-fails-after-claim-creation",
+      "batch-idempotency-key-reused-for-different-content",
+      "project-members-supplied-out-of-order",
+      "client-catalog-cached-before-new-operation-registration"
+    ]
+  },
+  "claims": [
+    {
+      "property": "a pre-existing generic Vuoro client discovers and invokes the newly registered cutover-evidence operation without reinstalling sprintctl",
+      "result": "example-tested",
+      "evidence": [
+        "the released local vuoro_client and vuoro_service packages ran tests/test_vuoro_work_adapter_integration.py without skips",
+        "a client that observed an empty catalog invoked work.pilot.cutover-evidence after registration"
+      ]
+    },
+    {
+      "property": "catalog handlers are Click-independent and work.claim.start matches the legacy CLI's authenticated actor, pending-to-active transition, and release-on-transition-failure behavior",
+      "result": "example-tested",
+      "evidence": [
+        "generic-client invocation returned a claim owned by the authenticated identity and transitioned the item to active",
+        "application and CLI parity tests covered successful claim start and transition-failure release"
+      ]
+    },
+    {
+      "property": "outer records, nested authority commands, claim agents, and authenticated identities are bound before a single or batch arbitration reaches the backend",
+      "result": "concurrency-tested",
+      "evidence": [
+        "single, batch, and project-batch impersonation variants were rejected before backend mutation",
+        "the PostgreSQL actor-binding history confirmed the same rejection boundary against the served authority"
+      ]
+    },
+    {
+      "property": "served claim/lifecycle retries, stale bases, ordered batches, and competing claims preserve the durable authority contract",
+      "result": "concurrency-tested",
+      "evidence": [
+        "independent PostgreSQL competing claim clients produced one durable acceptance",
+        "served lifecycle retry and stale-basis histories, producer-order batch histories, and declared project-member ordering passed"
+      ]
+    },
+    {
+      "property": "the real protocol integration path and PostgreSQL test scopes complete without residue",
+      "result": "example-tested",
+      "evidence": [
+        "the full released-package, PostgreSQL-enabled suite passed 1149 tests with zero skips",
+        "sprintctl-pg-cleanup/v1 recorded zero remaining rows in every registered repository-scoped table"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "Local release inputs were /projects/dev/vuoro/packages/vuoro-client and /projects/dev/vuoro/packages/vuoro-service at Vuoro main d0254987e0d584230eeba45efbc7094f5375e93b.",
+    "Focused released-package command `uv run --extra dev --extra remote --with /projects/dev/vuoro/packages/vuoro-client --with /projects/dev/vuoro/packages/vuoro-service pytest -q --tb=short -x tests/test_vuoro_work_adapter_integration.py tests/test_work_application.py` passed 14 tests in 2.43 seconds.",
+    "Full command with the same released-package inputs, disposable PostgreSQL URL, and production-guard URL passed 1149 tests in 365.00 seconds with no skips.",
+    "This result describes the exact implementation head before this evidence-only commit; independent verification and publication remain separate gates."
+  ]
+}
