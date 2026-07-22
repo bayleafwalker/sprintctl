@@ -1,0 +1,95 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.remote-schema-migration-compatibility",
+  "contract_ref": {
+    "doc_id": "sprintctl-vuoro-served-authority-alignment",
+    "revision": "git:142d5ccccd68d589a17de7e8ed3c4bed0361bb56"
+  },
+  "implementation_sha": "855ba466706e59009006bd2bbc8b0d712d839cec",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary-native-postgresql-18.4-and-temporary-sqlite",
+    "isolation": "one disposable PostgreSQL 18.4 cluster with a dedicated unprivileged role and database; independent PostgreSQL connections for bounded concurrent histories; SQLite transactional projection replacement",
+    "tool_versions": {
+      "postgresql": "18.4",
+      "python": "3.14.6",
+      "pytest": "9.0.2",
+      "uv": "0.11.28"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 10,
+    "bounds": {
+      "postgresql_instances": 1,
+      "repositories": 2,
+      "depth_2_histories": 10,
+      "concurrent_migration_jobs": 2,
+      "concurrent_appenders_per_repository": 2,
+      "legacy_schema_versions": 2,
+      "captured_projection_high_waters": 1
+    },
+    "faults_exercised": [
+      "migration-statement-failure-before-ledger-advance",
+      "migration-failure-while-a-concurrent-retry-waits-on-the-global-lock",
+      "append-failure-after-repository-offset-selection",
+      "lost-response-retry-after-record-commit",
+      "retained-history-suffix-offered-to-empty-projection",
+      "runtime-starts-before-migration",
+      "runtime-starts-against-newer-schema",
+      "runtime-credential-attempts-ddl"
+    ]
+  },
+  "claims": [
+    {
+      "property": "runtime startup serves only exact remote schema version 3, publishes the repository cursor capability, and performs no DDL",
+      "result": "example-tested",
+      "evidence": [
+        "startup compatibility probes accepted version 3 and failed closed for missing, version 1, version 2, and version 4 ledgers",
+        "a read-only runtime credential completed the compatibility probe and was denied schema-object creation"
+      ]
+    },
+    {
+      "property": "serialized v1-to-v3 and v2-to-v3 migrations retain global ingest identity, backfill contiguous public offsets per repository, and translate authority-decision references to repository-bound offsets",
+      "result": "concurrency-tested",
+      "evidence": [
+        "two synchronized independent PostgreSQL migration jobs returned applied-version histories [] and [2, 3] for the shared v1 ledger",
+        "interleaved legacy rows for two repositories migrated to independent contiguous public offsets while retaining their ingest_id values",
+        "an injected failed migration rolled back before a waiting independent connection completed the migration"
+      ]
+    },
+    {
+      "property": "same-repository appenders allocate distinct contiguous offsets while different repositories may both publish offset 1 with distinct global ingest IDs",
+      "result": "concurrency-tested",
+      "evidence": [
+        "two independent same-repository appenders produced public offsets {1, 2}",
+        "independent first appends for two repositories both returned public offset 1 and retained different ingest_id values",
+        "interleaved two-repository appends each produced the public sequence [1, 2]"
+      ]
+    },
+    {
+      "property": "duplicate retry and transaction rollback after allocation do not consume repository cursor positions",
+      "result": "concurrency-tested",
+      "evidence": [
+        "a lost-response retry returned its originally committed public offset without advancing the cursor",
+        "an injected failure after offset selection rolled back both record and cursor update, and the next append reused the uncommitted position"
+      ]
+    },
+    {
+      "property": "runtime-role DDL denial and registered PostgreSQL test-scope cleanup remain fail-closed",
+      "result": "example-tested",
+      "evidence": [
+        "the production-like probe role received InsufficientPrivilege for CREATE TABLE and for an itest-* write",
+        "sprintctl-pg-cleanup/v1 reported zero remaining rows in authority_decision, claim, dep, event, ingest_record, ingest_repo_cursor, ingest_stream, ref, sprint, track, and work_item"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "Focused disposable PostgreSQL command `uv run --extra dev --extra remote pytest -q --tb=short -x tests/test_pg_integration.py::TestInitDb tests/test_pg_integration.py::TestProducerOutboxIngestion tests/test_work_application_pg.py` passed 25 tests in 6.71 seconds.",
+    "Whole PostgreSQL command `uv run --extra dev --extra remote pytest -q --tb=short -x tests/test_pg_integration.py tests/test_work_application_pg.py` passed 101 tests in 16.06 seconds with no target skips.",
+    "The required PostgreSQL-enabled full-suite command `uv run --extra dev --extra remote pytest -q --tb=short` passed 1147 tests in 370.94 seconds and skipped one test module only because the Vuoro client/service integration extra is intentionally deferred to item 1194.",
+    "The verification-artifact validator, Python compileall, and git diff --check passed. Ruff was not installed in the declared development environment, so no Ruff result is claimed.",
+    "This result describes the exact rebased implementation commit before this evidence-only commit; independent verification and publication remain separate gates."
+  ]
+}
