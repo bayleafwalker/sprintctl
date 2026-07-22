@@ -16,6 +16,13 @@ dev = ["pytest>=8"]
 remote = [
     "psycopg[binary]>=3.1",
 ]
+# vuoro-client has no release tag yet (only 0.1.0.dev0 in-tree); pinned by
+# commit SHA to the revision verified against the deployed vuoro-shared
+# service (commit 82c372b) as an interim measure. Replace with a proper
+# `vuoro-client-vX.Y.Z` tag pin once the vuoro repo cuts one.
+served = [
+    "vuoro-client @ git+https://github.com/bayleafwalker/vuoro.git@82c372b2a222e0936e61510f1a96acb8e2fe3fc1#subdirectory=packages/vuoro-client ; python_version >= '3.12'",
+]
 
 [tool.setuptools]
 packages = ["sprintctl"]

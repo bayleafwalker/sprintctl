@@ -177,3 +177,236 @@ def test_doctor_human_output_names_provenance_and_guidance(monkeypatch, runner):
     assert "package: code=0.1.0 metadata=0.1.0" in result.output
     assert "source-capability-mismatch" in result.output
     assert "fix: pipx upgrade sprintctl" in result.output
+
+
+# --- served-mode probe -------------------------------------------------
+
+
+def _write_served_profile(path: Path, *, credential_ref: str) -> Path:
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "vuoro-client-profile/v1",
+                "id": "workstation-vuoro-shared",
+                "target": {
+                    "environment_id": "vuoro-shared",
+                    "endpoint": "https://vuoro-shared.example/",
+                },
+                "credential_ref": credential_ref,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_probe_served_backend_reports_unavailable_without_a_profile():
+    result = doctor._probe_served_backend({}, None)
+
+    assert result["backend"] == "served"
+    assert result["status"] == "unavailable"
+    assert result["error"] == "served profile did not parse"
+    assert result["credential_resolved"] is None
+
+
+def test_probe_served_backend_reports_unavailable_when_vuoro_client_is_missing(
+    tmp_path, monkeypatch
+):
+    from sprintctl.backend import ServedProfile
+
+    profile = ServedProfile(
+        name="workstation-vuoro-shared",
+        endpoint="https://vuoro-shared.example/",
+        credential_ref="file:/does/not/matter",
+        expected_environment="vuoro-shared",
+        source_path=tmp_path / "profile.json",
+    )
+    monkeypatch.setattr(doctor.importlib.util, "find_spec", lambda name: None)
+
+    result = doctor._probe_served_backend({}, profile)
+
+    assert result["status"] == "unavailable"
+    assert result["error"] == "vuoro-client is not installed"
+    # This genuinely reflects this sandbox: vuoro-client is not installed here.
+    assert doctor.importlib.util.find_spec("vuoro_client") is None
+
+
+def test_probe_served_backend_reports_credential_resolution_failure(tmp_path, monkeypatch):
+    from sprintctl.backend import ServedProfile
+    from sprintctl.vuoro_credentials import CredentialResolutionError
+
+    profile = ServedProfile(
+        name="workstation-vuoro-shared",
+        endpoint="https://vuoro-shared.example/",
+        credential_ref="file:/does/not/exist",
+        expected_environment="vuoro-shared",
+        source_path=tmp_path / "profile.json",
+    )
+    monkeypatch.setattr(doctor.importlib.util, "find_spec", lambda name: object())
+
+    result = doctor._probe_served_backend({}, profile)
+
+    assert result["credential_resolved"] is False
+    assert result["status"] == "unavailable"
+    assert "credential" in result["error"].lower()
+
+
+def test_probe_served_backend_reports_current_when_catalog_matches(tmp_path, monkeypatch):
+    from sprintctl.backend import ServedProfile
+
+    cred_path = tmp_path / "cred"
+    cred_path.write_text("token-value\n", encoding="utf-8")
+    cred_path.chmod(0o600)
+    profile = ServedProfile(
+        name="workstation-vuoro-shared",
+        endpoint="https://vuoro-shared.example/",
+        credential_ref=f"file:{cred_path}",
+        expected_environment="vuoro-shared",
+        source_path=tmp_path / "profile.json",
+    )
+    monkeypatch.setattr(doctor.importlib.util, "find_spec", lambda name: object())
+    monkeypatch.setattr(
+        doctor._served,
+        "catalog_operation_names",
+        lambda served_profile: set(doctor._SERVED_EXPECTED_OPERATIONS),
+    )
+
+    result = doctor._probe_served_backend({}, profile)
+
+    assert result["credential_resolved"] is True
+    assert result["compatible"] is True
+    assert result["status"] == "current"
+    assert result["error"] is None
+    assert result["actual_version"] == sorted(doctor._SERVED_EXPECTED_OPERATIONS)
+
+
+def test_probe_served_backend_reports_mismatch_for_missing_operations(tmp_path, monkeypatch):
+    from sprintctl.backend import ServedProfile
+
+    cred_path = tmp_path / "cred"
+    cred_path.write_text("token-value\n", encoding="utf-8")
+    cred_path.chmod(0o600)
+    profile = ServedProfile(
+        name="workstation-vuoro-shared",
+        endpoint="https://vuoro-shared.example/",
+        credential_ref=f"file:{cred_path}",
+        expected_environment="vuoro-shared",
+        source_path=tmp_path / "profile.json",
+    )
+    monkeypatch.setattr(doctor.importlib.util, "find_spec", lambda name: object())
+    monkeypatch.setattr(
+        doctor._served,
+        "catalog_operation_names",
+        lambda served_profile: {"work.read.sprints"},
+    )
+
+    result = doctor._probe_served_backend({}, profile)
+
+    assert result["compatible"] is False
+    assert result["status"] == "mismatch"
+    assert "work.claim.start" in result["error"]
+
+
+def test_probe_served_backend_reports_catalog_transport_failure(tmp_path, monkeypatch):
+    from sprintctl.backend import ServedProfile
+
+    cred_path = tmp_path / "cred"
+    cred_path.write_text("token-value\n", encoding="utf-8")
+    cred_path.chmod(0o600)
+    profile = ServedProfile(
+        name="workstation-vuoro-shared",
+        endpoint="https://vuoro-shared.example/",
+        credential_ref=f"file:{cred_path}",
+        expected_environment="vuoro-shared",
+        source_path=tmp_path / "profile.json",
+    )
+    monkeypatch.setattr(doctor.importlib.util, "find_spec", lambda name: object())
+
+    def _boom(served_profile):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(doctor._served, "catalog_operation_names", _boom)
+
+    result = doctor._probe_served_backend({}, profile)
+
+    assert result["credential_resolved"] is True
+    assert result["status"] == "unavailable"
+    assert result["error"] == "connection refused"
+
+
+def test_doctor_json_reports_served_mode_end_to_end(tmp_path, monkeypatch, runner):
+    (tmp_path / ".git").mkdir()
+    cred_path = tmp_path / "cred"
+    cred_path.write_text("token-value\n", encoding="utf-8")
+    cred_path.chmod(0o600)
+    profile_path = _write_served_profile(
+        tmp_path / "profile.json", credential_ref=f"file:{cred_path}"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("SPRINTCTL_URL", raising=False)
+    monkeypatch.setenv("SPRINTCTL_BACKEND", "served")
+    monkeypatch.setenv("SPRINTCTL_VUORO_PROFILE", str(profile_path))
+    monkeypatch.setattr(doctor.importlib.util, "find_spec", lambda name: object())
+    monkeypatch.setattr(
+        doctor._served,
+        "catalog_operation_names",
+        lambda served_profile: set(doctor._SERVED_EXPECTED_OPERATIONS),
+    )
+
+    result = runner.invoke(cli, ["doctor", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["backend"]["resolved_mode"] == "served"
+    assert payload["schema"]["backend"] == "served"
+    assert payload["schema"]["status"] == "current"
+    assert payload["extras"]["served"]["enabled"] is True
+    assert payload["status"] == "ok"
+
+
+def test_doctor_served_mode_missing_extra_is_a_finding(tmp_path, monkeypatch, runner):
+    (tmp_path / ".git").mkdir()
+    profile_path = _write_served_profile(
+        tmp_path / "profile.json", credential_ref="file:~/.config/vuoro/credentials/x"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("SPRINTCTL_URL", raising=False)
+    monkeypatch.setenv("SPRINTCTL_BACKEND", "served")
+    monkeypatch.setenv("SPRINTCTL_VUORO_PROFILE", str(profile_path))
+    monkeypatch.setattr(doctor.importlib.util, "find_spec", lambda name: None)
+
+    result = runner.invoke(cli, ["doctor", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["extras"]["served"]["enabled"] is False
+    codes = {finding["code"] for finding in payload["findings"]}
+    assert "served-extra-missing" in codes
+    assert "sprintctl[served]" in " ".join(
+        guidance
+        for finding in payload["findings"]
+        for guidance in finding["guidance"]
+    )
+
+
+def test_doctor_human_output_reports_served_extra(monkeypatch, runner):
+    facts = _fixture("doctor-current.json")
+    facts["backend"]["environment_mode"] = "served"
+    facts["backend"]["resolved_mode"] = "served"
+    facts["extras"]["served"] = {"enabled": False, "requirement": "vuoro-client"}
+    facts["schema"] = {
+        "backend": "served",
+        "expected_version": ["work.claim.start"],
+        "actual_version": None,
+        "compatible": None,
+        "status": "unavailable",
+        "error": "vuoro-client is not installed",
+    }
+    report = doctor.evaluate_facts(facts)
+    monkeypatch.setattr(doctor, "collect_report", lambda: report)
+
+    result = runner.invoke(cli, ["doctor"])
+
+    assert "extras: remote=" in result.output
+    assert "served=missing" in result.output
+    assert "served-extra-missing" in result.output

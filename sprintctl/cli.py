@@ -31,6 +31,8 @@ from . import pilot as _pilot
 from . import project as _project
 from . import projection as _projection
 from . import projection_reads as _projection_reads
+from . import served as _served
+from . import served_routes as _served_routes
 from . import shadow as _shadow
 from . import sync as _sync
 from .render import render_sprint_doc
@@ -216,6 +218,49 @@ def _get_project_stores(obj: dict, project_value: str | Path):
         for member in members
     ]
     return project, scopes
+
+
+# The exact served-mode allowlist entries #1195 wires up. Indexing them here
+# (rather than hard-coding operation name strings at each call site) means a
+# mismatch between this file and sprintctl/served_routes.py's table raises
+# immediately at import time instead of silently drifting.
+_SERVED_SPRINT_LIST_ROUTE = _served_routes.routes_for("sprint.list")[0]
+_SERVED_ITEM_SHOW_ROUTE = _served_routes.routes_for("item.show")[0]
+_SERVED_CLAIM_START_ROUTE = _served_routes.routes_for("claim.start")[0]
+_SERVED_NEXT_WORK_ROUTES = {
+    route.operation: route for route in _served_routes.routes_for("next-work")
+}
+assert _SERVED_SPRINT_LIST_ROUTE.operation == "work.read.sprints"
+assert _SERVED_ITEM_SHOW_ROUTE.operation == "work.read.item"
+assert _SERVED_CLAIM_START_ROUTE.operation == "work.claim.start"
+assert set(_SERVED_NEXT_WORK_ROUTES) == {"work.read.next-work", "work.project.next-work"}
+
+
+def _served_config_or_none(obj: dict):
+    """Return the active backend.ServedProfile-carrying config when
+    SPRINTCTL_BACKEND=served, else None. Populates obj["backend_config"] the
+    same way _get_store does, so served and store-backed command paths share
+    one source of truth for the resolved backend mode."""
+    try:
+        config = _backend.load_backend_config()
+    except _backend.BackendConfigError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+    obj["backend_config"] = config
+    if config.mode != "served":
+        return None
+    return config
+
+
+def _run_served(operation_label: str, func, *args, **kwargs):
+    """Invoke a sprintctl.served facade function, translating any failure
+    (transport, catalog validation, or an operation rejection) into the same
+    'Error: ...' + exit(1) convention the local/remote store paths use."""
+    try:
+        return func(*args, **kwargs)
+    except Exception as exc:  # noqa: BLE001 - surface any served-mode failure uniformly
+        click.echo(f"Error: served {operation_label} failed: {exc}", err=True)
+        sys.exit(1)
 
 
 def _with_origin(value: dict, repo_id: str) -> dict:
@@ -789,20 +834,40 @@ def sprint_status(obj, sprint_id, new_status, actor, as_json) -> None:
 @click.pass_obj
 def sprint_list(obj, include_backlog, include_archive, active_only, project_path, as_json) -> None:
     """List sprints (active_sprint kind by default; use flags to include others)."""
-    if project_path is None:
-        scopes = [(None, *_get_store(obj))]
+    config = _served_config_or_none(obj)
+    if config is not None:
+        if project_path is not None:
+            click.echo(
+                "Error: 'sprint list --project' has no served-mode equivalent "
+                "(no catalog operation exists for a project-scoped sprint listing); "
+                "omit --project, or use SPRINTCTL_BACKEND=local or remote.",
+                err=True,
+            )
+            sys.exit(1)
+        result = _run_served(
+            "sprint list",
+            _served.read_sprints,
+            config.served_profile,
+            include_backlog=include_backlog,
+            include_archive=include_archive,
+            active_only=active_only,
+        )
+        sprints: list[dict] = result["sprints"]
     else:
-        _binding, scopes = _get_project_stores(obj, project_path)
-
-    sprints: list[dict] = []
-    for repo_id, store, m in scopes:
-        if active_only:
-            scoped_sprints = m.list_active_sprints(store)
+        if project_path is None:
+            scopes = [(None, *_get_store(obj))]
         else:
-            scoped_sprints = m.list_sprints(store)
-        if repo_id is not None:
-            scoped_sprints = [_with_origin(sprint, repo_id) for sprint in scoped_sprints]
-        sprints.extend(scoped_sprints)
+            _binding, scopes = _get_project_stores(obj, project_path)
+
+        sprints = []
+        for repo_id, store, m in scopes:
+            if active_only:
+                scoped_sprints = m.list_active_sprints(store)
+            else:
+                scoped_sprints = m.list_sprints(store)
+            if repo_id is not None:
+                scoped_sprints = [_with_origin(sprint, repo_id) for sprint in scoped_sprints]
+            sprints.extend(scoped_sprints)
 
     if not active_only:
         visible_kinds = {"active_sprint"}
@@ -1185,46 +1250,62 @@ def _projection_item_events(projection_path: Path, item_id: int) -> list[dict]:
 @click.pass_obj
 def item_show(obj, item_id, as_json) -> None:
     """Show a single work item with its recent events and active claims."""
-    store, m = _get_store(obj)
-    it = m.get_work_item(store, item_id)
-    if it is None:
-        click.echo(f"Item #{item_id} not found.", err=True)
-        sys.exit(1)
-
-    # Item core fields (status, title, assignee, ...) only ever change via
-    # authority commands, which the shadow pilot never mirrors -- so they
-    # always come from backend regardless of the flag. The event/notes
-    # history below is the one sub-section the cached projection can
-    # honestly reconstruct, because item note/event observations are what
-    # gets mirrored.
-    projection_health = _projection_health()
-    projection_status = _projection_surface_status(projection_health, supported=True)
-    if projection_status["source"] == "projection":
-        item_events = _projection_item_events(Path(projection_health["projection_path"]), item_id)
+    config = _served_config_or_none(obj)
+    projection_status = None
+    if config is not None:
+        result = _run_served(
+            "item show", _served.read_item, config.served_profile, item_id=item_id
+        )
+        it = result["item"]
+        item_events = result["events"]
+        claims = result["active_claims"]
+        refs = result["refs"]
+        blocking = result["deps"]["blocked_by"]
+        blocked_by_me = result["deps"]["blocks"]
     else:
-        events = m.list_events(store, it["sprint_id"])
-        item_events = [e for e in events if e.get("work_item_id") == item_id]
+        store, m = _get_store(obj)
+        it = m.get_work_item(store, item_id)
+        if it is None:
+            click.echo(f"Item #{item_id} not found.", err=True)
+            sys.exit(1)
 
-    claims = m.list_claims(store, item_id, active_only=True)
-    refs = m.list_refs(store, item_id)
-    blocking = m.list_deps_blocking(store, item_id)
-    blocked_by_me = m.list_deps_blocked_by(store, item_id)
+        # Item core fields (status, title, assignee, ...) only ever change via
+        # authority commands, which the shadow pilot never mirrors -- so they
+        # always come from backend regardless of the flag. The event/notes
+        # history below is the one sub-section the cached projection can
+        # honestly reconstruct, because item note/event observations are what
+        # gets mirrored.
+        projection_health = _projection_health()
+        projection_status = _projection_surface_status(projection_health, supported=True)
+        if projection_status["source"] == "projection":
+            item_events = _projection_item_events(Path(projection_health["projection_path"]), item_id)
+        else:
+            events = m.list_events(store, it["sprint_id"])
+            item_events = [e for e in events if e.get("work_item_id") == item_id]
+
+        claims = m.list_claims(store, item_id, active_only=True)
+        refs = m.list_refs(store, item_id)
+        blocking = m.list_deps_blocking(store, item_id)
+        blocked_by_me = m.list_deps_blocked_by(store, item_id)
 
     if as_json:
-        click.echo(json.dumps({
+        payload = {
             "item": dict(it),
             "events": item_events,
             "active_claims": claims,
             "refs": refs,
             "deps": {"blocked_by": blocking, "blocks": blocked_by_me},
-            "projection": projection_status,
-        }, indent=2))
+        }
+        if projection_status is not None:
+            payload["projection"] = projection_status
+        click.echo(json.dumps(payload, indent=2))
         return
 
     click.echo(f"#{it['id']}  [{it['status']}]  {it['title']}")
-    status_line = _projection_status_line(projection_status)
-    if status_line:
-        click.echo(f"  {status_line}")
+    if projection_status is not None:
+        status_line = _projection_status_line(projection_status)
+        if status_line:
+            click.echo(f"  {status_line}")
     click.echo(f"  Sprint:   #{it['sprint_id']}")
     track_name = it.get("track_name", "")
     if track_name:
@@ -5355,6 +5436,73 @@ def claim_start(
     If activating the item fails after claim creation, sprintctl attempts to
     release the new claim automatically to avoid leaving accidental ownership.
     """
+    config = _served_config_or_none(obj)
+    if config is not None:
+        runtime_session_id = _detect_runtime_session_id(runtime_session_id)
+        instance_id = _detect_instance_id(instance_id)
+        hostname = _detect_hostname(hostname)
+        pid = _detect_pid(pid)
+        result = _run_served(
+            "claim start",
+            _served.claim_start,
+            config.served_profile,
+            item_id=item_id,
+            ttl_seconds=ttl_seconds,
+            branch=branch,
+            worktree_path=worktree_path,
+            commit_sha=commit_sha,
+            pr_ref=pr_ref,
+            runtime_session_id=runtime_session_id,
+            instance_id=instance_id,
+            hostname=hostname,
+            pid=pid,
+        )
+        claim = result["claim"]
+        # work.claim.start's catalog contract has no actor/agent input field:
+        # the claim's owning actor is the authenticated identity the server
+        # resolves from the credential, not the --actor value below.
+        served_actor = claim.get("actor")
+        if served_actor is not None and served_actor != actor:
+            click.echo(
+                f"Note: served mode claims as the authenticated identity "
+                f"({served_actor}); --actor {actor!r} was not sent and is ignored.",
+                err=True,
+            )
+        cid = result["claim_id"]
+        # No-op outside local mode: _local_recovery_available() gates this on
+        # config.mode == "local", so served mode never writes a recovery file.
+        recovery_path = _write_claim_recovery_record(claim)
+        if as_json:
+            click.echo(json.dumps({
+                "operation": result["operation"],
+                "claim_id": cid,
+                "claim_token": result["claim_token"],
+                "claim": claim,
+                "local_recovery": {
+                    "recovery_token_exists": recovery_path is not None,
+                    "recovery_token_path": str(recovery_path) if recovery_path is not None else None,
+                },
+                "item_id": result["item_id"],
+                "item_status_before": result["item_status_before"],
+                "item_status_after": result["item_status_after"],
+                "status_transition_applied": result["status_transition_applied"],
+                "refs": result["refs"],
+            }, indent=2))
+            return
+
+        click.echo(f"Claim #{cid} created: {served_actor} → item #{item_id} (execute, ttl={ttl_seconds}s)")
+        if result["status_transition_applied"]:
+            click.echo(
+                f"Item #{item_id} status: {result['item_status_before']} -> {result['item_status_after']}"
+            )
+        else:
+            click.echo(f"Item #{item_id} already active; status unchanged.")
+        click.echo(f"Claim token: {result['claim_token']}")
+        if recovery_path is not None:
+            click.echo(f"Recovery token file: {recovery_path}")
+        _echo_item_refs(result["refs"], item_id)
+        return
+
     store, m = _get_store(obj)
     item = m.get_work_item(store, item_id)
     if item is None:
@@ -6216,6 +6364,80 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
     Items are listed in creation order. Items blocked by incomplete predecessors
     are excluded from the suggestion.
     """
+    config = _served_config_or_none(obj)
+    if config is not None:
+        if explain:
+            click.echo(
+                "Error: 'next-work --explain' has no served-mode equivalent "
+                "(exclusion reasons and conflicts are computed against a local store); "
+                "omit --explain, or use SPRINTCTL_BACKEND=local or remote.",
+                err=True,
+            )
+            sys.exit(1)
+        if project_path is None:
+            result = _run_served(
+                "next-work",
+                _served.read_next_work,
+                config.served_profile,
+                sprint_id=sprint_id,
+            )
+            s = result["sprint"]
+            ready = result["ready_items"]
+            if as_json:
+                click.echo(json.dumps(ready, indent=2))
+                return
+            if not ready:
+                click.echo(f"No pending items ready to start in sprint #{s['id']} ({s['name']}).")
+                return
+            click.echo(f"Ready to start in sprint #{s['id']} ({s['name']}):")
+            rows: list[list[str]] = []
+            for it in ready:
+                assignee = it.get("assignee") or "-"
+                rows.append(
+                    [f"#{it['id']}", _format_priority(it), it["track_name"], assignee, it["title"]]
+                )
+            for line in _render_table(["ID", "PRI", "TRACK", "ASSIGNEE", "TITLE"], rows):
+                click.echo(f"  {line}")
+            return
+
+        result = _run_served(
+            "project next-work",
+            _served.project_next_work,
+            config.served_profile,
+            sprint_id=sprint_id,
+        )
+        ready_items = result["ready_items"]
+        repositories = result["repositories"]
+        if as_json:
+            click.echo(json.dumps(ready_items, indent=2))
+            return
+        click.echo(f"Project {result['project_id']}")
+        for entry in repositories:
+            repo_id = entry["origin_repo"]
+            click.echo(f"\n=== {repo_id} ===")
+            sprint_row = entry["sprint"]
+            tagged_ready = entry["ready_items"]
+            if not tagged_ready:
+                click.echo(
+                    f"No pending items ready to start in sprint #{sprint_row['id']} "
+                    f"({sprint_row['name']})."
+                )
+                continue
+            rows = []
+            for item_row in tagged_ready:
+                rows.append(
+                    [
+                        f"#{item_row['id']}",
+                        _format_priority(item_row),
+                        item_row["track_name"],
+                        item_row.get("assignee") or "-",
+                        item_row["title"],
+                    ]
+                )
+            for line in _render_table(["ID", "PRI", "TRACK", "ASSIGNEE", "TITLE"], rows):
+                click.echo(f"  {line}")
+        return
+
     if project_path is None:
         store, m = _get_store(obj)
         if sprint_id is not None:

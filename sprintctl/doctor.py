@@ -17,10 +17,12 @@ from typing import Any, Mapping
 
 from . import CLI_CAPABILITIES, __version__
 from . import backend as _backend
+from . import served as _served
 from .pg_migrations import CURRENT_SCHEMA_VERSION as REMOTE_SCHEMA_VERSION
 
 
 SQLITE_SCHEMA_VERSION = 11
+_SERVED_EXPECTED_OPERATIONS = _served.EXPECTED_OPERATIONS
 _VERSION_RE = re.compile(r"\bversion\s+([^\s]+)")
 _POSTGRES_CREDENTIAL_RE = re.compile(r"(postgres(?:ql)?://)[^\s@]+@", re.IGNORECASE)
 
@@ -245,6 +247,65 @@ def _probe_remote_schema(environ: Mapping[str, str]) -> dict[str, Any]:
     return result
 
 
+def _probe_served_backend(
+    environ: Mapping[str, str], served_profile: Any | None
+) -> dict[str, Any]:
+    """Verify the three things served mode needs before any command runs:
+    the credential file resolves, the profile parsed (already implied by the
+    caller having a ``served_profile``), and the catalog the profile points
+    at exposes the operations ``sprintctl.served`` invokes.
+
+    Read-only: never invokes a served operation, only unauthenticated
+    catalog discovery.
+    """
+    result: dict[str, Any] = {
+        "backend": "served",
+        "expected_version": sorted(_SERVED_EXPECTED_OPERATIONS),
+        "actual_version": None,
+        "compatible": None,
+        "status": "unavailable",
+        "error": None,
+        "credential_resolved": None,
+        "profile": None,
+    }
+    if served_profile is None:
+        result["error"] = "served profile did not parse"
+        return result
+    result["profile"] = {
+        "name": served_profile.name,
+        "endpoint": served_profile.endpoint,
+        "expected_environment": served_profile.expected_environment,
+    }
+    if importlib.util.find_spec("vuoro_client") is None:
+        result["error"] = "vuoro-client is not installed"
+        return result
+
+    from . import vuoro_credentials
+
+    try:
+        vuoro_credentials.resolve_file_credential(served_profile.credential_ref)
+    except vuoro_credentials.CredentialResolutionError as exc:
+        result["credential_resolved"] = False
+        result["error"] = str(exc)
+        return result
+    result["credential_resolved"] = True
+
+    try:
+        operations = _served.catalog_operation_names(served_profile)
+    except Exception as exc:  # transport, handshake, and schema failures vary by client
+        result["error"] = str(exc)
+        return result
+
+    actual = sorted(operations)
+    result["actual_version"] = actual
+    missing = sorted(_SERVED_EXPECTED_OPERATIONS - operations)
+    result["compatible"] = not missing
+    result["status"] = "current" if not missing else "mismatch"
+    if missing:
+        result["error"] = "catalog is missing expected operations: " + ", ".join(missing)
+    return result
+
+
 def _finding(code: str, severity: str, message: str, guidance: list[str]) -> dict[str, Any]:
     return {
         "code": code,
@@ -327,6 +388,15 @@ def evaluate_facts(facts: Mapping[str, Any]) -> dict[str, Any]:
                 [REINSTALL_GUIDANCE["remote_pipx"], REINSTALL_GUIDANCE["remote_uv"]],
             )
         )
+    if backend["environment_mode"] == "served" and not extras.get("served", {}).get("enabled"):
+        findings.append(
+            _finding(
+                "served-extra-missing",
+                "error",
+                "Served mode is configured but vuoro-client is unavailable.",
+                ["Install the 'served' extra: pip install 'sprintctl[served]'."],
+            )
+        )
     if schema["status"] == "mismatch":
         findings.append(
             _finding(
@@ -365,17 +435,32 @@ def collect_report(
         "remote": {
             "enabled": importlib.util.find_spec("psycopg") is not None,
             "requirement": "psycopg[binary]>=3.1",
-        }
+        },
+        "served": {
+            "enabled": importlib.util.find_spec("vuoro_client") is not None,
+            "requirement": "vuoro-client (the 'served' extra)",
+        },
     }
     if backend["valid"] and backend["resolved_mode"] == "remote":
         schema = _probe_remote_schema(environ)
+    elif backend["valid"] and backend["resolved_mode"] == "served":
+        served_profile = None
+        try:
+            served_profile = _backend.load_backend_config(cwd=cwd, environ=environ).served_profile
+        except _backend.BackendConfigError:
+            served_profile = None
+        schema = _probe_served_backend(environ, served_profile)
     elif backend["valid"]:
         schema = _probe_local_schema(environ)
     else:
         schema = {
             "backend": backend["environment_mode"],
             "expected_version": (
-                REMOTE_SCHEMA_VERSION if backend["environment_mode"] == "remote" else SQLITE_SCHEMA_VERSION
+                REMOTE_SCHEMA_VERSION
+                if backend["environment_mode"] == "remote"
+                else sorted(_SERVED_EXPECTED_OPERATIONS)
+                if backend["environment_mode"] == "served"
+                else SQLITE_SCHEMA_VERSION
             ),
             "actual_version": None,
             "compatible": None,
@@ -416,8 +501,10 @@ def render_text(report: Mapping[str, Any]) -> str:
     )
     source_version = provenance["source"]["version"] if provenance["source"]["present"] else "not detected"
     lines.append(f"source: {source_version}")
+    served_extra = report["extras"].get("served", {})
     lines.append(
-        f"extras: remote={'enabled' if report['extras']['remote']['enabled'] else 'missing'}"
+        f"extras: remote={'enabled' if report['extras']['remote']['enabled'] else 'missing'} "
+        f"served={'enabled' if served_extra.get('enabled') else 'missing'}"
     )
     lines.append(
         f"backend: env={backend['environment_mode']} resolved={backend['resolved_mode'] or 'invalid'} "
