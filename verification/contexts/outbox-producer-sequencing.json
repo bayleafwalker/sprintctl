@@ -5,7 +5,7 @@
   "subject": "producer-authored-observation-and-authority-command-outbox",
   "contract_ref": {
     "doc_id": "adr-outbox-sync-model",
-    "revision": "git:50cf3ee4d0da4fe14814b49b86173dc57782b0d2"
+    "revision": "git:50cf3ee13009b04fc0e61db5d5be6f4f6bcbf215"
   },
   "source_of_truth": "local-producer-sqlite-outbox",
   "depth": 2,

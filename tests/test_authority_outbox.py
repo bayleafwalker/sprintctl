@@ -104,6 +104,27 @@ class _StubConnection:
         self.closed = True
 
 
+@pytest.mark.parametrize(
+    "error_code",
+    [
+        sqlite3.SQLITE_BUSY,
+        sqlite3.SQLITE_BUSY_RECOVERY,
+        sqlite3.SQLITE_BUSY_SNAPSHOT,
+        sqlite3.SQLITE_BUSY_TIMEOUT,
+        sqlite3.SQLITE_LOCKED,
+        sqlite3.SQLITE_LOCKED_SHAREDCACHE,
+        sqlite3.SQLITE_LOCKED_VTAB,
+    ],
+)
+def test_busy_or_locked_classification_accepts_primary_and_extended_codes(
+    error_code,
+):
+    retryable = sqlite3.OperationalError("database is busy or locked")
+    retryable.sqlite_errorcode = error_code
+
+    assert outbox._is_busy_or_locked(retryable) is True
+
+
 @pytest.mark.parametrize("error_code", [sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED])
 def test_open_retries_busy_or_locked_wal_and_closes_failed_connection(
     tmp_path, monkeypatch, error_code
@@ -301,8 +322,10 @@ def test_concurrent_openers_serialize_migration_and_append_without_loss(
     assert errors == []
     migrated = outbox.open_outbox(path)
     try:
-        event_ids = [record.event_id for record in outbox.list_records(migrated)]
+        records = outbox.list_records(migrated)
+        event_ids = [record.event_id for record in records]
         assert event_ids[0] == "legacy-event"
         assert set(event_ids[1:]) == {"concurrent-1", "concurrent-2"}
+        assert [record.origin_seq for record in records] == [1, 2, 3]
     finally:
         migrated.close()
