@@ -4,8 +4,8 @@
   "owner_repo": "sprintctl",
   "subject": "primary-local-sqlite-wal-initialization-and-versioned-schema-open",
   "contract_ref": {
-    "doc_id": "migration-guide",
-    "revision": "git:f61bbb6cf380abf2d2dac262062b9e2a387d90a1"
+    "doc_id": "sprintctl.local-sqlite-initialization",
+    "revision": "git:ff35ace88b6825168476d17838a3413c06ebd74f"
   },
   "source_of_truth": "repository-local-primary-sqlite-database",
   "depth": 2,
@@ -58,7 +58,7 @@
     "every failed connection attempt is closed",
     "non-busy WAL and foreign-key setup failures propagate without retry",
     "every successful returned connection has foreign-key enforcement enabled and WAL mode selected",
-    "concurrent version-5 openers reach exact schema version 14 with the expected tables and explicit indexes",
+    "concurrent version-5 openers reach exact schema version 14, matching init_db's final _run_migration target_version=14 registration rather than the nine-entry _MIGRATIONS SQL list, with the expected tables and explicit indexes",
     "no worker remains blocked at a test barrier or join deadline"
   ],
   "faults": [
@@ -71,7 +71,7 @@
   ],
   "oracles": [
     "all eight workers terminate without recorded exceptions",
-    "schema_version is exactly 14",
+    "schema_version is exactly 14 and matches the final target_version=14 _run_migration registration in init_db; len(_MIGRATIONS) is 9 and is not the schema-version oracle",
     "user table and explicit index name sets exactly match the version-14 schema",
     "PRAGMA foreign_keys returns 1 and PRAGMA journal_mode returns wal",
     "stub connections record cleanup, retry count, delay sequence, and unchanged exception identity"
@@ -79,6 +79,7 @@
   "implementation_anchors": [
     "sprintctl/db.py:_is_busy_or_locked",
     "sprintctl/db.py:get_connection",
+    "sprintctl/db.py:init_db",
     "tests/test_core.py:TestEdgeCases.test_init_db_handles_concurrent_version_lag_after_upgrade",
     "tests/test_core.py:TestEdgeCases.test_connection_retries_primary_and_extended_busy_or_locked_wal_errors",
     "tests/test_core.py:TestEdgeCases.test_connection_stops_after_bounded_busy_wal_retries",

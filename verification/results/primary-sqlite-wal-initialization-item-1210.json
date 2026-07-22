@@ -1,0 +1,83 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.primary-sqlite.wal-initialization",
+  "contract_ref": {
+    "doc_id": "sprintctl.local-sqlite-initialization",
+    "revision": "git:ff35ace88b6825168476d17838a3413c06ebd74f"
+  },
+  "implementation_sha": "a778462cdc8d641226dfcadb4e464be16cd8221a",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary-file-backed-sqlite",
+    "isolation": "eight independent SQLite connections per history, synchronized before open, with the existing BEGIN IMMEDIATE migration serialization",
+    "tool_versions": {
+      "python": "3.12.13",
+      "pytest": "9.0.2",
+      "sqlite": "3.53.1",
+      "uv": "0.11.28"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 32,
+    "bounds": {
+      "openers_per_history": 8,
+      "initial_schema_version": 5,
+      "target_schema_version": 14,
+      "migration_sql_list_entries": 9,
+      "wal_initialization_attempts": 5,
+      "barrier_timeout_seconds": 5,
+      "history_join_timeout_seconds": 30
+    },
+    "faults_exercised": [
+      "primary-SQLITE_BUSY-during-WAL-initialization",
+      "extended-SQLITE_BUSY-during-WAL-initialization",
+      "primary-SQLITE_LOCKED-during-WAL-initialization",
+      "extended-SQLITE_LOCKED-during-WAL-initialization",
+      "bounded-retry-exhaustion",
+      "non-busy-WAL-initialization-failure",
+      "foreign-key-setup-failure"
+    ]
+  },
+  "claims": [
+    {
+      "property": "all eight concurrent version-5 openers terminate and converge on the exact version-14 schema while retaining foreign-key enforcement and WAL mode",
+      "result": "concurrency-tested",
+      "evidence": [
+        "32 parameterized eight-opener histories passed",
+        "each history asserted the exact table and explicit-index name sets, schema_version 14, PRAGMA foreign_keys=1, and PRAGMA journal_mode=wal"
+      ]
+    },
+    {
+      "property": "only primary or extended SQLite BUSY and LOCKED WAL errors retry, with five attempts and delays of 10, 20, 40, and 80 milliseconds",
+      "result": "example-tested",
+      "evidence": [
+        "six primary/extended BUSY and LOCKED cases retried and closed the failed connection",
+        "bounded exhaustion preserved the final exception identity and exact delay sequence"
+      ]
+    },
+    {
+      "property": "non-busy WAL and foreign-key setup failures close the connection and propagate without retry",
+      "result": "example-tested",
+      "evidence": [
+        "two non-busy WAL cases and one foreign-key setup case passed",
+        "the focused item-1210 command passed 42 tests in 29.61 seconds"
+      ]
+    },
+    {
+      "property": "schema version 14 is the final target_version registered by init_db and is not inferred from the nine-entry _MIGRATIONS SQL list",
+      "result": "example-tested",
+      "evidence": [
+        "sprintctl/db.py:init_db ends with _run_migration target_version 14",
+        "the concurrent histories asserted schema_version exactly 14"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "The exact repository gate `timeout --foreground 900s uv run pytest` passed with 1016 tests and skipped 85 PostgreSQL integration tests in 343.39 seconds.",
+    "All 85 skips were inspected with `uv run pytest tests/test_pg_integration.py -q -rs` and were caused only by SPRINTCTL_TEST_PG_URL not being set; the remote dependency extra was installed.",
+    "The manifest/artifact validator and 22 document, dispatch-manifest, and document-linked-work contract tests passed.",
+    "Ruff reported 36 existing findings at the implementation versus 37 at exact base 142d5ccccd68d589a17de7e8ed3c4bed0361bb56; no new finding was introduced."
+  ]
+}

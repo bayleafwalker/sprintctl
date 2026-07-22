@@ -45,7 +45,11 @@
     "producer-restart-after-local-commit"
   ],
   "oracles": [
-    "outbox-record-query", "stream-sequence-contiguity", "immutable-trigger-check"],
+    "outbox-record-query",
+    "concurrent legacy migration records retain the legacy event first and have origin_seq exactly [1, 2, 3]",
+    "stream-sequence-contiguity",
+    "immutable-trigger-check"
+  ],
   "implementation_anchors": [
     "sprintctl/outbox.py:append_observation",
     "sprintctl/outbox.py:init_outbox"
