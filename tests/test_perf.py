@@ -36,6 +36,17 @@ RICH_DECISION_EVENTS = 12
 RICH_STALE_ITEMS = 10
 
 
+@pytest.fixture
+def memory_conn():
+    """Use the in-memory database promised by this module's timing contract."""
+    connection = db.get_connection(Path(":memory:"))
+    db.init_db(connection)
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+
 def _now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -202,8 +213,9 @@ class TestQueryTiming:
 # ---------------------------------------------------------------------------
 
 class TestWriteThroughput:
-    def test_bulk_item_creation_under_500ms(self, conn):
+    def test_bulk_item_creation_under_500ms(self, memory_conn):
         """Creating 200 items sequentially must complete in under 2000 ms."""
+        conn = memory_conn
         sid = db.create_sprint(conn, "Bulk", "", "2026-01-01", "2026-06-30", "active")
         tid = db.get_or_create_track(conn, sid, "eng")
         start = time.monotonic()
@@ -212,8 +224,9 @@ class TestWriteThroughput:
         elapsed = _ms(start)
         assert elapsed < 2000, f"bulk item creation took {elapsed:.1f} ms"
 
-    def test_bulk_event_creation_under_500ms(self, conn):
+    def test_bulk_event_creation_under_500ms(self, memory_conn):
         """Creating 200 events sequentially must complete in under 2000 ms."""
+        conn = memory_conn
         sid = db.create_sprint(conn, "BulkEv", "", "2026-01-01", "2026-06-30", "active")
         tid = db.get_or_create_track(conn, sid, "eng")
         iid = db.create_work_item(conn, sid, tid, "Task")
@@ -227,8 +240,9 @@ class TestWriteThroughput:
         elapsed = _ms(start)
         assert elapsed < 2000, f"bulk event creation took {elapsed:.1f} ms"
 
-    def test_bulk_ref_creation_under_200ms(self, conn):
+    def test_bulk_ref_creation_under_200ms(self, memory_conn):
         """Attaching 100 refs to a single item must complete in under 1000 ms."""
+        conn = memory_conn
         sid = db.create_sprint(conn, "RefBulk", "", "2026-01-01", "2026-06-30", "active")
         tid = db.get_or_create_track(conn, sid, "eng")
         iid = db.create_work_item(conn, sid, tid, "Big task")
@@ -244,8 +258,9 @@ class TestWriteThroughput:
 # ---------------------------------------------------------------------------
 
 class TestSweepAtScale:
-    def test_sweep_200_items_under_200ms(self, conn):
+    def test_sweep_200_items_under_200ms(self, memory_conn):
         """sweep over 200 active items (all stale) must finish in under 2500 ms."""
+        conn = memory_conn
         sprint = _build_large_sprint(conn)
         items = db.list_work_items(conn, sprint_id=sprint["id"])
         # Activate all items and back-date their updated_at so they're stale

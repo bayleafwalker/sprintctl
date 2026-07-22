@@ -283,7 +283,12 @@ def test_item_show_serves_events_from_healthy_projection_with_backend_parity(
     producer = outbox.open_outbox(pilot_paths.outbox_path)
     cache = projection.open_cached_projection(pilot_paths.projection_path)
     try:
-        _cache_outbox_records(producer, cache, advanced_at="2026-07-20T11:59:50Z")
+        current = datetime.now(timezone.utc).replace(microsecond=0)
+        _cache_outbox_records(
+            producer,
+            cache,
+            advanced_at=current.isoformat().replace("+00:00", "Z"),
+        )
     finally:
         producer.close()
         cache.close()
