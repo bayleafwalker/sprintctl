@@ -15,6 +15,7 @@ from typing import TextIO
 import click
 
 from . import __version__
+from . import application as _application
 from . import backend as _backend
 from . import authority as _authority
 from . import authority_config as _authority_config
@@ -2919,12 +2920,169 @@ def authority_submit(
         raise click.exceptions.Exit(exit_code)
 
 
+def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
+    """Served-mode ``authority sync``: flushes durable outbox records through
+    one ``work.batch.apply`` call per ``--batch-size`` chunk.
+
+    ``WorkApplication.apply_records`` (application.py:612-644) is the entire
+    served sync mechanism: it already self-routes a mixed batch of
+    OBSERVATION and AUTHORITY_COMMAND records by ``record_class`` -- runs of
+    observations are ingested together and each authority command is
+    arbitrated individually against one running ``transient_credentials``
+    map -- so unlike the local/remote path (``_sync.synchronize_outbox``,
+    which also rebuilds a local SQLite projection cache), there is nothing
+    else to route here: served mode keeps no local projection at all, every
+    served read already goes live to the server.
+
+    Two things are deliberately excluded from every outgoing chunk, and
+    reported rather than silently dropped:
+
+    - A command whose payload references a ``...credential_ref`` with no
+      matching pending proof sidecar blocks that record *and every record
+      after it* for this pass -- this mirrors ``synchronize_outbox``'s own
+      stop-at-first-gap semantics exactly (a later record may have been
+      minted assuming an earlier one already landed, so nothing after a gap
+      is speculatively sent ahead of it). Reported under
+      ``pending_command_event_ids``.
+    - A ``capability-receipt.accept`` record: the server's
+      ``SUPPORTED_BATCH_TYPES`` (application.py:29-42) excludes it, so
+      sending one would abort its *entire chunk* with a confusing
+      ``record-type-not-allowed`` rejection rather than just that one
+      record. It is skipped -- without stopping anything after it, since
+      unlike a credential gap, no future retry ever makes it sendable over
+      this operation -- and reported under
+      ``unsupported_command_event_ids``.
+
+    Note on actor identity: the server rejects any record -- observation or
+    command -- whose ``actor`` does not match the authenticated served
+    identity (``_validate_record`` in application.py). An observation
+    durably recorded via ``event observation add --actor`` under a mismatched
+    actor is therefore permanently unflushable through served sync: every
+    retry hits the same ``actor-mismatch`` rejection forever. This is known,
+    accepted behavior for #1195 Group C -- not something this sync path
+    attempts to detect or repair.
+    """
+    rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+    producer = _outbox.open_outbox(rollout_paths.outbox_path)
+    try:
+        records = _outbox.list_records(producer)
+    finally:
+        producer.close()
+
+    included: list[_outbox.OutboxRecord] = []
+    pending_event_ids: list[str] = []
+    unsupported_event_ids: list[str] = []
+    transient_credentials: dict[str, str] = {}
+
+    for index, record in enumerate(records):
+        if record.record_class == _outbox.OBSERVATION:
+            included.append(record)
+            continue
+        if record.event_type == "capability-receipt.accept":
+            unsupported_event_ids.append(record.event_id)
+            continue
+        envelope = _contracts.record_from_dict(record.payload)
+        required_refs = {
+            value
+            for key, value in envelope.payload.items()
+            if key.endswith("credential_ref") and isinstance(value, str)
+        }
+        pending = _authority_config.load_pending_authority_credential(
+            rollout_paths,
+            event_id=record.event_id,
+        )
+        available = (not required_refs) if pending is None else (
+            required_refs <= set(pending.credentials)
+        )
+        if not available:
+            pending_event_ids.extend(
+                blocked.event_id
+                for blocked in records[index:]
+                if blocked.record_class == _outbox.AUTHORITY_COMMAND
+            )
+            break
+        if pending is not None:
+            transient_credentials.update(pending.credentials)
+        included.append(record)
+
+    commands_by_event_id = {
+        record.event_id: record
+        for record in included
+        if record.record_class == _outbox.AUTHORITY_COMMAND
+    }
+
+    uploaded_observation_count = 0
+    decisions: list[dict[str, object]] = []
+    for start in range(0, len(included), batch_size):
+        chunk = included[start : start + batch_size]
+        if not chunk:
+            continue
+        key = _application.batch_idempotency_key(chunk)
+        result = _run_served(
+            "authority sync",
+            _served.batch_apply,
+            config.served_profile,
+            records=[_served_record_argument(r) for r in chunk],
+            idempotency_key=key,
+            transient_credentials=transient_credentials,
+        )
+        for item in result.get("results", []):
+            if item.get("kind") == "decision":
+                decisions.append(item)
+            else:
+                uploaded_observation_count += 1
+
+    for decision in decisions:
+        event_id = decision.get("event_id")
+        record = commands_by_event_id.get(event_id)
+        keep_for_recovery = (
+            decision.get("outcome") == "accepted"
+            and record is not None
+            and (
+                record.event_type == "claim.acquire"
+                or (
+                    record.event_type == "claim.handoff"
+                    and record.payload.get("payload", {}).get("mode") == "rotate"
+                )
+            )
+        )
+        if not keep_for_recovery:
+            _authority_config.remove_pending_authority_credential(
+                rollout_paths, event_id=event_id
+            )
+
+    payload = {
+        "uploaded_observation_count": uploaded_observation_count,
+        "decisions": decisions,
+        "pending_command_event_ids": pending_event_ids,
+        "unsupported_command_event_ids": unsupported_event_ids,
+    }
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+    else:
+        click.echo(
+            f"Authority sync: {uploaded_observation_count} observations uploaded, "
+            f"{len(decisions)} decisions, {len(pending_event_ids)} pending, "
+            f"{len(unsupported_event_ids)} unsupported."
+        )
+        if unsupported_event_ids:
+            click.echo(
+                "capability-receipt.accept is not supported over the served batch "
+                f"operation; unsupported event ids: {', '.join(unsupported_event_ids)}",
+                err=True,
+            )
+
+
 @authority_commands.command("sync")
 @click.option("--batch-size", default=100, type=int, show_default=True)
 @click.option("--json", "as_json", is_flag=True, default=False)
 @click.pass_obj
 def authority_sync(obj, batch_size: int, as_json: bool) -> None:
     """Retry durable commands whose local proof sidecar is available."""
+    config = _served_config_or_none(obj)
+    if config is not None:
+        _served_authority_sync(config, batch_size, as_json)
+        return
     rollout = _authority_rollout_status()
     if rollout.mode is not _authority_config.AuthorityCommandMode.ENFORCE:
         raise click.ClickException("authority sync requires enforce mode")

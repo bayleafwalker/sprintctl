@@ -330,7 +330,7 @@ def test_catalog_operation_names_uses_a_fresh_client_and_returns_names(fake_vuor
     assert client.invocations == [], "catalog discovery must not invoke an operation"
 
 
-def test_expected_operations_matches_the_ten_served_routes_command_paths():
+def test_expected_operations_matches_the_eleven_served_routes_command_paths():
     expected = {
         route.operation
         for path in (
@@ -344,11 +344,12 @@ def test_expected_operations_matches_the_ten_served_routes_command_paths():
             "claim.handoff",
             "claim.release",
             "pilot.cutover-evidence",
+            "authority.sync",
         )
         for route in routes_for(path)
     }
     assert served.EXPECTED_OPERATIONS == expected
-    assert len(served.EXPECTED_OPERATIONS) == 8
+    assert len(served.EXPECTED_OPERATIONS) == 9
     assert served.EXPECTED_OPERATIONS == {
         "work.read.sprints",
         "work.read.item",
@@ -358,6 +359,7 @@ def test_expected_operations_matches_the_ten_served_routes_command_paths():
         "work.lifecycle.arbitrate",
         "work.claim.arbitrate",
         "work.pilot.cutover-evidence",
+        "work.batch.apply",
     }
 
 

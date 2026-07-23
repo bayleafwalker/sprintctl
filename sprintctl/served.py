@@ -139,6 +139,40 @@ def cutover_evidence(
     )
 
 
+def batch_apply(
+    served_profile: ServedProfile,
+    *,
+    records: list[dict[str, Any]],
+    idempotency_key: str,
+    transient_credentials: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Invoke ``work.batch.apply`` (``sprintctl authority sync``).
+
+    This is the entire served sync mechanism: a mixed batch of OBSERVATION
+    and AUTHORITY_COMMAND records self-routes server-side by
+    ``record_class`` (``WorkApplication.apply_records``,
+    application.py:612-644) -- consecutive observations are ingested
+    together and each authority command is arbitrated individually, all
+    against one shared ``transient_credentials`` map for the whole batch
+    (omitted entirely when empty, since an observation-only batch needs no
+    credential material at all). ``idempotency_key`` must equal
+    ``application.batch_idempotency_key(records)`` computed over the exact
+    same records in the exact same order the server will see. See
+    ``sprintctl.cli._served_authority_sync`` for the chunking,
+    credential-resolution, and sidecar-cleanup this wraps -- and for why
+    ``capability-receipt.accept`` records are never included here (excluded
+    from the server's ``SUPPORTED_BATCH_TYPES``, application.py:29-42).
+    """
+
+    arguments = {"records": records}
+    kwargs: dict[str, Any] = {"idempotency_key": idempotency_key}
+    if transient_credentials:
+        kwargs["transient_credentials"] = transient_credentials
+    return asyncio.run(
+        _invoke_operation(served_profile, "work.batch.apply", arguments, **kwargs)
+    )
+
+
 def claim_start(
     served_profile: ServedProfile,
     *,
@@ -263,9 +297,11 @@ def lifecycle_arbitrate(
 # (next-work contributes two: work.read.next-work and work.project.next-work;
 # item.status and sprint.status share one operation, work.lifecycle.arbitrate;
 # claim.heartbeat, claim.handoff, and claim.release share one operation,
-# work.claim.arbitrate). Excludes authority.sync and event.observation.add:
-# both are registered routes in served_routes.py, but neither is wired to a
-# real served CLI path yet (Group C, still open in #1195).
+# work.claim.arbitrate). Excludes event.observation.add: it is a registered
+# route in served_routes.py, but no served CLI path invokes work.evidence.ingest
+# directly -- `event observation add` always appends to the local outbox and
+# is only ever flushed through authority.sync's work.batch.apply (see
+# _served_authority_sync in cli.py), so it stays out of this probe list.
 _DOCTOR_PROBE_COMMAND_PATHS = (
     "sprint.list",
     "item.show",
@@ -277,6 +313,7 @@ _DOCTOR_PROBE_COMMAND_PATHS = (
     "claim.handoff",
     "claim.release",
     "pilot.cutover-evidence",
+    "authority.sync",
 )
 
 EXPECTED_OPERATIONS: frozenset[str] = frozenset(
@@ -307,6 +344,7 @@ def catalog_operation_names(served_profile: ServedProfile) -> frozenset[str]:
 
 __all__ = [
     "EXPECTED_OPERATIONS",
+    "batch_apply",
     "catalog_operation_names",
     "claim_arbitrate",
     "claim_context",
