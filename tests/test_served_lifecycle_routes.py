@@ -383,3 +383,383 @@ def test_served_record_argument_matches_record_definition_field_set(tmp_path):
     }
     assert record["event_id"] == durable.event_id
     assert record["event_type"] == "sprint.close"
+
+
+# ---------------------------------------------------------------------------
+# claim heartbeat / claim release (#1195 Group A, Build A2)
+# ---------------------------------------------------------------------------
+
+
+def _credential_dir(tmp_path):
+    return tmp_path / ".sprintctl" / "authority-credentials"
+
+
+def _stub_claim_context(monkeypatch, *, claim_id, actor, authority_repo_uuid, claim_revision):
+    def fake_claim_context(profile, *, claim_id: int):
+        return {
+            "repo_id": "repo-x",
+            "authority_repo_uuid": authority_repo_uuid,
+            "actor": actor,
+            "claim": {"claim_id": claim_id, "work_item_id": 3, "actor": actor},
+            "claim_revision": claim_revision,
+        }
+
+    monkeypatch.setattr(cli_module._served, "claim_context", fake_claim_context)
+
+
+def test_served_claim_heartbeat_mints_claim_renew_with_metadata_parity(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    authority_repo_uuid = str(uuid4())
+    _stub_claim_context(
+        monkeypatch,
+        claim_id=9,
+        actor="worker-1",
+        authority_repo_uuid=authority_repo_uuid,
+        claim_revision="claim:9@sha256:" + "a" * 64,
+    )
+    captured = {}
+
+    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+        captured["record"] = record
+        captured["transient_credentials"] = transient_credentials
+        return {
+            "outcome": "accepted",
+            "effect": {
+                "claim_id": 9,
+                "work_item_id": 3,
+                "actor": "worker-1",
+                "expires_at": "2026-07-23T01:05:00Z",
+            },
+        }
+
+    monkeypatch.setattr(cli_module._served, "claim_arbitrate", fake_claim_arbitrate)
+
+    result = runner.invoke(
+        cli,
+        [
+            "claim", "heartbeat", "--id", "9", "--claim-token", "secret-proof",
+            "--ttl", "600", "--branch", "feat/x", "--worktree", "/wt",
+            "--commit-sha", "abc123", "--pr-ref", "org/repo#1",
+            "--runtime-session-id", "rs-1", "--instance-id", "inst-1",
+            "--hostname", "host-1", "--pid", "4242", "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    record = captured["record"]
+    assert record["event_type"] == "claim.renew"
+    assert record["actor"] == "worker-1"
+    assert record["basis_revision"] == "claim:9@sha256:" + "a" * 64
+
+    payload = record["payload"]["payload"]
+    assert payload["claim_id"] == 9
+    assert payload["ttl_seconds"] == 600
+    assert payload["metadata"] == {
+        "runtime_session_id": "rs-1",
+        "instance_id": "inst-1",
+        "branch": "feat/x",
+        "worktree_path": "/wt",
+        "commit_sha": "abc123",
+        "pr_ref": "org/repo#1",
+        "hostname": "host-1",
+        "pid": 4242,
+    }
+    ref = payload["credential_ref"]
+    assert captured["transient_credentials"] == {ref: "secret-proof"}
+
+    refs = record["payload"]["refs"]
+    assert refs["repo_id"] == authority_repo_uuid
+    assert refs["aggregate_type"] == "claim"
+    assert refs["claim_id"] == 9
+
+    payload_json = json.loads(result.output)
+    assert payload_json["heartbeat_ttl_seconds"] == 600
+    assert payload_json["expires_at"] == "2026-07-23T01:05:00Z"
+
+    # Terminal accepted decision clears the retry sidecar.
+    assert list(_credential_dir(tmp_path).glob("*")) == []
+
+
+def test_served_claim_heartbeat_omits_metadata_when_all_fields_are_none(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    _stub_claim_context(
+        monkeypatch,
+        claim_id=1,
+        actor="worker-1",
+        authority_repo_uuid=str(uuid4()),
+        claim_revision="claim:1@sha256:" + "b" * 64,
+    )
+    captured = {}
+
+    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+        captured["record"] = record
+        return {
+            "outcome": "accepted",
+            "effect": {"claim_id": 1, "expires_at": "2026-07-23T01:05:00Z"},
+        }
+
+    monkeypatch.setattr(cli_module._served, "claim_arbitrate", fake_claim_arbitrate)
+    monkeypatch.setattr(cli_module, "_detect_runtime_session_id", lambda explicit: None)
+    monkeypatch.setattr(cli_module, "_detect_hostname", lambda explicit: "detected-host")
+    monkeypatch.setattr(cli_module, "_detect_instance_id", lambda explicit: "detected-instance")
+    monkeypatch.setattr(cli_module, "_detect_pid", lambda explicit: 1)
+
+    result = runner.invoke(
+        cli, ["claim", "heartbeat", "--id", "1", "--claim-token", "secret"]
+    )
+    assert result.exit_code == 0, result.output
+    payload = captured["record"]["payload"]["payload"]
+    assert "runtime_session_id" not in payload.get("metadata", {})
+    assert "branch" not in payload.get("metadata", {})
+
+
+def test_served_claim_heartbeat_warns_before_expiry(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    _stub_claim_context(
+        monkeypatch,
+        claim_id=2,
+        actor="worker-1",
+        authority_repo_uuid=str(uuid4()),
+        claim_revision="claim:2@sha256:" + "c" * 64,
+    )
+    monkeypatch.setattr(
+        cli_module._served,
+        "claim_arbitrate",
+        lambda profile, *, record, transient_credentials: {
+            "outcome": "accepted",
+            "effect": {"claim_id": 2, "expires_at": "2026-07-23T00:00:30Z"},
+        },
+    )
+
+    result = runner.invoke(
+        cli,
+        [
+            "claim", "heartbeat", "--id", "2", "--claim-token", "secret",
+            "--ttl", "30", "--warn-before-expiry", "60",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "heartbeat refreshed (ttl=30s, expires=2026-07-23T00:00:30Z)" in result.output
+    assert "Warning: claim #2 expires in 30s" in result.output
+
+
+def test_served_claim_heartbeat_ignores_mismatched_advisory_actor(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    _stub_claim_context(
+        monkeypatch,
+        claim_id=3,
+        actor="authenticated-actor",
+        authority_repo_uuid=str(uuid4()),
+        claim_revision="claim:3@sha256:" + "d" * 64,
+    )
+    captured = {}
+
+    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+        captured["record"] = record
+        return {"outcome": "accepted", "effect": {"claim_id": 3, "expires_at": "x"}}
+
+    monkeypatch.setattr(cli_module._served, "claim_arbitrate", fake_claim_arbitrate)
+
+    result = runner.invoke(
+        cli,
+        [
+            "claim", "heartbeat", "--id", "3", "--claim-token", "secret",
+            "--actor", "someone-else",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "authenticated-actor" in result.output
+    assert "'someone-else' was not sent and is ignored" in result.output
+    assert captured["record"]["actor"] == "authenticated-actor"
+
+
+def test_served_claim_heartbeat_surfaces_a_rejected_decision_and_clears_sidecar(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    _stub_claim_context(
+        monkeypatch,
+        claim_id=4,
+        actor="worker-1",
+        authority_repo_uuid=str(uuid4()),
+        claim_revision="claim:4@sha256:" + "e" * 64,
+    )
+    monkeypatch.setattr(
+        cli_module._served,
+        "claim_arbitrate",
+        lambda profile, *, record, transient_credentials: {
+            "outcome": "rejected",
+            "reason_code": "invalid-claim-proof",
+            "reason_detail": "claim proof is invalid",
+            "effect": {},
+        },
+    )
+
+    result = runner.invoke(
+        cli, ["claim", "heartbeat", "--id", "4", "--claim-token", "wrong-secret"]
+    )
+    assert result.exit_code != 0
+    assert "invalid-claim-proof" in result.output
+    # A rejected decision is terminal too: the sidecar is cleared, not kept.
+    assert list(_credential_dir(tmp_path).glob("*")) == []
+
+
+def test_served_claim_heartbeat_keeps_sidecar_on_transport_failure(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    _stub_claim_context(
+        monkeypatch,
+        claim_id=5,
+        actor="worker-1",
+        authority_repo_uuid=str(uuid4()),
+        claim_revision="claim:5@sha256:" + "f" * 64,
+    )
+
+    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+        raise RuntimeError("connection reset")
+
+    monkeypatch.setattr(cli_module._served, "claim_arbitrate", fake_claim_arbitrate)
+
+    result = runner.invoke(
+        cli, ["claim", "heartbeat", "--id", "5", "--claim-token", "secret-proof"]
+    )
+    assert result.exit_code != 0
+    assert "connection reset" in result.output
+    # Unknown/transport failure: the sidecar is retained for a retry.
+    sidecars = list(_credential_dir(tmp_path).glob("*"))
+    assert len(sidecars) == 1
+
+
+def test_served_claim_release_clears_sidecar_on_accepted_decision(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    _stub_claim_context(
+        monkeypatch,
+        claim_id=6,
+        actor="worker-1",
+        authority_repo_uuid=str(uuid4()),
+        claim_revision="claim:6@sha256:" + "1" * 64,
+    )
+    captured = {}
+
+    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+        captured["record"] = record
+        captured["transient_credentials"] = transient_credentials
+        return {
+            "outcome": "accepted",
+            "effect": {"claim_id": 6, "released": True},
+        }
+
+    monkeypatch.setattr(cli_module._served, "claim_arbitrate", fake_claim_arbitrate)
+
+    result = runner.invoke(
+        cli, ["claim", "release", "--id", "6", "--claim-token", "secret-proof"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "Claim #6 released." in result.output
+
+    record = captured["record"]
+    assert record["event_type"] == "claim.release"
+    assert record["actor"] == "worker-1"
+    payload = record["payload"]["payload"]
+    assert set(payload) == {"claim_id", "credential_ref"}
+    assert payload["claim_id"] == 6
+    ref = payload["credential_ref"]
+    assert captured["transient_credentials"] == {ref: "secret-proof"}
+
+    assert list(_credential_dir(tmp_path).glob("*")) == []
+
+
+def test_served_claim_release_keeps_sidecar_on_transport_failure(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    _stub_claim_context(
+        monkeypatch,
+        claim_id=7,
+        actor="worker-1",
+        authority_repo_uuid=str(uuid4()),
+        claim_revision="claim:7@sha256:" + "2" * 64,
+    )
+
+    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+        raise RuntimeError("timeout")
+
+    monkeypatch.setattr(cli_module._served, "claim_arbitrate", fake_claim_arbitrate)
+
+    result = runner.invoke(
+        cli, ["claim", "release", "--id", "7", "--claim-token", "secret-proof"]
+    )
+    assert result.exit_code != 0
+    assert "timeout" in result.output
+    sidecars = list(_credential_dir(tmp_path).glob("*"))
+    assert len(sidecars) == 1
+
+
+def test_served_claim_release_surfaces_a_rejected_decision(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    _stub_claim_context(
+        monkeypatch,
+        claim_id=8,
+        actor="worker-1",
+        authority_repo_uuid=str(uuid4()),
+        claim_revision="claim:8@sha256:" + "3" * 64,
+    )
+    monkeypatch.setattr(
+        cli_module._served,
+        "claim_arbitrate",
+        lambda profile, *, record, transient_credentials: {
+            "outcome": "rejected",
+            "reason_code": "expired-grant",
+            "reason_detail": "claim grant has expired",
+            "effect": {},
+        },
+    )
+
+    result = runner.invoke(
+        cli, ["claim", "release", "--id", "8", "--claim-token", "secret-proof"]
+    )
+    assert result.exit_code != 0
+    assert "expired-grant" in result.output
+
+
+def test_served_claim_release_ignores_mismatched_advisory_actor(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    _stub_claim_context(
+        monkeypatch,
+        claim_id=10,
+        actor="authenticated-actor",
+        authority_repo_uuid=str(uuid4()),
+        claim_revision="claim:10@sha256:" + "4" * 64,
+    )
+    captured = {}
+
+    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+        captured["record"] = record
+        return {"outcome": "accepted", "effect": {"claim_id": 10, "released": True}}
+
+    monkeypatch.setattr(cli_module._served, "claim_arbitrate", fake_claim_arbitrate)
+
+    result = runner.invoke(
+        cli,
+        [
+            "claim", "release", "--id", "10", "--claim-token", "secret",
+            "--actor", "someone-else",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "authenticated-actor" in result.output
+    assert "'someone-else' was not sent and is ignored" in result.output
+    assert captured["record"]["actor"] == "authenticated-actor"

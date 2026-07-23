@@ -147,6 +147,55 @@ def claim_start(
     return asyncio.run(_invoke_operation(served_profile, "work.claim.start", arguments))
 
 
+def claim_context(served_profile: ServedProfile, *, claim_id: int) -> dict[str, Any]:
+    """Invoke ``work.claim.context`` (authenticated-actor/authority-uuid/claim-
+    snapshot/claim-revision read backing served ``claim heartbeat``/``claim
+    release``/``claim handoff``).
+
+    A plain v1 read: no ``transient_credentials``, no idempotency key, no
+    basis revision -- this never mutates anything, so there is nothing to
+    retry-guard. See the "Approved authority-context contract" section of
+    ``docs/plans/agentops/vuoro-claim-proof-transport-clarification-2026-07-23.md``
+    for the exact non-secret result shape this returns.
+    """
+
+    return asyncio.run(
+        _invoke_operation(served_profile, "work.claim.context", {"claim_id": claim_id})
+    )
+
+
+def claim_arbitrate(
+    served_profile: ServedProfile,
+    *,
+    record: dict[str, Any],
+    transient_credentials: dict[str, str],
+) -> dict[str, Any]:
+    """Invoke ``work.claim.arbitrate`` (served ``claim heartbeat``/``claim
+    release``/``claim handoff``) with the claim proof carried over the
+    ``invocation/v2`` transient-credential channel, not as a catalog
+    argument.
+
+    Per the approved transport contract, ``transient_credentials`` is a
+    transport-level facility outside the operation's ``arguments`` --
+    forwarded here to ``_invoke_operation``'s ``**kwargs``, which passes it
+    straight through to ``client.invoke(...)``. As with
+    :func:`lifecycle_arbitrate`, the idempotency key and basis revision must
+    equal the record's own ``event_id``/``basis_revision``.
+    """
+
+    arguments = {"record": record}
+    return asyncio.run(
+        _invoke_operation(
+            served_profile,
+            "work.claim.arbitrate",
+            arguments,
+            idempotency_key=record["event_id"],
+            basis_revision=record["basis_revision"],
+            transient_credentials=transient_credentials,
+        )
+    )
+
+
 def lifecycle_arbitrate(
     served_profile: ServedProfile, *, record: dict[str, Any]
 ) -> dict[str, Any]:
@@ -178,10 +227,10 @@ def lifecycle_arbitrate(
 
 
 # The subset of served_routes.py's allowlist that doctor's served probe
-# checks for -- the exact 6 catalog operations #1195 wires through this
-# facade (next-work contributes two: work.read.next-work and
-# work.project.next-work; item.status and sprint.status share one operation,
-# work.lifecycle.arbitrate).
+# checks for -- the exact catalog operations #1195 wires through this facade
+# (next-work contributes two: work.read.next-work and work.project.next-work;
+# item.status and sprint.status share one operation, work.lifecycle.arbitrate;
+# claim.heartbeat and claim.release share one operation, work.claim.arbitrate).
 _DOCTOR_PROBE_COMMAND_PATHS = (
     "sprint.list",
     "item.show",
@@ -189,6 +238,8 @@ _DOCTOR_PROBE_COMMAND_PATHS = (
     "claim.start",
     "item.status",
     "sprint.status",
+    "claim.heartbeat",
+    "claim.release",
 )
 
 EXPECTED_OPERATIONS: frozenset[str] = frozenset(
@@ -220,6 +271,8 @@ def catalog_operation_names(served_profile: ServedProfile) -> frozenset[str]:
 __all__ = [
     "EXPECTED_OPERATIONS",
     "catalog_operation_names",
+    "claim_arbitrate",
+    "claim_context",
     "claim_start",
     "lifecycle_arbitrate",
     "project_next_work",

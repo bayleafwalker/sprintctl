@@ -212,6 +212,66 @@ def test_lifecycle_arbitrate_sends_the_record_and_matching_idempotency_and_basis
     assert kwargs["basis_revision"] == record["basis_revision"]
 
 
+def test_claim_context_sends_only_claim_id_with_no_credentials(fake_vuoro_client):
+    profile = _profile()
+    result = served.claim_context(profile, claim_id=9)
+    assert result["operation"] == "work.claim.context"
+    assert result["arguments"] == {"claim_id": 9}
+    client = fake_vuoro_client.instances[-1]
+    _operation, _arguments, kwargs = client.invocations[0]
+    assert kwargs == {}
+
+
+def _sample_claim_record(**overrides) -> dict:
+    record = {
+        "origin_stream_id": "11111111-1111-1111-1111-111111111111",
+        "origin_seq": 1,
+        "event_id": "44444444-4444-4444-4444-444444444444",
+        "schema_version": 1,
+        "record_class": "authority-command",
+        "event_type": "claim.renew",
+        "actor": "worker",
+        "runtime_session_id": None,
+        "occurred_at": "2026-07-23T00:00:00Z",
+        "basis_revision": "claim:9@sha256:" + "b" * 64,
+        "correlation_id": "44444444-4444-4444-4444-444444444444",
+        "causation_id": None,
+        "payload": {"claim_id": 9, "ttl_seconds": 300},
+        "payload_sha256": "a" * 64,
+        "created_at": "2026-07-23T00:00:00Z",
+    }
+    record.update(overrides)
+    return record
+
+
+def test_claim_arbitrate_sends_the_record_and_transient_credentials(fake_vuoro_client):
+    profile = _profile()
+    record = _sample_claim_record()
+    credentials = {"sha256:" + "c" * 64: "secret-proof"}
+    result = served.claim_arbitrate(profile, record=record, transient_credentials=credentials)
+    assert result["operation"] == "work.claim.arbitrate"
+    assert result["arguments"] == {"record": record}
+    client = fake_vuoro_client.instances[-1]
+    _operation, _arguments, kwargs = client.invocations[0]
+    assert kwargs["idempotency_key"] == record["event_id"]
+    assert kwargs["basis_revision"] == record["basis_revision"]
+    assert kwargs["transient_credentials"] == credentials
+
+
+def test_claim_arbitrate_uses_a_fresh_client_per_call(fake_vuoro_client):
+    profile = _profile()
+    served.claim_arbitrate(
+        profile, record=_sample_claim_record(), transient_credentials={}
+    )
+    served.claim_arbitrate(
+        profile, record=_sample_claim_record(), transient_credentials={}
+    )
+    assert len(fake_vuoro_client.instances) == 2
+    first, second = fake_vuoro_client.instances
+    assert first is not second
+    assert first.closed and second.closed
+
+
 def test_lifecycle_arbitrate_uses_a_fresh_client_per_call(fake_vuoro_client):
     profile = _profile()
     served.lifecycle_arbitrate(profile, record=_sample_lifecycle_record())
@@ -270,7 +330,7 @@ def test_catalog_operation_names_uses_a_fresh_client_and_returns_names(fake_vuor
     assert client.invocations == [], "catalog discovery must not invoke an operation"
 
 
-def test_expected_operations_matches_the_six_served_routes_command_paths():
+def test_expected_operations_matches_the_eight_served_routes_command_paths():
     expected = {
         route.operation
         for path in (
@@ -280,11 +340,13 @@ def test_expected_operations_matches_the_six_served_routes_command_paths():
             "claim.start",
             "item.status",
             "sprint.status",
+            "claim.heartbeat",
+            "claim.release",
         )
         for route in routes_for(path)
     }
     assert served.EXPECTED_OPERATIONS == expected
-    assert len(served.EXPECTED_OPERATIONS) == 6
+    assert len(served.EXPECTED_OPERATIONS) == 7
     assert served.EXPECTED_OPERATIONS == {
         "work.read.sprints",
         "work.read.item",
@@ -292,6 +354,7 @@ def test_expected_operations_matches_the_six_served_routes_command_paths():
         "work.project.next-work",
         "work.claim.start",
         "work.lifecycle.arbitrate",
+        "work.claim.arbitrate",
     }
 
 

@@ -229,6 +229,8 @@ _SERVED_ITEM_SHOW_ROUTE = _served_routes.routes_for("item.show")[0]
 _SERVED_CLAIM_START_ROUTE = _served_routes.routes_for("claim.start")[0]
 _SERVED_ITEM_STATUS_ROUTE = _served_routes.routes_for("item.status")[0]
 _SERVED_SPRINT_STATUS_ROUTE = _served_routes.routes_for("sprint.status")[0]
+_SERVED_CLAIM_HEARTBEAT_ROUTE = _served_routes.routes_for("claim.heartbeat")[0]
+_SERVED_CLAIM_RELEASE_ROUTE = _served_routes.routes_for("claim.release")[0]
 _SERVED_NEXT_WORK_ROUTES = {
     route.operation: route for route in _served_routes.routes_for("next-work")
 }
@@ -237,6 +239,8 @@ assert _SERVED_ITEM_SHOW_ROUTE.operation == "work.read.item"
 assert _SERVED_CLAIM_START_ROUTE.operation == "work.claim.start"
 assert _SERVED_ITEM_STATUS_ROUTE.operation == "work.lifecycle.arbitrate"
 assert _SERVED_SPRINT_STATUS_ROUTE.operation == "work.lifecycle.arbitrate"
+assert _SERVED_CLAIM_HEARTBEAT_ROUTE.operation == "work.claim.arbitrate"
+assert _SERVED_CLAIM_RELEASE_ROUTE.operation == "work.claim.arbitrate"
 assert set(_SERVED_NEXT_WORK_ROUTES) == {"work.read.next-work", "work.project.next-work"}
 
 
@@ -5882,6 +5886,156 @@ def claim_start(
     _echo_item_refs(refs, item_id)
 
 
+def _served_claim_heartbeat(
+    config,
+    claim_id,
+    claim_token,
+    actor,
+    ttl_seconds,
+    warn_before_expiry,
+    runtime_session_id,
+    instance_id,
+    branch,
+    worktree_path,
+    commit_sha,
+    pr_ref,
+    hostname,
+    pid,
+    as_json,
+) -> None:
+    """Served-mode ``claim heartbeat``: mints a ``claim.renew`` authority
+    command, carries its proof over the ``invocation/v2`` transient-
+    credential channel (never a catalog argument), and arbitrates it via
+    ``work.claim.arbitrate``.
+
+    Per "Approved authority-context contract" in the claim-proof transport
+    clarification, ``work.claim.context`` supplies the authenticated actor,
+    authority repo UUID, and current claim revision this needs to construct
+    a canonical ``AuthorityCommand`` without database access. Like
+    ``claim_start``, the minted record's actor is always that authenticated
+    identity, never an advisory ``--actor`` override (the server rejects an
+    actor mismatch downstream anyway, per ``_validate_record`` in
+    ``application.py``).
+    """
+    runtime_session_id = _detect_runtime_session_id(runtime_session_id)
+    instance_id = _detect_instance_id(instance_id)
+    hostname = _detect_hostname(hostname)
+    pid = _detect_pid(pid)
+
+    context = _run_served(
+        "claim heartbeat", _served.claim_context, config.served_profile, claim_id=claim_id
+    )
+    authenticated_actor = context["actor"]
+    if actor is not None and actor != authenticated_actor:
+        click.echo(
+            f"Note: served mode claims as the authenticated identity "
+            f"({authenticated_actor}); --actor {actor!r} was not sent and is ignored.",
+            err=True,
+        )
+
+    # Same credential_ref/credentials-map shape ``authority submit`` builds
+    # from a claim token -- see its ``if claim_token is not None:`` branch.
+    ref = _authority.credential_ref(claim_token)
+    credentials = {ref: claim_token}
+    metadata = {
+        key: value
+        for key, value in {
+            "runtime_session_id": runtime_session_id,
+            "instance_id": instance_id,
+            "branch": branch,
+            "worktree_path": worktree_path,
+            "commit_sha": commit_sha,
+            "pr_ref": pr_ref,
+            "hostname": hostname,
+            "pid": pid,
+        }.items()
+        if value is not None
+    }
+    payload: dict[str, object] = {
+        "claim_id": claim_id,
+        "ttl_seconds": ttl_seconds,
+        "credential_ref": ref,
+    }
+    if metadata:
+        payload["metadata"] = metadata
+
+    rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+    try:
+        durable = _mint_authority_command_record(
+            record_type="claim.renew",
+            actor=authenticated_actor,
+            refs={
+                "repo_id": context["authority_repo_uuid"],
+                "aggregate_type": "claim",
+                "aggregate_id": claim_id,
+                "claim_id": claim_id,
+            },
+            payload=payload,
+            basis_revision=context["claim_revision"],
+            outbox_path=rollout_paths.outbox_path,
+        )
+    except (TypeError, ValueError) as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+    # Written before the served invocation below so an unknown/transport
+    # outcome leaves retry material for the identical durable record --
+    # mirrors ``authority submit``'s enforce-mode sequencing.
+    _authority_config.store_pending_authority_credentials(
+        rollout_paths,
+        event_id=durable.event_id,
+        credentials=credentials,
+        recovery_credential_ref=None,
+    )
+
+    decision = _run_served(
+        "claim heartbeat",
+        _served.claim_arbitrate,
+        config.served_profile,
+        record=_served_record_argument(durable),
+        transient_credentials=credentials,
+    )
+    # A resolved decision (accepted or rejected) is terminal either way, so
+    # the retry sidecar is cleared now; an exception from the call above
+    # would have exited via _run_served before reaching this line, leaving
+    # the sidecar in place for a retry.
+    _authority_config.remove_pending_authority_credential(
+        rollout_paths, event_id=durable.event_id
+    )
+    if decision["outcome"] != "accepted":
+        click.echo(
+            f"Error: {decision.get('reason_code')}: {decision.get('reason_detail')}",
+            err=True,
+        )
+        sys.exit(1)
+
+    # decision["effect"] is _claim_effect(...)'s post-update row (claim_id,
+    # work_item_id, actor, claim_type, exclusive, heartbeat, expires_at,
+    # status, lease_epoch, runtime_session_id, instance_id) -- a smaller
+    # shape than the full non-served ``m.get_claim(...)`` dict (no
+    # branch/worktree_path/commit_sha/pr_ref/hostname/pid/identity/
+    # ownership_proof fields; served mode never fetches those non-secret-but-
+    # unnecessary extras with a second round trip just for cosmetic parity).
+    # The wording, the fields actually referenced by the text output
+    # (``expires_at``), and ``--warn-before-expiry`` behavior match the
+    # non-served command exactly.
+    refreshed = dict(decision["effect"])
+    if as_json:
+        refreshed["heartbeat_ttl_seconds"] = ttl_seconds
+        click.echo(json.dumps(refreshed, indent=2))
+        return
+    click.echo(
+        f"Claim #{claim_id} heartbeat refreshed (ttl={ttl_seconds}s, expires={refreshed['expires_at']})"
+    )
+    if warn_before_expiry > 0 and ttl_seconds <= warn_before_expiry:
+        click.echo(
+            f"Warning: claim #{claim_id} expires in {ttl_seconds}s which is within "
+            f"the --warn-before-expiry window ({warn_before_expiry}s). "
+            "Consider increasing --ttl or heartbeating more frequently.",
+            err=True,
+        )
+
+
 @claim.command("heartbeat")
 @click.option("--id", "claim_id", type=int, required=True, help="Claim ID")
 @click.option("--claim-token", required=True, help="Claim token returned when the claim was created")
@@ -5919,6 +6073,26 @@ def claim_heartbeat(
     as_json,
 ) -> None:
     """Refresh the TTL on an existing claim."""
+    config = _served_config_or_none(obj)
+    if config is not None:
+        _served_claim_heartbeat(
+            config,
+            claim_id,
+            claim_token,
+            actor,
+            ttl_seconds,
+            warn_before_expiry,
+            runtime_session_id,
+            instance_id,
+            branch,
+            worktree_path,
+            commit_sha,
+            pr_ref,
+            hostname,
+            pid,
+            as_json,
+        )
+        return
     store, m = _get_store(obj)
     runtime_session_id = _detect_runtime_session_id(runtime_session_id)
     instance_id = _detect_instance_id(instance_id)
@@ -5959,6 +6133,77 @@ def claim_heartbeat(
         )
 
 
+def _served_claim_release(config, claim_id, claim_token, actor) -> None:
+    """Served-mode ``claim release``: mints a ``claim.release`` authority
+    command, carries its proof over the ``invocation/v2`` transient-
+    credential channel, and arbitrates it via ``work.claim.arbitrate``.
+
+    See :func:`_served_claim_heartbeat` for the shared context-read /
+    proof-reference / sidecar / mint / arbitrate / cleanup sequence this
+    mirrors; release's authority-command payload needs only ``claim_id`` and
+    ``credential_ref`` (``_handle_claim_mutation``'s ``claim.release`` branch
+    in ``authority.py`` reads nothing else from the payload).
+    """
+    context = _run_served(
+        "claim release", _served.claim_context, config.served_profile, claim_id=claim_id
+    )
+    authenticated_actor = context["actor"]
+    if actor is not None and actor != authenticated_actor:
+        click.echo(
+            f"Note: served mode claims as the authenticated identity "
+            f"({authenticated_actor}); --actor {actor!r} was not sent and is ignored.",
+            err=True,
+        )
+
+    ref = _authority.credential_ref(claim_token)
+    credentials = {ref: claim_token}
+    payload = {"claim_id": claim_id, "credential_ref": ref}
+
+    rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+    try:
+        durable = _mint_authority_command_record(
+            record_type="claim.release",
+            actor=authenticated_actor,
+            refs={
+                "repo_id": context["authority_repo_uuid"],
+                "aggregate_type": "claim",
+                "aggregate_id": claim_id,
+                "claim_id": claim_id,
+            },
+            payload=payload,
+            basis_revision=context["claim_revision"],
+            outbox_path=rollout_paths.outbox_path,
+        )
+    except (TypeError, ValueError) as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+    _authority_config.store_pending_authority_credentials(
+        rollout_paths,
+        event_id=durable.event_id,
+        credentials=credentials,
+        recovery_credential_ref=None,
+    )
+
+    decision = _run_served(
+        "claim release",
+        _served.claim_arbitrate,
+        config.served_profile,
+        record=_served_record_argument(durable),
+        transient_credentials=credentials,
+    )
+    _authority_config.remove_pending_authority_credential(
+        rollout_paths, event_id=durable.event_id
+    )
+    if decision["outcome"] != "accepted":
+        click.echo(
+            f"Error: {decision.get('reason_code')}: {decision.get('reason_detail')}",
+            err=True,
+        )
+        sys.exit(1)
+    click.echo(f"Claim #{claim_id} released.")
+
+
 @claim.command("release")
 @click.option("--id", "claim_id", type=int, required=True, help="Claim ID")
 @click.option("--claim-token", required=True, help="Claim token returned when the claim was created")
@@ -5966,6 +6211,10 @@ def claim_heartbeat(
 @click.pass_obj
 def claim_release(obj, claim_id, claim_token, actor) -> None:
     """Release (delete) a claim."""
+    config = _served_config_or_none(obj)
+    if config is not None:
+        _served_claim_release(config, claim_id, claim_token, actor)
+        return
     store, m = _get_store(obj)
     try:
         m.release_claim(store, claim_id, claim_token, actor=actor)
