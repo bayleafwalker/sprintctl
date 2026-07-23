@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
@@ -334,6 +335,13 @@ def test_probe_served_backend_reports_catalog_transport_failure(tmp_path, monkey
     assert result["error"] == "connection refused"
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 12),
+    reason=(
+        "served mode requires Python 3.12+; this test exercises behavior only "
+        "reachable past that version gate"
+    ),
+)
 def test_doctor_json_reports_served_mode_end_to_end(tmp_path, monkeypatch, runner):
     (tmp_path / ".git").mkdir()
     cred_path = tmp_path / "cred"

@@ -11,6 +11,7 @@ transport layer -- the same pattern ``tests/test_authority_cli.py`` uses for
 from __future__ import annotations
 
 import json
+import sys
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -19,6 +20,14 @@ import pytest
 import sprintctl.cli as cli_module
 from sprintctl import outbox
 from sprintctl.cli import cli
+
+_requires_312 = pytest.mark.skipif(
+    sys.version_info < (3, 12),
+    reason=(
+        "served mode requires Python 3.12+; this test exercises behavior only "
+        "reachable past that version gate"
+    ),
+)
 
 
 def _configure_served_repo(tmp_path, monkeypatch) -> None:
@@ -62,6 +71,7 @@ def _outbox_records(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@_requires_312
 def test_served_item_status_active_to_done_appends_item_done_record(
     runner, tmp_path, monkeypatch
 ):
@@ -104,6 +114,7 @@ def test_served_item_status_active_to_done_appends_item_done_record(
     assert records[0].event_id == captured["record"]["event_id"]
 
 
+@_requires_312
 def test_served_item_status_pending_to_active_uses_item_transition_record(
     runner, tmp_path, monkeypatch
 ):
@@ -132,6 +143,7 @@ def test_served_item_status_pending_to_active_uses_item_transition_record(
     assert captured["record"]["payload"]["payload"] == {"to_status": "active"}
 
 
+@_requires_312
 def test_served_item_status_rejects_claim_proof_arguments(runner, tmp_path, monkeypatch):
     _configure_served_repo(tmp_path, monkeypatch)
     # Neither _served.read_item nor _served.lifecycle_arbitrate should ever be
@@ -154,6 +166,7 @@ def test_served_item_status_rejects_claim_proof_arguments(runner, tmp_path, monk
     assert _outbox_records(tmp_path) == []
 
 
+@_requires_312
 def test_served_item_status_surfaces_a_rejected_decision(runner, tmp_path, monkeypatch):
     _configure_served_repo(tmp_path, monkeypatch)
     item = {"id": 4, "aggregate_uuid": str(uuid4()), "status": "done"}
@@ -183,6 +196,7 @@ def test_served_item_status_surfaces_a_rejected_decision(runner, tmp_path, monke
 # ---------------------------------------------------------------------------
 
 
+@_requires_312
 def test_served_sprint_status_activate_appends_sprint_activate_record(
     runner, tmp_path, monkeypatch
 ):
@@ -221,6 +235,7 @@ def test_served_sprint_status_activate_appends_sprint_activate_record(
     ]
 
 
+@_requires_312
 def test_served_sprint_status_close_surfaces_boundary_event(runner, tmp_path, monkeypatch):
     _configure_served_repo(tmp_path, monkeypatch)
     sprint = {"id": 12, "aggregate_uuid": str(uuid4()), "status": "active"}
@@ -254,6 +269,7 @@ def test_served_sprint_status_close_surfaces_boundary_event(runner, tmp_path, mo
     assert payload["boundary_revision"] == "event:99"
 
 
+@_requires_312
 def test_served_sprint_status_rejects_planned_target_with_no_served_call(
     runner, tmp_path, monkeypatch
 ):
@@ -272,6 +288,7 @@ def test_served_sprint_status_rejects_planned_target_with_no_served_call(
     assert _outbox_records(tmp_path) == []
 
 
+@_requires_312
 def test_served_sprint_status_not_found(runner, tmp_path, monkeypatch):
     _configure_served_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(
@@ -408,6 +425,7 @@ def _stub_claim_context(monkeypatch, *, claim_id, actor, authority_repo_uuid, cl
     monkeypatch.setattr(cli_module._served, "claim_context", fake_claim_context)
 
 
+@_requires_312
 def test_served_claim_heartbeat_mints_claim_renew_with_metadata_parity(
     runner, tmp_path, monkeypatch
 ):
@@ -483,6 +501,7 @@ def test_served_claim_heartbeat_mints_claim_renew_with_metadata_parity(
     assert list(_credential_dir(tmp_path).glob("*")) == []
 
 
+@_requires_312
 def test_served_claim_heartbeat_omits_metadata_when_all_fields_are_none(
     runner, tmp_path, monkeypatch
 ):
@@ -518,6 +537,7 @@ def test_served_claim_heartbeat_omits_metadata_when_all_fields_are_none(
     assert "branch" not in payload.get("metadata", {})
 
 
+@_requires_312
 def test_served_claim_heartbeat_warns_before_expiry(runner, tmp_path, monkeypatch):
     _configure_served_repo(tmp_path, monkeypatch)
     _stub_claim_context(
@@ -548,6 +568,7 @@ def test_served_claim_heartbeat_warns_before_expiry(runner, tmp_path, monkeypatc
     assert "Warning: claim #2 expires in 30s" in result.output
 
 
+@_requires_312
 def test_served_claim_heartbeat_ignores_mismatched_advisory_actor(
     runner, tmp_path, monkeypatch
 ):
@@ -580,6 +601,7 @@ def test_served_claim_heartbeat_ignores_mismatched_advisory_actor(
     assert captured["record"]["actor"] == "authenticated-actor"
 
 
+@_requires_312
 def test_served_claim_heartbeat_surfaces_a_rejected_decision_and_clears_sidecar(
     runner, tmp_path, monkeypatch
 ):
@@ -611,6 +633,7 @@ def test_served_claim_heartbeat_surfaces_a_rejected_decision_and_clears_sidecar(
     assert list(_credential_dir(tmp_path).glob("*")) == []
 
 
+@_requires_312
 def test_served_claim_heartbeat_keeps_sidecar_on_transport_failure(
     runner, tmp_path, monkeypatch
 ):
@@ -638,6 +661,7 @@ def test_served_claim_heartbeat_keeps_sidecar_on_transport_failure(
     assert len(sidecars) == 1
 
 
+@_requires_312
 def test_served_claim_release_clears_sidecar_on_accepted_decision(
     runner, tmp_path, monkeypatch
 ):
@@ -679,6 +703,7 @@ def test_served_claim_release_clears_sidecar_on_accepted_decision(
     assert list(_credential_dir(tmp_path).glob("*")) == []
 
 
+@_requires_312
 def test_served_claim_release_keeps_sidecar_on_transport_failure(
     runner, tmp_path, monkeypatch
 ):
@@ -705,6 +730,7 @@ def test_served_claim_release_keeps_sidecar_on_transport_failure(
     assert len(sidecars) == 1
 
 
+@_requires_312
 def test_served_claim_release_surfaces_a_rejected_decision(
     runner, tmp_path, monkeypatch
 ):
@@ -734,6 +760,7 @@ def test_served_claim_release_surfaces_a_rejected_decision(
     assert "expired-grant" in result.output
 
 
+@_requires_312
 def test_served_claim_release_ignores_mismatched_advisory_actor(
     runner, tmp_path, monkeypatch
 ):
@@ -777,6 +804,7 @@ def _stub_read_item(monkeypatch, *, item):
     )
 
 
+@_requires_312
 def test_served_claim_handoff_rotate_mints_new_token_and_bumps_lease_epoch(
     runner, tmp_path, monkeypatch
 ):
@@ -854,6 +882,7 @@ def test_served_claim_handoff_rotate_mints_new_token_and_bumps_lease_epoch(
     assert list(_credential_dir(tmp_path).glob("*")) == []
 
 
+@_requires_312
 def test_served_claim_handoff_transfer_keeps_token_unchanged(
     runner, tmp_path, monkeypatch
 ):
@@ -902,6 +931,7 @@ def test_served_claim_handoff_transfer_keeps_token_unchanged(
     assert bundle["claim"]["claim_token"] == "shared-secret"
 
 
+@_requires_312
 def test_served_claim_handoff_rejects_allow_legacy_adopt(runner, tmp_path, monkeypatch):
     _configure_served_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(
@@ -922,6 +952,7 @@ def test_served_claim_handoff_rejects_allow_legacy_adopt(runner, tmp_path, monke
     assert _outbox_records(tmp_path) == []
 
 
+@_requires_312
 def test_served_claim_handoff_requires_claim_token(runner, tmp_path, monkeypatch):
     _configure_served_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(
@@ -939,6 +970,7 @@ def test_served_claim_handoff_requires_claim_token(runner, tmp_path, monkeypatch
     assert _outbox_records(tmp_path) == []
 
 
+@_requires_312
 def test_served_claim_handoff_rejects_wrong_claim_token(runner, tmp_path, monkeypatch):
     _configure_served_repo(tmp_path, monkeypatch)
     _stub_claim_context(
@@ -972,6 +1004,7 @@ def test_served_claim_handoff_rejects_wrong_claim_token(runner, tmp_path, monkey
     assert list(_credential_dir(tmp_path).glob("*")) == []
 
 
+@_requires_312
 def test_served_claim_handoff_surfaces_credential_conflict(
     runner, tmp_path, monkeypatch
 ):
@@ -1006,6 +1039,7 @@ def test_served_claim_handoff_surfaces_credential_conflict(
     assert list(_credential_dir(tmp_path).glob("*")) == []
 
 
+@_requires_312
 def test_served_claim_handoff_keeps_sidecar_on_transport_failure(
     runner, tmp_path, monkeypatch
 ):
@@ -1037,6 +1071,7 @@ def test_served_claim_handoff_keeps_sidecar_on_transport_failure(
     assert len(sidecars) == 1
 
 
+@_requires_312
 def test_served_claim_handoff_ignores_mismatched_performed_by(
     runner, tmp_path, monkeypatch
 ):
@@ -1073,6 +1108,7 @@ def test_served_claim_handoff_ignores_mismatched_performed_by(
     assert captured["record"]["actor"] == "authenticated-actor"
 
 
+@_requires_312
 def test_served_claim_handoff_degrades_bundle_when_item_fetch_fails(
     runner, tmp_path, monkeypatch
 ):
@@ -1165,6 +1201,7 @@ def _fake_cutover_payload(**overrides) -> dict:
     return payload
 
 
+@_requires_312
 def test_served_cutover_evidence_skip_parity_invokes_operation_with_none_parity(
     runner, tmp_path, monkeypatch
 ):
@@ -1199,6 +1236,7 @@ def test_served_cutover_evidence_skip_parity_invokes_operation_with_none_parity(
     assert captured["rehearse"] is True
 
 
+@_requires_312
 def test_served_cutover_evidence_pilot_disabled_passes_none_parity_without_error(
     runner, tmp_path, monkeypatch
 ):
@@ -1221,6 +1259,7 @@ def test_served_cutover_evidence_pilot_disabled_passes_none_parity_without_error
     assert captured["parity"] is None
 
 
+@_requires_312
 def test_served_cutover_evidence_fails_closed_when_pilot_enabled_and_parity_requested(
     runner, tmp_path, monkeypatch
 ):
@@ -1244,6 +1283,7 @@ def test_served_cutover_evidence_fails_closed_when_pilot_enabled_and_parity_requ
     assert "--skip-parity" in result.output
 
 
+@_requires_312
 def test_served_cutover_evidence_passes_max_watermark_age_and_skip_rollback_rehearsal(
     runner, tmp_path, monkeypatch
 ):
@@ -1271,6 +1311,7 @@ def test_served_cutover_evidence_passes_max_watermark_age_and_skip_rollback_rehe
     assert json.loads(result.output)["rollback_rehearsal"] is None
 
 
+@_requires_312
 def test_served_cutover_evidence_text_output_matches_local_shape(
     runner, tmp_path, monkeypatch
 ):
@@ -1288,6 +1329,7 @@ def test_served_cutover_evidence_text_output_matches_local_shape(
     assert "Promotable: True" in result.output
 
 
+@_requires_312
 def test_served_cutover_evidence_surfaces_a_transport_failure(
     runner, tmp_path, monkeypatch
 ):

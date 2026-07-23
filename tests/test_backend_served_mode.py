@@ -1,4 +1,5 @@
 import json
+import sys
 from collections import namedtuple
 
 import pytest
@@ -6,6 +7,14 @@ import pytest
 from sprintctl import backend
 
 _VersionInfo = namedtuple("_VersionInfo", ["major", "minor", "micro"])
+
+_requires_312 = pytest.mark.skipif(
+    sys.version_info < (3, 12),
+    reason=(
+        "served mode requires Python 3.12+; this test exercises behavior only "
+        "reachable past that version gate"
+    ),
+)
 
 
 def _write_profile(path, **overrides):
@@ -28,6 +37,7 @@ def _write_profile(path, **overrides):
     return path
 
 
+@_requires_312
 def test_served_mode_requires_profile(tmp_path):
     (tmp_path / ".git").mkdir()
     try:
@@ -78,6 +88,7 @@ def test_served_mode_requires_python_312(tmp_path, monkeypatch):
         raise AssertionError("expected backend config error")
 
 
+@_requires_312
 def test_served_mode_requires_repo_identity(tmp_path):
     profile_path = _write_profile(tmp_path / "profile.json")
     try:
@@ -94,6 +105,7 @@ def test_served_mode_requires_repo_identity(tmp_path):
         raise AssertionError("expected backend config error")
 
 
+@_requires_312
 def test_served_mode_loads_profile_fields(tmp_path):
     (tmp_path / ".git").mkdir()
     profile_path = _write_profile(tmp_path / "profile.json")
@@ -114,6 +126,7 @@ def test_served_mode_loads_profile_fields(tmp_path):
     )
 
 
+@_requires_312
 def test_served_mode_missing_profile_file_errors(tmp_path):
     (tmp_path / ".git").mkdir()
     missing = tmp_path / "does-not-exist.json"
@@ -132,6 +145,7 @@ def test_served_mode_missing_profile_file_errors(tmp_path):
         raise AssertionError("expected backend config error")
 
 
+@_requires_312
 def test_served_mode_invalid_json_errors(tmp_path):
     (tmp_path / ".git").mkdir()
     profile_path = tmp_path / "profile.json"
@@ -171,6 +185,7 @@ def test_served_mode_invalid_json_errors(tmp_path):
         ),
     ],
 )
+@_requires_312
 def test_served_mode_rejects_malformed_profiles(tmp_path, overrides, expected_message):
     (tmp_path / ".git").mkdir()
     profile_path = _write_profile(tmp_path / "profile.json", **overrides)
@@ -188,6 +203,7 @@ def test_served_mode_rejects_malformed_profiles(tmp_path, overrides, expected_me
         raise AssertionError("expected backend config error")
 
 
+@_requires_312
 def test_backend_marker_accepts_served(tmp_path):
     marker_dir = tmp_path / ".sprintctl"
     marker_dir.mkdir()
