@@ -763,3 +763,373 @@ def test_served_claim_release_ignores_mismatched_advisory_actor(
     assert "authenticated-actor" in result.output
     assert "'someone-else' was not sent and is ignored" in result.output
     assert captured["record"]["actor"] == "authenticated-actor"
+
+
+# ---------------------------------------------------------------------------
+# claim handoff (#1195 Group A, Build A3)
+# ---------------------------------------------------------------------------
+
+
+def _stub_read_item(monkeypatch, *, item):
+    monkeypatch.setattr(
+        cli_module._served, "read_item", lambda profile, *, item_id: {"item": item}
+    )
+
+
+def test_served_claim_handoff_rotate_mints_new_token_and_bumps_lease_epoch(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    authority_repo_uuid = str(uuid4())
+    _stub_claim_context(
+        monkeypatch,
+        claim_id=20,
+        actor="worker-1",
+        authority_repo_uuid=authority_repo_uuid,
+        claim_revision="claim:20@sha256:" + "5" * 64,
+    )
+    _stub_read_item(monkeypatch, item={"id": 3, "sprint_id": 55, "title": "Do the thing"})
+    captured = {}
+
+    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+        captured["record"] = record
+        captured["transient_credentials"] = dict(transient_credentials)
+        return {
+            "outcome": "accepted",
+            "effect": {
+                "claim_id": 20,
+                "work_item_id": 3,
+                "actor": "recipient-actor",
+                "claim_type": "work",
+                "exclusive": True,
+                "heartbeat": "2026-07-23T01:00:00Z",
+                "expires_at": "2026-07-23T01:05:00Z",
+                "status": "active",
+                "lease_epoch": 2,
+                "runtime_session_id": None,
+                "instance_id": None,
+            },
+        }
+
+    monkeypatch.setattr(cli_module._served, "claim_arbitrate", fake_claim_arbitrate)
+
+    result = runner.invoke(
+        cli,
+        [
+            "claim", "handoff", "--id", "20", "--claim-token", "old-secret",
+            "--actor", "recipient-actor", "--mode", "rotate", "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    record = captured["record"]
+    assert record["event_type"] == "claim.handoff"
+    assert record["actor"] == "worker-1"  # authenticated actor, not the recipient
+    assert record["basis_revision"] == "claim:20@sha256:" + "5" * 64
+
+    payload = record["payload"]["payload"]
+    assert payload["claim_id"] == 20
+    assert payload["to_actor"] == "recipient-actor"
+    assert payload["mode"] == "rotate"
+    old_ref = payload["credential_ref"]
+    proposed_ref = payload["proposed_credential_ref"]
+    assert old_ref != proposed_ref
+
+    creds = captured["transient_credentials"]
+    assert set(creds) == {old_ref, proposed_ref}
+    assert creds[old_ref] == "old-secret"
+    new_token = creds[proposed_ref]
+    assert new_token != "old-secret"
+
+    bundle = json.loads(result.output)
+    assert bundle["mode"] == "rotate"
+    assert bundle["claim"]["claim_token"] == new_token
+    assert bundle["claim"]["lease_epoch"] == 2
+    assert bundle["item"]["id"] == 3
+    assert bundle["sprint_id"] == 55
+    assert bundle["performed_by"] == "worker-1"
+
+    # Terminal accepted decision clears the retry sidecar.
+    assert list(_credential_dir(tmp_path).glob("*")) == []
+
+
+def test_served_claim_handoff_transfer_keeps_token_unchanged(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    _stub_claim_context(
+        monkeypatch,
+        claim_id=21,
+        actor="worker-1",
+        authority_repo_uuid=str(uuid4()),
+        claim_revision="claim:21@sha256:" + "6" * 64,
+    )
+    _stub_read_item(monkeypatch, item={"id": 4, "sprint_id": 56})
+    captured = {}
+
+    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+        captured["record"] = record
+        captured["transient_credentials"] = dict(transient_credentials)
+        return {
+            "outcome": "accepted",
+            "effect": {
+                "claim_id": 21,
+                "work_item_id": 4,
+                "actor": "recipient-actor",
+                "lease_epoch": 1,
+            },
+        }
+
+    monkeypatch.setattr(cli_module._served, "claim_arbitrate", fake_claim_arbitrate)
+
+    result = runner.invoke(
+        cli,
+        [
+            "claim", "handoff", "--id", "21", "--claim-token", "shared-secret",
+            "--actor", "recipient-actor", "--mode", "transfer", "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    payload = captured["record"]["payload"]["payload"]
+    assert payload["mode"] == "transfer"
+    assert "proposed_credential_ref" not in payload
+    # Only one credential binding for transfer mode -- no new token minted.
+    assert len(captured["transient_credentials"]) == 1
+
+    bundle = json.loads(result.output)
+    assert bundle["claim"]["claim_token"] == "shared-secret"
+
+
+def test_served_claim_handoff_rejects_allow_legacy_adopt(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served,
+        "claim_context",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not be called")),
+    )
+
+    result = runner.invoke(
+        cli,
+        [
+            "claim", "handoff", "--id", "22", "--claim-token", "secret",
+            "--actor", "recipient-actor", "--allow-legacy-adopt",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--allow-legacy-adopt is not supported in served mode" in result.output
+    assert _outbox_records(tmp_path) == []
+
+
+def test_served_claim_handoff_requires_claim_token(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served,
+        "claim_context",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not be called")),
+    )
+
+    result = runner.invoke(
+        cli,
+        ["claim", "handoff", "--id", "23", "--actor", "recipient-actor"],
+    )
+    assert result.exit_code != 0
+    assert "--claim-token is required in served mode" in result.output
+    assert _outbox_records(tmp_path) == []
+
+
+def test_served_claim_handoff_rejects_wrong_claim_token(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    _stub_claim_context(
+        monkeypatch,
+        claim_id=24,
+        actor="worker-1",
+        authority_repo_uuid=str(uuid4()),
+        claim_revision="claim:24@sha256:" + "7" * 64,
+    )
+    monkeypatch.setattr(
+        cli_module._served,
+        "claim_arbitrate",
+        lambda profile, *, record, transient_credentials: {
+            "outcome": "rejected",
+            "reason_code": "invalid-claim-proof",
+            "reason_detail": "claim proof is invalid",
+            "effect": {},
+        },
+    )
+
+    result = runner.invoke(
+        cli,
+        [
+            "claim", "handoff", "--id", "24", "--claim-token", "wrong-secret",
+            "--actor", "recipient-actor",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "invalid-claim-proof" in result.output
+    # A rejected decision is terminal too: the sidecar is cleared, not kept.
+    assert list(_credential_dir(tmp_path).glob("*")) == []
+
+
+def test_served_claim_handoff_surfaces_credential_conflict(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    _stub_claim_context(
+        monkeypatch,
+        claim_id=25,
+        actor="worker-1",
+        authority_repo_uuid=str(uuid4()),
+        claim_revision="claim:25@sha256:" + "8" * 64,
+    )
+    monkeypatch.setattr(
+        cli_module._served,
+        "claim_arbitrate",
+        lambda profile, *, record, transient_credentials: {
+            "outcome": "rejected",
+            "reason_code": "credential-conflict",
+            "reason_detail": "proposed claim proof is already in use",
+            "effect": {},
+        },
+    )
+
+    result = runner.invoke(
+        cli,
+        [
+            "claim", "handoff", "--id", "25", "--claim-token", "secret",
+            "--actor", "recipient-actor", "--mode", "rotate",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "credential-conflict" in result.output
+    assert list(_credential_dir(tmp_path).glob("*")) == []
+
+
+def test_served_claim_handoff_keeps_sidecar_on_transport_failure(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    _stub_claim_context(
+        monkeypatch,
+        claim_id=26,
+        actor="worker-1",
+        authority_repo_uuid=str(uuid4()),
+        claim_revision="claim:26@sha256:" + "9" * 64,
+    )
+
+    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+        raise RuntimeError("connection reset")
+
+    monkeypatch.setattr(cli_module._served, "claim_arbitrate", fake_claim_arbitrate)
+
+    result = runner.invoke(
+        cli,
+        [
+            "claim", "handoff", "--id", "26", "--claim-token", "secret",
+            "--actor", "recipient-actor",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "connection reset" in result.output
+    # Unknown/transport failure: the sidecar is retained for a retry.
+    sidecars = list(_credential_dir(tmp_path).glob("*"))
+    assert len(sidecars) == 1
+
+
+def test_served_claim_handoff_ignores_mismatched_performed_by(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    _stub_claim_context(
+        monkeypatch,
+        claim_id=27,
+        actor="authenticated-actor",
+        authority_repo_uuid=str(uuid4()),
+        claim_revision="claim:27@sha256:" + "0" * 64,
+    )
+    _stub_read_item(monkeypatch, item={"id": 9, "sprint_id": None})
+    captured = {}
+
+    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+        captured["record"] = record
+        return {
+            "outcome": "accepted",
+            "effect": {"claim_id": 27, "work_item_id": 9, "actor": "recipient-actor"},
+        }
+
+    monkeypatch.setattr(cli_module._served, "claim_arbitrate", fake_claim_arbitrate)
+
+    result = runner.invoke(
+        cli,
+        [
+            "claim", "handoff", "--id", "27", "--claim-token", "secret",
+            "--actor", "recipient-actor", "--performed-by", "someone-else",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "authenticated-actor" in result.output
+    assert "'someone-else' was not sent and is ignored" in result.output
+    assert captured["record"]["actor"] == "authenticated-actor"
+
+
+def test_served_claim_handoff_degrades_bundle_when_item_fetch_fails(
+    runner, tmp_path, monkeypatch
+):
+    """An already-accepted handoff must not be reported as a failure just
+    because the post-acceptance item-detail fetch for the bundle breaks."""
+    _configure_served_repo(tmp_path, monkeypatch)
+    _stub_claim_context(
+        monkeypatch,
+        claim_id=31,
+        actor="authenticated-actor",
+        authority_repo_uuid=str(uuid4()),
+        claim_revision="claim:31@sha256:" + "1" * 64,
+    )
+
+    def fake_read_item(profile, *, item_id):
+        raise RuntimeError("transport blip")
+
+    monkeypatch.setattr(cli_module._served, "read_item", fake_read_item)
+
+    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+        return {
+            "outcome": "accepted",
+            "effect": {
+                "claim_id": 31,
+                "work_item_id": 9,
+                "actor": "recipient-actor",
+                "claim_type": "work",
+                "exclusive": True,
+                "heartbeat": "2026-07-23T01:00:00Z",
+                "expires_at": "2026-07-23T01:05:00Z",
+                "status": "active",
+                "lease_epoch": 2,
+                "runtime_session_id": None,
+                "instance_id": None,
+            },
+        }
+
+    monkeypatch.setattr(cli_module._served, "claim_arbitrate", fake_claim_arbitrate)
+
+    result = runner.invoke(
+        cli,
+        [
+            "claim", "handoff", "--id", "31", "--claim-token", "secret",
+            "--actor", "recipient-actor", "--mode", "transfer", "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "transport blip" in result.output
+    assert "handoff succeeded" in result.output
+
+    # stdout mixes the warning (stderr in real usage, merged here by the
+    # runner) with the JSON bundle -- parse just the JSON line.
+    json_line = [line for line in result.output.splitlines() if line.startswith("{")][0]
+    bundle_start = result.output.index(json_line)
+    bundle = json.loads(result.output[bundle_start:])
+    assert bundle["item"] is None
+    assert bundle["sprint_id"] is None
+    assert bundle["claim"]["claim_token"] == "secret"
+
+    # The handoff itself was accepted, so the retry sidecar is still cleared.
+    assert list(_credential_dir(tmp_path).glob("*")) == []

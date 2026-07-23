@@ -6225,6 +6225,237 @@ def claim_release(obj, claim_id, claim_token, actor) -> None:
     click.echo(f"Claim #{claim_id} released.")
 
 
+def _served_claim_handoff(
+    config,
+    claim_id,
+    claim_token,
+    actor,
+    mode,
+    ttl_seconds,
+    runtime_session_id,
+    instance_id,
+    branch,
+    worktree_path,
+    commit_sha,
+    pr_ref,
+    hostname,
+    pid,
+    performed_by,
+    note,
+    allow_legacy_adopt,
+    output_path,
+    as_json,
+) -> None:
+    """Served-mode ``claim handoff``: mints a ``claim.handoff`` authority
+    command, carries the current (and, for rotate mode, a freshly minted
+    proposed) claim proof over the ``invocation/v2`` transient-credential
+    channel, and arbitrates it via ``work.claim.arbitrate``.
+
+    See :func:`_served_claim_heartbeat` for the shared context-read / sidecar
+    / mint / arbitrate / cleanup sequence this mirrors. Handoff differs from
+    heartbeat/release in three ways (#1195 Group A, Build A3 scope
+    decisions):
+
+    * ``--allow-legacy-adopt`` has no served-mode equivalent. The legacy-
+      ambiguous-claim concept it exists for -- a claim row with no
+      ``claim_token`` at all -- is a local-sqlite/legacy-remote artifact with
+      no evidence the served backend's claim rows can ever be in that state,
+      and there is no local ambiguity-detection event to fall back on here.
+      Rather than guess server behavior, this rejects explicitly. Because
+      served mode has no such adoption escape hatch, ``--claim-token`` is
+      effectively required in served mode.
+    * ``--actor`` here is the *recipient* identifier (becomes
+      ``payload["to_actor"]``), never the authenticated identity -- do not
+      confuse it with ``context["actor"]``, which (like heartbeat/release)
+      is always who *performed* the handoff (``envelope.actor``).
+    * Rotate mode (the default) must mint the new claim token client-side --
+      the server never invents one, see ``_handle_claim_mutation``'s
+      ``claim.handoff`` branch in authority.py -- and carry *two* transient
+      credential bindings in one map: the current token's ref (proving
+      current ownership) and the newly minted token's ref
+      (``proposed_credential_ref`` in the payload), so the server learns the
+      new secret without it ever appearing in the payload itself. Transfer
+      mode leaves the token unchanged and needs only the current ref.
+    """
+    if allow_legacy_adopt:
+        click.echo(
+            "Error: --allow-legacy-adopt is not supported in served mode", err=True
+        )
+        sys.exit(1)
+    if claim_token is None:
+        click.echo(
+            "Error: --claim-token is required in served mode "
+            "(there is no legacy-adoption fallback)",
+            err=True,
+        )
+        sys.exit(1)
+
+    runtime_session_id = _detect_runtime_session_id(runtime_session_id)
+    instance_id = _detect_instance_id(instance_id)
+    hostname = _detect_hostname(hostname)
+    pid = _detect_pid(pid)
+
+    context = _run_served(
+        "claim handoff", _served.claim_context, config.served_profile, claim_id=claim_id
+    )
+    authenticated_actor = context["actor"]
+    if performed_by is not None and performed_by != authenticated_actor:
+        click.echo(
+            f"Note: served mode records the authenticated identity "
+            f"({authenticated_actor}) as who performed the handoff; "
+            f"--performed-by {performed_by!r} was not sent and is ignored.",
+            err=True,
+        )
+
+    ref = _authority.credential_ref(claim_token)
+    credentials = {ref: claim_token}
+    new_token = claim_token
+    metadata = {
+        key: value
+        for key, value in {
+            "runtime_session_id": runtime_session_id,
+            "instance_id": instance_id,
+            "branch": branch,
+            "worktree_path": worktree_path,
+            "commit_sha": commit_sha,
+            "pr_ref": pr_ref,
+            "hostname": hostname,
+            "pid": pid,
+        }.items()
+        if value is not None
+    }
+    payload: dict[str, object] = {
+        "claim_id": claim_id,
+        "to_actor": actor,
+        "mode": mode,
+        "ttl_seconds": ttl_seconds,
+        "credential_ref": ref,
+    }
+    if mode == "rotate":
+        # The server never invents the new token (authority.py's claim.handoff
+        # branch only ever reads it back out of the transient credentials map
+        # via ``proposed_credential_ref``) -- matches
+        # ``db.py::_generate_claim_token``'s technique exactly.
+        new_token = secrets.token_urlsafe(24)
+        proposed_ref = _authority.credential_ref(new_token)
+        credentials[proposed_ref] = new_token
+        payload["proposed_credential_ref"] = proposed_ref
+    if metadata:
+        payload["metadata"] = metadata
+    if note is not None:
+        payload["note"] = note
+
+    rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+    try:
+        durable = _mint_authority_command_record(
+            record_type="claim.handoff",
+            actor=authenticated_actor,
+            refs={
+                "repo_id": context["authority_repo_uuid"],
+                "aggregate_type": "claim",
+                "aggregate_id": claim_id,
+                "claim_id": claim_id,
+            },
+            payload=payload,
+            basis_revision=context["claim_revision"],
+            outbox_path=rollout_paths.outbox_path,
+        )
+    except (TypeError, ValueError) as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+    # Written before the served invocation below so an unknown/transport
+    # outcome leaves retry material for the identical durable record -- both
+    # credential bindings (current +, for rotate, proposed) are captured here
+    # since the server needs both in the same transient_credentials map.
+    _authority_config.store_pending_authority_credentials(
+        rollout_paths,
+        event_id=durable.event_id,
+        credentials=credentials,
+        recovery_credential_ref=None,
+    )
+
+    decision = _run_served(
+        "claim handoff",
+        _served.claim_arbitrate,
+        config.served_profile,
+        record=_served_record_argument(durable),
+        transient_credentials=credentials,
+    )
+    # Unlike ``authority submit``'s claim.handoff-rotate special case (which
+    # retains the sidecar after an accepted decision so the new token can be
+    # recovered later via ``authority recover-proof``, because that generic
+    # command never echoes the secret in its own output), this command
+    # already holds ``new_token`` in local memory and echoes it directly
+    # below -- so, exactly like heartbeat/release, any resolved (accepted or
+    # rejected) decision clears the sidecar now; only an exception from the
+    # call above (which exits via _run_served before reaching this line)
+    # leaves it in place for a retry.
+    _authority_config.remove_pending_authority_credential(
+        rollout_paths, event_id=durable.event_id
+    )
+    if decision["outcome"] != "accepted":
+        click.echo(
+            f"Error: {decision.get('reason_code')}: {decision.get('reason_detail')}",
+            err=True,
+        )
+        sys.exit(1)
+
+    # decision["effect"] is _claim_effect(...)'s post-update row -- never
+    # carries claim_token (see the heartbeat helper's comment on that shape),
+    # so the token to report is whatever this command itself used or minted
+    # above.
+    effect = dict(decision["effect"])
+    # The handoff itself is already accepted and durable at this point (the
+    # sidecar above is cleared), so a failure fetching item details for the
+    # bundle must not be reported as a handoff failure via _run_served's
+    # sys.exit(1) -- that would tell the caller a successful mutation failed,
+    # and worse, would look retryable when the current claim proof is already
+    # invalidated. Degrade to a smaller bundle instead.
+    try:
+        item_payload = _served.read_item(config.served_profile, item_id=effect["work_item_id"])
+        item = item_payload.get("item")
+    except Exception as exc:  # noqa: BLE001 - degrade, don't fail an already-accepted handoff
+        click.echo(
+            f"Warning: claim #{claim_id} handoff succeeded, but fetching item "
+            f"details for the bundle failed: {exc}",
+            err=True,
+        )
+        item = None
+    bundle = {
+        "bundle_type": "claim_handoff",
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "mode": mode,
+        "claim": {**effect, "claim_token": new_token},
+        "item": item,
+        # served mode has no single-sprint read operation (only the list-
+        # returning work.read.sprints, work.read.item's sibling); rather than
+        # fetch and filter the full sprint list on every handoff just for a
+        # cosmetic parity field, this reports the item's sprint_id alone --
+        # a smaller shape than the local bundle's full "sprint" object
+        # (#1195 Build A3 scope decision, in the same spirit as the
+        # documented heartbeat effect-shape gap).
+        "sprint_id": item.get("sprint_id") if item else None,
+        "performed_by": authenticated_actor,
+    }
+
+    if output_path and output_path != "-":
+        with open(output_path, "w") as fh:
+            json.dump(bundle, fh, indent=2)
+        click.echo(f"Claim handoff bundle written to {output_path}")
+        if not as_json:
+            click.echo(f"Claim #{claim_id} handed off to {actor} (mode={mode})")
+            click.echo(f"Claim token: {new_token}")
+        return
+
+    if as_json or output_path == "-":
+        click.echo(json.dumps(bundle, indent=2))
+        return
+
+    click.echo(f"Claim #{claim_id} handed off to {actor} (mode={mode})")
+    click.echo(f"Claim token: {new_token}")
+
+
 @claim.command("handoff")
 @click.option("--id", "claim_id", type=int, required=True, help="Claim ID")
 @click.option("--claim-token", default=None, help="Existing claim token (required unless explicitly adopting a lost or legacy proof)")
@@ -6272,6 +6503,30 @@ def claim_handoff(
     as_json,
 ) -> None:
     """Explicitly transfer or rotate claim ownership and emit a claim handoff bundle."""
+    config = _served_config_or_none(obj)
+    if config is not None:
+        _served_claim_handoff(
+            config,
+            claim_id,
+            claim_token,
+            actor,
+            mode,
+            ttl_seconds,
+            runtime_session_id,
+            instance_id,
+            branch,
+            worktree_path,
+            commit_sha,
+            pr_ref,
+            hostname,
+            pid,
+            performed_by,
+            note,
+            allow_legacy_adopt,
+            output_path,
+            as_json,
+        )
+        return
     store, m = _get_store(obj)
     runtime_session_id = _detect_runtime_session_id(runtime_session_id)
     instance_id = _detect_instance_id(instance_id)
