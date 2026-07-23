@@ -413,7 +413,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.1" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'remote'", specifier = ">=3.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
-    { name = "vuoro-client", marker = "python_full_version >= '3.12' and extra == 'served'", git = "https://github.com/bayleafwalker/vuoro.git?subdirectory=packages%2Fvuoro-client&rev=82c372b2a222e0936e61510f1a96acb8e2fe3fc1" },
+    { name = "vuoro-client", marker = "python_full_version >= '3.12' and extra == 'served'", git = "https://github.com/bayleafwalker/vuoro.git?subdirectory=packages%2Fvuoro-client&rev=55d80c51d5ec94f3e26995dcc5b85539254fdee1" },
 ]
 provides-extras = ["dev", "remote", "served"]
 
@@ -438,7 +438,7 @@ wheels = [
 [[package]]
 name = "vuoro-client"
 version = "0.1.0.dev0"
-source = { git = "https://github.com/bayleafwalker/vuoro.git?subdirectory=packages%2Fvuoro-client&rev=82c372b2a222e0936e61510f1a96acb8e2fe3fc1#82c372b2a222e0936e61510f1a96acb8e2fe3fc1" }
+source = { git = "https://github.com/bayleafwalker/vuoro.git?subdirectory=packages%2Fvuoro-client&rev=55d80c51d5ec94f3e26995dcc5b85539254fdee1#55d80c51d5ec94f3e26995dcc5b85539254fdee1" }
 dependencies = [
     { name = "httpx" },
     { name = "jsonschema" },
