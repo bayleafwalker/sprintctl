@@ -3207,6 +3207,106 @@ def pilot_sync(obj, batch_size: int, as_json: bool) -> None:
         click.echo(f"Synchronized {payload['uploaded']} observation records; watermark {result.watermark.ingest_offset}.")
 
 
+def _emit_cutover_evidence_text(payload: dict) -> None:
+    """Shared text rendering for ``pilot cutover-evidence``'s local and served
+    paths -- both call the exact same ``cutover.build_cutover_evidence``
+    contract (locally or over ``work.pilot.cutover-evidence``), so both
+    produce this same payload shape."""
+    click.echo(f"Cutover dogfood evidence (contract v{payload['contract_version']}):")
+    cfg = payload["config"]
+    click.echo(
+        f"  Config: pilot={cfg['pilot_enabled']} authority_mode={cfg['authority_command_mode']} "
+        f"projection_reads={cfg['projection_reads_enabled']}"
+    )
+    if payload["parity"] is not None:
+        click.echo(
+            "  Parity: "
+            + ("equal" if payload["parity"]["is_equal"] else "diverged")
+            + f" {payload['parity']['counts']}"
+        )
+    else:
+        click.echo("  Parity: not evaluated")
+    watermark = payload["watermark"]
+    click.echo(
+        f"  Watermark: healthy={watermark.get('healthy')} age={watermark.get('age_seconds')} "
+        f"(max {watermark.get('max_age_seconds')}s)"
+    )
+    click.echo(f"  Stale-tool incidents: {len(payload['stale_tools']['incidents'])}")
+    if payload["rollback_rehearsal"] is not None:
+        rehearsal_ok = payload["rollback_rehearsal"]["rollback_ok"]
+        click.echo(f"  Rollback rehearsal: {'ok' if rehearsal_ok else 'FAILED'}")
+    else:
+        click.echo("  Rollback rehearsal: skipped")
+    click.echo(f"  Promotable: {payload['promotable']}")
+    if payload["blockers"]:
+        click.echo("  Blockers: " + ", ".join(payload["blockers"]))
+
+
+def _served_cutover_evidence(
+    config,
+    sprint_id,
+    skip_parity,
+    max_watermark_age_seconds,
+    skip_rollback_rehearsal,
+    as_json,
+) -> None:
+    """Served-mode ``pilot cutover-evidence``: routes to
+    ``work.pilot.cutover-evidence``, the same ``cutover.build_cutover_evidence``
+    call the local path makes, just invoked over the served transport.
+
+    Local mode computes ``parity`` itself by comparing the pilot's local
+    shadow-observation outbox against this repo's *authoritative* event
+    table, read directly off the local store via ``m.list_events(store,
+    sprint_id)`` (see the local branch of ``pilot_cutover_evidence`` below).
+    There is no served-catalog read operation that exposes that sprint-wide
+    authoritative event log: ``work.read.item`` only returns one item's
+    events (see ``WorkApplication._read_item``), and no
+    sprint-scoped-events / ``work.read.events``-shaped operation is
+    registered in ``served_routes.py`` or ``vuoro_adapter.py``. So unlike
+    ``item status``/``sprint status`` (which have a served read this facade
+    can reuse), there is no served-mode equivalent to source real parity
+    from -- inventing a new server-side operation for it is out of scope
+    here. This fails closed only in the one case that would actually need
+    that missing data (the pilot enabled and a real parity computation
+    requested); it otherwise matches local mode's own no-op exactly: when
+    the pilot was never enabled, local mode leaves ``parity`` as ``None``
+    without erroring, and this does too.
+    """
+    parity_payload = None
+    if not skip_parity:
+        try:
+            status = _pilot.shadow_pilot_status(cwd=Path.cwd())
+        except _pilot.ShadowPilotConfigError as exc:
+            click.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
+        if status.enabled:
+            click.echo(
+                "Error: served pilot cutover-evidence cannot compute parity: no served "
+                "read operation exposes a sprint's authoritative event history "
+                "(work.read.item only returns one item's events, not the sprint-wide "
+                "event log parity computation needs); pass --skip-parity, or use "
+                "SPRINTCTL_BACKEND=local or remote for a full parity computation.",
+                err=True,
+            )
+            sys.exit(1)
+        # Pilot disabled: parity stays None, matching local mode's own no-op
+        # (build_cutover_evidence reports "parity-not-evaluated" either way).
+
+    payload = _run_served(
+        "pilot cutover-evidence",
+        _served.cutover_evidence,
+        config.served_profile,
+        parity=parity_payload,
+        max_watermark_age_seconds=max_watermark_age_seconds,
+        rehearse=not skip_rollback_rehearsal,
+    )
+
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+        return
+    _emit_cutover_evidence_text(payload)
+
+
 @pilot.command("cutover-evidence")
 @click.option(
     "--sprint-id",
@@ -3248,6 +3348,12 @@ def pilot_cutover_evidence(
     repository -- it only assembles evidence for an operator-directed
     decision. See docs/reference/cutover-dogfood.md.
     """
+    config = _served_config_or_none(obj)
+    if config is not None:
+        _served_cutover_evidence(
+            config, sprint_id, skip_parity, max_watermark_age_seconds, skip_rollback_rehearsal, as_json
+        )
+        return
     parity_payload = None
     if not skip_parity:
         try:

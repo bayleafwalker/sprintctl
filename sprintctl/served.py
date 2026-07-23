@@ -107,6 +107,38 @@ def project_next_work(
     )
 
 
+def cutover_evidence(
+    served_profile: ServedProfile,
+    *,
+    parity: dict[str, Any] | None = None,
+    max_watermark_age_seconds: int = 300,
+    rehearse: bool = True,
+) -> dict[str, Any]:
+    """Invoke ``work.pilot.cutover-evidence`` (``sprintctl pilot cutover-evidence``).
+
+    ``parity`` must already be computed by the caller (mirroring
+    ``cutover.build_cutover_evidence``'s own contract, which never fetches
+    parity itself). Served mode has no read operation exposing the
+    sprint-wide authoritative event log parity computation needs --
+    ``work.read.item`` only returns one item's events, and no
+    sprint-scoped-events operation exists in the served catalog -- so a
+    served caller wanting full parity cannot compute it the way local mode's
+    ``m.list_events(store, sprint_id)`` does; pass ``None`` (the
+    ``--skip-parity`` path, or whenever the pilot is disabled) instead. See
+    ``sprintctl.cli._served_cutover_evidence`` for the CLI-side guard that
+    enforces this.
+    """
+
+    arguments = {
+        "parity": parity,
+        "max_watermark_age_seconds": max_watermark_age_seconds,
+        "rehearse": rehearse,
+    }
+    return asyncio.run(
+        _invoke_operation(served_profile, "work.pilot.cutover-evidence", arguments)
+    )
+
+
 def claim_start(
     served_profile: ServedProfile,
     *,
@@ -230,7 +262,10 @@ def lifecycle_arbitrate(
 # checks for -- the exact catalog operations #1195 wires through this facade
 # (next-work contributes two: work.read.next-work and work.project.next-work;
 # item.status and sprint.status share one operation, work.lifecycle.arbitrate;
-# claim.heartbeat and claim.release share one operation, work.claim.arbitrate).
+# claim.heartbeat, claim.handoff, and claim.release share one operation,
+# work.claim.arbitrate). Excludes authority.sync and event.observation.add:
+# both are registered routes in served_routes.py, but neither is wired to a
+# real served CLI path yet (Group C, still open in #1195).
 _DOCTOR_PROBE_COMMAND_PATHS = (
     "sprint.list",
     "item.show",
@@ -239,7 +274,9 @@ _DOCTOR_PROBE_COMMAND_PATHS = (
     "item.status",
     "sprint.status",
     "claim.heartbeat",
+    "claim.handoff",
     "claim.release",
+    "pilot.cutover-evidence",
 )
 
 EXPECTED_OPERATIONS: frozenset[str] = frozenset(
@@ -274,6 +311,7 @@ __all__ = [
     "claim_arbitrate",
     "claim_context",
     "claim_start",
+    "cutover_evidence",
     "lifecycle_arbitrate",
     "project_next_work",
     "read_item",

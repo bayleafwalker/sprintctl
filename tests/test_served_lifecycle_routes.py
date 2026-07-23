@@ -11,6 +11,7 @@ transport layer -- the same pattern ``tests/test_authority_cli.py`` uses for
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -1133,3 +1134,170 @@ def test_served_claim_handoff_degrades_bundle_when_item_fetch_fails(
 
     # The handoff itself was accepted, so the retry sidecar is still cleared.
     assert list(_credential_dir(tmp_path).glob("*")) == []
+
+
+# ---------------------------------------------------------------------------
+# pilot cutover-evidence (#1211)
+# ---------------------------------------------------------------------------
+
+
+def _fake_cutover_payload(**overrides) -> dict:
+    payload = {
+        "contract_version": "1",
+        "config": {
+            "pilot_enabled": True,
+            "authority_command_mode": "shadow",
+            "projection_reads_enabled": False,
+        },
+        "parity": None,
+        "watermark": {
+            "healthy": True,
+            "fallback_reason": None,
+            "age_seconds": 5,
+            "max_age_seconds": 300,
+        },
+        "stale_tools": {"status": "ok", "incidents": [], "findings": []},
+        "rollback_rehearsal": {"rollback_ok": True},
+        "promotable": False,
+        "blockers": ["parity-not-evaluated"],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_served_cutover_evidence_skip_parity_invokes_operation_with_none_parity(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._pilot,
+        "shadow_pilot_status",
+        lambda *, cwd=None, repo_root=None: (_ for _ in ()).throw(
+            AssertionError("should not be called when --skip-parity is set")
+        ),
+    )
+    captured = {}
+
+    def fake_cutover_evidence(profile, *, parity, max_watermark_age_seconds, rehearse):
+        captured["parity"] = parity
+        captured["max_watermark_age_seconds"] = max_watermark_age_seconds
+        captured["rehearse"] = rehearse
+        return _fake_cutover_payload(parity=None, promotable=True, blockers=[])
+
+    monkeypatch.setattr(cli_module._served, "cutover_evidence", fake_cutover_evidence)
+
+    result = runner.invoke(
+        cli, ["pilot", "cutover-evidence", "--skip-parity", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["parity"] is None
+    assert payload["promotable"] is True
+
+    assert captured["parity"] is None
+    assert captured["max_watermark_age_seconds"] == cli_module._cutover.DEFAULT_MAX_WATERMARK_AGE_SECONDS
+    assert captured["rehearse"] is True
+
+
+def test_served_cutover_evidence_pilot_disabled_passes_none_parity_without_error(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._pilot,
+        "shadow_pilot_status",
+        lambda *, cwd=None, repo_root=None: SimpleNamespace(enabled=False),
+    )
+    captured = {}
+
+    def fake_cutover_evidence(profile, *, parity, max_watermark_age_seconds, rehearse):
+        captured["parity"] = parity
+        return _fake_cutover_payload(parity=None)
+
+    monkeypatch.setattr(cli_module._served, "cutover_evidence", fake_cutover_evidence)
+
+    result = runner.invoke(cli, ["pilot", "cutover-evidence", "--json"])
+    assert result.exit_code == 0, result.output
+    assert captured["parity"] is None
+
+
+def test_served_cutover_evidence_fails_closed_when_pilot_enabled_and_parity_requested(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._pilot,
+        "shadow_pilot_status",
+        lambda *, cwd=None, repo_root=None: SimpleNamespace(enabled=True),
+    )
+    monkeypatch.setattr(
+        cli_module._served,
+        "cutover_evidence",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("should not be called: no served parity source exists")
+        ),
+    )
+
+    result = runner.invoke(cli, ["pilot", "cutover-evidence"])
+    assert result.exit_code != 0
+    assert "cannot compute parity" in result.output
+    assert "--skip-parity" in result.output
+
+
+def test_served_cutover_evidence_passes_max_watermark_age_and_skip_rollback_rehearsal(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    captured = {}
+
+    def fake_cutover_evidence(profile, *, parity, max_watermark_age_seconds, rehearse):
+        captured["max_watermark_age_seconds"] = max_watermark_age_seconds
+        captured["rehearse"] = rehearse
+        return _fake_cutover_payload(parity=None, rollback_rehearsal=None)
+
+    monkeypatch.setattr(cli_module._served, "cutover_evidence", fake_cutover_evidence)
+
+    result = runner.invoke(
+        cli,
+        [
+            "pilot", "cutover-evidence", "--skip-parity",
+            "--max-watermark-age-seconds", "60",
+            "--skip-rollback-rehearsal", "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["max_watermark_age_seconds"] == 60
+    assert captured["rehearse"] is False
+    assert json.loads(result.output)["rollback_rehearsal"] is None
+
+
+def test_served_cutover_evidence_text_output_matches_local_shape(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served,
+        "cutover_evidence",
+        lambda *a, **k: _fake_cutover_payload(promotable=True, blockers=[]),
+    )
+
+    result = runner.invoke(cli, ["pilot", "cutover-evidence", "--skip-parity"])
+    assert result.exit_code == 0, result.output
+    assert "Cutover dogfood evidence (contract v1):" in result.output
+    assert "Parity: not evaluated" in result.output
+    assert "Promotable: True" in result.output
+
+
+def test_served_cutover_evidence_surfaces_a_transport_failure(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+
+    def fake_cutover_evidence(profile, *, parity, max_watermark_age_seconds, rehearse):
+        raise RuntimeError("connection reset")
+
+    monkeypatch.setattr(cli_module._served, "cutover_evidence", fake_cutover_evidence)
+
+    result = runner.invoke(cli, ["pilot", "cutover-evidence", "--skip-parity"])
+    assert result.exit_code != 0
+    assert "connection reset" in result.output
