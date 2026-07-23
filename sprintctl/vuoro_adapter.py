@@ -278,6 +278,31 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "not-allowed",
     ),
     WorkOperationContract(
+        "work.claim.context",
+        _object_schema(
+            {"claim_id": {"type": "integer", "minimum": 1}}, required=("claim_id",)
+        ),
+        _result_schema(
+            (
+                "repo_id",
+                "authority_repo_uuid",
+                "actor",
+                "claim",
+                "claim_revision",
+            ),
+            {
+                "repo_id": {"type": "string"},
+                "authority_repo_uuid": {"type": ["string", "null"]},
+                "actor": {"type": "string"},
+                "claim": {"type": "object"},
+                "claim_revision": {"type": "string"},
+            },
+        ),
+        "work:claim",
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
         "work.claim.arbitrate",
         _RECORD_INPUT,
         _DECISION_RESULT,

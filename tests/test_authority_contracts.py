@@ -193,3 +193,45 @@ def test_item_done_is_strictly_done_and_decision_taxonomy_covers_claim_completio
 
     assert contracts.record_class_for_type("claim.handed-off") is contracts.RecordClass.REMOTE_DECISION
     assert contracts.record_class_for_type("claim.released") is contracts.RecordClass.REMOTE_DECISION
+
+
+def test_claim_renew_metadata_is_optional_and_matches_the_acquire_allowlist():
+    # No metadata at all: unchanged, backward-compatible shape.
+    without_metadata = _command("claim.renew")
+    assert "metadata" not in without_metadata.payload
+
+    # An explicit, partial metadata object round-trips canonically and only
+    # keeps the fields actually supplied.
+    payload = _payload("claim.renew")
+    payload["metadata"] = {"branch": "feature/renew", "pid": 4242}
+    with_metadata = _command("claim.renew", payload=payload)
+    assert with_metadata.payload["metadata"] == {
+        "branch": "feature/renew",
+        "pid": 4242,
+    }
+
+    # The same strict allowlist claim.acquire/claim.handoff already enforce.
+    payload = _payload("claim.renew")
+    payload["metadata"] = {"bearer": "must-not-enter-outbox"}
+    with pytest.raises(ValueError, match="unknown fields: bearer"):
+        _command("claim.renew", payload=payload)
+
+
+def test_claim_handoff_note_is_optional_and_is_a_plain_string():
+    without_note = _command("claim.handoff")
+    assert "note" not in without_note.payload
+
+    payload = _payload("claim.handoff")
+    payload["note"] = "Structured handoff note."
+    with_note = _command("claim.handoff", payload=payload)
+    assert with_note.payload["note"] == "Structured handoff note."
+
+    payload = _payload("claim.handoff")
+    payload["note"] = 12345
+    with pytest.raises(ValueError, match="payload.note must be a non-empty string"):
+        _command("claim.handoff", payload=payload)
+
+    payload = _payload("claim.handoff")
+    payload["note"] = {"claim_token": "must-not-enter-outbox"}
+    with pytest.raises(ValueError, match="must not contain secret field"):
+        _command("claim.handoff", payload=payload)

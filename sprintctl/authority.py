@@ -17,7 +17,7 @@ from typing import Any, Mapping
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from . import contracts, outbox, pg
-from .db import CLAIM_TYPES, SPRINT_TRANSITIONS, VALID_TRANSITIONS
+from .db import CLAIM_TYPES, SPRINT_TRANSITIONS, VALID_TRANSITIONS, _claim_event_identity
 
 
 AUTHORITY_COMMAND = contracts.RecordClass.AUTHORITY_COMMAND.value
@@ -605,13 +605,37 @@ def _handle_claim_mutation(
 
     ttl = _positive_int(envelope.payload.get("ttl_seconds", 300), "ttl_seconds")
     if command == "claim.renew":
+        # Same "only apply non-null values" semantics as legacy
+        # ``pg.heartbeat_claim``/``db.heartbeat_claim``: an omitted metadata
+        # field leaves the existing column untouched via COALESCE.
+        metadata = dict(envelope.payload.get("metadata") or {})
         cur.execute(
             """
             UPDATE claim SET heartbeat = now(),
-                expires_at = now() + (%s || ' seconds')::interval
+                expires_at = now() + (%s || ' seconds')::interval,
+                runtime_session_id = COALESCE(%s, runtime_session_id),
+                instance_id        = COALESCE(%s, instance_id),
+                branch             = COALESCE(%s, branch),
+                worktree_path      = COALESCE(%s, worktree_path),
+                commit_sha         = COALESCE(%s, commit_sha),
+                pr_ref             = COALESCE(%s, pr_ref),
+                hostname           = COALESCE(%s, hostname),
+                pid                = COALESCE(%s, pid)
             WHERE repo_id = %s AND id = %s RETURNING *
             """,
-            (ttl, store.repo_id, claim_id),
+            (
+                ttl,
+                metadata.get("runtime_session_id"),
+                metadata.get("instance_id"),
+                metadata.get("branch"),
+                metadata.get("worktree_path"),
+                metadata.get("commit_sha"),
+                metadata.get("pr_ref"),
+                metadata.get("hostname"),
+                metadata.get("pid"),
+                store.repo_id,
+                claim_id,
+            ),
         )
         return _claim_effect(cur.fetchone())
 
@@ -659,7 +683,81 @@ def _handle_claim_mutation(
             claim_id,
         ),
     )
-    return _claim_effect(cur.fetchone())
+    updated = cur.fetchone()
+    _emit_claim_handoff_event(
+        cur,
+        store,
+        claim_id=claim_id,
+        work_item_id=int(updated["work_item_id"]),
+        performed_by=envelope.actor,
+        before=claim,
+        after=updated,
+        mode=mode,
+        note=envelope.payload.get("note"),
+    )
+    return _claim_effect(updated)
+
+
+def _emit_claim_handoff_event(
+    cur: Any,
+    store: pg.PgStore,
+    *,
+    claim_id: int,
+    work_item_id: int,
+    performed_by: str,
+    before: Mapping[str, Any],
+    after: Mapping[str, Any],
+    mode: str,
+    note: str | None,
+) -> None:
+    """Atomically emit the non-secret ``claim-handoff`` coordination event.
+
+    Runs on the caller's transaction-scoped cursor so the ownership UPDATE and
+    this evidence INSERT commit or roll back together -- see the claim-proof
+    transport clarification's "atomically emits non-secret claim-handoff
+    coordination evidence" requirement.  Neither the current nor the proposed
+    claim proof is ever placed in this payload; ``_claim_event_identity``
+    only reports ``claim_token_present``/``identity_status``, matching the
+    legacy ``pg.handoff_claim``/``db.handoff_claim`` non-secret shape.
+    """
+
+    cur.execute(
+        "SELECT sprint_id FROM work_item WHERE repo_id = %s AND id = %s",
+        (store.repo_id, work_item_id),
+    )
+    item = cur.fetchone()
+    if item is None:
+        # Mirrors the legacy ``_emit_claim_event`` helpers: a vanished parent
+        # work item silently forgoes coordination evidence rather than
+        # failing an otherwise-accepted claim mutation.
+        return
+    payload = contracts.canonicalize_claim_handoff_payload(
+        {
+            "summary": f"Claim #{claim_id} handed off to {after['agent']}",
+            "detail": note or f"Claim ownership transferred with mode={mode}.",
+            "tags": ["claims", "handoff", "coordination"],
+            "operation": "handoff",
+            "mode": mode,
+            "legacy_adopted": False,
+            "token_rotated": mode == "rotate",
+            "from_identity": _claim_event_identity(before),
+            "to_identity": _claim_event_identity(after),
+        }
+    )
+    cur.execute(
+        """
+        INSERT INTO event (
+            repo_id, sprint_id, work_item_id, source_type, actor, event_type, payload
+        ) VALUES (%s, %s, %s, 'system', %s, 'claim-handoff', %s)
+        """,
+        (
+            store.repo_id,
+            item["sprint_id"],
+            work_item_id,
+            performed_by,
+            json.dumps(payload),
+        ),
+    )
 
 
 def _handle_receipt(

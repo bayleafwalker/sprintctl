@@ -48,6 +48,18 @@ class InvocationIdentity(Protocol):
     authorities: frozenset[str]
 
 
+class TransientCredentialCarrier(Protocol):
+    """Duck-typed shape of Vuoro's ``invocation/v2`` transient-proof carrier.
+
+    Matches ``vuoro_service.identity.TransientCredentials``: bindings are
+    keyed by non-secret ``sha256:<64-lowercase-hex>`` references and are only
+    ever readable through ``reveal`` -- never iterated, logged, or cached as
+    a plain mapping.
+    """
+
+    def reveal(self, key: str) -> str | None: ...
+
+
 class InvocationContext(Protocol):
     identity: InvocationIdentity
     request_id: str
@@ -55,6 +67,10 @@ class InvocationContext(Protocol):
     catalog_revision: str
     idempotency_requirement: str
     idempotency_key: str | None
+    # Present on a v2 invocation; absent (or empty) on v1 and on every
+    # existing protocol-v1-only test double.  Composition wiring is what
+    # supplies a real carrier -- see ``make_transient_credential_resolver``.
+    transient_credentials: TransientCredentialCarrier | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,6 +273,7 @@ class WorkApplication:
             "work.read.records": self._read_records,
             "work.read.decisions": self._read_decisions,
             "work.claim.start": self._claim_start,
+            "work.claim.context": self._claim_context,
             "work.claim.arbitrate": self._claim_arbitrate,
             "work.lifecycle.arbitrate": self._lifecycle_arbitrate,
             "work.evidence.ingest": self._evidence_ingest,
@@ -511,6 +528,39 @@ class WorkApplication:
             "item_status_after": updated_item["status"],
             "status_transition_applied": transitioned,
             "refs": self.backend.list_refs(self.store, item_id),
+        }
+
+    def _claim_context(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        """Non-secret authority context a served client needs to construct a
+        canonical claim command without database access (``work:claim``
+        read).
+
+        Returns exactly the "Approved authority-context contract" fields:
+        the resolved authenticated actor, Sprintctl's ``repo_id`` plus the
+        authority repository UUID, the current non-secret claim snapshot
+        (including ``work_item_id``), and the canonical current
+        ``claim_revision``.  Never a claim token, a proof digest, another
+        identity's bearer credential, or a database DSN.  A missing or
+        inaccessible claim is rejected before any producer/outbox record
+        could be created -- this handler is read-only.
+        """
+
+        from . import authority  # Lazy: standalone SQLite needs no psycopg.
+
+        claim_id = _positive_int(arguments.get("claim_id"), "claim_id")
+        claim = self.backend.get_claim(self.store, claim_id, include_secret=False)
+        if claim is None:
+            raise ApplicationRejection(
+                "claim-not-found", f"Claim #{claim_id} not found", 404
+            )
+        return {
+            "repo_id": self.repo_id,
+            "authority_repo_uuid": getattr(self.store, "authority_repo_uuid", None),
+            "actor": context.identity.actor,
+            "claim": claim,
+            "claim_revision": authority.claim_revision(claim),
         }
 
     def _lifecycle_arbitrate(
@@ -929,6 +979,67 @@ def _required_mapping(value: Any, field: str) -> Mapping[str, Any]:
     return value
 
 
+_CLAIM_CREDENTIAL_REF_FIELDS: tuple[str, ...] = (
+    "credential_ref",
+    "proposed_credential_ref",
+    "coordinate_credential_ref",
+)
+
+
+def make_transient_credential_resolver() -> CredentialResolver:
+    """Compose Sprintctl's credential resolver over a v2 transient-proof carrier.
+
+    Per the Vuoro claim-proof transport clarification's approved transport
+    contract: "service composition supplies Sprintctl's credential resolver,
+    which returns only bindings referenced by the validated immutable
+    command." The returned callable reads ``context.transient_credentials``
+    (a duck-typed :class:`TransientCredentialCarrier` -- satisfied today by
+    ``vuoro_service.identity.TransientCredentials`` on a real ``invocation/v2``
+    request) and reveals only the ``sha256:<64-lowercase-hex>`` refs the
+    record's own payload actually names, through ``credential_ref`` /
+    ``proposed_credential_ref`` / ``coordinate_credential_ref``.
+
+    The rehash-and-compare that turns a revealed proof into an accepted or
+    rejected effect is left exactly where it already lives --
+    ``authority._resolve_credential`` / ``authority._verify_claim_secret``,
+    invoked downstream by ``arbitrate_command``.  This resolver only ever
+    hands back what the payload already asked for; it does not verify,
+    cache, log, or otherwise widen access to a revealed proof.
+
+    This module has no import-time or call-time dependency on anything
+    Vuoro-owned: it only assumes the ``reveal(key) -> str | None`` duck type
+    documented on :class:`TransientCredentialCarrier`.  A context without a
+    transient carrier -- a v1 invocation, or any existing test double built
+    before v2 -- resolves to no credentials, i.e. today's no-resolver
+    behaviour.
+    """
+
+    def resolve(
+        context: InvocationContext, record: outbox.OutboxRecord
+    ) -> Mapping[str, str] | None:
+        carrier = getattr(context, "transient_credentials", None)
+        if carrier is None:
+            return None
+        payload: Any = record.payload
+        if record.record_class == contracts.RecordClass.AUTHORITY_COMMAND.value:
+            inner = payload.get("payload") if isinstance(payload, Mapping) else None
+            if isinstance(inner, Mapping):
+                payload = inner
+        if not isinstance(payload, Mapping):
+            return None
+        resolved: dict[str, str] = {}
+        for field in _CLAIM_CREDENTIAL_REF_FIELDS:
+            ref = payload.get(field)
+            if not isinstance(ref, str):
+                continue
+            proof = carrier.reveal(ref)
+            if proof is not None:
+                resolved[ref] = proof
+        return resolved
+
+    return resolve
+
+
 __all__ = [
     "ApplicationRejection",
     "CLAIM_COMMAND_TYPES",
@@ -937,8 +1048,10 @@ __all__ = [
     "ProjectMemberApplication",
     "ProjectWorkApplication",
     "SUPPORTED_BATCH_TYPES",
+    "TransientCredentialCarrier",
     "WorkApplication",
     "batch_idempotency_key",
+    "make_transient_credential_resolver",
     "project_batch_idempotency_key",
     "record_from_dict",
     "record_to_dict",

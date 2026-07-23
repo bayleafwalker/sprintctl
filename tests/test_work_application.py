@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from sprintctl import application, contracts, db, outbox
+from sprintctl import application, authority, contracts, db, outbox
 from sprintctl.application import (
     ApplicationRejection,
     ProjectMemberApplication,
@@ -140,6 +140,45 @@ def _claim_record(
         payload=payload,
         payload_sha256=hashlib.sha256(encoded.encode()).hexdigest(),
         created_at="2026-07-21T12:00:00Z",
+    )
+
+
+class _FakeTransientCredentialCarrier:
+    """Minimal ``TransientCredentialCarrier`` double for resolver unit tests.
+
+    Matches the ``reveal(key) -> str | None`` duck type documented on
+    :class:`application.TransientCredentialCarrier` without depending on
+    ``vuoro_service`` at all.
+    """
+
+    def __init__(self, bindings: dict[str, str]):
+        self._bindings = dict(bindings)
+
+    def reveal(self, key: str) -> str | None:
+        return self._bindings.get(key)
+
+
+def _fake_authority_command_record(inner_payload: dict) -> outbox.OutboxRecord:
+    """An ``authority-command``-classed record shaped only well enough for
+    :func:`application.make_transient_credential_resolver` -- it never
+    round-trips through ``record_from_dict``/canonical validation."""
+
+    return outbox.OutboxRecord(
+        origin_stream_id="00000000-0000-4000-8000-000000000001",
+        origin_seq=1,
+        event_id="00000000-0000-4000-8000-000000000099",
+        schema_version=1,
+        record_class=contracts.RecordClass.AUTHORITY_COMMAND.value,
+        event_type="claim.handoff",
+        actor="resolver-test",
+        runtime_session_id=None,
+        occurred_at="2026-07-23T00:00:00Z",
+        basis_revision="claim:1@sha256:" + "0" * 64,
+        correlation_id=None,
+        causation_id=None,
+        payload={"payload": inner_payload},
+        payload_sha256="0" * 64,
+        created_at="2026-07-23T00:00:00Z",
     )
 
 
@@ -660,3 +699,123 @@ def test_cutover_evidence_handler_is_the_same_domain_core(monkeypatch, tmp_path)
         "max_watermark_age_seconds": 90,
         "rehearse": False,
     }
+
+
+def test_claim_context_catalog_contract_is_an_unauthenticated_read_op_shape():
+    contract = next(
+        contract
+        for contract in WORK_OPERATION_CONTRACTS
+        if contract.name == "work.claim.context"
+    )
+    assert contract.required_authority == "work:claim"
+    assert contract.execution_semantics == "read"
+    assert contract.idempotency == "not-allowed"
+    assert contract.input_schema["required"] == ["claim_id"]
+
+
+def test_claim_context_returns_non_secret_snapshot_and_current_revision(
+    conn, active_sprint
+):
+    track = db.get_or_create_track(conn, active_sprint["id"], "served")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Context item")
+    claim_id = db.create_claim(conn, item_id, "claim-owner")
+
+    app = _application(store=conn, backend=db)
+    result = app.invoke(
+        "work.claim.context",
+        {"claim_id": claim_id},
+        _context(actor="context-reader"),
+    )
+
+    assert result["repo_id"] == "test-repo"
+    assert result["authority_repo_uuid"] is None
+    assert result["actor"] == "context-reader"
+    assert result["claim"]["work_item_id"] == item_id
+    assert "claim_token" not in result["claim"]
+
+    secret_claim = db.get_claim(conn, claim_id, include_secret=True)
+    assert result["claim_revision"] == authority.claim_revision(secret_claim)
+    assert secret_claim["claim_token"] not in json.dumps(result)
+
+
+def test_claim_context_missing_claim_rejects_without_backend_mutation(conn):
+    app = _application(store=conn, backend=db)
+
+    with pytest.raises(ApplicationRejection) as rejected:
+        app.invoke("work.claim.context", {"claim_id": 999}, _context())
+
+    assert rejected.value.code == "claim-not-found"
+    assert rejected.value.http_status == 404
+
+
+def test_transient_credential_resolver_reveals_only_referenced_refs():
+    resolver = application.make_transient_credential_resolver()
+    referenced_ref = "sha256:" + "1" * 64
+    proposed_ref = "sha256:" + "2" * 64
+    unrelated_ref = "sha256:" + "3" * 64
+    carrier = _FakeTransientCredentialCarrier(
+        {
+            referenced_ref: "secret-one",
+            proposed_ref: "secret-two",
+            unrelated_ref: "secret-three",
+        }
+    )
+    context = SimpleNamespace(transient_credentials=carrier)
+    record = _fake_authority_command_record(
+        {
+            "credential_ref": referenced_ref,
+            "proposed_credential_ref": proposed_ref,
+        }
+    )
+
+    resolved = resolver(context, record)
+
+    assert resolved == {referenced_ref: "secret-one", proposed_ref: "secret-two"}
+
+
+def test_transient_credential_resolver_returns_none_without_a_carrier():
+    resolver = application.make_transient_credential_resolver()
+    record = _fake_authority_command_record({"credential_ref": "sha256:" + "1" * 64})
+
+    assert resolver(SimpleNamespace(transient_credentials=None), record) is None
+    # A context built before v2 existed (no attribute at all) behaves the same.
+    assert resolver(SimpleNamespace(), record) is None
+
+
+def test_transient_credential_resolver_skips_unresolvable_bindings():
+    resolver = application.make_transient_credential_resolver()
+    ref = "sha256:" + "4" * 64
+    context = SimpleNamespace(transient_credentials=_FakeTransientCredentialCarrier({}))
+    record = _fake_authority_command_record({"credential_ref": ref})
+
+    assert resolver(context, record) == {}
+
+
+def test_transient_credential_resolver_reads_the_flat_payload_for_observations():
+    """Only ``authority-command``-classed records nest their domain payload
+    one level down (``record.payload["payload"]``); an observation's own
+    payload already sits at the top level."""
+
+    resolver = application.make_transient_credential_resolver()
+    ref = "sha256:" + "5" * 64
+    carrier = _FakeTransientCredentialCarrier({ref: "secret"})
+    context = SimpleNamespace(transient_credentials=carrier)
+    observation = outbox.OutboxRecord(
+        origin_stream_id="00000000-0000-4000-8000-000000000001",
+        origin_seq=1,
+        event_id="00000000-0000-4000-8000-000000000098",
+        schema_version=1,
+        record_class=contracts.RecordClass.OBSERVATION.value,
+        event_type="event.observed",
+        actor="resolver-test",
+        runtime_session_id=None,
+        occurred_at="2026-07-23T00:00:00Z",
+        basis_revision=None,
+        correlation_id=None,
+        causation_id=None,
+        payload={"credential_ref": ref},
+        payload_sha256="0" * 64,
+        created_at="2026-07-23T00:00:00Z",
+    )
+
+    assert resolver(context, observation) == {ref: "secret"}

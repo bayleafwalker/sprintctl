@@ -353,12 +353,16 @@ def _canonical_authority_payload(record_type: str, payload: Mapping[str, Any]) -
             payload,
             field="payload",
             required={"claim_id", "ttl_seconds", "credential_ref"},
+            optional={"metadata"},
         )
-        return {
+        result = {
             "claim_id": _positive_int(source["claim_id"], "payload.claim_id"),
             "ttl_seconds": _positive_ttl(source["ttl_seconds"]),
             "credential_ref": _credential_ref(source["credential_ref"]),
         }
+        if "metadata" in source:
+            result["metadata"] = _canonical_claim_metadata(source["metadata"])
+        return result
 
     if record_type == "claim.handoff":
         source = _strict_fields(
@@ -372,7 +376,7 @@ def _canonical_authority_payload(record_type: str, payload: Mapping[str, Any]) -
                 "credential_ref",
                 "metadata",
             },
-            optional={"proposed_credential_ref"},
+            optional={"proposed_credential_ref", "note"},
         )
         mode = _required_string(source["mode"], "payload.mode")
         if mode not in {"rotate", "transfer"}:
@@ -394,6 +398,8 @@ def _canonical_authority_payload(record_type: str, payload: Mapping[str, Any]) -
             result["proposed_credential_ref"] = _credential_ref(
                 source["proposed_credential_ref"]
             )
+        if "note" in source:
+            result["note"] = _optional_string(source["note"], "payload.note")
         return result
 
     if record_type == "claim.release":

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import uuid
@@ -138,6 +139,78 @@ def _claim_command(store, item, actor, token, event_id, *, claim_agent=None):
         basis_revision=authority.item_revision(item),
     )
     return command, {reference: token}
+
+
+def _renew_command(store, claim, token, event_id, *, metadata=None):
+    reference = authority.credential_ref(token)
+    payload = {
+        "claim_id": claim["id"],
+        "ttl_seconds": 900,
+        "credential_ref": reference,
+    }
+    if metadata is not None:
+        payload["metadata"] = metadata
+    command = contracts.AuthorityCommand(
+        event_id=event_id,
+        record_type="claim.renew",
+        schema_version="1",
+        actor=claim["agent"],
+        authored_at="2026-07-21T12:00:00Z",
+        refs={
+            "repo_id": store.authority_repo_uuid,
+            "aggregate_type": "claim",
+            "claim_id": claim["id"],
+        },
+        payload=payload,
+        basis_revision=authority.claim_revision(claim),
+    )
+    return command, {reference: token}
+
+
+def _handoff_command(
+    store,
+    claim,
+    *,
+    actor,
+    to_actor,
+    token,
+    event_id,
+    mode="rotate",
+    proposed_token=None,
+    metadata=None,
+    note=None,
+):
+    reference = authority.credential_ref(token)
+    payload = {
+        "claim_id": claim["id"],
+        "to_actor": to_actor,
+        "mode": mode,
+        "ttl_seconds": 900,
+        "credential_ref": reference,
+        "metadata": metadata or {},
+    }
+    credentials = {reference: token}
+    if mode == "rotate":
+        proposed_reference = authority.credential_ref(proposed_token)
+        payload["proposed_credential_ref"] = proposed_reference
+        credentials[proposed_reference] = proposed_token
+    if note is not None:
+        payload["note"] = note
+    command = contracts.AuthorityCommand(
+        event_id=event_id,
+        record_type="claim.handoff",
+        schema_version="1",
+        actor=actor,
+        authored_at="2026-07-21T12:00:00Z",
+        refs={
+            "repo_id": store.authority_repo_uuid,
+            "aggregate_type": "claim",
+            "claim_id": claim["id"],
+        },
+        payload=payload,
+        basis_revision=authority.claim_revision(claim),
+    )
+    return command, credentials
 
 
 @pytest.mark.parametrize(
@@ -350,4 +423,283 @@ def test_served_lifecycle_retry_and_stale_basis_are_durable(store_factory, tmp_p
     assert rejected["reason_code"] == "stale-basis"
     assert retried == {**rejected, "duplicate": True}
     assert pg.get_work_item(store, item_id)["status"] == "active"
+    store.conn.close()
+
+
+def test_claim_context_returns_non_secret_snapshot_and_current_revision(
+    store_factory, tmp_path
+):
+    store = store_factory("claim-context")
+    sprint_id = pg.create_sprint(store, "Claim context", status="active")
+    track_id = pg.get_or_create_track(store, sprint_id, "work")
+    item_id = pg.create_work_item(store, sprint_id, track_id, "Context item")
+    item = pg.get_work_item(store, item_id)
+
+    command, credentials = _claim_command(
+        store, item, "context-actor", "context-proof", str(uuid.uuid4())
+    )
+    record = _command_record(tmp_path / "context-producer.db", command)
+    app = _application(store, credentials)
+    context = _context("context-actor", record.basis_revision, record.event_id)
+    accepted = app.invoke(
+        "work.claim.arbitrate", {"record": record_to_dict(record)}, context
+    )
+    assert accepted["outcome"] == "accepted"
+    claim_id = accepted["effect"]["claim_id"]
+
+    read_context = _context("context-reader", None, None)
+    result = app.invoke("work.claim.context", {"claim_id": claim_id}, read_context)
+
+    assert result["repo_id"] == store.repo_id
+    assert result["authority_repo_uuid"] == store.authority_repo_uuid
+    assert result["actor"] == "context-reader"
+    assert result["claim"]["claim_id"] == claim_id
+    assert result["claim"]["work_item_id"] == item_id
+    assert result["claim_revision"] == authority.get_claim_revision(store, claim_id)
+
+    serialized = json.dumps(result)
+    assert "claim_token" not in result["claim"]
+    assert "context-proof" not in serialized
+    assert "dsn" not in serialized.lower()
+    store.conn.close()
+
+
+def test_claim_context_missing_claim_rejects_without_producer_record(store_factory):
+    store = store_factory("claim-context-missing")
+    app = _application(store, {})
+    context = _context("context-reader", None, None)
+
+    with pytest.raises(ApplicationRejection) as rejected:
+        app.invoke("work.claim.context", {"claim_id": 999999}, context)
+
+    assert rejected.value.code == "claim-not-found"
+    assert rejected.value.http_status == 404
+    assert pg.list_ingested_records(store, after_offset=0, limit=None) == []
+    store.conn.close()
+
+
+def test_claim_renew_applies_metadata_with_legacy_heartbeat_semantics(
+    store_factory, tmp_path
+):
+    store = store_factory("claim-renew-metadata")
+    sprint_id = pg.create_sprint(store, "Claim renew", status="active")
+    track_id = pg.get_or_create_track(store, sprint_id, "work")
+    item_id = pg.create_work_item(store, sprint_id, track_id, "Renew item")
+    item = pg.get_work_item(store, item_id)
+
+    acquire, acquire_credentials = _claim_command(
+        store, item, "renew-actor", "renew-proof", str(uuid.uuid4())
+    )
+    acquire_record = _command_record(tmp_path / "renew-acquire.db", acquire)
+    app = _application(store, acquire_credentials)
+    accepted = app.invoke(
+        "work.claim.arbitrate",
+        {"record": record_to_dict(acquire_record)},
+        _context("renew-actor", acquire_record.basis_revision, acquire_record.event_id),
+    )
+    claim_id = accepted["effect"]["claim_id"]
+
+    # First renew: supply full metadata.
+    claim = pg.get_claim(store, claim_id, include_secret=True)
+    renew_one_command, renew_one_credentials = _renew_command(
+        store,
+        claim,
+        "renew-proof",
+        str(uuid.uuid4()),
+        metadata={
+            "runtime_session_id": "session-one",
+            "instance_id": "instance-one",
+            "branch": "feature/one",
+            "worktree_path": "/work/one",
+            "commit_sha": "a" * 40,
+            "pr_ref": "org/repo#1",
+            "hostname": "host-one",
+            "pid": 111,
+        },
+    )
+    renew_one = _command_record(tmp_path / "renew-one.db", renew_one_command)
+    app_one = _application(store, renew_one_credentials)
+    result_one = app_one.invoke(
+        "work.claim.arbitrate",
+        {"record": record_to_dict(renew_one)},
+        _context("renew-actor", renew_one.basis_revision, renew_one.event_id),
+    )
+    assert result_one["outcome"] == "accepted"
+    after_one = pg.get_claim(store, claim_id, include_secret=False)
+    assert after_one["runtime_session_id"] == "session-one"
+    assert after_one["instance_id"] == "instance-one"
+    assert after_one["branch"] == "feature/one"
+    assert after_one["worktree_path"] == "/work/one"
+    assert after_one["commit_sha"] == "a" * 40
+    assert after_one["pr_ref"] == "org/repo#1"
+    assert after_one["hostname"] == "host-one"
+    assert after_one["pid"] == 111
+
+    # Second renew: omit metadata entirely -- existing values must survive
+    # (the same COALESCE / "only apply non-null values" semantics legacy
+    # ``pg.heartbeat_claim`` uses).
+    claim = pg.get_claim(store, claim_id, include_secret=True)
+    renew_two_command, renew_two_credentials = _renew_command(
+        store, claim, "renew-proof", str(uuid.uuid4()), metadata=None
+    )
+    renew_two = _command_record(tmp_path / "renew-two.db", renew_two_command)
+    app_two = _application(store, renew_two_credentials)
+    result_two = app_two.invoke(
+        "work.claim.arbitrate",
+        {"record": record_to_dict(renew_two)},
+        _context("renew-actor", renew_two.basis_revision, renew_two.event_id),
+    )
+    assert result_two["outcome"] == "accepted"
+    after_two = pg.get_claim(store, claim_id, include_secret=False)
+    assert after_two["runtime_session_id"] == "session-one"
+    assert after_two["branch"] == "feature/one"
+    assert after_two["pid"] == 111
+
+    # Third renew: a partial metadata object overrides only the named field.
+    claim = pg.get_claim(store, claim_id, include_secret=True)
+    renew_three_command, renew_three_credentials = _renew_command(
+        store,
+        claim,
+        "renew-proof",
+        str(uuid.uuid4()),
+        metadata={"branch": "feature/two"},
+    )
+    renew_three = _command_record(tmp_path / "renew-three.db", renew_three_command)
+    app_three = _application(store, renew_three_credentials)
+    result_three = app_three.invoke(
+        "work.claim.arbitrate",
+        {"record": record_to_dict(renew_three)},
+        _context("renew-actor", renew_three.basis_revision, renew_three.event_id),
+    )
+    assert result_three["outcome"] == "accepted"
+    after_three = pg.get_claim(store, claim_id, include_secret=False)
+    assert after_three["branch"] == "feature/two"
+    assert after_three["runtime_session_id"] == "session-one"
+    assert after_three["pid"] == 111
+    store.conn.close()
+
+
+def test_claim_handoff_atomically_emits_non_secret_coordination_event(
+    store_factory, tmp_path
+):
+    store = store_factory("claim-handoff-event")
+    sprint_id = pg.create_sprint(store, "Claim handoff", status="active")
+    track_id = pg.get_or_create_track(store, sprint_id, "work")
+    item_id = pg.create_work_item(store, sprint_id, track_id, "Handoff item")
+    item = pg.get_work_item(store, item_id)
+
+    acquire, acquire_credentials = _claim_command(
+        store, item, "handoff-owner", "handoff-old-proof", str(uuid.uuid4())
+    )
+    acquire_record = _command_record(tmp_path / "handoff-acquire.db", acquire)
+    app = _application(store, acquire_credentials)
+    accepted = app.invoke(
+        "work.claim.arbitrate",
+        {"record": record_to_dict(acquire_record)},
+        _context(
+            "handoff-owner", acquire_record.basis_revision, acquire_record.event_id
+        ),
+    )
+    claim_id = accepted["effect"]["claim_id"]
+
+    claim = pg.get_claim(store, claim_id, include_secret=True)
+    handoff_command, handoff_credentials = _handoff_command(
+        store,
+        claim,
+        actor="handoff-owner",
+        to_actor="handoff-recipient",
+        token="handoff-old-proof",
+        proposed_token="handoff-new-proof",
+        event_id=str(uuid.uuid4()),
+        note="Structured handoff note.",
+    )
+    handoff = _command_record(tmp_path / "handoff.db", handoff_command)
+    handoff_app = _application(store, handoff_credentials)
+    handoff_context = _context(
+        "handoff-owner", handoff.basis_revision, handoff.event_id
+    )
+    handoff_result = handoff_app.invoke(
+        "work.claim.arbitrate", {"record": record_to_dict(handoff)}, handoff_context
+    )
+    assert handoff_result["outcome"] == "accepted"
+    assert handoff_result["effect"]["actor"] == "handoff-recipient"
+
+    events = [
+        event
+        for event in pg.list_events(store, sprint_id)
+        if event["event_type"] == "claim-handoff"
+    ]
+    assert len(events) == 1
+    event = events[0]
+    assert event["actor"] == "handoff-owner"
+    assert event["work_item_id"] == item_id
+    payload = json.loads(event["payload"])
+    assert payload["operation"] == "handoff"
+    assert payload["mode"] == "rotate"
+    assert payload["detail"] == "Structured handoff note."
+    assert payload["token_rotated"] is True
+    assert payload["from_identity"]["actor"] == "handoff-owner"
+    assert payload["to_identity"]["actor"] == "handoff-recipient"
+    assert payload["from_identity"]["claim_token_present"] is True
+    assert payload["to_identity"]["claim_token_present"] is True
+
+    serialized = json.dumps(payload)
+    assert "handoff-old-proof" not in serialized
+    assert "handoff-new-proof" not in serialized
+    assert "claim_token" not in payload["from_identity"]
+    assert "claim_token" not in payload["to_identity"]
+
+    # A handoff rejected *inside* the handoff branch itself (credential
+    # conflict, discovered after proof resolution but before the ownership
+    # UPDATE) must leave both claim ownership and coordination evidence
+    # untouched -- the ownership UPDATE and the evidence INSERT commit or
+    # roll back together.
+    blocker_item_id = pg.create_work_item(store, sprint_id, track_id, "Blocker item")
+    blocker_item = pg.get_work_item(store, blocker_item_id)
+    blocker_acquire, blocker_credentials = _claim_command(
+        store, blocker_item, "handoff-recipient", "blocker-proof", str(uuid.uuid4())
+    )
+    blocker_record = _command_record(tmp_path / "handoff-blocker.db", blocker_acquire)
+    _application(store, blocker_credentials).invoke(
+        "work.claim.arbitrate",
+        {"record": record_to_dict(blocker_record)},
+        _context(
+            "handoff-recipient",
+            blocker_acquire.basis_revision,
+            blocker_acquire.event_id,
+        ),
+    )
+
+    claim_after_handoff = pg.get_claim(store, claim_id, include_secret=True)
+    conflicting_command, conflicting_credentials = _handoff_command(
+        store,
+        claim_after_handoff,
+        actor="handoff-recipient",
+        to_actor="handoff-third",
+        token="handoff-new-proof",
+        proposed_token="blocker-proof",
+        event_id=str(uuid.uuid4()),
+    )
+    conflicting = _command_record(
+        tmp_path / "handoff-conflicting.db", conflicting_command
+    )
+    conflicting_result = _application(store, conflicting_credentials).invoke(
+        "work.claim.arbitrate",
+        {"record": record_to_dict(conflicting)},
+        _context(
+            "handoff-recipient", conflicting.basis_revision, conflicting.event_id
+        ),
+    )
+    assert conflicting_result["outcome"] == "rejected"
+    assert conflicting_result["reason_code"] == "credential-conflict"
+
+    events_after = [
+        event
+        for event in pg.list_events(store, sprint_id)
+        if event["event_type"] == "claim-handoff"
+    ]
+    assert len(events_after) == 1
+    assert pg.get_claim(store, claim_id, include_secret=False)["agent"] == (
+        "handoff-recipient"
+    )
     store.conn.close()
