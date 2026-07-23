@@ -53,10 +53,13 @@ def _client(served_profile: ServedProfile) -> Any:
 
 
 async def _invoke_operation(
-    served_profile: ServedProfile, operation: str, arguments: dict[str, Any]
+    served_profile: ServedProfile,
+    operation: str,
+    arguments: dict[str, Any],
+    **kwargs: Any,
 ) -> Any:
     async with _client(served_profile) as client:
-        return await client.invoke(operation, arguments)
+        return await client.invoke(operation, arguments, **kwargs)
 
 
 def read_sprints(
@@ -144,11 +147,49 @@ def claim_start(
     return asyncio.run(_invoke_operation(served_profile, "work.claim.start", arguments))
 
 
+def lifecycle_arbitrate(
+    served_profile: ServedProfile, *, record: dict[str, Any]
+) -> dict[str, Any]:
+    """Invoke ``work.lifecycle.arbitrate`` (``sprintctl item status`` /
+    ``sprintctl sprint status``, for the ``item.transition``, ``item.done``,
+    ``sprint.activate`` and ``sprint.close`` record types only -- claim
+    arbitration is a separate, not-yet-wired operation).
+
+    Per the "Authority and retry semantics" section of
+    ``docs/reference/vuoro-work-adapter.md``, a single-command invocation's
+    idempotency key and basis revision must equal the canonical command
+    record's ``event_id`` and ``basis_revision``; this sends both alongside
+    the record so the served application can enforce that match. ``record``
+    is the exact JSON shape described by ``_RECORD_DEFINITION`` in
+    :mod:`sprintctl.vuoro_adapter` -- a durable outbox-appended envelope, not
+    a value this facade fabricates itself.
+    """
+
+    arguments = {"record": record}
+    return asyncio.run(
+        _invoke_operation(
+            served_profile,
+            "work.lifecycle.arbitrate",
+            arguments,
+            idempotency_key=record["event_id"],
+            basis_revision=record["basis_revision"],
+        )
+    )
+
+
 # The subset of served_routes.py's allowlist that doctor's served probe
-# checks for -- the exact 5 catalog operations #1195 wires through this
+# checks for -- the exact 6 catalog operations #1195 wires through this
 # facade (next-work contributes two: work.read.next-work and
-# work.project.next-work).
-_DOCTOR_PROBE_COMMAND_PATHS = ("sprint.list", "item.show", "next-work", "claim.start")
+# work.project.next-work; item.status and sprint.status share one operation,
+# work.lifecycle.arbitrate).
+_DOCTOR_PROBE_COMMAND_PATHS = (
+    "sprint.list",
+    "item.show",
+    "next-work",
+    "claim.start",
+    "item.status",
+    "sprint.status",
+)
 
 EXPECTED_OPERATIONS: frozenset[str] = frozenset(
     route.operation
@@ -180,6 +221,7 @@ __all__ = [
     "EXPECTED_OPERATIONS",
     "catalog_operation_names",
     "claim_start",
+    "lifecycle_arbitrate",
     "project_next_work",
     "read_item",
     "read_next_work",

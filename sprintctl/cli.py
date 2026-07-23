@@ -227,12 +227,16 @@ def _get_project_stores(obj: dict, project_value: str | Path):
 _SERVED_SPRINT_LIST_ROUTE = _served_routes.routes_for("sprint.list")[0]
 _SERVED_ITEM_SHOW_ROUTE = _served_routes.routes_for("item.show")[0]
 _SERVED_CLAIM_START_ROUTE = _served_routes.routes_for("claim.start")[0]
+_SERVED_ITEM_STATUS_ROUTE = _served_routes.routes_for("item.status")[0]
+_SERVED_SPRINT_STATUS_ROUTE = _served_routes.routes_for("sprint.status")[0]
 _SERVED_NEXT_WORK_ROUTES = {
     route.operation: route for route in _served_routes.routes_for("next-work")
 }
 assert _SERVED_SPRINT_LIST_ROUTE.operation == "work.read.sprints"
 assert _SERVED_ITEM_SHOW_ROUTE.operation == "work.read.item"
 assert _SERVED_CLAIM_START_ROUTE.operation == "work.claim.start"
+assert _SERVED_ITEM_STATUS_ROUTE.operation == "work.lifecycle.arbitrate"
+assert _SERVED_SPRINT_STATUS_ROUTE.operation == "work.lifecycle.arbitrate"
 assert set(_SERVED_NEXT_WORK_ROUTES) == {"work.read.next-work", "work.project.next-work"}
 
 
@@ -753,6 +757,107 @@ def sprint_show(obj, sprint_id, detail, watch_mode, interval, as_json) -> None:
         click.echo("\nWatch mode stopped.")
 
 
+def _served_sprint_status(config, sprint_id, new_status, actor, as_json) -> None:
+    """Served-mode ``sprint status``: routes to ``work.lifecycle.arbitrate``.
+
+    Only ``sprint.activate`` (-> "active") and ``sprint.close`` (-> "closed")
+    exist in authority.py's dispatch table -- no sprint status ever
+    transitions *to* "planned" (``SPRINT_TRANSITIONS`` in db.py has no target
+    of "planned" from any source status), so there is no record_type for that
+    target and served mode fails closed rather than guessing.
+    """
+    if new_status not in ("active", "closed"):
+        click.echo(
+            "Error: served sprint status has no work.lifecycle.arbitrate mapping for "
+            f"a transition to {new_status!r} (no sprint status ever transitions to "
+            "'planned'); use SPRINTCTL_BACKEND=local or remote.",
+            err=True,
+        )
+        sys.exit(1)
+
+    actor = (actor or os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown").strip()
+    read_result = _run_served(
+        "sprint status",
+        _served.read_sprints,
+        config.served_profile,
+        include_backlog=True,
+        include_archive=True,
+    )
+    sprint = next(
+        (s for s in read_result["sprints"] if s["id"] == sprint_id), None
+    )
+    if sprint is None:
+        click.echo(f"Sprint #{sprint_id} not found.", err=True)
+        sys.exit(1)
+    current = sprint["status"]
+    record_type = "sprint.activate" if new_status == "active" else "sprint.close"
+    rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+    try:
+        durable = _mint_authority_command_record(
+            record_type=record_type,
+            actor=actor,
+            refs={
+                "repo_id": _authority_repo_uuid(rollout_paths.repo_root),
+                "aggregate_type": "sprint",
+                "aggregate_uuid": sprint["aggregate_uuid"],
+                "aggregate_id": sprint_id,
+            },
+            payload={},
+            basis_revision=_authority.sprint_revision(sprint),
+            outbox_path=rollout_paths.outbox_path,
+        )
+    except (TypeError, ValueError) as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    decision = _run_served(
+        "sprint status",
+        _served.lifecycle_arbitrate,
+        config.served_profile,
+        record=_served_record_argument(durable),
+    )
+    if decision["outcome"] != "accepted":
+        click.echo(
+            f"Error: {decision.get('reason_code')}: {decision.get('reason_detail')}",
+            err=True,
+        )
+        sys.exit(1)
+    effect = decision["effect"]
+    boundary_event_id = effect.get("boundary_event_id")
+    boundary_revision = effect.get("boundary_revision")
+    if new_status == "active":
+        _emit_audit_event(
+            "sprint.opened",
+            summary=f"Sprint {sprint_id} opened",
+            refs=[f"sprint:{sprint_id}"],
+            metadata={"sprint_id": sprint_id, "event_type": "sprint-opened"},
+        )
+    elif new_status == "closed":
+        _emit_audit_event(
+            "sprint.closed",
+            summary=f"Sprint {sprint_id} closed",
+            refs=[f"sprint:{sprint_id}"],
+            metadata={
+                "sprint_id": sprint_id,
+                "event_type": "sprint-closed",
+                "boundary_event_id": boundary_event_id,
+                "boundary_revision": boundary_revision,
+                "actor": actor,
+            },
+        )
+    if as_json:
+        payload = {"sprint_id": sprint_id, "previous": current, "status": new_status}
+        if boundary_event_id is not None:
+            payload["boundary_event_id"] = boundary_event_id
+            payload["boundary_revision"] = boundary_revision
+        click.echo(json.dumps(payload, indent=2))
+        return
+    click.echo(f"Sprint #{sprint_id} status: {current} -> {new_status}")
+    if boundary_event_id is not None:
+        click.echo(
+            f"Sprint-close boundary event #{boundary_event_id} (revision {boundary_revision})"
+        )
+
+
 @sprint.command("status")
 @click.option("--id", "sprint_id", type=int, required=True, help="Sprint ID")
 @click.option(
@@ -767,6 +872,10 @@ def sprint_show(obj, sprint_id, detail, watch_mode, interval, as_json) -> None:
 @click.pass_obj
 def sprint_status(obj, sprint_id, new_status, actor, as_json) -> None:
     """Update a sprint's status (enforces allowed transitions)."""
+    config = _served_config_or_none(obj)
+    if config is not None:
+        _served_sprint_status(config, sprint_id, new_status, actor, as_json)
+        return
     store, m = _get_store(obj)
     s = m.get_sprint(store, sprint_id)
     if s is None:
@@ -1532,6 +1641,90 @@ def item_note(
     click.echo(f"Recorded note #{eid} ({note_type}) on item #{item_id}: {summary}")
 
 
+def _served_item_status(config, item_id, new_status, actor, claim_id, claim_token, as_json) -> None:
+    """Served-mode ``item status``: routes to ``work.lifecycle.arbitrate``.
+
+    Every ``new_status`` choice has a record_type in authority.py's dispatch
+    table (``item.done`` for "done", ``item.transition`` -- generic via a
+    payload ``to_status`` field -- for "pending"/"active"/"blocked"), so
+    there is no unmapped-transition gap here the way ``sprint status`` has
+    for "planned".
+
+    The remaining gap is claim proof: per "Authority and retry semantics" in
+    docs/reference/vuoro-work-adapter.md, "Claim proof bytes are resolved by
+    service composition and are never accepted in authority-command
+    invocation arguments or the catalog" -- the same unresolved cross-repo
+    question that keeps claim heartbeat/handoff/release out of #1195's scope.
+    ``item.transition``/``item.done`` conditionally need that same proof
+    whenever the target item currently has an active exclusive claim
+    (mirrors ``_handle_item`` in authority.py and ``set_work_item_status`` in
+    db.py). Rather than silently dropping a caller-supplied
+    --claim-id/--claim-token (which would just surface later as a confusing
+    server-side "invalid-claim-proof" rejection), this fails closed
+    immediately when either is supplied. Omitting them still works whenever
+    the item has no active exclusive claim; the served application correctly
+    rejects the rest, matching local mode's ClaimConflict for that case.
+    """
+    if claim_id is not None or claim_token is not None:
+        click.echo(
+            "Error: served item status cannot accept --claim-id/--claim-token: claim "
+            "proof bytes are never accepted in authority-command invocation arguments "
+            "(docs/reference/vuoro-work-adapter.md); use SPRINTCTL_BACKEND=local or "
+            "remote for a claim-proven transition.",
+            err=True,
+        )
+        sys.exit(1)
+
+    read_result = _run_served(
+        "item status", _served.read_item, config.served_profile, item_id=item_id
+    )
+    it = read_result["item"]
+    current = it["status"]
+    record_type = "item.done" if new_status == "done" else "item.transition"
+    actor_value = (actor or os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown").strip()
+    rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+    try:
+        durable = _mint_authority_command_record(
+            record_type=record_type,
+            actor=actor_value,
+            refs={
+                "repo_id": _authority_repo_uuid(rollout_paths.repo_root),
+                "aggregate_type": "item",
+                "aggregate_uuid": it["aggregate_uuid"],
+                "aggregate_id": item_id,
+            },
+            payload={"to_status": new_status},
+            basis_revision=_authority.item_revision(it),
+            outbox_path=rollout_paths.outbox_path,
+        )
+    except (TypeError, ValueError) as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    decision = _run_served(
+        "item status",
+        _served.lifecycle_arbitrate,
+        config.served_profile,
+        record=_served_record_argument(durable),
+    )
+    if decision["outcome"] != "accepted":
+        click.echo(
+            f"Error: {decision.get('reason_code')}: {decision.get('reason_detail')}",
+            err=True,
+        )
+        sys.exit(1)
+    effect = decision["effect"]
+    final_status = effect.get("status", new_status)
+    if as_json:
+        click.echo(
+            json.dumps(
+                {"item_id": item_id, "previous": current, "status": final_status},
+                indent=2,
+            )
+        )
+        return
+    click.echo(f"Item #{item_id} status: {current} -> {final_status}")
+
+
 @item.command("status")
 @click.option("--id", "item_id", type=int, required=True, help="Item ID")
 @click.option(
@@ -1548,6 +1741,10 @@ def item_note(
 @click.pass_obj
 def item_status(obj, item_id, new_status, actor, claim_id, claim_token, as_json) -> None:
     """Update an item's status (enforces transitions, claims, and dependency safety)."""
+    config = _served_config_or_none(obj)
+    if config is not None:
+        _served_item_status(config, item_id, new_status, actor, claim_id, claim_token, as_json)
+        return
     store, m = _get_store(obj)
     it = m.get_work_item(store, item_id)
     if it is None:
@@ -2363,6 +2560,101 @@ def _authority_basis_revision(
     return f"event:{events[0]['id']}"
 
 
+def _mint_authority_command_record(
+    *,
+    record_type: str,
+    actor: str,
+    refs: dict[str, object],
+    payload: dict,
+    basis_revision: str | None,
+    outbox_path: Path,
+    event_id: str | None = None,
+    correlation_id: str | None = None,
+    runtime_session_id: str | None = None,
+) -> _outbox.OutboxRecord:
+    """Build one immutable ``_contracts.AuthorityCommand`` envelope and
+    durably append it to the local producer outbox (``.sprintctl/authority-
+    command-outbox.db``), returning the appended durable ``OutboxRecord``.
+
+    That record's origin_stream_id/origin_seq/schema_version/payload_sha256/
+    created_at (assigned by the outbox append itself, not fabricated here) are
+    exactly the shape a served operation's ``record`` argument requires --
+    see ``_RECORD_DEFINITION`` in :mod:`sprintctl.vuoro_adapter`.
+
+    Pure extraction of the record-construction step ``authority submit`` has
+    always performed when minting a brand-new command (not its idempotent-
+    retry path, which looks up a pre-existing durable record by event_id
+    instead of minting one). Shared by ``authority submit`` and any other
+    command path that needs to mint one durable authority-command envelope,
+    e.g. served-mode item/sprint status transitions routed through
+    ``work.lifecycle.arbitrate``.
+    """
+
+    request = _contracts.AuthorityCommand(
+        event_id=event_id or str(uuid.uuid4()),
+        record_type=record_type,
+        schema_version="1",
+        actor=actor,
+        authored_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        refs=refs,
+        payload=payload,
+        basis_revision=basis_revision,
+        correlation_id=(
+            correlation_id if correlation_id is not None else (event_id or str(uuid.uuid4()))
+        ),
+    )
+    producer = _outbox.open_outbox(outbox_path)
+    try:
+        return _outbox.append_authority_command(
+            producer,
+            request,
+            runtime_session_id=(
+                runtime_session_id
+                if runtime_session_id is not None
+                else _detect_runtime_session_id(None)
+            ),
+        )
+    finally:
+        producer.close()
+
+
+def _served_record_argument(durable: _outbox.OutboxRecord) -> dict[str, object]:
+    """Shape a durable ``OutboxRecord`` into the plain JSON dict a served
+    operation's ``record`` input expects (``_RECORD_DEFINITION`` in
+    :mod:`sprintctl.vuoro_adapter`).
+
+    Deliberately a small local duplicate of
+    ``sprintctl.application.record_to_dict`` rather than a reuse of it:
+    ``sprintctl.application`` imports ``sprintctl.cutover``, which chains
+    through ``sprintctl.doctor`` to ``sprintctl.pg_migrations``, and served-
+    mode call sites must stay free of that import (see
+    ``tests/test_served.py::test_served_and_its_optional_dependencies_never_import_postgres_modules``).
+    cli.py itself already imports pg-touching modules for local/remote-mode
+    commands, so this constraint is about served.py's own dependency surface,
+    not about cli.py -- but this shaping is kept next to the served-mode call
+    sites that need it rather than reaching into ``application`` out of
+    habit.
+    """
+
+    return {
+        "origin_stream_id": durable.origin_stream_id,
+        "origin_seq": durable.origin_seq,
+        "event_id": durable.event_id,
+        "schema_version": durable.schema_version,
+        "record_class": durable.record_class,
+        "event_type": durable.event_type,
+        "actor": durable.actor,
+        "runtime_session_id": durable.runtime_session_id,
+        "occurred_at": durable.occurred_at,
+        "basis_revision": durable.basis_revision,
+        "correlation_id": durable.correlation_id,
+        "causation_id": durable.causation_id,
+        "payload": json.loads(json.dumps(durable.payload)),
+        "payload_sha256": durable.payload_sha256,
+        "created_at": durable.created_at,
+    }
+
+
 @cli.group("authority")
 def authority_commands() -> None:
     """Operate the feature-flagged remote authority command journal."""
@@ -2559,19 +2851,18 @@ def authority_submit(
         if aggregate_type == "claim":
             refs["claim_id"] = aggregate_id
         try:
-            request = _contracts.AuthorityCommand(
-                event_id=event_id or str(uuid.uuid4()),
+            durable = _mint_authority_command_record(
                 record_type=record_type,
-                schema_version="1",
                 actor=actor,
-                authored_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 refs=refs,
                 payload=command_payload,
                 basis_revision=basis_revision,
-                correlation_id=event_id or str(uuid.uuid4()),
+                outbox_path=rollout.paths.outbox_path,
+                event_id=event_id,
             )
         except (TypeError, ValueError) as exc:
             raise click.ClickException(str(exc)) from exc
+        request = _contracts.record_from_dict(durable.payload)
 
         if credentials:
             _authority_config.store_pending_authority_credentials(
@@ -2580,15 +2871,6 @@ def authority_submit(
                 credentials=credentials,
                 recovery_credential_ref=generated_ref,
             )
-        producer = _outbox.open_outbox(rollout.paths.outbox_path)
-        try:
-            durable = _outbox.append_authority_command(
-                producer,
-                request,
-                runtime_session_id=_detect_runtime_session_id(None),
-            )
-        finally:
-            producer.close()
 
     result: dict[str, object] = {
         "request_event_id": durable.event_id,

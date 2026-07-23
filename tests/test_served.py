@@ -176,6 +176,52 @@ def test_claim_start_never_sends_an_idempotency_key_or_retries(fake_vuoro_client
     assert kwargs.get("idempotency_key") is None
 
 
+def _sample_lifecycle_record(**overrides) -> dict:
+    record = {
+        "origin_stream_id": "11111111-1111-1111-1111-111111111111",
+        "origin_seq": 1,
+        "event_id": "22222222-2222-2222-2222-222222222222",
+        "schema_version": 1,
+        "record_class": "authority-command",
+        "event_type": "item.transition",
+        "actor": "worker",
+        "runtime_session_id": None,
+        "occurred_at": "2026-07-23T00:00:00Z",
+        "basis_revision": "item:33333333-3333-3333-3333-333333333333@status:pending",
+        "correlation_id": "22222222-2222-2222-2222-222222222222",
+        "causation_id": None,
+        "payload": {"to_status": "active"},
+        "payload_sha256": "a" * 64,
+        "created_at": "2026-07-23T00:00:00Z",
+    }
+    record.update(overrides)
+    return record
+
+
+def test_lifecycle_arbitrate_sends_the_record_and_matching_idempotency_and_basis(
+    fake_vuoro_client,
+):
+    profile = _profile()
+    record = _sample_lifecycle_record()
+    result = served.lifecycle_arbitrate(profile, record=record)
+    assert result["operation"] == "work.lifecycle.arbitrate"
+    assert result["arguments"] == {"record": record}
+    client = fake_vuoro_client.instances[-1]
+    _operation, _arguments, kwargs = client.invocations[0]
+    assert kwargs["idempotency_key"] == record["event_id"]
+    assert kwargs["basis_revision"] == record["basis_revision"]
+
+
+def test_lifecycle_arbitrate_uses_a_fresh_client_per_call(fake_vuoro_client):
+    profile = _profile()
+    served.lifecycle_arbitrate(profile, record=_sample_lifecycle_record())
+    served.lifecycle_arbitrate(profile, record=_sample_lifecycle_record())
+    assert len(fake_vuoro_client.instances) == 2
+    first, second = fake_vuoro_client.instances
+    assert first is not second
+    assert first.closed and second.closed
+
+
 def test_credential_resolver_passed_to_client_is_resolve_file_credential(fake_vuoro_client):
     profile = _profile()
     served.read_item(profile, item_id=1)
@@ -224,20 +270,28 @@ def test_catalog_operation_names_uses_a_fresh_client_and_returns_names(fake_vuor
     assert client.invocations == [], "catalog discovery must not invoke an operation"
 
 
-def test_expected_operations_matches_the_five_served_routes_command_paths():
+def test_expected_operations_matches_the_six_served_routes_command_paths():
     expected = {
         route.operation
-        for path in ("sprint.list", "item.show", "next-work", "claim.start")
+        for path in (
+            "sprint.list",
+            "item.show",
+            "next-work",
+            "claim.start",
+            "item.status",
+            "sprint.status",
+        )
         for route in routes_for(path)
     }
     assert served.EXPECTED_OPERATIONS == expected
-    assert len(served.EXPECTED_OPERATIONS) == 5
+    assert len(served.EXPECTED_OPERATIONS) == 6
     assert served.EXPECTED_OPERATIONS == {
         "work.read.sprints",
         "work.read.item",
         "work.read.next-work",
         "work.project.next-work",
         "work.claim.start",
+        "work.lifecycle.arbitrate",
     }
 
 
