@@ -192,6 +192,63 @@ def test_served_item_status_surfaces_a_rejected_decision(runner, tmp_path, monke
 
 
 # ---------------------------------------------------------------------------
+# item note
+# ---------------------------------------------------------------------------
+
+
+@_requires_312
+def test_served_item_note_calls_work_item_note_not_get_store(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    captured = {}
+
+    def fake_item_note(profile, **kwargs):
+        captured.update(kwargs)
+        return {
+            "event_id": 42,
+            "item_id": kwargs["item_id"],
+            "note_type": kwargs["note_type"],
+            "summary": kwargs["summary"],
+        }
+
+    monkeypatch.setattr(cli_module._served, "item_note", fake_item_note)
+
+    result = runner.invoke(
+        cli,
+        [
+            "item", "note", "--id", "7", "--type", "decision",
+            "--summary", "Chose served", "--detail", "extra",
+            "--tags", "a, b", "--actor", "ignored-locally",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Recorded note #42 (decision) on item #7: Chose served" in result.output
+    assert captured["item_id"] == 7
+    assert captured["note_type"] == "decision"
+    assert captured["summary"] == "Chose served"
+    assert captured["detail"] == "extra"
+    assert captured["tags"] == ["a", "b"]
+
+
+@_requires_312
+def test_served_item_note_surfaces_a_rejection(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+
+    def fake_item_note(profile, **kwargs):
+        raise RuntimeError("item-not-found: Item #7 not found")
+
+    monkeypatch.setattr(cli_module._served, "item_note", fake_item_note)
+
+    result = runner.invoke(
+        cli,
+        ["item", "note", "--id", "7", "--type", "decision", "--summary", "x"],
+    )
+    assert result.exit_code != 0
+    assert "item-not-found" in result.output
+
+
+# ---------------------------------------------------------------------------
 # sprint status
 # ---------------------------------------------------------------------------
 

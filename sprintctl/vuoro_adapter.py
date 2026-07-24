@@ -330,6 +330,39 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         ("json-schema-draft-2020-12", "local-defs-ref"),
     ),
     WorkOperationContract(
+        "work.item.note",
+        _object_schema(
+            {
+                "item_id": {"type": "integer", "minimum": 1},
+                "note_type": {"type": "string", "minLength": 1},
+                "summary": {"type": "string", "minLength": 1},
+                "detail": {"type": ["string", "null"]},
+                "tags": {
+                    "type": ["array", "null"],
+                    "items": {"type": "string", "minLength": 1},
+                },
+                "evidence_item_id": {"type": ["integer", "null"], "minimum": 1},
+                "evidence_event_id": {"type": ["integer", "null"], "minimum": 1},
+                "git_branch": {"type": ["string", "null"]},
+                "git_sha": {"type": ["string", "null"]},
+                "git_worktree": {"type": ["string", "null"]},
+            },
+            required=("item_id", "note_type", "summary"),
+        ),
+        _result_schema(
+            ("event_id", "item_id", "note_type", "summary"),
+            {
+                "event_id": {"type": "integer", "minimum": 1},
+                "item_id": {"type": "integer", "minimum": 1},
+                "note_type": {"type": "string"},
+                "summary": {"type": "string"},
+            },
+        ),
+        "work:evidence",
+        "write",
+        "not-allowed",
+    ),
+    WorkOperationContract(
         "work.batch.apply",
         _BATCH_INPUT,
         _REPO_RESULTS,
@@ -452,6 +485,7 @@ LEGACY_REMOTE_COMMAND_PARITY: tuple[dict[str, str], ...] = (
     },
     {"legacy": "sprintctl authority sync", "operation": "work.batch.apply"},
     {"legacy": "sprintctl event observation add", "operation": "work.evidence.ingest"},
+    {"legacy": "sprintctl item note", "operation": "work.item.note"},
     {"legacy": "sprintctl next-work --project", "operation": "work.project.next-work"},
     {"legacy": "project dispatch batching", "operation": "work.project.batch"},
     {
