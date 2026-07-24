@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -31,6 +32,8 @@ try:
     _PSYCOPG_AVAILABLE = True
 except ImportError:  # pragma: no cover
     _PSYCOPG_AVAILABLE = False
+
+_logger = logging.getLogger(__name__)
 
 from . import contracts as _contracts
 from . import outbox
@@ -543,6 +546,83 @@ class IngestConflictError(ValueError):
     """A producer identity was reused for a different immutable record."""
 
 
+def _admit_sequence(origin_stream_id: str, high_water: int, bootstrapped: bool, origin_seq: int) -> None:
+    """Validate a producer's next sequence number, or raise ``IngestGapError``.
+
+    Contiguity is always required -- a stream's first-ever admission
+    (``bootstrapped=True``, i.e. this call's ``_lock_ingest_stream`` just
+    created the row) is NOT given a free pass to start above 1. Silently
+    accepting an arbitrary starting sequence cannot distinguish a producer
+    that legitimately lost its first record (a real bug worth rejecting)
+    from one whose remote ledger was reset out from under it by a schema
+    migration -- both look identical from here (a brand-new stream row, no
+    history). See ``seed_ingest_stream`` for the sanctioned, explicit,
+    operator-invoked recovery path for the latter case; it must never be
+    inferred automatically.
+
+    This is logged (not just raised) because a gap here signals either a
+    genuine client bug or -- as happened with sprintctl-work schema v4's
+    ``repository_ingest_cursor`` rollout, which reset every existing
+    producer's remote history to empty while every local outbox kept
+    counting from where it left off -- an operationally significant
+    ledger-reset event worth alerting on before it's rediscovered per-item.
+    """
+    expected = high_water + 1
+    if origin_seq == expected:
+        return
+    _logger.error(
+        "ingest gap rejected: origin_stream_id=%s expected=%s received=%s bootstrapped=%s",
+        origin_stream_id,
+        expected,
+        origin_seq,
+        bootstrapped,
+    )
+    raise IngestGapError(origin_stream_id, expected, origin_seq)
+
+
+def seed_ingest_stream(store: PgStore, origin_stream_id: str, seed_high_water: int) -> None:
+    """Explicitly authorize one producer stream to resume above sequence 1.
+
+    Operator-invoked recovery for a stream whose remote ledger history was
+    lost (e.g. by a ledger-introducing/resetting schema migration) while its
+    local outbox kept incrementing. Inserts the stream's ``ingest_stream``
+    row pre-seeded to ``seed_high_water`` so the producer's very next
+    admission -- at ``seed_high_water + 1`` -- satisfies ordinary strict
+    contiguity with no change to ``_admit_sequence``'s guarantees for any
+    other stream. Refuses to touch a stream that has already been admitted
+    at least once (use the ordinary gap-detected path for that case; this is
+    a one-time bootstrap, not a rewind).
+
+    Callers are responsible for justifying ``seed_high_water`` (typically:
+    the operator has independently confirmed, e.g. from the producer's local
+    outbox, exactly what its next real sequence number will be).
+    """
+    if seed_high_water < 0:
+        raise ValueError("seed_high_water must be >= 0")
+    with store.conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO ingest_stream (repo_id, origin_stream_id, highest_origin_seq)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (repo_id, origin_stream_id) DO NOTHING
+            """,
+            (store.repo_id, origin_stream_id, seed_high_water),
+        )
+        if cur.rowcount == 0:
+            store.conn.rollback()
+            raise IngestConflictError(
+                f"origin stream {origin_stream_id!r} already has ingest history; "
+                "seed_ingest_stream only bootstraps a stream with none"
+            )
+    store.conn.commit()
+    _logger.warning(
+        "ingest stream seeded: repo_id=%s origin_stream_id=%s seed_high_water=%s",
+        store.repo_id,
+        origin_stream_id,
+        seed_high_water,
+    )
+
+
 @dataclass(frozen=True)
 class IngestedRecord:
     """One immutable producer observation as ordered by the remote authority."""
@@ -702,8 +782,23 @@ def _ingested_record_from_row(row: dict) -> IngestedRecord:
     return IngestedRecord(record=record, ingest_offset=int(row["ingest_offset"]))
 
 
-def _lock_ingest_stream(cur: Any, store: PgStore, origin_stream_id: str) -> int:
-    """Create then lock one stream row, serializing its sequence admissions."""
+def _lock_ingest_stream(cur: Any, store: PgStore, origin_stream_id: str) -> tuple[int, bool]:
+    """Create then lock one stream row, serializing its sequence admissions.
+
+    Returns ``(highest_origin_seq, bootstrapped)`` where ``bootstrapped`` is
+    True only when this call is the very first time the remote authority has
+    ever seen this ``origin_stream_id`` (the INSERT actually created the row,
+    rather than finding one from a prior admission). Callers use this to
+    admit a producer's first-ever record at whatever sequence it presents,
+    rather than requiring it to start at 1 -- see ``_admit_request`` and
+    ``ingest_records`` for why: a schema migration that introduces or resets
+    the ingest ledger (e.g. sprintctl-work schema v4's
+    ``repository_ingest_cursor`` capability) leaves every already-active
+    local producer outbox with a sequence counter ahead of the remote's now-
+    empty history for that stream. Without a first-contact bootstrap, such a
+    producer can never admit another record again, because the remote will
+    forever expect 1 while the producer will forever send something higher.
+    """
     cur.execute(
         """
         INSERT INTO ingest_stream (repo_id, origin_stream_id)
@@ -712,6 +807,7 @@ def _lock_ingest_stream(cur: Any, store: PgStore, origin_stream_id: str) -> int:
         """,
         (store.repo_id, origin_stream_id),
     )
+    bootstrapped = cur.rowcount == 1
     cur.execute(
         """
         SELECT highest_origin_seq FROM ingest_stream
@@ -722,7 +818,7 @@ def _lock_ingest_stream(cur: Any, store: PgStore, origin_stream_id: str) -> int:
     )
     row = cur.fetchone()
     assert row is not None
-    return int(row["highest_origin_seq"])
+    return int(row["highest_origin_seq"]), bootstrapped
 
 
 def _lock_ingest_repo_cursor(cur: Any, store: PgStore) -> int:
@@ -771,10 +867,12 @@ def ingest_records(store: PgStore, records: list[outbox.OutboxRecord]) -> list[I
         with store.conn.cursor() as cur:
             cursor_start = _lock_ingest_repo_cursor(cur, store)
             next_offset = cursor_start
-            high_water = {
+            stream_state = {
                 origin_stream_id: _lock_ingest_stream(cur, store, origin_stream_id)
                 for origin_stream_id in sorted({item.record.origin_stream_id for item in prepared})
             }
+            high_water = {stream_id: state[0] for stream_id, state in stream_state.items()}
+            bootstrapped = {stream_id: state[1] for stream_id, state in stream_state.items()}
             results: list[IngestResult] = []
             for item in prepared:
                 record = item.record
@@ -809,9 +907,13 @@ def ingest_records(store: PgStore, records: list[outbox.OutboxRecord]) -> list[I
                 if same_event is not None:
                     raise IngestConflictError("event_id already identifies a different record")
 
-                expected = high_water[record.origin_stream_id] + 1
-                if record.origin_seq != expected:
-                    raise IngestGapError(record.origin_stream_id, expected, record.origin_seq)
+                _admit_sequence(
+                    record.origin_stream_id,
+                    high_water[record.origin_stream_id],
+                    bootstrapped[record.origin_stream_id],
+                    record.origin_seq,
+                )
+                bootstrapped[record.origin_stream_id] = False
                 next_offset += 1
                 cur.execute(
                     """

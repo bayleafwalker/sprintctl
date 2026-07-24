@@ -915,6 +915,32 @@ class TestProducerOutboxIngestion:
         admitted = pg.ingest_records(store, [first, second])
         assert [result.record.origin_seq for result in admitted] == [1, 2]
 
+    def test_seed_ingest_stream_lets_a_stranded_producer_resume(self, store, tmp_path):
+        """A producer whose remote ledger history was lost (e.g. by a
+        ledger-introducing/resetting schema migration -- see sprintctl-work
+        schema v4's repository_ingest_cursor rollout, 2026-07-24) can never
+        admit another record: the remote permanently expects sequence 1
+        while the producer permanently sends whatever it already has queued
+        locally. ``seed_ingest_stream`` is the explicit, operator-invoked
+        recovery for exactly that, and does not weaken ordinary gap
+        detection for anyone else.
+        """
+        stranded_stream_id = str(uuid.uuid4())
+        first, second = self._records(tmp_path)
+        stranded_second = replace(second, origin_stream_id=stranded_stream_id, origin_seq=7)
+
+        with pytest.raises(pg.IngestGapError, match="expected sequence 1, received 7"):
+            pg.ingest_records(store, [stranded_second])
+
+        pg.seed_ingest_stream(store, stranded_stream_id, 6)
+
+        admitted = pg.ingest_records(store, [stranded_second])
+        assert admitted[0].record.origin_seq == 7
+        assert admitted[0].duplicate is False
+
+        with pytest.raises(pg.IngestConflictError, match="already has ingest history"):
+            pg.seed_ingest_stream(store, stranded_stream_id, 100)
+
     def test_concurrent_same_stream_retry_admits_once(self, store, tmp_path):
         record = self._records(tmp_path, count=1)[0]
         before_offset = max(
@@ -2216,6 +2242,61 @@ class TestAuthorityCommandArbitration:
             assert pg.get_work_item(store, item_id)["status"] == "pending"
         finally:
             producer.close()
+
+    def test_arbitrate_command_succeeds_without_a_committed_repository_uuid(
+        self, pg_test_scope, store, tmp_path
+    ):
+        """Regression test for the served (Vuoro work-adapter) composition
+        path, which never sets ``authority_repo_uuid`` -- there is no
+        server-side repo-UUID registry to populate it from, because served
+        callers are already tenant-isolated by identity before
+        WorkApplication.invoke ever runs (see vuoro_service.composition).
+
+        Before this fix, ``_apply_command`` treated an unset
+        authority_repo_uuid as a hard `AuthorityProtocolError`, which meant
+        every served item/sprint/claim authority command failed
+        unconditionally -- discovered 2026-07-24 while reconciling sprintctl
+        #1220/#1221, which had been silently blocked by this since the
+        served work.lifecycle.arbitrate route shipped in #1195. Every other
+        test in this class supplies a matching authority_repo_uuid on both
+        sides and would not have caught this.
+        """
+        isolated = pg.PgStore(
+            conn=store.conn,
+            repo_id=pg_test_scope("served-no-committed-uuid"),
+        )
+        assert isolated.authority_repo_uuid is None
+        sprint_id = pg.create_sprint(isolated, f"Served-uuid-{_uid()}", status="active")
+        track_id = pg.get_or_create_track(isolated, sprint_id, "authority")
+        item_id = pg.create_work_item(isolated, sprint_id, track_id, "Served item")
+        item = pg.get_work_item(isolated, item_id)
+        producer = outbox.open_outbox(tmp_path / "served-no-committed-uuid.db")
+        try:
+            command = contracts.AuthorityCommand(
+                event_id=str(uuid.uuid4()),
+                record_type="item.transition",
+                schema_version="1",
+                actor="served-client",
+                authored_at="2026-07-24T18:00:00Z",
+                refs={
+                    # A served client has no committed authority UUID of its
+                    # own either; any UUID-shaped value is accepted here
+                    # since the mismatch check is skipped when the store has
+                    # nothing to check it against (see isolated above).
+                    "repo_id": str(uuid.uuid4()),
+                    "aggregate_type": "item",
+                    "aggregate_uuid": item["aggregate_uuid"],
+                },
+                payload={"to_status": "active"},
+                basis_revision=authority.item_revision(item),
+            )
+            durable = outbox.append_authority_command(producer, command)
+            decision = authority.arbitrate_command(isolated, durable)
+        finally:
+            producer.close()
+
+        assert decision.accepted is True
+        assert pg.get_work_item(isolated, item_id)["status"] == "active"
 
     def test_malformed_embedded_command_is_durably_rejected(self, store, tmp_path):
         sprint_id = pg.create_sprint(store, f"Malformed-command-{_uid()}", status="active")

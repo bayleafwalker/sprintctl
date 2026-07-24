@@ -266,7 +266,7 @@ def _admit_request(
     ingest_offset: int,
 ) -> tuple[pg.IngestedRecord, bool]:
     record = prepared.record
-    high_water = pg._lock_ingest_stream(cur, store, record.origin_stream_id)
+    high_water, bootstrapped = pg._lock_ingest_stream(cur, store, record.origin_stream_id)
     cur.execute(
         "SELECT * FROM ingest_record "
         "WHERE repo_id = %s AND origin_stream_id = %s AND origin_seq = %s",
@@ -290,9 +290,7 @@ def _admit_request(
             raise AuthorityCommandConflict("event_id already identifies a different record")
         return pg._ingested_record_from_row(same_event), True
 
-    expected = high_water + 1
-    if record.origin_seq != expected:
-        raise pg.IngestGapError(record.origin_stream_id, expected, record.origin_seq)
+    pg._admit_sequence(record.origin_stream_id, high_water, bootstrapped, record.origin_seq)
     return _insert_prepared(cur, store, prepared, ingest_offset), False
 
 
@@ -827,11 +825,24 @@ def _apply_command(
     envelope: contracts.AuthorityCommand,
     credentials: Mapping[str, str],
 ) -> dict[str, Any]:
-    if store.authority_repo_uuid is None:
-        raise AuthorityProtocolError(
-            "remote authority commands require the committed repository UUID"
-        )
-    if envelope.refs.get("repo_id") != store.authority_repo_uuid:
+    # authority_repo_uuid is populated only by the legacy direct-PostgreSQL
+    # "authority submit" CLI path, which reads a committed UUID from the
+    # client's own sprintctl.dispatch.json and can therefore check it against
+    # every command it sends. The served (Vuoro work-adapter) path has no
+    # equivalent: there is no server-side repo-UUID registry to check
+    # against, because tenant isolation there is already enforced earlier,
+    # by identity (Identity.authorizes_repo gates every invocation on the
+    # string repo_id before WorkApplication.invoke is ever called -- see
+    # vuoro_service.composition). Treating an unset authority_repo_uuid as a
+    # hard error made every served item/sprint/claim authority command fail
+    # unconditionally (discovered via sprintctl #1220/#1221 gate-status
+    # reconciliation, 2026-07-24) since composition.py never had a UUID to
+    # set it to and never should. Only enforce the mismatch check when a
+    # caller has actually committed a UUID to check against.
+    if (
+        store.authority_repo_uuid is not None
+        and envelope.refs.get("repo_id") != store.authority_repo_uuid
+    ):
         raise _RejectedCommand(
             "repository-mismatch",
             "command repository UUID does not match the remote authority tenant",
@@ -891,7 +902,7 @@ def _decision_record(
         causation_id=request.event_id,
     )
     stream_id = str(uuid5(NAMESPACE_URL, f"sprintctl-authority:{store.repo_id}"))
-    high_water = pg._lock_ingest_stream(cur, store, stream_id)
+    high_water, _bootstrapped = pg._lock_ingest_stream(cur, store, stream_id)
     payload = decision.to_dict()
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     record = outbox.OutboxRecord(
