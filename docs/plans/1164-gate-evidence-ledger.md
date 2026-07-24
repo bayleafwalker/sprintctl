@@ -81,6 +81,34 @@ compared the two stale copies against each other. Fixed by making
 `db.CURRENT_SCHEMA_VERSION` the single source of truth (doctor imports it;
 pyproject bumped; fresh-database regression test added).
 
+## #1220 stale-install fail-closed record (2026-07-24)
+
+Owner: sprintctl #1220 (old-client fail-closed guidance and write denial).
+`sprintctl doctor` schema-version-mismatch on read is already recorded
+(event #1433). This closes the write-side half: a disposable PostgreSQL 16
+instance was bootstrapped with `pg.PG_DDL` only (schema left at version 1,
+below `MINIMUM_SCHEMA_VERSION=4` — the unmigrated-install scenario) and
+exercised against the current CLI in `SPRINTCTL_BACKEND=remote` mode.
+
+Every remote-mode command funnels through one choke point,
+`cli.py::_get_store()`, which calls
+`pg_migrations.startup_schema_handshake()` before returning a store to any
+command handler — so schema-compatibility denial is structural, not
+per-command. Representative write entry points were run directly against
+the stale schema to confirm this empirically:
+
+| Command | Result |
+| --- | --- |
+| `sprintctl doctor` | exit 1, `schema-version-mismatch: remote schema 1 is incompatible with expected 4` |
+| `sprintctl sprint status --id 1 --status active` | exit 1, same schema-incompatibility message, raised at connection setup before the command runs |
+| `sprintctl claim start --item-id 1 --actor test-actor` | exit 1, same schema-incompatibility message |
+
+Post-run row counts on the disposable database: `sprint=0, work_item=0,
+claim=0, ingest_record=0` — no write reached the database from any denied
+command. The upgrade path (reinstall the `uv tool` with the `remote,served`
+extras from the current repository) is documented in
+`docs/reference/postgres-schema-compatibility.md`.
+
 ## Sources
 
 - agentops `docs/plans/clean-room-1164-cross-repo-backlog.md` (section 2, the
