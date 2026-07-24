@@ -12,6 +12,7 @@ build/
 .sprintctl/
 .kctl/
 .auditctl/
+.envrc.local
 handoff.json
 handoff-*.json
 sprint-*.json
