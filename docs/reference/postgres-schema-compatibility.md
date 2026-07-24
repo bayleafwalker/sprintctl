@@ -16,11 +16,23 @@ create, alter, or repair schema objects.
 work API as `sprintctl-work/v1`, reports the actual remote schema version, and
 reports the minimum and maximum versions this runtime supports.
 
-Schema version 3 is the only supported version in this rollout. A missing
-ledger, versions 1 or 2, and any version greater than 3 fail closed before a runtime
+Schema version 4 is the only supported version in this rollout. A missing
+ledger, versions 1-3, and any version greater than 4 fail closed before a runtime
 command is served. The check executes only `SELECT to_regclass(...)` and a
 `SELECT` over `schema_version`; it never attempts repair. Package version
 strings are not protocol compatibility evidence.
+
+A pre-cutover client that has not upgraded reports this fail-closed state as
+`schema-version-mismatch` on `sprintctl doctor` (remote schema newer than the
+client's compiled expectation) and is denied writes on every remote entry
+point; see [#1220 evidence](../plans/1164-gate-evidence-ledger.md) for the
+recorded stale-install verification. The upgrade path is to reinstall the
+`sprintctl` uv tool from the current `sprintctl` repository with the
+`remote` and `served` extras: `uv tool install --force --reinstall
+--from /path/to/sprintctl sprintctl[remote,served]` (or the published
+package once released). An install missing those extras cannot use
+`SPRINTCTL_BACKEND=served` or `remote` at all and fails with
+`invalid SPRINTCTL_BACKEND=...` before any schema check runs.
 
 The handshake also publishes
 `sprintctl-repository-ingest-cursor/v1` with `scope=repository` and
@@ -56,6 +68,10 @@ The advisory lock, table lock, DDL, data translation, cursor seed, and ledger
 advance share one transaction; a fault cannot publish version 3 early. Runtime
 append transactions lock the repository cursor before any producer-stream row,
 and retries or rollbacks do not consume public offsets.
+
+Migration version 4 widens the `ref` table's `ref_type` CHECK constraint to
+add `command` (validation-command refs, mirroring SQLite migration 15) and
+does not touch `ingest_record` or the repository cursor.
 
 Projection cache schema version 2 records its owning repository. A version-1
 cache is never interpreted as current: synchronization captures the repository
