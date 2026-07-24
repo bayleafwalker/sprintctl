@@ -20,7 +20,7 @@ item only inventories gaps; it does not close them.
 | 4 | Endpoint/identity workstation cutover | Done | sprintctl #1195 (done) — served-mode compatibility release; endpoint/identity profile wiring; verified via events #1396/#1397 (Group C landed and independently re-verified, commit `f22132c`, CI run 30003277273 green across the full matrix). |
 | 5 | Catalog parity for legacy remote-relevant commands (current catalog) | Done | `sprintctl/served_routes.py` wires 11 of 12 `LEGACY_REMOTE_COMMAND_PARITY` entries (as of `work.item.note`, 2026-07-24 — see "Follow-up finding" below); the 12th (`work.project.batch` / "project dispatch batching") has no legacy CLI command to give parity to. sprintctl #1212 (done) made that an explicit decision, not an oversight: no CLI entry point exists or is currently planned, so there is nothing for a served route to replace. Parity is complete against the current catalog. |
 | 6 | Runtime-role DDL denial (deployed) | Done | appservice #1225 (done, 2026-07-24) — `sprintctl-schema-migrate-v3` job live-verified `Complete 1/1`, 0 restarts, 39h stable. Job embeds a DDL-denial probe: post-migration it connects as `sprintctl_runtime` and attempts `CREATE TABLE`, expecting `InsufficientPrivilege`; `backoffLimit: 0` means the job would fail loudly if DDL unexpectedly succeeded. `sprintctl-cnpg.yaml` confirms `sprintctl_runtime` is DML-only (no CREATE/createdb/createrole/superuser). See sprintctl #1164 ref #347. |
-| 7 | Direct credential removal | Open (code correctly designed and merged, deploy pending) | Owner: appservice #1226. `sprintctl`'s own workstation `.envrc` flipped to served mode 2026-07-24 and verified (`doctor` ok, live `item show` correct) — that repo's direct credential can be removed. The other 7 workstation repos (`agentops`, `box`, `actionq`, `aligned-equity`, `_orchestration`, `homelab-analytics`, `scribectl`) cannot yet: vuoro #1245's code is merged and correctly designed (client-sent `repo_id`, identity-authorized per repo, sprintctl PR #5 + vuoro PR #2, both CI-green — see "#1245 design correction, implemented" below) but not deployed. Deploying it (new adapter wheel, image, `vuoro-identities` secret update, cluster redeploy) is the remaining blocker. |
+| 7 | Direct credential removal | Done | Owner: appservice #1226. `vuoro-shared` redeployed 2026-07-24 with #1245's corrected design (image `sha256:713f57d6f3...`, schema migrated 3→4, both identity tokens gain `repo_ids: ["*"]`) and verified live end-to-end: a real `work.read.item` and `work.item.note` from the workstation, and independently from devbox-agent after both hosts' CLIs were reinstalled with the fixed `vuoro-client` dependency pin. `vuoro-shared` can now serve every repository tenant a bound identity is authorized for — the capability the other 7 workstation repos (`agentops`, `box`, `actionq`, `aligned-equity`, `_orchestration`, `homelab-analytics`, `scribectl`) need is live. Individually flipping each of those repos' own `.envrc` to served mode is separate follow-up work, not a gate blocker (each just needs `SPRINTCTL_BACKEND=served` + the existing shared credential; no per-repo server-side change required). See "#1245 deployed and verified live" below for the full record. |
 | 8 | vuoro-dev four-domain evidence | Done | vuoro #1222 (done, 2026-07-24) — handshake (all 4 domains compatible), full 39-op catalog, and accepted+rejected invocation/decision evidence per domain (two distinct stable error surfaces: `authority-required`, `idempotency-key-required`). Required adding a broader disposable identity to vuoro-dev (previous identity was work:read-only). See sprintctl #1164 ref #351. |
 | 9 | Export/recovery rehearsal (cross-backend) | Done | Owner: sprintctl #1219 — rehearsal completed 2026-07-24 against the live served authority using `sprintctl db recover-from-remote` (#1233, commit `b38937e`, CI run 30073378545 green). See "Row 9 rehearsal record" below. |
 | 10 | Production promotion evidence | Done | vuoro #1223 (done, 2026-07-24) — `vuoro-shared` deployment/image/migration state recorded; historical sprintctl data backfilled (repo_id=`sprintctl` scope, no prior tool existed for this — see record) with exact row-count parity (sprint 21, track 51, work_item 195, claim 3, dep 57, ref 141, event 469); post-promotion health/parity verified via a live served-mode read (`sprintctl doctor`, `sprint list`, `item show --id 1164` all correct against production). See sprintctl #1164 ref #348. |
@@ -181,22 +181,66 @@ missing/unauthorized/authorized/wildcard `repo_id` end-to-end through
 `create_app`), vuoro-client (10 tests), sprintctl full suite (1198
 passed) and disposable-PostgreSQL suite (109 passed) — all green.
 
-**Still not deployed.** Remaining, in order, each a live-production action
-requiring explicit confirmation before it runs:
+## #1245 deployed and verified live (2026-07-24)
 
-1. Build and publish a new sprintctl adapter wheel from this merged
-   commit; update `packages/vuoro-service/composition/adapter-pins.json`'s
-   `work` entry (`source_revision`, `artifact_url`, `artifact_sha256`) in
-   vuoro.
-2. Tag/dispatch `publish-service-image.yaml` to build and push a new
-   `vuoro-service` image; update `deployment.yaml`'s image digest in
-   `appservice`.
-3. Update the production `vuoro-identities` secret: both existing tokens
-   gain `"repo_ids": ["*"]` (no new tokens needed under the corrected
-   design).
-4. Apply/reconcile the `appservice` changes against the live cluster and
-   verify `vuoro-shared` comes up healthy serving the new schema/identity
-   shape.
+All four remaining deployment steps completed, with production identity
+edits confirmed via explicit user sign-off before executing:
+
+1. Built the sprintctl wheel from commit `f96fb54` and published it as
+   GitHub release `vuoro-adapter-v1-f96fb54`; updated vuoro's
+   `adapter-pins.json` work entry (source_revision, artifact_url,
+   artifact_sha256) and verified `docker build .` succeeds with the new
+   pin (vuoro PR #3, merged).
+2. Tagged `vuoro-service-v0.1.2`, triggering `publish-service-image.yaml`
+   → `ghcr.io/bayleafwalker/vuoro-service@sha256:713f57d6f341d54c1964541
+   5a480e9a8e949d6d98dbe95e3b940647da1098597`.
+3. Updated the production `vuoro-identities` secret (SOPS-encrypted,
+   `appservice`): both `workstation-vuoro` and `devbox-agent-vuoro` gain
+   `"repo_ids": ["*"]`. Committed in the same commit as the deployment
+   image digest bump — deploying the image without this would have
+   crash-looped the service, since the new `load_identities` requires a
+   non-empty `repo_ids` on every `work:`-authority identity.
+4. Pushed to `appservice` main, forced a Flux reconcile. The rollout hit
+   two real issues, both resolved:
+   - **Schema-version mismatch**: the new image requires PostgreSQL
+     schema 4 (this session's `_apply_schema_version_4`, the
+     `ref_type='command'` change), but production was still at 3. Ran a
+     one-off migration job (`vuoro-migrate-v4-work.yaml`, following
+     `vuoro-migrate-v1.yaml`'s established pattern) — `sprintctl
+     remote-schema migrate`: `from_version=3, to_version=4`. Committed to
+     `appservice` for audit history.
+   - **Stale lock blocking the migration**: the migration's `ALTER TABLE
+     ref` blocked for several minutes on an `idle in transaction`
+     connection (pid 674, `vuoro_work_runtime`, open since 10:19 that
+     morning — a leaked connection from the old pod's single
+     long-lived-connection composition pattern, `sprintctl.pg`'s one
+     `PgStore` per process with no reconnect/pooling; a pre-existing
+     latent issue, not introduced this session). Terminated it with
+     `pg_terminate_backend`; the old pod kept serving throughout (its
+     next request opened a fresh connection) and the migration completed
+     immediately after.
+   - The Deployment's rolling update kept the old pod serving the whole
+     time — zero observed downtime.
+
+**Live verification, both hosts, after this deploy:**
+- `sprintctl doctor` → `ok`, full catalog including the new
+  `work.item.note` operation.
+- A real `work.read.item` (`item show --id 1220`) and the first-ever
+  `work.item.note` call in production (events #1440 workstation, #1441
+  devbox-agent) both succeeded.
+- Both hosts' installed `uv tool` needed reinstalling: their
+  `vuoro-client` dependency was still pinned to commit `55d80c5`
+  (predates `AsyncVuoroClient.invoke` sending `repo_id` at all) — fixed by
+  bumping `pyproject.toml`'s `served` extra to vuoro commit `1cce813`
+  (includes the fix) and reinstalling on both hosts.
+- Operational note for future sessions: `direnv exec DIR CMD` only loads
+  `DIR`'s `.envrc` environment — it does **not** `cd` into `DIR`. Since
+  served-mode `repo_id` is resolved from the process's actual cwd
+  (`.sprintctl/backend.json`), a scripted invocation must `cd DIR` first
+  (letting the normal shell hook fire) rather than relying on `direnv exec
+  DIR` from elsewhere — the latter silently resolves the wrong (or no)
+  repo_id with no error, since both production identities carry a
+  wildcard `repo_ids: ["*"]` that authorizes any string.
 
 ## Sources
 
