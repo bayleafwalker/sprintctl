@@ -167,7 +167,7 @@ def test_served_authority_sync_flushes_observation_only_batch(runner, tmp_path, 
 
     captured = {}
 
-    def fake_batch_apply(profile, *, records, idempotency_key, transient_credentials=None):
+    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key, transient_credentials=None):
         captured["records"] = records
         captured["idempotency_key"] = idempotency_key
         captured["transient_credentials"] = transient_credentials
@@ -213,7 +213,7 @@ def test_served_authority_sync_mixed_batch_with_available_credential(
 
     captured = {}
 
-    def fake_batch_apply(profile, *, records, idempotency_key, transient_credentials=None):
+    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key, transient_credentials=None):
         captured["records"] = records
         captured["transient_credentials"] = transient_credentials
         return {
@@ -271,7 +271,7 @@ def test_served_authority_sync_stops_at_first_credential_gap(runner, tmp_path, m
 
     captured = {}
 
-    def fake_batch_apply(profile, *, records, idempotency_key, transient_credentials=None):
+    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key, transient_credentials=None):
         captured["records"] = records
         return {"repo_id": "repo-x", "results": [_ingest_result(observation_before)]}
 
@@ -330,7 +330,7 @@ def test_served_authority_sync_routes_capability_receipt_accept_to_unsupported(
 
     captured = {}
 
-    def fake_batch_apply(profile, *, records, idempotency_key, transient_credentials=None):
+    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key, transient_credentials=None):
         captured["records"] = records
         return {
             "repo_id": "repo-x",
@@ -562,7 +562,7 @@ def test_served_authority_sync_splits_batches_by_batch_size_with_separate_keys(
 
     calls = []
 
-    def fake_batch_apply(profile, *, records, idempotency_key, transient_credentials=None):
+    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key, transient_credentials=None):
         calls.append((list(records), idempotency_key))
         return {
             "repo_id": "repo-x",

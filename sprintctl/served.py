@@ -65,6 +65,7 @@ async def _invoke_operation(
 def read_sprints(
     served_profile: ServedProfile,
     *,
+    repo_id: str,
     include_backlog: bool = False,
     include_archive: bool = False,
     active_only: bool = False,
@@ -76,24 +77,34 @@ def read_sprints(
         "include_archive": include_archive,
         "active_only": active_only,
     }
-    return asyncio.run(_invoke_operation(served_profile, "work.read.sprints", arguments))
+    return asyncio.run(
+        _invoke_operation(served_profile, "work.read.sprints", arguments, repo_id=repo_id)
+    )
 
 
-def read_item(served_profile: ServedProfile, *, item_id: int) -> dict[str, Any]:
+def read_item(
+    served_profile: ServedProfile, *, repo_id: str, item_id: int
+) -> dict[str, Any]:
     """Invoke ``work.read.item`` (``sprintctl item show --id ID --json``)."""
 
     return asyncio.run(
-        _invoke_operation(served_profile, "work.read.item", {"item_id": item_id})
+        _invoke_operation(
+            served_profile, "work.read.item", {"item_id": item_id}, repo_id=repo_id
+        )
     )
 
 
 def read_next_work(
-    served_profile: ServedProfile, *, sprint_id: int | None = None
+    served_profile: ServedProfile, *, repo_id: str, sprint_id: int | None = None
 ) -> dict[str, Any]:
     """Invoke ``work.read.next-work`` (``sprintctl next-work --json``, no ``--project``)."""
 
     arguments = {"sprint_id": sprint_id}
-    return asyncio.run(_invoke_operation(served_profile, "work.read.next-work", arguments))
+    return asyncio.run(
+        _invoke_operation(
+            served_profile, "work.read.next-work", arguments, repo_id=repo_id
+        )
+    )
 
 
 def project_next_work(
@@ -110,6 +121,7 @@ def project_next_work(
 def cutover_evidence(
     served_profile: ServedProfile,
     *,
+    repo_id: str,
     parity: dict[str, Any] | None = None,
     max_watermark_age_seconds: int = 300,
     rehearse: bool = True,
@@ -135,13 +147,19 @@ def cutover_evidence(
         "rehearse": rehearse,
     }
     return asyncio.run(
-        _invoke_operation(served_profile, "work.pilot.cutover-evidence", arguments)
+        _invoke_operation(
+            served_profile,
+            "work.pilot.cutover-evidence",
+            arguments,
+            repo_id=repo_id,
+        )
     )
 
 
 def batch_apply(
     served_profile: ServedProfile,
     *,
+    repo_id: str,
     records: list[dict[str, Any]],
     idempotency_key: str,
     transient_credentials: dict[str, str] | None = None,
@@ -165,7 +183,7 @@ def batch_apply(
     """
 
     arguments = {"records": records}
-    kwargs: dict[str, Any] = {"idempotency_key": idempotency_key}
+    kwargs: dict[str, Any] = {"idempotency_key": idempotency_key, "repo_id": repo_id}
     if transient_credentials:
         kwargs["transient_credentials"] = transient_credentials
     return asyncio.run(
@@ -176,6 +194,7 @@ def batch_apply(
 def claim_start(
     served_profile: ServedProfile,
     *,
+    repo_id: str,
     item_id: int,
     ttl_seconds: int = 300,
     branch: str | None = None,
@@ -210,12 +229,17 @@ def claim_start(
         "hostname": hostname,
         "pid": pid,
     }
-    return asyncio.run(_invoke_operation(served_profile, "work.claim.start", arguments))
+    return asyncio.run(
+        _invoke_operation(
+            served_profile, "work.claim.start", arguments, repo_id=repo_id
+        )
+    )
 
 
 def item_note(
     served_profile: ServedProfile,
     *,
+    repo_id: str,
     item_id: int,
     note_type: str,
     summary: str,
@@ -246,10 +270,14 @@ def item_note(
         "git_sha": git_sha,
         "git_worktree": git_worktree,
     }
-    return asyncio.run(_invoke_operation(served_profile, "work.item.note", arguments))
+    return asyncio.run(
+        _invoke_operation(served_profile, "work.item.note", arguments, repo_id=repo_id)
+    )
 
 
-def claim_context(served_profile: ServedProfile, *, claim_id: int) -> dict[str, Any]:
+def claim_context(
+    served_profile: ServedProfile, *, repo_id: str, claim_id: int
+) -> dict[str, Any]:
     """Invoke ``work.claim.context`` (authenticated-actor/authority-uuid/claim-
     snapshot/claim-revision read backing served ``claim heartbeat``/``claim
     release``/``claim handoff``).
@@ -262,13 +290,19 @@ def claim_context(served_profile: ServedProfile, *, claim_id: int) -> dict[str, 
     """
 
     return asyncio.run(
-        _invoke_operation(served_profile, "work.claim.context", {"claim_id": claim_id})
+        _invoke_operation(
+            served_profile,
+            "work.claim.context",
+            {"claim_id": claim_id},
+            repo_id=repo_id,
+        )
     )
 
 
 def claim_arbitrate(
     served_profile: ServedProfile,
     *,
+    repo_id: str,
     record: dict[str, Any],
     transient_credentials: dict[str, str],
 ) -> dict[str, Any]:
@@ -293,13 +327,14 @@ def claim_arbitrate(
             arguments,
             idempotency_key=record["event_id"],
             basis_revision=record["basis_revision"],
+            repo_id=repo_id,
             transient_credentials=transient_credentials,
         )
     )
 
 
 def lifecycle_arbitrate(
-    served_profile: ServedProfile, *, record: dict[str, Any]
+    served_profile: ServedProfile, *, repo_id: str, record: dict[str, Any]
 ) -> dict[str, Any]:
     """Invoke ``work.lifecycle.arbitrate`` (``sprintctl item status`` /
     ``sprintctl sprint status``, for the ``item.transition``, ``item.done``,
@@ -324,6 +359,7 @@ def lifecycle_arbitrate(
             arguments,
             idempotency_key=record["event_id"],
             basis_revision=record["basis_revision"],
+            repo_id=repo_id,
         )
     )
 

@@ -785,6 +785,7 @@ def _served_sprint_status(config, sprint_id, new_status, actor, as_json) -> None
         "sprint status",
         _served.read_sprints,
         config.served_profile,
+        repo_id=config.repo_id,
         include_backlog=True,
         include_archive=True,
     )
@@ -818,6 +819,7 @@ def _served_sprint_status(config, sprint_id, new_status, actor, as_json) -> None
         "sprint status",
         _served.lifecycle_arbitrate,
         config.served_profile,
+        repo_id=config.repo_id,
         record=_served_record_argument(durable),
     )
     if decision["outcome"] != "accepted":
@@ -962,6 +964,7 @@ def sprint_list(obj, include_backlog, include_archive, active_only, project_path
             "sprint list",
             _served.read_sprints,
             config.served_profile,
+            repo_id=config.repo_id,
             include_backlog=include_backlog,
             include_archive=include_archive,
             active_only=active_only,
@@ -1387,7 +1390,11 @@ def item_show(obj, item_id, as_json) -> None:
     projection_status = None
     if config is not None:
         result = _run_served(
-            "item show", _served.read_item, config.served_profile, item_id=item_id
+            "item show",
+            _served.read_item,
+            config.served_profile,
+            repo_id=config.repo_id,
+            item_id=item_id,
         )
         it = result["item"]
         item_events = result["events"]
@@ -1621,6 +1628,7 @@ def _served_item_note(
         "item note",
         _served.item_note,
         config.served_profile,
+        repo_id=config.repo_id,
         item_id=item_id,
         note_type=note_type,
         summary=summary,
@@ -1743,7 +1751,11 @@ def _served_item_status(config, item_id, new_status, actor, claim_id, claim_toke
         sys.exit(1)
 
     read_result = _run_served(
-        "item status", _served.read_item, config.served_profile, item_id=item_id
+        "item status",
+        _served.read_item,
+        config.served_profile,
+        repo_id=config.repo_id,
+        item_id=item_id,
     )
     it = read_result["item"]
     current = it["status"]
@@ -1771,6 +1783,7 @@ def _served_item_status(config, item_id, new_status, actor, claim_id, claim_toke
         "item status",
         _served.lifecycle_arbitrate,
         config.served_profile,
+        repo_id=config.repo_id,
         record=_served_record_argument(durable),
     )
     if decision["outcome"] != "accepted":
@@ -3085,6 +3098,7 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
             "authority sync",
             _served.batch_apply,
             config.served_profile,
+            repo_id=config.repo_id,
             records=[_served_record_argument(r) for r in chunk],
             idempotency_key=key,
             transient_credentials=transient_credentials,
@@ -3517,6 +3531,7 @@ def _served_cutover_evidence(
         "pilot cutover-evidence",
         _served.cutover_evidence,
         config.served_profile,
+        repo_id=config.repo_id,
         parity=parity_payload,
         max_watermark_age_seconds=max_watermark_age_seconds,
         rehearse=not skip_rollback_rehearsal,
@@ -6179,6 +6194,7 @@ def claim_start(
             "claim start",
             _served.claim_start,
             config.served_profile,
+            repo_id=config.repo_id,
             item_id=item_id,
             ttl_seconds=ttl_seconds,
             branch=branch,
@@ -6370,7 +6386,7 @@ def _served_claim_heartbeat(
     pid = _detect_pid(pid)
 
     context = _run_served(
-        "claim heartbeat", _served.claim_context, config.served_profile, claim_id=claim_id
+        "claim heartbeat", _served.claim_context, config.served_profile, repo_id=config.repo_id, claim_id=claim_id
     )
     authenticated_actor = context["actor"]
     if actor is not None and actor != authenticated_actor:
@@ -6439,6 +6455,7 @@ def _served_claim_heartbeat(
         "claim heartbeat",
         _served.claim_arbitrate,
         config.served_profile,
+        repo_id=config.repo_id,
         record=_served_record_argument(durable),
         transient_credentials=credentials,
     )
@@ -6592,7 +6609,7 @@ def _served_claim_release(config, claim_id, claim_token, actor) -> None:
     in ``authority.py`` reads nothing else from the payload).
     """
     context = _run_served(
-        "claim release", _served.claim_context, config.served_profile, claim_id=claim_id
+        "claim release", _served.claim_context, config.served_profile, repo_id=config.repo_id, claim_id=claim_id
     )
     authenticated_actor = context["actor"]
     if actor is not None and actor != authenticated_actor:
@@ -6636,6 +6653,7 @@ def _served_claim_release(config, claim_id, claim_token, actor) -> None:
         "claim release",
         _served.claim_arbitrate,
         config.served_profile,
+        repo_id=config.repo_id,
         record=_served_record_argument(durable),
         transient_credentials=credentials,
     )
@@ -6743,7 +6761,7 @@ def _served_claim_handoff(
     pid = _detect_pid(pid)
 
     context = _run_served(
-        "claim handoff", _served.claim_context, config.served_profile, claim_id=claim_id
+        "claim handoff", _served.claim_context, config.served_profile, repo_id=config.repo_id, claim_id=claim_id
     )
     authenticated_actor = context["actor"]
     if performed_by is not None and performed_by != authenticated_actor:
@@ -6826,6 +6844,7 @@ def _served_claim_handoff(
         "claim handoff",
         _served.claim_arbitrate,
         config.served_profile,
+        repo_id=config.repo_id,
         record=_served_record_argument(durable),
         transient_credentials=credentials,
     )
@@ -6860,7 +6879,11 @@ def _served_claim_handoff(
     # and worse, would look retryable when the current claim proof is already
     # invalidated. Degrade to a smaller bundle instead.
     try:
-        item_payload = _served.read_item(config.served_profile, item_id=effect["work_item_id"])
+        item_payload = _served.read_item(
+            config.served_profile,
+            repo_id=config.repo_id,
+            item_id=effect["work_item_id"],
+        )
         item = item_payload.get("item")
     except Exception as exc:  # noqa: BLE001 - degrade, don't fail an already-accepted handoff
         click.echo(
@@ -7612,6 +7635,7 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
                 "next-work",
                 _served.read_next_work,
                 config.served_profile,
+                repo_id=config.repo_id,
                 sprint_id=sprint_id,
             )
             s = result["sprint"]

@@ -92,7 +92,11 @@ def fake_vuoro_client(monkeypatch):
 def test_read_sprints_shapes_arguments(fake_vuoro_client):
     profile = _profile()
     result = served.read_sprints(
-        profile, include_backlog=True, include_archive=False, active_only=False
+        profile,
+        repo_id="repo-x",
+        include_backlog=True,
+        include_archive=False,
+        active_only=False,
     )
     assert result == {
         "operation": "work.read.sprints",
@@ -106,14 +110,14 @@ def test_read_sprints_shapes_arguments(fake_vuoro_client):
 
 def test_read_item_sends_only_item_id(fake_vuoro_client):
     profile = _profile()
-    result = served.read_item(profile, item_id=42)
+    result = served.read_item(profile, repo_id="repo-x", item_id=42)
     assert result["operation"] == "work.read.item"
     assert result["arguments"] == {"item_id": 42}
 
 
 def test_read_next_work_and_project_next_work_send_sprint_id(fake_vuoro_client):
     profile = _profile()
-    single = served.read_next_work(profile, sprint_id=7)
+    single = served.read_next_work(profile, repo_id="repo-x", sprint_id=7)
     assert single["operation"] == "work.read.next-work"
     assert single["arguments"] == {"sprint_id": 7}
 
@@ -126,6 +130,7 @@ def test_claim_start_sends_full_shape_and_never_an_actor_field(fake_vuoro_client
     profile = _profile()
     result = served.claim_start(
         profile,
+        repo_id="repo-x",
         item_id=5,
         ttl_seconds=120,
         branch="feat/x",
@@ -160,7 +165,7 @@ def test_claim_start_sends_full_shape_and_never_an_actor_field(fake_vuoro_client
 
 def test_claim_start_defaults_ttl_and_omits_no_keys(fake_vuoro_client):
     profile = _profile()
-    served.claim_start(profile, item_id=1)
+    served.claim_start(profile, repo_id="repo-x", item_id=1)
     client = fake_vuoro_client.instances[-1]
     _operation, arguments, _kwargs = client.invocations[0]
     assert arguments["ttl_seconds"] == 300
@@ -169,7 +174,7 @@ def test_claim_start_defaults_ttl_and_omits_no_keys(fake_vuoro_client):
 
 def test_claim_start_never_sends_an_idempotency_key_or_retries(fake_vuoro_client):
     profile = _profile()
-    served.claim_start(profile, item_id=1)
+    served.claim_start(profile, repo_id="repo-x", item_id=1)
     client = fake_vuoro_client.instances[-1]
     assert len(client.invocations) == 1, "claim start must invoke exactly once, no retry"
 
@@ -178,6 +183,7 @@ def test_item_note_sends_full_shape_and_never_an_actor_field(fake_vuoro_client):
     profile = _profile()
     result = served.item_note(
         profile,
+        repo_id="repo-x",
         item_id=7,
         note_type="decision",
         summary="Chose served",
@@ -211,11 +217,11 @@ def test_item_note_sends_full_shape_and_never_an_actor_field(fake_vuoro_client):
 
 def test_item_note_never_sends_an_idempotency_key_or_retries(fake_vuoro_client):
     profile = _profile()
-    served.item_note(profile, item_id=1, note_type="decision", summary="s")
+    served.item_note(profile, repo_id="repo-x", item_id=1, note_type="decision", summary="s")
     client = fake_vuoro_client.instances[-1]
     assert len(client.invocations) == 1, "item note must invoke exactly once, no retry"
     _operation, _arguments, kwargs = client.invocations[0]
-    assert kwargs == {}
+    assert kwargs == {"repo_id": "repo-x"}
     _operation, _arguments, kwargs = client.invocations[0]
     assert kwargs.get("idempotency_key") is None
 
@@ -247,7 +253,7 @@ def test_lifecycle_arbitrate_sends_the_record_and_matching_idempotency_and_basis
 ):
     profile = _profile()
     record = _sample_lifecycle_record()
-    result = served.lifecycle_arbitrate(profile, record=record)
+    result = served.lifecycle_arbitrate(profile, repo_id="repo-x", record=record)
     assert result["operation"] == "work.lifecycle.arbitrate"
     assert result["arguments"] == {"record": record}
     client = fake_vuoro_client.instances[-1]
@@ -258,12 +264,12 @@ def test_lifecycle_arbitrate_sends_the_record_and_matching_idempotency_and_basis
 
 def test_claim_context_sends_only_claim_id_with_no_credentials(fake_vuoro_client):
     profile = _profile()
-    result = served.claim_context(profile, claim_id=9)
+    result = served.claim_context(profile, repo_id="repo-x", claim_id=9)
     assert result["operation"] == "work.claim.context"
     assert result["arguments"] == {"claim_id": 9}
     client = fake_vuoro_client.instances[-1]
     _operation, _arguments, kwargs = client.invocations[0]
-    assert kwargs == {}
+    assert kwargs == {"repo_id": "repo-x"}
 
 
 def _sample_claim_record(**overrides) -> dict:
@@ -292,7 +298,7 @@ def test_claim_arbitrate_sends_the_record_and_transient_credentials(fake_vuoro_c
     profile = _profile()
     record = _sample_claim_record()
     credentials = {"sha256:" + "c" * 64: "secret-proof"}
-    result = served.claim_arbitrate(profile, record=record, transient_credentials=credentials)
+    result = served.claim_arbitrate(profile, repo_id="repo-x", record=record, transient_credentials=credentials)
     assert result["operation"] == "work.claim.arbitrate"
     assert result["arguments"] == {"record": record}
     client = fake_vuoro_client.instances[-1]
@@ -305,10 +311,10 @@ def test_claim_arbitrate_sends_the_record_and_transient_credentials(fake_vuoro_c
 def test_claim_arbitrate_uses_a_fresh_client_per_call(fake_vuoro_client):
     profile = _profile()
     served.claim_arbitrate(
-        profile, record=_sample_claim_record(), transient_credentials={}
+        profile, repo_id="repo-x", record=_sample_claim_record(), transient_credentials={}
     )
     served.claim_arbitrate(
-        profile, record=_sample_claim_record(), transient_credentials={}
+        profile, repo_id="repo-x", record=_sample_claim_record(), transient_credentials={}
     )
     assert len(fake_vuoro_client.instances) == 2
     first, second = fake_vuoro_client.instances
@@ -318,8 +324,8 @@ def test_claim_arbitrate_uses_a_fresh_client_per_call(fake_vuoro_client):
 
 def test_lifecycle_arbitrate_uses_a_fresh_client_per_call(fake_vuoro_client):
     profile = _profile()
-    served.lifecycle_arbitrate(profile, record=_sample_lifecycle_record())
-    served.lifecycle_arbitrate(profile, record=_sample_lifecycle_record())
+    served.lifecycle_arbitrate(profile, repo_id="repo-x", record=_sample_lifecycle_record())
+    served.lifecycle_arbitrate(profile, repo_id="repo-x", record=_sample_lifecycle_record())
     assert len(fake_vuoro_client.instances) == 2
     first, second = fake_vuoro_client.instances
     assert first is not second
@@ -328,7 +334,7 @@ def test_lifecycle_arbitrate_uses_a_fresh_client_per_call(fake_vuoro_client):
 
 def test_credential_resolver_passed_to_client_is_resolve_file_credential(fake_vuoro_client):
     profile = _profile()
-    served.read_item(profile, item_id=1)
+    served.read_item(profile, repo_id="repo-x", item_id=1)
     client = fake_vuoro_client.instances[-1]
     assert client.credential_resolver is resolve_file_credential
 
@@ -336,11 +342,11 @@ def test_credential_resolver_passed_to_client_is_resolve_file_credential(fake_vu
 @pytest.mark.parametrize(
     "call",
     [
-        lambda profile: served.read_sprints(profile),
-        lambda profile: served.read_item(profile, item_id=1),
-        lambda profile: served.read_next_work(profile),
+        lambda profile: served.read_sprints(profile, repo_id="repo-x"),
+        lambda profile: served.read_item(profile, repo_id="repo-x", item_id=1),
+        lambda profile: served.read_next_work(profile, repo_id="repo-x"),
         lambda profile: served.project_next_work(profile),
-        lambda profile: served.claim_start(profile, item_id=1),
+        lambda profile: served.claim_start(profile, repo_id="repo-x", item_id=1),
     ],
 )
 def test_each_operation_constructs_a_fresh_client_per_call(fake_vuoro_client, call):
@@ -357,7 +363,7 @@ def test_client_profile_carries_the_served_profile_fields(fake_vuoro_client):
     profile = _profile(
         name="n", endpoint="https://e/", credential_ref="file:/x", expected_environment="env"
     )
-    served.read_item(profile, item_id=1)
+    served.read_item(profile, repo_id="repo-x", item_id=1)
     client = fake_vuoro_client.instances[-1]
     assert client.profile.name == "n"
     assert client.profile.endpoint == "https://e/"
