@@ -23,7 +23,7 @@ item only inventories gaps; it does not close them.
 | 7 | Direct credential removal | Open | Owner: appservice #1226 — workstation and cluster credential sweep; rotate/remove all direct DB credentials except the migration job's. |
 | 8 | vuoro-dev four-domain evidence | Open | Owner: vuoro #1222 — four-domain handshake/catalog/invocation/decision evidence bundle on vuoro-dev. |
 | 9 | Export/recovery rehearsal (cross-backend) | Done | Owner: sprintctl #1219 — rehearsal completed 2026-07-24 against the live served authority using `sprintctl db recover-from-remote` (#1233, commit `b38937e`, CI run 30073378545 green). See "Row 9 rehearsal record" below. |
-| 10 | Production promotion evidence | Open | Owner: vuoro #1223 — promotion record (image digest, config hash, migration state, post-promotion health/parity). |
+| 10 | Production promotion evidence | Done | vuoro #1223 (done, 2026-07-24) — `vuoro-shared` deployment/image/migration state recorded; historical sprintctl data backfilled (repo_id=`sprintctl` scope, no prior tool existed for this — see record) with exact row-count parity (sprint 21, track 51, work_item 195, claim 3, dep 57, ref 141, event 469); post-promotion health/parity verified via a live served-mode read (`sprintctl doctor`, `sprint list`, `item show --id 1164` all correct against production). See sprintctl #1164 ref #348. |
 | 11 | Explicit operator gate | Open | Owner: sprintctl #1221 — decision event on #1164 authorizing removal, recorded only once every row above is green. Blocked by this ledger (#1218) and by #1219/#1220. |
 
 ## Expected-finding check
@@ -31,13 +31,15 @@ item only inventories gaps; it does not close them.
 Per `docs/plans/next-session-dispatch.md` in agentops, the open rows were
 originally #1219/#1220 (sprintctl), #1222/#1223 (vuoro), #1225/#1226
 (appservice), confirmed against live item state on 2026-07-24. Since then,
-#1219 and #1225 closed (see rows 9 and 6 above).
+#1219, #1225, and #1223 closed (see rows 9, 6, and 10 above).
 
-- Rows 1–6 and 9 are Done, each backed by a done item with recorded
+- Rows 1–6, 9, and 10 are Done, each backed by a done item with recorded
   verification evidence (no unrecorded-but-actually-done gaps found).
-- Rows 7, 8, 10 remain Open, owned by #1226, #1222, #1223 respectively —
-  confirmed `pending` with no refs/events yet as of 2026-07-24 (checked via
-  `sprintctl item show` in each owning repo).
+- Row 7 (#1226) remains blocked until a credential-sweep session confirms
+  served reads/writes are safe fleet-wide; it was explicitly gated on row 10
+  landing, which it now has.
+- Row 8 (#1222, vuoro-dev four-domain evidence) remains open, confirmed
+  `pending` with no refs/events yet as of 2026-07-24.
 - Row 11 (#1221) is Open and correctly excluded from the "gap" list: it is
   the terminal operator-gate decision, gated on every other row, not an
   independent evidence gap.
