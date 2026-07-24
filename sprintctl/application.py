@@ -333,6 +333,7 @@ class WorkApplication:
             "work.claim.arbitrate": target._claim_arbitrate,
             "work.lifecycle.arbitrate": target._lifecycle_arbitrate,
             "work.evidence.ingest": target._evidence_ingest,
+            "work.item.note": target._item_note,
             "work.batch.apply": target._batch_apply,
             "work.pilot.cutover-evidence": target._cutover_evidence,
         }
@@ -656,6 +657,77 @@ class WorkApplication:
         return {
             "repo_id": self.repo_id,
             "results": [_ingest_result(value) for value in results],
+        }
+
+    def _item_note(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        """Record a structured note event on a work item (``item note``).
+
+        Unlike ``work.evidence.ingest``, this is a direct, synchronous write
+        (mirrors the local CLI's ``create_event`` call) rather than a durable
+        outbox-producer record -- ``item note`` has no local outbox/retry
+        semantics either, so this does not invent any for the served path.
+        The recording actor is always the authenticated identity, never a
+        client-supplied argument, matching ``work.claim.start``.
+        """
+
+        item_id = _positive_int(arguments.get("item_id"), "item_id")
+        note_type = _optional_text(arguments.get("note_type"), "note_type")
+        summary = _optional_text(arguments.get("summary"), "summary")
+        if not note_type or not summary:
+            raise ApplicationRejection(
+                "invalid-arguments", "note_type and summary are required", 422
+            )
+        item = self.backend.get_work_item(self.store, item_id)
+        if item is None:
+            raise ApplicationRejection(
+                "item-not-found", f"Item #{item_id} not found", 404
+            )
+        payload: dict[str, Any] = {"summary": summary}
+        detail = _optional_text(arguments.get("detail"), "detail")
+        if detail:
+            payload["detail"] = detail
+        tags = arguments.get("tags")
+        if tags:
+            if not isinstance(tags, list) or not all(
+                isinstance(tag, str) and tag for tag in tags
+            ):
+                raise ApplicationRejection(
+                    "invalid-arguments", "tags must be an array of non-empty strings", 422
+                )
+            payload["tags"] = list(tags)
+        evidence_item_id = _optional_positive_int(
+            arguments.get("evidence_item_id"), "evidence_item_id"
+        )
+        if evidence_item_id is not None:
+            payload["evidence_item_id"] = evidence_item_id
+        evidence_event_id = _optional_positive_int(
+            arguments.get("evidence_event_id"), "evidence_event_id"
+        )
+        if evidence_event_id is not None:
+            payload["evidence_event_id"] = evidence_event_id
+        for field in ("git_branch", "git_sha", "git_worktree"):
+            value = _optional_text(arguments.get(field), field)
+            if value:
+                payload[field] = value
+        try:
+            event_id = self.backend.create_event(
+                self.store,
+                item["sprint_id"],
+                actor=context.identity.actor,
+                event_type=note_type,
+                source_type="actor",
+                work_item_id=item_id,
+                payload=payload,
+            )
+        except ValueError as exc:
+            raise ApplicationRejection("note-rejected", str(exc)) from exc
+        return {
+            "event_id": event_id,
+            "item_id": item_id,
+            "note_type": note_type,
+            "summary": summary,
         }
 
     def _batch_apply(

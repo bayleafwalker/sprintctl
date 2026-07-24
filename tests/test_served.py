@@ -172,6 +172,50 @@ def test_claim_start_never_sends_an_idempotency_key_or_retries(fake_vuoro_client
     served.claim_start(profile, item_id=1)
     client = fake_vuoro_client.instances[-1]
     assert len(client.invocations) == 1, "claim start must invoke exactly once, no retry"
+
+
+def test_item_note_sends_full_shape_and_never_an_actor_field(fake_vuoro_client):
+    profile = _profile()
+    result = served.item_note(
+        profile,
+        item_id=7,
+        note_type="decision",
+        summary="Chose served",
+        detail="Extra context",
+        tags=["a", "b"],
+        evidence_item_id=None,
+        evidence_event_id=None,
+        git_branch=None,
+        git_sha=None,
+        git_worktree=None,
+    )
+    assert result["operation"] == "work.item.note"
+    args = result["arguments"]
+    assert set(args) == {
+        "item_id",
+        "note_type",
+        "summary",
+        "detail",
+        "tags",
+        "evidence_item_id",
+        "evidence_event_id",
+        "git_branch",
+        "git_sha",
+        "git_worktree",
+    }
+    assert "actor" not in args
+    assert args["item_id"] == 7
+    assert args["note_type"] == "decision"
+    assert args["tags"] == ["a", "b"]
+
+
+def test_item_note_never_sends_an_idempotency_key_or_retries(fake_vuoro_client):
+    profile = _profile()
+    served.item_note(profile, item_id=1, note_type="decision", summary="s")
+    client = fake_vuoro_client.instances[-1]
+    assert len(client.invocations) == 1, "item note must invoke exactly once, no retry"
+    _operation, _arguments, kwargs = client.invocations[0]
+    assert kwargs == {}
     _operation, _arguments, kwargs = client.invocations[0]
     assert kwargs.get("idempotency_key") is None
 
@@ -330,7 +374,7 @@ def test_catalog_operation_names_uses_a_fresh_client_and_returns_names(fake_vuor
     assert client.invocations == [], "catalog discovery must not invoke an operation"
 
 
-def test_expected_operations_matches_the_eleven_served_routes_command_paths():
+def test_expected_operations_matches_the_twelve_served_routes_command_paths():
     expected = {
         route.operation
         for path in (
@@ -343,13 +387,14 @@ def test_expected_operations_matches_the_eleven_served_routes_command_paths():
             "claim.heartbeat",
             "claim.handoff",
             "claim.release",
+            "item.note",
             "pilot.cutover-evidence",
             "authority.sync",
         )
         for route in routes_for(path)
     }
     assert served.EXPECTED_OPERATIONS == expected
-    assert len(served.EXPECTED_OPERATIONS) == 9
+    assert len(served.EXPECTED_OPERATIONS) == 10
     assert served.EXPECTED_OPERATIONS == {
         "work.read.sprints",
         "work.read.item",
@@ -358,6 +403,7 @@ def test_expected_operations_matches_the_eleven_served_routes_command_paths():
         "work.claim.start",
         "work.lifecycle.arbitrate",
         "work.claim.arbitrate",
+        "work.item.note",
         "work.pilot.cutover-evidence",
         "work.batch.apply",
     }

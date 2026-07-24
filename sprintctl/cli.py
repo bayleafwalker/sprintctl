@@ -1602,6 +1602,42 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, project_path, as_json)
         click.echo(line)
 
 
+def _served_item_note(
+    config, item_id, note_type, summary, detail, tags, actor,
+    evidence_item_id, evidence_event_id, git_branch, git_sha, git_worktree,
+) -> None:
+    """Served-mode ``item note``: routes to ``work.item.note``.
+
+    Unlike ``item status``/``sprint status``, this is not an authority
+    command -- no outbox record is minted, and there is no basis-revision or
+    idempotency-key concept to send. The recording actor is always the
+    authenticated identity the server resolves from the credential; a
+    caller-supplied ``--actor`` is accepted for parity with local mode but
+    silently ignored server-side, exactly like ``claim start``'s actor.
+    """
+
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+    result = _run_served(
+        "item note",
+        _served.item_note,
+        config.served_profile,
+        item_id=item_id,
+        note_type=note_type,
+        summary=summary,
+        detail=detail,
+        tags=tag_list,
+        evidence_item_id=evidence_item_id,
+        evidence_event_id=evidence_event_id,
+        git_branch=git_branch,
+        git_sha=git_sha,
+        git_worktree=git_worktree,
+    )
+    click.echo(
+        f"Recorded note #{result['event_id']} ({result['note_type']}) "
+        f"on item #{result['item_id']}: {result['summary']}"
+    )
+
+
 @item.command("note")
 @click.option("--id", "item_id", type=int, required=True, help="Work item ID")
 @click.option("--type", "note_type", required=True, help="Note type (e.g. decision, blocker, update)")
@@ -1621,6 +1657,13 @@ def item_note(
     git_branch, git_sha, git_worktree,
 ) -> None:
     """Record a structured note event on a work item."""
+    config = _served_config_or_none(obj)
+    if config is not None:
+        _served_item_note(
+            config, item_id, note_type, summary, detail, tags, actor,
+            evidence_item_id, evidence_event_id, git_branch, git_sha, git_worktree,
+        )
+        return
     store, m = _get_store(obj)
     it = m.get_work_item(store, item_id)
     if it is None:

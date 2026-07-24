@@ -213,6 +213,42 @@ def claim_start(
     return asyncio.run(_invoke_operation(served_profile, "work.claim.start", arguments))
 
 
+def item_note(
+    served_profile: ServedProfile,
+    *,
+    item_id: int,
+    note_type: str,
+    summary: str,
+    detail: str | None = None,
+    tags: list[str] | None = None,
+    evidence_item_id: int | None = None,
+    evidence_event_id: int | None = None,
+    git_branch: str | None = None,
+    git_sha: str | None = None,
+    git_worktree: str | None = None,
+) -> dict[str, Any]:
+    """Invoke ``work.item.note`` (``sprintctl item note``).
+
+    The recording actor is always the authenticated identity the server
+    resolves from the credential, not a caller-supplied argument -- same
+    rule as :func:`claim_start`.
+    """
+
+    arguments = {
+        "item_id": item_id,
+        "note_type": note_type,
+        "summary": summary,
+        "detail": detail,
+        "tags": tags,
+        "evidence_item_id": evidence_item_id,
+        "evidence_event_id": evidence_event_id,
+        "git_branch": git_branch,
+        "git_sha": git_sha,
+        "git_worktree": git_worktree,
+    }
+    return asyncio.run(_invoke_operation(served_profile, "work.item.note", arguments))
+
+
 def claim_context(served_profile: ServedProfile, *, claim_id: int) -> dict[str, Any]:
     """Invoke ``work.claim.context`` (authenticated-actor/authority-uuid/claim-
     snapshot/claim-revision read backing served ``claim heartbeat``/``claim
@@ -312,6 +348,7 @@ _DOCTOR_PROBE_COMMAND_PATHS = (
     "claim.heartbeat",
     "claim.handoff",
     "claim.release",
+    "item.note",
     "pilot.cutover-evidence",
     "authority.sync",
 )

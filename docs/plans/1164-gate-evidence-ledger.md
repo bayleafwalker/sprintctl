@@ -16,9 +16,9 @@ item only inventories gaps; it does not close them.
 | --- | --- | --- | --- |
 | 1 | Selected-repo cutover | Done | sprintctl #1163 (done) — per-repo authority/projection dogfood with parity, watermark/reconciliation lag, and rollback rehearsal evidence. |
 | 2 | Deployment-owned migrations, runtime DDL denial (client side) | Done | sprintctl #1193 (done) — client-shipped DDL replaced by a read-only compatibility probe; migration/runtime roles defined; client-side DDL denial verified. Deployed-cluster DDL denial is tracked separately as row 6. |
-| 3 | Work adapter/catalog + legacy remote-command inventory | Done | sprintctl #1194 (done) — Click-independent core extracted; `LEGACY_REMOTE_COMMAND_PARITY` inventory published in `sprintctl/vuoro_adapter.py` (11 legacy command groups mapped to catalog operations). |
+| 3 | Work adapter/catalog + legacy remote-command inventory | Done | sprintctl #1194 (done) — Click-independent core extracted; `LEGACY_REMOTE_COMMAND_PARITY` inventory published in `sprintctl/vuoro_adapter.py` (12 legacy command groups mapped to catalog operations as of `work.item.note`, 2026-07-24). |
 | 4 | Endpoint/identity workstation cutover | Done | sprintctl #1195 (done) — served-mode compatibility release; endpoint/identity profile wiring; verified via events #1396/#1397 (Group C landed and independently re-verified, commit `f22132c`, CI run 30003277273 green across the full matrix). |
-| 5 | Catalog parity for legacy remote-relevant commands (current catalog) | Done | `sprintctl/served_routes.py` wires 10 of 11 `LEGACY_REMOTE_COMMAND_PARITY` entries; the 11th (`work.project.batch` / "project dispatch batching") has no legacy CLI command to give parity to. sprintctl #1212 (done) made that an explicit decision, not an oversight: no CLI entry point exists or is currently planned, so there is nothing for a served route to replace. Parity is complete against the current catalog. |
+| 5 | Catalog parity for legacy remote-relevant commands (current catalog) | Done | `sprintctl/served_routes.py` wires 11 of 12 `LEGACY_REMOTE_COMMAND_PARITY` entries (as of `work.item.note`, 2026-07-24 — see "Follow-up finding" below); the 12th (`work.project.batch` / "project dispatch batching") has no legacy CLI command to give parity to. sprintctl #1212 (done) made that an explicit decision, not an oversight: no CLI entry point exists or is currently planned, so there is nothing for a served route to replace. Parity is complete against the current catalog. |
 | 6 | Runtime-role DDL denial (deployed) | Done | appservice #1225 (done, 2026-07-24) — `sprintctl-schema-migrate-v3` job live-verified `Complete 1/1`, 0 restarts, 39h stable. Job embeds a DDL-denial probe: post-migration it connects as `sprintctl_runtime` and attempts `CREATE TABLE`, expecting `InsufficientPrivilege`; `backoffLimit: 0` means the job would fail loudly if DDL unexpectedly succeeded. `sprintctl-cnpg.yaml` confirms `sprintctl_runtime` is DML-only (no CREATE/createdb/createrole/superuser). See sprintctl #1164 ref #347. |
 | 7 | Direct credential removal | Open (scope corrected) | Owner: appservice #1226. `sprintctl`'s own workstation `.envrc` flipped to served mode 2026-07-24 and verified (`doctor` ok, live `item show` correct) — that repo's direct credential can be removed. The other 7 workstation repos (`agentops`, `box`, `actionq`, `aligned-equity`, `_orchestration`, `homelab-analytics`, `scribectl`) cannot: `vuoro-shared` is single-tenant (`work_store.repo_id` fixed at deploy time from `VUORO_WORK_REPOSITORY_ID`, `composition.py:261`), so served mode only ever serves the `sprintctl` repo regardless of which repo the client is in. Filed vuoro #1245 (make `repo_id` a per-request parameter) as the real blocker for the other 7. Cluster-side: `agent-cockpit`/`vscode-shell` deployments (already narrowed to the DML-only `sprintctl_runtime` role, not touched further) and the migration job (non-scope) are unaffected by this finding. |
 | 8 | vuoro-dev four-domain evidence | Done | vuoro #1222 (done, 2026-07-24) — handshake (all 4 domains compatible), full 39-op catalog, and accepted+rejected invocation/decision evidence per domain (two distinct stable error surfaces: `authority-required`, `idempotency-key-required`). Required adding a broader disposable identity to vuoro-dev (previous identity was work:read-only). See sprintctl #1164 ref #351. |
@@ -108,6 +108,41 @@ claim=0, ingest_record=0` — no write reached the database from any denied
 command. The upgrade path (reinstall the `uv tool` with the `remote,served`
 extras from the current repository) is documented in
 `docs/reference/postgres-schema-compatibility.md`.
+
+### Follow-up finding: served catalog gap for item metadata writes
+
+Not part of #1220's original scope. While capturing the write-denial
+evidence above, `sprintctl item note`, `sprintctl item ref add`, and
+`sprintctl item add` all failed with `could not connect to postgres from
+SPRINTCTL_URL: 'NoneType' object has no attribute 'encode'` under a plain
+`SPRINTCTL_BACKEND=served` environment (no direct DSN configured). Cause:
+`vuoro_adapter.WORK_OPERATION_CONTRACTS` had no `work.note.*` / `work.ref.*`
+/ `work.item.add` operations — served mode covered only `work.claim.*`,
+`work.lifecycle.arbitrate`, `work.evidence.ingest`, `work.batch.apply`,
+`work.project.*`, and `work.pilot.cutover-evidence`. Every other CLI write
+fell back to the direct-remote path, which a served-only client (no
+`SPRINTCTL_URL`) cannot use.
+
+**`item note` closed the same session (2026-07-24):** added `work.item.note`
+to `WORK_OPERATION_CONTRACTS`, a `WorkApplication._item_note` handler
+(direct synchronous write via `backend.create_event`, actor always the
+authenticated identity — never a client-supplied argument, matching
+`work.claim.start`), a `served.item_note` client facade, and an
+`item.note` route in `served_routes.py`'s allowlist (now 12 routes, 10
+operations in `EXPECTED_OPERATIONS`). Verified: unit tests against SQLite
+and a real disposable PostgreSQL, a `served.py` client-shape test, and a
+CLI-level test monkeypatching the served facade — all in the same commit
+as this record.
+
+**Still open:** `item ref add` and `item add` remain served-incompatible.
+Both need real new service-side operations (`work.ref.add`, `work.item.add`)
+with their own authority/validation decisions — `pg.add_ref` has no
+existing outbox/durable-record precedent to lean on the way `item note`
+did, and `item add` additionally touches sprint/track defaulting. Next
+session: design `work.ref.add` and `work.item.add` following the
+`work.item.note` precedent in this commit (contract in `vuoro_adapter.py`,
+handler in `application.py`, client in `served.py`, route in
+`served_routes.py`, tests against both SQLite and real PostgreSQL).
 
 ## Sources
 

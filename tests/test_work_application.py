@@ -493,6 +493,50 @@ def test_click_free_claim_start_matches_cli_state_flow(conn, runner, active_spri
     assert db.list_claims(conn, failing_item, active_only=False) == []
 
 
+def test_item_note_records_an_event_bound_to_the_authenticated_actor_not_arguments(
+    conn, active_sprint
+):
+    track = db.get_or_create_track(conn, active_sprint["id"], "notes")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Note target")
+    app = _application(store=conn, backend=db)
+
+    result = app.invoke(
+        "work.item.note",
+        {
+            "item_id": item_id,
+            "note_type": "decision",
+            "summary": "Chose the served path",
+            "detail": "See #1220 evidence.",
+            "tags": ["served", "note"],
+        },
+        _context(actor="authenticated-actor"),
+    )
+
+    assert result["item_id"] == item_id
+    assert result["note_type"] == "decision"
+    assert result["summary"] == "Chose the served path"
+    events = db.list_events(conn, active_sprint["id"])
+    recorded = next(e for e in events if e["id"] == result["event_id"])
+    assert recorded["event_type"] == "decision"
+    assert recorded["work_item_id"] == item_id
+    assert recorded["actor"] == "authenticated-actor"
+    payload = json.loads(recorded["payload"])
+    assert payload["summary"] == "Chose the served path"
+    assert payload["detail"] == "See #1220 evidence."
+    assert payload["tags"] == ["served", "note"]
+
+
+def test_item_note_rejects_a_missing_item_before_any_write(conn):
+    app = _application(store=conn, backend=db)
+    with pytest.raises(ApplicationRejection) as rejected:
+        app.invoke(
+            "work.item.note",
+            {"item_id": 999999, "note_type": "decision", "summary": "no such item"},
+            _context(actor="worker"),
+        )
+    assert rejected.value.code == "item-not-found"
+
+
 def test_batch_is_content_bound_idempotent_and_preserves_producer_order():
     calls = []
     app = _application(calls=calls)

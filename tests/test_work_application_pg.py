@@ -214,6 +214,35 @@ def _handoff_command(
     return command, credentials
 
 
+def test_item_note_records_an_event_bound_to_the_authenticated_actor(store_factory):
+    store = store_factory("item-note")
+    sprint_id = pg.create_sprint(store, "Notes", status="active")
+    track_id = pg.get_or_create_track(store, sprint_id, "work")
+    item_id = pg.create_work_item(store, sprint_id, track_id, "Note target")
+    app = _application(store, {})
+
+    context = _context("authenticated-actor", None, "note-1")
+    result = app.invoke(
+        "work.item.note",
+        {
+            "item_id": item_id,
+            "note_type": "decision",
+            "summary": "Chose the served path",
+            "tags": ["served"],
+        },
+        context,
+    )
+
+    assert result["item_id"] == item_id
+    assert result["note_type"] == "decision"
+    events = pg.list_events(store, sprint_id)
+    recorded = next(e for e in events if e["id"] == result["event_id"])
+    assert recorded["event_type"] == "decision"
+    assert recorded["actor"] == "authenticated-actor"
+    assert recorded["work_item_id"] == item_id
+    store.conn.close()
+
+
 def test_invoke_scopes_to_the_identitys_repo_id_not_the_application_constructor(
     store_factory,
 ):
