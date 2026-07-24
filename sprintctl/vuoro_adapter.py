@@ -507,6 +507,11 @@ def register_work_catalog(
     from vuoro_service.contracts import OperationDefinition
 
     for contract in WORK_OPERATION_CONTRACTS:
+        # work.project.* operations aggregate across a project's member
+        # repos using an origin_repo field inside their own arguments (see
+        # ProjectWorkApplication) -- they have no single repo_id to scope
+        # to, so they stay outside the envelope-level repo_id/authorization
+        # gate that every other work.* operation requires.
         definition = OperationDefinition(
             name=contract.name,
             owning_domain="work",
@@ -515,6 +520,7 @@ def register_work_catalog(
             required_authority=contract.required_authority,
             execution_semantics=contract.execution_semantics,
             idempotency=contract.idempotency,
+            repo_scoped=not contract.name.startswith("work.project."),
             required_client_schema_features=list(
                 contract.required_client_schema_features
             ),

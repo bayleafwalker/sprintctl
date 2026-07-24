@@ -46,7 +46,6 @@ class InvocationIdentity(Protocol):
     actor: str
     environment: str
     authorities: frozenset[str]
-    repo_id: str
 
 
 class TransientCredentialCarrier(Protocol):
@@ -68,6 +67,11 @@ class InvocationContext(Protocol):
     catalog_revision: str
     idempotency_requirement: str
     idempotency_key: str | None
+    # Client-supplied repository scope for this one call (the server has
+    # already authorized it against the identity before invoke() runs --
+    # see vuoro_service.app._dispatch). None on every existing
+    # protocol-v1-only test double that predates the envelope field.
+    repo_id: str | None
     # Present on a v2 invocation; absent (or empty) on v1 and on every
     # existing protocol-v1-only test double.  Composition wiring is what
     # supplies a real carrier -- see ``make_transient_credential_resolver``.
@@ -310,11 +314,14 @@ class WorkApplication:
             raise ApplicationRejection(
                 "invalid-arguments", "operation arguments must be an object", 422
             )
-        # An identity with no bound repo_id (older registries, or a caller
-        # that only holds non-work authorities) falls back to the
-        # application's own construction-time repo_id, preserving today's
-        # single-tenant behavior exactly.
-        requested_repo_id = getattr(context.identity, "repo_id", "") or self.repo_id
+        # The server has already authorized context.repo_id against the
+        # caller's identity before invoke() runs (vuoro_service.app._dispatch
+        # + Identity.authorizes_repo) -- this only needs a value to scope to.
+        # A context with no repo_id at all (every existing protocol-v1-only
+        # test double, and any caller built before the envelope field
+        # existed) falls back to the application's own construction-time
+        # repo_id, preserving today's single-tenant behavior exactly.
+        requested_repo_id = getattr(context, "repo_id", None) or self.repo_id
         if not requested_repo_id:
             raise ApplicationRejection(
                 "repo-id-required",

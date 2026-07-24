@@ -78,12 +78,12 @@ def test_served_item_status_active_to_done_appends_item_done_record(
     _configure_served_repo(tmp_path, monkeypatch)
     item = {"id": 7, "aggregate_uuid": str(uuid4()), "status": "active"}
     monkeypatch.setattr(
-        cli_module._served, "read_item", lambda profile, *, item_id: {"item": item}
+        cli_module._served, "read_item", lambda profile, *, repo_id=None, item_id: {"item": item}
     )
 
     captured = {}
 
-    def fake_lifecycle_arbitrate(profile, *, record):
+    def fake_lifecycle_arbitrate(profile, *, repo_id=None, record):
         captured["record"] = record
         return {
             "outcome": "accepted",
@@ -121,11 +121,11 @@ def test_served_item_status_pending_to_active_uses_item_transition_record(
     _configure_served_repo(tmp_path, monkeypatch)
     item = {"id": 3, "aggregate_uuid": str(uuid4()), "status": "pending"}
     monkeypatch.setattr(
-        cli_module._served, "read_item", lambda profile, *, item_id: {"item": item}
+        cli_module._served, "read_item", lambda profile, *, repo_id=None, item_id: {"item": item}
     )
     captured = {}
 
-    def fake_lifecycle_arbitrate(profile, *, record):
+    def fake_lifecycle_arbitrate(profile, *, repo_id=None, record):
         captured["record"] = record
         return {
             "outcome": "accepted",
@@ -171,12 +171,12 @@ def test_served_item_status_surfaces_a_rejected_decision(runner, tmp_path, monke
     _configure_served_repo(tmp_path, monkeypatch)
     item = {"id": 4, "aggregate_uuid": str(uuid4()), "status": "done"}
     monkeypatch.setattr(
-        cli_module._served, "read_item", lambda profile, *, item_id: {"item": item}
+        cli_module._served, "read_item", lambda profile, *, repo_id=None, item_id: {"item": item}
     )
     monkeypatch.setattr(
         cli_module._served,
         "lifecycle_arbitrate",
-        lambda profile, *, record: {
+        lambda profile, *, repo_id=None, record: {
             "outcome": "rejected",
             "reason_code": "invalid-transition",
             "reason_detail": "cannot transition done -> active",
@@ -266,7 +266,7 @@ def test_served_sprint_status_activate_appends_sprint_activate_record(
     )
     captured = {}
 
-    def fake_lifecycle_arbitrate(profile, *, record):
+    def fake_lifecycle_arbitrate(profile, *, repo_id=None, record):
         captured["record"] = record
         return {
             "outcome": "accepted",
@@ -304,7 +304,7 @@ def test_served_sprint_status_close_surfaces_boundary_event(runner, tmp_path, mo
     monkeypatch.setattr(
         cli_module._served,
         "lifecycle_arbitrate",
-        lambda profile, *, record: {
+        lambda profile, *, repo_id=None, record: {
             "outcome": "accepted",
             "effect": {
                 "sprint_id": 12,
@@ -470,7 +470,7 @@ def _credential_dir(tmp_path):
 
 
 def _stub_claim_context(monkeypatch, *, claim_id, actor, authority_repo_uuid, claim_revision):
-    def fake_claim_context(profile, *, claim_id: int):
+    def fake_claim_context(profile, *, repo_id=None, claim_id: int):
         return {
             "repo_id": "repo-x",
             "authority_repo_uuid": authority_repo_uuid,
@@ -497,7 +497,7 @@ def test_served_claim_heartbeat_mints_claim_renew_with_metadata_parity(
     )
     captured = {}
 
-    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+    def fake_claim_arbitrate(profile, *, repo_id=None, record, transient_credentials):
         captured["record"] = record
         captured["transient_credentials"] = transient_credentials
         return {
@@ -572,7 +572,7 @@ def test_served_claim_heartbeat_omits_metadata_when_all_fields_are_none(
     )
     captured = {}
 
-    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+    def fake_claim_arbitrate(profile, *, repo_id=None, record, transient_credentials):
         captured["record"] = record
         return {
             "outcome": "accepted",
@@ -607,7 +607,7 @@ def test_served_claim_heartbeat_warns_before_expiry(runner, tmp_path, monkeypatc
     monkeypatch.setattr(
         cli_module._served,
         "claim_arbitrate",
-        lambda profile, *, record, transient_credentials: {
+        lambda profile, *, repo_id=None, record, transient_credentials: {
             "outcome": "accepted",
             "effect": {"claim_id": 2, "expires_at": "2026-07-23T00:00:30Z"},
         },
@@ -639,7 +639,7 @@ def test_served_claim_heartbeat_ignores_mismatched_advisory_actor(
     )
     captured = {}
 
-    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+    def fake_claim_arbitrate(profile, *, repo_id=None, record, transient_credentials):
         captured["record"] = record
         return {"outcome": "accepted", "effect": {"claim_id": 3, "expires_at": "x"}}
 
@@ -673,7 +673,7 @@ def test_served_claim_heartbeat_surfaces_a_rejected_decision_and_clears_sidecar(
     monkeypatch.setattr(
         cli_module._served,
         "claim_arbitrate",
-        lambda profile, *, record, transient_credentials: {
+        lambda profile, *, repo_id=None, record, transient_credentials: {
             "outcome": "rejected",
             "reason_code": "invalid-claim-proof",
             "reason_detail": "claim proof is invalid",
@@ -703,7 +703,7 @@ def test_served_claim_heartbeat_keeps_sidecar_on_transport_failure(
         claim_revision="claim:5@sha256:" + "f" * 64,
     )
 
-    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+    def fake_claim_arbitrate(profile, *, repo_id=None, record, transient_credentials):
         raise RuntimeError("connection reset")
 
     monkeypatch.setattr(cli_module._served, "claim_arbitrate", fake_claim_arbitrate)
@@ -732,7 +732,7 @@ def test_served_claim_release_clears_sidecar_on_accepted_decision(
     )
     captured = {}
 
-    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+    def fake_claim_arbitrate(profile, *, repo_id=None, record, transient_credentials):
         captured["record"] = record
         captured["transient_credentials"] = transient_credentials
         return {
@@ -773,7 +773,7 @@ def test_served_claim_release_keeps_sidecar_on_transport_failure(
         claim_revision="claim:7@sha256:" + "2" * 64,
     )
 
-    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+    def fake_claim_arbitrate(profile, *, repo_id=None, record, transient_credentials):
         raise RuntimeError("timeout")
 
     monkeypatch.setattr(cli_module._served, "claim_arbitrate", fake_claim_arbitrate)
@@ -802,7 +802,7 @@ def test_served_claim_release_surfaces_a_rejected_decision(
     monkeypatch.setattr(
         cli_module._served,
         "claim_arbitrate",
-        lambda profile, *, record, transient_credentials: {
+        lambda profile, *, repo_id=None, record, transient_credentials: {
             "outcome": "rejected",
             "reason_code": "expired-grant",
             "reason_detail": "claim grant has expired",
@@ -831,7 +831,7 @@ def test_served_claim_release_ignores_mismatched_advisory_actor(
     )
     captured = {}
 
-    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+    def fake_claim_arbitrate(profile, *, repo_id=None, record, transient_credentials):
         captured["record"] = record
         return {"outcome": "accepted", "effect": {"claim_id": 10, "released": True}}
 
@@ -857,7 +857,7 @@ def test_served_claim_release_ignores_mismatched_advisory_actor(
 
 def _stub_read_item(monkeypatch, *, item):
     monkeypatch.setattr(
-        cli_module._served, "read_item", lambda profile, *, item_id: {"item": item}
+        cli_module._served, "read_item", lambda profile, *, repo_id=None, item_id: {"item": item}
     )
 
 
@@ -877,7 +877,7 @@ def test_served_claim_handoff_rotate_mints_new_token_and_bumps_lease_epoch(
     _stub_read_item(monkeypatch, item={"id": 3, "sprint_id": 55, "title": "Do the thing"})
     captured = {}
 
-    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+    def fake_claim_arbitrate(profile, *, repo_id=None, record, transient_credentials):
         captured["record"] = record
         captured["transient_credentials"] = dict(transient_credentials)
         return {
@@ -954,7 +954,7 @@ def test_served_claim_handoff_transfer_keeps_token_unchanged(
     _stub_read_item(monkeypatch, item={"id": 4, "sprint_id": 56})
     captured = {}
 
-    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+    def fake_claim_arbitrate(profile, *, repo_id=None, record, transient_credentials):
         captured["record"] = record
         captured["transient_credentials"] = dict(transient_credentials)
         return {
@@ -1040,7 +1040,7 @@ def test_served_claim_handoff_rejects_wrong_claim_token(runner, tmp_path, monkey
     monkeypatch.setattr(
         cli_module._served,
         "claim_arbitrate",
-        lambda profile, *, record, transient_credentials: {
+        lambda profile, *, repo_id=None, record, transient_credentials: {
             "outcome": "rejected",
             "reason_code": "invalid-claim-proof",
             "reason_detail": "claim proof is invalid",
@@ -1076,7 +1076,7 @@ def test_served_claim_handoff_surfaces_credential_conflict(
     monkeypatch.setattr(
         cli_module._served,
         "claim_arbitrate",
-        lambda profile, *, record, transient_credentials: {
+        lambda profile, *, repo_id=None, record, transient_credentials: {
             "outcome": "rejected",
             "reason_code": "credential-conflict",
             "reason_detail": "proposed claim proof is already in use",
@@ -1109,7 +1109,7 @@ def test_served_claim_handoff_keeps_sidecar_on_transport_failure(
         claim_revision="claim:26@sha256:" + "9" * 64,
     )
 
-    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+    def fake_claim_arbitrate(profile, *, repo_id=None, record, transient_credentials):
         raise RuntimeError("connection reset")
 
     monkeypatch.setattr(cli_module._served, "claim_arbitrate", fake_claim_arbitrate)
@@ -1143,7 +1143,7 @@ def test_served_claim_handoff_ignores_mismatched_performed_by(
     _stub_read_item(monkeypatch, item={"id": 9, "sprint_id": None})
     captured = {}
 
-    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+    def fake_claim_arbitrate(profile, *, repo_id=None, record, transient_credentials):
         captured["record"] = record
         return {
             "outcome": "accepted",
@@ -1180,12 +1180,12 @@ def test_served_claim_handoff_degrades_bundle_when_item_fetch_fails(
         claim_revision="claim:31@sha256:" + "1" * 64,
     )
 
-    def fake_read_item(profile, *, item_id):
+    def fake_read_item(profile, *, repo_id=None, item_id):
         raise RuntimeError("transport blip")
 
     monkeypatch.setattr(cli_module._served, "read_item", fake_read_item)
 
-    def fake_claim_arbitrate(profile, *, record, transient_credentials):
+    def fake_claim_arbitrate(profile, *, repo_id=None, record, transient_credentials):
         return {
             "outcome": "accepted",
             "effect": {
@@ -1272,7 +1272,7 @@ def test_served_cutover_evidence_skip_parity_invokes_operation_with_none_parity(
     )
     captured = {}
 
-    def fake_cutover_evidence(profile, *, parity, max_watermark_age_seconds, rehearse):
+    def fake_cutover_evidence(profile, *, repo_id=None, parity, max_watermark_age_seconds, rehearse):
         captured["parity"] = parity
         captured["max_watermark_age_seconds"] = max_watermark_age_seconds
         captured["rehearse"] = rehearse
@@ -1305,7 +1305,7 @@ def test_served_cutover_evidence_pilot_disabled_passes_none_parity_without_error
     )
     captured = {}
 
-    def fake_cutover_evidence(profile, *, parity, max_watermark_age_seconds, rehearse):
+    def fake_cutover_evidence(profile, *, repo_id=None, parity, max_watermark_age_seconds, rehearse):
         captured["parity"] = parity
         return _fake_cutover_payload(parity=None)
 
@@ -1347,7 +1347,7 @@ def test_served_cutover_evidence_passes_max_watermark_age_and_skip_rollback_rehe
     _configure_served_repo(tmp_path, monkeypatch)
     captured = {}
 
-    def fake_cutover_evidence(profile, *, parity, max_watermark_age_seconds, rehearse):
+    def fake_cutover_evidence(profile, *, repo_id=None, parity, max_watermark_age_seconds, rehearse):
         captured["max_watermark_age_seconds"] = max_watermark_age_seconds
         captured["rehearse"] = rehearse
         return _fake_cutover_payload(parity=None, rollback_rehearsal=None)
@@ -1392,7 +1392,7 @@ def test_served_cutover_evidence_surfaces_a_transport_failure(
 ):
     _configure_served_repo(tmp_path, monkeypatch)
 
-    def fake_cutover_evidence(profile, *, parity, max_watermark_age_seconds, rehearse):
+    def fake_cutover_evidence(profile, *, repo_id=None, parity, max_watermark_age_seconds, rehearse):
         raise RuntimeError("connection reset")
 
     monkeypatch.setattr(cli_module._served, "cutover_evidence", fake_cutover_evidence)

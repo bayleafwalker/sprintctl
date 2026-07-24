@@ -77,7 +77,7 @@ def store_factory():
         administrative.close()
 
 
-def _context(actor, basis_revision, event_id, *, repo_id=""):
+def _context(actor, basis_revision, event_id, *, repo_id=None):
     return type(
         "Context",
         (),
@@ -89,9 +89,9 @@ def _context(actor, basis_revision, event_id, *, repo_id=""):
                     "actor": actor,
                     "environment": "vuoro-dev",
                     "authorities": frozenset({"work:claim", "work:lifecycle"}),
-                    "repo_id": repo_id,
                 },
             )(),
+            "repo_id": repo_id,
             "request_id": f"request:{event_id}",
             "basis_revision": basis_revision,
             "catalog_revision": "catalog-1",
