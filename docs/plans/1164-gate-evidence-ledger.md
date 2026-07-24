@@ -20,7 +20,7 @@ item only inventories gaps; it does not close them.
 | 4 | Endpoint/identity workstation cutover | Done | sprintctl #1195 (done) — served-mode compatibility release; endpoint/identity profile wiring; verified via events #1396/#1397 (Group C landed and independently re-verified, commit `f22132c`, CI run 30003277273 green across the full matrix). |
 | 5 | Catalog parity for legacy remote-relevant commands (current catalog) | Done | `sprintctl/served_routes.py` wires 11 of 12 `LEGACY_REMOTE_COMMAND_PARITY` entries (as of `work.item.note`, 2026-07-24 — see "Follow-up finding" below); the 12th (`work.project.batch` / "project dispatch batching") has no legacy CLI command to give parity to. sprintctl #1212 (done) made that an explicit decision, not an oversight: no CLI entry point exists or is currently planned, so there is nothing for a served route to replace. Parity is complete against the current catalog. |
 | 6 | Runtime-role DDL denial (deployed) | Done | appservice #1225 (done, 2026-07-24) — `sprintctl-schema-migrate-v3` job live-verified `Complete 1/1`, 0 restarts, 39h stable. Job embeds a DDL-denial probe: post-migration it connects as `sprintctl_runtime` and attempts `CREATE TABLE`, expecting `InsufficientPrivilege`; `backoffLimit: 0` means the job would fail loudly if DDL unexpectedly succeeded. `sprintctl-cnpg.yaml` confirms `sprintctl_runtime` is DML-only (no CREATE/createdb/createrole/superuser). See sprintctl #1164 ref #347. |
-| 7 | Direct credential removal | Open (scope corrected) | Owner: appservice #1226. `sprintctl`'s own workstation `.envrc` flipped to served mode 2026-07-24 and verified (`doctor` ok, live `item show` correct) — that repo's direct credential can be removed. The other 7 workstation repos (`agentops`, `box`, `actionq`, `aligned-equity`, `_orchestration`, `homelab-analytics`, `scribectl`) cannot: `vuoro-shared` is single-tenant (`work_store.repo_id` fixed at deploy time from `VUORO_WORK_REPOSITORY_ID`, `composition.py:261`), so served mode only ever serves the `sprintctl` repo regardless of which repo the client is in. Filed vuoro #1245 (make `repo_id` a per-request parameter) as the real blocker for the other 7. Cluster-side: `agent-cockpit`/`vscode-shell` deployments (already narrowed to the DML-only `sprintctl_runtime` role, not touched further) and the migration job (non-scope) are unaffected by this finding. |
+| 7 | Direct credential removal | Open (scope corrected, #1245 code merged but not deployable as designed) | Owner: appservice #1226. `sprintctl`'s own workstation `.envrc` flipped to served mode 2026-07-24 and verified (`doctor` ok, live `item show` correct) — that repo's direct credential can be removed. The other 7 workstation repos (`agentops`, `box`, `actionq`, `aligned-equity`, `_orchestration`, `homelab-analytics`, `scribectl`) cannot yet. vuoro #1245's code merged (sprintctl PR #3, vuoro PR #1, both CI-green) but its design is wrong for production: `Identity.repo_id` binds one bearer token to exactly one fixed repository, resolved entirely server-side from the identity registry. Production has only 2 tokens (`workstation-vuoro`, `devbox-agent-vuoro` — one per *host*, not per *repo*), and every other repo-identity resolution in this codebase is client/cwd-driven (`.sprintctl/backend.json`, `_repo_id_from_cwd()`). Deploying #1245 as merged would require minting 7+ new per-repo tokens instead of reusing the 2 existing ones — see "#1245 redesign needed before deploy" below for the corrected design and why the production identity secret was deliberately left untouched. |
 | 8 | vuoro-dev four-domain evidence | Done | vuoro #1222 (done, 2026-07-24) — handshake (all 4 domains compatible), full 39-op catalog, and accepted+rejected invocation/decision evidence per domain (two distinct stable error surfaces: `authority-required`, `idempotency-key-required`). Required adding a broader disposable identity to vuoro-dev (previous identity was work:read-only). See sprintctl #1164 ref #351. |
 | 9 | Export/recovery rehearsal (cross-backend) | Done | Owner: sprintctl #1219 — rehearsal completed 2026-07-24 against the live served authority using `sprintctl db recover-from-remote` (#1233, commit `b38937e`, CI run 30073378545 green). See "Row 9 rehearsal record" below. |
 | 10 | Production promotion evidence | Done | vuoro #1223 (done, 2026-07-24) — `vuoro-shared` deployment/image/migration state recorded; historical sprintctl data backfilled (repo_id=`sprintctl` scope, no prior tool existed for this — see record) with exact row-count parity (sprint 21, track 51, work_item 195, claim 3, dep 57, ref 141, event 469); post-promotion health/parity verified via a live served-mode read (`sprintctl doctor`, `sprint list`, `item show --id 1164` all correct against production). See sprintctl #1164 ref #348. |
@@ -143,6 +143,74 @@ session: design `work.ref.add` and `work.item.add` following the
 `work.item.note` precedent in this commit (contract in `vuoro_adapter.py`,
 handler in `application.py`, client in `served.py`, route in
 `served_routes.py`, tests against both SQLite and real PostgreSQL).
+
+## #1245 redesign needed before deploy (2026-07-24)
+
+vuoro #1245's merged code (sprintctl PR #3, vuoro PR #1) is real,
+CI-verified, and correctly makes `WorkApplication.invoke()` resolve
+`repo_id` per call instead of once at process start — but the *source* of
+that per-call `repo_id` is wrong for production. It reads
+`context.identity.repo_id`, a field fixed on the `Identity` at bearer-token
+mint time (`load_identities` in `composition.py`). That means each bearer
+token still only ever unlocks exactly one repository, decided by whoever
+issues the token — not "one running application serves every repository
+tenant a bound identity is authorized for," which is what the composition
+docstring (and #1245's actual goal) claims.
+
+This was caught before touching the production `vuoro-identities` secret
+(SOPS-encrypted, `appservice` repo): it holds exactly 2 tokens today,
+`workstation-vuoro` and `devbox-agent-vuoro` — one per **host**, matching
+how every other repo-identity resolution in this codebase already works
+(`.sprintctl/backend.json`, `sprintctl.pg._repo_id_from_cwd()`: the
+*client* knows and states which repo it's in; the server doesn't dictate
+it). Deploying #1245 as merged would force minting a separate token per
+`(host, repo)` pair — 9+ tokens instead of 2 — a real ongoing
+credential-management burden that doesn't match the existing model, and
+was never actually decided as the intended design.
+
+**Corrected design, not yet implemented:**
+
+1. Add `repo_id` to the wire protocol envelope (`InvocationRequest` /
+   `InvocationRequestV2` in `vuoro_service/contracts.py`, currently
+   `schema_version: "invocation/v1"` / `"invocation/v2"` — this is an
+   additive envelope field, likely warranting `"invocation/v3"` or an
+   additive bump of v2). The *client* sends it, exactly like
+   `basis_revision`/`idempotency_key` are already client-supplied envelope
+   fields, not per-operation JSON-schema arguments.
+2. `vuoro_service/identity.py`'s `InvocationContext` gains a `repo_id: str`
+   field (envelope-level), separate from `Identity`.
+3. `Identity` gains an authorization concept instead of a single fixed
+   `repo_id` — e.g. `repo_ids: frozenset[str]` with a wildcard sentinel
+   (`{"*"}`) meaning "every repo," since both existing production
+   identities are trusted per-host credentials that should authorize every
+   repo on that host, not an enumerated list.
+4. `app.py`'s `_dispatch` extracts `repo_id` from the request, validates it
+   against `identity.repo_ids` (exact membership or wildcard), and passes
+   it into `InvocationContext.repo_id`.
+5. `WorkApplication.invoke()` (sprintctl `application.py`, already reworked
+   for #1245) reads `context.repo_id` instead of
+   `context.identity.repo_id`.
+6. `packages/vuoro-client` (`AsyncVuoroClient.invoke`) and
+   `sprintctl.served`'s facade functions (`served.py`) start sending
+   `repo_id` (from `.sprintctl/backend.json`, same resolution the
+   local/remote paths already use) with every `work.*` call.
+7. `composition.py`'s `load_identities` accepts `repo_ids` (plural) instead
+   of `repo_id`, still requiring it non-empty for any `work:`-authority
+   identity.
+8. Rework the tests this session added for the identity-bound design
+   (`test_identity_registry_requires_repo_id_for_work_authorities`,
+   `test_identity_registry_scopes_a_work_authority_to_its_repo_id` in
+   vuoro, `test_invoke_scopes_to_the_identitys_repo_id_...` in sprintctl)
+   to the corrected envelope-driven design.
+
+Only after that redesign should: a new sprintctl adapter wheel be built and
+published, `adapter-pins.json`'s work entry updated, a new `vuoro-service`
+image built and pushed, `deployment.yaml`'s image digest updated, the
+production `vuoro-identities` secret updated (existing 2 tokens gain
+`repo_ids: ["*"]` — no new tokens needed under the corrected design), and
+`vuoro-shared` redeployed. None of that happened this session; the
+production identity secret was read (decrypted, to confirm exactly what it
+contains) but never written.
 
 ## Sources
 
