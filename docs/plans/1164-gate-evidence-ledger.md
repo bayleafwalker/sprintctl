@@ -20,7 +20,7 @@ item only inventories gaps; it does not close them.
 | 4 | Endpoint/identity workstation cutover | Done | sprintctl #1195 (done) — served-mode compatibility release; endpoint/identity profile wiring; verified via events #1396/#1397 (Group C landed and independently re-verified, commit `f22132c`, CI run 30003277273 green across the full matrix). |
 | 5 | Catalog parity for legacy remote-relevant commands (current catalog) | Done | `sprintctl/served_routes.py` wires 11 of 12 `LEGACY_REMOTE_COMMAND_PARITY` entries (as of `work.item.note`, 2026-07-24 — see "Follow-up finding" below); the 12th (`work.project.batch` / "project dispatch batching") has no legacy CLI command to give parity to. sprintctl #1212 (done) made that an explicit decision, not an oversight: no CLI entry point exists or is currently planned, so there is nothing for a served route to replace. Parity is complete against the current catalog. |
 | 6 | Runtime-role DDL denial (deployed) | Done | appservice #1225 (done, 2026-07-24) — `sprintctl-schema-migrate-v3` job live-verified `Complete 1/1`, 0 restarts, 39h stable. Job embeds a DDL-denial probe: post-migration it connects as `sprintctl_runtime` and attempts `CREATE TABLE`, expecting `InsufficientPrivilege`; `backoffLimit: 0` means the job would fail loudly if DDL unexpectedly succeeded. `sprintctl-cnpg.yaml` confirms `sprintctl_runtime` is DML-only (no CREATE/createdb/createrole/superuser). See sprintctl #1164 ref #347. |
-| 7 | Direct credential removal | Done | Owner: appservice #1226. `vuoro-shared` redeployed 2026-07-24 with #1245's corrected design (image `sha256:713f57d6f3...`, schema migrated 3→4, both identity tokens gain `repo_ids: ["*"]`) and verified live end-to-end: a real `work.read.item` and `work.item.note` from the workstation, and independently from devbox-agent after both hosts' CLIs were reinstalled with the fixed `vuoro-client` dependency pin. `vuoro-shared` can now serve every repository tenant a bound identity is authorized for — the capability the other 7 workstation repos (`agentops`, `box`, `actionq`, `aligned-equity`, `_orchestration`, `homelab-analytics`, `scribectl`) need is live. Individually flipping each of those repos' own `.envrc` to served mode is separate follow-up work, not a gate blocker (each just needs `SPRINTCTL_BACKEND=served` + the existing shared credential; no per-repo server-side change required). See "#1245 deployed and verified live" below for the full record. |
+| 7 | Direct credential removal | Done | Owner: appservice #1226. `vuoro-shared` redeployed 2026-07-24 with #1245's corrected design (image `sha256:713f57d6f3...`, schema migrated 3→4, both identity tokens gain `repo_ids: ["*"]`) and verified live end-to-end. All 8 workstation repos (`sprintctl` plus `agentops`, `box`, `actionq`, `aligned-equity`, `_orchestration`, `homelab-analytics`, `scribectl`) are now on served mode, each backfilled into vuoro-shared's work schema with verified row-count parity and a live confirmed read. See "#1245 deployed and verified live" and "Remote-backfill: all 7 workstation repos" below for the full record. |
 | 8 | vuoro-dev four-domain evidence | Done | vuoro #1222 (done, 2026-07-24) — handshake (all 4 domains compatible), full 39-op catalog, and accepted+rejected invocation/decision evidence per domain (two distinct stable error surfaces: `authority-required`, `idempotency-key-required`). Required adding a broader disposable identity to vuoro-dev (previous identity was work:read-only). See sprintctl #1164 ref #351. |
 | 9 | Export/recovery rehearsal (cross-backend) | Done | Owner: sprintctl #1219 — rehearsal completed 2026-07-24 against the live served authority using `sprintctl db recover-from-remote` (#1233, commit `b38937e`, CI run 30073378545 green). See "Row 9 rehearsal record" below. |
 | 10 | Production promotion evidence | Done | vuoro #1223 (done, 2026-07-24) — `vuoro-shared` deployment/image/migration state recorded; historical sprintctl data backfilled (repo_id=`sprintctl` scope, no prior tool existed for this — see record) with exact row-count parity (sprint 21, track 51, work_item 195, claim 3, dep 57, ref 141, event 469); post-promotion health/parity verified via a live served-mode read (`sprintctl doctor`, `sprint list`, `item show --id 1164` all correct against production). See sprintctl #1164 ref #348. |
@@ -241,6 +241,65 @@ edits confirmed via explicit user sign-off before executing:
   DIR` from elsewhere — the latter silently resolves the wrong (or no)
   repo_id with no error, since both production identities carry a
   wildcard `repo_ids: ["*"]` that authorizes any string.
+
+## Remote-backfill: all 7 workstation repos (2026-07-24)
+
+Row 7's promise ("the capability the other 7 repos need is live") required
+one more real gap to close: those repos' history existed only in the
+legacy direct-remote database, invisible to a served-mode client (data
+safe, just absent from vuoro-shared's `work` schema under their
+`repo_id`). Closed same session:
+
+**Tooling**: `sprintctl remote-backfill` (new CLI command, sprintctl commit
+`8b1f673`, released as `vuoro-adapter-v1-8b1f673` and baked into
+`vuoro-service-v0.1.3`) generalizes the one-off manual procedure `#1223`'s
+own promotion used. Reuses the existing, tested `import_ndjson(remap_ids=
+True)` path (the same one `migrate-to-remote` uses for shared-database
+imports) — only a new `export_from_postgres` reader was needed, reading
+from any PostgreSQL connection the way `export_ndjson` already reads from
+sqlite. Always remaps IDs (never preserves the source's literal integers):
+the destination's identity sequences have advanced independently of the
+source's since the schema was first shared.
+
+**Infrastructure**: a same-namespace copy of the legacy DB's credential
+(`sprintctl-legacy-source` secret, `vuoro-shared` namespace — Kubernetes
+secrets don't cross namespaces) and two narrowly pod-label-scoped
+NetworkPolicy rules (`sprintctl-remote-backfill-egress` in `vuoro-shared`,
+plus a matching ingress rule added to `sprintctl-postgres`'s existing
+`allow-ingress-cloudnative-pg-sprintctl` policy), since both namespaces
+default-deny cross-namespace traffic and the legacy DB's own ingress
+allowlist previously covered only the `cloudnative-pg` operator and LAN
+CIDRs. Kept as standing infrastructure (not torn down after this one use)
+since `remote-backfill` is now a permanent, reusable capability — future
+repos or a data re-sync can reuse it without redoing this setup.
+
+**Execution and a real incident**: dry-run confirmed connectivity and
+counts per repo first, then real backfills. Running all 6 remaining real
+backfills concurrently caused 2 of 6 (`actionq`, `homelab-analytics`) to
+fail with a Postgres unique-constraint violation (`duplicate key value...
+already exists`) — `import_ndjson`'s `_advance_identity_sequences` helper
+reads `MAX(id)` then `setval`s the sequence, which is **not safe under
+concurrent invocation**: two simultaneous callers can both read the same
+stale max and both `setval` to it, so a later `nextval()` on either
+connection can reissue an id the other already committed. Both failures
+rolled back cleanly (whole transaction; confirmed zero partial rows before
+retrying) and succeeded on a sequential retry once the other 4 had already
+committed and settled the sequence. **`remote-backfill` must not be run
+concurrently against the same destination database** — worth a dedicated
+fix (e.g. an advisory lock around the sequence-advance step) before this
+tool sees routine multi-repo use again.
+
+Final row-count parity, all 8 repos (`sprintctl` + the 7 backfilled),
+verified via `SELECT repo_id, COUNT(*) FROM work.sprint GROUP BY repo_id`
+matching each repo's own dry-run source counts exactly. Every repo's
+`.envrc` (or, for `homelab-analytics`, its shared `tools/project-env.sh`)
+was then flipped to served mode and verified live (`sprintctl doctor` ok,
+a real `sprint list` returning that repo's own data) before committing —
+`_orchestration` has no git repo (config-only directory, edited directly,
+no commit); every other repo's `.envrc` change is committed on whichever
+branch that repo was actually checked out on (`aligned-equity` was on
+`codex/adopt-working-process-dispatch`, not `main` — its own active
+branch, confirmed before pushing there).
 
 ## Sources
 
