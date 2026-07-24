@@ -22,7 +22,7 @@ item only inventories gaps; it does not close them.
 | 6 | Runtime-role DDL denial (deployed) | Open | Owner: appservice #1225 — migration job + migration/runtime role split, deployed, with DDL-denial evidence captured from the live runtime role. |
 | 7 | Direct credential removal | Open | Owner: appservice #1226 — workstation and cluster credential sweep; rotate/remove all direct DB credentials except the migration job's. |
 | 8 | vuoro-dev four-domain evidence | Open | Owner: vuoro #1222 — four-domain handshake/catalog/invocation/decision evidence bundle on vuoro-dev. |
-| 9 | Export/recovery rehearsal (cross-backend) | Open | Owner: sprintctl #1219 — must complete before removal; replaces the split backend's fallback role per the clean-room rollback invariant. |
+| 9 | Export/recovery rehearsal (cross-backend) | Done | Owner: sprintctl #1219 — rehearsal completed 2026-07-24 against the live served authority using `sprintctl db recover-from-remote` (#1233, commit `b38937e`, CI run 30073378545 green). See "Row 9 rehearsal record" below. |
 | 10 | Production promotion evidence | Open | Owner: vuoro #1223 — promotion record (image digest, config hash, migration state, post-promotion health/parity). |
 | 11 | Explicit operator gate | Open | Owner: sprintctl #1221 — decision event on #1164 authorizing removal, recorded only once every row above is green. Blocked by this ledger (#1218) and by #1219/#1220. |
 
@@ -48,6 +48,37 @@ exactly #1219/#1220 (sprintctl), #1222/#1223 (vuoro), #1225/#1226
 No row was found to be satisfied-but-unrecorded beyond what #1195's own
 event history already captured (row 5, closed here as Done rather than the
 backlog doc's original "To verify").
+
+## Row 9 rehearsal record (2026-07-24)
+
+Operator procedure and captured evidence for the #1219 cross-backend
+export/recovery rehearsal:
+
+1. `SPRINTCTL_BACKEND=remote sprintctl db recover-from-remote --output
+   recovery.db --verify` against the live served authority (read-only;
+   repo_id `sprintctl`). Parity report: sprint 21/21, track 50/50,
+   work_item 187/187, claim 4/4, ref 133/133, dep 45/45,
+   event 465 (+21 in-transaction `recovery.completed` provenance events)
+   = 486/486 — all `[ok]`; `PRAGMA integrity_check` ok, zero FK violations.
+2. Scratch environment pointed at the recovered file
+   (`SPRINTCTL_BACKEND`/`SPRINTCTL_URL` unset, `SPRINTCTL_DB=recovery.db`):
+   `sprintctl doctor` exit 0 with `schema: expected=14 actual=14`;
+   `sprint list`, `item list`, `claim list-sprint` all serve correct
+   current-state data.
+3. Ownership-invalidation semantics verified live: the one active claim at
+   snapshot time (claim #163 on #1219, held by the rehearsing session)
+   came back `expired` in the recovered file; zero `claim_token` values
+   present in any recovered row; every `recovery.completed` payload carries
+   `source_row_counts` and `claims_closed=1`.
+
+Bonus finding fixed during the rehearsal: `sprintctl doctor` falsely
+reported `schema-version-mismatch: local schema 14 is incompatible with
+expected 11` against any current local database — `doctor.py` and
+`pyproject.toml` both pinned a stale copy of the SQLite schema version (11)
+while `db.py` migrations had advanced to 14, and the release-integrity test
+compared the two stale copies against each other. Fixed by making
+`db.CURRENT_SCHEMA_VERSION` the single source of truth (doctor imports it;
+pyproject bumped; fresh-database regression test added).
 
 ## Sources
 

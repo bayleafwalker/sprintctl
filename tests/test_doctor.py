@@ -45,6 +45,23 @@ def test_stale_fixture_detects_uuid_json_extra_and_schema_mismatches():
     assert "sprintctl[remote]" in findings["remote-extra-missing"]["guidance"][0]
 
 
+def test_local_schema_probe_accepts_freshly_initialized_database(tmp_path):
+    from sprintctl import db
+
+    path = tmp_path / "fresh.db"
+    conn = db.get_connection(path)
+    try:
+        db.init_db(conn)
+    finally:
+        conn.close()
+
+    result = doctor._probe_local_schema({"SPRINTCTL_DB": str(path)})
+
+    assert result["status"] == "current"
+    assert result["compatible"] is True
+    assert result["actual_version"] == doctor.SQLITE_SCHEMA_VERSION
+
+
 def test_local_schema_probe_is_read_only_and_reports_mismatch(tmp_path):
     path = tmp_path / "old.db"
     with sqlite3.connect(path) as conn:
@@ -55,7 +72,7 @@ def test_local_schema_probe_is_read_only_and_reports_mismatch(tmp_path):
 
     assert result == {
         "backend": "local",
-        "expected_version": 11,
+        "expected_version": doctor.SQLITE_SCHEMA_VERSION,
         "actual_version": 9,
         "compatible": False,
         "status": "mismatch",

@@ -35,6 +35,10 @@ SPRINT_TRANSITIONS: dict[str, set[str]] = {
 
 SPRINT_KINDS = ("active_sprint", "backlog", "archive")
 
+# Single source of truth for the local schema version; init_db() must end by
+# migrating to exactly this version, and doctor compares databases against it.
+CURRENT_SCHEMA_VERSION = 14
+
 _MIGRATIONS: list[str] = [
     # Migration 1: initial schema
     """
@@ -540,7 +544,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     _run_migration(conn, 11, _migration_11)
     _run_migration(conn, 12, _migration_12)
     _run_migration(conn, 13, _migration_13)
-    _run_migration(conn, 14, _migration_14, foreign_keys_off=True)
+    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_14, foreign_keys_off=True)
 
 
 # --- Sprint ---

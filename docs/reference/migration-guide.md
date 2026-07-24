@@ -58,6 +58,7 @@ Current SQLite schema version: **13**.
 | 11 | Added native work item priority (1–9, nullable) |
 | 12 | Added claim `status` (`active|expired`) with a parity default |
 | 13 | Added claim `lease_epoch` with an initial value of 1 |
+| 14 | Added explicit scope-ref kinds (`file`, `glob`, `manifest`) to `ref.ref_type` |
 
 ---
 
