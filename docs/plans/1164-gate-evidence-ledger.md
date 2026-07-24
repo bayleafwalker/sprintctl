@@ -21,7 +21,7 @@ item only inventories gaps; it does not close them.
 | 5 | Catalog parity for legacy remote-relevant commands (current catalog) | Done | `sprintctl/served_routes.py` wires 10 of 11 `LEGACY_REMOTE_COMMAND_PARITY` entries; the 11th (`work.project.batch` / "project dispatch batching") has no legacy CLI command to give parity to. sprintctl #1212 (done) made that an explicit decision, not an oversight: no CLI entry point exists or is currently planned, so there is nothing for a served route to replace. Parity is complete against the current catalog. |
 | 6 | Runtime-role DDL denial (deployed) | Done | appservice #1225 (done, 2026-07-24) — `sprintctl-schema-migrate-v3` job live-verified `Complete 1/1`, 0 restarts, 39h stable. Job embeds a DDL-denial probe: post-migration it connects as `sprintctl_runtime` and attempts `CREATE TABLE`, expecting `InsufficientPrivilege`; `backoffLimit: 0` means the job would fail loudly if DDL unexpectedly succeeded. `sprintctl-cnpg.yaml` confirms `sprintctl_runtime` is DML-only (no CREATE/createdb/createrole/superuser). See sprintctl #1164 ref #347. |
 | 7 | Direct credential removal | Open | Owner: appservice #1226 — workstation and cluster credential sweep; rotate/remove all direct DB credentials except the migration job's. |
-| 8 | vuoro-dev four-domain evidence | Open | Owner: vuoro #1222 — four-domain handshake/catalog/invocation/decision evidence bundle on vuoro-dev. |
+| 8 | vuoro-dev four-domain evidence | Done | vuoro #1222 (done, 2026-07-24) — handshake (all 4 domains compatible), full 39-op catalog, and accepted+rejected invocation/decision evidence per domain (two distinct stable error surfaces: `authority-required`, `idempotency-key-required`). Required adding a broader disposable identity to vuoro-dev (previous identity was work:read-only). See sprintctl #1164 ref #351. |
 | 9 | Export/recovery rehearsal (cross-backend) | Done | Owner: sprintctl #1219 — rehearsal completed 2026-07-24 against the live served authority using `sprintctl db recover-from-remote` (#1233, commit `b38937e`, CI run 30073378545 green). See "Row 9 rehearsal record" below. |
 | 10 | Production promotion evidence | Done | vuoro #1223 (done, 2026-07-24) — `vuoro-shared` deployment/image/migration state recorded; historical sprintctl data backfilled (repo_id=`sprintctl` scope, no prior tool existed for this — see record) with exact row-count parity (sprint 21, track 51, work_item 195, claim 3, dep 57, ref 141, event 469); post-promotion health/parity verified via a live served-mode read (`sprintctl doctor`, `sprint list`, `item show --id 1164` all correct against production). See sprintctl #1164 ref #348. |
 | 11 | Explicit operator gate | Open | Owner: sprintctl #1221 — decision event on #1164 authorizing removal, recorded only once every row above is green. Blocked by this ledger (#1218) and by #1219/#1220. |
@@ -31,15 +31,13 @@ item only inventories gaps; it does not close them.
 Per `docs/plans/next-session-dispatch.md` in agentops, the open rows were
 originally #1219/#1220 (sprintctl), #1222/#1223 (vuoro), #1225/#1226
 (appservice), confirmed against live item state on 2026-07-24. Since then,
-#1219, #1225, and #1223 closed (see rows 9, 6, and 10 above).
+#1219, #1225, #1223, and #1222 closed (see rows 9, 6, 10, and 8 above).
 
-- Rows 1–6, 9, and 10 are Done, each backed by a done item with recorded
+- Rows 1–6 and 8–10 are Done, each backed by a done item with recorded
   verification evidence (no unrecorded-but-actually-done gaps found).
-- Row 7 (#1226) remains blocked until a credential-sweep session confirms
-  served reads/writes are safe fleet-wide; it was explicitly gated on row 10
-  landing, which it now has.
-- Row 8 (#1222, vuoro-dev four-domain evidence) remains open, confirmed
-  `pending` with no refs/events yet as of 2026-07-24.
+- Row 7 (#1226) is the only open evidence row left. It was explicitly gated
+  on row 10 (production promotion) landing, which it now has, so it is
+  actually actionable now, not just nominally open.
 - Row 11 (#1221) is Open and correctly excluded from the "gap" list: it is
   the terminal operator-gate decision, gated on every other row, not an
   independent evidence gap.
