@@ -77,7 +77,7 @@ def store_factory():
         administrative.close()
 
 
-def _context(actor, basis_revision, event_id):
+def _context(actor, basis_revision, event_id, *, repo_id=""):
     return type(
         "Context",
         (),
@@ -89,6 +89,7 @@ def _context(actor, basis_revision, event_id):
                     "actor": actor,
                     "environment": "vuoro-dev",
                     "authorities": frozenset({"work:claim", "work:lifecycle"}),
+                    "repo_id": repo_id,
                 },
             )(),
             "request_id": f"request:{event_id}",
@@ -211,6 +212,52 @@ def _handoff_command(
         basis_revision=authority.claim_revision(claim),
     )
     return command, credentials
+
+
+def test_invoke_scopes_to_the_identitys_repo_id_not_the_application_constructor(
+    store_factory,
+):
+    """One long-lived WorkApplication must be able to serve either tenant.
+
+    ``WorkApplication.postgres(store_a)`` is bound to ``store_a`` at
+    construction (matching real composition, which builds one application
+    per process from ``VUORO_WORK_REPOSITORY_ID``). An identity whose
+    ``repo_id`` names a *different* repository must still be served from
+    that repository -- this is the sprintctl #1245 contract that unblocks
+    vuoro-shared from being pinned to a single repo tenant.
+    """
+
+    store_a = store_factory("cross-tenant-a")
+    store_b = store_factory("cross-tenant-b")
+    sprint_a = pg.create_sprint(store_a, "Repo A sprint", status="active")
+    sprint_b = pg.create_sprint(store_b, "Repo B sprint", status="active")
+
+    app = _application(store_a, {})
+
+    # No repo_id on the identity falls back to the application's own
+    # construction-time repo_id -- today's single-tenant behavior.
+    default_context = _context("reader", None, "read-default")
+    default_result = app.invoke("work.read.sprints", {}, default_context)
+    assert default_result["repo_id"] == store_a.repo_id
+    assert {row["id"] for row in default_result["sprints"]} == {sprint_a}
+
+    # An identity bound to the other repo must be served from that repo,
+    # even though ``app`` was constructed against store_a.
+    other_context = _context(
+        "reader", None, "read-other", repo_id=store_b.repo_id
+    )
+    other_result = app.invoke("work.read.sprints", {}, other_context)
+    assert other_result["repo_id"] == store_b.repo_id
+    assert {row["id"] for row in other_result["sprints"]} == {sprint_b}
+
+    # The original store's data is untouched and still reachable through
+    # the same application instance on a subsequent call.
+    again = app.invoke("work.read.sprints", {}, default_context)
+    assert again["repo_id"] == store_a.repo_id
+    assert {row["id"] for row in again["sprints"]} == {sprint_a}
+
+    store_a.conn.close()
+    store_b.conn.close()
 
 
 @pytest.mark.parametrize(
