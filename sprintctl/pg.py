@@ -193,7 +193,7 @@ CREATE TABLE IF NOT EXISTS ref (
     ref_type     text        NOT NULL DEFAULT 'other'
                               CHECK (ref_type IN (
                                   'pr', 'issue', 'doc', 'other',
-                                  'file', 'glob', 'manifest'
+                                  'file', 'glob', 'manifest', 'command'
                               )),
     url          text        NOT NULL,
     label        text        NOT NULL DEFAULT '',
@@ -1054,6 +1054,16 @@ def _apply_schema_version_3(cur: Any) -> None:
     )
 
 
+def _apply_schema_version_4(cur: Any) -> None:
+    """Add the 'command' ref kind (validation-command refs) to the ref table."""
+    cur.execute("ALTER TABLE ref DROP CONSTRAINT IF EXISTS ref_ref_type_check")
+    cur.execute(
+        "ALTER TABLE ref ADD CONSTRAINT ref_ref_type_check "
+        "CHECK (ref_type IN ('pr', 'issue', 'doc', 'other', "
+        "'file', 'glob', 'manifest', 'command'))"
+    )
+
+
 def compatibility_handshake(store: PgStore) -> dict[str, Any]:
     """Return the public read-only work API/schema handshake."""
     return _pg_migrations.compatibility_handshake(store)
@@ -1067,6 +1077,7 @@ def require_compatible_schema(store: PgStore) -> dict[str, Any]:
 def migrate_schema(store: PgStore) -> dict[str, Any]:
     """Run the serialized deployment migration package."""
     return _pg_migrations.migrate_schema(store)
+
 
 
 def _advance_identity_sequences(cur: Any, tables: tuple[str, ...]) -> None:

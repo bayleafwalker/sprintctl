@@ -402,7 +402,7 @@ class TestMigration2:
 
     def test_schema_version_is_14(self, conn):
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 14
+        assert version == 15
 
     def test_claim_retention_columns_have_parity_defaults(self, conn):
         columns = {

@@ -98,6 +98,34 @@ class TestRefDB:
         refs = db.list_refs(conn, iid)
         assert len(refs) == 4
 
+    def test_command_ref_type_accepted_and_stored_verbatim(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        ref_id = db.add_ref(conn, iid, "command", "pytest tests/test_auth.py", "Auth check")
+        refs = db.list_refs(conn, iid)
+        assert len(refs) == 1
+        assert refs[0]["id"] == ref_id
+        assert refs[0]["ref_type"] == "command"
+        assert refs[0]["url"] == "pytest tests/test_auth.py"
+        assert refs[0]["label"] == "Auth check"
+        assert "scope" not in refs[0]
+
+    def test_command_ref_strips_surrounding_whitespace(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        db.add_ref(conn, iid, "command", "  pytest tests/test_auth.py  ")
+        refs = db.list_refs(conn, iid)
+        assert refs[0]["url"] == "pytest tests/test_auth.py"
+
+    @pytest.mark.parametrize("command", ["", "   ", "\n\t"])
+    def test_command_ref_rejects_empty_command(self, conn, active_sprint, command):
+        iid = _item(conn, active_sprint["id"])
+        with pytest.raises(ValueError, match="non-empty shell command"):
+            db.add_ref(conn, iid, "command", command)
+
+    def test_command_ref_rejects_nul_bytes(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        with pytest.raises(ValueError, match="NUL"):
+            db.add_ref(conn, iid, "command", "pytest\x00tests")
+
     def test_scope_ref_types_are_normalized_and_portable(self, conn, active_sprint):
         iid = _item(conn, active_sprint["id"])
         db.add_ref(conn, iid, "file", "./src/context.py", "Context reader")
@@ -232,6 +260,32 @@ class TestRefCLI:
         refs = db.list_refs(conn, iid)
         assert refs[0]["url"] == "docs/plans/my-plan.md"
         assert refs[0]["ref_type"] == "doc"
+
+    def test_item_ref_add_command_type(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        result = runner.invoke(cli, [
+            "item", "ref", "add",
+            "--id", str(iid),
+            "--type", "command",
+            "--url", "pytest tests/test_auth.py",
+            "--label", "Auth check",
+        ])
+        assert result.exit_code == 0, result.output
+        assert "command" in result.output
+        refs = db.list_refs(conn, iid)
+        assert refs[0]["ref_type"] == "command"
+        assert refs[0]["url"] == "pytest tests/test_auth.py"
+
+    def test_item_ref_add_command_rejects_empty(self, runner, conn, active_sprint, db_path):
+        iid = _item(conn, active_sprint["id"])
+        result = runner.invoke(cli, [
+            "item", "ref", "add",
+            "--id", str(iid),
+            "--type", "command",
+            "--url", "   ",
+        ])
+        assert result.exit_code == 1
+        assert "non-empty shell command" in result.output
 
     def test_item_ref_list_text(self, runner, conn, active_sprint, db_path):
         iid = _item(conn, active_sprint["id"])

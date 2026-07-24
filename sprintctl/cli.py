@@ -1133,9 +1133,10 @@ def item_add(obj, sprint_id, track_name, title, description, assignee, priority,
 @item.command("edit")
 @click.option("--id", "item_id", type=int, required=True, help="Item ID")
 @click.option("--description", required=True, help="Non-empty implementation scope or objective")
+@click.option("--actor", default=None, help="Actor name (default: actor)")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output updated item as JSON")
 @click.pass_obj
-def item_edit(obj, item_id, description, as_json) -> None:
+def item_edit(obj, item_id, description, actor, as_json) -> None:
     """Replace a work item's description."""
     try:
         _db.validate_work_item_description(description)
@@ -1143,11 +1144,29 @@ def item_edit(obj, item_id, description, as_json) -> None:
         raise click.BadParameter(str(exc), param_hint="--description") from exc
 
     store, m = _get_store(obj)
+    existing = m.get_work_item(store, item_id)
+    if existing is None:
+        click.echo(f"Item #{item_id} not found.", err=True)
+        sys.exit(1)
     try:
         m.update_work_item_description(store, item_id, description)
     except ValueError as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
+
+    m.create_event(
+        store,
+        existing["sprint_id"],
+        actor=actor or "actor",
+        event_type="item-edited",
+        source_type="actor",
+        work_item_id=item_id,
+        payload={
+            "summary": f"Item #{item_id} description edited",
+            "previous_description": existing["description"],
+            "description": description,
+        },
+    )
 
     updated = m.get_work_item(store, item_id)
     assert updated is not None
@@ -1893,14 +1912,15 @@ def item_ref() -> None:
 @click.option(
     "--type", "ref_type",
     required=True,
-    type=click.Choice(["pr", "issue", "doc", "other", "file", "glob", "manifest"]),
+    type=click.Choice(["pr", "issue", "doc", "other", "file", "glob", "manifest", "command"]),
     help="Reference type",
 )
 @click.option(
     "--url",
     required=True,
     help=("Reference target. Doc refs accept URLs or repo-relative paths; "
-          "file, glob, and manifest refs require repo-relative POSIX paths."),
+          "file, glob, and manifest refs require repo-relative POSIX paths; "
+          "command refs hold a non-empty runnable shell command."),
 )
 @click.option("--label", default="", help="Short human-readable label")
 @click.pass_obj

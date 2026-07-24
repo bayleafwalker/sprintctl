@@ -351,6 +351,14 @@ class TestItemCRUD:
         assert data["description"] == "New shaped scope"
         assert db.get_work_item(conn, item_id)["description"] == "New shaped scope"
 
+        events = db.list_events(conn, active_sprint["id"])
+        edit_events = [e for e in events if e["event_type"] == "item-edited"]
+        assert len(edit_events) == 1
+        payload = json.loads(edit_events[0]["payload"])
+        assert payload["previous_description"] == "Old scope"
+        assert payload["description"] == "New shaped scope"
+        assert edit_events[0]["work_item_id"] == item_id
+
     def test_item_edit_rejects_empty_description_without_mutation(
         self, runner, conn, active_sprint
     ):
@@ -593,7 +601,7 @@ class TestEdgeCases:
     def test_init_db_idempotent(self, conn):
         db.init_db(conn)  # second call
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 14
+        assert version == 15
 
     @pytest.mark.parametrize("_history", range(32))
     def test_init_db_handles_concurrent_version_lag_after_upgrade(
@@ -649,7 +657,7 @@ class TestEdgeCases:
         finally:
             conn.close()
 
-        assert version == 14
+        assert version == 15
         assert tables == {
             "claim",
             "dep",
