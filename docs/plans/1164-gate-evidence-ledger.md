@@ -19,7 +19,7 @@ item only inventories gaps; it does not close them.
 | 3 | Work adapter/catalog + legacy remote-command inventory | Done | sprintctl #1194 (done) — Click-independent core extracted; `LEGACY_REMOTE_COMMAND_PARITY` inventory published in `sprintctl/vuoro_adapter.py` (11 legacy command groups mapped to catalog operations). |
 | 4 | Endpoint/identity workstation cutover | Done | sprintctl #1195 (done) — served-mode compatibility release; endpoint/identity profile wiring; verified via events #1396/#1397 (Group C landed and independently re-verified, commit `f22132c`, CI run 30003277273 green across the full matrix). |
 | 5 | Catalog parity for legacy remote-relevant commands (current catalog) | Done | `sprintctl/served_routes.py` wires 10 of 11 `LEGACY_REMOTE_COMMAND_PARITY` entries; the 11th (`work.project.batch` / "project dispatch batching") has no legacy CLI command to give parity to. sprintctl #1212 (done) made that an explicit decision, not an oversight: no CLI entry point exists or is currently planned, so there is nothing for a served route to replace. Parity is complete against the current catalog. |
-| 6 | Runtime-role DDL denial (deployed) | Open | Owner: appservice #1225 — migration job + migration/runtime role split, deployed, with DDL-denial evidence captured from the live runtime role. |
+| 6 | Runtime-role DDL denial (deployed) | Done | appservice #1225 (done, 2026-07-24) — `sprintctl-schema-migrate-v3` job live-verified `Complete 1/1`, 0 restarts, 39h stable. Job embeds a DDL-denial probe: post-migration it connects as `sprintctl_runtime` and attempts `CREATE TABLE`, expecting `InsufficientPrivilege`; `backoffLimit: 0` means the job would fail loudly if DDL unexpectedly succeeded. `sprintctl-cnpg.yaml` confirms `sprintctl_runtime` is DML-only (no CREATE/createdb/createrole/superuser). See sprintctl #1164 ref #347. |
 | 7 | Direct credential removal | Open | Owner: appservice #1226 — workstation and cluster credential sweep; rotate/remove all direct DB credentials except the migration job's. |
 | 8 | vuoro-dev four-domain evidence | Open | Owner: vuoro #1222 — four-domain handshake/catalog/invocation/decision evidence bundle on vuoro-dev. |
 | 9 | Export/recovery rehearsal (cross-backend) | Done | Owner: sprintctl #1219 — rehearsal completed 2026-07-24 against the live served authority using `sprintctl db recover-from-remote` (#1233, commit `b38937e`, CI run 30073378545 green). See "Row 9 rehearsal record" below. |
@@ -28,15 +28,16 @@ item only inventories gaps; it does not close them.
 
 ## Expected-finding check
 
-Per `docs/plans/next-session-dispatch.md` in agentops, the open rows should be
-exactly #1219/#1220 (sprintctl), #1222/#1223 (vuoro), #1225/#1226
-(appservice). Confirmed against live item state on 2026-07-24:
+Per `docs/plans/next-session-dispatch.md` in agentops, the open rows were
+originally #1219/#1220 (sprintctl), #1222/#1223 (vuoro), #1225/#1226
+(appservice), confirmed against live item state on 2026-07-24. Since then,
+#1219 and #1225 closed (see rows 9 and 6 above).
 
-- Rows 1–5 are Done, each backed by a done sprintctl item with recorded
+- Rows 1–6 and 9 are Done, each backed by a done item with recorded
   verification evidence (no unrecorded-but-actually-done gaps found).
-- Rows 6–10 are Open, owned by #1225, #1226, #1222, #1219, #1223
-  respectively — all five confirmed `pending` with no refs/events yet
-  (checked via `sprintctl item show` in each owning repo).
+- Rows 7, 8, 10 remain Open, owned by #1226, #1222, #1223 respectively —
+  confirmed `pending` with no refs/events yet as of 2026-07-24 (checked via
+  `sprintctl item show` in each owning repo).
 - Row 11 (#1221) is Open and correctly excluded from the "gap" list: it is
   the terminal operator-gate decision, gated on every other row, not an
   independent evidence gap.
