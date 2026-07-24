@@ -2661,6 +2661,42 @@ def export_ndjson(sqlite_conn: Any, repo_id: str, out: Any) -> dict[str, int]:
     return counts
 
 
+def export_from_postgres(source_conn: Any, repo_id: str) -> list[dict]:
+    """Read one repository's rows from another PostgreSQL database's identically
+    shaped work tables, in the same table order and record shape ``export_ndjson``
+    produces from sqlite -- so both sources can feed the same ``import_ndjson``.
+
+    ``source_conn`` is a plain ``psycopg`` connection (row_factory=dict_row) to
+    any database whose ``public`` schema uses this module's DDL -- typically a
+    separate, independently-deployed sprintctl authority (e.g. a pre-served-mode
+    direct-remote database), not the destination ``store``'s own connection.
+    Read-only: never mutates ``source_conn``.
+    """
+    records: list[dict] = []
+    with source_conn.cursor() as cur:
+        for table in _EXPORT_TABLES:
+            cur.execute(
+                f"SELECT * FROM {table} WHERE repo_id = %s ORDER BY id ASC",  # noqa: S608
+                (repo_id,),
+            )
+            for row in cur.fetchall():
+                data = dict(row)
+                data.pop("repo_id", None)
+                records.append({"table": table, "repo_id": repo_id, "data": data})
+    return records
+
+
+def backfill_repo_row_counts(conn: Any, repo_id: str) -> dict[str, int]:
+    """Per-table row counts for repo_id, for source/destination parity checks."""
+    counts: dict[str, int] = {}
+    with conn.cursor() as cur:
+        for table in _EXPORT_TABLES:
+            cur.execute(f"SELECT COUNT(*) AS n FROM {table} WHERE repo_id = %s", (repo_id,))  # noqa: S608
+            row = cur.fetchone()
+            counts[table] = row["n"] if row else 0
+    return counts
+
+
 # FK columns that may need id remapping during import, keyed by child table.
 _IMPORT_FK_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "track":     [("sprint_id", "sprint")],

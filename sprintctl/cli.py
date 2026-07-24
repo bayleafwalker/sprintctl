@@ -8575,6 +8575,160 @@ def migrate_to_remote_cmd(
 
 
 # ---------------------------------------------------------------------------
+# remote-backfill — PostgreSQL-to-PostgreSQL repo state transfer
+#
+# Generalizes the one-off manual procedure used for sprintctl #1164's own
+# served-mode promotion (vuoro #1223 "production promotion record": a
+# hand-run psql \copy / COPY FROM STDIN dance, table by table, done once for
+# one repo). Every workstation repo still on direct-remote mode has its
+# history in a database completely separate from vuoro-shared's -- this
+# backfill is the prerequisite for any of them flipping to served mode
+# without their sprint/item history going silently invisible.
+# ---------------------------------------------------------------------------
+
+@cli.command("remote-backfill")
+@click.option("--source-url", required=True, help="Source PostgreSQL URL (a separate, already-deployed sprintctl authority)")
+@click.option("--url", "dest_url", default=None, help="Destination PostgreSQL URL (default: $SPRINTCTL_URL)")
+@click.option("--repo-id", "repo_id", required=True, help="Repository to copy (must be explicit -- this command is not run from inside a repo checkout)")
+@click.option("--dry-run", is_flag=True, default=False, help="Report source/destination row counts without writing")
+@click.option("--replace", is_flag=True, default=False, help="Delete existing destination rows for repo_id before import")
+@click.option("--yes", "skip_confirm", is_flag=True, default=False, help="Skip the confirmation prompt before writing")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit machine-readable summary")
+def remote_backfill_cmd(
+    source_url,
+    dest_url,
+    repo_id,
+    dry_run,
+    replace,
+    skip_confirm,
+    as_json,
+) -> None:
+    """Copy one repository's history from another PostgreSQL authority.
+
+    Always remaps IDs on import (never preserves the source's literal
+    integer IDs): the destination is a shared, already-live database whose
+    own identity sequences have advanced independently of the source's, so
+    literal-ID preservation risks a silent collision with another repo's
+    (or this repo's own later served-mode) rows. This is the same
+    ``import_ndjson(remap_ids=True)`` path ``migrate-to-remote`` uses for
+    exactly this reason when importing into a shared database.
+    """
+    from . import pg as _pg  # noqa: PLC0415
+
+    dest_url = dest_url or os.environ.get("SPRINTCTL_URL")
+    if not dest_url:
+        click.echo("Error: destination Postgres URL required. Pass --url or set SPRINTCTL_URL.", err=True)
+        sys.exit(1)
+
+    try:
+        source_store = _pg.get_connection(source_url)
+    except Exception as e:
+        click.echo(f"Error: could not connect to --source-url: {e}", err=True)
+        sys.exit(1)
+    try:
+        dest_store = _pg.get_connection(dest_url)
+    except Exception as e:
+        click.echo(f"Error: could not connect to destination Postgres: {e}", err=True)
+        source_store.conn.close()
+        sys.exit(1)
+
+    source_counts = _pg.backfill_repo_row_counts(source_store.conn, repo_id)
+    if sum(source_counts.values()) == 0:
+        click.echo(f"Error: no rows found for repo_id '{repo_id}' at --source-url.", err=True)
+        source_store.conn.close()
+        dest_store.conn.close()
+        sys.exit(1)
+
+    existing_dest_counts = _pg.backfill_repo_row_counts(dest_store.conn, repo_id)
+    existing_total = sum(existing_dest_counts.values())
+
+    if dry_run:
+        # Report-only: never enforce the existing-destination-data guard
+        # here, since dry-run makes no write for it to protect.
+        if as_json:
+            click.echo(json.dumps({
+                "dry_run": True,
+                "repo_id": repo_id,
+                "source_counts": source_counts,
+                "existing_destination_counts": existing_dest_counts,
+            }, indent=2))
+        else:
+            click.echo(f"Dry run for repo '{repo_id}'")
+            for table, count in source_counts.items():
+                click.echo(f"  {table}: {count} rows")
+            if existing_total > 0:
+                click.echo(
+                    f"Note: destination already has {existing_total} row(s) "
+                    "for this repo_id; a real run would require --replace."
+                )
+        source_store.conn.close()
+        dest_store.conn.close()
+        return
+
+    if existing_total > 0 and not replace:
+        click.echo(
+            f"Error: destination already has data for repo_id '{repo_id}' "
+            f"({existing_total} rows). Use --replace to re-import intentionally.",
+            err=True,
+        )
+        source_store.conn.close()
+        dest_store.conn.close()
+        sys.exit(1)
+
+    if not skip_confirm:
+        total_rows = sum(source_counts.values())
+        click.echo(f"About to backfill repo '{repo_id}' ({total_rows} rows) into the destination Postgres.")
+        if not click.confirm("Proceed?"):
+            click.echo("Aborted.")
+            source_store.conn.close()
+            dest_store.conn.close()
+            sys.exit(0)
+
+    dest_store.repo_id = repo_id
+    records = _pg.export_from_postgres(source_store.conn, repo_id)
+    try:
+        imported_counts = _pg.import_ndjson(
+            dest_store,
+            records,
+            replace=replace,
+            remap_ids=True,
+            trusted_state_transfer=False,
+        )
+    except Exception as e:
+        click.echo(f"Error: import failed: {e}", err=True)
+        click.echo("Source has NOT been modified. Fix the error and retry (use --replace if the destination now has partial data).", err=True)
+        source_store.conn.close()
+        dest_store.conn.close()
+        sys.exit(1)
+
+    dest_counts = _pg.backfill_repo_row_counts(dest_store.conn, repo_id)
+    source_store.conn.close()
+    dest_store.conn.close()
+
+    parity = {
+        table: {"source": source_counts.get(table, 0), "destination": dest_counts.get(table, 0)}
+        for table in source_counts
+    }
+    all_match = all(v["source"] == v["destination"] for v in parity.values())
+
+    if as_json:
+        click.echo(json.dumps({
+            "repo_id": repo_id,
+            "imported_counts": imported_counts,
+            "parity": parity,
+            "parity_ok": all_match,
+        }, indent=2))
+    else:
+        click.echo(f"Backfilled repo '{repo_id}'.")
+        for table, v in parity.items():
+            mark = "ok" if v["source"] == v["destination"] else "MISMATCH"
+            click.echo(f"  {table}: source={v['source']} destination={v['destination']} [{mark}]")
+        if not all_match:
+            click.echo("Error: row count parity check failed after import.", err=True)
+            sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # repo — remote repo management
 # ---------------------------------------------------------------------------
 

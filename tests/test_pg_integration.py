@@ -1754,6 +1754,180 @@ class TestNdjsonRoundTrip:
             repl_store.conn.close()
 
 
+class TestRemoteBackfill:
+    """export_from_postgres + import_ndjson(remap_ids=True): the PostgreSQL-to-
+    PostgreSQL path `sprintctl remote-backfill` uses to copy a repository's
+    history out of a separate, already-deployed authority. Both connections
+    point at the same disposable database in these tests (there is only one
+    to test against), but the functions themselves are connection-agnostic --
+    export_from_postgres only ever reads, import_ndjson only ever writes to
+    the store it's given."""
+
+    def test_export_from_postgres_matches_backfill_row_counts(self, store, pg_test_scope):
+        repo_id = pg_test_scope("backfill-export")
+        source_store = pg.PgStore(conn=store.conn, repo_id=repo_id)
+        sprint_id = pg.create_sprint(source_store, "Backfill Sprint", "G", status="active")
+        track_id = pg.get_or_create_track(source_store, sprint_id, "eng")
+        item_id = pg.create_work_item(source_store, sprint_id, track_id, "Backfill Item")
+        pg.add_ref(source_store, item_id, "pr", "https://github.com/org/repo/pull/1")
+        pg.create_event(
+            source_store, sprint_id, actor="a", event_type="note",
+            source_type="actor", work_item_id=item_id, payload={"summary": "x"},
+        )
+
+        counts = pg.backfill_repo_row_counts(store.conn, repo_id)
+        assert counts["sprint"] == 1
+        assert counts["track"] == 1
+        assert counts["work_item"] == 1
+        assert counts["ref"] == 1
+        assert counts["event"] == 1
+        assert counts["claim"] == 0
+        assert counts["dep"] == 0
+
+        records = pg.export_from_postgres(store.conn, repo_id)
+        assert len(records) == sum(counts.values())
+        by_table = {}
+        for record in records:
+            by_table.setdefault(record["table"], []).append(record)
+            assert record["repo_id"] == repo_id
+            assert "repo_id" not in record["data"]
+        assert len(by_table["sprint"]) == 1
+        assert by_table["sprint"][0]["data"]["name"] == "Backfill Sprint"
+        assert by_table["ref"][0]["data"]["url"] == "https://github.com/org/repo/pull/1"
+
+    def test_backfill_round_trip_remaps_ids_and_preserves_parity(self, store, pg_test_scope):
+        repo_id = pg_test_scope("backfill-roundtrip")
+        source_store = pg.PgStore(conn=store.conn, repo_id=repo_id)
+        sprint_id = pg.create_sprint(source_store, "RT Sprint", "G", status="active")
+        track_id = pg.get_or_create_track(source_store, sprint_id, "eng")
+        item_id = pg.create_work_item(source_store, sprint_id, track_id, "RT Item")
+        pg.add_ref(source_store, item_id, "pr", "https://github.com/org/repo/pull/2")
+        pg.create_event(
+            source_store, sprint_id, actor="a", event_type="note",
+            source_type="actor", work_item_id=item_id, payload={"summary": "rt"},
+        )
+
+        source_counts = pg.backfill_repo_row_counts(store.conn, repo_id)
+        records = pg.export_from_postgres(store.conn, repo_id)
+
+        dest_store = pg.PgStore(conn=psycopg.connect(_PG_URL, row_factory=dict_row), repo_id=repo_id)
+        try:
+            # replace=True simulates copying into a genuinely separate,
+            # already-populated-by-source destination: delete the captured
+            # rows (records already holds their data in memory), then
+            # reinsert with fresh remapped IDs -- exactly what
+            # remote_backfill_cmd does against two real databases.
+            imported = pg.import_ndjson(dest_store, records, replace=True, remap_ids=True)
+            dest_counts = pg.backfill_repo_row_counts(dest_store.conn, repo_id)
+            assert dest_counts == source_counts
+            assert imported["sprint"] == 1
+            assert imported["work_item"] == 1
+
+            new_item = pg.get_work_item(dest_store, pg.list_work_items(dest_store, sprint_id=None)[0]["id"])
+            assert new_item["id"] != item_id, "remap_ids=True must not preserve the source's literal id"
+            assert new_item["title"] == "RT Item"
+        finally:
+            dest_store.conn.close()
+
+    def test_remote_backfill_row_counts_ignore_other_repos(self, store, pg_test_scope):
+        repo_a = pg_test_scope("backfill-scope-a")
+        repo_b = pg_test_scope("backfill-scope-b")
+        store_a = pg.PgStore(conn=store.conn, repo_id=repo_a)
+        store_b = pg.PgStore(conn=store.conn, repo_id=repo_b)
+        pg.create_sprint(store_a, "A Sprint", "G", status="active")
+        pg.create_sprint(store_b, "B Sprint 1", "G", status="active")
+        pg.create_sprint(store_b, "B Sprint 2", "G", status="active")
+
+        assert pg.backfill_repo_row_counts(store.conn, repo_a)["sprint"] == 1
+        assert pg.backfill_repo_row_counts(store.conn, repo_b)["sprint"] == 2
+        records_a = pg.export_from_postgres(store.conn, repo_a)
+        assert len([r for r in records_a if r["table"] == "sprint"]) == 1
+
+
+class TestRemoteBackfillCli:
+    """CLI wiring for `sprintctl remote-backfill`. --source-url and --url both
+    point at the same disposable Postgres in these tests -- the command
+    itself does not require them to differ, and in production they name two
+    genuinely separate deployments."""
+
+    def test_dry_run_reports_source_counts_without_writing(self, store, pg_test_scope, runner):
+        repo_id = pg_test_scope("backfill-cli-dry")
+        source_store = pg.PgStore(conn=store.conn, repo_id=repo_id)
+        pg.create_sprint(source_store, "CLI Dry Sprint", "G", status="active")
+
+        result = runner.invoke(cli, [
+            "remote-backfill",
+            "--source-url", _PG_URL,
+            "--url", _PG_URL,
+            "--repo-id", repo_id,
+            "--dry-run",
+            "--json",
+        ])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["dry_run"] is True
+        assert payload["source_counts"]["sprint"] == 1
+
+    def test_missing_repo_data_at_source_is_an_error(self, pg_test_scope, runner):
+        repo_id = pg_test_scope("backfill-cli-missing")
+        result = runner.invoke(cli, [
+            "remote-backfill",
+            "--source-url", _PG_URL,
+            "--url", _PG_URL,
+            "--repo-id", repo_id,
+            "--dry-run",
+        ])
+        assert result.exit_code != 0
+        assert "no rows found" in result.output.lower()
+
+    def test_existing_destination_data_requires_replace(self, store, pg_test_scope, runner):
+        # Since --source-url and --url are the same disposable database in
+        # this test, any pre-existing row for repo_id already satisfies the
+        # "destination has data" guard -- no separate backfill run needed to
+        # set it up.
+        repo_id = pg_test_scope("backfill-cli-guard")
+        guard_store = pg.PgStore(conn=store.conn, repo_id=repo_id)
+        pg.create_sprint(guard_store, "Guard Sprint", "G", status="active")
+
+        result = runner.invoke(cli, [
+            "remote-backfill",
+            "--source-url", _PG_URL,
+            "--url", _PG_URL,
+            "--repo-id", repo_id,
+            "--yes",
+        ])
+        assert result.exit_code != 0
+        assert "already has data" in result.output.lower()
+
+    def test_full_backfill_with_replace_reports_parity(self, store, pg_test_scope, runner):
+        repo_id = pg_test_scope("backfill-cli-full")
+        source_store = pg.PgStore(conn=store.conn, repo_id=repo_id)
+        sprint_id = pg.create_sprint(source_store, "CLI Full Sprint", "G", status="active")
+        track_id = pg.get_or_create_track(source_store, sprint_id, "eng")
+        pg.create_work_item(source_store, sprint_id, track_id, "CLI Full Item")
+
+        # --replace lets the (trivially true, same-database-in-this-test)
+        # existing-destination-data guard through; source_counts is computed
+        # from the CLI's own pre-write read, before import_ndjson's replace
+        # delete+reinsert -- so parity still means what it means in
+        # production, where source and destination are genuinely separate.
+        result = runner.invoke(cli, [
+            "remote-backfill",
+            "--source-url", _PG_URL,
+            "--url", _PG_URL,
+            "--repo-id", repo_id,
+            "--replace",
+            "--yes",
+            "--json",
+        ])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["parity_ok"] is True
+        assert payload["parity"]["sprint"] == {"source": 1, "destination": 1}
+        assert payload["parity"]["track"] == {"source": 1, "destination": 1}
+        assert payload["parity"]["work_item"] == {"source": 1, "destination": 1}
+
+
 # ---------------------------------------------------------------------------
 # Maintain
 # ---------------------------------------------------------------------------
