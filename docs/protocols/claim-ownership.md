@@ -58,6 +58,14 @@ parity.
 
 TTL expiry alone is still not a fencing token.
 
+Database recovery (`sprintctl db recover-from-remote`) never restores
+ownership: the recovered SQLite carries every claim row for audit, but
+`claim_token` is stripped and active claims are closed as `expired`. A
+recovered database is a new authority instance — pre-recovery proof does not
+work against it and work must be reclaimed. This keeps recovered files free
+of usable credentials and prevents split-brain continuity when the source
+authority is still reachable.
+
 `lease_epoch` is the future fencing value for a claim lineage. It starts at 1,
 advances when remote ownership proof rotates, and advances again when a new
 remote claim reacquires an item after expiry. It is exposed now so retained

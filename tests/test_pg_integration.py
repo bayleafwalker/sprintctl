@@ -44,8 +44,9 @@ pytestmark = [
 ]
 
 # Safe unconditional imports: pg.py handles missing psycopg gracefully.
-from sprintctl import authority, contracts, maintain, observations, pg, projection, sync
+from sprintctl import authority, contracts, db, maintain, observations, pg, projection, sync
 from sprintctl import outbox
+from sprintctl.cli import cli
 from sprintctl.db import ClaimConflict, InvalidTransition
 from sprintctl.pg_testing import (
     assert_disposable_connection,
@@ -1504,6 +1505,89 @@ class TestDep:
     def test_self_dep_raises(self, store, work_item_id):
         with pytest.raises(ValueError):
             pg.add_dep(store, work_item_id, work_item_id)
+
+
+# ---------------------------------------------------------------------------
+# Recovery snapshot (Postgres → recovery SQLite, ID-preserving)
+# ---------------------------------------------------------------------------
+
+class TestRecoverFromRemote:
+    def test_snapshot_then_write_preserves_ids_and_passes_integrity(
+        self, tmp_path, store, sprint_id, track_id, work_item_id,
+    ):
+        pg.create_event(store, sprint_id, "ag", "note", source_type="actor",
+                        work_item_id=work_item_id,
+                        payload={"summary": "recovery source event"})
+        pg.create_claim(store, work_item_id, "ag", ttl_seconds=300)
+        pg.add_ref(store, work_item_id, "doc", "docs/plans/x.md")
+        other_item = pg.create_work_item(store, sprint_id, track_id, f"Dep-{_uid()}")
+        pg.add_dep(store, work_item_id, other_item)
+
+        snapshot = pg.recover_repo_snapshot(store)
+        assert any(row["id"] == sprint_id for row in snapshot["sprint"])
+        assert any(row["id"] == work_item_id for row in snapshot["work_item"])
+        assert snapshot["claim"] and snapshot["ref"] and snapshot["dep"]
+
+        dest = tmp_path / "recovery.db"
+        conn = db.get_connection(dest)
+        try:
+            db.init_db(conn)
+            counts = db.write_recovery_snapshot(
+                conn,
+                snapshot,
+                provenance={"recovered_at": "2026-07-24T00:00:00Z",
+                            "source_repo_id": store.repo_id},
+            )
+            assert counts["sprint"] == len(snapshot["sprint"])
+            assert counts["work_item"] == len(snapshot["work_item"])
+
+            assert db.get_sprint(conn, sprint_id) is not None
+            assert db.get_work_item(conn, work_item_id)["id"] == work_item_id
+            assert db.get_work_item(conn, other_item)["id"] == other_item
+
+            report = db.check_integrity(conn)
+            assert report["ok"] is True, report
+
+            claim_row = conn.execute(
+                "SELECT exclusive, status, claim_token FROM claim WHERE work_item_id = ?",
+                (work_item_id,),
+            ).fetchone()
+            assert claim_row["exclusive"] == 1
+            # ownership is never restored: the live pg claim comes back closed,
+            # with its bearer token stripped
+            assert claim_row["status"] == "expired"
+            assert claim_row["claim_token"] is None
+
+            provenance_rows = conn.execute(
+                "SELECT sprint_id FROM event WHERE event_type = 'recovery.completed'"
+            ).fetchall()
+            assert len(provenance_rows) == len(snapshot["sprint"])
+
+            event_row = conn.execute(
+                "SELECT payload FROM event WHERE work_item_id = ? AND event_type = 'note'",
+                (work_item_id,),
+            ).fetchone()
+            assert json.loads(event_row["payload"])["summary"] == "recovery source event"
+
+            # A subsequent synthetic recovery.completed event must not collide
+            # with any restored event id.
+            max_restored_event_id = max(row["id"] for row in snapshot["event"])
+            new_event_id = db.create_event(
+                conn, sprint_id, "sprintctl", "recovery.completed", source_type="system",
+            )
+            assert new_event_id > max_restored_event_id
+        finally:
+            conn.close()
+
+    def test_refuses_to_overwrite_existing_output(self, tmp_path, runner, monkeypatch):
+        (tmp_path / ".git").mkdir()
+        dest = tmp_path / "existing.db"
+        dest.write_text("not a real db")
+        monkeypatch.setenv("SPRINTCTL_BACKEND", "remote")
+        monkeypatch.setenv("SPRINTCTL_URL", _PG_URL)
+        result = runner.invoke(cli, ["db", "recover-from-remote", "--output", str(dest)])
+        assert result.exit_code != 0
+        assert "already exists" in result.output
 
 
 # ---------------------------------------------------------------------------

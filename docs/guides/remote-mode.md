@@ -189,17 +189,46 @@ the server. Key operational notes:
 
 ## Reverting to local mode
 
-Remote mode is designed to be a one-way migration per repo. To revert:
+Remote mode is designed to be a one-way migration per repo. To revert to a
+**current-state** sqlite database, use the recovery command:
 
-1. Export the postgres data: `sprintctl migrate-to-remote` output can be
-   adapted, or use `pg_dump` for a full export.
-2. Remove `.sprintctl/backend.json`.
-3. Restore a sqlite backup (the `.db.migrated-*` archive) or start fresh.
-4. Unset `SPRINTCTL_BACKEND` and `SPRINTCTL_URL` from your environment.
+1. `SPRINTCTL_BACKEND=remote sprintctl db recover-from-remote --output recovery.db --verify`
+   — reads every repo-scoped row (sprint, track, work_item, event, claim, ref,
+   dep) for the resolved `repo_id` directly from postgres and writes a fresh
+   sqlite database at the current local schema, with original IDs preserved.
+   Read-only against postgres; refuses to overwrite an existing `--output`
+   file. `--verify` reports per-table row-count parity against the postgres
+   source and runs sqlite integrity/foreign-key checks. The command also
+   writes one synthetic `recovery.completed` event per recovered sprint, in
+   the same transaction as the recovered rows, so a recovered database is
+   distinguishable from one that was never migrated.
+   `ingest_stream`/`ingest_repo_cursor`/`ingest_record`/`authority_decision`
+   are intentionally not carried over — they are remote-serving
+   infrastructure with no sqlite equivalent.
+
+   Active ownership is not carried over either: `claim_token` is stripped
+   from every claim row and active claims are closed as `expired`. A
+   recovered database is a **new authority instance** — pre-recovery claim
+   credentials do not work against it, agents must reclaim work, and the
+   recovered file never contains usable secrets. Claim history is preserved
+   for audit.
+
+   If the remote and local schemas have drifted (a migration landed on one
+   side but not the other), the command fails closed with a schema-mismatch
+   error instead of writing partial rows. If a run fails or is interrupted,
+   the partial `--output` file is removed where possible; delete it manually
+   before retrying if it remains.
+2. Point `SPRINTCTL_DB` at the recovered file, remove `.sprintctl/backend.json`,
+   and unset `SPRINTCTL_BACKEND` / `SPRINTCTL_URL`.
+
+If you only need a postgres-to-postgres copy (not a local sqlite database),
+`pg_dump` remains the right tool — `db recover-from-remote` never writes to
+postgres.
 
 This path should only be necessary in exceptional circumstances (lost postgres
-access, environment teardown). Data created in postgres after the migration
-will not be in the reverted sqlite database.
+access, environment teardown). Data created in postgres after recovery runs
+will not be in the recovered sqlite database — it captures a single point in
+time, not an ongoing sync.
 
 ---
 

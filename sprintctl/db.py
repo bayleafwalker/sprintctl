@@ -2140,6 +2140,111 @@ def backlog_seed_from_candidates(
 
 # --- Database maintenance ---
 
+_RECOVERY_TABLE_ORDER = ("sprint", "track", "work_item", "event", "claim", "ref", "dep")
+
+
+class RecoverySchemaMismatch(Exception):
+    """A snapshot row's column set does not exactly match the local SQLite table."""
+
+    def __init__(self, table: str, missing: list[str], unexpected: list[str]):
+        self.table = table
+        self.missing = missing
+        self.unexpected = unexpected
+        super().__init__(
+            f"recovery schema mismatch on '{table}': "
+            f"missing={missing} unexpected={unexpected}"
+        )
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> list[str]:
+    return [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+
+
+def write_recovery_snapshot(
+    conn: sqlite3.Connection,
+    snapshot: dict[str, list[dict]],
+    *,
+    provenance: dict | None = None,
+) -> dict[str, int]:
+    """Bulk-insert a repo-scoped Postgres snapshot into a fresh local SQLite
+    database, preserving original row IDs. Bypasses status-transition and
+    claim-lifecycle validation by design: this restores a prior authoritative
+    state rather than replaying business operations.
+
+    Ownership is not restored: claim_token is stripped from every claim row
+    and active claims are closed as 'expired'. A recovered database is a new
+    authority instance — pre-recovery credentials must not work against it,
+    and the file must never carry usable secrets.
+
+    Every snapshot row must match the local table's column set exactly
+    (modulo the Postgres-only repo_id); any drift raises
+    RecoverySchemaMismatch instead of silently writing partial rows.
+
+    When provenance is given, one synthetic recovery.completed event is
+    written per recovered sprint inside the same transaction, so provenance
+    is all-or-nothing with the data. Returned counts cover source rows only.
+    """
+    if provenance is not None:
+        _contracts.require_generic_event_write_allowed("recovery.completed")
+    counts: dict[str, int] = {}
+    claims_closed = 0
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("PRAGMA foreign_keys = OFF")
+        for table in _RECOVERY_TABLE_ORDER:
+            rows = snapshot.get(table, [])
+            table_cols = set(_table_columns(conn, table))
+            n = 0
+            for row in rows:
+                row_cols = set(row) - {"repo_id"}
+                if row_cols != table_cols:
+                    raise RecoverySchemaMismatch(
+                        table=table,
+                        missing=sorted(table_cols - row_cols),
+                        unexpected=sorted(row_cols - table_cols),
+                    )
+                insert_cols = [c for c in row if c != "repo_id"]
+                values = []
+                for col in insert_cols:
+                    value = row[col]
+                    if table == "event" and col == "payload" and not isinstance(value, str):
+                        value = json.dumps(value)
+                    elif table == "claim" and col == "exclusive":
+                        value = 1 if value else 0
+                    elif table == "claim" and col == "claim_token":
+                        value = None
+                    elif table == "claim" and col == "status" and value == "active":
+                        value = "expired"
+                        claims_closed += 1
+                    values.append(value)
+                placeholders = ",".join("?" for _ in insert_cols)
+                conn.execute(
+                    f"INSERT INTO {table} ({','.join(insert_cols)}) VALUES ({placeholders})",
+                    values,
+                )
+                n += 1
+            counts[table] = n
+        if provenance is not None:
+            payload = dict(provenance)
+            payload["source_row_counts"] = counts
+            payload["claims_closed"] = claims_closed
+            for sprint_row in snapshot.get("sprint", []):
+                _insert_event(
+                    conn,
+                    sprint_row["id"],
+                    "sprintctl",
+                    "recovery.completed",
+                    source_type="system",
+                    payload=payload,
+                )
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return counts
+
+
 def vacuum_database(conn: sqlite3.Connection) -> dict:
     """Run VACUUM and report page counts and reclaimed bytes."""
     page_size = conn.execute("PRAGMA page_size").fetchone()[0]

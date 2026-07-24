@@ -4307,6 +4307,126 @@ def db_integrity(obj, as_json) -> None:
         sys.exit(1)
 
 
+@db_group.command("recover-from-remote")
+@click.option("--output", "output_path", required=True, help="Path to write the recovered SQLite database")
+@click.option(
+    "--verify",
+    "run_verify",
+    is_flag=True,
+    default=False,
+    help="Run parity and integrity checks on the recovered database after writing it",
+)
+def db_recover_from_remote(output_path, run_verify) -> None:
+    """Read every repo-scoped row from the served remote authority (Postgres)
+    and write a fresh, ID-preserving recovery SQLite database. Read-only
+    against Postgres; refuses to overwrite an existing --output file."""
+    try:
+        config = _backend.require_remote_backend()
+    except _backend.BackendConfigError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+
+    dest = Path(output_path)
+    if dest.exists():
+        click.echo(f"Error: output path already exists: {dest}", err=True)
+        sys.exit(1)
+
+    from . import pg as _pg  # noqa: PLC0415
+
+    try:
+        store = _pg.get_connection(config.url)
+    except Exception as e:
+        detail = _redacted_postgres_error(e, config.url)
+        click.echo(f"Error: could not connect to postgres from SPRINTCTL_URL: {detail}", err=True)
+        sys.exit(1)
+    try:
+        snapshot = _pg.recover_repo_snapshot(store)
+    finally:
+        store.conn.close()
+
+    conn = _db.get_connection(dest)
+    write_error: Exception | None = None
+    try:
+        _db.init_db(conn)
+        recovered_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        counts = _db.write_recovery_snapshot(
+            conn,
+            snapshot,
+            provenance={
+                "recovered_at": recovered_at,
+                "source_repo_id": config.repo_id,
+            },
+        )
+    except Exception as e:
+        write_error = e
+    finally:
+        conn.close()
+
+    if write_error is not None:
+        dest.unlink(missing_ok=True)
+        if isinstance(write_error, _db.RecoverySchemaMismatch):
+            click.echo(f"Error: {write_error}", err=True)
+            click.echo(
+                "Remote and local schemas have drifted; recovery fails closed "
+                "rather than writing partial rows.",
+                err=True,
+            )
+            sys.exit(1)
+        raise write_error
+
+    claims_closed = sum(1 for c in snapshot.get("claim", []) if c.get("status") == "active")
+    click.echo(f"Recovered repo '{config.repo_id}' to {dest}")
+    for table, n in counts.items():
+        click.echo(f"  {table}: {n}")
+    click.echo(
+        f"  active claims closed: {claims_closed} (claim tokens are not carried over; "
+        "work must be reclaimed against the recovered authority)"
+    )
+
+    if not run_verify:
+        return
+
+    verify_conn = _db.get_connection(dest)
+    try:
+        report = _db.check_integrity(verify_conn)
+    finally:
+        verify_conn.close()
+
+    click.echo("")
+    click.echo("Parity report (Postgres source vs recovered SQLite):")
+    parity_ok = True
+    for table in ("sprint", "track", "work_item", "claim", "ref", "dep"):
+        source_n = len(snapshot.get(table, []))
+        dest_n = report["table_counts"].get(table, 0)
+        status = "ok" if source_n == dest_n else "MISMATCH"
+        if status != "ok":
+            parity_ok = False
+        click.echo(f"  {table}: source={source_n} recovered={dest_n} [{status}]")
+    # event count in the recovered DB includes one synthetic recovery.completed
+    # event per recovered sprint, on top of the recovered source events.
+    source_events = len(snapshot.get("event", []))
+    expected_events = source_events + len(snapshot.get("sprint", []))
+    dest_events = report["table_counts"].get("event", 0)
+    status = "ok" if expected_events == dest_events else "MISMATCH"
+    if status != "ok":
+        parity_ok = False
+    click.echo(
+        f"  event: source={source_events} (+{len(snapshot.get('sprint', []))} recovery.completed) "
+        f"recovered={dest_events} [{status}]"
+    )
+
+    click.echo("")
+    click.echo(f"Integrity: {'ok' if report['ok'] else 'FAILED'}")
+    for line in report["integrity_check"]:
+        if line != "ok":
+            click.echo(f"  {line}")
+    for violation in report["foreign_key_violations"]:
+        click.echo(f"  fk violation: {violation}")
+
+    if not parity_ok or not report["ok"]:
+        sys.exit(1)
+
+
 def _resolve_sprint(conn, sprint_id: int | None, *, m=None) -> dict:
     m = m or _db
     if sprint_id is not None:

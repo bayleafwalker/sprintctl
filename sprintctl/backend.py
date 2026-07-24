@@ -247,3 +247,13 @@ def require_local_backend() -> BackendConfig:
     if config.mode == "remote":
         raise BackendConfigError("Error: remote backend is not implemented yet.")
     return config
+
+
+def require_remote_backend() -> BackendConfig:
+    config = load_backend_config()
+    if config.mode != "remote":
+        raise BackendConfigError(
+            "Error: this command requires SPRINTCTL_BACKEND=remote "
+            f"(current: '{config.mode}')."
+        )
+    return config

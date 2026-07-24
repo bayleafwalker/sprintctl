@@ -1121,6 +1121,27 @@ def _norm(row: dict) -> dict:
     return out
 
 
+_RECOVERY_TABLES = ("sprint", "track", "work_item", "event", "claim", "ref", "dep")
+
+
+def recover_repo_snapshot(store: PgStore) -> dict[str, list[dict]]:
+    """Read every repo-scoped row for this repo_id, ordered by id ascending.
+
+    Excludes ingest_stream/ingest_repo_cursor/ingest_record/authority_decision:
+    those are remote-serving infrastructure with no SQLite equivalent, and a
+    recovered local authority does not need them.
+    """
+    snapshot: dict[str, list[dict]] = {}
+    with store.conn.cursor() as cur:
+        for table in _RECOVERY_TABLES:
+            cur.execute(
+                f"SELECT * FROM {table} WHERE repo_id = %s ORDER BY id ASC",  # noqa: S608 — fixed identifier set
+                (store.repo_id,),
+            )
+            snapshot[table] = [_norm(r) for r in cur.fetchall()]
+    return snapshot
+
+
 # ---------------------------------------------------------------------------
 # Sprint
 # ---------------------------------------------------------------------------
