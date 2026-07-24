@@ -105,11 +105,16 @@ dispatch manifest.
 | V3-8 | #1241 | Rewrite the coordination protocol contract, overlay, and operator guides for the reservation model |
 | V3-9 | agentops #1242 | Update cross-repo agent guidance mirrors for the reservation model (covers agentops dispatch skills + sprintctl-bootstrap-template docs) |
 
-Outstanding cross-repo action: the **V3-3 vuoro twin** (catalog v2 service
-composition, transient-credential carrier decision per Q5) must be filed in
-vuoro's own backlog by a session with vuoro backlog access — the vuoro
-checkout on this host has no sprintctl backend config. Recorded on #1237 and
-agentops #1242.
+**V3-3 vuoro twin — filed 2026-07-24.** vuoro `.sprintctl` backend config
+bootstrapped (repo_id `vuoro`, already registered in remote postgres); vuoro
+sprint 429 ("v3 Reservation Model: Vuoro Twin"), track `v3-reservations`,
+item #1243. Q5 resolved: **retire** the invocation/v2 transient-credential
+carrier — it was purpose-built solely to carry sprintctl `claim_token`
+proofs (commit 0e7aa58, #1195 Group A) and has zero consumers now that v3
+deletes `claim_token`; a carrier built for an abandoned pattern is not
+general-purpose infra worth preserving. vuoro #1243 also covers the
+composition/client-discovery refresh for the catalog v2 cutover once #1237
+lands; it is sequenced to start after #1237, not concurrently.
 
 **Sequencing:** V3-1 → V3-2 → V3-3 (+vuoro twin) → V3-4 → V3-5 → V3-6 →
 V3-7 (#1234) → V3-8 → V3-9. V3-4/5/6 form one release train (V3-4's column
@@ -156,10 +161,11 @@ one recovery table.
 - **Q4 — Stale sweep policy.** Should `maintain check --fix` auto-mark
   long-idle reservations `interrupted` (at what horizon), or is staleness
   display-only with takeover always manual?
-- **Q5 — Vuoro transient-credentials carrier.** With the work domain no
+- **Q5 — Vuoro transient-credentials carrier.** ~~With the work domain no
   longer consuming invocation/v2 transient proofs, does vuoro retire the
   generic carrier (`vuoro_service/identity.py`, client resolver) or retain
-  it for future domains? Scoping decision for the V3-3 vuoro twin.
+  it for future domains?~~ **Resolved 2026-07-24: retire.** Filed as vuoro
+  #1243 (sprint 429); see note above §2.
 - **Q6 — Retirement-tract interleaving.** Confirmed by placement: #1220,
   #1221, #1164 complete on current semantics before the V3-4 schema train
   lands (#1238 is dependency-gated on #1164).
