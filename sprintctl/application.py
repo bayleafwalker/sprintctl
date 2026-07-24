@@ -46,6 +46,7 @@ class InvocationIdentity(Protocol):
     actor: str
     environment: str
     authorities: frozenset[str]
+    repo_id: str
 
 
 class TransientCredentialCarrier(Protocol):
@@ -237,27 +238,70 @@ class WorkApplication:
         credential_resolver: CredentialResolver | None = None,
         repo_root: Path | None = None,
     ) -> WorkApplication:
-        """Compose the served application from sprintctl's PostgreSQL authority."""
+        """Compose the served application from sprintctl's PostgreSQL authority.
 
-        from . import authority, pg  # Lazy: standalone SQLite needs no psycopg.
+        ``store.repo_id`` seeds the instance returned here, but every served
+        invocation re-scopes to the calling identity's ``repo_id`` (see
+        :meth:`invoke` and :meth:`_scoped_for`); one running application can
+        serve every repository tenant a bound identity is authorized for.
+        """
+
+        from . import pg  # Lazy: standalone SQLite needs no psycopg.
 
         return cls(
             repo_id=store.repo_id,
             store=store,
             backend=pg,
-            ingest_records=lambda records: pg.ingest_records(store, records),
-            arbitrate_command=lambda record, credentials: authority.arbitrate_command(
-                store, record, credentials=credentials
-            ),
-            list_records=lambda after, limit: pg.list_ingested_records(
-                store, after_offset=after, limit=limit
-            ),
-            list_decisions=lambda after, limit: authority.list_authority_decisions(
-                store, after_offset=after, limit=limit
-            ),
+            **cls._store_bound_callables(store),
             credential_resolver=credential_resolver,
             repo_root=repo_root,
         )
+
+    @staticmethod
+    def _store_bound_callables(store: Any) -> dict[str, Any]:
+        from . import authority, pg  # Lazy: standalone SQLite needs no psycopg.
+
+        return {
+            "ingest_records": lambda records: pg.ingest_records(store, records),
+            "arbitrate_command": lambda record, credentials: authority.arbitrate_command(
+                store, record, credentials=credentials
+            ),
+            "list_records": lambda after, limit: pg.list_ingested_records(
+                store, after_offset=after, limit=limit
+            ),
+            "list_decisions": lambda after, limit: authority.list_authority_decisions(
+                store, after_offset=after, limit=limit
+            ),
+        }
+
+    def _scoped_for(self, repo_id: str) -> WorkApplication:
+        """Return a copy of this application bound to ``repo_id`` for one call.
+
+        The underlying connection (``store.conn``) is shared, unchanged from
+        today's single-tenant behavior; only the repository scope is
+        request-local. When ``store`` is a real :class:`~sprintctl.pg.PgStore`
+        (the only backend production composition uses), this rebuilds
+        ``store``, ``ingest_records``, ``arbitrate_command``, ``list_records``,
+        and ``list_decisions`` so every backend call this copy makes resolves
+        against ``repo_id``. Test doubles that pass a bare connection or no
+        store at all (``WorkApplication`` also backs local-SQLite and
+        unit-test call sites that have no concept of a repo-scoped store) are
+        left exactly as constructed; only the ``repo_id`` field is updated for
+        them.
+        """
+
+        from dataclasses import fields, is_dataclass, replace
+
+        store = self.store
+        if is_dataclass(store) and any(field.name == "repo_id" for field in fields(store)):
+            scoped_store = replace(store, repo_id=repo_id)
+            return replace(
+                self,
+                repo_id=repo_id,
+                store=scoped_store,
+                **self._store_bound_callables(scoped_store),
+            )
+        return replace(self, repo_id=repo_id)
 
     def invoke(
         self, operation: str, arguments: Mapping[str, Any], context: InvocationContext
@@ -266,19 +310,31 @@ class WorkApplication:
             raise ApplicationRejection(
                 "invalid-arguments", "operation arguments must be an object", 422
             )
+        # An identity with no bound repo_id (older registries, or a caller
+        # that only holds non-work authorities) falls back to the
+        # application's own construction-time repo_id, preserving today's
+        # single-tenant behavior exactly.
+        requested_repo_id = getattr(context.identity, "repo_id", "") or self.repo_id
+        if not requested_repo_id:
+            raise ApplicationRejection(
+                "repo-id-required",
+                "identity is not bound to a repository",
+                403,
+            )
+        target = self._scoped_for(requested_repo_id)
         handlers = {
-            "work.read.sprints": self._read_sprints,
-            "work.read.item": self._read_item,
-            "work.read.next-work": self._read_next_work,
-            "work.read.records": self._read_records,
-            "work.read.decisions": self._read_decisions,
-            "work.claim.start": self._claim_start,
-            "work.claim.context": self._claim_context,
-            "work.claim.arbitrate": self._claim_arbitrate,
-            "work.lifecycle.arbitrate": self._lifecycle_arbitrate,
-            "work.evidence.ingest": self._evidence_ingest,
-            "work.batch.apply": self._batch_apply,
-            "work.pilot.cutover-evidence": self._cutover_evidence,
+            "work.read.sprints": target._read_sprints,
+            "work.read.item": target._read_item,
+            "work.read.next-work": target._read_next_work,
+            "work.read.records": target._read_records,
+            "work.read.decisions": target._read_decisions,
+            "work.claim.start": target._claim_start,
+            "work.claim.context": target._claim_context,
+            "work.claim.arbitrate": target._claim_arbitrate,
+            "work.lifecycle.arbitrate": target._lifecycle_arbitrate,
+            "work.evidence.ingest": target._evidence_ingest,
+            "work.batch.apply": target._batch_apply,
+            "work.pilot.cutover-evidence": target._cutover_evidence,
         }
         try:
             handler = handlers[operation]
