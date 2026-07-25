@@ -107,6 +107,34 @@ def read_next_work(
     )
 
 
+def read_events(
+    served_profile: ServedProfile,
+    *,
+    repo_id: str,
+    sprint_id: int,
+    work_item_id: int | None = None,
+    after_offset: int = 0,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    """Invoke ``work.read.events`` (``sprintctl event list --sprint-id ID``).
+
+    ``work_item_id`` filters server-side (cheap, matches the ``work.read.item``
+    pattern). ``event_type``/``--knowledge`` filtering stays client-side in the
+    CLI layer that calls this facade, to avoid catalog schema churn -- see
+    sprintctl item #1247.
+    """
+
+    arguments = {
+        "sprint_id": sprint_id,
+        "work_item_id": work_item_id,
+        "after_offset": after_offset,
+        "limit": limit,
+    }
+    return asyncio.run(
+        _invoke_operation(served_profile, "work.read.events", arguments, repo_id=repo_id)
+    )
+
+
 def project_next_work(
     served_profile: ServedProfile, *, sprint_id: int | None = None
 ) -> dict[str, Any]:
@@ -130,15 +158,14 @@ def cutover_evidence(
 
     ``parity`` must already be computed by the caller (mirroring
     ``cutover.build_cutover_evidence``'s own contract, which never fetches
-    parity itself). Served mode has no read operation exposing the
-    sprint-wide authoritative event log parity computation needs --
-    ``work.read.item`` only returns one item's events, and no
-    sprint-scoped-events operation exists in the served catalog -- so a
-    served caller wanting full parity cannot compute it the way local mode's
-    ``m.list_events(store, sprint_id)`` does; pass ``None`` (the
-    ``--skip-parity`` path, or whenever the pilot is disabled) instead. See
-    ``sprintctl.cli._served_cutover_evidence`` for the CLI-side guard that
-    enforces this.
+    parity itself). This function itself still never fetches parity --
+    ``work.read.events`` (added by #1247, see :func:`read_events`) exposes the
+    sprint-wide event log a caller would need to compute it, but no caller of
+    ``cutover_evidence`` has been updated to use it yet, so a served caller
+    wanting full parity should still pass ``None`` (the ``--skip-parity``
+    path, or whenever the pilot is disabled) unless/until that wiring lands.
+    See ``sprintctl.cli._served_cutover_evidence`` for the CLI-side guard
+    that enforces this today.
     """
 
     arguments = {
@@ -365,15 +392,22 @@ def lifecycle_arbitrate(
 
 
 # The subset of served_routes.py's allowlist that doctor's served probe
-# checks for -- the exact catalog operations #1195 wires through this facade
-# (next-work contributes two: work.read.next-work and work.project.next-work;
-# item.status and sprint.status share one operation, work.lifecycle.arbitrate;
+# checks for -- the exact catalog operations #1195 (and its #1247 completion
+# gap) wire through this facade (next-work contributes two:
+# work.read.next-work and work.project.next-work; item.status and
+# sprint.status share one operation, work.lifecycle.arbitrate;
 # claim.heartbeat, claim.handoff, and claim.release share one operation,
 # work.claim.arbitrate). Excludes event.observation.add: it is a registered
 # route in served_routes.py, but no served CLI path invokes work.evidence.ingest
 # directly -- `event observation add` always appends to the local outbox and
 # is only ever flushed through authority.sync's work.batch.apply (see
 # _served_authority_sync in cli.py), so it stays out of this probe list.
+#
+# Every operation added to the served catalog must be added here in the same
+# change -- the #1195 postmortem found this list had already silently drifted
+# out of sync with newly-wired routes once (missing claim.handoff, then
+# pilot.cutover-evidence), meaning `doctor` was not actually verifying the
+# catalog before commands ran. See docs/plans/served-mode-gaps-plan.md.
 _DOCTOR_PROBE_COMMAND_PATHS = (
     "sprint.list",
     "item.show",
@@ -387,6 +421,7 @@ _DOCTOR_PROBE_COMMAND_PATHS = (
     "item.note",
     "pilot.cutover-evidence",
     "authority.sync",
+    "event.list",
 )
 
 EXPECTED_OPERATIONS: frozenset[str] = frozenset(
@@ -425,6 +460,7 @@ __all__ = [
     "cutover_evidence",
     "lifecycle_arbitrate",
     "project_next_work",
+    "read_events",
     "read_item",
     "read_next_work",
     "read_sprints",

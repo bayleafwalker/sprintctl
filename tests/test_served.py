@@ -126,6 +126,39 @@ def test_read_next_work_and_project_next_work_send_sprint_id(fake_vuoro_client):
     assert project["arguments"] == {"sprint_id": None}
 
 
+def test_read_events_sends_sprint_id_filter_and_pagination(fake_vuoro_client):
+    profile = _profile()
+    result = served.read_events(
+        profile,
+        repo_id="repo-x",
+        sprint_id=9,
+        work_item_id=3,
+        after_offset=1,
+        limit=10,
+    )
+    assert result["operation"] == "work.read.events"
+    assert result["arguments"] == {
+        "sprint_id": 9,
+        "work_item_id": 3,
+        "after_offset": 1,
+        "limit": 10,
+    }
+    client = fake_vuoro_client.instances[-1]
+    _operation, _arguments, kwargs = client.invocations[0]
+    assert kwargs == {"repo_id": "repo-x"}
+
+
+def test_read_events_defaults_omit_work_item_filter_and_pagination(fake_vuoro_client):
+    profile = _profile()
+    result = served.read_events(profile, repo_id="repo-x", sprint_id=9)
+    assert result["arguments"] == {
+        "sprint_id": 9,
+        "work_item_id": None,
+        "after_offset": 0,
+        "limit": None,
+    }
+
+
 def test_claim_start_sends_full_shape_and_never_an_actor_field(fake_vuoro_client):
     profile = _profile()
     result = served.claim_start(
@@ -347,6 +380,7 @@ def test_credential_resolver_passed_to_client_is_resolve_file_credential(fake_vu
         lambda profile: served.read_next_work(profile, repo_id="repo-x"),
         lambda profile: served.project_next_work(profile),
         lambda profile: served.claim_start(profile, repo_id="repo-x", item_id=1),
+        lambda profile: served.read_events(profile, repo_id="repo-x", sprint_id=1),
     ],
 )
 def test_each_operation_constructs_a_fresh_client_per_call(fake_vuoro_client, call):
@@ -380,7 +414,7 @@ def test_catalog_operation_names_uses_a_fresh_client_and_returns_names(fake_vuor
     assert client.invocations == [], "catalog discovery must not invoke an operation"
 
 
-def test_expected_operations_matches_the_twelve_served_routes_command_paths():
+def test_expected_operations_matches_the_thirteen_served_routes_command_paths():
     expected = {
         route.operation
         for path in (
@@ -396,11 +430,12 @@ def test_expected_operations_matches_the_twelve_served_routes_command_paths():
             "item.note",
             "pilot.cutover-evidence",
             "authority.sync",
+            "event.list",
         )
         for route in routes_for(path)
     }
     assert served.EXPECTED_OPERATIONS == expected
-    assert len(served.EXPECTED_OPERATIONS) == 10
+    assert len(served.EXPECTED_OPERATIONS) == 11
     assert served.EXPECTED_OPERATIONS == {
         "work.read.sprints",
         "work.read.item",
@@ -412,7 +447,21 @@ def test_expected_operations_matches_the_twelve_served_routes_command_paths():
         "work.item.note",
         "work.pilot.cutover-evidence",
         "work.batch.apply",
+        "work.read.events",
     }
+
+
+def test_expected_operations_would_fail_if_event_list_route_were_omitted_from_probe():
+    """sprintctl#1247: the doctor probe's command-path allowlist must be
+    updated in the same change that adds a new served route -- the #1195
+    postmortem found this list silently drifted out of sync twice before
+    (missing `claim.handoff`, then `pilot.cutover-evidence`). This test
+    fails if `event.list` (and therefore `work.read.events`) is missing from
+    `_DOCTOR_PROBE_COMMAND_PATHS`/`EXPECTED_OPERATIONS`, independent of the
+    exact-set assertion above."""
+
+    assert "event.list" in served._DOCTOR_PROBE_COMMAND_PATHS
+    assert "work.read.events" in served.EXPECTED_OPERATIONS
 
 
 def test_served_module_imports_without_vuoro_client_installed():

@@ -255,6 +255,7 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
     assert len(names) == len(set(names))
     assert {
         "work.read.next-work",
+        "work.read.events",
         "work.claim.start",
         "work.claim.arbitrate",
         "work.lifecycle.arbitrate",
@@ -288,6 +289,103 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         if contract.name == "work.claim.start"
     )
     assert claim_start.idempotency == "not-allowed"
+
+
+def test_work_read_events_contract_shape():
+    """sprintctl#1247: ``work.read.events`` follows the ``work.read.records``/
+    ``work.read.decisions`` read-contract template, but with ``sprint_id``
+    required and an optional server-side ``work_item_id`` filter (matching
+    ``work.read.item``'s pattern), not the plain pagination-only shape those
+    two share."""
+
+    contract = next(
+        c for c in WORK_OPERATION_CONTRACTS if c.name == "work.read.events"
+    )
+    assert contract.required_authority == "work:read"
+    assert contract.execution_semantics == "read"
+    assert contract.idempotency == "not-allowed"
+    assert contract.input_schema["required"] == ["sprint_id"]
+    assert set(contract.input_schema["properties"]) == {
+        "sprint_id",
+        "work_item_id",
+        "after_offset",
+        "limit",
+    }
+    assert contract.input_schema["additionalProperties"] is False
+    assert contract.result_schema["required"] == ["repo_id", "events"]
+    assert contract.result_schema["properties"]["events"] == {
+        "type": "array",
+        "items": {"type": "object"},
+    }
+
+
+def test_read_events_returns_sprint_events_in_order(conn, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "served")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Item")
+    e1 = db.create_event(
+        conn, active_sprint["id"], "agent", event_type="decision",
+        work_item_id=item_id, payload={"summary": "first"},
+    )
+    e2 = db.create_event(
+        conn, active_sprint["id"], "agent", event_type="pattern-noted",
+        payload={"summary": "second"},
+    )
+
+    app = _application(store=conn, backend=db)
+    result = app.invoke("work.read.events", {"sprint_id": active_sprint["id"]}, _context())
+
+    assert result["repo_id"] == "test-repo"
+    assert [e["id"] for e in result["events"]] == [e1, e2]
+
+
+def test_read_events_filters_by_work_item_id_server_side(conn, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "served")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Item")
+    other_id = db.create_work_item(conn, active_sprint["id"], track, "Other")
+    matching = db.create_event(
+        conn, active_sprint["id"], "agent", event_type="decision",
+        work_item_id=item_id, payload={"summary": "matches"},
+    )
+    db.create_event(
+        conn, active_sprint["id"], "agent", event_type="decision",
+        work_item_id=other_id, payload={"summary": "does not match"},
+    )
+
+    app = _application(store=conn, backend=db)
+    result = app.invoke(
+        "work.read.events",
+        {"sprint_id": active_sprint["id"], "work_item_id": item_id},
+        _context(),
+    )
+
+    assert [e["id"] for e in result["events"]] == [matching]
+
+
+def test_read_events_applies_after_offset_and_limit(conn, active_sprint):
+    ids = [
+        db.create_event(
+            conn, active_sprint["id"], "agent", event_type="pattern-noted",
+            payload={"summary": f"event-{i}"},
+        )
+        for i in range(5)
+    ]
+
+    app = _application(store=conn, backend=db)
+    result = app.invoke(
+        "work.read.events",
+        {"sprint_id": active_sprint["id"], "after_offset": 1, "limit": 2},
+        _context(),
+    )
+
+    assert [e["id"] for e in result["events"]] == ids[1:3]
+
+
+def test_read_events_rejects_missing_sprint_before_backend(conn):
+    app = _application(store=conn, backend=db)
+    with pytest.raises(ApplicationRejection) as excinfo:
+        app.invoke("work.read.events", {"sprint_id": 999999}, _context())
+    assert excinfo.value.http_status == 404
+    assert excinfo.value.code == "sprint-not-found"
 
 
 def test_click_next_work_and_application_handler_share_backend_semantics(

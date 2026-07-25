@@ -28,3 +28,14 @@ def test_single_route_commands_have_no_ambiguity():
 
 def test_unknown_command_has_no_routes():
     assert routes_for("db.vacuum") == ()
+
+
+def test_event_list_routes_to_work_read_events():
+    """sprintctl#1247: `event list` gets a served route (`work.read.events`)
+    even though no served CLI path invokes it yet -- landing the route ahead
+    of the CLI wiring (#1249's event-list sub-part) is the whole point of
+    this change."""
+
+    routes = routes_for("event.list")
+    assert len(routes) == 1
+    assert routes[0].operation == "work.read.events"

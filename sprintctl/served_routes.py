@@ -73,6 +73,7 @@ SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
     ServedRoute("item.status", "work.lifecycle.arbitrate"),
     ServedRoute("sprint.status", "work.lifecycle.arbitrate"),
     ServedRoute("event.observation.add", "work.evidence.ingest"),
+    ServedRoute("event.list", "work.read.events"),
     ServedRoute("item.note", "work.item.note"),
     ServedRoute("authority.sync", "work.batch.apply"),
     ServedRoute("pilot.cutover-evidence", "work.pilot.cutover-evidence"),

@@ -335,6 +335,7 @@ class WorkApplication:
             "work.read.next-work": target._read_next_work,
             "work.read.records": target._read_records,
             "work.read.decisions": target._read_decisions,
+            "work.read.events": target._read_events,
             "work.claim.start": target._claim_start,
             "work.claim.context": target._claim_context,
             "work.claim.arbitrate": target._claim_arbitrate,
@@ -401,6 +402,30 @@ class WorkApplication:
                 "blocks": self.backend.list_deps_blocked_by(self.store, item_id),
             },
         }
+
+    def _read_events(
+        self, arguments: dict[str, Any], _context: InvocationContext
+    ) -> dict[str, Any]:
+        sprint_id = _positive_int(arguments.get("sprint_id"), "sprint_id")
+        sprint = self.backend.get_sprint(self.store, sprint_id)
+        if sprint is None:
+            raise ApplicationRejection(
+                "sprint-not-found", f"Sprint #{sprint_id} not found", 404
+            )
+        work_item_id = _optional_positive_int(
+            arguments.get("work_item_id"), "work_item_id"
+        )
+        events = self.backend.list_events(self.store, sprint_id)
+        if work_item_id is not None:
+            events = [
+                event for event in events if event.get("work_item_id") == work_item_id
+            ]
+        after, limit = _pagination(arguments)
+        if after:
+            events = events[after:]
+        if limit is not None:
+            events = events[:limit]
+        return {"repo_id": self.repo_id, "events": events}
 
     def _resolve_sprint(
         self, requested: Any, *, prefer_backlog: bool = False

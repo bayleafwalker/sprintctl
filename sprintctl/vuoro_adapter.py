@@ -233,6 +233,28 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         )
     ),
     WorkOperationContract(
+        "work.read.events",
+        _object_schema(
+            {
+                "sprint_id": {"type": "integer", "minimum": 1},
+                "work_item_id": {"type": ["integer", "null"], "minimum": 1},
+                "after_offset": {"type": "integer", "minimum": 0, "default": 0},
+                "limit": {"type": ["integer", "null"], "minimum": 1},
+            },
+            required=("sprint_id",),
+        ),
+        _result_schema(
+            ("repo_id", "events"),
+            {
+                "repo_id": {"type": "string"},
+                "events": {"type": "array", "items": {"type": "object"}},
+            },
+        ),
+        "work:read",
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
         "work.claim.start",
         _object_schema(
             {
