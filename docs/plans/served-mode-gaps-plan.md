@@ -1,9 +1,28 @@
 # Served-Mode Gaps — Implementation Brief
 
 Status: planned (dispatch-plan output, 2026-07-24)
-Related items: #1247, #1248, #1249, #1250 (sprint #407, track `served-mode-gaps`);
+Related items: #1982, #1983, #1984, #1985 (sprint #407, track `served-mode-gaps`);
 #1164 (split-backend retirement gate, whose dependency chain is now clear);
 #1195 (served-backend cutover this whole gap set traces back to)
+
+**ID renumbering note (2026-07-25):** these items (plus the sibling closed-loop
+record item, formerly #1251) were originally filed via the direct-remote CLI
+path against the legacy pre-cutover `sprintctl-cnpg-main` Postgres cluster on
+2026-07-24, after that repo's one-off `sprintctl-remote-backfill` window had
+already closed -- they never synced into `vuoro-shared-db` and were invisible
+to every served-mode caller. Recovered 2026-07-25 via a scoped, transactional
+row migration directly into `vuoro-shared-db`'s `work` schema (content and doc
+refs preserved verbatim; sprint/track linkage preserved by reusing the
+existing sprint #407 and newly-created `served-mode-gaps` track; fresh
+`aggregate_uuid`s and Postgres-assigned identity IDs, since the destination's
+global identity sequence already had unrelated rows at 1247/1250). Old -> new
+ID mapping: #1247 -> #1982, #1248 -> #1983, #1249 -> #1984, #1250 -> #1985,
+#1251 -> #1986. All citations below are updated to the new IDs. See sprintctl
+item #1989 (closed-loop record: this renumbering + the legacy DB being made
+read-only in the same pass; filed `done`) for full evidence, including the
+old->new mapping, migration mechanism, and revoke verification. Note #1986
+is the migrated item itself (the authority_repo_uuid fix record), not the
+closed-loop record -- #1989 is the new record documenting this recovery.
 
 ## Why these are in-tract, not deferred work
 
@@ -20,23 +39,23 @@ it against this brief.
 ## Sequencing
 
 ```
-#1247 (vuoro read op: work.read.events)
+#1982 (vuoro read op: work.read.events)
    |
-   +--> #1248 (kctl served source)
+   +--> #1983 (kctl served source)
    |
-   +--> #1249 event-list sub-part (reuses work.read.events directly)
+   +--> #1984 event-list sub-part (reuses work.read.events directly)
 
-#1249 has three independent sub-parts beyond event-list -- event-add,
+#1984 has three independent sub-parts beyond event-list -- event-add,
 sprint-show, item-add -- each needs its own new operation and can land in
 any order, or in parallel across separate builds.
 
-#1250 is fully independent of the other three; smallest, most contained
+#1985 is fully independent of the other three; smallest, most contained
 change; no reason to sequence it after anything.
 ```
 
-Recommended execution order: **#1250 first** (small, isolated, no cross-repo
-release needed beyond sprintctl itself), then **#1247**, then **#1248 and
-#1249's event-list sub-part in parallel**, then **#1249's remaining three
+Recommended execution order: **#1985 first** (small, isolated, no cross-repo
+release needed beyond sprintctl itself), then **#1982**, then **#1983 and
+#1984's event-list sub-part in parallel**, then **#1984's remaining three
 sub-parts** (event-add, item-add, sprint-show, in that order -- sprint-show
 last because its `--detail` mode needs its own design pass, see below).
 
@@ -49,7 +68,7 @@ meaning `doctor` was not actually verifying the catalog before commands ran.
 Recurring this omission is the single most likely way this plan ships
 broken and undetected, exactly like the `authority_repo_uuid` bug did.
 
-## #1247 — Vuoro work-adapter sprint-scoped-events read operation
+## #1982 — Vuoro work-adapter sprint-scoped-events read operation
 
 **Fully a sprintctl-side change.** `vuoro_service/composition.py`'s
 `register_work_catalog` call already registers whatever is present in
@@ -60,7 +79,7 @@ session for the `authority_repo_uuid` fix (sprintctl commit `0938568` ->
 release `vuoro-adapter-v1-0938568` -> vuoro `adapter-pins.json` bump at
 commit `3c262a8` -> tag `vuoro-service-v0.1.4` -> appservice
 `vuoro-shared/app/deployment.yaml` digest bump -> `flux reconcile
-kustomization vuoro-shared --with-source` -- see sprintctl item #1251 for
+kustomization vuoro-shared --with-source` -- see sprintctl item #1986 for
 the closed-loop record of that exact sequence).
 
 Four touch points, all in `sprintctl/`:
@@ -104,7 +123,7 @@ pattern) and client-side for `event_type`/`--knowledge` (rarely
 selective enough to matter, avoids catalog schema churn if CLI flags
 change).
 
-## #1248 — kctl served-mode source
+## #1983 — kctl served-mode source
 
 `/projects/dev/kctl/kctl/source.py` (216 lines) has a clean three-way
 dispatch shape already (`open_sprintctl_source()`, line 183) but only
@@ -120,24 +139,24 @@ itself uses: `pyproject.toml`'s `served` extra, pinned by commit SHA) rather
 than shelling out to the `sprintctl` CLI -- this preserves kctl's existing
 architecture of reading the shared substrate directly instead of adding a
 process-exec dependency on another tool's CLI. `fetch_events` maps directly
-onto #1247's `work.read.events`. `list_preflight_targets` has no obvious
-existing operation to reuse (not mentioned in #1247's scope) -- **open
-question for whoever picks up #1248: does `list_preflight_targets` need its
+onto #1982's `work.read.events`. `list_preflight_targets` has no obvious
+existing operation to reuse (not mentioned in #1982's scope) -- **open
+question for whoever picks up #1983: does `list_preflight_targets` need its
 own new served operation, or can it be satisfied by composing
 `work.read.sprints` (already served) with something else?** Needs a design
-pass before implementation starts; don't assume it's covered by #1247 as
+pass before implementation starts; don't assume it's covered by #1982 as
 filed.
 
-## #1249 — event add / event list / sprint show / item add served-mode awareness
+## #1984 — event add / event list / sprint show / item add served-mode awareness
 
 All four currently call `_get_store(obj)` unconditionally, bypassing the
 `_served_config_or_none` branch that `item status`/`item note` already use.
 The four sub-parts are **not uniform** -- do not treat this as one
 mechanical find-replace:
 
-- **`event list`** (`cli.py:3749`) — once #1247 lands, this is direct reuse
+- **`event list`** (`cli.py:3749`) — once #1982 lands, this is direct reuse
   of `served.read_events`. Smallest of the four sub-parts; do this one
-  alongside or immediately after #1247, not as a separate later pass.
+  alongside or immediately after #1982, not as a separate later pass.
 
 - **`event add`** (`cli.py:2464-2519`, `_event_add_impl`) — currently a
   direct, non-outbox, non-CAS `create_event` call. Best template is
@@ -170,7 +189,7 @@ mechanical find-replace:
   -- resolve by having `--watch` poll the new `work.read.sprint` operation
   in a loop client-side, same as it presumably already polls locally.
 
-## #1250 — advisory lock for `_advance_identity_sequences`
+## #1985 — advisory lock for `_advance_identity_sequences`
 
 `sprintctl/pg.py:1185-1201`. For each table: `SELECT
 pg_get_serial_sequence(...)` then `SELECT setval(seq, COALESCE(MAX(id),1),
@@ -206,10 +225,10 @@ only checks one call's rows would not catch the race this is fixing).
 
 ## Next-steps checklist for the orchestrating session
 
-- [ ] #1250: implement advisory lock + concurrency regression test in
+- [ ] #1985: implement advisory lock + concurrency regression test in
       sprintctl, land on main, no cross-repo release needed for this one
-      alone (though bundling it into the same release as #1247 is fine).
-- [ ] #1247: add `work.read.events` (operation contract, handler, served
+      alone (though bundling it into the same release as #1982 is fine).
+- [ ] #1982: add `work.read.events` (operation contract, handler, served
       route, served.py facade), update `_DOCTOR_PROBE_COMMAND_PATHS` /
       `EXPECTED_OPERATIONS`, add tests, land on sprintctl main, cut a new
       `vuoro-adapter-v1-<sha>` release, bump `vuoro`'s `adapter-pins.json`,
@@ -217,14 +236,14 @@ only checks one call's rows would not catch the race this is fixing).
       `vuoro-shared/app/deployment.yaml` digest, `flux reconcile`, verify
       `doctor: ok` + a live `event list` call from both workstation and
       devbox-agent.
-- [ ] #1249 event-list sub-part: land alongside #1247 (same release train).
-- [ ] #1248: resolve the `list_preflight_targets` open question, then
+- [ ] #1984 event-list sub-part: land alongside #1982 (same release train).
+- [ ] #1983: resolve the `list_preflight_targets` open question, then
       implement `ServedSprintctlSource` in kctl, add `served` extra to
       kctl's `pyproject.toml`, verify `kctl doctor` passes in served mode.
-- [ ] #1249 remaining sub-parts (event-add, item-add, sprint-show-basic):
+- [ ] #1984 remaining sub-parts (event-add, item-add, sprint-show-basic):
       each needs its own operation + served route + doctor-probe update +
       tests; sprint-show's `--detail`/`--watch` handling needs the
       dedicated design pass noted above before implementation starts.
-- [ ] Update this doc's `status:` line and #1247-#1250's descriptions to
+- [ ] Update this doc's `status:` line and #1982-#1985's descriptions to
       point at whichever sub-parts shipped, if the work lands in more than
       one pass (likely, given the phasing above).
