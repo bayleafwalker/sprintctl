@@ -1779,6 +1779,117 @@ class TestNdjsonRoundTrip:
         finally:
             repl_store.conn.close()
 
+    def test_concurrent_imports_serialize_identity_sequence_advance(
+        self, store, pg_test_scope, monkeypatch
+    ):
+        """Regression test for sprintctl#1250.
+
+        _advance_identity_sequences reads MAX(id) then setval()s the shared,
+        cross-repo identity sequence to it. Without IDENTITY_SEQUENCE_LOCK_KEYS,
+        two concurrent import_ndjson calls can each read a stale MAX(id) under
+        READ COMMITTED (neither sees the other's still-uncommitted rows), and
+        because sequence state is non-transactional, whichever call's setval()
+        physically executes last wins -- even if it reflects fewer rows. That
+        can regress the sequence below rows the *other* caller already
+        committed, so a naive test asserting only "my own rows are covered"
+        would not catch it; this asserts the sequence covers the max id across
+        *both* callers.
+
+        Proves two things: (1) the second call's advisory-lock acquisition
+        genuinely blocks until the first call's transaction commits (not just
+        that results happen to come out right), and (2) the resulting sequence
+        value is >= the true combined max of both callers' rows.
+        """
+        repo_a = pg_test_scope("seq-lock-a")
+        repo_b = pg_test_scope("seq-lock-b")
+        base = 2_000_000_000 + int(uuid.uuid4().hex[:6], 16)
+        ids_a = [base, base + 1, base + 2]
+        ids_b = [base + 1000, base + 1001, base + 1002]
+
+        def sprint_records(repo_id, ids):
+            return [
+                {
+                    "table": "sprint",
+                    "repo_id": repo_id,
+                    "data": {"id": i, "name": f"SeqLock-{i}", "goal": "G", "status": "active"},
+                }
+                for i in ids
+            ]
+
+        first_paused = threading.Event()
+        release_first = threading.Event()
+        second_attempted = threading.Event()
+        second_completed = threading.Event()
+        original_advance = pg._advance_identity_sequences
+
+        def instrumented_advance(cur, tables):
+            name = threading.current_thread().name
+            if name == "import-worker-b":
+                second_attempted.set()
+            original_advance(cur, tables)
+            if name == "import-worker-a":
+                first_paused.set()
+                assert release_first.wait(timeout=5)
+            else:
+                second_completed.set()
+
+        monkeypatch.setattr(pg, "_advance_identity_sequences", instrumented_advance)
+        failures = []
+
+        def worker(repo_id, ids):
+            conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+            independent_store = pg.PgStore(conn=conn, repo_id=repo_id)
+            try:
+                pg.import_ndjson(independent_store, sprint_records(repo_id, ids))
+            except BaseException as exc:  # Preserve a worker failure for assertion.
+                failures.append(exc)
+            finally:
+                conn.close()
+
+        first = threading.Thread(
+            target=worker, args=(repo_a, ids_a), name="import-worker-a"
+        )
+        second = threading.Thread(
+            target=worker, args=(repo_b, ids_b), name="import-worker-b"
+        )
+        try:
+            first.start()
+            assert first_paused.wait(timeout=5), "first import never reached the critical section"
+            second.start()
+            assert not second_attempted.wait(timeout=0.2), (
+                "second import bypassed the identity-sequence advisory lock while "
+                "the first import's transaction was still open"
+            )
+            release_first.set()
+            first.join(timeout=15)
+            second.join(timeout=15)
+            assert not first.is_alive() and not second.is_alive()
+            assert second_completed.wait(timeout=5)
+        finally:
+            release_first.set()  # Never leave the first worker parked on failure.
+
+        assert failures == []
+
+        with store.conn.cursor() as cur:
+            cur.execute("SELECT pg_get_serial_sequence('sprint', 'id') AS seq")
+            seq_name = cur.fetchone()["seq"]
+            cur.execute(f"SELECT last_value FROM {seq_name}")  # noqa: S608 - identifier from pg catalog, not user input
+            last_value = cur.fetchone()["last_value"]
+
+        true_max = max(ids_a + ids_b)
+        assert last_value >= true_max, (
+            f"sequence last_value={last_value} regressed below the combined "
+            f"max id={true_max} across both concurrent importers"
+        )
+
+        # Defense in depth: the next ordinary (non-explicit-id) insert must not
+        # collide with either caller's explicitly-imported rows.
+        next_id = pg.create_sprint(
+            pg.PgStore(conn=store.conn, repo_id=repo_a), f"After-{uuid.uuid4().hex[:6]}", "G",
+            status="active",
+        )
+        assert next_id > true_max
+
 
 class TestRemoteBackfill:
     """export_from_postgres + import_ndjson(remap_ids=True): the PostgreSQL-to-

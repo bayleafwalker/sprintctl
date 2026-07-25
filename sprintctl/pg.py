@@ -518,6 +518,21 @@ PG_DDL = _DDL
 # negotiation are owned by pg_migrations; runtime code below owns work data.
 _SCHEMA_BOOTSTRAP_LOCK_KEYS = _pg_migrations.SCHEMA_MIGRATION_LOCK_KEYS
 
+# Identity sequences (sprint/track/work_item/event/claim/ref/dep) are global
+# across every repo sharing this database, not repo-scoped -- see the
+# "global sequence ids may already be taken by other repos" note on
+# import_ndjson. _advance_identity_sequences reads MAX(id) then setval()s the
+# sequence to it; two concurrent import_ndjson calls can each read a stale
+# MAX(id) (READ COMMITTED snapshots don't see each other's uncommitted
+# inserts) and setval to it, and because sequence state changes are
+# non-transactional, whichever setval() physically executes last wins even if
+# it reflects fewer rows -- silently leaving the sequence behind the true
+# global max. This two-int32 fixed-key form (distinct from
+# SCHEMA_MIGRATION_LOCK_KEYS above, ASCII-derived the same way) serializes
+# those calls; unlike authority.py's hashtextextended(ref, 0) per-repo lock
+# form, this one is intentionally global rather than repo-scoped.
+IDENTITY_SEQUENCE_LOCK_KEYS = (0x5345514C, 0x4F434B53)  # "SEQL", "OCKS"
+
 
 @dataclass
 class PgStore:
@@ -2874,6 +2889,12 @@ def import_ndjson(
     id_maps: dict[str, dict[int, int]] = {t: {} for t in _EXPORT_TABLES}
 
     with store.conn.cursor() as cur:
+        # Serialize against every other concurrent import_ndjson call (any
+        # repo) before touching identity sequences: both call sites below
+        # read MAX(id) then setval() it, which races across concurrent
+        # backfills into this shared database. See IDENTITY_SEQUENCE_LOCK_KEYS.
+        cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", IDENTITY_SEQUENCE_LOCK_KEYS)
+
         if remap_ids:
             # Advance every sequence past the current global max BEFORE any deletes,
             # so the max reflects all committed data. Running this after the replace
