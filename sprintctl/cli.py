@@ -904,6 +904,7 @@ def _served_sprint_status(config, sprint_id, new_status, actor, as_json) -> None
         )
         sys.exit(1)
 
+    context = _resolved_context(config)
     actor = (actor or os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown").strip()
     read_result = _run_served(
         "sprint status",
@@ -912,12 +913,13 @@ def _served_sprint_status(config, sprint_id, new_status, actor, as_json) -> None
         repo_id=config.repo_id,
         include_backlog=True,
         include_archive=True,
+        resolved_context=context,
     )
     sprint = next(
         (s for s in read_result["sprints"] if s["id"] == sprint_id), None
     )
     if sprint is None:
-        click.echo(f"Sprint #{sprint_id} not found.", err=True)
+        click.echo(f"Sprint #{sprint_id} not found.\n{_render_resolved_context(context)}", err=True)
         sys.exit(1)
     current = sprint["status"]
     record_type = "sprint.activate" if new_status == "active" else "sprint.close"
@@ -945,6 +947,7 @@ def _served_sprint_status(config, sprint_id, new_status, actor, as_json) -> None
         config.served_profile,
         repo_id=config.repo_id,
         record=_served_record_argument(durable),
+        resolved_context=context,
     )
     if decision["outcome"] != "accepted":
         click.echo(
@@ -987,6 +990,7 @@ def _served_sprint_status(config, sprint_id, new_status, actor, as_json) -> None
         click.echo(
             f"Sprint-close boundary event #{boundary_event_id} (revision {boundary_revision})"
         )
+    click.echo(_render_resolved_context(context))
 
 
 @sprint.command("status")
@@ -1902,6 +1906,7 @@ def _served_item_status(config, item_id, new_status, actor, claim_id, claim_toke
     the item has no active exclusive claim; the served application correctly
     rejects the rest, matching local mode's ClaimConflict for that case.
     """
+    context = _resolved_context(config)
     if claim_id is not None or claim_token is not None:
         click.echo(
             "Error: served item status cannot accept --claim-id/--claim-token: claim "
@@ -1918,6 +1923,7 @@ def _served_item_status(config, item_id, new_status, actor, claim_id, claim_toke
         config.served_profile,
         repo_id=config.repo_id,
         item_id=item_id,
+        resolved_context=context,
     )
     it = read_result["item"]
     current = it["status"]
@@ -1977,7 +1983,8 @@ def _served_item_status(config, item_id, new_status, actor, claim_id, claim_toke
         sys.exit(1)
     if decision["outcome"] != "accepted":
         click.echo(
-            f"Error: {decision.get('reason_code')}: {decision.get('reason_detail')}",
+            f"Error: {decision.get('reason_code')}: {decision.get('reason_detail')}\n"
+            f"{_render_resolved_context(context)}",
             err=True,
         )
         sys.exit(1)
@@ -1992,6 +1999,7 @@ def _served_item_status(config, item_id, new_status, actor, claim_id, claim_toke
         )
         return
     click.echo(f"Item #{item_id} status: {current} -> {final_status}")
+    click.echo(_render_resolved_context(context))
 
 
 @item.command("status")

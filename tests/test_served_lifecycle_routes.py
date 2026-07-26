@@ -568,6 +568,7 @@ def test_served_item_status_surfaces_a_rejected_decision(runner, tmp_path, monke
     )
     assert result.exit_code != 0
     assert "invalid-transition" in result.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in result.output
 
 
 @_requires_312
