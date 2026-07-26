@@ -2700,10 +2700,17 @@ def _event_add_impl(
         click.echo(f"Work item #{work_item_id} not found.", err=True)
         sys.exit(1)
     try:
+        backend_config = obj.get("backend_config")
+        expected_project = (
+            backend_config.repo_id
+            if backend_config is not None
+            and (backend_config.mode != "local" or backend_config.marker is not None)
+            else None
+        )
         eid = m.create_event(
             store, sprint_id, actor, event_type,
             source_type=source_type, work_item_id=work_item_id, payload=payload_dict,
-            expected_project=(obj.get("backend_config").repo_id if obj.get("backend_config") else None),
+            expected_project=expected_project,
         )
     except (TypeError, ValueError) as e:
         click.echo(f"Error: {e}", err=True)
