@@ -7628,16 +7628,28 @@ def claim_list_sprint(obj, sprint_id, show_all, expiring_within, as_json) -> Non
 
 @claim.command("show")
 @click.option("--id", "claim_id", type=int, required=True, help="Claim ID")
-@click.option("--claim-token", required=True, help="Claim token (proves ownership; re-displays the token)")
+@click.option("--claim-token", required=False, help="Claim token (required only by local/remote backends)")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
 def claim_show(obj, claim_id, claim_token, as_json) -> None:
-    """Show a claim and re-display its token (useful after context loss).
+    """Show a claim. Local mode can re-display its token with proof.
 
     Requires the current claim_token to prove ownership before revealing it again.
     """
-    if _served_config_or_none(obj) is not None:
-        _served_operation_unavailable("claim show")
+    config = _served_config_or_none(obj)
+    if config is not None:
+        claim = _run_served("claim show", _served.read_claim, config.served_profile,
+            repo_id=config.repo_id, claim_id=claim_id, resolved_context=_resolved_context(config))["claim"]
+        if as_json:
+            click.echo(json.dumps(claim, indent=2))
+            return
+        click.echo(f"Claim #{claim_id}  actor={claim['actor']}  type={claim['claim_type']}")
+        click.echo(f"  status={claim['status']}  lease_epoch={claim['lease_epoch']}  expires={claim['expires_at']}  identity_status={claim['identity_status']}")
+        click.echo("  claim_token: unavailable in served reads")
+        return
+    if claim_token is None:
+        click.echo("Error: --claim-token is required outside served mode", err=True)
+        sys.exit(1)
     store, m = _get_store(obj)
     claim = m.get_claim(store, claim_id, include_secret=True)
     if claim is None:

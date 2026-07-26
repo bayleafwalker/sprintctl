@@ -334,6 +334,7 @@ class WorkApplication:
             "work.read.item": target._read_item,
             "work.read.items": target._read_items,
             "work.read.claims": target._read_claims,
+            "work.read.claim": target._read_claim,
             "work.read.next-work": target._read_next_work,
             "work.read.records": target._read_records,
             "work.read.decisions": target._read_decisions,
@@ -427,8 +428,29 @@ class WorkApplication:
         sprint_id = _optional_positive_int(arguments.get("sprint_id"), "sprint_id")
         if item_id is not None and sprint_id is not None:
             raise ApplicationRejection("invalid-arguments", "provide at most one of item_id or sprint_id", 422)
+        instance_id = _optional_text(arguments.get("instance_id"), "instance_id")
+        runtime_session_id = _optional_text(arguments.get("runtime_session_id"), "runtime_session_id")
+        hostname = _optional_text(arguments.get("hostname"), "hostname")
+        pid = _optional_positive_int(arguments.get("pid"), "pid")
+        if hostname is None and pid is not None:
+            raise ApplicationRejection("invalid-arguments", "pid requires hostname", 422)
         active_only = bool(arguments.get("active_only", True))
-        if item_id is not None:
+        identity_query = instance_id or runtime_session_id or hostname
+        if identity_query:
+            # Domain backend owns canonical (AND-composed) identity matching
+            # and intentionally searches the entire repository for resume.
+            claims = self.backend.find_claim_by_identity(
+                self.store, instance_id=instance_id, runtime_session_id=runtime_session_id,
+                hostname=hostname, pid=pid, active_only=active_only,
+            )
+            if item_id is not None:
+                claims = [claim for claim in claims if claim["work_item_id"] == item_id]
+            if sprint_id is not None:
+                if self.backend.get_sprint(self.store, sprint_id) is None:
+                    raise ApplicationRejection("sprint-not-found", f"Sprint #{sprint_id} not found", 404)
+                item_ids = {item["id"] for item in self.backend.list_work_items(self.store, sprint_id=sprint_id)}
+                claims = [claim for claim in claims if claim["work_item_id"] in item_ids]
+        elif item_id is not None:
             claims = self.backend.list_claims(self.store, item_id, active_only=active_only)
         elif sprint_id is not None:
             if self.backend.get_sprint(self.store, sprint_id) is None:
@@ -437,19 +459,18 @@ class WorkApplication:
         else:
             sprint = self._resolve_sprint(None)
             claims = self.backend.list_claims_by_sprint(self.store, sprint["id"], active_only=active_only)
-        instance_id = _optional_text(arguments.get("instance_id"), "instance_id")
-        runtime_session_id = _optional_text(arguments.get("runtime_session_id"), "runtime_session_id")
-        hostname = _optional_text(arguments.get("hostname"), "hostname")
-        pid = _optional_positive_int(arguments.get("pid"), "pid")
-        if hostname is None and pid is not None:
-            raise ApplicationRejection("invalid-arguments", "pid requires hostname", 422)
-        if instance_id or runtime_session_id or hostname:
-            claims = [claim for claim in claims if (
-                (instance_id is not None and claim.get("instance_id") == instance_id)
-                or (runtime_session_id is not None and claim.get("runtime_session_id") == runtime_session_id)
-                or (hostname is not None and pid is not None and claim.get("hostname") == hostname and claim.get("pid") == pid)
-            )]
         return {"repo_id": self.repo_id, "claims": claims}
+
+    def _read_claim(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        """Return one claim's inspectable state, never its bearer proof."""
+        claim_id = _positive_int(arguments.get("claim_id"), "claim_id")
+        claim = self.backend.get_claim(self.store, claim_id, include_secret=False)
+        if claim is None:
+            raise ApplicationRejection("claim-not-found", f"Claim #{claim_id} not found", 404)
+        # Backends must honour include_secret=False; keep this defensive
+        # boundary so a serialization regression cannot publish a token.
+        claim.pop("claim_token", None)
+        return {"repo_id": self.repo_id, "claim": claim}
 
     def _item_ref_add(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
         item_id = _positive_int(arguments.get("item_id"), "item_id")

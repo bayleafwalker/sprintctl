@@ -59,9 +59,12 @@ SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
     ServedRoute("claim.list", "work.read.claims"),
     ServedRoute("claim.list-sprint", "work.read.claims"),
     ServedRoute("claim.resume", "work.read.claims"),
+    ServedRoute("claim.show", "work.read.claim"),
     ServedRoute("item.ref.add", "work.item.ref.add"),
+    ServedRoute("item.ref.list", "work.read.item"),
     ServedRoute("item.ref.remove", "work.item.ref.remove"),
     ServedRoute("item.dep.add", "work.item.dep.add"),
+    ServedRoute("item.dep.list", "work.read.item"),
     ServedRoute("item.dep.remove", "work.item.dep.remove"),
     ServedRoute(
         "next-work",

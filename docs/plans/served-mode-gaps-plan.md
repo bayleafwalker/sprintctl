@@ -41,15 +41,15 @@ it against this brief.
 
 The served adapter now has explicit catalog routes for `item list`, `item ref
 add/list/remove`, `item dep add/list/remove`, `claim list`, `claim
-list-sprint`, and identity-filtered `claim resume`.  Ref/dependency listing is
+list-sprint`, identity-filtered `claim resume`, and non-secret `claim show`.
+Ref/dependency listing is
 an explicit CLI command backed by `work.read.item`; it is not an undocumented
 instruction to scrape `item show`.  Writes are direct catalog operations and
 never fall back to a local or direct-Postgres store.
 
 The following remain deliberately fail-closed until their *full* contracts are
 served: `usage --context`, `next-work --explain`, `session resume`, sprint
-`handoff`, `claim show` (which must not expose/revalidate bearer proof via an
-unauthenticated read), `claim recover`, coordinator `claim create`, and
+`handoff`, `claim recover`, coordinator `claim create`, and
 atomic `item done-from-claim`.  A raw aggregate read is not context parity:
 the context contract also owns stale-work, conflict, decision, and next-action
 derivation.  `sprintctl doctor` probes every operation used by the supported

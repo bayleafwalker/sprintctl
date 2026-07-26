@@ -82,7 +82,6 @@ def _outbox_records(tmp_path):
     [
         ["usage", "--context"],
         ["item", "done-from-claim", "--id", "3", "--claim-id", "4", "--claim-token", "secret"],
-        ["claim", "show", "--id", "3", "--claim-token", "secret"],
         ["claim", "recover", "--id", "3"],
         ["claim", "create", "--item-id", "3", "--actor", "agent"],
         ["session", "resume"],
@@ -149,6 +148,19 @@ def test_served_blind_loop_lists_and_links_use_catalog_facade(runner, tmp_path, 
     ):
         result = runner.invoke(cli, argv)
         assert result.exit_code == 0, result.output
+
+
+@_requires_312
+def test_served_claim_show_inspects_without_token_or_store(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli_module, "_get_store", lambda _obj: pytest.fail("served command opened store"))
+    monkeypatch.setattr(cli_module._served, "read_claim", lambda *a, **k: {"claim": {
+        "claim_id": 3, "actor": "agent", "claim_type": "execute", "status": "active",
+        "lease_epoch": 1, "expires_at": "later", "identity_status": "verified",
+    }})
+    result = runner.invoke(cli, ["claim", "show", "--id", "3", "--json"])
+    assert result.exit_code == 0, result.output
+    assert "claim_token" not in json.loads(result.output)
 
 
 @_requires_312

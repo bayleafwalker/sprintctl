@@ -205,6 +205,12 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work:read", "read", "not-allowed",
     ),
     WorkOperationContract(
+        "work.read.claim",
+        _object_schema({"claim_id": {"type": "integer", "minimum": 1}}, required=("claim_id",)),
+        _result_schema(("repo_id", "claim"), {"repo_id": {"type": "string"}, "claim": {"type": "object"}}),
+        "work:read", "read", "not-allowed",
+    ),
+    WorkOperationContract(
         "work.read.next-work",
         _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
         _result_schema(

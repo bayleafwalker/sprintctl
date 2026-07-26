@@ -342,10 +342,26 @@ def test_served_claim_resume_filters_identity_on_server(conn, active_sprint):
     track = db.get_or_create_track(conn, active_sprint["id"], "served")
     item_id = db.create_work_item(conn, active_sprint["id"], track, "Resume")
     db.create_claim(conn, item_id, "agent", instance_id="instance-a", runtime_session_id="run-a", hostname="host", pid=7)
+    other_sprint = db.create_sprint(conn, "other", status="planned")
+    other_track = db.get_or_create_track(conn, other_sprint, "served")
+    other_item = db.create_work_item(conn, other_sprint, other_track, "Other")
+    mismatch_item = db.create_work_item(conn, other_sprint, other_track, "Mismatch")
+    db.create_claim(conn, other_item, "agent", instance_id="instance-a", runtime_session_id="run-a", hostname="host", pid=7)
+    db.create_claim(conn, mismatch_item, "agent", instance_id="instance-a", runtime_session_id="different", hostname="host", pid=7)
     app = _application(store=conn, backend=db)
-    result = app.invoke("work.read.claims", {"item_id": item_id, "active_only": True, "instance_id": "instance-a", "runtime_session_id": None, "hostname": None, "pid": None}, _context())
-    assert len(result["claims"]) == 1
+    result = app.invoke("work.read.claims", {"item_id": None, "sprint_id": None, "active_only": True, "instance_id": "instance-a", "runtime_session_id": "run-a", "hostname": "host", "pid": 7}, _context())
+    assert {claim["work_item_id"] for claim in result["claims"]} == {item_id, other_item}
+    assert all(claim["runtime_session_id"] == "run-a" for claim in result["claims"])
     assert app.invoke("work.read.claims", {"item_id": item_id, "active_only": True, "instance_id": "other", "runtime_session_id": None, "hostname": None, "pid": None}, _context())["claims"] == []
+
+
+def test_served_claim_show_never_returns_bearer_token(conn, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "served")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Inspect")
+    claim_id = db.create_claim(conn, item_id, "agent")
+    result = _application(store=conn, backend=db).invoke("work.read.claim", {"claim_id": claim_id}, _context())
+    assert result["claim"]["claim_id"] == claim_id
+    assert "claim_token" not in result["claim"]
 
 
 def test_read_events_returns_sprint_events_in_order(conn, active_sprint):

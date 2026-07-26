@@ -110,6 +110,11 @@ def read_claims(served_profile: ServedProfile, *, repo_id: str, item_id: int | N
     }, repo_id=repo_id))
 
 
+def read_claim(served_profile: ServedProfile, *, repo_id: str, claim_id: int) -> dict[str, Any]:
+    """Inspect a claim without ever returning its bearer token."""
+    return asyncio.run(_invoke_operation(served_profile, "work.read.claim", {"claim_id": claim_id}, repo_id=repo_id))
+
+
 def item_ref_add(served_profile: ServedProfile, *, repo_id: str, item_id: int, ref_type: str, url: str, label: str = "") -> dict[str, Any]:
     return asyncio.run(_invoke_operation(served_profile, "work.item.ref.add", {"item_id": item_id, "ref_type": ref_type, "url": url, "label": label}, repo_id=repo_id))
 
@@ -478,9 +483,12 @@ _DOCTOR_PROBE_COMMAND_PATHS = (
     "claim.list",
     "claim.list-sprint",
     "claim.resume",
+    "claim.show",
     "item.ref.add",
+    "item.ref.list",
     "item.ref.remove",
     "item.dep.add",
+    "item.dep.list",
     "item.dep.remove",
     "next-work",
     "claim.start",
@@ -544,6 +552,7 @@ __all__ = [
     "read_item",
     "read_items",
     "read_claims",
+    "read_claim",
     "read_next_work",
     "read_sprint",
     "read_sprints",
