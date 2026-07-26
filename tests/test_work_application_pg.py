@@ -289,6 +289,31 @@ def test_invoke_scopes_to_the_identitys_repo_id_not_the_application_constructor(
     store_b.conn.close()
 
 
+def test_context_aggregate_uses_a_fresh_snapshot_after_a_reused_connection_read(
+    store_factory,
+):
+    """A prior implicit transaction on the service connection is not ours to
+    reconfigure or close; the aggregate opens a sibling repeatable-read read."""
+    store = store_factory("context-reused-connection")
+    sprint_id = pg.create_sprint(store, "Context", status="active")
+    track_id = pg.get_or_create_track(store, sprint_id, "work")
+    pg.create_work_item(store, sprint_id, track_id, "Ready")
+    store.conn.commit()
+
+    # This is the ordinary non-autocommit reuse case: an earlier read leaves
+    # the shared connection in a transaction before the next invocation.
+    assert pg.list_sprints(store)
+    result = _application(store, {}).invoke(
+        "work.read.context", {"sprint_id": sprint_id}, _context("reader", None, None)
+    )
+
+    assert result["contract_version"] == "1"
+    assert result["summary"]["ready"] == 1
+    assert result["next_action"]["kind"] == "start-ready-item"
+    store.conn.rollback()
+    store.conn.close()
+
+
 @pytest.mark.parametrize(
     ("operation", "mismatch", "expected_code"),
     [

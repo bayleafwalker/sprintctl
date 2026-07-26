@@ -14,7 +14,7 @@ not add a second request ledger or a second state machine.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -594,16 +594,17 @@ class WorkApplication:
         point in time instead of exposing a client-composed partial result.
         """
         now = datetime.now(timezone.utc)
-        conn = getattr(self.store, "conn", None)
-        if conn is not None and hasattr(conn, "transaction"):
-            with conn.transaction():
-                with conn.cursor() as cursor:
-                    cursor.execute(
-                        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
-                    )
+        snapshot = getattr(self.backend, "repeatable_read_snapshot", None)
+        if callable(snapshot):
+            # Never alter the service's shared connection: a prior invocation
+            # may have started its implicit non-autocommit transaction.
+            with snapshot(self.store) as snapshot_store:
+                snapshot_app = replace(self, store=snapshot_store)
                 return context_contract.build_context_contract(
-                    self.store, self._resolve_sprint(arguments.get("sprint_id")), now,
-                    backend=self.backend
+                    snapshot_store,
+                    snapshot_app._resolve_sprint(arguments.get("sprint_id")),
+                    now,
+                    backend=self.backend,
                 )
         return context_contract.build_context_contract(
             self.store, self._resolve_sprint(arguments.get("sprint_id")), now,

@@ -19,6 +19,7 @@ import hashlib
 import json
 import logging
 import secrets
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -539,6 +540,35 @@ class PgStore:
     conn: Any  # psycopg.Connection when psycopg is available
     repo_id: str
     authority_repo_uuid: str | None = None
+
+
+@contextmanager
+def repeatable_read_snapshot(store: PgStore):
+    """Yield an isolated, read-only repeatable-read store for one aggregate.
+
+    A service worker reuses its normal non-autocommit connection across
+    invocations.  An earlier read can therefore leave an implicit transaction
+    open, where PostgreSQL rejects ``SET TRANSACTION``.  Aggregate reads must
+    not commit or roll back that caller-owned transaction, so they use this
+    short-lived sibling connection instead of trying to reconfigure it.
+    """
+    if not _PSYCOPG_AVAILABLE:  # pragma: no cover - defensive optional-extra guard
+        raise RuntimeError("psycopg is not installed")
+    snapshot_conn = psycopg.connect(store.conn.info.dsn, row_factory=dict_row)
+    snapshot_store = PgStore(
+        conn=snapshot_conn,
+        repo_id=store.repo_id,
+        authority_repo_uuid=store.authority_repo_uuid,
+    )
+    try:
+        with snapshot_conn.transaction():
+            with snapshot_conn.cursor() as cursor:
+                cursor.execute(
+                    "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+                )
+            yield snapshot_store
+    finally:
+        snapshot_conn.close()
 
 
 # ---------------------------------------------------------------------------
