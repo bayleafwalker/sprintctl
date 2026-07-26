@@ -214,6 +214,21 @@ class TestGetReadyItems:
 # ---------------------------------------------------------------------------
 
 class TestDepCLI:
+    def test_item_dep_add_accepts_same_repo_scoped_references(
+        self, runner, conn, active_sprint, db_path, tmp_path
+    ):
+        iid_a = _item(conn, active_sprint["id"], "A")
+        iid_b = _item(conn, active_sprint["id"], "B")
+
+        result = runner.invoke(cli, [
+            "item", "dep", "add",
+            "--id", f"{tmp_path.name}#{iid_a}",
+            "--blocks-item-id", f"{tmp_path.name}#{iid_b}",
+        ])
+
+        assert result.exit_code == 0, result.output
+        assert db.list_deps_blocking(conn, iid_b)[0]["item_id"] == iid_a
+
     def test_item_dep_add_basic(self, runner, conn, active_sprint, db_path):
         iid_a = _item(conn, active_sprint["id"], "A")
         iid_b = _item(conn, active_sprint["id"], "B")

@@ -1262,13 +1262,14 @@ def item_add(obj, sprint_id: str, track_name, title, description, assignee, prio
 
 
 @item.command("edit")
-@click.option("--id", "item_id", type=int, required=True, help="Item ID")
+@click.option("--id", "item_id", type=str, required=True, help="Item ID or repo#id")
 @click.option("--description", required=True, help="Non-empty implementation scope or objective")
 @click.option("--actor", default=None, help="Actor name (default: actor)")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output updated item as JSON")
 @click.pass_obj
-def item_edit(obj, item_id, description, actor, as_json) -> None:
+def item_edit(obj, item_id: str, description, actor, as_json) -> None:
     """Replace a work item's description."""
+    item_id = _apply_scoped_id(obj, item_id, field="item")
     try:
         _db.validate_work_item_description(description)
     except ValueError as exc:
@@ -1308,18 +1309,19 @@ def item_edit(obj, item_id, description, actor, as_json) -> None:
 
 
 @item.command("priority")
-@click.option("--id", "item_id", type=int, required=True, help="Item ID")
+@click.option("--id", "item_id", type=str, required=True, help="Item ID or repo#id")
 @click.option("--set", "priority", type=int, default=None, help="Priority 1-9 (1 = highest)")
 @click.option("--clear", is_flag=True, default=False, help="Clear the priority (unprioritized)")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output updated item as JSON")
 @click.pass_obj
-def item_priority(obj, item_id, priority, clear, as_json) -> None:
+def item_priority(obj, item_id: str, priority, clear, as_json) -> None:
     """Set or clear a work item's native priority.
 
     Priority orders next-work suggestions (1 first, unprioritized last) and
     replaces the legacy [pN] title-prefix convention, which remains recognized
     as a fallback when no native priority is set.
     """
+    item_id = _apply_scoped_id(obj, item_id, field="item")
     if (priority is None) == (not clear):
         click.echo("Error: pass exactly one of --set N or --clear.", err=True)
         sys.exit(1)
@@ -1780,24 +1782,27 @@ def _served_item_note(
 
 
 @item.command("note")
-@click.option("--id", "item_id", type=int, required=True, help="Work item ID")
+@click.option("--id", "item_id", type=str, required=True, help="Work item ID or repo#id")
 @click.option("--type", "note_type", required=True, help="Note type (e.g. decision, blocker, update)")
 @click.option("--summary", required=True, help="Short summary")
 @click.option("--detail", default=None, help="Extended detail")
 @click.option("--tags", default=None, help="Comma-separated tags")
 @click.option("--actor", default="actor", help="Actor name (default: actor)")
-@click.option("--evidence-item-id", type=int, default=None, help="Work item ID this knowledge came from")
+@click.option("--evidence-item-id", type=str, default=None, help="Work item ID or repo#id this knowledge came from")
 @click.option("--evidence-event-id", type=int, default=None, help="Event ID this knowledge came from")
 @click.option("--git-branch", default=None, help="Git branch name at time of note")
 @click.option("--git-sha", default=None, help="Git commit SHA at time of note")
 @click.option("--git-worktree", default=None, help="Git worktree path at time of note")
 @click.pass_obj
 def item_note(
-    obj, item_id, note_type, summary, detail, tags, actor,
+    obj, item_id: str, note_type, summary, detail, tags, actor,
     evidence_item_id, evidence_event_id,
     git_branch, git_sha, git_worktree,
 ) -> None:
     """Record a structured note event on a work item."""
+    item_id = _apply_scoped_id(obj, item_id, field="item")
+    if evidence_item_id is not None:
+        evidence_item_id = _apply_scoped_id(obj, evidence_item_id, field="item")
     config = _served_config_or_none(obj)
     if config is not None:
         _served_item_note(
@@ -2125,7 +2130,7 @@ def item_ref() -> None:
 
 
 @item_ref.command("add")
-@click.option("--id", "item_id", type=int, required=True, help="Work item ID")
+@click.option("--id", "item_id", type=str, required=True, help="Work item ID or repo#id")
 @click.option(
     "--type", "ref_type",
     required=True,
@@ -2141,8 +2146,9 @@ def item_ref() -> None:
 )
 @click.option("--label", default="", help="Short human-readable label")
 @click.pass_obj
-def item_ref_add(obj, item_id, ref_type, url, label) -> None:
+def item_ref_add(obj, item_id: str, ref_type, url, label) -> None:
     """Attach an external reference to a work item."""
+    item_id = _apply_scoped_id(obj, item_id, field="item")
     store, m = _get_store(obj)
     try:
         ref_id = m.add_ref(store, item_id, ref_type, url, label)
@@ -2153,11 +2159,12 @@ def item_ref_add(obj, item_id, ref_type, url, label) -> None:
 
 
 @item_ref.command("list")
-@click.option("--id", "item_id", type=int, required=True, help="Work item ID")
+@click.option("--id", "item_id", type=str, required=True, help="Work item ID or repo#id")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
-def item_ref_list(obj, item_id, as_json) -> None:
+def item_ref_list(obj, item_id: str, as_json) -> None:
     """List external references on a work item."""
+    item_id = _apply_scoped_id(obj, item_id, field="item")
     store, m = _get_store(obj)
     if m.get_work_item(store, item_id) is None:
         click.echo(f"Item #{item_id} not found.", err=True)
@@ -2175,11 +2182,12 @@ def item_ref_list(obj, item_id, as_json) -> None:
 
 
 @item_ref.command("remove")
-@click.option("--id", "item_id", type=int, required=True, help="Work item ID")
+@click.option("--id", "item_id", type=str, required=True, help="Work item ID or repo#id")
 @click.option("--ref-id", type=int, required=True, help="Ref ID to remove")
 @click.pass_obj
-def item_ref_remove(obj, item_id, ref_id) -> None:
+def item_ref_remove(obj, item_id: str, ref_id) -> None:
     """Remove an external reference from a work item."""
+    item_id = _apply_scoped_id(obj, item_id, field="item")
     store, m = _get_store(obj)
     try:
         m.remove_ref(store, ref_id, item_id)
@@ -2199,11 +2207,13 @@ def item_dep() -> None:
 
 
 @item_dep.command("add")
-@click.option("--id", "item_id", type=int, required=True, help="Blocker item ID (must complete first)")
-@click.option("--blocks-item-id", type=int, required=True, help="ID of the item being blocked")
+@click.option("--id", "item_id", type=str, required=True, help="Blocker item ID or repo#id (must complete first)")
+@click.option("--blocks-item-id", type=str, required=True, help="ID or repo#id of the item being blocked")
 @click.pass_obj
-def item_dep_add(obj, item_id, blocks_item_id) -> None:
+def item_dep_add(obj, item_id: str, blocks_item_id: str) -> None:
     """Record that item --id must complete before --blocks-item-id can start."""
+    item_id = _apply_scoped_id(obj, item_id, field="item")
+    blocks_item_id = _apply_scoped_id(obj, blocks_item_id, field="item")
     store, m = _get_store(obj)
     try:
         dep_id = m.add_dep(store, item_id, blocks_item_id)
@@ -2214,11 +2224,12 @@ def item_dep_add(obj, item_id, blocks_item_id) -> None:
 
 
 @item_dep.command("list")
-@click.option("--id", "item_id", type=int, required=True, help="Work item ID")
+@click.option("--id", "item_id", type=str, required=True, help="Work item ID or repo#id")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
-def item_dep_list(obj, item_id, as_json) -> None:
+def item_dep_list(obj, item_id: str, as_json) -> None:
     """List dependencies for a work item (what blocks it and what it blocks)."""
+    item_id = _apply_scoped_id(obj, item_id, field="item")
     store, m = _get_store(obj)
     if m.get_work_item(store, item_id) is None:
         click.echo(f"Item #{item_id} not found.", err=True)
@@ -2242,11 +2253,12 @@ def item_dep_list(obj, item_id, as_json) -> None:
 
 
 @item_dep.command("remove")
-@click.option("--id", "item_id", type=int, required=True, help="Work item ID (either side of the dep)")
+@click.option("--id", "item_id", type=str, required=True, help="Work item ID or repo#id (either side of the dep)")
 @click.option("--dep-id", type=int, required=True, help="Dep ID to remove")
 @click.pass_obj
-def item_dep_remove(obj, item_id, dep_id) -> None:
+def item_dep_remove(obj, item_id: str, dep_id) -> None:
     """Remove a dependency."""
+    item_id = _apply_scoped_id(obj, item_id, field="item")
     store, m = _get_store(obj)
     try:
         m.remove_dep(store, dep_id, item_id)
