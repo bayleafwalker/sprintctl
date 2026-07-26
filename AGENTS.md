@@ -212,6 +212,14 @@ sprintctl git-context [--json]
 
 ## Refs and deps
 
+### Repository-scoped references
+
+On shared `remote` or `served` state, cite an item as `repo#id` (for example,
+`sprintctl#1984`) in plans, handoffs, and chat. `item show`, `item status`,
+`item add`, `event add`, and `sprint show` accept that form. A bare numeric ID
+is only safe when the repository marker already establishes the scope; never
+infer another repository from a similarly numbered item.
+
 An item is shaped only when it has a governing doc ref or an explicit `No doc:`
 decision note. Follow `docs/reference/doc-refs.md`; agents never set a doc to
 `ratified` themselves.

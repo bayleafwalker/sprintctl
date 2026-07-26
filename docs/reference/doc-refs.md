@@ -1,5 +1,14 @@
 # Doc refs: linking work items to their design docs
 
+## Scope the work-item reference first
+
+When documenting shared `remote` or `served` work, write the work-item
+reference as `repo#id`, for example `sprintctl#1984`. This is the stable,
+human-readable scope declaration for a multi-tenant store; do not rely on a
+bare `#id` outside an already identified repository. Commands that accept a
+work-item target may accept the same form (for example,
+`sprintctl item show --id sprintctl#1984`).
+
 Work items carry a one-line title; the actual implementation scope usually
 lives in a repo doc (`docs/plans/`, `docs/sprints/`). The doc ref is the
 machine link between the two. This page defines the convention: how docs
