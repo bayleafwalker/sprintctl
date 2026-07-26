@@ -346,6 +346,13 @@ whole acceptance list and must not be read as a release/deployment claim.
   the last D4/D6 evidence gap found during the source acceptance audit.
   GitHub CI run `30192732608` is green across both full Python suites,
   disposable-Postgres integration, and the producer-contract job.
+- `02c0b23` makes marker-less remote and served identity refusal consistently
+  report `backend-uncorroborated` before any command can attempt a backend
+  read; `4508bd6` updates the served-mode contract expectation. Direct
+  backend/lifecycle acceptance coverage passed 95 tests, including all four
+  named marker-less read commands. GitHub CI run `30192895015` is green across
+  both full Python suites, disposable-Postgres integration, and the
+  producer-contract job.
 
 ## Acceptance checks
 
