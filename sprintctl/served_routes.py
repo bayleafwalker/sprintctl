@@ -37,6 +37,7 @@ is pure data, checkable independent of the CLI wiring that will consume it.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +108,7 @@ SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
     ServedRoute("event.observation.add", "work.evidence.ingest"),
     ServedRoute("event.list", "work.read.events"),
     ServedRoute("event.add", "work.event.add"),
+    ServedRoute("event.log", "work.event.add", notes="Alias for `event add`."),
     ServedRoute("item.add", "work.item.create"),
     ServedRoute("sprint.show", "work.read.sprint"),
     ServedRoute("sprint.show.detail", "work.read.sprint-detail"),
@@ -114,6 +116,99 @@ SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
     ServedRoute("authority.sync", "work.batch.apply"),
     ServedRoute("pilot.cutover-evidence", "work.pilot.cutover-evidence"),
 )
+
+
+# Every executable Click leaf is classified here, rather than leaving served
+# support to an accidental consequence of whether its callback happens to call
+# ``_get_store``.  ``catalog`` commands have a Vuoro route (some select a
+# route from their options); ``local`` commands are intentionally backend-free
+# diagnostics; and ``unavailable`` commands must fail before any store is
+# constructed.  Keep this table in lockstep with the Click tree -- the CLI
+# imports it and asserts exact coverage at import time.
+ServedDisposition = Literal["catalog", "local", "unavailable"]
+
+SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
+    "doctor": "local",
+    "sprint create": "catalog",
+    "sprint show": "catalog",
+    "sprint status": "catalog",
+    "sprint list": "catalog",
+    "sprint kind": "unavailable",
+    "sprint backlog-seed": "unavailable",
+    "item add": "catalog",
+    "item edit": "unavailable",
+    "item priority": "unavailable",
+    "item show": "catalog",
+    "item list": "catalog",
+    "item note": "catalog",
+    "item status": "catalog",
+    "item done-from-claim": "catalog",
+    "item ref add": "catalog",
+    "item ref list": "catalog",
+    "item ref remove": "catalog",
+    "item dep add": "catalog",
+    "item dep list": "catalog",
+    "item dep remove": "catalog",
+    "event observation add": "unavailable",
+    "event observation list": "unavailable",
+    "event add": "catalog",
+    "event log": "catalog",
+    "event list": "catalog",
+    "authority status": "unavailable",
+    "authority mode": "unavailable",
+    "authority submit": "unavailable",
+    "authority sync": "catalog",
+    "authority recover-proof": "unavailable",
+    "authority clear-proof": "unavailable",
+    "pilot status": "unavailable",
+    "pilot enable": "unavailable",
+    "pilot disable": "unavailable",
+    "pilot verify": "unavailable",
+    "pilot sync": "unavailable",
+    "pilot cutover-evidence": "catalog",
+    "projection-reads status": "unavailable",
+    "projection-reads enable": "unavailable",
+    "projection-reads disable": "unavailable",
+    "takeup sweep": "unavailable",
+    "takeup take": "unavailable",
+    "takeup release": "unavailable",
+    "takeup list": "unavailable",
+    "takeup show": "unavailable",
+    "maintain check": "unavailable",
+    "maintain sweep": "unavailable",
+    "maintain carryover": "unavailable",
+    "db vacuum": "unavailable",
+    "db integrity": "unavailable",
+    "db recover-from-remote": "unavailable",
+    "export": "unavailable",
+    "import": "unavailable",
+    "claim create": "unavailable",
+    "claim start": "catalog",
+    "claim heartbeat": "catalog",
+    "claim release": "catalog",
+    "claim handoff": "catalog",
+    "claim list": "catalog",
+    "claim list-sprint": "catalog",
+    "claim show": "catalog",
+    "claim resume": "catalog",
+    "claim recover": "unavailable",
+    "handoff": "catalog",
+    "agent-protocol": "local",
+    "next-work": "catalog",
+    "context-candidates": "unavailable",
+    "session resume": "unavailable",
+    # The no-option form prints static command help. ``usage --context`` is
+    # catalog-backed; the CLI selects that disposition from parsed options.
+    "usage": "local",
+    "git-context": "local",
+    "render": "unavailable",
+    "remote-schema check": "unavailable",
+    "remote-schema migrate": "unavailable",
+    "migrate-to-remote": "unavailable",
+    "remote-backfill": "unavailable",
+    "repo list": "unavailable",
+    "repo delete": "unavailable",
+}
 
 
 _ROUTES_BY_COMMAND: dict[str, tuple[ServedRoute, ...]] = {}
@@ -130,4 +225,10 @@ def routes_for(command_path: str) -> tuple[ServedRoute, ...]:
     return _ROUTES_BY_COMMAND.get(command_path, ())
 
 
-__all__ = ["ServedRoute", "SERVED_COMMAND_ROUTES", "routes_for"]
+__all__ = [
+    "ServedDisposition",
+    "ServedRoute",
+    "SERVED_COMMAND_DISPOSITIONS",
+    "SERVED_COMMAND_ROUTES",
+    "routes_for",
+]

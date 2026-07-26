@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 import uuid
+from functools import wraps
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TextIO
@@ -361,6 +362,41 @@ def _served_operation_unavailable(command: str, *, replacement: str | None = Non
         message += " Use an explicitly configured local or remote recovery backend."
     click.echo(message, err=True)
     sys.exit(1)
+
+
+def _served_disposition(command_path: str, params: dict[str, object]) -> _served_routes.ServedDisposition:
+    """Return the explicit served-mode disposition for one Click leaf.
+
+    ``usage`` has two intentionally different surfaces: static command help is
+    local and backend-free, while ``usage --context`` is a catalog read.  All
+    other option-sensitive served limitations remain in their catalog-backed
+    callbacks, where they can give a precise option-level diagnostic.
+    """
+    if command_path == "usage" and params.get("as_context"):
+        return "catalog"
+    return _served_routes.SERVED_COMMAND_DISPOSITIONS[command_path]
+
+
+def _guard_served_command(command_path: str, params: dict[str, object]) -> None:
+    """Fail unavailable served commands before their callback can open a store."""
+    disposition = _served_disposition(command_path, params)
+    if disposition == "local":
+        return
+    config = _served_config_or_none(click.get_current_context().find_root().obj)
+    if config is None or disposition == "catalog":
+        return
+    replacements = {
+        "claim create": (
+            "Use served 'claim start' for a single execute claim; "
+            "coordinator/subclaim creation is not yet catalogued."
+        ),
+        "claim recover": (
+            "Claim recovery is local-sidecar-only; use an existing claim token "
+            "or an authorized handoff."
+        ),
+        "session resume": "The combined session-resume contract is not yet served.",
+    }
+    _served_operation_unavailable(command_path, replacement=replacements.get(command_path))
 
 
 def _run_served(operation_label: str, func, *args, resolved_context: dict[str, str | None] | None = None, **kwargs):
@@ -9409,3 +9445,50 @@ def repo_delete(obj, repo_id, skip_confirm) -> None:
     total = sum(counts.values())
     deleted = {t: n for t, n in counts.items() if n > 0}
     click.echo(f"Deleted {total} rows for '{repo_id}': {deleted}")
+
+
+def _click_leaf_paths(command: click.Command, prefix: tuple[str, ...] = ()) -> set[str]:
+    """Return every executable Click leaf below ``command``.
+
+    This intentionally inspects the constructed Click tree, not a duplicate
+    hand-maintained list.  The import-time equality assertion makes adding a
+    command a conscious served-mode decision.
+    """
+    if isinstance(command, click.Group):
+        return {
+            path
+            for name, child in command.commands.items()
+            for path in _click_leaf_paths(child, (*prefix, name))
+        }
+    return {" ".join(prefix)}
+
+
+def _install_served_command_guards(command: click.Command, prefix: tuple[str, ...] = ()) -> None:
+    """Wrap each Click leaf before its callback can construct a backend store."""
+    if isinstance(command, click.Group):
+        for name, child in command.commands.items():
+            _install_served_command_guards(child, (*prefix, name))
+        return
+
+    command_path = " ".join(prefix)
+    callback = command.callback
+    assert callback is not None, f"Click leaf {command_path!r} has no callback"
+
+    @wraps(callback)
+    def guarded_callback(*args, __callback=callback, __path=command_path, **kwargs):
+        _guard_served_command(__path, kwargs)
+        return __callback(*args, **kwargs)
+
+    # Regression tests inspect this marker to prove the structural inventory
+    # is enforced, rather than merely documented.
+    guarded_callback.__served_guard_path__ = command_path
+    command.callback = guarded_callback
+
+
+_CLICK_LEAF_PATHS = _click_leaf_paths(cli)
+assert _CLICK_LEAF_PATHS == set(_served_routes.SERVED_COMMAND_DISPOSITIONS), (
+    "SERVED_COMMAND_DISPOSITIONS must classify every Click leaf exactly; "
+    f"unclassified={sorted(_CLICK_LEAF_PATHS - set(_served_routes.SERVED_COMMAND_DISPOSITIONS))}, "
+    f"stale={sorted(set(_served_routes.SERVED_COMMAND_DISPOSITIONS) - _CLICK_LEAF_PATHS)}"
+)
+_install_served_command_guards(cli)
