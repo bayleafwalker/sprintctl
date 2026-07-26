@@ -77,9 +77,9 @@ def test_remote_mode_requires_repo_identity(tmp_path):
                 "SPRINTCTL_BACKEND": "remote",
                 "SPRINTCTL_URL": "postgresql://example/db",
             },
-        )
+    )
     except backend.BackendConfigError as exc:
-        assert "cannot resolve repo_id for remote mode" in str(exc)
+        assert "backend-uncorroborated" in str(exc)
     else:
         raise AssertionError("expected backend config error")
 
@@ -285,8 +285,47 @@ def test_cli_preflight_errors_before_creating_local_db(tmp_path, monkeypatch, ru
     result = runner.invoke(cli, ["sprint", "list"])
 
     assert result.exit_code == 1
-    assert "cannot resolve repo_id for remote mode" in result.output
+    assert "backend-uncorroborated" in result.output
     assert not (tmp_path / ".sprintctl").exists()
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["item", "show", "--id", "1"],
+        ["item", "list"],
+        ["sprint", "show"],
+        ["event", "list", "--sprint-id", "1"],
+    ],
+)
+def test_markerless_remote_preflight_fails_closed_for_each_named_read(
+    tmp_path, monkeypatch, runner, args
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SPRINTCTL_BACKEND", "remote")
+    monkeypatch.setenv("SPRINTCTL_URL", "postgresql://example/db")
+    monkeypatch.delenv("SPRINTCTL_REPO_ID", raising=False)
+
+    result = runner.invoke(cli, args)
+
+    assert result.exit_code == 1
+    assert "backend-uncorroborated" in result.output
+    assert not (tmp_path / ".sprintctl").exists()
+
+
+def test_local_item_show_not_found_reports_env_resolved_context(tmp_path, monkeypatch, runner):
+    workdir = tmp_path / "unrelated"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    monkeypatch.setenv("SPRINTCTL_BACKEND", "local")
+    monkeypatch.setenv("SPRINTCTL_REPO_ID", "env-repo")
+    monkeypatch.setenv("SPRINTCTL_DB", str(tmp_path / "sprintctl.db"))
+
+    result = runner.invoke(cli, ["item", "show", "--id", "1"])
+
+    assert result.exit_code == 1
+    assert "Item #1 not found." in result.output
+    assert "Context: repo=env-repo (source=env) backend=local target=local SQLite" in result.output
 
 
 def test_cli_local_marker_mismatch_errors_before_sqlite_open(tmp_path, monkeypatch, runner):

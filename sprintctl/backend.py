@@ -295,8 +295,8 @@ def load_backend_config(
         )
     if mode in {"remote", "served"} and repo_id is None:
         raise BackendConfigError(
-            f"Error: cannot resolve repo_id for {mode} mode. Run from inside a repository "
-            "with .sprintctl/backend.json or .git."
+            f"Error: backend-uncorroborated: {mode} mode without a repository marker identity "
+            "requires both --repo-id and --allow-markerless-nonlocal for this invocation."
         )
     if marker is not None and marker.backend != mode:
         assert repo_id is not None

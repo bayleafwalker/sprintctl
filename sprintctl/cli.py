@@ -1565,7 +1565,10 @@ def item_show(obj, item_id: str, as_json) -> None:
         store, m = _get_store(obj)
         it = m.get_work_item(store, item_id)
         if it is None:
-            click.echo(f"Item #{item_id} not found.", err=True)
+            click.echo(
+                f"Item #{item_id} not found.\n{_render_resolved_context(context)}",
+                err=True,
+            )
             sys.exit(1)
 
         # Item core fields (status, title, assignee, ...) only ever change via
