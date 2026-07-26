@@ -570,6 +570,30 @@ def test_done_from_claim_is_atomic_and_retries_after_claim_delete(store_factory,
     duplicate = app.invoke("work.lifecycle.arbitrate", {"record": record_to_dict(record)}, context)
     assert duplicate == {**accepted, "duplicate": True}
 
+    kept_id = pg.create_work_item(store, sprint_id, track_id, "Finish but retain claim")
+    pg.set_work_item_status(store, kept_id, "active")
+    kept_item = pg.get_work_item(store, kept_id)
+    kept_claim_id = pg.create_claim(store, kept_id, "worker")
+    kept_claim = pg.get_claim(store, kept_claim_id, include_secret=True)
+    assert kept_claim is not None
+    kept_ref = authority.credential_ref(kept_claim["claim_token"])
+    kept_command = contracts.AuthorityCommand(
+        event_id=str(uuid.uuid4()), record_type="item.done-from-claim", schema_version="1",
+        actor="worker", authored_at="2026-07-26T12:00:00Z",
+        refs={"repo_id": store.authority_repo_uuid, "aggregate_type": "item", "aggregate_uuid": kept_item["aggregate_uuid"]},
+        payload={"claim_id": kept_claim_id, "credential_ref": kept_ref, "keep_claim": True},
+        basis_revision=authority.item_revision(kept_item),
+    )
+    kept_record = _command_record(tmp_path / "atomic-finish-keep.db", kept_command)
+    kept = _application(store, {kept_ref: kept_claim["claim_token"]}).invoke(
+        "work.lifecycle.arbitrate", {"record": record_to_dict(kept_record)},
+        _context("worker", kept_record.basis_revision, kept_record.event_id),
+    )
+    assert kept["outcome"] == "accepted" and kept["effect"]["claim_released"] is False
+    assert kept["effect"]["claim_still_present"] is True
+    assert pg.get_work_item(store, kept_id)["status"] == "done"
+    assert pg.get_claim(store, kept_claim_id) is not None
+
     other_id = pg.create_work_item(store, sprint_id, track_id, "Reject wrong proof")
     pg.set_work_item_status(store, other_id, "active")
     other = pg.get_work_item(store, other_id)
