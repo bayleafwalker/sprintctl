@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,10 @@ class BackendConfigError(ValueError):
 
 
 class ServedProfileError(BackendConfigError):
+    pass
+
+
+class ReferenceParseError(BackendConfigError):
     pass
 
 
@@ -48,6 +53,7 @@ class BackendConfig:
     url: str | None
     repo_root: Path | None
     repo_id: str | None
+    repo_source: str
     marker: BackendMarker | None
     served_profile: ServedProfile | None = None
 
@@ -92,7 +98,10 @@ def resolve_repo_identity(cwd: Path | None = None) -> tuple[Path | None, str | N
     marker = _load_marker(marker_path) if marker_path else None
     if marker is not None:
         repo_root = marker.path.parent.parent
-        repo_id = repo_root.name
+        # The committed marker is stable across a renamed checkout.  The
+        # directory name remains a compatibility fallback only when no marker
+        # exists; it must not turn a clone rename into an identity error.
+        repo_id = marker.repo_id or repo_root.name
     else:
         sqlite_path = _find_upward(start, ".sprintctl/sprintctl.db")
         if sqlite_path is not None:
@@ -103,12 +112,33 @@ def resolve_repo_identity(cwd: Path | None = None) -> tuple[Path | None, str | N
             repo_root = git_path.parent if git_path is not None else None
             repo_id = repo_root.name if repo_root is not None else None
 
-    if marker is not None and marker.repo_id is not None and marker.repo_id != repo_id:
-        raise BackendConfigError(
-            f"Error: repo marker mismatch: marker repo_id='{marker.repo_id}' "
-            f"but directory name resolves to '{repo_id}'."
-        )
     return repo_root, repo_id, marker
+
+
+def parse_scoped_id(value: str | int, *, field: str = "id") -> tuple[str | None, int]:
+    """Parse either a local numeric ID or an explicit ``repo#id`` reference.
+
+    This is intentionally a presentation-layer parser: database identity and
+    schema remain unchanged.  Command groups can adopt it incrementally while
+    sharing one strict malformed-reference error contract.
+    """
+    raw = str(value)
+    if raw.isdecimal() and int(raw) > 0:
+        return None, int(raw)
+    if raw.count("#") != 1:
+        raise ReferenceParseError(
+            f"Error: invalid {field} reference {raw!r}; use a positive integer or repo#id."
+        )
+    repo_id, identifier = raw.split("#", 1)
+    if not repo_id or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", repo_id):
+        raise ReferenceParseError(
+            f"Error: invalid {field} reference {raw!r}; repository name is malformed."
+        )
+    if not identifier.isdecimal() or int(identifier) < 1:
+        raise ReferenceParseError(
+            f"Error: invalid {field} reference {raw!r}; ID must be a positive integer."
+        )
+    return repo_id, int(identifier)
 
 
 def _load_served_profile(path: Path) -> ServedProfile:
@@ -187,6 +217,8 @@ def load_backend_config(
     *,
     cwd: Path | None = None,
     environ: Mapping[str, str] | None = None,
+    explicit_repo_id: str | None = None,
+    allow_markerless_nonlocal: bool = False,
 ) -> BackendConfig:
     env = environ if environ is not None else os.environ
     mode = env.get("SPRINTCTL_BACKEND") or "local"
@@ -219,7 +251,41 @@ def load_backend_config(
             )
         served_profile = _load_served_profile(Path(profile_path_raw).expanduser())
 
-    repo_root, repo_id, marker = resolve_repo_identity(cwd)
+    repo_root, inferred_repo_id, marker = resolve_repo_identity(cwd)
+    env_repo_id = env.get("SPRINTCTL_REPO_ID")
+    marker_repo_id = marker.repo_id if marker is not None else None
+    if explicit_repo_id:
+        repo_id = explicit_repo_id
+        repo_source = "flag"
+    elif env_repo_id:
+        repo_id = env_repo_id
+        repo_source = "env"
+    elif marker_repo_id:
+        repo_id = marker_repo_id
+        repo_source = "marker"
+    else:
+        repo_id = inferred_repo_id
+        repo_source = "cwd" if inferred_repo_id is not None else "unresolved"
+
+    # A marker is the committed repository identity.  Neither a flag nor an
+    # environment override may silently repoint a checkout at another tenant.
+    if marker_repo_id is not None and repo_id is not None and repo_id != marker_repo_id:
+        raise BackendConfigError(
+            f"Error: repo scope mismatch: {repo_source} repo_id='{repo_id}' "
+            f"but repo marker requires '{marker_repo_id}'."
+        )
+    # Without a marker, an explicit repo scope must still corroborate an
+    # available cwd identity rather than silently cross a repository boundary.
+    if (
+        marker is None
+        and explicit_repo_id is not None
+        and inferred_repo_id is not None
+        and explicit_repo_id != inferred_repo_id
+    ):
+        raise BackendConfigError(
+            f"Error: repo scope mismatch: flag repo_id='{explicit_repo_id}' "
+            f"but cwd resolves to '{inferred_repo_id}'."
+        )
     if mode in {"remote", "served"} and repo_id is None:
         raise BackendConfigError(
             f"Error: cannot resolve repo_id for {mode} mode. Run from inside a repository "
@@ -231,12 +297,19 @@ def load_backend_config(
             f"Error: SPRINTCTL_BACKEND={mode} cannot be used in repo '{repo_id}'; "
             f"repo marker requires {marker.backend}."
         )
+    if mode in {"remote", "served"} and marker_repo_id is None:
+        if not explicit_repo_id or not allow_markerless_nonlocal:
+            raise BackendConfigError(
+                f"Error: backend-uncorroborated: {mode} mode without a repository marker identity "
+                "requires both --repo-id and --allow-markerless-nonlocal for this invocation."
+            )
 
     return BackendConfig(
         mode=mode,
         url=url,
         repo_root=repo_root,
         repo_id=repo_id,
+        repo_source=repo_source,
         marker=marker,
         served_profile=served_profile,
     )

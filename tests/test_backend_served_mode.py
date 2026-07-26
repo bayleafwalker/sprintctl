@@ -108,6 +108,12 @@ def test_served_mode_requires_repo_identity(tmp_path):
 @_requires_312
 def test_served_mode_loads_profile_fields(tmp_path):
     (tmp_path / ".git").mkdir()
+    marker_dir = tmp_path / ".sprintctl"
+    marker_dir.mkdir()
+    (marker_dir / "backend.json").write_text(
+        json.dumps({"backend": "served", "repo_id": tmp_path.name}),
+        encoding="utf-8",
+    )
     profile_path = _write_profile(tmp_path / "profile.json")
     config = backend.load_backend_config(
         cwd=tmp_path,

@@ -30,6 +30,12 @@ _requires_312 = pytest.mark.skipif(
 
 def _configure_served_repo(tmp_path, monkeypatch) -> None:
     (tmp_path / ".git").mkdir()
+    marker_dir = tmp_path / ".sprintctl"
+    marker_dir.mkdir()
+    (marker_dir / "backend.json").write_text(
+        json.dumps({"backend": "served", "repo_id": tmp_path.name}),
+        encoding="utf-8",
+    )
     (tmp_path / "sprintctl.dispatch.json").write_text(
         json.dumps({"schema_version": 1, "repo_id": str(uuid4())}),
         encoding="utf-8",

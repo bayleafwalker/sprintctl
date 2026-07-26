@@ -109,13 +109,10 @@ def test_backend_marker_repo_id_mismatch_errors(tmp_path):
         encoding="utf-8",
     )
 
-    try:
-        backend.load_backend_config(cwd=tmp_path, environ={})
-    except backend.BackendConfigError as exc:
-        assert "repo marker mismatch: marker repo_id='wrong'" in str(exc)
-        assert f"directory name resolves to '{tmp_path.name}'" in str(exc)
-    else:
-        raise AssertionError("expected backend config error")
+    config = backend.load_backend_config(cwd=tmp_path, environ={})
+
+    assert config.repo_id == "wrong"
+    assert config.repo_source == "marker"
 
 
 def test_repo_identity_prefers_backend_marker(tmp_path):
@@ -134,6 +131,80 @@ def test_repo_identity_prefers_backend_marker(tmp_path):
     assert repo_root == repo
     assert repo_id == "repo"
     assert marker is not None
+
+
+def test_scoped_id_parser_accepts_bare_and_explicit_references():
+    assert backend.parse_scoped_id("42") == (None, 42)
+    assert backend.parse_scoped_id("sprintctl#42") == ("sprintctl", 42)
+
+
+def test_scoped_id_parser_rejects_malformed_references():
+    for value in ("0", "sprintctl#0", "#42", "sprintctl#", "a#1#2", "bad repo#2"):
+        try:
+            backend.parse_scoped_id(value)
+        except backend.ReferenceParseError as exc:
+            assert "invalid id reference" in str(exc)
+        else:
+            raise AssertionError(f"expected malformed reference error for {value!r}")
+
+
+def test_markerless_remote_requires_explicit_scoped_opt_in(tmp_path):
+    environment = {
+        "SPRINTCTL_BACKEND": "remote",
+        "SPRINTCTL_URL": "postgresql://example/db",
+        "SPRINTCTL_REPO_ID": "env-repo",
+    }
+    try:
+        backend.load_backend_config(cwd=tmp_path, environ=environment)
+    except backend.BackendConfigError as exc:
+        assert "backend-uncorroborated" in str(exc)
+    else:
+        raise AssertionError("expected marker-less remote backend to be rejected")
+
+    config = backend.load_backend_config(
+        cwd=tmp_path,
+        environ=environment,
+        explicit_repo_id="explicit-repo",
+        allow_markerless_nonlocal=True,
+    )
+    assert config.repo_id == "explicit-repo"
+    assert config.repo_source == "flag"
+
+
+def test_nonlocal_marker_without_a_repo_id_is_not_corroboration(tmp_path):
+    marker_dir = tmp_path / ".sprintctl"
+    marker_dir.mkdir()
+    (marker_dir / "backend.json").write_text(
+        json.dumps({"backend": "remote"}), encoding="utf-8"
+    )
+    try:
+        backend.load_backend_config(
+            cwd=tmp_path,
+            environ={"SPRINTCTL_BACKEND": "remote", "SPRINTCTL_URL": "postgresql://example/db"},
+        )
+    except backend.BackendConfigError as exc:
+        assert "backend-uncorroborated" in str(exc)
+    else:
+        raise AssertionError("expected marker without repo_id to be rejected")
+
+
+def test_explicit_scope_cannot_conflict_with_marker(tmp_path):
+    marker_dir = tmp_path / ".sprintctl"
+    marker_dir.mkdir()
+    (marker_dir / "backend.json").write_text(
+        json.dumps({"backend": "remote", "repo_id": "marker-repo"}),
+        encoding="utf-8",
+    )
+    try:
+        backend.load_backend_config(
+            cwd=tmp_path,
+            environ={"SPRINTCTL_BACKEND": "remote", "SPRINTCTL_URL": "postgresql://example/db"},
+            explicit_repo_id="other-repo",
+        )
+    except backend.BackendConfigError as exc:
+        assert "repo scope mismatch" in str(exc)
+    else:
+        raise AssertionError("expected conflicting explicit repo scope to be rejected")
 
 
 def test_repo_identity_uses_sqlite_marker_before_git(tmp_path):

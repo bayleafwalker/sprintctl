@@ -361,6 +361,12 @@ def test_probe_served_backend_reports_catalog_transport_failure(tmp_path, monkey
 )
 def test_doctor_json_reports_served_mode_end_to_end(tmp_path, monkeypatch, runner):
     (tmp_path / ".git").mkdir()
+    marker_dir = tmp_path / ".sprintctl"
+    marker_dir.mkdir()
+    (marker_dir / "backend.json").write_text(
+        json.dumps({"backend": "served", "repo_id": tmp_path.name}),
+        encoding="utf-8",
+    )
     cred_path = tmp_path / "cred"
     cred_path.write_text("token-value\n", encoding="utf-8")
     cred_path.chmod(0o600)

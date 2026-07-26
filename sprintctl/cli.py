@@ -101,10 +101,19 @@ def _detect_pid(explicit: int | None) -> int:
 
 @click.group()
 @click.version_option(__version__, prog_name="sprintctl")
+@click.option("--repo-id", default=None, help="Explicit repository scope for this invocation")
+@click.option(
+    "--allow-markerless-nonlocal",
+    is_flag=True,
+    default=False,
+    help="Permit one remote/served invocation without a repository marker when used with --repo-id",
+)
 @click.pass_context
-def cli(ctx: click.Context) -> None:
+def cli(ctx: click.Context, repo_id: str | None, allow_markerless_nonlocal: bool) -> None:
     ctx.ensure_object(dict)
     ctx.obj.setdefault("conn", None)
+    ctx.obj["explicit_repo_id"] = repo_id
+    ctx.obj["allow_markerless_nonlocal"] = allow_markerless_nonlocal
 
 
 @cli.command("doctor")
@@ -148,7 +157,10 @@ def _redacted_postgres_error(exc: Exception, url: str | None) -> str:
 def _get_store(obj: dict):
     """Return (store, db_module) for the configured backend. Exits on error."""
     try:
-        config = _backend.load_backend_config()
+        config = _backend.load_backend_config(
+            explicit_repo_id=obj.get("explicit_repo_id"),
+            allow_markerless_nonlocal=obj.get("allow_markerless_nonlocal", False),
+        )
     except _backend.BackendConfigError as e:
         click.echo(str(e), err=True)
         sys.exit(1)
@@ -259,7 +271,10 @@ def _served_config_or_none(obj: dict):
     same way _get_store does, so served and store-backed command paths share
     one source of truth for the resolved backend mode."""
     try:
-        config = _backend.load_backend_config()
+        config = _backend.load_backend_config(
+            explicit_repo_id=obj.get("explicit_repo_id"),
+            allow_markerless_nonlocal=obj.get("allow_markerless_nonlocal", False),
+        )
     except _backend.BackendConfigError as e:
         click.echo(str(e), err=True)
         sys.exit(1)

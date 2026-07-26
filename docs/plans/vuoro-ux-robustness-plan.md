@@ -174,13 +174,13 @@ parity` closed subject in `.agents/overlays/sprintctl.state-protocols.md`
 is depth-2, an irreversible multi-object schema change would need Depth-3
 escalation).
 
-**D3 — repo_id precedence: explicit flag/prefix > `SPRINTCTL_REPO_ID` (new
-env var) > cwd-derived default-suggestion (no longer silent truth).**
-Explicit-vs-cwd mismatch always fails closed, reusing the existing
-`migrate-to-remote` assert error shape (`cli.py:8414`). Note: this precedence
-resolves *which repo* (Axis 1) — it does not by itself catch Axis 2
-(finding 3), which needs D-new below; a marker-less cwd has no repo_id
-conflict for D3 to detect.
+**D3 — repo_id precedence: explicit reference/flag > committed marker >
+`SPRINTCTL_REPO_ID` > cwd-derived compatibility fallback.** Explicit-vs-marker
+or explicit-vs-cwd mismatch always fails closed, reusing the existing
+`migrate-to-remote` assert error shape (`cli.py:8414`). An environment value
+cannot silently override a committed marker. Note: this precedence resolves
+*which repo* (Axis 1) — it does not by itself catch Axis 2 (finding 3), which
+needs D-new below; a marker-less cwd has no repo_id conflict for D3 to detect.
 
 **D4 — Server change is scope-reporting only, not new authorization.**
 `application.py`'s existing `Identity.authorizes_repo` already gates access;
@@ -212,12 +212,19 @@ directly. Redact credentials per the existing `_redacted_postgres_error`
 helper (`cli.py:140`).
 
 **D7 — Fail-closed on uncorroborated non-local backend from a marker-less
-cwd.** New rule, orthogonal to D3: when `SPRINTCTL_BACKEND` resolves to
+cwd.** New rule, orthogonal to D3: marker-less `remote` or `served` execution
+fails closed unless the invocation supplies both explicit `--repo-id` and an
+invocation-scoped opt-in flag. `local` mode is exempt.
+<!-- Superseded by the 2026-07-26 O1/O6 decision below.
 `remote` or `served` from env with **no marker in scope to corroborate it**,
 fail closed unless the operator opts in explicitly (flag or allowlist env —
 see O6). `local` mode is exempt (single-tenant, safe by construction). This
 is the rule that directly closes finding 3 — D3 alone does not, since a
 marker-less cwd presents no repo_id conflict for D3 to catch.
+-->
+
+There is no persistent environment allowlist; this closes finding 3, which
+D3 alone cannot catch from a marker-less cwd.
 
 **D8 — Silent-failure taxonomy is a first-class `doctor` + preflight
 contract.** `doctor` and the D5 preflight both check and label each known
@@ -238,12 +245,12 @@ closed with the tombstone's own message (`this database was superseded ...,
 see ...`) instead of a bare permission-denied error. This is the client-side
 half of finding 2's fix; the server-side half (revoke) is already done.
 
-## Open questions (operator decision required — do not silently resolve)
+## Resolved policy and remaining operator questions
 
-- **O1 (ergonomics):** D7's bare-numeric-on-shared-substrate case — always
-  fail closed (safest, most disruptive to habit), or echo-and-proceed by
-  default with fail-closed reserved for explicit-prefix mismatch? Trades
-  safety against daily friction.
+- **O1 (resolved, 2026-07-26):** fail closed by default for marker-less
+  `remote` or `served` execution. The narrow exception is explicit
+  `--repo-id` plus the invocation-scoped opt-in in D7; echo-and-proceed is
+  not acceptable.
 - **O5 (architecture, devbox-agent env split) — materially de-risked by
   "Already executed," but not fully closed:** `~/.config/actionq-env` on
   devbox-agent is both the interactive-shell default *and* the actionq-
@@ -258,9 +265,11 @@ half of finding 2's fix; the server-side half (revoke) is already done.
   Decide: split interactive vs. daemon env sources, or reconcile
   `sprintctl_takeup` to speak served mode. This tract's client-side code
   does not depend on this being resolved.
-- **O6 (D7 opt-in mechanism):** explicit flag vs. required marker vs. env
-  allowlist (`SPRINTCTL_ALLOW_UNCORROBORATED_BACKEND=1`)? Couples to O5 — a
-  marker-less daemon session would trip D7 by design.
+- **O6 (resolved, 2026-07-26):** use explicit `--repo-id` plus an
+  invocation-scoped opt-in flag. Do not add `SPRINTCTL_ALLOW_UNCORROBORATED_BACKEND`
+  or any other persistent global bypass. Daemon/service environments must
+  identify the repository explicitly or provide a marker; reconcile their
+  environment split separately before D7 rollout.
 - **O9 (new — lockdown durability):** the legacy-DB revoke from "Already
   executed" is git-recorded but not GitOps-enforced (no managed-roles/
   postInitSQL block, applied via direct `kubectl exec`). Worth a follow-up
