@@ -7,6 +7,7 @@ import json
 import pytest
 
 from sprintctl import db
+import sprintctl.cli as cli_module
 from sprintctl.cli import cli
 
 
@@ -369,6 +370,23 @@ class TestNextWork:
 
         assert result.exit_code == 0, result.output
         assert "Ready task" in result.output
+
+    def test_recommended_commands_scope_shared_item_and_sprint_references(self):
+        commands = cli_module._recommended_commands_for_next_action(
+            sprint_id=7,
+            repo_id="sprintctl",
+            next_action={
+                "kind": "resolve-blocker",
+                "item_id": 12,
+                "blocker_item_id": 11,
+            },
+        )
+
+        assert commands == [
+            "sprintctl item show --id sprintctl#11",
+            "sprintctl item show --id sprintctl#12",
+            "sprintctl next-work --sprint-id sprintctl#7 --json --explain",
+        ]
 
     def test_next_work_excludes_blocked_items(self, runner, conn, active_sprint, db_path):
         iid_a = _item(conn, active_sprint["id"], "Prerequisite")

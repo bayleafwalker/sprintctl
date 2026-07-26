@@ -4916,6 +4916,11 @@ def _echo_item_refs(refs: list[dict], item_id: int) -> None:
         click.echo(f"  {_format_ref_line(r)}")
 
 
+def _render_repo_reference(repo_id: str | None, identifier: int) -> str:
+    """Render a reusable item/sprint input without changing local UX."""
+    return f"{repo_id}#{identifier}" if repo_id is not None else str(identifier)
+
+
 def _collect_next_work_explained_payload(
     *,
     conn,
@@ -4923,6 +4928,7 @@ def _collect_next_work_explained_payload(
     ready_items: list[dict],
     now: datetime,
     m=None,
+    repo_id: str | None = None,
 ) -> dict:
     m = m or _db
     dependency_waiting_items = _dependency_waiting_items(conn, sprint["id"], m=m)
@@ -4952,6 +4958,7 @@ def _collect_next_work_explained_payload(
     recommended_commands = _recommended_commands_for_next_action(
         sprint_id=sprint["id"],
         next_action=next_action,
+        repo_id=repo_id,
     )
     recommended_command_bundle = _recommended_command_bundle(
         commands=recommended_commands,
@@ -5485,15 +5492,19 @@ def _derive_next_action(
     }
 
 
-def _recommended_commands_for_next_action(*, sprint_id: int, next_action: dict) -> list[str]:
+def _recommended_commands_for_next_action(
+    *, sprint_id: int, next_action: dict, repo_id: str | None = None
+) -> list[str]:
     kind = next_action.get("kind")
     item_id = next_action.get("item_id")
     claim_id = next_action.get("claim_id")
     blocker_id = next_action.get("blocker_item_id")
+    sprint_ref = _render_repo_reference(repo_id, sprint_id)
+    item_ref = lambda identifier: _render_repo_reference(repo_id, identifier)
 
     if kind == "resolve-claim-identity":
         commands = [
-            f"sprintctl claim resume --sprint-id {sprint_id} --json",
+            "sprintctl claim resume --json",
         ]
         if claim_id is not None:
             commands.append(
@@ -5515,16 +5526,16 @@ def _recommended_commands_for_next_action(*, sprint_id: int, next_action: dict) 
     if kind in {"unblock-dependent-work", "resolve-blocker"}:
         commands = []
         if blocker_id is not None:
-            commands.append(f"sprintctl item show --id {blocker_id}")
+            commands.append(f"sprintctl item show --id {item_ref(blocker_id)}")
         if item_id is not None:
-            commands.append(f"sprintctl item show --id {item_id}")
-        commands.append(f"sprintctl next-work --sprint-id {sprint_id} --json --explain")
+            commands.append(f"sprintctl item show --id {item_ref(item_id)}")
+        commands.append(f"sprintctl next-work --sprint-id {sprint_ref} --json --explain")
         return commands
 
     if kind == "inspect-active-claim":
         commands = []
         if item_id is not None:
-            commands.append(f"sprintctl item show --id {item_id}")
+            commands.append(f"sprintctl item show --id {item_ref(item_id)}")
         if claim_id is not None:
             commands.append(
                 f"sprintctl claim heartbeat --id {claim_id} --claim-token <token> --ttl 600 --actor <name>"
@@ -5539,8 +5550,8 @@ def _recommended_commands_for_next_action(*, sprint_id: int, next_action: dict) 
         if item_id is not None:
             commands.extend(
                 [
-                    f"sprintctl claim start --item-id {item_id} --actor <name> --ttl 600 --json",
-                    f"sprintctl item show --id {item_id}",
+                    f"sprintctl claim start --item-id {item_ref(item_id)} --actor <name> --ttl 600 --json",
+                    f"sprintctl item show --id {item_ref(item_id)}",
                 ]
             )
         return commands
@@ -5550,8 +5561,8 @@ def _recommended_commands_for_next_action(*, sprint_id: int, next_action: dict) 
         if item_id is not None:
             commands.extend(
                 [
-                    f"sprintctl claim start --item-id {item_id} --actor <name> --ttl 600 --json",
-                    f"sprintctl item show --id {item_id}",
+                    f"sprintctl claim start --item-id {item_ref(item_id)} --actor <name> --ttl 600 --json",
+                    f"sprintctl item show --id {item_ref(item_id)}",
                 ]
             )
         return commands
@@ -5559,12 +5570,12 @@ def _recommended_commands_for_next_action(*, sprint_id: int, next_action: dict) 
     if kind in {"triage-blocked-item", "refresh-stale-item"}:
         if item_id is None:
             return []
-        return [f"sprintctl item show --id {item_id}"]
+        return [f"sprintctl item show --id {item_ref(item_id)}"]
 
     if kind == "no-action":
         return [
-            f"sprintctl usage --context --sprint-id {sprint_id} --json",
-            f"sprintctl next-work --sprint-id {sprint_id} --json --explain",
+            f"sprintctl usage --context --sprint-id {sprint_ref} --json",
+            f"sprintctl next-work --sprint-id {sprint_ref} --json --explain",
         ]
 
     return []
@@ -8044,6 +8055,11 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
                 ready_items=ready,
                 now=datetime.now(timezone.utc),
                 m=m,
+                repo_id=(
+                    obj["backend_config"].repo_id
+                    if obj["backend_config"].mode == "remote"
+                    else None
+                ),
             )
             payload["projection"] = projection_status
         if as_json:
@@ -8104,6 +8120,7 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
                 ready_items=ready,
                 now=now,
                 m=m,
+                repo_id=repo_id,
             )
             entry["next_work"] = _tag_next_work_payload(detailed, repo_id)
         repositories.append(entry)
