@@ -525,6 +525,11 @@ def mark_terminal_authority_decision(
             handle.write(payload); handle.flush(); os.fsync(handle.fileno())
         os.chmod(temporary, 0o600)
         os.replace(temporary, path)
+        directory_fd = os.open(paths.terminal_dir, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     finally:
         if temporary.exists():
             temporary.unlink()
