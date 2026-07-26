@@ -1079,6 +1079,7 @@ def test_served_claim_heartbeat_omits_metadata_when_all_fields_are_none(
     assert "runtime_session_id" not in payload.get("metadata", {})
     assert "branch" not in payload.get("metadata", {})
     assert captured["record"]["payload"]["refs"]["repo_id"] == _manifest_repo_uuid(tmp_path)
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in result.output
 
 
 @_requires_312
@@ -1173,6 +1174,7 @@ def test_served_claim_heartbeat_surfaces_a_rejected_decision_and_clears_sidecar(
     )
     assert result.exit_code != 0
     assert "invalid-claim-proof" in result.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in result.output
     # A rejected decision is terminal too: the sidecar is cleared, not kept.
     assert list(_credential_dir(tmp_path).glob("*")) == []
 
@@ -1234,6 +1236,7 @@ def test_served_claim_release_clears_sidecar_on_accepted_decision(
     )
     assert result.exit_code == 0, result.output
     assert "Claim #6 released." in result.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in result.output
 
     record = captured["record"]
     assert record["event_type"] == "claim.release"
@@ -1303,6 +1306,7 @@ def test_served_claim_release_surfaces_a_rejected_decision(
     )
     assert result.exit_code != 0
     assert "expired-grant" in result.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in result.output
 
 
 @_requires_312
@@ -1494,6 +1498,7 @@ def test_served_claim_handoff_rejects_allow_legacy_adopt(runner, tmp_path, monke
     )
     assert result.exit_code != 0
     assert "--allow-legacy-adopt is not supported in served mode" in result.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in result.output
     assert _outbox_records(tmp_path) == []
 
 
@@ -1545,6 +1550,7 @@ def test_served_claim_handoff_rejects_wrong_claim_token(runner, tmp_path, monkey
     )
     assert result.exit_code != 0
     assert "invalid-claim-proof" in result.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in result.output
     # A rejected decision is terminal too: the sidecar is cleared, not kept.
     assert list(_credential_dir(tmp_path).glob("*")) == []
 

@@ -6716,13 +6716,15 @@ def _served_claim_heartbeat(
     actor mismatch downstream anyway, per ``_validate_record`` in
     ``application.py``).
     """
+    resolved_context = _resolved_context(config)
     runtime_session_id = _detect_runtime_session_id(runtime_session_id)
     instance_id = _detect_instance_id(instance_id)
     hostname = _detect_hostname(hostname)
     pid = _detect_pid(pid)
 
     context = _run_served(
-        "claim heartbeat", _served.claim_context, config.served_profile, repo_id=config.repo_id, claim_id=claim_id
+        "claim heartbeat", _served.claim_context, config.served_profile, repo_id=config.repo_id, claim_id=claim_id,
+        resolved_context=resolved_context,
     )
     authenticated_actor = context["actor"]
     if actor is not None and actor != authenticated_actor:
@@ -6797,6 +6799,7 @@ def _served_claim_heartbeat(
         repo_id=config.repo_id,
         record=_served_record_argument(durable),
         transient_credentials=credentials,
+        resolved_context=resolved_context,
     )
     # A resolved decision (accepted or rejected) is terminal either way, so
     # the retry sidecar is cleared now; an exception from the call above
@@ -6807,7 +6810,8 @@ def _served_claim_heartbeat(
     )
     if decision["outcome"] != "accepted":
         click.echo(
-            f"Error: {decision.get('reason_code')}: {decision.get('reason_detail')}",
+            f"Error: {decision.get('reason_code')}: {decision.get('reason_detail')}\n"
+            f"{_render_resolved_context(resolved_context)}",
             err=True,
         )
         sys.exit(1)
@@ -6837,6 +6841,7 @@ def _served_claim_heartbeat(
             "Consider increasing --ttl or heartbeating more frequently.",
             err=True,
         )
+    click.echo(_render_resolved_context(resolved_context))
 
 
 @claim.command("heartbeat")
@@ -6947,8 +6952,10 @@ def _served_claim_release(config, claim_id, claim_token, actor) -> None:
     ``credential_ref`` (``_handle_claim_mutation``'s ``claim.release`` branch
     in ``authority.py`` reads nothing else from the payload).
     """
+    resolved_context = _resolved_context(config)
     context = _run_served(
-        "claim release", _served.claim_context, config.served_profile, repo_id=config.repo_id, claim_id=claim_id
+        "claim release", _served.claim_context, config.served_profile, repo_id=config.repo_id, claim_id=claim_id,
+        resolved_context=resolved_context,
     )
     authenticated_actor = context["actor"]
     if actor is not None and actor != authenticated_actor:
@@ -6998,17 +7005,20 @@ def _served_claim_release(config, claim_id, claim_token, actor) -> None:
         repo_id=config.repo_id,
         record=_served_record_argument(durable),
         transient_credentials=credentials,
+        resolved_context=resolved_context,
     )
     _authority_config.remove_pending_authority_credential(
         rollout_paths, event_id=durable.event_id
     )
     if decision["outcome"] != "accepted":
         click.echo(
-            f"Error: {decision.get('reason_code')}: {decision.get('reason_detail')}",
+            f"Error: {decision.get('reason_code')}: {decision.get('reason_detail')}\n"
+            f"{_render_resolved_context(resolved_context)}",
             err=True,
         )
         sys.exit(1)
     click.echo(f"Claim #{claim_id} released.")
+    click.echo(_render_resolved_context(resolved_context))
 
 
 @claim.command("release")
@@ -7084,15 +7094,18 @@ def _served_claim_handoff(
       new secret without it ever appearing in the payload itself. Transfer
       mode leaves the token unchanged and needs only the current ref.
     """
+    resolved_context = _resolved_context(config)
     if allow_legacy_adopt:
         click.echo(
-            "Error: --allow-legacy-adopt is not supported in served mode", err=True
+            "Error: --allow-legacy-adopt is not supported in served mode\n"
+            f"{_render_resolved_context(resolved_context)}", err=True
         )
         sys.exit(1)
     if claim_token is None:
         click.echo(
             "Error: --claim-token is required in served mode "
-            "(there is no legacy-adoption fallback)",
+            "(there is no legacy-adoption fallback)\n"
+            f"{_render_resolved_context(resolved_context)}",
             err=True,
         )
         sys.exit(1)
@@ -7103,7 +7116,8 @@ def _served_claim_handoff(
     pid = _detect_pid(pid)
 
     context = _run_served(
-        "claim handoff", _served.claim_context, config.served_profile, repo_id=config.repo_id, claim_id=claim_id
+        "claim handoff", _served.claim_context, config.served_profile, repo_id=config.repo_id, claim_id=claim_id,
+        resolved_context=resolved_context,
     )
     authenticated_actor = context["actor"]
     if performed_by is not None and performed_by != authenticated_actor:
@@ -7192,6 +7206,7 @@ def _served_claim_handoff(
         repo_id=config.repo_id,
         record=_served_record_argument(durable),
         transient_credentials=credentials,
+        resolved_context=resolved_context,
     )
     # Unlike ``authority submit``'s claim.handoff-rotate special case (which
     # retains the sidecar after an accepted decision so the new token can be
@@ -7207,7 +7222,8 @@ def _served_claim_handoff(
     )
     if decision["outcome"] != "accepted":
         click.echo(
-            f"Error: {decision.get('reason_code')}: {decision.get('reason_detail')}",
+            f"Error: {decision.get('reason_code')}: {decision.get('reason_detail')}\n"
+            f"{_render_resolved_context(resolved_context)}",
             err=True,
         )
         sys.exit(1)
@@ -7261,6 +7277,7 @@ def _served_claim_handoff(
         if not as_json:
             click.echo(f"Claim #{claim_id} handed off to {actor} (mode={mode})")
             click.echo(f"Claim token: {new_token}")
+            click.echo(_render_resolved_context(resolved_context))
         return
 
     if as_json or output_path == "-":
@@ -7269,6 +7286,7 @@ def _served_claim_handoff(
 
     click.echo(f"Claim #{claim_id} handed off to {actor} (mode={mode})")
     click.echo(f"Claim token: {new_token}")
+    click.echo(_render_resolved_context(resolved_context))
 
 
 @claim.command("handoff")
