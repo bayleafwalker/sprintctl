@@ -7788,8 +7788,9 @@ def handoff_cmd(obj, sprint_id, output_path, events_limit, fmt) -> None:
                 sprint_id=sid, bundle=bundle)
         except Exception as error:
             click.echo(f"Handoff bundle written, but served recording is unconfirmed: {error}", err=True)
-            return
-        click.echo(f"Handoff bundle for sprint #{sid} written to {dest}")
+            raise click.exceptions.Exit(1) from error
+        if dest != "-":
+            click.echo(f"Handoff bundle for sprint #{sid} written to {dest}")
         return
     store, m = _get_store(obj)
     if sprint_id is not None:

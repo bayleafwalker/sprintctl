@@ -204,7 +204,8 @@ def test_served_handoff_fetches_writes_then_records_without_opening_store(runner
     result = runner.invoke(cli, ["handoff", "--sprint-id", "3", "--output", "-"])
 
     assert result.exit_code == 0, result.output
-    assert json.loads(result.output.split("Handoff bundle for", 1)[0]) == bundle
+    assert json.loads(result.stdout) == bundle
+    assert result.stderr == ""
     assert [name for name, _ in calls] == ["read", "record"]
     assert calls[0][1]["git_context"] is None
     assert calls[1][1]["bundle"] == bundle
@@ -217,11 +218,13 @@ def test_served_handoff_reports_unconfirmed_recording_after_output(runner, tmp_p
     monkeypatch.setattr(cli_module._served, "read_handoff", lambda *a, **k: bundle)
     monkeypatch.setattr(cli_module._served, "handoff_record", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("network lost")))
 
-    result = runner.invoke(cli, ["handoff", "--sprint-id", "3", "--output", "-"])
+    output_path = tmp_path / "handoff.json"
+    result = runner.invoke(cli, ["handoff", "--sprint-id", "3", "--output", str(output_path)])
 
-    assert result.exit_code == 0, result.output
-    assert '"bundle_type": "handoff"' in result.output
-    assert "served recording is unconfirmed: network lost" in result.output
+    assert result.exit_code == 1, result.output
+    assert result.stdout == ""
+    assert "served recording is unconfirmed: network lost" in result.stderr
+    assert json.loads(output_path.read_text(encoding="utf-8")) == bundle
 
 
 @_requires_312
