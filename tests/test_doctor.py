@@ -98,10 +98,14 @@ def test_remote_schema_probe_enforces_read_only_connection(monkeypatch):
             return None
 
         def execute(self, query):
-            observed["query"] = query
+            observed.setdefault("queries", []).append(query)
 
         def fetchone(self):
-            return (4,)
+            return {
+                0: (doctor.REMOTE_SCHEMA_VERSION,),
+                1: (True,),
+                2: (None,),
+            }[len(observed["queries"]) - 1]
 
     class Connection:
         def cursor(self):
@@ -121,8 +125,29 @@ def test_remote_schema_probe_enforces_read_only_connection(monkeypatch):
 
     assert result["status"] == "current"
     assert observed["kwargs"]["options"] == "-c default_transaction_read_only=on"
-    assert observed["query"].startswith("SELECT version")
+    assert observed["queries"] == [
+        "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1",
+        "SELECT EXISTS (SELECT 1 FROM sprint WHERE status = 'active')",
+        "SELECT to_regclass('superseded_marker')",
+    ]
     assert observed["closed"] is True
+
+
+def test_doctor_labels_empty_and_superseded_remote_targets():
+    facts = _fixture("doctor-current.json")
+    facts["schema"] = {
+        **facts["schema"],
+        "has_active_sprint": False,
+        "superseded_marker": "this database was superseded; use served mode",
+    }
+
+    report = doctor.evaluate_facts(facts)
+
+    findings = {finding["code"]: finding for finding in report["findings"]}
+    assert findings["backend-reachable-but-empty"]["severity"] == "warning"
+    assert "SF2-b" in findings["backend-reachable-but-empty"]["message"]
+    assert findings["backend-superseded"]["severity"] == "error"
+    assert "this database was superseded" in findings["backend-superseded"]["message"]
 
 
 def test_remote_schema_error_redacts_credentials(monkeypatch):

@@ -214,6 +214,8 @@ def _probe_remote_schema(environ: Mapping[str, str]) -> dict[str, Any]:
         "compatible": None,
         "status": "unavailable",
         "error": None,
+        "has_active_sprint": None,
+        "superseded_marker": None,
     }
     if importlib.util.find_spec("psycopg") is None:
         result["error"] = "psycopg is not installed"
@@ -234,7 +236,18 @@ def _probe_remote_schema(environ: Mapping[str, str]) -> dict[str, Any]:
         with conn.cursor() as cur:
             cur.execute("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
             row = cur.fetchone()
-        version = int(row[0]) if row is not None else 0
+            version = int(row[0]) if row is not None else 0
+            if version == REMOTE_SCHEMA_VERSION:
+                cur.execute("SELECT EXISTS (SELECT 1 FROM sprint WHERE status = 'active')")
+                active_row = cur.fetchone()
+                result["has_active_sprint"] = bool(active_row[0]) if active_row is not None else False
+                cur.execute("SELECT to_regclass('superseded_marker')")
+                marker_row = cur.fetchone()
+                if marker_row is not None and marker_row[0] is not None:
+                    cur.execute("SELECT message FROM superseded_marker LIMIT 1")
+                    message_row = cur.fetchone()
+                    if message_row is not None and message_row[0] is not None:
+                        result["superseded_marker"] = str(message_row[0])
     except Exception as exc:  # driver exceptions vary by psycopg implementation
         message = str(exc).replace(url, "<redacted SPRINTCTL_URL>")
         result["error"] = _POSTGRES_CREDENTIAL_RE.sub(r"\1<redacted>@", message)
@@ -416,6 +429,31 @@ def evaluate_facts(facts: Mapping[str, Any]) -> dict[str, Any]:
                 ["Install the 'served' extra: pip install 'sprintctl[served]'."],
             )
         )
+    if backend["valid"] and backend["resolved_mode"] == "remote" and schema["status"] == "current":
+        if schema.get("has_active_sprint") is False:
+            findings.append(
+                _finding(
+                    "backend-reachable-but-empty",
+                    "warning",
+                    "Remote backend is reachable but holds no active sprint data (SF2-b).",
+                    [
+                        "Confirm SPRINTCTL_URL targets the current shared authority; "
+                        "doctor performed read-only checks only.",
+                    ],
+                )
+            )
+        if schema.get("superseded_marker"):
+            findings.append(
+                _finding(
+                    "backend-superseded",
+                    "error",
+                    f"Remote backend is superseded: {schema['superseded_marker']} (SF3).",
+                    [
+                        "Stop using this remote target and switch to the current served authority; "
+                        "doctor performed read-only checks only.",
+                    ],
+                )
+            )
     if schema["status"] == "mismatch":
         findings.append(
             _finding(
