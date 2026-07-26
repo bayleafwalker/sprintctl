@@ -1654,7 +1654,7 @@ class TestRecoverFromRemote:
         result = runner.invoke(
             cli,
             [
-                "--repo-id", "pg-integration",
+                "--repo-id", tmp_path.name,
                 "--allow-markerless-nonlocal",
                 "db", "recover-from-remote",
                 "--output", str(dest),
