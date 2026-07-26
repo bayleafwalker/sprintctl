@@ -71,6 +71,42 @@ def _store(version=4, **kwargs):
     return pg.PgStore(conn=conn, repo_id="test-repo"), conn
 
 
+def test_snapshot_uses_store_connection_factory_instead_of_redacted_dsn(monkeypatch):
+    class Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return None
+
+        def execute(self, statement):
+            assert statement == "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+
+    class Connection:
+        closed = False
+
+        def transaction(self):
+            return Context()
+
+        def cursor(self):
+            return Context()
+
+        def close(self):
+            self.closed = True
+
+    sibling = Connection()
+    store = pg.PgStore(
+        conn=object(), repo_id="agentops", connection_factory=lambda: sibling
+    )
+    monkeypatch.setattr(pg, "_PSYCOPG_AVAILABLE", True)
+
+    with pg.repeatable_read_snapshot(store) as snapshot:
+        assert snapshot.conn is sibling
+        assert snapshot.connection_factory is store.connection_factory
+
+    assert sibling.closed is True
+
+
 def test_runtime_compatibility_probe_is_read_only_and_publishes_work_api():
     store, conn = _store(4)
 

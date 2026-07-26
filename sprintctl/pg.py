@@ -22,7 +22,7 @@ import secrets
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 from uuid import UUID, uuid4
 from urllib.parse import urlparse
 
@@ -540,6 +540,10 @@ class PgStore:
     conn: Any  # psycopg.Connection when psycopg is available
     repo_id: str
     authority_repo_uuid: str | None = None
+    # Psycopg deliberately redacts passwords from ``conn.info.dsn``. Served
+    # aggregate reads need a sibling connection, so retain a closure over the
+    # operator-supplied DSN without exposing it through store metadata.
+    connection_factory: Callable[[], Any] | None = None
 
 
 @contextmanager
@@ -554,11 +558,16 @@ def repeatable_read_snapshot(store: PgStore):
     """
     if not _PSYCOPG_AVAILABLE:  # pragma: no cover - defensive optional-extra guard
         raise RuntimeError("psycopg is not installed")
-    snapshot_conn = psycopg.connect(store.conn.info.dsn, row_factory=dict_row)
+    snapshot_conn = (
+        store.connection_factory()
+        if store.connection_factory is not None
+        else psycopg.connect(store.conn.info.dsn, row_factory=dict_row)
+    )
     snapshot_store = PgStore(
         conn=snapshot_conn,
         repo_id=store.repo_id,
         authority_repo_uuid=store.authority_repo_uuid,
+        connection_factory=store.connection_factory,
     )
     try:
         with snapshot_conn.transaction():
@@ -1041,7 +1050,11 @@ def get_connection(url: str) -> PgStore:
         raise RuntimeError("psycopg is not installed. Install sprintctl[remote].")
     repo_id = _repo_id_from_cwd()
     conn = psycopg.connect(url, row_factory=dict_row)
-    return PgStore(conn=conn, repo_id=repo_id)
+    return PgStore(
+        conn=conn,
+        repo_id=repo_id,
+        connection_factory=lambda: psycopg.connect(url, row_factory=dict_row),
+    )
 
 
 def superseded_marker_message(store: PgStore) -> str | None:

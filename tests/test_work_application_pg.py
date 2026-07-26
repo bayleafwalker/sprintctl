@@ -354,6 +354,56 @@ def test_sprint_detail_aggregate_uses_a_fresh_snapshot_after_a_reused_connection
     store.conn.close()
 
 
+def test_snapshot_uses_store_connection_factory_instead_of_redacted_dsn(monkeypatch):
+    class Transaction:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return None
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return None
+
+        def execute(self, statement):
+            assert statement == "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+
+    class Connection:
+        def __init__(self):
+            self.closed = False
+
+        def transaction(self):
+            return Transaction()
+
+        def cursor(self):
+            return Cursor()
+
+        def close(self):
+            self.closed = True
+
+    sibling = Connection()
+    store = pg.PgStore(
+        conn=object(),
+        repo_id="agentops",
+        connection_factory=lambda: sibling,
+    )
+    monkeypatch.setattr(
+        pg.psycopg,
+        "connect",
+        lambda *_args, **_kwargs: pytest.fail("redacted connection DSN must not be reused"),
+    )
+
+    with pg.repeatable_read_snapshot(store) as snapshot:
+        assert snapshot.conn is sibling
+        assert snapshot.connection_factory is store.connection_factory
+
+    assert sibling.closed is True
+
+
 @pytest.mark.parametrize(
     ("operation", "mismatch", "expected_code"),
     [
