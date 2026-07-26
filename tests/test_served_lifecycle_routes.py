@@ -262,10 +262,74 @@ def test_served_event_list_empty_and_error_report_resolved_context(runner, tmp_p
     assert "Sprint #11 not found." in missing.output
     assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in missing.output
 
+    monkeypatch.setattr(
+        cli_module._served,
+        "project_next_work",
+        lambda profile, *, sprint_id=None: {
+            "project_id": "workspace",
+            "ready_items": [],
+            "repositories": [
+                {
+                    "origin_repo": "member",
+                    "sprint": {"id": 8, "name": "Member"},
+                    "ready_items": [],
+                }
+            ],
+        },
+    )
+    project = runner.invoke(cli, ["next-work", "--project"])
+
+    assert project.exit_code == 0, project.output
+    assert "Project workspace" in project.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in project.output
+
 
 # ---------------------------------------------------------------------------
-# event add / item add / sprint show
+# next-work / event add / item add / sprint show
 # ---------------------------------------------------------------------------
+
+
+@_requires_312
+def test_served_next_work_text_and_errors_report_resolved_context(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served,
+        "read_next_work",
+        lambda profile, *, repo_id=None, sprint_id=None: {
+            "sprint": {"id": 11, "name": "Current"},
+            "ready_items": [
+                {"id": 3, "priority": 2, "track_name": "build", "assignee": None, "title": "Ready"}
+            ],
+        },
+    )
+
+    ready = runner.invoke(cli, ["next-work", "--sprint-id", "11"])
+
+    assert ready.exit_code == 0, ready.output
+    assert "Ready to start in sprint #11 (Current):" in ready.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in ready.output
+
+    monkeypatch.setattr(
+        cli_module._served,
+        "read_next_work",
+        lambda profile, **kwargs: {"sprint": {"id": 11, "name": "Current"}, "ready_items": []},
+    )
+    empty = runner.invoke(cli, ["next-work", "--sprint-id", "11"])
+
+    assert empty.exit_code == 0, empty.output
+    assert "No pending items ready to start" in empty.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in empty.output
+
+    monkeypatch.setattr(
+        cli_module._served,
+        "read_next_work",
+        lambda profile, **kwargs: (_ for _ in ()).throw(ValueError("Sprint #11 not found.")),
+    )
+    missing = runner.invoke(cli, ["next-work", "--sprint-id", "11"])
+
+    assert missing.exit_code == 1
+    assert "Sprint #11 not found." in missing.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in missing.output
 
 
 @_requires_312

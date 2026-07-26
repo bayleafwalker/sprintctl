@@ -7973,6 +7973,7 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
         sprint_id = _apply_scoped_id(obj, sprint_id, field="sprint")
     config = _served_config_or_none(obj)
     if config is not None:
+        context = _resolved_context(config)
         if explain:
             click.echo(
                 "Error: 'next-work --explain' has no served-mode equivalent "
@@ -7988,6 +7989,7 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
                 config.served_profile,
                 repo_id=config.repo_id,
                 sprint_id=sprint_id,
+                resolved_context=context,
             )
             s = result["sprint"]
             ready = result["ready_items"]
@@ -7996,6 +7998,7 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
                 return
             if not ready:
                 click.echo(f"No pending items ready to start in sprint #{s['id']} ({s['name']}).")
+                click.echo(_render_resolved_context(context))
                 return
             click.echo(f"Ready to start in sprint #{s['id']} ({s['name']}):")
             rows: list[list[str]] = []
@@ -8006,6 +8009,7 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
                 )
             for line in _render_table(["ID", "PRI", "TRACK", "ASSIGNEE", "TITLE"], rows):
                 click.echo(f"  {line}")
+            click.echo(_render_resolved_context(context))
             return
 
         result = _run_served(
@@ -8013,6 +8017,7 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
             _served.project_next_work,
             config.served_profile,
             sprint_id=sprint_id,
+            resolved_context=context,
         )
         ready_items = result["ready_items"]
         repositories = result["repositories"]
@@ -8044,6 +8049,7 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
                 )
             for line in _render_table(["ID", "PRI", "TRACK", "ASSIGNEE", "TITLE"], rows):
                 click.echo(f"  {line}")
+        click.echo(_render_resolved_context(context))
         return
 
     if project_path is None:
