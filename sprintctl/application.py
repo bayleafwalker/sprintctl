@@ -332,6 +332,8 @@ class WorkApplication:
         handlers = {
             "work.read.sprints": target._read_sprints,
             "work.read.item": target._read_item,
+            "work.read.items": target._read_items,
+            "work.read.claims": target._read_claims,
             "work.read.next-work": target._read_next_work,
             "work.read.records": target._read_records,
             "work.read.decisions": target._read_decisions,
@@ -339,6 +341,10 @@ class WorkApplication:
             "work.read.sprint": target._read_sprint,
             "work.event.add": target._event_add,
             "work.item.create": target._item_create,
+            "work.item.ref.add": target._item_ref_add,
+            "work.item.ref.remove": target._item_ref_remove,
+            "work.item.dep.add": target._item_dep_add,
+            "work.item.dep.remove": target._item_dep_remove,
             "work.claim.start": target._claim_start,
             "work.claim.context": target._claim_context,
             "work.claim.arbitrate": target._claim_arbitrate,
@@ -405,6 +411,85 @@ class WorkApplication:
                 "blocks": self.backend.list_deps_blocked_by(self.store, item_id),
             },
         }
+
+    def _read_items(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        sprint_id = _optional_positive_int(arguments.get("sprint_id"), "sprint_id")
+        track_name = _optional_text(arguments.get("track_name"), "track_name")
+        status = _optional_text(arguments.get("status"), "status")
+        if status is not None and status not in {"pending", "active", "done", "blocked"}:
+            raise ApplicationRejection("invalid-arguments", "status must be pending, active, done, or blocked", 422)
+        return {"repo_id": self.repo_id, "items": self.backend.list_work_items(
+            self.store, sprint_id=sprint_id, track_name=track_name, status=status
+        )}
+
+    def _read_claims(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        item_id = _optional_positive_int(arguments.get("item_id"), "item_id")
+        sprint_id = _optional_positive_int(arguments.get("sprint_id"), "sprint_id")
+        if item_id is not None and sprint_id is not None:
+            raise ApplicationRejection("invalid-arguments", "provide at most one of item_id or sprint_id", 422)
+        active_only = bool(arguments.get("active_only", True))
+        if item_id is not None:
+            claims = self.backend.list_claims(self.store, item_id, active_only=active_only)
+        elif sprint_id is not None:
+            if self.backend.get_sprint(self.store, sprint_id) is None:
+                raise ApplicationRejection("sprint-not-found", f"Sprint #{sprint_id} not found", 404)
+            claims = self.backend.list_claims_by_sprint(self.store, sprint_id, active_only=active_only)
+        else:
+            sprint = self._resolve_sprint(None)
+            claims = self.backend.list_claims_by_sprint(self.store, sprint["id"], active_only=active_only)
+        instance_id = _optional_text(arguments.get("instance_id"), "instance_id")
+        runtime_session_id = _optional_text(arguments.get("runtime_session_id"), "runtime_session_id")
+        hostname = _optional_text(arguments.get("hostname"), "hostname")
+        pid = _optional_positive_int(arguments.get("pid"), "pid")
+        if hostname is None and pid is not None:
+            raise ApplicationRejection("invalid-arguments", "pid requires hostname", 422)
+        if instance_id or runtime_session_id or hostname:
+            claims = [claim for claim in claims if (
+                (instance_id is not None and claim.get("instance_id") == instance_id)
+                or (runtime_session_id is not None and claim.get("runtime_session_id") == runtime_session_id)
+                or (hostname is not None and pid is not None and claim.get("hostname") == hostname and claim.get("pid") == pid)
+            )]
+        return {"repo_id": self.repo_id, "claims": claims}
+
+    def _item_ref_add(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        item_id = _positive_int(arguments.get("item_id"), "item_id")
+        ref_type = _optional_text(arguments.get("ref_type"), "ref_type")
+        url = _optional_text(arguments.get("url"), "url")
+        label = arguments.get("label", "")
+        if not ref_type or not url or not isinstance(label, str):
+            raise ApplicationRejection("invalid-arguments", "item_id, ref_type, url, and string label are required", 422)
+        try:
+            ref_id = self.backend.add_ref(self.store, item_id, ref_type, url, label)
+        except ValueError as exc:
+            raise ApplicationRejection("ref-rejected", str(exc), 422) from exc
+        return {"repo_id": self.repo_id, "item_id": item_id, "ref_id": ref_id}
+
+    def _item_ref_remove(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        item_id = _positive_int(arguments.get("item_id"), "item_id")
+        ref_id = _positive_int(arguments.get("ref_id"), "ref_id")
+        try:
+            self.backend.remove_ref(self.store, ref_id, item_id)
+        except ValueError as exc:
+            raise ApplicationRejection("ref-rejected", str(exc), 422) from exc
+        return {"repo_id": self.repo_id, "item_id": item_id, "ref_id": ref_id}
+
+    def _item_dep_add(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        item_id = _positive_int(arguments.get("item_id"), "item_id")
+        blocked_item_id = _positive_int(arguments.get("blocked_item_id"), "blocked_item_id")
+        try:
+            dep_id = self.backend.add_dep(self.store, item_id, blocked_item_id)
+        except ValueError as exc:
+            raise ApplicationRejection("dependency-rejected", str(exc), 422) from exc
+        return {"repo_id": self.repo_id, "item_id": item_id, "dep_id": dep_id}
+
+    def _item_dep_remove(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        item_id = _positive_int(arguments.get("item_id"), "item_id")
+        dep_id = _positive_int(arguments.get("dep_id"), "dep_id")
+        try:
+            self.backend.remove_dep(self.store, dep_id, item_id)
+        except ValueError as exc:
+            raise ApplicationRejection("dependency-rejected", str(exc), 422) from exc
+        return {"repo_id": self.repo_id, "item_id": item_id, "dep_id": dep_id}
 
     def _read_events(
         self, arguments: dict[str, Any], _context: InvocationContext

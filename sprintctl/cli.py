@@ -1727,11 +1727,26 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, project_path, as_json)
     if as_json and as_fzf:
         click.echo("Error: --fzf cannot be combined with --json.", err=True)
         sys.exit(1)
-    if _served_config_or_none(obj) is not None:
-        _served_operation_unavailable(
-            "item list",
-            replacement="Inspect a known item with 'item show --id …'; aggregate listing needs work.read.items.",
-        )
+    config = _served_config_or_none(obj)
+    if config is not None:
+        if project_path is not None or as_fzf:
+            _served_operation_unavailable("item list", replacement="--project and --fzf remain local-only served gaps.")
+        result = _run_served("item list", _served.read_items, config.served_profile,
+                             repo_id=config.repo_id, sprint_id=sprint_id, track_name=track_name,
+                             status=status, resolved_context=_resolved_context(config))
+        items = result["items"]
+        if as_json:
+            click.echo(json.dumps(items, indent=2))
+            return
+        if not items:
+            click.echo("No items found.")
+            click.echo(_render_resolved_context(_resolved_context(config)))
+            return
+        rows = [[f"#{it['id']}", _style_status(it["status"]), _format_priority(it), it["track_name"], it.get("assignee") or "-", it["title"]] for it in items]
+        for line in _render_table(["ID", "STATUS", "PRI", "TRACK", "ASSIGNEE", "TITLE"], rows):
+            click.echo(line)
+        click.echo(_render_resolved_context(_resolved_context(config)))
+        return
 
     if project_path is None:
         scopes = [(None, *_get_store(obj))]
@@ -2219,8 +2234,13 @@ def item_ref() -> None:
 def item_ref_add(obj, item_id: str, ref_type, url, label) -> None:
     """Attach an external reference to a work item."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
-    if _served_config_or_none(obj) is not None:
-        _served_operation_unavailable("item ref add")
+    config = _served_config_or_none(obj)
+    if config is not None:
+        result = _run_served("item ref add", _served.item_ref_add, config.served_profile,
+            repo_id=config.repo_id, item_id=item_id, ref_type=ref_type, url=url, label=label,
+            resolved_context=_resolved_context(config))
+        click.echo(f"Ref #{result['ref_id']} added to item #{item_id}: [{ref_type}] {url}")
+        return
     store, m = _get_store(obj)
     try:
         ref_id = m.add_ref(store, item_id, ref_type, url, label)
@@ -2237,10 +2257,16 @@ def item_ref_add(obj, item_id: str, ref_type, url, label) -> None:
 def item_ref_list(obj, item_id: str, as_json) -> None:
     """List external references on a work item."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
-    if _served_config_or_none(obj) is not None:
-        _served_operation_unavailable(
-            "item ref list", replacement="Use 'item show --id …' to inspect refs for a known item."
-        )
+    config = _served_config_or_none(obj)
+    if config is not None:
+        result = _run_served("item ref list", _served.read_item, config.served_profile,
+            repo_id=config.repo_id, item_id=item_id, resolved_context=_resolved_context(config))
+        refs = result["refs"]
+        if as_json: click.echo(json.dumps(refs, indent=2))
+        elif not refs: click.echo(f"No refs on item #{item_id}.")
+        else:
+            for r in refs: click.echo(f"  #{r['id']}  [{r['ref_type']}]  {r['url']}{'  ' + r['label'] if r['label'] else ''}")
+        return
     store, m = _get_store(obj)
     if m.get_work_item(store, item_id) is None:
         click.echo(f"Item #{item_id} not found.", err=True)
@@ -2264,8 +2290,12 @@ def item_ref_list(obj, item_id: str, as_json) -> None:
 def item_ref_remove(obj, item_id: str, ref_id) -> None:
     """Remove an external reference from a work item."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
-    if _served_config_or_none(obj) is not None:
-        _served_operation_unavailable("item ref remove")
+    config = _served_config_or_none(obj)
+    if config is not None:
+        _run_served("item ref remove", _served.item_ref_remove, config.served_profile,
+            repo_id=config.repo_id, item_id=item_id, ref_id=ref_id, resolved_context=_resolved_context(config))
+        click.echo(f"Ref #{ref_id} removed from item #{item_id}.")
+        return
     store, m = _get_store(obj)
     try:
         m.remove_ref(store, ref_id, item_id)
@@ -2292,8 +2322,13 @@ def item_dep_add(obj, item_id: str, blocks_item_id: str) -> None:
     """Record that item --id must complete before --blocks-item-id can start."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
     blocks_item_id = _apply_scoped_id(obj, blocks_item_id, field="item")
-    if _served_config_or_none(obj) is not None:
-        _served_operation_unavailable("item dep add")
+    config = _served_config_or_none(obj)
+    if config is not None:
+        result = _run_served("item dep add", _served.item_dep_add, config.served_profile,
+            repo_id=config.repo_id, item_id=item_id, blocked_item_id=blocks_item_id,
+            resolved_context=_resolved_context(config))
+        click.echo(f"Dep #{result['dep_id']}: item #{item_id} blocks item #{blocks_item_id}")
+        return
     store, m = _get_store(obj)
     try:
         dep_id = m.add_dep(store, item_id, blocks_item_id)
@@ -2310,10 +2345,17 @@ def item_dep_add(obj, item_id: str, blocks_item_id: str) -> None:
 def item_dep_list(obj, item_id: str, as_json) -> None:
     """List dependencies for a work item (what blocks it and what it blocks)."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
-    if _served_config_or_none(obj) is not None:
-        _served_operation_unavailable(
-            "item dep list", replacement="Use 'item show --id …' to inspect dependencies for a known item."
-        )
+    config = _served_config_or_none(obj)
+    if config is not None:
+        result = _run_served("item dep list", _served.read_item, config.served_profile,
+            repo_id=config.repo_id, item_id=item_id, resolved_context=_resolved_context(config))
+        blocking, blocked_by_me = result["deps"]["blocked_by"], result["deps"]["blocks"]
+        if as_json: click.echo(json.dumps({"blocked_by": blocking, "blocks": blocked_by_me}, indent=2))
+        elif not blocking and not blocked_by_me: click.echo(f"No dependencies on item #{item_id}.")
+        else:
+            for d in blocking: click.echo(f"Item #{item_id} is blocked by: #{d['item_id']}  [{d['blocker_status']}]  {d['blocker_title']}  (dep #{d['id']})")
+            for d in blocked_by_me: click.echo(f"Item #{item_id} blocks: #{d['blocked_item_id']}  [{d['waiting_status']}]  {d['waiting_title']}  (dep #{d['id']})")
+        return
     store, m = _get_store(obj)
     if m.get_work_item(store, item_id) is None:
         click.echo(f"Item #{item_id} not found.", err=True)
@@ -2343,8 +2385,12 @@ def item_dep_list(obj, item_id: str, as_json) -> None:
 def item_dep_remove(obj, item_id: str, dep_id) -> None:
     """Remove a dependency."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
-    if _served_config_or_none(obj) is not None:
-        _served_operation_unavailable("item dep remove")
+    config = _served_config_or_none(obj)
+    if config is not None:
+        _run_served("item dep remove", _served.item_dep_remove, config.served_profile,
+            repo_id=config.repo_id, item_id=item_id, dep_id=dep_id, resolved_context=_resolved_context(config))
+        click.echo(f"Dep #{dep_id} removed.")
+        return
     store, m = _get_store(obj)
     try:
         m.remove_dep(store, dep_id, item_id)
@@ -6493,6 +6539,11 @@ def claim_create(
     an active coordinate claim without triggering a conflict error.
     """
     item_id = _apply_scoped_id(obj, item_id, field="item")
+    if _served_config_or_none(obj) is not None:
+        _served_operation_unavailable(
+            "claim create",
+            replacement="Use served 'claim start' for a single execute claim; coordinator/subclaim creation is not yet catalogued.",
+        )
     store, m = _get_store(obj)
     runtime_session_id = _detect_runtime_session_id(runtime_session_id)
     instance_id = _detect_instance_id(instance_id)
@@ -7490,10 +7541,16 @@ def claim_handoff(
 def claim_list(obj, item_id, show_all, as_json) -> None:
     """List claims on a work item."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
-    if _served_config_or_none(obj) is not None:
-        _served_operation_unavailable(
-            "claim list", replacement="Use 'item show --id …' to inspect active claims for a known item."
-        )
+    config = _served_config_or_none(obj)
+    if config is not None:
+        claims = _run_served("claim list", _served.read_claims, config.served_profile,
+            repo_id=config.repo_id, item_id=item_id, active_only=not show_all,
+            resolved_context=_resolved_context(config))["claims"]
+        if as_json: click.echo(json.dumps(claims, indent=2))
+        elif not claims: click.echo(f"No {'active ' if not show_all else ''}claims on item #{item_id}.")
+        else:
+            for c in claims: click.echo(f"#{c['claim_id']}  {c['actor']}  [{c['claim_type']}]  {'exclusive' if c['exclusive'] else 'shared'}  status={c['status']}  epoch={c['lease_epoch']}  proof={c['identity_status']}  expires={c['expires_at']}  heartbeat={c['heartbeat']}")
+        return
     store, m = _get_store(obj)
     claims = m.list_claims(store, item_id, active_only=not show_all)
     if as_json:
@@ -7525,8 +7582,18 @@ def claim_list_sprint(obj, sprint_id, show_all, expiring_within, as_json) -> Non
     """List all claims across a sprint, optionally filtered by expiry window."""
     if sprint_id is not None:
         sprint_id = _apply_scoped_id(obj, sprint_id, field="sprint")
-    if _served_config_or_none(obj) is not None:
-        _served_operation_unavailable("claim list-sprint")
+    config = _served_config_or_none(obj)
+    if config is not None:
+        if expiring_within is not None:
+            _served_operation_unavailable("claim list-sprint --expiring-within", replacement="The served catalog has no clock-window claim filter yet.")
+        claims = _run_served("claim list-sprint", _served.read_claims, config.served_profile,
+            repo_id=config.repo_id, sprint_id=sprint_id, active_only=not show_all,
+            resolved_context=_resolved_context(config))["claims"]
+        if as_json: click.echo(json.dumps(claims, indent=2))
+        elif not claims: click.echo("No claims found.")
+        else:
+            for c in claims: click.echo(f"#{c['claim_id']}  item #{c['work_item_id']} ({c.get('item_title', '-')})  {c['actor']}  [{c['claim_type']}]  status={c['status']}  expires={c['expires_at']}")
+        return
     store, m = _get_store(obj)
     if sprint_id is not None:
         sprint = m.get_sprint(store, sprint_id)
@@ -7611,8 +7678,21 @@ def claim_resume(obj, item_id, instance_id, runtime_session_id, hostname, pid, a
     """
     if item_id is not None:
         item_id = _apply_scoped_id(obj, item_id, field="item")
-    if _served_config_or_none(obj) is not None:
-        _served_operation_unavailable("claim resume")
+    config = _served_config_or_none(obj)
+    if config is not None:
+        runtime_session_id = _detect_runtime_session_id(runtime_session_id)
+        instance_id = instance_id or os.environ.get("SPRINTCTL_INSTANCE_ID")
+        if not any((instance_id, runtime_session_id, hostname and pid)):
+            click.echo("Error: provide an identity to resume claims.", err=True); sys.exit(1)
+        claims = _run_served("claim resume", _served.read_claims, config.served_profile,
+            repo_id=config.repo_id, item_id=item_id, active_only=True, instance_id=instance_id,
+            runtime_session_id=runtime_session_id, hostname=hostname, pid=pid,
+            resolved_context=_resolved_context(config))["claims"]
+        if as_json: click.echo(json.dumps(claims, indent=2))
+        elif not claims: click.echo("No active claims found matching the provided identity.")
+        else:
+            for c in claims: click.echo(f"#{c['claim_id']}  item #{c['work_item_id']}  {c['actor']}  [{c['claim_type']}]  expires={c['expires_at']}  proof={c['identity_status']}")
+        return
     store, m = _get_store(obj)
     runtime_session_id = _detect_runtime_session_id(runtime_session_id)
     instance_id = instance_id or os.environ.get("SPRINTCTL_INSTANCE_ID")
@@ -8076,7 +8156,7 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
         if explain:
             _served_operation_unavailable(
                 "next-work --explain",
-                replacement="Omit --explain, or use an explicitly configured local or remote recovery backend.",
+                replacement="The full exclusion/conflict explanation contract is not yet served.",
             )
         if project_path is None:
             result = _run_served(
@@ -8442,6 +8522,11 @@ def session() -> None:
 @click.pass_obj
 def session_resume_cmd(obj, sprint_id, as_json) -> None:
     """Show a combined resume surface (context, next-work explain, and git context)."""
+    if _served_config_or_none(obj) is not None:
+        _served_operation_unavailable(
+            "session resume",
+            replacement="The combined session-resume contract is not yet served.",
+        )
     store, m = _get_store(obj)
     sprint = _resolve_sprint(store, sprint_id, m=m)
     payload = _collect_session_resume_payload(
@@ -8483,7 +8568,7 @@ def usage_cmd(obj, as_context, sprint_id, project_path, as_json) -> None:
         if _served_config_or_none(obj) is not None:
             _served_operation_unavailable(
                 "usage --context",
-                replacement="Use 'next-work' and 'item show --id …' until work.read.context is deployed.",
+                replacement="The full context contract (staleness, conflicts, decisions, and action recommendation) is not yet served.",
             )
         if project_path is not None:
             project, scopes = _get_project_stores(obj, project_path)

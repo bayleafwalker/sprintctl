@@ -81,19 +81,11 @@ def _outbox_records(tmp_path):
     "argv",
     [
         ["usage", "--context"],
-        ["item", "list"],
         ["item", "done-from-claim", "--id", "3", "--claim-id", "4", "--claim-token", "secret"],
-        ["item", "ref", "add", "--id", "3", "--type", "doc", "--url", "docs/plan.md"],
-        ["item", "ref", "list", "--id", "3"],
-        ["item", "ref", "remove", "--id", "3", "--ref-id", "2"],
-        ["item", "dep", "add", "--id", "3", "--blocks-item-id", "4"],
-        ["item", "dep", "list", "--id", "3"],
-        ["item", "dep", "remove", "--id", "3", "--dep-id", "2"],
-        ["claim", "list", "--item-id", "3"],
-        ["claim", "list-sprint", "--sprint-id", "3"],
         ["claim", "show", "--id", "3", "--claim-token", "secret"],
-        ["claim", "resume", "--instance-id", "instance"],
         ["claim", "recover", "--id", "3"],
+        ["claim", "create", "--item-id", "3", "--actor", "agent"],
+        ["session", "resume"],
         ["handoff", "--sprint-id", "3", "--output", "-"],
         ["next-work", "--explain"],
     ],
@@ -132,6 +124,31 @@ def test_served_claim_recover_fails_closed_before_opening_local_connection(
     assert result.exit_code == 1, result.output
     assert "served-operation-unavailable" in result.output
     assert "local-sidecar-only" in result.output
+
+
+@_requires_312
+def test_served_blind_loop_lists_and_links_use_catalog_facade(runner, tmp_path, monkeypatch):
+    """New P0 reads/writes never open a store and preserve their CLI shapes."""
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli_module, "_get_store", lambda _obj: pytest.fail("served command opened store"))
+    monkeypatch.setattr(cli_module._served, "read_items", lambda *a, **k: {"items": [{"id": 3, "status": "pending", "priority": 3, "track_name": "core", "assignee": None, "title": "Work"}]})
+    monkeypatch.setattr(cli_module._served, "read_claims", lambda *a, **k: {"claims": [{"claim_id": 4, "work_item_id": 3, "actor": "agent", "claim_type": "execute", "exclusive": True, "status": "active", "lease_epoch": 1, "identity_status": "verified", "expires_at": "later", "heartbeat": "now"}]})
+    monkeypatch.setattr(cli_module._served, "item_ref_add", lambda *a, **k: {"ref_id": 8})
+    monkeypatch.setattr(cli_module._served, "item_dep_add", lambda *a, **k: {"dep_id": 9})
+    monkeypatch.setattr(cli_module._served, "read_item", lambda *a, **k: {"refs": [], "deps": {"blocked_by": [], "blocks": []}})
+    monkeypatch.setattr(cli_module._served, "item_ref_remove", lambda *a, **k: {})
+    monkeypatch.setattr(cli_module._served, "item_dep_remove", lambda *a, **k: {})
+
+    for argv in (
+        ["item", "list", "--json"], ["claim", "list", "--item-id", "3", "--json"],
+        ["claim", "resume", "--instance-id", "instance", "--json"],
+        ["item", "ref", "add", "--id", "3", "--type", "doc", "--url", "docs/x.md"],
+        ["item", "ref", "list", "--id", "3"], ["item", "ref", "remove", "--id", "3", "--ref-id", "8"],
+        ["item", "dep", "add", "--id", "3", "--blocks-item-id", "4"], ["item", "dep", "list", "--id", "3"],
+        ["item", "dep", "remove", "--id", "3", "--dep-id", "9"],
+    ):
+        result = runner.invoke(cli, argv)
+        assert result.exit_code == 0, result.output
 
 
 @_requires_312

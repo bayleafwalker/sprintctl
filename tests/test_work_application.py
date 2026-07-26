@@ -322,6 +322,32 @@ def test_work_read_events_contract_shape():
     }
 
 
+def test_served_item_links_and_claim_reads_use_backend_contracts(conn, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "served")
+    blocker = db.create_work_item(conn, active_sprint["id"], track, "Blocker")
+    waiting = db.create_work_item(conn, active_sprint["id"], track, "Waiting")
+    app = _application(store=conn, backend=db)
+
+    ref = app.invoke("work.item.ref.add", {"item_id": blocker, "ref_type": "doc", "url": "docs/plan.md", "label": "plan"}, _context())
+    dep = app.invoke("work.item.dep.add", {"item_id": blocker, "blocked_item_id": waiting}, _context())
+    item = app.invoke("work.read.item", {"item_id": blocker}, _context())
+    assert item["refs"][0]["id"] == ref["ref_id"]
+    assert item["deps"]["blocks"][0]["id"] == dep["dep_id"]
+    assert app.invoke("work.read.items", {"sprint_id": active_sprint["id"], "track_name": None, "status": None}, _context())["items"]
+    app.invoke("work.item.ref.remove", {"item_id": blocker, "ref_id": ref["ref_id"]}, _context())
+    app.invoke("work.item.dep.remove", {"item_id": blocker, "dep_id": dep["dep_id"]}, _context())
+
+
+def test_served_claim_resume_filters_identity_on_server(conn, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "served")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Resume")
+    db.create_claim(conn, item_id, "agent", instance_id="instance-a", runtime_session_id="run-a", hostname="host", pid=7)
+    app = _application(store=conn, backend=db)
+    result = app.invoke("work.read.claims", {"item_id": item_id, "active_only": True, "instance_id": "instance-a", "runtime_session_id": None, "hostname": None, "pid": None}, _context())
+    assert len(result["claims"]) == 1
+    assert app.invoke("work.read.claims", {"item_id": item_id, "active_only": True, "instance_id": "other", "runtime_session_id": None, "hostname": None, "pid": None}, _context())["claims"] == []
+
+
 def test_read_events_returns_sprint_events_in_order(conn, active_sprint):
     track = db.get_or_create_track(conn, active_sprint["id"], "served")
     item_id = db.create_work_item(conn, active_sprint["id"], track, "Item")

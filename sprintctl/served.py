@@ -94,6 +94,38 @@ def read_item(
     )
 
 
+def read_items(served_profile: ServedProfile, *, repo_id: str, sprint_id: int | None = None,
+               track_name: str | None = None, status: str | None = None) -> dict[str, Any]:
+    return asyncio.run(_invoke_operation(served_profile, "work.read.items", {
+        "sprint_id": sprint_id, "track_name": track_name, "status": status,
+    }, repo_id=repo_id))
+
+
+def read_claims(served_profile: ServedProfile, *, repo_id: str, item_id: int | None = None,
+                sprint_id: int | None = None, active_only: bool = True, instance_id: str | None = None,
+                runtime_session_id: str | None = None, hostname: str | None = None, pid: int | None = None) -> dict[str, Any]:
+    return asyncio.run(_invoke_operation(served_profile, "work.read.claims", {
+        "item_id": item_id, "sprint_id": sprint_id, "active_only": active_only, "instance_id": instance_id,
+        "runtime_session_id": runtime_session_id, "hostname": hostname, "pid": pid,
+    }, repo_id=repo_id))
+
+
+def item_ref_add(served_profile: ServedProfile, *, repo_id: str, item_id: int, ref_type: str, url: str, label: str = "") -> dict[str, Any]:
+    return asyncio.run(_invoke_operation(served_profile, "work.item.ref.add", {"item_id": item_id, "ref_type": ref_type, "url": url, "label": label}, repo_id=repo_id))
+
+
+def item_ref_remove(served_profile: ServedProfile, *, repo_id: str, item_id: int, ref_id: int) -> dict[str, Any]:
+    return asyncio.run(_invoke_operation(served_profile, "work.item.ref.remove", {"item_id": item_id, "ref_id": ref_id}, repo_id=repo_id))
+
+
+def item_dep_add(served_profile: ServedProfile, *, repo_id: str, item_id: int, blocked_item_id: int) -> dict[str, Any]:
+    return asyncio.run(_invoke_operation(served_profile, "work.item.dep.add", {"item_id": item_id, "blocked_item_id": blocked_item_id}, repo_id=repo_id))
+
+
+def item_dep_remove(served_profile: ServedProfile, *, repo_id: str, item_id: int, dep_id: int) -> dict[str, Any]:
+    return asyncio.run(_invoke_operation(served_profile, "work.item.dep.remove", {"item_id": item_id, "dep_id": dep_id}, repo_id=repo_id))
+
+
 def read_next_work(
     served_profile: ServedProfile, *, repo_id: str, sprint_id: int | None = None
 ) -> dict[str, Any]:
@@ -442,6 +474,14 @@ def lifecycle_arbitrate(
 _DOCTOR_PROBE_COMMAND_PATHS = (
     "sprint.list",
     "item.show",
+    "item.list",
+    "claim.list",
+    "claim.list-sprint",
+    "claim.resume",
+    "item.ref.add",
+    "item.ref.remove",
+    "item.dep.add",
+    "item.dep.remove",
     "next-work",
     "claim.start",
     "item.status",
@@ -494,10 +534,16 @@ __all__ = [
     "cutover_evidence",
     "event_add",
     "item_create",
+    "item_dep_add",
+    "item_dep_remove",
+    "item_ref_add",
+    "item_ref_remove",
     "lifecycle_arbitrate",
     "project_next_work",
     "read_events",
     "read_item",
+    "read_items",
+    "read_claims",
     "read_next_work",
     "read_sprint",
     "read_sprints",

@@ -193,6 +193,18 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "not-allowed",
     ),
     WorkOperationContract(
+        "work.read.items",
+        _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}, "track_name": {"type": ["string", "null"]}, "status": {"type": ["string", "null"]}}),
+        _result_schema(("repo_id", "items"), {"repo_id": {"type": "string"}, "items": {"type": "array", "items": {"type": "object"}}}),
+        "work:read", "read", "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.read.claims",
+        _object_schema({"item_id": {"type": ["integer", "null"], "minimum": 1}, "sprint_id": {"type": ["integer", "null"], "minimum": 1}, "active_only": {"type": "boolean", "default": True}, "instance_id": {"type": ["string", "null"]}, "runtime_session_id": {"type": ["string", "null"]}, "hostname": {"type": ["string", "null"]}, "pid": {"type": ["integer", "null"], "minimum": 1}}),
+        _result_schema(("repo_id", "claims"), {"repo_id": {"type": "string"}, "claims": {"type": "array", "items": {"type": "object"}}}),
+        "work:read", "read", "not-allowed",
+    ),
+    WorkOperationContract(
         "work.read.next-work",
         _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
         _result_schema(
@@ -303,6 +315,15 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
             {"item": {"type": "object"}, "track_name": {"type": "string"}},
         ),
         "work:lifecycle", "write", "not-allowed",
+    ),
+    *(
+        WorkOperationContract(name, _object_schema(properties, required=required), _result_schema(("repo_id", "item_id", result_id), {"repo_id": {"type": "string"}, "item_id": {"type": "integer", "minimum": 1}, result_id: {"type": "integer", "minimum": 1}}), "work:lifecycle", "write", "not-allowed")
+        for name, properties, required, result_id in (
+            ("work.item.ref.add", {"item_id": {"type": "integer", "minimum": 1}, "ref_type": {"type": "string", "minLength": 1}, "url": {"type": "string", "minLength": 1}, "label": {"type": "string", "default": ""}}, ("item_id", "ref_type", "url"), "ref_id"),
+            ("work.item.ref.remove", {"item_id": {"type": "integer", "minimum": 1}, "ref_id": {"type": "integer", "minimum": 1}}, ("item_id", "ref_id"), "ref_id"),
+            ("work.item.dep.add", {"item_id": {"type": "integer", "minimum": 1}, "blocked_item_id": {"type": "integer", "minimum": 1}}, ("item_id", "blocked_item_id"), "dep_id"),
+            ("work.item.dep.remove", {"item_id": {"type": "integer", "minimum": 1}, "dep_id": {"type": "integer", "minimum": 1}}, ("item_id", "dep_id"), "dep_id"),
+        )
     ),
     WorkOperationContract(
         "work.claim.start",
