@@ -1,3 +1,7 @@
+import sys
+
+import pytest
+
 from sprintctl.served_routes import SERVED_COMMAND_ROUTES, routes_for
 from sprintctl.vuoro_adapter import WORK_OPERATION_CONTRACTS
 import sprintctl.cli as cli_module
@@ -104,6 +108,10 @@ def _configure_served_repo(tmp_path, monkeypatch):
     monkeypatch.delenv("SPRINTCTL_URL", raising=False)
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 12),
+    reason="served mode requires Python 3.12+",
+)
 def test_unclassified_legacy_store_paths_fail_before_get_store_in_served_mode(
     runner, tmp_path, monkeypatch
 ):
@@ -125,6 +133,10 @@ def test_unclassified_legacy_store_paths_fail_before_get_store_in_served_mode(
         assert "could not connect to postgres" not in result.output.lower()
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 12),
+    reason="served mode requires Python 3.12+",
+)
 def test_catalog_classified_command_still_never_opens_store_in_served_mode(
     runner, tmp_path, monkeypatch
 ):

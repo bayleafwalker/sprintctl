@@ -1651,7 +1651,15 @@ class TestRecoverFromRemote:
         dest.write_text("not a real db")
         monkeypatch.setenv("SPRINTCTL_BACKEND", "remote")
         monkeypatch.setenv("SPRINTCTL_URL", _PG_URL)
-        result = runner.invoke(cli, ["db", "recover-from-remote", "--output", str(dest)])
+        result = runner.invoke(
+            cli,
+            [
+                "--repo-id", "pg-integration",
+                "--allow-markerless-nonlocal",
+                "db", "recover-from-remote",
+                "--output", str(dest),
+            ],
+        )
         assert result.exit_code != 0
         assert "already exists" in result.output
 
