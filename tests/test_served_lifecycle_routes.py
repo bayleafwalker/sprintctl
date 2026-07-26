@@ -82,6 +82,7 @@ def _outbox_records(tmp_path):
     [
         ["usage", "--context"],
         ["item", "list"],
+        ["item", "done-from-claim", "--id", "3", "--claim-id", "4", "--claim-token", "secret"],
         ["item", "ref", "add", "--id", "3", "--type", "doc", "--url", "docs/plan.md"],
         ["item", "ref", "list", "--id", "3"],
         ["item", "ref", "remove", "--id", "3", "--ref-id", "2"],
@@ -92,7 +93,9 @@ def _outbox_records(tmp_path):
         ["claim", "list-sprint", "--sprint-id", "3"],
         ["claim", "show", "--id", "3", "--claim-token", "secret"],
         ["claim", "resume", "--instance-id", "instance"],
+        ["claim", "recover", "--id", "3"],
         ["handoff", "--sprint-id", "3", "--output", "-"],
+        ["next-work", "--explain"],
     ],
 )
 def test_unavailable_served_p0_commands_fail_closed_before_opening_store(
@@ -109,6 +112,26 @@ def test_unavailable_served_p0_commands_fail_closed_before_opening_store(
     assert result.exit_code == 1, result.output
     assert "served-operation-unavailable" in result.output
     assert "PostgreSQL" not in result.output
+
+
+@_requires_312
+def test_served_claim_recover_fails_closed_before_opening_local_connection(
+    runner, tmp_path, monkeypatch
+):
+    """Recovery is a local-sidecar operation, never a served backend read."""
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module, "_get_conn", lambda _obj: pytest.fail("served recovery opened SQLite")
+    )
+    monkeypatch.setattr(
+        cli_module, "_get_store", lambda _obj: pytest.fail("served recovery opened store")
+    )
+
+    result = runner.invoke(cli, ["claim", "recover", "--id", "3"])
+
+    assert result.exit_code == 1, result.output
+    assert "served-operation-unavailable" in result.output
+    assert "local-sidecar-only" in result.output
 
 
 @_requires_312

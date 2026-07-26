@@ -2095,6 +2095,11 @@ def item_done_from_claim(obj, item_id, claim_id, claim_token, actor, keep_claim,
     """Mark an active item done using claim proof, then optionally release the claim."""
     if item_id is not None:
         item_id = _apply_scoped_id(obj, item_id, field="item")
+    if _served_config_or_none(obj) is not None:
+        _served_operation_unavailable(
+            "item done-from-claim",
+            replacement="Use the served 'item status --status done' and 'claim release' steps until their atomic finish operation is catalogued.",
+        )
     store, m = _get_store(obj)
     claim = m.get_claim(store, claim_id)
     if claim is None:
@@ -7667,6 +7672,13 @@ def claim_recover(obj, claim_id, item_id, as_json) -> None:
         sys.exit(1)
     if item_id is not None:
         item_id = _apply_scoped_id(obj, item_id, field="item")
+    config = _served_config_or_none(obj)
+    if config is not None:
+        _served_operation_unavailable(
+            "claim recover",
+            replacement="Claim recovery is local-sidecar-only; use an existing claim token or an authorized handoff.",
+        )
+    assert config is None
     try:
         config = _backend.load_backend_config()
     except _backend.BackendConfigError as e:
@@ -8062,13 +8074,10 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
     if config is not None:
         context = _resolved_context(config)
         if explain:
-            click.echo(
-                "Error: 'next-work --explain' has no served-mode equivalent "
-                "(exclusion reasons and conflicts are computed against a local store); "
-                "omit --explain, or use SPRINTCTL_BACKEND=local or remote.",
-                err=True,
+            _served_operation_unavailable(
+                "next-work --explain",
+                replacement="Omit --explain, or use an explicitly configured local or remote recovery backend.",
             )
-            sys.exit(1)
         if project_path is None:
             result = _run_served(
                 "next-work",
