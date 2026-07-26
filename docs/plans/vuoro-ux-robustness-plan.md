@@ -299,6 +299,28 @@ authorization; full served-mode support for `item list`/`sprint show`/
 *diagnosed*, not complete); O5/O6/O9/O10 (separate follow-ups once filing is
 unblocked).
 
+## Implemented, independently verified slices (not completion)
+
+The following source slices are committed on `main`; they do not satisfy the
+whole acceptance list and must not be read as a release/deployment claim.
+
+- `a7736a3` extends `repo#id` parsing to remaining local item, claim,
+  event-list, and sprint targets, including optional `item done-from-claim
+  --id`. Four direct CLI tests cover the added claim-list, done-from-claim,
+  event-list, and sprint-kind forms.
+- `8cf06d8` keeps established JSON result shapes while adding redacted resolved
+  context to text-mode served `sprint show`, `sprint list`, and `event list`
+  success, empty, and served-error output. All 50 served lifecycle route tests
+  passed.
+- `b84a3d5` adds read-only doctor findings for SF2-b
+  (`backend-reachable-but-empty`) and SF3 (`backend-superseded`); all 20
+  doctor tests passed.
+- `7cb278d` makes remote commands read the optional `superseded_marker` and
+  fail closed before schema handshake. Its unit coverage passed. The dedicated
+  disposable-Postgres test is committed but was skipped in this environment
+  because `SPRINTCTL_TEST_PG_URL` is unset, so D-new-1's real-fixture evidence
+  remains outstanding.
+
 ## Acceptance checks
 
 1. From `/projects/dev/agentops`, `sprintctl item show --id sprintctl#1195`
