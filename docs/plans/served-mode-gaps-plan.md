@@ -1,6 +1,7 @@
 # Served-Mode Gaps — Implementation Brief
 
-Status: planned (dispatch-plan output, 2026-07-24)
+Status: partially implemented (source merged 2026-07-26; adapter release and
+deployment verification remain separately authorized)
 Related items: #1982, #1983, #1984, #1985 (sprint #407, track `served-mode-gaps`);
 #1164 (split-backend retirement gate, whose dependency chain is now clear);
 #1195 (served-backend cutover this whole gap set traces back to)
@@ -225,25 +226,23 @@ only checks one call's rows would not catch the race this is fixing).
 
 ## Next-steps checklist for the orchestrating session
 
-- [ ] #1985: implement advisory lock + concurrency regression test in
-      sprintctl, land on main, no cross-repo release needed for this one
-      alone (though bundling it into the same release as #1982 is fine).
-- [ ] #1982: add `work.read.events` (operation contract, handler, served
+- [x] #1985: advisory lock + concurrency regression test landed in sprintctl
+      (`8c7111e`).
+- [x] #1982: `work.read.events` (operation contract, handler, served
       route, served.py facade), update `_DOCTOR_PROBE_COMMAND_PATHS` /
-      `EXPECTED_OPERATIONS`, add tests, land on sprintctl main, cut a new
-      `vuoro-adapter-v1-<sha>` release, bump `vuoro`'s `adapter-pins.json`,
-      tag a new `vuoro-service-vX.Y.Z`, bump `appservice`'s
-      `vuoro-shared/app/deployment.yaml` digest, `flux reconcile`, verify
-      `doctor: ok` + a live `event list` call from both workstation and
-      devbox-agent.
-- [ ] #1984 event-list sub-part: land alongside #1982 (same release train).
-- [ ] #1983: resolve the `list_preflight_targets` open question, then
-      implement `ServedSprintctlSource` in kctl, add `served` extra to
-      kctl's `pyproject.toml`, verify `kctl doctor` passes in served mode.
+      `EXPECTED_OPERATIONS`, and tests landed in sprintctl (`eadc53a`).
+      Remaining: cut a new `vuoro-adapter-v1-<sha>` release, bump vuoro's
+      adapter pin, deploy through the separately authorized appservice path,
+      then verify `doctor: ok` and live served calls from both hosts.
+- [x] #1984 event-list sub-part landed in sprintctl (`d8bd7fa`), pending the
+      same adapter release/deployment verification as #1982.
+- [x] #1983: `ServedSprintctlSource` landed in kctl (`2187c5c`) with a
+      `served` extra and durable event-ID watermarking. Preflight deliberately
+      reports the absent `maintain.check` catalog operation instead of
+      claiming a clean result; a served `kctl doctor` is not an existing
+      command to verify.
 - [ ] #1984 remaining sub-parts (event-add, item-add, sprint-show-basic):
       each needs its own operation + served route + doctor-probe update +
       tests; sprint-show's `--detail`/`--watch` handling needs the
       dedicated design pass noted above before implementation starts.
-- [ ] Update this doc's `status:` line and #1982-#1985's descriptions to
-      point at whichever sub-parts shipped, if the work lands in more than
-      one pass (likely, given the phasing above).
+- [x] Update this doc's status as work lands in more than one pass.
