@@ -1245,16 +1245,19 @@ def item_add(obj, sprint_id: str, track_name, title, description, assignee, prio
             raise click.BadParameter(str(exc), param_hint="--priority") from exc
     config = _served_config_or_none(obj)
     if config is not None:
+        context = _resolved_context(config)
         result = _run_served(
             "item add", _served.item_create, config.served_profile,
             repo_id=config.repo_id, sprint_id=sprint_id, track_name=track_name,
             title=title, description=description, assignee=assignee, priority=priority,
+            resolved_context=context,
         )
         created = {**result["item"], "track_name": result["track_name"]}
         if as_json:
             click.echo(json.dumps(created, indent=2))
             return
         click.echo(f"Added item #{created['id']}: {created['title']}  [track: {created['track_name']}]")
+        click.echo(_render_resolved_context(context))
         return
     store, m = _get_store(obj)
     s = m.get_sprint(store, sprint_id)
@@ -2679,15 +2682,18 @@ def _event_add_impl(
             sys.exit(1)
     config = _served_config_or_none(obj)
     if config is not None:
+        context = _resolved_context(config)
         result = _run_served(
             "event add", _served.event_add, config.served_profile,
             repo_id=config.repo_id, sprint_id=sprint_id, event_type=event_type,
             work_item_id=work_item_id, source_type=source_type, payload=payload_dict,
+            resolved_context=context,
         )
         if as_json:
             click.echo(json.dumps({"operation": "event_add", **result}, indent=2))
             return
         click.echo(f"Recorded event #{result['event_id']}: {result['type']}  (actor: {result['actor']})")
+        click.echo(_render_resolved_context(context))
         return
     if not actor:
         click.echo("Error: --actor is required for local or remote event writes.", err=True)

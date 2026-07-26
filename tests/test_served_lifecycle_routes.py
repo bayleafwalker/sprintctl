@@ -301,6 +301,38 @@ def test_served_item_add_uses_facade_without_store(runner, tmp_path, monkeypatch
 
 
 @_requires_312
+def test_served_write_text_output_and_error_report_resolved_context(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served,
+        "item_create",
+        lambda profile, **kwargs: {
+            "item": {"id": 12, "title": kwargs["title"]},
+            "track_name": kwargs["track_name"],
+        },
+    )
+    item_result = runner.invoke(
+        cli,
+        ["item", "add", "--sprint-id", "11", "--track", "served", "--title", "Created"],
+    )
+    assert item_result.exit_code == 0, item_result.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in item_result.output
+
+    monkeypatch.setattr(
+        cli_module._served,
+        "event_add",
+        lambda profile, **kwargs: (_ for _ in ()).throw(ValueError("Sprint #11 not found.")),
+    )
+    event_result = runner.invoke(
+        cli,
+        ["event", "add", "--sprint-id", "11", "--type", "decision"],
+    )
+    assert event_result.exit_code == 1
+    assert "Sprint #11 not found." in event_result.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in event_result.output
+
+
+@_requires_312
 def test_served_sprint_show_reads_basic_and_refuses_detail(runner, tmp_path, monkeypatch):
     _configure_served_repo(tmp_path, monkeypatch)
     calls = []
