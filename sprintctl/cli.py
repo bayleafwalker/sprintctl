@@ -1544,6 +1544,7 @@ def item_show(obj, item_id: str, as_json) -> None:
     """Show a single work item with its recent events and active claims."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
     config = _served_config_or_none(obj)
+    context = _resolved_context(obj["backend_config"])
     projection_status = None
     if config is not None:
         result = _run_served(
@@ -1552,6 +1553,7 @@ def item_show(obj, item_id: str, as_json) -> None:
             config.served_profile,
             repo_id=config.repo_id,
             item_id=item_id,
+            resolved_context=context,
         )
         it = result["item"]
         item_events = result["events"]
@@ -1584,8 +1586,6 @@ def item_show(obj, item_id: str, as_json) -> None:
         refs = m.list_refs(store, item_id)
         blocking = m.list_deps_blocking(store, item_id)
         blocked_by_me = m.list_deps_blocked_by(store, item_id)
-
-    context = _resolved_context(obj["backend_config"])
 
     if as_json:
         payload = {

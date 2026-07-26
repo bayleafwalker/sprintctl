@@ -100,6 +100,22 @@ def test_served_item_show_accepts_scoped_reference_and_reports_context(runner, t
     assert payload["resolved_context"]["target"] == "https://vuoro-shared.example/"
 
 
+@_requires_312
+def test_served_item_show_error_reports_resolved_context(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served,
+        "read_item",
+        lambda profile, **kwargs: (_ for _ in ()).throw(ValueError("Item #12 not found.")),
+    )
+
+    result = runner.invoke(cli, ["item", "show", "--id", "12"])
+
+    assert result.exit_code == 1
+    assert "Item #12 not found." in result.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in result.output
+
+
 def test_item_show_rejects_conflicting_reference_and_global_scope(runner, db_path):
     result = runner.invoke(
         cli,
