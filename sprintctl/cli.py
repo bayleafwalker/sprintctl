@@ -340,6 +340,26 @@ def _served_config_or_none(obj: dict):
     return config
 
 
+def _served_operation_unavailable(command: str, *, replacement: str | None = None) -> None:
+    """Fail closed for a command the served catalog cannot yet perform.
+
+    This guard must run before ``_get_store``.  In particular, a missing
+    catalog route must never turn into an attempt to import the direct
+    PostgreSQL backend (which used to produce a misleading install-psycopg
+    suggestion for a perfectly valid served invocation).
+    """
+    message = (
+        f"Error: served-operation-unavailable: '{command}' is not available "
+        "through the Vuoro served catalog yet."
+    )
+    if replacement:
+        message += f" {replacement}"
+    else:
+        message += " Use an explicitly configured local or remote recovery backend."
+    click.echo(message, err=True)
+    sys.exit(1)
+
+
 def _run_served(operation_label: str, func, *args, resolved_context: dict[str, str | None] | None = None, **kwargs):
     """Invoke a sprintctl.served facade function, translating any failure
     (transport, catalog validation, or an operation rejection) into the same
@@ -1707,6 +1727,11 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, project_path, as_json)
     if as_json and as_fzf:
         click.echo("Error: --fzf cannot be combined with --json.", err=True)
         sys.exit(1)
+    if _served_config_or_none(obj) is not None:
+        _served_operation_unavailable(
+            "item list",
+            replacement="Inspect a known item with 'item show --id …'; aggregate listing needs work.read.items.",
+        )
 
     if project_path is None:
         scopes = [(None, *_get_store(obj))]
@@ -2189,6 +2214,8 @@ def item_ref() -> None:
 def item_ref_add(obj, item_id: str, ref_type, url, label) -> None:
     """Attach an external reference to a work item."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
+    if _served_config_or_none(obj) is not None:
+        _served_operation_unavailable("item ref add")
     store, m = _get_store(obj)
     try:
         ref_id = m.add_ref(store, item_id, ref_type, url, label)
@@ -2205,6 +2232,10 @@ def item_ref_add(obj, item_id: str, ref_type, url, label) -> None:
 def item_ref_list(obj, item_id: str, as_json) -> None:
     """List external references on a work item."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
+    if _served_config_or_none(obj) is not None:
+        _served_operation_unavailable(
+            "item ref list", replacement="Use 'item show --id …' to inspect refs for a known item."
+        )
     store, m = _get_store(obj)
     if m.get_work_item(store, item_id) is None:
         click.echo(f"Item #{item_id} not found.", err=True)
@@ -2228,6 +2259,8 @@ def item_ref_list(obj, item_id: str, as_json) -> None:
 def item_ref_remove(obj, item_id: str, ref_id) -> None:
     """Remove an external reference from a work item."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
+    if _served_config_or_none(obj) is not None:
+        _served_operation_unavailable("item ref remove")
     store, m = _get_store(obj)
     try:
         m.remove_ref(store, ref_id, item_id)
@@ -2254,6 +2287,8 @@ def item_dep_add(obj, item_id: str, blocks_item_id: str) -> None:
     """Record that item --id must complete before --blocks-item-id can start."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
     blocks_item_id = _apply_scoped_id(obj, blocks_item_id, field="item")
+    if _served_config_or_none(obj) is not None:
+        _served_operation_unavailable("item dep add")
     store, m = _get_store(obj)
     try:
         dep_id = m.add_dep(store, item_id, blocks_item_id)
@@ -2270,6 +2305,10 @@ def item_dep_add(obj, item_id: str, blocks_item_id: str) -> None:
 def item_dep_list(obj, item_id: str, as_json) -> None:
     """List dependencies for a work item (what blocks it and what it blocks)."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
+    if _served_config_or_none(obj) is not None:
+        _served_operation_unavailable(
+            "item dep list", replacement="Use 'item show --id …' to inspect dependencies for a known item."
+        )
     store, m = _get_store(obj)
     if m.get_work_item(store, item_id) is None:
         click.echo(f"Item #{item_id} not found.", err=True)
@@ -2299,6 +2338,8 @@ def item_dep_list(obj, item_id: str, as_json) -> None:
 def item_dep_remove(obj, item_id: str, dep_id) -> None:
     """Remove a dependency."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
+    if _served_config_or_none(obj) is not None:
+        _served_operation_unavailable("item dep remove")
     store, m = _get_store(obj)
     try:
         m.remove_dep(store, dep_id, item_id)
@@ -7444,6 +7485,10 @@ def claim_handoff(
 def claim_list(obj, item_id, show_all, as_json) -> None:
     """List claims on a work item."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
+    if _served_config_or_none(obj) is not None:
+        _served_operation_unavailable(
+            "claim list", replacement="Use 'item show --id …' to inspect active claims for a known item."
+        )
     store, m = _get_store(obj)
     claims = m.list_claims(store, item_id, active_only=not show_all)
     if as_json:
@@ -7475,6 +7520,8 @@ def claim_list_sprint(obj, sprint_id, show_all, expiring_within, as_json) -> Non
     """List all claims across a sprint, optionally filtered by expiry window."""
     if sprint_id is not None:
         sprint_id = _apply_scoped_id(obj, sprint_id, field="sprint")
+    if _served_config_or_none(obj) is not None:
+        _served_operation_unavailable("claim list-sprint")
     store, m = _get_store(obj)
     if sprint_id is not None:
         sprint = m.get_sprint(store, sprint_id)
@@ -7517,6 +7564,8 @@ def claim_show(obj, claim_id, claim_token, as_json) -> None:
 
     Requires the current claim_token to prove ownership before revealing it again.
     """
+    if _served_config_or_none(obj) is not None:
+        _served_operation_unavailable("claim show")
     store, m = _get_store(obj)
     claim = m.get_claim(store, claim_id, include_secret=True)
     if claim is None:
@@ -7557,6 +7606,8 @@ def claim_resume(obj, item_id, instance_id, runtime_session_id, hostname, pid, a
     """
     if item_id is not None:
         item_id = _apply_scoped_id(obj, item_id, field="item")
+    if _served_config_or_none(obj) is not None:
+        _served_operation_unavailable("claim resume")
     store, m = _get_store(obj)
     runtime_session_id = _detect_runtime_session_id(runtime_session_id)
     instance_id = instance_id or os.environ.get("SPRINTCTL_INSTANCE_ID")
@@ -7805,6 +7856,8 @@ def handoff_cmd(obj, sprint_id, output_path, events_limit, fmt) -> None:
     Use --format json (default) for a machine-parseable bundle.
     Pass --output - to write to stdout regardless of format.
     """
+    if _served_config_or_none(obj) is not None:
+        _served_operation_unavailable("handoff")
     store, m = _get_store(obj)
     if sprint_id is not None:
         s = m.get_sprint(store, sprint_id)
@@ -8418,6 +8471,11 @@ def usage_cmd(obj, as_context, sprint_id, project_path, as_json) -> None:
     if project_path is not None and not as_context:
         raise click.ClickException("--project requires --context")
     if as_context:
+        if _served_config_or_none(obj) is not None:
+            _served_operation_unavailable(
+                "usage --context",
+                replacement="Use 'next-work' and 'item show --id …' until work.read.context is deployed.",
+            )
         if project_path is not None:
             project, scopes = _get_project_stores(obj, project_path)
             resolved, unavailable = _project_sprints(scopes, sprint_id)

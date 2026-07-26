@@ -77,6 +77,41 @@ def _outbox_records(tmp_path):
 
 
 @_requires_312
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["usage", "--context"],
+        ["item", "list"],
+        ["item", "ref", "add", "--id", "3", "--type", "doc", "--url", "docs/plan.md"],
+        ["item", "ref", "list", "--id", "3"],
+        ["item", "ref", "remove", "--id", "3", "--ref-id", "2"],
+        ["item", "dep", "add", "--id", "3", "--blocks-item-id", "4"],
+        ["item", "dep", "list", "--id", "3"],
+        ["item", "dep", "remove", "--id", "3", "--dep-id", "2"],
+        ["claim", "list", "--item-id", "3"],
+        ["claim", "list-sprint", "--sprint-id", "3"],
+        ["claim", "show", "--id", "3", "--claim-token", "secret"],
+        ["claim", "resume", "--instance-id", "instance"],
+        ["handoff", "--sprint-id", "3", "--output", "-"],
+    ],
+)
+def test_unavailable_served_p0_commands_fail_closed_before_opening_store(
+    runner, tmp_path, monkeypatch, argv
+):
+    """Unimplemented catalog routes must not fall into the PG/store path."""
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module, "_get_store", lambda _obj: pytest.fail("served command opened store")
+    )
+
+    result = runner.invoke(cli, argv)
+
+    assert result.exit_code == 1, result.output
+    assert "served-operation-unavailable" in result.output
+    assert "PostgreSQL" not in result.output
+
+
+@_requires_312
 def test_served_item_show_accepts_scoped_reference_and_reports_context(runner, tmp_path, monkeypatch):
     _configure_served_repo(tmp_path, monkeypatch)
     captured = {}
