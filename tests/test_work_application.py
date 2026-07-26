@@ -259,6 +259,7 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
     assert len(names) == len(set(names))
     assert {
         "work.read.context",
+        "work.maintain.check",
         "work.read.handoff",
         "work.read.next-work",
         "work.read.next-work-explain",
@@ -342,6 +343,23 @@ def test_work_read_context_returns_the_exact_frozen_v1_contract(conn, active_spr
     assert result["sprint"]["id"] == active_sprint["id"]
     assert result["summary"]["ready"] == 1
     assert result["next_action"]["kind"] == "start-ready-item"
+
+
+def test_served_maintain_check_uses_the_owning_readonly_diagnostic(conn, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "served")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Unclaimed active")
+    db.set_work_item_status(conn, item_id, "active")
+    app = _application(store=conn, backend=db)
+
+    result = app.invoke("work.maintain.check", {"sprint_id": active_sprint["id"]}, _context())
+
+    assert result["repo_id"] == "test-repo"
+    assert result["sprint"]["id"] == active_sprint["id"]
+    assert result["threshold_hours"] > 0
+    assert result["pending_threshold_hours"] is None
+    assert "active-item-without-live-claim" in {
+        finding["reason_code"] for finding in result["findings"]
+    }
 
 
 def test_work_read_events_contract_shape():

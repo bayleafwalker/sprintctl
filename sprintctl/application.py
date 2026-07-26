@@ -25,7 +25,7 @@ import socket
 from typing import Any, Protocol
 from uuid import uuid4
 
-from . import context_contract, contracts, cutover, db, handoff, outbox, sprint_detail
+from . import context_contract, contracts, cutover, db, handoff, maintain, outbox, sprint_detail
 
 
 CLAIM_COMMAND_TYPES = frozenset(
@@ -454,6 +454,7 @@ class WorkApplication:
             "work.read.events": target._read_events,
             "work.read.sprint": target._read_sprint,
             "work.read.sprint-detail": target._read_sprint_detail,
+            "work.maintain.check": target._maintain_check,
             "work.event.add": target._event_add,
             "work.handoff.record": target._handoff_record,
             "work.item.create": target._item_create,
@@ -613,6 +614,40 @@ class WorkApplication:
             self.store, self._resolve_sprint(arguments.get("sprint_id")), now,
             backend=self.backend,
         )
+
+    def _maintain_check(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        """Return the owning maintenance diagnostic from one server snapshot."""
+        now = datetime.now(timezone.utc)
+
+        def build(store: Any) -> dict[str, Any]:
+            snapshot_app = replace(self, store=store)
+            report = maintain.check(
+                store,
+                snapshot_app._resolve_sprint(arguments.get("sprint_id"))["id"],
+                now,
+                _m=self.backend,
+            )
+            pending_threshold = report["pending_threshold"]
+            return {
+                "repo_id": self.repo_id,
+                "sprint": report["sprint"],
+                "risk": report["risk"],
+                "stale_items": report["stale_items"],
+                "track_health": report["track_health"],
+                "findings": report["findings"],
+                "threshold_hours": report["threshold"].total_seconds() / 3600,
+                "pending_threshold_hours": (
+                    pending_threshold.total_seconds() / 3600
+                    if pending_threshold is not None
+                    else None
+                ),
+            }
+
+        snapshot = getattr(self.backend, "repeatable_read_snapshot", None)
+        if callable(snapshot):
+            with snapshot(self.store) as snapshot_store:
+                return build(snapshot_store)
+        return build(self.store)
 
     def _read_handoff(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
         events_limit = _positive_int(arguments.get("events_limit"), "events_limit")

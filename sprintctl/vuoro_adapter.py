@@ -234,6 +234,27 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work:read", "read", "not-allowed",
     ),
     WorkOperationContract(
+        "work.maintain.check",
+        _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
+        _result_schema(
+            (
+                "repo_id", "sprint", "risk", "stale_items", "track_health",
+                "findings", "threshold_hours", "pending_threshold_hours",
+            ),
+            {
+                "repo_id": {"type": "string"},
+                "sprint": {"type": "object"},
+                "risk": {"type": "object"},
+                "stale_items": {"type": "array", "items": {"type": "object"}},
+                "track_health": {"type": "object"},
+                "findings": {"type": "array", "items": {"type": "object"}},
+                "threshold_hours": {"type": "number", "exclusiveMinimum": 0},
+                "pending_threshold_hours": {"type": ["number", "null"]},
+            },
+        ),
+        "work:read", "read", "not-allowed",
+    ),
+    WorkOperationContract(
         "work.read.next-work",
         _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
         _result_schema(
