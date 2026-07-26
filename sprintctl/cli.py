@@ -3099,13 +3099,17 @@ _AUTHORITY_COMMAND_TYPES = (
 
 
 def _authority_repo_uuid(repo_root: Path) -> str:
-    manifest = repo_root / "sprintctl.dispatch.json"
+    manifests = sorted(repo_root.glob("*.dispatch.json"))
     try:
-        raw = json.loads(manifest.read_text(encoding="utf-8"))
-        return str(uuid.UUID(str(raw["repo_id"])))
+        if len(manifests) != 1:
+            raise ValueError("expected exactly one root dispatch manifest")
+        raw = json.loads(manifests[0].read_text(encoding="utf-8"))
+        repository_identity = raw.get("authority_repo_uuid", raw["repo_id"])
+        return str(uuid.UUID(str(repository_identity)))
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise _authority_config.AuthorityCommandConfigError(
-            "authority commands require a committed UUID repo_id in sprintctl.dispatch.json"
+            "authority commands require exactly one root *.dispatch.json with a "
+            "committed UUID authority_repo_uuid (legacy UUID repo_id is also accepted)"
         ) from exc
 
 

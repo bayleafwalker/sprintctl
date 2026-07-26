@@ -21,6 +21,89 @@ def _configure_repo(tmp_path) -> None:
     )
 
 
+def test_authority_repository_uuid_can_be_distinct_from_dispatch_repo_id(
+    runner,
+    conn,
+    tmp_path,
+):
+    authority_repo_uuid = str(uuid4())
+    state = tmp_path / ".sprintctl"
+    state.mkdir(exist_ok=True)
+    (state / "backend.json").write_text(
+        json.dumps({"backend": "local", "repo_id": "example"}),
+        encoding="utf-8",
+    )
+    (tmp_path / "example.dispatch.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "repo_id": "example",
+                "authority_repo_uuid": authority_repo_uuid,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    sprint_id = db.create_sprint(conn, "Authority CLI", status="active")
+    track_id = db.get_or_create_track(conn, sprint_id, "authority")
+    item_id = db.create_work_item(conn, sprint_id, track_id, "Canonical manifest")
+    assert runner.invoke(cli, ["authority", "mode", "--set", "shadow"]).exit_code == 0
+
+    result = runner.invoke(
+        cli,
+        [
+            "authority",
+            "submit",
+            "--type",
+            "item.transition",
+            "--aggregate-id",
+            str(item_id),
+            "--payload",
+            '{"to_status":"active"}',
+            "--actor",
+            "shadow-agent",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+
+
+def test_authority_repository_uuid_rejects_multiple_root_manifests(
+    runner,
+    conn,
+    tmp_path,
+):
+    _configure_repo(tmp_path)
+    (tmp_path / "other.dispatch.json").write_text(
+        json.dumps({"schema_version": 1, "repo_id": str(uuid4())}),
+        encoding="utf-8",
+    )
+    sprint_id = db.create_sprint(conn, "Authority CLI", status="active")
+    track_id = db.get_or_create_track(conn, sprint_id, "authority")
+    item_id = db.create_work_item(conn, sprint_id, track_id, "Ambiguous manifest")
+    assert runner.invoke(cli, ["authority", "mode", "--set", "shadow"]).exit_code == 0
+
+    result = runner.invoke(
+        cli,
+        [
+            "authority",
+            "submit",
+            "--type",
+            "item.transition",
+            "--aggregate-id",
+            str(item_id),
+            "--payload",
+            '{"to_status":"active"}',
+            "--actor",
+            "shadow-agent",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "exactly one root *.dispatch.json" in str(result.exception)
+
+
 def test_authority_mode_defaults_off_and_shadow_submit_never_mutates(
     runner,
     conn,
