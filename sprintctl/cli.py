@@ -233,6 +233,11 @@ def _get_store(obj: dict):
     if store is None:
         try:
             store = _pg.get_connection(config.url)
+            tombstone_message = _pg.superseded_marker_message(store)
+            if tombstone_message is not None:
+                raise RuntimeError(
+                    "remote backend is superseded: " + tombstone_message
+                )
             from . import pg_migrations as _pg_migrations  # noqa: PLC0415
             obj["remote_compatibility"] = _pg_migrations.startup_schema_handshake(
                 store,

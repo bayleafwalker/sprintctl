@@ -1,6 +1,9 @@
 import json
 
+import pytest
+
 from sprintctl import backend
+import sprintctl.cli as cli_module
 from sprintctl.cli import cli
 
 
@@ -186,6 +189,41 @@ def test_nonlocal_marker_without_a_repo_id_is_not_corroboration(tmp_path):
         assert "backend-uncorroborated" in str(exc)
     else:
         raise AssertionError("expected marker without repo_id to be rejected")
+
+
+def test_remote_tombstone_fails_closed_before_schema_handshake(tmp_path, monkeypatch, runner):
+    marker_dir = tmp_path / ".sprintctl"
+    marker_dir.mkdir()
+    (marker_dir / "backend.json").write_text(
+        json.dumps({"backend": "remote", "repo_id": tmp_path.name}), encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SPRINTCTL_BACKEND", "remote")
+    monkeypatch.setenv("SPRINTCTL_URL", "postgresql://example.invalid/sprintctl")
+
+    from sprintctl import pg
+
+    class Connection:
+        def close(self):
+            return None
+
+    store = pg.PgStore(conn=Connection(), repo_id=tmp_path.name)
+    monkeypatch.setattr(pg, "get_connection", lambda _url: store)
+    monkeypatch.setattr(
+        pg,
+        "superseded_marker_message",
+        lambda _store: "this database was superseded; use served mode",
+    )
+    monkeypatch.setattr(
+        "sprintctl.pg_migrations.startup_schema_handshake",
+        lambda *_args: pytest.fail("schema handshake must not run after a tombstone"),
+    )
+
+    result = runner.invoke(cli, ["sprint", "list"])
+
+    assert result.exit_code == 1
+    assert "remote backend is superseded" in result.output
+    assert "this database was superseded; use served mode" in result.output
 
 
 def test_explicit_scope_cannot_conflict_with_marker(tmp_path):

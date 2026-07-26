@@ -1014,6 +1014,35 @@ def get_connection(url: str) -> PgStore:
     return PgStore(conn=conn, repo_id=repo_id)
 
 
+def superseded_marker_message(store: PgStore) -> str | None:
+    """Return a remote-target tombstone message, if the optional marker exists.
+
+    This is deliberately read-only and does not require the marker table to be
+    part of Sprintctl's managed schema.  A target that carries a marker was
+    intentionally retired; callers must fail closed rather than proceed with
+    an otherwise valid connection to the wrong authority.
+    """
+    def first_value(row: Any) -> Any:
+        if row is None:
+            return None
+        if isinstance(row, dict):
+            return next(iter(row.values()), None)
+        return row[0]
+
+    with store.conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('superseded_marker')")
+        relation = cur.fetchone()
+        relation_value = first_value(relation)
+        if relation_value is None:
+            return None
+        cur.execute("SELECT message FROM superseded_marker LIMIT 1")
+        marker = cur.fetchone()
+    marker_value = first_value(marker)
+    if marker_value is None:
+        return None
+    return str(marker_value)
+
+
 def _repo_id_from_cwd() -> str:
     from pathlib import Path
     from . import backend as _backend

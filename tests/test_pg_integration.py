@@ -211,6 +211,22 @@ def work_item_id(store, sprint_id, track_id):
 # Schema
 # ---------------------------------------------------------------------------
 
+class TestRemoteSafety:
+    def test_superseded_marker_is_read_from_disposable_temp_table(self, store):
+        """The marker probe is read-only; the temporary fixture disappears with this connection."""
+        with store.conn.cursor() as cur:
+            cur.execute("CREATE TEMP TABLE superseded_marker (message text NOT NULL)")
+            cur.execute(
+                "INSERT INTO superseded_marker(message) VALUES (%s)",
+                ("this database was superseded; use served mode",),
+            )
+        try:
+            assert pg.superseded_marker_message(store) == "this database was superseded; use served mode"
+        finally:
+            with store.conn.cursor() as cur:
+                cur.execute("DROP TABLE superseded_marker")
+
+
 class TestInitDb:
     def test_idempotent(self, store):
         pg.init_db(store)
