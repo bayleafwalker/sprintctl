@@ -123,6 +123,7 @@ def _backend_facts(cwd: Path, environ: Mapping[str, str]) -> dict[str, Any]:
         "resolved_mode": None,
         "repo_root": None,
         "repo_id": None,
+        "repo_source": None,
         "marker": None,
         "error": None,
     }
@@ -135,7 +136,11 @@ def _backend_facts(cwd: Path, environ: Mapping[str, str]) -> dict[str, Any]:
         except _backend.BackendConfigError:
             return facts
         facts["repo_root"] = str(repo_root) if repo_root else None
-        facts["repo_id"] = repo_id
+        env_repo_id = environ.get("SPRINTCTL_REPO_ID")
+        facts["repo_id"] = env_repo_id or repo_id
+        facts["repo_source"] = (
+            "env" if env_repo_id else "marker" if marker and marker.repo_id else "cwd" if repo_id else None
+        )
         if marker:
             facts["marker"] = {
                 "path": str(marker.path),
@@ -150,6 +155,7 @@ def _backend_facts(cwd: Path, environ: Mapping[str, str]) -> dict[str, Any]:
             "resolved_mode": config.mode,
             "repo_root": str(config.repo_root) if config.repo_root else None,
             "repo_id": config.repo_id,
+            "repo_source": config.repo_source,
             "marker": (
                 {
                     "path": str(config.marker.path),
@@ -370,14 +376,28 @@ def evaluate_facts(facts: Mapping[str, Any]) -> dict[str, Any]:
         )
 
     if not backend["valid"]:
-        findings.append(
-            _finding(
-                "backend-config-invalid",
-                "error",
-                backend["error"] or "Backend configuration is invalid.",
-                ["Align SPRINTCTL_BACKEND, SPRINTCTL_URL, and .sprintctl/backend.json."],
+        error = backend["error"] or "Backend configuration is invalid."
+        if "backend-uncorroborated" in error:
+            findings.append(
+                _finding(
+                    "backend-uncorroborated",
+                    "error",
+                    error,
+                    [
+                        "Run from a repository with .sprintctl/backend.json, or pass "
+                        "--repo-id together with --allow-markerless-nonlocal for one invocation.",
+                    ],
+                )
             )
-        )
+        else:
+            findings.append(
+                _finding(
+                    "backend-config-invalid",
+                    "error",
+                    error,
+                    ["Align SPRINTCTL_BACKEND, SPRINTCTL_URL, and .sprintctl/backend.json."],
+                )
+            )
     if backend["environment_mode"] == "remote" and not extras["remote"]["enabled"]:
         findings.append(
             _finding(
@@ -507,6 +527,8 @@ def render_text(report: Mapping[str, Any]) -> str:
     )
     lines.append(
         f"backend: env={backend['environment_mode']} resolved={backend['resolved_mode'] or 'invalid'} "
+        f"repo={backend.get('repo_id') or 'unresolved'} "
+        f"source={backend.get('repo_source') or 'unresolved'} "
         f"marker={backend['marker']['backend'] if backend['marker'] else 'none'} "
         f"url={'configured' if backend['url_configured'] else 'unset'}"
     )

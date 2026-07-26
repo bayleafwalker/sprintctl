@@ -183,6 +183,24 @@ def test_doctor_invalid_backend_does_not_create_database(tmp_path, monkeypatch, 
     assert not db_path.exists()
 
 
+def test_doctor_labels_markerless_remote_backend_as_uncorroborated(tmp_path):
+    report = doctor.collect_report(
+        cwd=tmp_path,
+        environ={
+            "SPRINTCTL_BACKEND": "remote",
+            "SPRINTCTL_URL": "postgresql://example.invalid/sprintctl",
+            "SPRINTCTL_REPO_ID": "sprintctl",
+        },
+    )
+
+    findings = {finding["code"]: finding for finding in report["findings"]}
+    assert "backend-uncorroborated" in findings
+    assert "backend-config-invalid" not in findings
+    assert "--allow-markerless-nonlocal" in findings["backend-uncorroborated"]["guidance"][0]
+    assert report["backend"]["repo_id"] == "sprintctl"
+    assert report["backend"]["repo_source"] == "env"
+
+
 def test_doctor_human_output_names_provenance_and_guidance(monkeypatch, runner):
     report = doctor.evaluate_facts(_fixture("doctor-stale.json"))
     monkeypatch.setattr(doctor, "collect_report", lambda: report)
