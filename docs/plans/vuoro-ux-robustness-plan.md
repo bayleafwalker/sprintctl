@@ -327,6 +327,13 @@ whole acceptance list and must not be read as a release/deployment claim.
   CI run `30192103641` passed its full Python, disposable-Postgres, and
   producer-contract jobs. Local guidance retains its pre-existing bare-ID
   forms.
+- `e69d89b`, `9952bde`, and `b1ba051` add the same text-only resolved-context
+  reporting to served writes, claim start, and item/sprint status. `cdd7fd5`
+  covers served `next-work` (including project mode) for ready, empty, and
+  served-error outcomes; `2f2a9cb` covers served `item note` success and
+  rejection. Their focused lifecycle suite passed with 53 tests, and GitHub
+  CI run `30192405825` passed its full Python, disposable-Postgres, and
+  producer-contract jobs. JSON result contracts remain unchanged.
 
 ## Acceptance checks
 
