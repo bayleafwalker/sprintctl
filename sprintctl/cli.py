@@ -980,7 +980,7 @@ def _served_sprint_status(config, sprint_id, new_status, actor, as_json) -> None
 
 
 @sprint.command("status")
-@click.option("--id", "sprint_id", type=int, required=True, help="Sprint ID")
+@click.option("--id", "sprint_id", type=str, required=True, help="Sprint ID or repo#id")
 @click.option(
     "--status",
     "new_status",
@@ -993,6 +993,7 @@ def _served_sprint_status(config, sprint_id, new_status, actor, as_json) -> None
 @click.pass_obj
 def sprint_status(obj, sprint_id, new_status, actor, as_json) -> None:
     """Update a sprint's status (enforces allowed transitions)."""
+    sprint_id = _apply_scoped_id(obj, sprint_id, field="sprint")
     config = _served_config_or_none(obj)
     if config is not None:
         _served_sprint_status(config, sprint_id, new_status, actor, as_json)
@@ -1140,7 +1141,7 @@ def sprint_list(obj, include_backlog, include_archive, active_only, project_path
 
 
 @sprint.command("kind")
-@click.option("--id", "sprint_id", type=int, required=True, help="Sprint ID")
+@click.option("--id", "sprint_id", type=str, required=True, help="Sprint ID or repo#id")
 @click.option(
     "--kind",
     required=True,
@@ -1151,6 +1152,7 @@ def sprint_list(obj, include_backlog, include_archive, active_only, project_path
 @click.pass_obj
 def sprint_kind_cmd(obj, sprint_id, kind, as_json) -> None:
     """Set the kind classification of a sprint."""
+    sprint_id = _apply_scoped_id(obj, sprint_id, field="sprint")
     store, m = _get_store(obj)
     try:
         m.set_sprint_kind(store, sprint_id, kind)
@@ -1164,15 +1166,17 @@ def sprint_kind_cmd(obj, sprint_id, kind, as_json) -> None:
 
 
 @sprint.command("backlog-seed")
-@click.option("--from-sprint-id", "source_sprint_id", type=int, required=True,
-              help="Sprint ID to read knowledge candidates from")
-@click.option("--to-sprint-id", "target_sprint_id", type=int, required=True,
-              help="Sprint ID (backlog) to seed items into")
+@click.option("--from-sprint-id", "source_sprint_id", type=str, required=True,
+              help="Sprint ID or repo#id to read knowledge candidates from")
+@click.option("--to-sprint-id", "target_sprint_id", type=str, required=True,
+              help="Sprint ID or repo#id (backlog) to seed items into")
 @click.option("--actor", default="system", help="Actor name (default: system)")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output seeded items as JSON")
 @click.pass_obj
 def sprint_backlog_seed(obj, source_sprint_id, target_sprint_id, actor, as_json) -> None:
     """Seed backlog items from knowledge candidate events in another sprint."""
+    source_sprint_id = _apply_scoped_id(obj, source_sprint_id, field="sprint")
+    target_sprint_id = _apply_scoped_id(obj, target_sprint_id, field="sprint")
     store, m = _get_store(obj)
     try:
         seeded = m.backlog_seed_from_candidates(store, source_sprint_id, target_sprint_id, actor=actor)
@@ -2016,7 +2020,7 @@ def item_status(obj, item_id: str, new_status, actor, claim_id, claim_token, as_
 
 
 @item.command("done-from-claim")
-@click.option("--id", "item_id", type=int, default=None, help="Item ID (defaults to the claim's item)")
+@click.option("--id", "item_id", type=str, default=None, help="Item ID or repo#id (defaults to the claim's item)")
 @click.option("--claim-id", type=int, required=True, help="Claim ID proving ownership")
 @click.option("--claim-token", required=True, help="Claim token proving ownership")
 @click.option("--actor", default=None, help="Actor name")
@@ -2030,6 +2034,8 @@ def item_status(obj, item_id: str, new_status, actor, claim_id, claim_token, as_
 @click.pass_obj
 def item_done_from_claim(obj, item_id, claim_id, claim_token, actor, keep_claim, as_json) -> None:
     """Mark an active item done using claim proof, then optionally release the claim."""
+    if item_id is not None:
+        item_id = _apply_scoped_id(obj, item_id, field="item")
     store, m = _get_store(obj)
     claim = m.get_claim(store, claim_id)
     if claim is None:
@@ -3995,8 +4001,8 @@ def projection_reads_disable(as_json: bool) -> None:
 
 
 @event.command("list")
-@click.option("--sprint-id", type=int, required=True, help="Sprint ID")
-@click.option("--item-id", "work_item_id", type=int, default=None, help="Filter by work item ID")
+@click.option("--sprint-id", type=str, required=True, help="Sprint ID or repo#id")
+@click.option("--item-id", "work_item_id", type=str, default=None, help="Filter by work item ID or repo#id")
 @click.option("--type", "event_type", default=None, help="Filter by event type")
 @click.option("--knowledge", "knowledge_only", is_flag=True, default=False,
               help="Show only knowledge candidate events (decision, pattern-noted, lesson-learned, risk-accepted)")
@@ -4005,6 +4011,9 @@ def projection_reads_disable(as_json: bool) -> None:
 @click.pass_obj
 def event_list(obj, sprint_id, work_item_id, event_type, knowledge_only, limit, as_json) -> None:
     """List events for a sprint."""
+    sprint_id = _apply_scoped_id(obj, sprint_id, field="sprint")
+    if work_item_id is not None:
+        work_item_id = _apply_scoped_id(obj, work_item_id, field="item")
     if knowledge_only and event_type is not None:
         click.echo("Error: --knowledge and --type are mutually exclusive.", err=True)
         sys.exit(1)
@@ -7337,12 +7346,13 @@ def claim_handoff(
 
 
 @claim.command("list")
-@click.option("--item-id", type=int, required=True, help="Work item ID")
+@click.option("--item-id", type=str, required=True, help="Work item ID or repo#id")
 @click.option("--all", "show_all", is_flag=True, default=False, help="Include expired claims")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
 def claim_list(obj, item_id, show_all, as_json) -> None:
     """List claims on a work item."""
+    item_id = _apply_scoped_id(obj, item_id, field="item")
     store, m = _get_store(obj)
     claims = m.list_claims(store, item_id, active_only=not show_all)
     if as_json:
@@ -7362,7 +7372,7 @@ def claim_list(obj, item_id, show_all, as_json) -> None:
 
 
 @claim.command("list-sprint")
-@click.option("--sprint-id", type=int, default=None, help="Sprint ID (defaults to active)")
+@click.option("--sprint-id", type=str, default=None, help="Sprint ID or repo#id (defaults to active)")
 @click.option("--all", "show_all", is_flag=True, default=False, help="Include expired claims")
 @click.option(
     "--expiring-within", "expiring_within", type=int, default=None,
@@ -7372,6 +7382,8 @@ def claim_list(obj, item_id, show_all, as_json) -> None:
 @click.pass_obj
 def claim_list_sprint(obj, sprint_id, show_all, expiring_within, as_json) -> None:
     """List all claims across a sprint, optionally filtered by expiry window."""
+    if sprint_id is not None:
+        sprint_id = _apply_scoped_id(obj, sprint_id, field="sprint")
     store, m = _get_store(obj)
     if sprint_id is not None:
         sprint = m.get_sprint(store, sprint_id)
@@ -7437,7 +7449,7 @@ def claim_show(obj, claim_id, claim_token, as_json) -> None:
 
 
 @claim.command("resume")
-@click.option("--item-id", type=int, default=None, help="Filter results to a specific work item")
+@click.option("--item-id", type=str, default=None, help="Filter results to a specific work item or repo#id")
 @click.option("--instance-id", default=None, help="Your stable instance ID (preferred)")
 @click.option("--runtime-session-id", default=None, help="Your runtime session ID")
 @click.option("--hostname", default=None, help="Hostname (use with --pid)")
@@ -7452,6 +7464,8 @@ def claim_resume(obj, item_id, instance_id, runtime_session_id, hostname, pid, a
     recovered, or 'claim handoff --allow-legacy-adopt' to re-mint a fresh proof.
     Provide at least one of: --instance-id, --runtime-session-id, or --hostname + --pid.
     """
+    if item_id is not None:
+        item_id = _apply_scoped_id(obj, item_id, field="item")
     store, m = _get_store(obj)
     runtime_session_id = _detect_runtime_session_id(runtime_session_id)
     instance_id = instance_id or os.environ.get("SPRINTCTL_INSTANCE_ID")
@@ -7501,7 +7515,7 @@ def claim_resume(obj, item_id, instance_id, runtime_session_id, hostname, pid, a
 
 @claim.command("recover")
 @click.option("--id", "claim_id", type=int, default=None, help="Claim ID to recover")
-@click.option("--item-id", type=int, default=None, help="Recover the only active claim for a work item")
+@click.option("--item-id", type=str, default=None, help="Recover the only active claim for a work item or repo#id")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
 def claim_recover(obj, claim_id, item_id, as_json) -> None:
@@ -7509,6 +7523,8 @@ def claim_recover(obj, claim_id, item_id, as_json) -> None:
     if (claim_id is None) == (item_id is None):
         click.echo("Error: Provide exactly one of --id or --item-id", err=True)
         sys.exit(1)
+    if item_id is not None:
+        item_id = _apply_scoped_id(obj, item_id, field="item")
     try:
         config = _backend.load_backend_config()
     except _backend.BackendConfigError as e:

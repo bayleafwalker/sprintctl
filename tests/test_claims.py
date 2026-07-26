@@ -314,6 +314,20 @@ class TestClaimJSONAndCLI:
         assert result.exit_code == 0, result.output
         assert json.loads(result.output)["work_item_id"] == iid
 
+    def test_claim_list_accepts_scoped_item_reference(
+        self, runner, conn, active_sprint, db_path, tmp_path
+    ):
+        iid = _item(conn, active_sprint["id"])
+        _claim(conn, iid, agent="bot-1")
+
+        result = runner.invoke(
+            cli,
+            ["claim", "list", "--item-id", f"{tmp_path.name}#{iid}", "--json"],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert len(json.loads(result.output)) == 1
+
     def test_claim_create_cmd_json_includes_token_and_identity(self, runner, conn, active_sprint, db_path):
         iid = _item(conn, active_sprint["id"])
         result = runner.invoke(
@@ -462,6 +476,28 @@ class TestClaimJSONAndCLI:
         assert data["claim_still_present"] is False
         assert db.get_work_item(conn, iid)["status"] == "done"
         assert db.get_claim(conn, claim["claim_id"]) is None
+
+    def test_item_done_from_claim_accepts_scoped_optional_item_id(
+        self, runner, conn, active_sprint, db_path, tmp_path
+    ):
+        iid = _item(conn, active_sprint["id"])
+        started = runner.invoke(
+            cli,
+            ["claim", "start", "--item-id", str(iid), "--agent", "bot-1", "--json"],
+        )
+        claim = json.loads(started.output)
+
+        result = runner.invoke(
+            cli,
+            [
+                "item", "done-from-claim", "--id", f"{tmp_path.name}#{iid}",
+                "--claim-id", str(claim["claim_id"]), "--claim-token", claim["claim_token"],
+                "--actor", "bot-1", "--json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["item_status_after"] == "done"
 
     def test_item_done_from_claim_cmd_infers_item_id_from_claim(self, runner, conn, active_sprint, db_path):
         iid = _item(conn, active_sprint["id"])

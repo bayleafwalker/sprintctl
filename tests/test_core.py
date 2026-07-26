@@ -538,6 +538,25 @@ class TestEventLogging:
         )
         assert result.exit_code == 1
 
+    def test_event_list_accepts_scoped_sprint_and_item_references(
+        self, runner, conn, active_sprint, tmp_path
+    ):
+        sid = active_sprint["id"]
+        tid = db.get_or_create_track(conn, sid, "backend")
+        iid = db.create_work_item(conn, sid, tid, "Some work")
+        db.create_event(conn, sid, "agent-1", "progress", work_item_id=iid)
+
+        result = runner.invoke(
+            cli,
+            [
+                "event", "list", "--sprint-id", f"{tmp_path.name}#{sid}",
+                "--item-id", f"{tmp_path.name}#{iid}", "--json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert [event["work_item_id"] for event in json.loads(result.output)] == [iid]
+
 
 # ---------------------------------------------------------------------------
 # Group 5: Render
@@ -854,6 +873,15 @@ class TestSprintKind:
     def test_sprint_kind_cmd_sets_kind(self, runner, conn, db_path):
         sid = db.create_sprint(conn, "K2", "", "2026-04-01", "2026-04-30", "active")
         result = runner.invoke(cli, ["sprint", "kind", "--id", str(sid), "--kind", "archive"])
+        assert result.exit_code == 0, result.output
+        assert db.get_sprint(conn, sid)["kind"] == "archive"
+
+    def test_sprint_kind_accepts_scoped_reference(self, runner, conn, db_path, tmp_path):
+        sid = db.create_sprint(conn, "K3", "", "2026-04-01", "2026-04-30", "active")
+        result = runner.invoke(
+            cli,
+            ["sprint", "kind", "--id", f"{tmp_path.name}#{sid}", "--kind", "archive"],
+        )
         assert result.exit_code == 0, result.output
         assert db.get_sprint(conn, sid)["kind"] == "archive"
 
