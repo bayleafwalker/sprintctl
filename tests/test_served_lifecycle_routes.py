@@ -248,7 +248,7 @@ def test_served_event_add_uses_facade_and_ignores_client_actor(runner, tmp_path,
 
     monkeypatch.setattr(cli_module._served, "event_add", fake_event_add)
     monkeypatch.setattr(cli_module, "_get_store", lambda _obj: pytest.fail("served command opened store"))
-    result = runner.invoke(cli, ["event", "add", "--sprint-id", "11", "--type", "decision", "--item-id", "3", "--payload", '{"summary":"x"}', "--json"])
+    result = runner.invoke(cli, ["event", "add", "--sprint-id", f"{tmp_path.name}#11", "--type", "decision", "--item-id", f"{tmp_path.name}#3", "--payload", '{"summary":"x"}', "--json"])
     assert result.exit_code == 0, result.output
     assert captured["repo_id"] == tmp_path.name
     assert captured["payload"] == {"summary": "x"}
@@ -264,7 +264,7 @@ def test_served_item_add_uses_facade_without_store(runner, tmp_path, monkeypatch
         lambda profile, **kwargs: {"item": {"id": 12, "title": kwargs["title"], "priority": kwargs["priority"]}, "track_name": kwargs["track_name"]},
     )
     monkeypatch.setattr(cli_module, "_get_store", lambda _obj: pytest.fail("served command opened store"))
-    result = runner.invoke(cli, ["item", "add", "--sprint-id", "11", "--track", "served", "--title", "Created", "--priority", "2", "--json"])
+    result = runner.invoke(cli, ["item", "add", "--sprint-id", f"{tmp_path.name}#11", "--track", "served", "--title", "Created", "--priority", "2", "--json"])
     assert result.exit_code == 0, result.output
     assert json.loads(result.output) == {"id": 12, "title": "Created", "priority": 2, "track_name": "served"}
 
@@ -278,10 +278,10 @@ def test_served_sprint_show_reads_basic_and_refuses_detail(runner, tmp_path, mon
         lambda profile, **kwargs: calls.append(kwargs) or {"sprint": {"id": 11, "name": "Sprint", "goal": "G", "start_date": None, "end_date": None, "status": "active", "kind": "active_sprint"}},
     )
     monkeypatch.setattr(cli_module, "_get_store", lambda _obj: pytest.fail("served command opened store"))
-    result = runner.invoke(cli, ["sprint", "show", "--json"])
+    result = runner.invoke(cli, ["sprint", "show", "--id", f"{tmp_path.name}#11", "--json"])
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["id"] == 11
-    assert calls == [{"repo_id": tmp_path.name, "sprint_id": None}]
+    assert calls == [{"repo_id": tmp_path.name, "sprint_id": 11}]
     detail = runner.invoke(cli, ["sprint", "show", "--detail"])
     assert detail.exit_code == 1
     assert "has no catalog operation yet" in detail.output
