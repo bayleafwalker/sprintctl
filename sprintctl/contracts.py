@@ -71,6 +71,7 @@ SPRINTCTL_RECORD_TYPE_CLASSES: dict[str, RecordClass] = {
     "doc-ref.added": RecordClass.OBSERVATION,
     "command.requested": RecordClass.AUTHORITY_COMMAND,
     "item.done": RecordClass.AUTHORITY_COMMAND,
+    "item.done-from-claim": RecordClass.AUTHORITY_COMMAND,
     "item.transition": RecordClass.AUTHORITY_COMMAND,
     "sprint.activate": RecordClass.AUTHORITY_COMMAND,
     "sprint.close": RecordClass.AUTHORITY_COMMAND,
@@ -80,6 +81,7 @@ SPRINTCTL_RECORD_TYPE_CLASSES: dict[str, RecordClass] = {
     "claim.release": RecordClass.AUTHORITY_COMMAND,
     "capability-receipt.accept": RecordClass.AUTHORITY_COMMAND,
     "item.transitioned": RecordClass.REMOTE_DECISION,
+    "item.done-from-claim.completed": RecordClass.REMOTE_DECISION,
     "sprint-activated": RecordClass.REMOTE_DECISION,
     "sprint-closed": RecordClass.REMOTE_DECISION,
     "claim.granted": RecordClass.REMOTE_DECISION,
@@ -242,6 +244,7 @@ def _canonical_authority_refs(record_type: str, refs: Mapping[str, Any]) -> dict
         "claim.release": "claim",
         "item.transition": "item",
         "item.done": "item",
+        "item.done-from-claim": "item",
         "sprint.activate": "sprint",
         "sprint.close": "sprint",
         "capability-receipt.accept": "sprint",
@@ -300,6 +303,20 @@ def _canonical_authority_payload(record_type: str, payload: Mapping[str, Any]) -
         if "credential_ref" in source:
             result["credential_ref"] = _credential_ref(source["credential_ref"])
         return result
+
+    if record_type == "item.done-from-claim":
+        source = _strict_fields(
+            payload,
+            field="payload",
+            required={"claim_id", "credential_ref", "keep_claim"},
+        )
+        if not isinstance(source["keep_claim"], bool):
+            raise ValueError("payload.keep_claim must be a boolean")
+        return {
+            "claim_id": _positive_int(source["claim_id"], "payload.claim_id"),
+            "credential_ref": _credential_ref(source["credential_ref"]),
+            "keep_claim": source["keep_claim"],
+        }
 
     if record_type in {"sprint.activate", "sprint.close"}:
         return _strict_fields(payload, field="payload", required=set())

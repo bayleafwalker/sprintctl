@@ -17,7 +17,7 @@ store.  `Unavailable` likewise never opens a store: it exits with the stable
 | `claim start/heartbeat/handoff/release` | Served | `work.claim.start` / `work.claim.arbitrate`. |
 | `claim list`, `claim list-sprint`, `claim show`, `claim resume` | Unavailable | Item inspection exposes active claims only; resume and proof disclosure require dedicated designs. |
 | `item add`, `item note`, `item status`, `event add/list` | Served | Existing catalog routes. |
-| `item done-from-claim` | Unavailable | The two served steps, `item status --status done` then `claim release`, remain available; their local atomic convenience command needs a catalog operation. |
+| `item done-from-claim` | Served | One durable `item.done-from-claim` authority command through `work.lifecycle.arbitrate`; the claim proof is transient and retries reuse its immutable event id. |
 | `handoff` | Unavailable | Needs a served tracker-handoff read plus an append-only generated-handoff record. |
 
 `claim recover` remains recovery-only because it reads a local token sidecar;

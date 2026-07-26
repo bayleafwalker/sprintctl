@@ -32,7 +32,7 @@ CLAIM_COMMAND_TYPES = frozenset(
     {"claim.acquire", "claim.renew", "claim.handoff", "claim.release"}
 )
 LIFECYCLE_COMMAND_TYPES = frozenset(
-    {"item.transition", "item.done", "sprint.activate", "sprint.close"}
+    {"item.transition", "item.done", "item.done-from-claim", "sprint.activate", "sprint.close"}
 )
 OBSERVATION_TYPES = frozenset(
     record_type

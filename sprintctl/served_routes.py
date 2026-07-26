@@ -90,6 +90,7 @@ SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
     ServedRoute("claim.handoff", "work.claim.arbitrate"),
     ServedRoute("claim.release", "work.claim.arbitrate"),
     ServedRoute("item.status", "work.lifecycle.arbitrate"),
+    ServedRoute("item.done-from-claim", "work.lifecycle.arbitrate"),
     ServedRoute("sprint.status", "work.lifecycle.arbitrate"),
     ServedRoute("event.observation.add", "work.evidence.ingest"),
     ServedRoute("event.list", "work.read.events"),

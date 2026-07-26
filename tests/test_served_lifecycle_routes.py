@@ -81,7 +81,6 @@ def _outbox_records(tmp_path):
     "argv",
     [
         ["usage", "--context", "--project", "project.toml"],
-        ["item", "done-from-claim", "--id", "3", "--claim-id", "4", "--claim-token", "secret"],
         ["claim", "recover", "--id", "3"],
         ["claim", "create", "--item-id", "3", "--actor", "agent"],
         ["session", "resume"],
@@ -101,6 +100,44 @@ def test_unavailable_served_p0_commands_fail_closed_before_opening_store(
     assert result.exit_code == 1, result.output
     assert "served-operation-unavailable" in result.output
     assert "PostgreSQL" not in result.output
+
+
+@_requires_312
+def test_served_done_from_claim_uses_one_lifecycle_command_and_transient_proof(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    aggregate_uuid = str(uuid4())
+    monkeypatch.setattr(
+        cli_module._served, "claim_context", lambda *args, **kwargs: {
+            "actor": "worker", "authority_repo_uuid": _manifest_repo_uuid(tmp_path),
+            "claim": {"id": 9, "work_item_id": 3}, "claim_revision": "claim:9@sha256:" + "a" * 64,
+        },
+    )
+    monkeypatch.setattr(
+        cli_module._served, "read_item", lambda *args, **kwargs: {
+            "item": {"id": 3, "aggregate_uuid": aggregate_uuid, "status": "active"}
+        },
+    )
+    captured = {}
+    def arbitrate(*args, **kwargs):
+        captured.update(kwargs)
+        return {"outcome": "accepted", "effect": {
+            "item_id": 3, "previous_status": "active", "status": "done", "claim_released": True,
+            "claim_still_present": False, "keep_claim": False,
+        }}
+    monkeypatch.setattr(cli_module._served, "lifecycle_arbitrate", arbitrate)
+
+    result = runner.invoke(cli, ["item", "done-from-claim", "--claim-id", "9", "--claim-token", "secret", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["claim_released"] is True
+    record = captured["record"]
+    assert record["event_type"] == "item.done-from-claim"
+    command = record["payload"]["payload"]
+    assert command["claim_id"] == 9 and command["keep_claim"] is False
+    assert captured["transient_credentials"] == {command["credential_ref"]: "secret"}
+    assert [(r.record_class, r.event_type) for r in _outbox_records(tmp_path)] == [("authority-command", "item.done-from-claim")]
 
 
 @_requires_312

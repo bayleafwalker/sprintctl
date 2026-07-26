@@ -2094,6 +2094,78 @@ def item_status(obj, item_id: str, new_status, actor, claim_id, claim_token, as_
     click.echo(f"Item #{item_id} status: {current} -> {new_status}")
 
 
+def _served_item_done_from_claim(config, item_id, claim_id, claim_token, actor, keep_claim, as_json) -> None:
+    """Finish an execute claim through one durable lifecycle arbitration.
+
+    The preliminary reads only obtain non-secret immutable context; the state
+    change is a single ``work.lifecycle.arbitrate`` call carrying one durable
+    command and its transient proof.  It must never be replaced by status and
+    release catalog calls, which have an observable split-brain failure mode.
+    """
+    resolved_context = _resolved_context(config)
+    claim_context = _run_served(
+        "item done-from-claim", _served.claim_context, config.served_profile,
+        repo_id=config.repo_id, claim_id=claim_id, resolved_context=resolved_context,
+    )
+    claim = claim_context["claim"]
+    inferred_item_id = int(claim["work_item_id"])
+    if item_id is None:
+        item_id = inferred_item_id
+    if item_id != inferred_item_id:
+        click.echo(f"Error: claim #{claim_id} belongs to item #{inferred_item_id}, not item #{item_id}.", err=True)
+        sys.exit(1)
+    item_result = _run_served(
+        "item done-from-claim", _served.read_item, config.served_profile,
+        repo_id=config.repo_id, item_id=item_id, resolved_context=resolved_context,
+    )
+    item_value = item_result["item"]
+    authenticated_actor = claim_context["actor"]
+    if actor is not None and actor != authenticated_actor:
+        click.echo(f"Note: served mode claims as the authenticated identity ({authenticated_actor}); --actor {actor!r} was not sent and is ignored.", err=True)
+    ref = _authority.credential_ref(claim_token)
+    credentials = {ref: claim_token}
+    rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+    try:
+        durable = _mint_authority_command_record(
+            record_type="item.done-from-claim", actor=authenticated_actor,
+            refs={
+                "repo_id": _served_claim_authority_repo_uuid(claim_context, rollout_paths.repo_root),
+                "aggregate_type": "item", "aggregate_uuid": item_value["aggregate_uuid"],
+                "aggregate_id": item_id,
+            },
+            payload={"claim_id": claim_id, "credential_ref": ref, "keep_claim": keep_claim},
+            basis_revision=_authority.item_revision(item_value), outbox_path=rollout_paths.outbox_path,
+        )
+        _authority_config.store_pending_authority_credentials(
+            rollout_paths, event_id=durable.event_id, credentials=credentials,
+        )
+    except (TypeError, ValueError, _authority_config.AuthorityCommandConfigError) as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    decision = _run_served(
+        "item done-from-claim", _served.lifecycle_arbitrate, config.served_profile,
+        repo_id=config.repo_id, record=_served_record_argument(durable),
+        transient_credentials=credentials, resolved_context=resolved_context,
+    )
+    _authority_config.remove_pending_authority_credential(rollout_paths, event_id=durable.event_id)
+    if decision["outcome"] != "accepted":
+        click.echo(f"Error: {decision.get('reason_code')}: {decision.get('reason_detail')}\n{_render_resolved_context(resolved_context)}", err=True)
+        sys.exit(1)
+    effect = decision["effect"]
+    payload = {
+        "operation": "item_done_from_claim", "item_id": effect["item_id"],
+        "item_status_before": effect["previous_status"], "item_status_after": effect["status"],
+        "claim_id": claim_id, "claim_released": effect["claim_released"],
+        "claim_still_present": effect["claim_still_present"], "keep_claim": effect["keep_claim"],
+    }
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+        return
+    click.echo(f"Item #{item_id} status: {payload['item_status_before']} -> {payload['item_status_after']}")
+    click.echo(f"Claim #{claim_id} {'retained (--keep-claim).' if keep_claim else 'released.'}")
+    click.echo(_render_resolved_context(resolved_context))
+
+
 @item.command("done-from-claim")
 @click.option("--id", "item_id", type=str, default=None, help="Item ID or repo#id (defaults to the claim's item)")
 @click.option("--claim-id", type=int, required=True, help="Claim ID proving ownership")
@@ -2111,11 +2183,12 @@ def item_done_from_claim(obj, item_id, claim_id, claim_token, actor, keep_claim,
     """Mark an active item done using claim proof, then optionally release the claim."""
     if item_id is not None:
         item_id = _apply_scoped_id(obj, item_id, field="item")
-    if _served_config_or_none(obj) is not None:
-        _served_operation_unavailable(
-            "item done-from-claim",
-            replacement="Use the served 'item status --status done' and 'claim release' steps until their atomic finish operation is catalogued.",
+    config = _served_config_or_none(obj)
+    if config is not None:
+        _served_item_done_from_claim(
+            config, item_id, claim_id, claim_token, actor, keep_claim, as_json
         )
+        return
     store, m = _get_store(obj)
     claim = m.get_claim(store, claim_id)
     if claim is None:
@@ -2912,6 +2985,7 @@ _AUTHORITY_COMMAND_TYPES = (
     "claim.release",
     "item.transition",
     "item.done",
+    "item.done-from-claim",
     "sprint.activate",
     "sprint.close",
     "capability-receipt.accept",
@@ -3023,7 +3097,7 @@ def _authority_basis_revision(
     aggregate_id: int,
     aggregate: dict,
 ) -> str:
-    if record_type in {"item.transition", "item.done", "claim.acquire"}:
+    if record_type in {"item.transition", "item.done", "item.done-from-claim", "claim.acquire"}:
         return _authority.item_revision(aggregate)
     if record_type in {"sprint.activate", "sprint.close"}:
         return _authority.sprint_revision(aggregate)

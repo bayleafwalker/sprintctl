@@ -461,7 +461,8 @@ def claim_arbitrate(
 
 
 def lifecycle_arbitrate(
-    served_profile: ServedProfile, *, repo_id: str, record: dict[str, Any]
+    served_profile: ServedProfile, *, repo_id: str, record: dict[str, Any],
+    transient_credentials: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Invoke ``work.lifecycle.arbitrate`` (``sprintctl item status`` /
     ``sprintctl sprint status``, for the ``item.transition``, ``item.done``,
@@ -487,6 +488,7 @@ def lifecycle_arbitrate(
             idempotency_key=record["event_id"],
             basis_revision=record["basis_revision"],
             repo_id=repo_id,
+            **({"transient_credentials": transient_credentials} if transient_credentials is not None else {}),
         )
     )
 
@@ -529,6 +531,7 @@ _DOCTOR_PROBE_COMMAND_PATHS = (
     "next-work.explain",
     "claim.start",
     "item.status",
+    "item.done-from-claim",
     "sprint.status",
     "claim.heartbeat",
     "claim.handoff",

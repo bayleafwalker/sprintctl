@@ -642,6 +642,7 @@ LEGACY_REMOTE_COMMAND_PARITY: tuple[dict[str, str], ...] = (
         "legacy": "sprintctl item status / sprint status",
         "operation": "work.lifecycle.arbitrate",
     },
+    {"legacy": "sprintctl item done-from-claim", "operation": "work.lifecycle.arbitrate"},
     {"legacy": "sprintctl authority sync", "operation": "work.batch.apply"},
     {"legacy": "sprintctl event observation add", "operation": "work.evidence.ingest"},
     {"legacy": "sprintctl item note", "operation": "work.item.note"},
