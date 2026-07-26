@@ -167,6 +167,69 @@ def test_project_option_without_value_resolves_from_cwd(runner, tmp_path):
     assert json.loads(result.output) == []
 
 
+def test_served_project_views_do_not_read_client_binding_and_keep_sprint_json_shape(
+    runner, monkeypatch
+):
+    """The server, not a client project.toml, is the project authority."""
+    config = cli_module._backend.BackendConfig(
+        mode="served",
+        url=None,
+        repo_root=None,
+        repo_id="single",
+        repo_source="test",
+        marker=None,
+        served_profile=cli_module._backend.ServedProfile(
+            name="test",
+            endpoint="https://vuoro.test/",
+            credential_ref="file:test",
+            expected_environment="test",
+            source_path=Path("profile.json"),
+        ),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_served_config_or_none",
+        lambda obj: obj.setdefault("backend_config", config) or config,
+    )
+    monkeypatch.setattr(
+        cli_module._project,
+        "load_project",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("served project command read client binding")
+        ),
+    )
+    monkeypatch.setattr(
+        cli_module._served,
+        "project_sprints",
+        lambda *_args, **_kwargs: {
+            "contract_version": "project-1",
+            "project": {"project_id": PROJECT_ID},
+            "sprints": [{"id": 4, "name": "Backlog", "origin_repo": "agentops"}],
+            "repositories": [{"origin_repo": "agentops", "status": "ok", "sprints": []}],
+        },
+    )
+    sprints = runner.invoke(cli, ["sprint", "list", "--project", "missing.toml", "--json"])
+    assert sprints.exit_code == 0, sprints.output
+    assert json.loads(sprints.output) == [
+        {"id": 4, "name": "Backlog", "origin_repo": "agentops"}
+    ]
+
+    project_context = {
+        "contract_version": "project-1",
+        "project": {"project_id": PROJECT_ID},
+        "summary": {}, "sprints": [], "active_claims": [],
+        "active_unclaimed_items": [], "conflicts": [], "ready_items": [],
+        "blocked_items": [], "stale_items": [], "recent_decisions": [],
+        "next_actions": [], "repositories": [],
+    }
+    monkeypatch.setattr(
+        cli_module._served, "project_context", lambda *_args, **_kwargs: project_context
+    )
+    context = runner.invoke(cli, ["usage", "--context", "--project", "missing.toml", "--json"])
+    assert context.exit_code == 0, context.output
+    assert json.loads(context.output) == project_context
+
+
 def test_next_work_unions_repo_scopes_with_origin(runner, tmp_path, monkeypatch):
     project_path = _write_project(
         tmp_path / "project.toml",

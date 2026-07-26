@@ -1067,26 +1067,38 @@ def sprint_status(obj, sprint_id, new_status, actor, as_json) -> None:
 def sprint_list(obj, include_backlog, include_archive, active_only, project_path, as_json) -> None:
     """List sprints (active_sprint kind by default; use flags to include others)."""
     config = _served_config_or_none(obj)
+    project_unavailable: list[dict] = []
     if config is not None:
         if project_path is not None:
-            click.echo(
-                "Error: 'sprint list --project' has no served-mode equivalent "
-                "(no catalog operation exists for a project-scoped sprint listing); "
-                "omit --project, or use SPRINTCTL_BACKEND=local or remote.",
-                err=True,
+            # ``project_path`` is presence-only in served mode.  Never load
+            # the client's project.toml: Vuoro owns the canonical binding and
+            # per-member authorization for this aggregate.
+            project_result = _run_served(
+                "sprint list --project",
+                _served.project_sprints,
+                config.served_profile,
+                include_backlog=include_backlog,
+                include_archive=include_archive,
+                active_only=active_only,
+                resolved_context=_resolved_context(config),
             )
-            sys.exit(1)
-        result = _run_served(
-            "sprint list",
-            _served.read_sprints,
-            config.served_profile,
-            repo_id=config.repo_id,
-            include_backlog=include_backlog,
-            include_archive=include_archive,
-            active_only=active_only,
-            resolved_context=_resolved_context(config),
-        )
-        sprints: list[dict] = result["sprints"]
+            sprints: list[dict] = project_result["sprints"]
+            project_unavailable = [
+                entry for entry in project_result["repositories"]
+                if entry["status"] == "unavailable"
+            ]
+        else:
+            result = _run_served(
+                "sprint list",
+                _served.read_sprints,
+                config.served_profile,
+                repo_id=config.repo_id,
+                include_backlog=include_backlog,
+                include_archive=include_archive,
+                active_only=active_only,
+                resolved_context=_resolved_context(config),
+            )
+            sprints = result["sprints"]
     else:
         if project_path is None:
             scopes = [(None, *_get_store(obj))]
@@ -1142,6 +1154,8 @@ def sprint_list(obj, include_backlog, include_archive, active_only, project_path
     headers.extend(["STATUS", "KIND", "NAME", "DATES"])
     for line in _render_table(headers, rows):
         click.echo(line)
+    for entry in project_unavailable:
+        click.echo(f"Unavailable {entry['origin_repo']}: {entry['message']}")
     if config is not None:
         click.echo(_render_resolved_context(_resolved_context(config)))
 
@@ -8571,10 +8585,29 @@ def usage_cmd(obj, as_context, sprint_id, project_path, as_json) -> None:
     if as_context:
         if _served_config_or_none(obj) is not None:
             if project_path is not None:
-                _served_operation_unavailable(
+                config = obj["backend_config"]
+                project_snapshot = _run_served(
                     "usage --context --project",
-                    replacement="Project context remains unavailable until a project-scoped aggregate operation is deployed.",
+                    _served.project_context,
+                    config.served_profile,
+                    sprint_id=sprint_id,
+                    resolved_context=_resolved_context(config),
                 )
+                if as_json:
+                    click.echo(json.dumps(project_snapshot, indent=2))
+                    return
+                project = project_snapshot["project"]
+                click.echo(
+                    f"Project {project.get('display_name', project['project_id'])} "
+                    f"({project['project_id']})"
+                )
+                for entry in project_snapshot["repositories"]:
+                    click.echo(f"\n=== {entry['origin_repo']} ===")
+                    if entry["status"] == "unavailable":
+                        click.echo(f"  Unavailable: {entry['message']}")
+                    else:
+                        click.echo(_render_context_text(entry["context"]))
+                return
             config = obj["backend_config"]
             context = _resolved_context(config)
             snapshot = _run_served(

@@ -536,6 +536,45 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         ("json-schema-draft-2020-12", "local-defs-ref"),
     ),
     WorkOperationContract(
+        "work.project.context",
+        _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
+        _result_schema(
+            ("contract_version", "project", "summary", "sprints", "repositories"),
+            {
+                "contract_version": {"const": "project-1"},
+                "project": {"type": "object"},
+                "summary": {"type": "object"},
+                "sprints": {"type": "array", "items": {"type": "object"}},
+                "repositories": {"type": "array", "items": {"type": "object"}},
+            },
+        ),
+        "work:project-read",
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.project.sprints",
+        _object_schema(
+            {
+                "include_backlog": {"type": "boolean", "default": False},
+                "include_archive": {"type": "boolean", "default": False},
+                "active_only": {"type": "boolean", "default": False},
+            }
+        ),
+        _result_schema(
+            ("contract_version", "project", "sprints", "repositories"),
+            {
+                "contract_version": {"const": "project-1"},
+                "project": {"type": "object"},
+                "sprints": {"type": "array", "items": {"type": "object"}},
+                "repositories": {"type": "array", "items": {"type": "object"}},
+            },
+        ),
+        "work:project-read",
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
         "work.project.next-work",
         _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
         _result_schema(

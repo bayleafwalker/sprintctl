@@ -49,13 +49,24 @@ class ServedRoute:
 
 SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
     ServedRoute("usage.context", "work.read.context", precondition="project_path is None"),
+    ServedRoute(
+        "usage.context",
+        "work.project.context",
+        precondition="project_path is not None",
+        notes="The catalog resolves its own canonical project binding; the CLI does not send project.toml data.",
+    ),
     ServedRoute("handoff", "work.read.handoff"),
     ServedRoute("handoff.record", "work.handoff.record", notes="Internal post-output recording step for `handoff`."),
     ServedRoute(
         "sprint.list",
         "work.read.sprints",
         precondition="project_path is None",
-        notes="`sprint list --project ...` has no catalog equivalent; reject it in served mode.",
+    ),
+    ServedRoute(
+        "sprint.list",
+        "work.project.sprints",
+        precondition="project_path is not None",
+        notes="The catalog resolves its own canonical project binding; the CLI does not send project.toml data.",
     ),
     ServedRoute("item.show", "work.read.item"),
     ServedRoute("item.list", "work.read.items", precondition="project_path is None and not as_fzf"),

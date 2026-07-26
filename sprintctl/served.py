@@ -257,6 +257,38 @@ def project_next_work(
     )
 
 
+def project_context(
+    served_profile: ServedProfile, *, sprint_id: int | None = None
+) -> dict[str, Any]:
+    """Invoke the server-authorized project ContextContract aggregate."""
+
+    return asyncio.run(
+        _invoke_operation(served_profile, "work.project.context", {"sprint_id": sprint_id})
+    )
+
+
+def project_sprints(
+    served_profile: ServedProfile,
+    *,
+    include_backlog: bool = False,
+    include_archive: bool = False,
+    active_only: bool = False,
+) -> dict[str, Any]:
+    """List server-authorized project member sprints in canonical member order."""
+
+    return asyncio.run(
+        _invoke_operation(
+            served_profile,
+            "work.project.sprints",
+            {
+                "include_backlog": include_backlog,
+                "include_archive": include_archive,
+                "active_only": active_only,
+            },
+        )
+    )
+
+
 def cutover_evidence(
     served_profile: ServedProfile,
     *,
@@ -600,6 +632,8 @@ __all__ = [
     "item_ref_remove",
     "lifecycle_arbitrate",
     "project_next_work",
+    "project_context",
+    "project_sprints",
     "read_events",
     "read_item",
     "read_items",

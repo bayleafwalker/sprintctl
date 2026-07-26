@@ -134,6 +134,23 @@ def test_read_next_work_and_project_next_work_send_sprint_id(fake_vuoro_client):
     assert project["arguments"] == {"sprint_id": None}
 
 
+def test_project_context_and_sprints_send_no_client_project_authority(fake_vuoro_client):
+    profile = _profile()
+    context = served.project_context(profile, sprint_id=7)
+    assert context["operation"] == "work.project.context"
+    assert context["arguments"] == {"sprint_id": 7}
+    _operation, _arguments, kwargs = fake_vuoro_client.instances[-1].invocations[0]
+    assert kwargs == {}
+
+    sprints = served.project_sprints(profile, include_backlog=True)
+    assert sprints["operation"] == "work.project.sprints"
+    assert sprints["arguments"] == {
+        "include_backlog": True,
+        "include_archive": False,
+        "active_only": False,
+    }
+
+
 def test_read_next_work_explain_sends_only_optional_sprint_id(fake_vuoro_client):
     result = served.read_next_work_explain(_profile(), repo_id="repo-x", sprint_id=7)
     assert result["operation"] == "work.read.next-work-explain"
@@ -425,6 +442,8 @@ def test_credential_resolver_passed_to_client_is_resolve_file_credential(fake_vu
         lambda profile: served.read_context(profile, repo_id="repo-x"),
         lambda profile: served.read_next_work(profile, repo_id="repo-x"),
         lambda profile: served.project_next_work(profile),
+        lambda profile: served.project_context(profile),
+        lambda profile: served.project_sprints(profile),
         lambda profile: served.claim_start(profile, repo_id="repo-x", item_id=1),
         lambda profile: served.read_events(profile, repo_id="repo-x", sprint_id=1),
         lambda profile: served.read_sprint(profile, repo_id="repo-x"),
@@ -470,7 +489,7 @@ def test_expected_operations_matches_all_served_cli_command_paths():
         for route in routes_for(path)
     }
     assert served.EXPECTED_OPERATIONS == expected
-    assert len(served.EXPECTED_OPERATIONS) == 26
+    assert len(served.EXPECTED_OPERATIONS) == 28
     assert served.EXPECTED_OPERATIONS == {
         "work.read.sprints",
         "work.read.context",
@@ -482,6 +501,8 @@ def test_expected_operations_matches_all_served_cli_command_paths():
         "work.read.next-work",
         "work.read.next-work-explain",
         "work.project.next-work",
+        "work.project.context",
+        "work.project.sprints",
         "work.claim.start",
         "work.lifecycle.arbitrate",
         "work.claim.arbitrate",

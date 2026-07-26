@@ -80,7 +80,6 @@ def _outbox_records(tmp_path):
 @pytest.mark.parametrize(
     "argv",
     [
-        ["usage", "--context", "--project", "project.toml"],
         ["claim", "recover", "--id", "3"],
         ["claim", "create", "--item-id", "3", "--actor", "agent"],
         ["session", "resume"],
@@ -295,6 +294,57 @@ def test_served_project_next_work_explain_retains_unavailable_guard(
     assert result.exit_code == 1, result.output
     assert "served-operation-unavailable" in result.output
     assert "PostgreSQL" not in result.output
+
+
+@_requires_312
+def test_served_project_aggregates_do_not_open_store_and_keep_sprint_list_json_array(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli_module, "_get_store", lambda _obj: pytest.fail("served command opened store"))
+    monkeypatch.setattr(
+        cli_module._project,
+        "load_project",
+        lambda *_args, **_kwargs: pytest.fail("served command read client project.toml"),
+    )
+    project = {
+        "project_id": "workspace",
+        "display_name": "Workspace",
+        "home_repo": "agentops",
+        "backlog_repos": ["agentops", "sprintctl"],
+    }
+    monkeypatch.setattr(
+        cli_module._served,
+        "project_sprints",
+        lambda profile, **kwargs: {
+            "contract_version": "project-1",
+            "project": project,
+            "sprints": [{"id": 8, "name": "Member", "status": "active", "kind": "active_sprint", "origin_repo": "agentops"}],
+            "repositories": [
+                {"origin_repo": "agentops", "status": "ok", "sprints": []},
+                {"origin_repo": "sprintctl", "status": "unavailable", "reason_code": "sprint-not-found", "message": "No sprint."},
+            ],
+        },
+    )
+    result = runner.invoke(cli, ["sprint", "list", "--project", "ignored.toml", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == [
+        {"id": 8, "name": "Member", "status": "active", "kind": "active_sprint", "origin_repo": "agentops"}
+    ]
+
+    monkeypatch.setattr(
+        cli_module._served,
+        "project_context",
+        lambda profile, **kwargs: {
+            "contract_version": "project-1", "project": project,
+            "summary": {}, "sprints": [], "active_claims": [], "active_unclaimed_items": [],
+            "conflicts": [], "ready_items": [], "blocked_items": [], "stale_items": [],
+            "recent_decisions": [], "next_actions": [], "repositories": [],
+        },
+    )
+    context = runner.invoke(cli, ["usage", "--context", "--project", "ignored.toml", "--json"])
+    assert context.exit_code == 0, context.output
+    assert json.loads(context.output)["project"] == project
 
 
 @_requires_312

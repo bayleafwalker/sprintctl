@@ -30,13 +30,17 @@ def _context(
     actor: str = "served-test",
     basis_revision: str | None = None,
     idempotency_key: str | None = None,
+    repo_ids: frozenset[str] | None = None,
 ):
+    identity = SimpleNamespace(
+        actor=actor,
+        environment="vuoro-dev",
+        authorities=frozenset(),
+    )
+    if repo_ids is not None:
+        identity.authorizes_repo = lambda repo_id: repo_id in repo_ids
     return SimpleNamespace(
-        identity=SimpleNamespace(
-            actor=actor,
-            environment="vuoro-dev",
-            authorities=frozenset(),
-        ),
+        identity=identity,
         request_id="request-1",
         basis_revision=basis_revision,
         catalog_revision="catalog-1",
@@ -269,6 +273,8 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         "work.lifecycle.arbitrate",
         "work.evidence.ingest",
         "work.batch.apply",
+        "work.project.context",
+        "work.project.sprints",
         "work.project.next-work",
         "work.project.batch",
         "work.pilot.cutover-evidence",
@@ -854,6 +860,90 @@ def test_batch_is_content_bound_idempotent_and_preserves_producer_order():
             context,
         )
     assert mismatch.value.code == "idempotency-key-mismatch"
+
+
+def test_project_aggregates_use_canonical_binding_order_tags_and_partial_results(tmp_path):
+    first_store = db.get_connection(tmp_path / "agentops.db")
+    second_store = db.get_connection(tmp_path / "sprintctl.db")
+    for store, name in ((first_store, "agentops"), (second_store, "sprintctl")):
+        db.init_db(store)
+        sprint_id = db.create_sprint(
+            store, f"{name} backlog", "goal", None, None, "planned", kind="backlog"
+        )
+        track_id = db.get_or_create_track(store, sprint_id, "project")
+        db.create_work_item(store, sprint_id, track_id, f"{name} ready")
+
+    class SnapshotBackend:
+        def __init__(self, unavailable=False):
+            self.unavailable = unavailable
+            self.snapshots = 0
+
+        def repeatable_read_snapshot(self, store):
+            from contextlib import nullcontext
+
+            self.snapshots += 1
+            if self.unavailable:
+                raise RuntimeError("unavailable")
+            return nullcontext(store)
+
+        def __getattr__(self, name):
+            return getattr(db, name)
+
+    first_backend = SnapshotBackend()
+    second_backend = SnapshotBackend(unavailable=True)
+    project = ProjectWorkApplication(
+        "vuoro",
+        (
+            ProjectMemberApplication("agentops", _application(store=first_store, backend=first_backend, repo_id="agentops")),
+            ProjectMemberApplication("sprintctl", _application(store=second_store, backend=second_backend, repo_id="sprintctl")),
+        ),
+        canonical_binding={
+            "project_id": "vuoro",
+            "display_name": "Vuoro",
+            "home_repo": "agentops",
+            "backlog_repos": ["agentops", "sprintctl"],
+        },
+    )
+
+    context = project.invoke(
+        "work.project.context", {}, _context(repo_ids=frozenset({"agentops", "sprintctl"}))
+    )
+    assert context["project"]["display_name"] == "Vuoro"
+    assert [row["origin_repo"] for row in context["repositories"]] == ["agentops", "sprintctl"]
+    assert context["repositories"][1]["status"] == "unavailable"
+    assert context["ready_items"][0]["origin_repo"] == "agentops"
+    assert first_backend.snapshots == 1
+    assert second_backend.snapshots == 1
+
+    sprints = project.invoke(
+        "work.project.sprints", {"include_backlog": True}, _context(repo_ids=frozenset({"agentops", "sprintctl"}))
+    )
+    assert [row["origin_repo"] for row in sprints["repositories"]] == ["agentops", "sprintctl"]
+    assert [row["origin_repo"] for row in sprints["sprints"]] == ["agentops"]
+
+
+def test_project_aggregates_fail_closed_without_canonical_binding():
+    project = ProjectWorkApplication("vuoro", ())
+
+    with pytest.raises(ApplicationRejection) as error:
+        project.invoke("work.project.context", {}, _context())
+
+    assert error.value.code == "canonical-project-binding-required"
+
+
+def test_project_aggregates_reject_without_every_member_authorization():
+    project = ProjectWorkApplication(
+        "vuoro",
+        (ProjectMemberApplication("agentops", _application(repo_id="agentops")),),
+        canonical_binding={"project_id": "vuoro", "backlog_repos": ["agentops"]},
+    )
+
+    with pytest.raises(ApplicationRejection) as error:
+        project.invoke(
+            "work.project.sprints", {}, _context(repo_ids=frozenset())
+        )
+
+    assert error.value.code == "project-member-unauthorized"
 
 
 def test_project_batch_requires_declared_order_and_retries_member_units():
