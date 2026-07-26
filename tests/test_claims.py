@@ -297,6 +297,23 @@ class TestClaimEnforcement:
 
 
 class TestClaimJSONAndCLI:
+    def test_claim_create_accepts_scoped_item_reference(
+        self, runner, conn, active_sprint, db_path, tmp_path
+    ):
+        iid = _item(conn, active_sprint["id"])
+        result = runner.invoke(
+            cli,
+            [
+                "claim", "create",
+                "--item-id", f"{tmp_path.name}#{iid}",
+                "--agent", "bot-1",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["work_item_id"] == iid
+
     def test_claim_create_cmd_json_includes_token_and_identity(self, runner, conn, active_sprint, db_path):
         iid = _item(conn, active_sprint["id"])
         result = runner.invoke(

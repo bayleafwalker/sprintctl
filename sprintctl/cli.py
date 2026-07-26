@@ -6320,7 +6320,7 @@ def claim() -> None:
 
 
 @claim.command("create")
-@click.option("--item-id", type=int, required=True, help="Work item ID to claim")
+@click.option("--item-id", type=str, required=True, help="Work item ID or repo#id to claim")
 @click.option("--actor", "--agent", "actor", required=True, help="Actor identifier")
 @click.option(
     "--type", "claim_type",
@@ -6344,7 +6344,7 @@ def claim() -> None:
 @click.pass_obj
 def claim_create(
     obj,
-    item_id,
+    item_id: str,
     actor,
     claim_type,
     non_exclusive,
@@ -6367,6 +6367,7 @@ def claim_create(
     --coordinate-claim-token to create an execute/inspect/review claim under
     an active coordinate claim without triggering a conflict error.
     """
+    item_id = _apply_scoped_id(obj, item_id, field="item")
     store, m = _get_store(obj)
     runtime_session_id = _detect_runtime_session_id(runtime_session_id)
     instance_id = _detect_instance_id(instance_id)
@@ -6416,7 +6417,7 @@ def claim_create(
 
 
 @claim.command("start")
-@click.option("--item-id", type=int, required=True, help="Work item ID to claim and move to active")
+@click.option("--item-id", type=str, required=True, help="Work item ID or repo#id to claim and move to active")
 @click.option("--actor", "--agent", "actor", required=True, help="Actor identifier")
 @click.option("--ttl", "ttl_seconds", default=300, type=int, help="TTL in seconds (default: 300)")
 @click.option("--branch", default=None, help="Git branch name")
@@ -6431,7 +6432,7 @@ def claim_create(
 @click.pass_obj
 def claim_start(
     obj,
-    item_id,
+    item_id: str,
     actor,
     ttl_seconds,
     branch,
@@ -6449,6 +6450,7 @@ def claim_start(
     If activating the item fails after claim creation, sprintctl attempts to
     release the new claim automatically to avoid leaving accidental ownership.
     """
+    item_id = _apply_scoped_id(obj, item_id, field="item")
     config = _served_config_or_none(obj)
     if config is not None:
         runtime_session_id = _detect_runtime_session_id(runtime_session_id)
