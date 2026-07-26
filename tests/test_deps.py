@@ -358,6 +358,18 @@ class TestNextWork:
         assert result.exit_code == 0, result.output
         assert "Ready task" in result.output
 
+    def test_next_work_accepts_scoped_sprint_reference(
+        self, runner, conn, active_sprint, db_path, tmp_path
+    ):
+        _item(conn, active_sprint["id"], "Ready task")
+
+        result = runner.invoke(
+            cli, ["next-work", "--sprint-id", f"{tmp_path.name}#{active_sprint['id']}"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Ready task" in result.output
+
     def test_next_work_excludes_blocked_items(self, runner, conn, active_sprint, db_path):
         iid_a = _item(conn, active_sprint["id"], "Prerequisite")
         iid_b = _item(conn, active_sprint["id"], "Blocked task")

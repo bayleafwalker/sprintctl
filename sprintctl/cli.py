@@ -1665,7 +1665,7 @@ def item_show(obj, item_id: str, as_json) -> None:
 
 
 @item.command("list")
-@click.option("--sprint-id", type=int, default=None, help="Filter by sprint ID")
+@click.option("--sprint-id", type=str, default=None, help="Filter by sprint ID or repo#id")
 @click.option("--track", "track_name", default=None, help="Filter by track name")
 @click.option(
     "--status",
@@ -1692,6 +1692,8 @@ def item_show(obj, item_id: str, as_json) -> None:
 @click.pass_obj
 def item_list(obj, sprint_id, track_name, status, as_fzf, project_path, as_json) -> None:
     """List work items."""
+    if sprint_id is not None:
+        sprint_id = _apply_scoped_id(obj, sprint_id, field="sprint")
     if as_json and as_fzf:
         click.echo("Error: --fzf cannot be combined with --json.", err=True)
         sys.exit(1)
@@ -4692,15 +4694,15 @@ def db_recover_from_remote(output_path, run_verify) -> None:
     """Read every repo-scoped row from the served remote authority (Postgres)
     and write a fresh, ID-preserving recovery SQLite database. Read-only
     against Postgres; refuses to overwrite an existing --output file."""
+    dest = Path(output_path)
+    if dest.exists():
+        click.echo(f"Error: output path already exists: {dest}", err=True)
+        sys.exit(1)
+
     try:
         config = _backend.require_remote_backend()
     except _backend.BackendConfigError as e:
         click.echo(str(e), err=True)
-        sys.exit(1)
-
-    dest = Path(output_path)
-    if dest.exists():
-        click.echo(f"Error: output path already exists: {dest}", err=True)
         sys.exit(1)
 
     from . import pg as _pg  # noqa: PLC0415
@@ -7909,7 +7911,7 @@ def agent_protocol_cmd(as_json) -> None:
 
 
 @cli.command("next-work")
-@click.option("--sprint-id", type=int, default=None, help="Sprint ID (defaults to active)")
+@click.option("--sprint-id", type=str, default=None, help="Sprint ID or repo#id (defaults to active)")
 @click.option(
     "--project",
     "project_path",
@@ -7932,6 +7934,8 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
     Items are listed in creation order. Items blocked by incomplete predecessors
     are excluded from the suggestion.
     """
+    if sprint_id is not None:
+        sprint_id = _apply_scoped_id(obj, sprint_id, field="sprint")
     config = _served_config_or_none(obj)
     if config is not None:
         if explain:
@@ -8150,13 +8154,13 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
 
 
 @cli.command("context-candidates")
-@click.option("--sprint-id", type=int, default=None, help="Sprint ID (defaults to active)")
+@click.option("--sprint-id", type=str, default=None, help="Sprint ID or repo#id (defaults to active)")
 @click.option(
     "--item-id",
     "explicit_item_id",
-    type=int,
+    type=str,
     default=None,
-    help="Explicit item reference (rank 1). Only this rank is ever claim_eligible.",
+    help="Explicit item ID or repo#id (rank 1). Only this rank is ever claim_eligible.",
 )
 @click.option(
     "--path",
@@ -8196,6 +8200,10 @@ def context_candidates_cmd(obj, sprint_id, explicit_item_id, target_paths, query
     if limit <= 0:
         click.echo("Error: --limit must be a positive integer.", err=True)
         sys.exit(1)
+    if sprint_id is not None:
+        sprint_id = _apply_scoped_id(obj, sprint_id, field="sprint")
+    if explicit_item_id is not None:
+        explicit_item_id = _apply_scoped_id(obj, explicit_item_id, field="item")
     store, m = _get_store(obj)
     if sprint_id is not None:
         s = m.get_sprint(store, sprint_id)

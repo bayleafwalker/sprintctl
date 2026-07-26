@@ -218,6 +218,20 @@ class TestItemCRUD:
         assert "UI work" in result.output
         assert "Docs" in result.output
 
+    def test_item_list_accepts_scoped_sprint_reference(self, runner, active_sprint, tmp_path):
+        sid = active_sprint["id"]
+        runner.invoke(
+            cli,
+            ["item", "add", "--sprint-id", str(sid), "--track", "backend", "--title", "API work"],
+        )
+
+        result = runner.invoke(
+            cli, ["item", "list", "--sprint-id", f"{tmp_path.name}#{sid}"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "API work" in result.output
+
     def test_item_list_filter_by_track(self, runner, active_sprint):
         sid = str(active_sprint["id"])
         runner.invoke(cli, ["item", "add", "--sprint-id", sid, "--track", "backend", "--title", "BE item"])
@@ -556,6 +570,24 @@ class TestEventLogging:
 
         assert result.exit_code == 0, result.output
         assert [event["work_item_id"] for event in json.loads(result.output)] == [iid]
+
+    def test_context_candidates_accepts_scoped_sprint_and_item_references(
+        self, runner, conn, active_sprint, tmp_path
+    ):
+        sid = active_sprint["id"]
+        tid = db.get_or_create_track(conn, sid, "backend")
+        iid = db.create_work_item(conn, sid, tid, "Scoped candidate")
+
+        result = runner.invoke(
+            cli,
+            [
+                "context-candidates", "--sprint-id", f"{tmp_path.name}#{sid}",
+                "--item-id", f"{tmp_path.name}#{iid}", "--json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["explicit_target"]["item_id"] == iid
 
 
 # ---------------------------------------------------------------------------

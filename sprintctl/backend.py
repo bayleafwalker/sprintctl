@@ -252,6 +252,13 @@ def load_backend_config(
         served_profile = _load_served_profile(Path(profile_path_raw).expanduser())
 
     repo_root, inferred_repo_id, marker = resolve_repo_identity(cwd)
+    # Local SQLite has always been usable from an ordinary directory without a
+    # repository marker or Git metadata. Preserve that local compatibility
+    # identity for presentation and item references; non-local modes still
+    # require their stricter corroborated identity below.
+    if mode == "local" and inferred_repo_id is None:
+        repo_root = (cwd or Path.cwd()).resolve()
+        inferred_repo_id = repo_root.name
     env_repo_id = env.get("SPRINTCTL_REPO_ID")
     marker_repo_id = marker.repo_id if marker is not None else None
     if explicit_repo_id:

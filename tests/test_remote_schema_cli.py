@@ -41,6 +41,7 @@ def test_normal_remote_command_uses_read_only_startup_handshake(
     observed = {}
 
     monkeypatch.setattr(pg, "get_connection", lambda _url: store)
+    monkeypatch.setattr(pg, "superseded_marker_message", lambda _store: None)
     monkeypatch.setattr(
         pg,
         "init_db",
