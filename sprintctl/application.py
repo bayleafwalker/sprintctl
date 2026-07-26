@@ -1486,7 +1486,6 @@ class ProjectWorkApplication:
             return {
                 "contract_version": "project-1",
                 "project_id": self.project_id,
-                "project": dict(binding),
                 "ready_items": ready_items,
                 "repositories": repositories,
             }
