@@ -6508,6 +6508,7 @@ def claim_start(
     item_id = _apply_scoped_id(obj, item_id, field="item")
     config = _served_config_or_none(obj)
     if config is not None:
+        context = _resolved_context(config)
         runtime_session_id = _detect_runtime_session_id(runtime_session_id)
         instance_id = _detect_instance_id(instance_id)
         hostname = _detect_hostname(hostname)
@@ -6527,6 +6528,7 @@ def claim_start(
             instance_id=instance_id,
             hostname=hostname,
             pid=pid,
+            resolved_context=context,
         )
         claim = result["claim"]
         # work.claim.start's catalog contract has no actor/agent input field:
@@ -6572,6 +6574,7 @@ def claim_start(
         if recovery_path is not None:
             click.echo(f"Recovery token file: {recovery_path}")
         _echo_item_refs(result["refs"], item_id)
+        click.echo(_render_resolved_context(context))
         return
 
     store, m = _get_store(obj)

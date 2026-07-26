@@ -333,6 +333,33 @@ def test_served_write_text_output_and_error_report_resolved_context(runner, tmp_
 
 
 @_requires_312
+def test_served_claim_start_text_reports_resolved_context(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served,
+        "claim_start",
+        lambda profile, **kwargs: {
+            "operation": "claim_start",
+            "claim_id": 9,
+            "claim_token": "secret",
+            "claim": {"actor": "authenticated"},
+            "item_id": kwargs["item_id"],
+            "item_status_before": "pending",
+            "item_status_after": "active",
+            "status_transition_applied": True,
+            "refs": [],
+        },
+    )
+
+    result = runner.invoke(
+        cli, ["claim", "start", "--item-id", "12", "--actor", "worker"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in result.output
+
+
+@_requires_312
 def test_served_sprint_show_reads_basic_and_refuses_detail(runner, tmp_path, monkeypatch):
     _configure_served_repo(tmp_path, monkeypatch)
     calls = []
