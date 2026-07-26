@@ -2103,6 +2103,58 @@ def _served_item_done_from_claim(config, item_id, claim_id, claim_token, actor, 
     release catalog calls, which have an observable split-brain failure mode.
     """
     resolved_context = _resolved_context(config)
+    rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+    pending = _find_pending_served_done_from_claim_record(
+        rollout_paths.outbox_path, claim_id=claim_id, item_id=item_id,
+        keep_claim=keep_claim,
+    )
+    if pending is not None:
+        # Replay the original event *before* inspecting the claim.  In the
+        # response-lost success case that claim has already been deleted.
+        command = _contracts.record_from_dict(pending.payload)
+        assert isinstance(command, _contracts.AuthorityCommand)
+        expected_ref = command.payload["credential_ref"]
+        supplied_ref = _authority.credential_ref(claim_token)
+        if supplied_ref != expected_ref:
+            click.echo(
+                f"Error: durable item done-from-claim request {pending.event_id} "
+                "requires the original claim proof; do not mint a new request.",
+                err=True,
+            )
+            sys.exit(1)
+        try:
+            proof = _authority_config.load_pending_authority_credential(
+                rollout_paths, event_id=pending.event_id,
+            )
+            # A crash between append and sidecar persistence is recoverable
+            # while the caller still possesses the exact proof.  Restore the
+            # sidecar under the original event id, never mint a later record.
+            if proof is None:
+                _authority_config.store_pending_authority_credentials(
+                    rollout_paths, event_id=pending.event_id,
+                    credentials={expected_ref: claim_token},
+                )
+                proof = _authority_config.load_pending_authority_credential(
+                    rollout_paths, event_id=pending.event_id,
+                )
+            assert proof is not None
+        except _authority_config.AuthorityCommandConfigError as exc:
+            click.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
+        decision = _run_served(
+            "item done-from-claim", _served.lifecycle_arbitrate, config.served_profile,
+            repo_id=config.repo_id, record=_served_record_argument(pending),
+            transient_credentials=dict(proof.credentials), resolved_context=resolved_context,
+        )
+        _authority_config.remove_pending_authority_credential(
+            rollout_paths, event_id=pending.event_id
+        )
+        _render_served_done_from_claim_decision(
+            decision, item_id=item_id or int(command.refs["aggregate_id"]), claim_id=claim_id,
+            keep_claim=keep_claim, as_json=as_json, resolved_context=resolved_context,
+        )
+        return
+
     claim_context = _run_served(
         "item done-from-claim", _served.claim_context, config.served_profile,
         repo_id=config.repo_id, claim_id=claim_id, resolved_context=resolved_context,
@@ -2124,7 +2176,6 @@ def _served_item_done_from_claim(config, item_id, claim_id, claim_token, actor, 
         click.echo(f"Note: served mode claims as the authenticated identity ({authenticated_actor}); --actor {actor!r} was not sent and is ignored.", err=True)
     ref = _authority.credential_ref(claim_token)
     credentials = {ref: claim_token}
-    rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
     try:
         durable = _mint_authority_command_record(
             record_type="item.done-from-claim", actor=authenticated_actor,
@@ -2148,6 +2199,15 @@ def _served_item_done_from_claim(config, item_id, claim_id, claim_token, actor, 
         transient_credentials=credentials, resolved_context=resolved_context,
     )
     _authority_config.remove_pending_authority_credential(rollout_paths, event_id=durable.event_id)
+    _render_served_done_from_claim_decision(
+        decision, item_id=item_id, claim_id=claim_id, keep_claim=keep_claim,
+        as_json=as_json, resolved_context=resolved_context,
+    )
+
+
+def _render_served_done_from_claim_decision(
+    decision, *, item_id, claim_id, keep_claim, as_json, resolved_context,
+) -> None:
     if decision["outcome"] != "accepted":
         click.echo(f"Error: {decision.get('reason_code')}: {decision.get('reason_detail')}\n{_render_resolved_context(resolved_context)}", err=True)
         sys.exit(1)
@@ -2162,7 +2222,6 @@ def _served_item_done_from_claim(config, item_id, claim_id, claim_token, actor, 
         click.echo(json.dumps(payload, indent=2))
         return
     click.echo(f"Item #{item_id} status: {payload['item_status_before']} -> {payload['item_status_after']}")
-    click.echo(f"Claim #{claim_id} {'retained (--keep-claim).' if keep_claim else 'released.'}")
     click.echo(_render_resolved_context(resolved_context))
 
 
@@ -3054,6 +3113,38 @@ def _find_pending_served_item_status_record(
                 and command.refs.get("aggregate_uuid") == aggregate_uuid
                 and command.payload.get("to_status") == to_status
                 and command.basis_revision == basis_revision
+            ):
+                return record
+    finally:
+        producer.close()
+    return None
+
+
+def _find_pending_served_done_from_claim_record(
+    outbox_path: Path, *, claim_id: int, item_id: int | None, keep_claim: bool,
+) -> _outbox.OutboxRecord | None:
+    """Find the unfinished immutable finish request before reading the claim.
+
+    A successful finish deletes its claim.  Therefore a response-lost retry
+    cannot begin with ``work.claim.context``: that read would report not found
+    and strand the only retryable command behind an origin-sequence gap.  The
+    durable producer record is the retry identity, not the live claim.
+    """
+    producer = _outbox.open_outbox(outbox_path)
+    try:
+        for record in _outbox.list_records(producer):
+            if record.record_class != _outbox.AUTHORITY_COMMAND or record.event_type != "item.done-from-claim":
+                continue
+            try:
+                command = _contracts.record_from_dict(record.payload)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(command, _contracts.AuthorityCommand):
+                continue
+            if (
+                command.payload.get("claim_id") == claim_id
+                and command.payload.get("keep_claim") is keep_claim
+                and (item_id is None or command.refs.get("aggregate_id") == item_id)
             ):
                 return record
     finally:

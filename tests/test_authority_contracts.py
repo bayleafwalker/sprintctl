@@ -32,6 +32,7 @@ def _payload(record_type: str) -> dict[str, object]:
     return {
         "item.transition": {"to_status": "blocked", "claim_id": 17, "credential_ref": CREDENTIAL_REF},
         "item.done": {"to_status": "done", "claim_id": 17, "credential_ref": CREDENTIAL_REF},
+        "item.done-from-claim": {"claim_id": 17, "credential_ref": CREDENTIAL_REF, "keep_claim": False},
         "sprint.activate": {},
         "sprint.close": {},
         "claim.acquire": {
@@ -97,6 +98,7 @@ def _command(record_type: str, *, payload=None, refs=None, basis_revision="revis
         "claim.release",
         "item.transition",
         "item.done",
+        "item.done-from-claim",
         "sprint.activate",
         "sprint.close",
         "capability-receipt.accept",
@@ -204,6 +206,7 @@ def test_item_done_is_strictly_done_and_decision_taxonomy_covers_claim_completio
 
     assert contracts.record_class_for_type("claim.handed-off") is contracts.RecordClass.REMOTE_DECISION
     assert contracts.record_class_for_type("claim.released") is contracts.RecordClass.REMOTE_DECISION
+    assert contracts.record_class_for_type("item.done-from-claim.completed") is contracts.RecordClass.REMOTE_DECISION
 
 
 def test_claim_renew_metadata_is_optional_and_matches_the_acquire_allowlist():

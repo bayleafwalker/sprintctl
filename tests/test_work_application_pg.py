@@ -541,6 +541,58 @@ def test_served_lifecycle_retry_and_stale_basis_are_durable(store_factory, tmp_p
     store.conn.close()
 
 
+def test_done_from_claim_is_atomic_and_retries_after_claim_delete(store_factory, tmp_path):
+    store = store_factory("served-atomic-finish")
+    sprint_id = pg.create_sprint(store, "Atomic finish", status="active")
+    track_id = pg.get_or_create_track(store, sprint_id, "work")
+    item_id = pg.create_work_item(store, sprint_id, track_id, "Finish once")
+    pg.set_work_item_status(store, item_id, "active")
+    item = pg.get_work_item(store, item_id)
+    claim_id = pg.create_claim(store, item_id, "worker")
+    claim = pg.get_claim(store, claim_id, include_secret=True)
+    assert claim is not None
+    ref = authority.credential_ref(claim["claim_token"])
+    command = contracts.AuthorityCommand(
+        event_id=str(uuid.uuid4()), record_type="item.done-from-claim", schema_version="1",
+        actor="worker", authored_at="2026-07-26T12:00:00Z",
+        refs={"repo_id": store.authority_repo_uuid, "aggregate_type": "item", "aggregate_uuid": item["aggregate_uuid"]},
+        payload={"claim_id": claim_id, "credential_ref": ref, "keep_claim": False},
+        basis_revision=authority.item_revision(item),
+    )
+    record = _command_record(tmp_path / "atomic-finish.db", command)
+    app = _application(store, {ref: claim["claim_token"]})
+    context = _context("worker", record.basis_revision, record.event_id)
+    accepted = app.invoke("work.lifecycle.arbitrate", {"record": record_to_dict(record)}, context)
+    assert accepted["outcome"] == "accepted"
+    assert accepted["effect"]["claim_released"] is True
+    assert pg.get_work_item(store, item_id)["status"] == "done"
+    assert pg.get_claim(store, claim_id) is None
+    duplicate = app.invoke("work.lifecycle.arbitrate", {"record": record_to_dict(record)}, context)
+    assert duplicate == {**accepted, "duplicate": True}
+
+    other_id = pg.create_work_item(store, sprint_id, track_id, "Reject wrong proof")
+    pg.set_work_item_status(store, other_id, "active")
+    other = pg.get_work_item(store, other_id)
+    other_claim_id = pg.create_claim(store, other_id, "worker")
+    bad_ref = authority.credential_ref("wrong-proof")
+    rejected_command = contracts.AuthorityCommand(
+        event_id=str(uuid.uuid4()), record_type="item.done-from-claim", schema_version="1",
+        actor="worker", authored_at="2026-07-26T12:00:00Z",
+        refs={"repo_id": store.authority_repo_uuid, "aggregate_type": "item", "aggregate_uuid": other["aggregate_uuid"]},
+        payload={"claim_id": other_claim_id, "credential_ref": bad_ref, "keep_claim": False},
+        basis_revision=authority.item_revision(other),
+    )
+    rejected_record = _command_record(tmp_path / "atomic-finish-reject.db", rejected_command)
+    rejected_context = _context("worker", rejected_record.basis_revision, rejected_record.event_id)
+    rejected = _application(store, {bad_ref: "wrong-proof"}).invoke(
+        "work.lifecycle.arbitrate", {"record": record_to_dict(rejected_record)}, rejected_context
+    )
+    assert rejected["outcome"] == "rejected" and rejected["reason_code"] == "invalid-claim-proof"
+    assert pg.get_work_item(store, other_id)["status"] == "active"
+    assert pg.get_claim(store, other_claim_id) is not None
+    store.conn.close()
+
+
 def test_claim_context_returns_non_secret_snapshot_and_current_revision(
     store_factory, tmp_path
 ):

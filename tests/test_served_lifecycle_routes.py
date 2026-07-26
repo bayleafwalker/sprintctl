@@ -141,6 +141,64 @@ def test_served_done_from_claim_uses_one_lifecycle_command_and_transient_proof(
 
 
 @_requires_312
+def test_served_done_from_claim_replays_lost_response_before_claim_context(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    aggregate_uuid = str(uuid4())
+    context = {"actor": "worker", "authority_repo_uuid": _manifest_repo_uuid(tmp_path),
+               "claim": {"id": 9, "work_item_id": 3}, "claim_revision": "claim:9@sha256:" + "a" * 64}
+    monkeypatch.setattr(cli_module._served, "claim_context", lambda *a, **k: context)
+    monkeypatch.setattr(cli_module._served, "read_item", lambda *a, **k: {"item": {"id": 3, "aggregate_uuid": aggregate_uuid, "status": "active"}})
+    captured = []
+    def response_lost(*args, **kwargs):
+        captured.append(kwargs)
+        raise RuntimeError("response lost after commit")
+    monkeypatch.setattr(cli_module._served, "lifecycle_arbitrate", response_lost)
+    first = runner.invoke(cli, ["item", "done-from-claim", "--claim-id", "9", "--claim-token", "secret", "--json"])
+    assert first.exit_code == 1
+    records = _outbox_records(tmp_path)
+    assert len(records) == 1
+    event_id = records[0].event_id
+    assert list((tmp_path / ".sprintctl" / "authority-credentials").glob("*"))
+
+    monkeypatch.setattr(cli_module._served, "claim_context", lambda *a, **k: pytest.fail("retry must not inspect deleted claim"))
+    monkeypatch.setattr(cli_module._served, "read_item", lambda *a, **k: pytest.fail("retry must not reread item"))
+    def duplicate(*args, **kwargs):
+        captured.append(kwargs)
+        return {"outcome": "accepted", "duplicate": True, "effect": {"item_id": 3, "previous_status": "active", "status": "done", "claim_released": True, "claim_still_present": False, "keep_claim": False}}
+    monkeypatch.setattr(cli_module._served, "lifecycle_arbitrate", duplicate)
+    retry = runner.invoke(cli, ["item", "done-from-claim", "--claim-id", "9", "--claim-token", "secret", "--json"])
+    assert retry.exit_code == 0, retry.output
+    assert captured[1]["record"]["event_id"] == event_id
+    assert captured[1]["transient_credentials"] == captured[0]["transient_credentials"]
+    assert not list((tmp_path / ".sprintctl" / "authority-credentials").glob("*"))
+
+
+@_requires_312
+def test_served_authority_sync_replays_lost_done_from_claim_response_with_sidecar(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    aggregate_uuid = str(uuid4())
+    monkeypatch.setattr(cli_module._served, "claim_context", lambda *a, **k: {"actor": "worker", "authority_repo_uuid": _manifest_repo_uuid(tmp_path), "claim": {"id": 9, "work_item_id": 3}, "claim_revision": "claim:9@sha256:" + "a" * 64})
+    monkeypatch.setattr(cli_module._served, "read_item", lambda *a, **k: {"item": {"id": 3, "aggregate_uuid": aggregate_uuid, "status": "active"}})
+    monkeypatch.setattr(cli_module._served, "lifecycle_arbitrate", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("response lost")))
+    assert runner.invoke(cli, ["item", "done-from-claim", "--claim-id", "9", "--claim-token", "secret"]).exit_code == 1
+    event_id = _outbox_records(tmp_path)[0].event_id
+    captured = {}
+    def batch_apply(*args, **kwargs):
+        captured.update(kwargs)
+        return {"results": [{"kind": "decision", "event_id": event_id, "outcome": "accepted"}]}
+    monkeypatch.setattr(cli_module._served, "batch_apply", batch_apply)
+    result = runner.invoke(cli, ["authority", "sync", "--json"])
+    assert result.exit_code == 0, result.output
+    assert captured["transient_credentials"]
+    assert json.loads(result.output)["pending_command_event_ids"] == []
+    assert not list((tmp_path / ".sprintctl" / "authority-credentials").glob("*"))
+
+
+@_requires_312
 def test_served_usage_context_uses_atomic_aggregate_without_opening_store(
     runner, tmp_path, monkeypatch
 ):
