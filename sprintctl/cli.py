@@ -5934,115 +5934,13 @@ def _build_delta_since_last_handoff(
 
 
 def _build_handoff_bundle(conn, sprint: dict, events_limit: int, *, m=None) -> dict:
-    m = m or _db
-    now = datetime.now(timezone.utc)
-    generated_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    context = _collect_context_contract(conn, sprint, now, m=m)
-    items = m.list_work_items(conn, sprint_id=sprint["id"])
-    items_with_refs = []
-    for item in items:
-        enriched = {**item}
-        refs = m.list_refs(conn, item["id"])
-        if refs:
-            enriched["refs"] = refs
-        items_with_refs.append(enriched)
-
-    recent_events = m.list_events_limited(conn, sprint["id"], limit=events_limit)
-    all_events = m.list_events(conn, sprint["id"])
-    active_items = [
-        {"id": item["id"], "title": item["title"], "track": item["track_name"]}
-        for item in items
-        if item["status"] == "active"
-    ]
-    previous_handoff = _previous_handoff_generated(conn, sprint["id"], m=m)
-    git_context = _detect_git_context()
-
-    return _contracts.HandoffBundle(
-        sprintctl_version=__version__,
-        generated_at=generated_at,
-        generated_from={
-            "command": "sprintctl handoff",
-            "events_limit": events_limit,
-        },
-        sprint=dict(sprint),
-        summary=context["summary"],
-        active_claims=context["active_claims"],
-        conflicts=context["conflicts"],
-        work={
-            "active_items": active_items,
-            "active_unclaimed_items": context["active_unclaimed_items"],
-            "ready_items": context["ready_items"],
-            "blocked_items": context["blocked_items"],
-            "stale_items": context["stale_items"],
-        },
-        recent_decisions=context["recent_decisions"],
-        recent_events=[_summarize_event(event) for event in recent_events],
-        next_action=context["next_action"],
-        delta_since_last_handoff=_build_delta_since_last_handoff(
-            previous_handoff=previous_handoff,
-            items=items_with_refs,
-            all_events=all_events,
-            active_claims=context["active_claims"],
-        ),
-        freshness={
-            "generated_at": generated_at,
-            "previous_handoff_at": previous_handoff["created_at"] if previous_handoff else None,
-            "stale_item_count": len(context["stale_items"]),
-            "active_claim_count": len(context["active_claims"]),
-            "dirty_file_count": len(git_context["dirty_files"]) if git_context else 0,
-        },
-        evidence={
-            "dirty_files": git_context["dirty_files"] if git_context else [],
-            "items_with_refs": sum(1 for item in items_with_refs if item.get("refs")),
-            "total_refs": sum(len(item.get("refs", [])) for item in items_with_refs),
-            "recent_event_count": len(recent_events),
-            "recent_decision_count": len(context["recent_decisions"]),
-            "validation_outcomes": [],
-        },
-        git_context=git_context,
-        claim_identity_model={
-            "ownership_proof": "claim_id+claim_token",
-            "claim_tokens_included": False,
-            "ambiguous_identity_visible": True,
-            "explicit_claim_handoff_command": "sprintctl claim handoff",
-        },
-        resume_instructions=[
-            "Read this handoff bundle first.",
-            "Refresh live state with 'sprintctl usage --context --json'.",
-            "Inspect the target item with 'sprintctl item show --id <id> --json' if more detail is needed.",
-            "Use 'sprintctl claim resume' to locate transferred claims before claiming new work.",
-        ],
-        agent_shutdown_protocol={
-            "required_before_termination": [
-                "For each active claim you own: run 'sprintctl claim handoff --id <id> --claim-token <token> --actor <next-agent> --mode rotate' to pass ownership to the incoming session.",
-                "If no incoming session: run 'sprintctl claim release --id <id> --claim-token <token>' to free each claim.",
-                "If handing off the sprint: run 'sprintctl handoff' to produce a new bundle for the next agent.",
-            ],
-            "resumption_hint": (
-                "Incoming agents: use 'sprintctl claim resume --instance-id <id>' or "
-                "'--runtime-session-id <id>' to locate claims transferred to you."
-            ),
-        },
-        items=items_with_refs,
-        events=recent_events,
-    ).to_dict()
+    from . import handoff
+    return handoff.build_handoff_bundle(conn, sprint, events_limit, backend=m or _db, version=__version__, git_context=_detect_git_context())
 
 
 def _record_handoff_generated(conn, sprint_id: int, bundle: dict, *, m=None) -> None:
-    m = m or _db
-    m.create_event(
-        conn,
-        sprint_id=sprint_id,
-        actor="handoff",
-        event_type="handoff-generated",
-        source_type="system",
-        payload={
-            "summary": f"Handoff bundle generated for sprint #{sprint_id}",
-            "detail": "Generated a working-memory handoff bundle for the next session.",
-            "bundle_version": bundle["bundle_version"],
-            "events_limit": bundle["generated_from"]["events_limit"],
-        },
-    )
+    from . import handoff
+    handoff.record_handoff_generated(conn, sprint_id, bundle, backend=m or _db, actor="handoff")
 
 
 @maintain.command("check")
@@ -7869,8 +7767,30 @@ def handoff_cmd(obj, sprint_id, output_path, events_limit, fmt) -> None:
     Use --format json (default) for a machine-parseable bundle.
     Pass --output - to write to stdout regardless of format.
     """
-    if _served_config_or_none(obj) is not None:
-        _served_operation_unavailable("handoff")
+    config = _served_config_or_none(obj)
+    if config is not None:
+        bundle = _run_served("handoff", _served.read_handoff, config.served_profile,
+            repo_id=config.repo_id, sprint_id=sprint_id, events_limit=events_limit,
+            git_context=_detect_git_context(), resolved_context=_resolved_context(config))
+        sid = bundle["sprint"]["id"]
+        content = _render_handoff_text(bundle) if fmt == "text" else json.dumps(bundle, indent=2)
+        ext = ".txt" if fmt == "text" else ".json"
+        dest = output_path or f"handoff-{sid}{ext}"
+        if dest == "-":
+            click.echo(content)
+        else:
+            with open(dest, "w") as fh:
+                fh.write(content)
+                if not content.endswith("\n"):
+                    fh.write("\n")
+        try:
+            _served.handoff_record(config.served_profile, repo_id=config.repo_id,
+                sprint_id=sid, bundle=bundle)
+        except Exception as error:
+            click.echo(f"Handoff bundle written, but served recording is unconfirmed: {error}", err=True)
+            return
+        click.echo(f"Handoff bundle for sprint #{sid} written to {dest}")
+        return
     store, m = _get_store(obj)
     if sprint_id is not None:
         s = m.get_sprint(store, sprint_id)

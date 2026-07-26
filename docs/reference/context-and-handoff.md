@@ -305,7 +305,19 @@ Behavioral rules:
 - text mode is a rendering of the same semantics, not a different contract
 - claim secrets are never included
 - a `handoff-generated` event is recorded after successful bundle generation
+  (in served mode the CLI writes or emits the fetched bundle first, then asks
+  the tracker to append the event as the authenticated actor; if that second
+  call fails, the CLI explicitly reports that recording is unconfirmed)
 - `delta_since_last_handoff` compares against the most recent prior handoff event
+
+## Served mode
+
+`sprintctl handoff` uses `work.read.handoff` to obtain the same canonical
+bundle as local mode. The client supplies its own git context explicitly; the
+service never substitutes its deployment checkout. The bundle is rendered and
+written by the client, then `work.handoff.record` appends the normal,
+non-deduplicated `handoff-generated` event with the authenticated actor. No
+local store fallback is permitted in served mode.
 
 Important sections:
 

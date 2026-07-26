@@ -255,11 +255,13 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
     assert len(names) == len(set(names))
     assert {
         "work.read.context",
+        "work.read.handoff",
         "work.read.next-work",
         "work.read.next-work-explain",
         "work.read.events",
         "work.read.sprint",
         "work.event.add",
+        "work.handoff.record",
         "work.item.create",
         "work.claim.start",
         "work.claim.arbitrate",
@@ -288,6 +290,29 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         "work.batch.apply",
         "work.project.batch",
     }
+
+
+def test_served_handoff_uses_shared_bundle_and_authenticated_append_only_record(conn, active_sprint):
+    """The server builds the local contract; each successful client emission records once."""
+    app = _application(store=conn, backend=db)
+    context = _context(actor="authenticated-agent")
+
+    bundle = app.invoke(
+        "work.read.handoff",
+        {"sprint_id": active_sprint["id"], "events_limit": 50,
+         "git_context": {"branch": "agent/handoff", "sha": "abc", "worktree": "/client", "dirty_files": ["x.py"]}},
+        context,
+    )
+
+    assert bundle["bundle_type"] == "handoff"
+    assert bundle["git_context"]["worktree"] == "/client"
+    first = app.invoke("work.handoff.record", {"sprint_id": active_sprint["id"], "bundle": bundle}, context)
+    second = app.invoke("work.handoff.record", {"sprint_id": active_sprint["id"], "bundle": bundle}, context)
+
+    assert first["actor"] == "authenticated-agent"
+    assert first["event_id"] != second["event_id"]
+    events = [event for event in db.list_events(conn, active_sprint["id"]) if event["event_type"] == "handoff-generated"]
+    assert [event["actor"] for event in events] == ["authenticated-agent", "authenticated-agent"]
     claim_start = next(
         contract
         for contract in WORK_OPERATION_CONTRACTS

@@ -249,6 +249,21 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "not-allowed",
     ),
     WorkOperationContract(
+        "work.read.handoff",
+        _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}, "events_limit": {"type": "integer", "minimum": 1, "maximum": 500}, "git_context": {"type": ["object", "null"]}}, required=("events_limit",)),
+        _result_schema(
+            ("bundle_type", "bundle_version", "sprintctl_version", "generated_at", "generated_from", "sprint", "summary", "active_claims", "conflicts", "work", "recent_decisions", "recent_events", "next_action", "delta_since_last_handoff", "freshness", "evidence", "git_context", "claim_identity_model", "resume_instructions", "agent_shutdown_protocol", "items", "events"),
+            {"bundle_type": {"const": "handoff"}, "bundle_version": {"const": "1"}, "sprintctl_version": {"type": "string"}, "generated_at": {"type": "string"}, "generated_from": {"type": "object"}, "sprint": {"type": "object"}, "summary": {"type": "object"}, "active_claims": {"type": "array", "items": {"type": "object"}}, "conflicts": {"type": "array", "items": {"type": "object"}}, "work": {"type": "object"}, "recent_decisions": {"type": "array", "items": {"type": "object"}}, "recent_events": {"type": "array", "items": {"type": "object"}}, "next_action": {"type": "object"}, "delta_since_last_handoff": {"type": "object"}, "freshness": {"type": "object"}, "evidence": {"type": "object"}, "git_context": {"type": ["object", "null"]}, "claim_identity_model": {"type": "object"}, "resume_instructions": {"type": "array", "items": {"type": "string"}}, "agent_shutdown_protocol": {"type": "object"}, "items": {"type": "array", "items": {"type": "object"}}, "events": {"type": "array", "items": {"type": "object"}}},
+        ),
+        "work:read", "read", "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.handoff.record",
+        _object_schema({"sprint_id": {"type": "integer", "minimum": 1}, "bundle": {"type": "object"}}, required=("sprint_id", "bundle")),
+        _result_schema(("event_id", "sprint_id", "actor"), {"event_id": {"type": "integer", "minimum": 1}, "sprint_id": {"type": "integer", "minimum": 1}, "actor": {"type": "string"}}),
+        "work:write", "write", "not-allowed",
+    ),
+    WorkOperationContract(
         "work.read.next-work-explain",
         _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
         _result_schema(

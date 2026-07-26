@@ -25,7 +25,7 @@ import socket
 from typing import Any, Protocol
 from uuid import uuid4
 
-from . import context_contract, contracts, cutover, db, outbox
+from . import context_contract, contracts, cutover, db, handoff, outbox
 
 
 CLAIM_COMMAND_TYPES = frozenset(
@@ -446,6 +446,7 @@ class WorkApplication:
             "work.read.claims": target._read_claims,
             "work.read.claim": target._read_claim,
             "work.read.context": target._read_context,
+            "work.read.handoff": target._read_handoff,
             "work.read.next-work": target._read_next_work,
             "work.read.next-work-explain": target._read_next_work_explain,
             "work.read.records": target._read_records,
@@ -453,6 +454,7 @@ class WorkApplication:
             "work.read.events": target._read_events,
             "work.read.sprint": target._read_sprint,
             "work.event.add": target._event_add,
+            "work.handoff.record": target._handoff_record,
             "work.item.create": target._item_create,
             "work.item.ref.add": target._item_ref_add,
             "work.item.ref.remove": target._item_ref_remove,
@@ -610,6 +612,28 @@ class WorkApplication:
             self.store, self._resolve_sprint(arguments.get("sprint_id")), now,
             backend=self.backend,
         )
+
+    def _read_handoff(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        events_limit = _positive_int(arguments.get("events_limit"), "events_limit")
+        if events_limit > 500:
+            raise ApplicationRejection("invalid-arguments", "events_limit must be at most 500", 422)
+        git_context = arguments.get("git_context")
+        if git_context is not None and not isinstance(git_context, dict):
+            raise ApplicationRejection("invalid-arguments", "git_context must be an object or null", 422)
+        sprint = self._resolve_sprint(arguments.get("sprint_id"))
+        return handoff.build_handoff_bundle(self.store, sprint, events_limit, backend=self.backend, version=__import__("sprintctl").__version__, git_context=git_context)
+
+    def _handoff_record(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        sprint_id = _positive_int(arguments.get("sprint_id"), "sprint_id")
+        if self.backend.get_sprint(self.store, sprint_id) is None:
+            raise ApplicationRejection("sprint-not-found", f"Sprint #{sprint_id} not found", 404)
+        bundle = arguments.get("bundle")
+        if not isinstance(bundle, dict) or bundle.get("bundle_type") != "handoff" or bundle.get("bundle_version") != "1":
+            raise ApplicationRejection("invalid-arguments", "bundle must be a HandoffBundle v1", 422)
+        if bundle.get("sprint", {}).get("id") != sprint_id:
+            raise ApplicationRejection("invalid-arguments", "bundle sprint must match sprint_id", 422)
+        event_id = handoff.record_handoff_generated(self.store, sprint_id, bundle, backend=self.backend, actor=context.identity.actor)
+        return {"event_id": event_id, "sprint_id": sprint_id, "actor": context.identity.actor}
 
     def _item_ref_add(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
         item_id = _positive_int(arguments.get("item_id"), "item_id")

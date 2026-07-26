@@ -126,6 +126,16 @@ def read_context(
     )
 
 
+def read_handoff(served_profile: ServedProfile, *, repo_id: str, sprint_id: int | None, events_limit: int, git_context: dict | None) -> dict[str, Any]:
+    """Fetch one server-built handoff bundle; client git state is explicit."""
+    return asyncio.run(_invoke_operation(served_profile, "work.read.handoff", {"sprint_id": sprint_id, "events_limit": events_limit, "git_context": git_context}, repo_id=repo_id))
+
+
+def handoff_record(served_profile: ServedProfile, *, repo_id: str, sprint_id: int, bundle: dict[str, Any]) -> dict[str, Any]:
+    """Record a generated bundle after the client has successfully emitted it."""
+    return asyncio.run(_invoke_operation(served_profile, "work.handoff.record", {"sprint_id": sprint_id, "bundle": bundle}, repo_id=repo_id))
+
+
 def item_ref_add(served_profile: ServedProfile, *, repo_id: str, item_id: int, ref_type: str, url: str, label: str = "") -> dict[str, Any]:
     return asyncio.run(_invoke_operation(served_profile, "work.item.ref.add", {"item_id": item_id, "ref_type": ref_type, "url": url, "label": label}, repo_id=repo_id))
 
@@ -500,6 +510,8 @@ def lifecycle_arbitrate(
 # catalog before commands ran. See docs/plans/served-mode-gaps-plan.md.
 _DOCTOR_PROBE_COMMAND_PATHS = (
     "usage.context",
+    "handoff",
+    "handoff.record",
     "sprint.list",
     "item.show",
     "item.list",
@@ -562,6 +574,7 @@ __all__ = [
     "catalog_operation_names",
     "claim_arbitrate",
     "claim_context",
+    "handoff_record",
     "claim_start",
     "cutover_evidence",
     "event_add",
@@ -578,6 +591,7 @@ __all__ = [
     "read_claims",
     "read_claim",
     "read_context",
+    "read_handoff",
     "read_next_work",
     "read_sprint",
     "read_sprints",

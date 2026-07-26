@@ -85,7 +85,6 @@ def _outbox_records(tmp_path):
         ["claim", "recover", "--id", "3"],
         ["claim", "create", "--item-id", "3", "--actor", "agent"],
         ["session", "resume"],
-        ["handoff", "--sprint-id", "3", "--output", "-"],
     ],
 )
 def test_unavailable_served_p0_commands_fail_closed_before_opening_store(
@@ -182,6 +181,47 @@ def test_served_claim_recover_fails_closed_before_opening_local_connection(
     assert result.exit_code == 1, result.output
     assert "served-operation-unavailable" in result.output
     assert "local-sidecar-only" in result.output
+
+
+@_requires_312
+def test_served_handoff_fetches_writes_then_records_without_opening_store(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli_module, "_get_store", lambda _obj: pytest.fail("served command opened store"))
+    bundle = {
+        "bundle_type": "handoff", "bundle_version": "1", "generated_at": "now",
+        "generated_from": {"events_limit": 50},
+        "sprint": {"id": 3, "name": "served", "status": "active", "goal": "goal"},
+        "summary": {"total": 0, "done": 0, "active": 0, "pending": 0, "blocked": 0},
+        "active_claims": [], "conflicts": [],
+        "work": {"active_items": [], "ready_items": [], "blocked_items": [], "stale_items": []},
+        "recent_decisions": [], "recent_events": [], "next_action": {"kind": "no-action", "summary": "Nothing"},
+        "agent_shutdown_protocol": {"required_before_termination": []}, "resume_instructions": [],
+    }
+    calls = []
+    monkeypatch.setattr(cli_module._served, "read_handoff", lambda *a, **k: calls.append(("read", k)) or bundle)
+    monkeypatch.setattr(cli_module._served, "handoff_record", lambda *a, **k: calls.append(("record", k)) or {"event_id": 8, "actor": "served-agent"})
+
+    result = runner.invoke(cli, ["handoff", "--sprint-id", "3", "--output", "-"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output.split("Handoff bundle for", 1)[0]) == bundle
+    assert [name for name, _ in calls] == ["read", "record"]
+    assert calls[0][1]["git_context"] is None
+    assert calls[1][1]["bundle"] == bundle
+
+
+@_requires_312
+def test_served_handoff_reports_unconfirmed_recording_after_output(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    bundle = {"bundle_type": "handoff", "bundle_version": "1", "generated_from": {"events_limit": 50}, "sprint": {"id": 3, "name": "served", "status": "active", "goal": "goal"}, "summary": {"total": 0, "done": 0, "active": 0, "pending": 0, "blocked": 0}, "active_claims": [], "conflicts": [], "work": {"active_items": [], "ready_items": [], "blocked_items": [], "stale_items": []}, "recent_decisions": [], "recent_events": [], "next_action": {"kind": "no-action", "summary": "Nothing"}, "agent_shutdown_protocol": {"required_before_termination": []}, "resume_instructions": []}
+    monkeypatch.setattr(cli_module._served, "read_handoff", lambda *a, **k: bundle)
+    monkeypatch.setattr(cli_module._served, "handoff_record", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("network lost")))
+
+    result = runner.invoke(cli, ["handoff", "--sprint-id", "3", "--output", "-"])
+
+    assert result.exit_code == 0, result.output
+    assert '"bundle_type": "handoff"' in result.output
+    assert "served recording is unconfirmed: network lost" in result.output
 
 
 @_requires_312
