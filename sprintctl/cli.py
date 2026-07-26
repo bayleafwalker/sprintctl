@@ -295,6 +295,7 @@ def _get_project_stores(obj: dict, project_value: str | Path):
 # mismatch between this file and sprintctl/served_routes.py's table raises
 # immediately at import time instead of silently drifting.
 _SERVED_SPRINT_LIST_ROUTE = _served_routes.routes_for("sprint.list")[0]
+_SERVED_SPRINT_CREATE_ROUTE = _served_routes.routes_for("sprint.create")[0]
 _SERVED_ITEM_SHOW_ROUTE = _served_routes.routes_for("item.show")[0]
 _SERVED_EVENT_LIST_ROUTE = _served_routes.routes_for("event.list")[0]
 _SERVED_EVENT_ADD_ROUTE = _served_routes.routes_for("event.add")[0]
@@ -309,6 +310,7 @@ _SERVED_NEXT_WORK_ROUTES = {
     route.operation: route for route in _served_routes.routes_for("next-work")
 }
 assert _SERVED_SPRINT_LIST_ROUTE.operation == "work.read.sprints"
+assert _SERVED_SPRINT_CREATE_ROUTE.operation == "work.sprint.create"
 assert _SERVED_ITEM_SHOW_ROUTE.operation == "work.read.item"
 assert _SERVED_EVENT_LIST_ROUTE.operation == "work.read.events"
 assert _SERVED_EVENT_ADD_ROUTE.operation == "work.event.add"
@@ -773,6 +775,29 @@ def sprint() -> None:
 @click.pass_obj
 def sprint_create(obj, name, goal, start_date, end_date, status, kind, as_json) -> None:
     """Create a new sprint."""
+    config = _served_config_or_none(obj)
+    if config is not None:
+        context = _resolved_context(config)
+        result = _run_served(
+            "sprint create",
+            _served.sprint_create,
+            config.served_profile,
+            repo_id=config.repo_id,
+            name=name,
+            goal=goal,
+            start_date=start_date,
+            end_date=end_date,
+            status=status,
+            kind=kind,
+            resolved_context=context,
+        )
+        created = result["sprint"]
+        if as_json:
+            click.echo(json.dumps(created, indent=2))
+            return
+        click.echo(f"Created sprint #{created['id']}: {created['name']}")
+        click.echo(_render_resolved_context(context))
+        return
     store, m = _get_store(obj)
     sid = m.create_sprint(store, name, goal, start_date, end_date, status, kind=kind)
     if status == "active":

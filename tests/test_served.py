@@ -108,6 +108,30 @@ def test_read_sprints_shapes_arguments(fake_vuoro_client):
     }
 
 
+def test_sprint_create_sends_only_authoritative_sprint_fields(fake_vuoro_client):
+    result = served.sprint_create(
+        _profile(),
+        repo_id="repo-x",
+        name="Dispatch",
+        goal="Enable supervised dispatch",
+        start_date=None,
+        end_date=None,
+        status="active",
+        kind="active_sprint",
+    )
+    assert result["operation"] == "work.sprint.create"
+    assert result["arguments"] == {
+        "name": "Dispatch",
+        "goal": "Enable supervised dispatch",
+        "start_date": None,
+        "end_date": None,
+        "status": "active",
+        "kind": "active_sprint",
+    }
+    _operation, _arguments, kwargs = fake_vuoro_client.instances[-1].invocations[0]
+    assert kwargs == {"repo_id": "repo-x"}
+
+
 def test_read_item_sends_only_item_id(fake_vuoro_client):
     profile = _profile()
     result = served.read_item(profile, repo_id="repo-x", item_id=42)
@@ -489,9 +513,10 @@ def test_expected_operations_matches_all_served_cli_command_paths():
         for route in routes_for(path)
     }
     assert served.EXPECTED_OPERATIONS == expected
-    assert len(served.EXPECTED_OPERATIONS) == 28
+    assert len(served.EXPECTED_OPERATIONS) == 29
     assert served.EXPECTED_OPERATIONS == {
         "work.read.sprints",
+        "work.sprint.create",
         "work.read.context",
         "work.read.handoff",
         "work.read.item",

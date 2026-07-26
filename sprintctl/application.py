@@ -455,6 +455,7 @@ class WorkApplication:
             "work.read.sprint": target._read_sprint,
             "work.read.sprint-detail": target._read_sprint_detail,
             "work.maintain.check": target._maintain_check,
+            "work.sprint.create": target._sprint_create,
             "work.event.add": target._event_add,
             "work.handoff.record": target._handoff_record,
             "work.item.create": target._item_create,
@@ -764,6 +765,35 @@ class WorkApplication:
                 self.store, sprint, backend=self.backend, now=now
             ),
         }
+
+    def _sprint_create(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        """Create a sprint inside the authenticated repository scope."""
+        name = _optional_text(arguments.get("name"), "name")
+        goal = arguments.get("goal", "")
+        start_date = arguments.get("start_date")
+        end_date = arguments.get("end_date")
+        status = arguments.get("status", "planned")
+        kind = arguments.get("kind", "active_sprint")
+        if not name or not isinstance(goal, str):
+            raise ApplicationRejection("invalid-arguments", "name and string goal are required", 422)
+        if start_date is not None and not isinstance(start_date, str):
+            raise ApplicationRejection("invalid-arguments", "start_date must be a string or null", 422)
+        if end_date is not None and not isinstance(end_date, str):
+            raise ApplicationRejection("invalid-arguments", "end_date must be a string or null", 422)
+        if status not in {"planned", "active", "closed"}:
+            raise ApplicationRejection("invalid-arguments", "status must be planned, active, or closed", 422)
+        if kind not in {"active_sprint", "backlog", "archive"}:
+            raise ApplicationRejection("invalid-arguments", "kind must be active_sprint, backlog, or archive", 422)
+        try:
+            sprint_id = self.backend.create_sprint(
+                self.store, name, goal, start_date, end_date, status, kind=kind
+            )
+        except ValueError as exc:
+            raise ApplicationRejection("sprint-create-rejected", str(exc), 422) from exc
+        sprint = self.backend.get_sprint(self.store, sprint_id)
+        if sprint is None:  # pragma: no cover - backend postcondition
+            raise ApplicationRejection("sprint-create-failed", "created sprint could not be read back", 500)
+        return {"repo_id": self.repo_id, "sprint": sprint}
 
     def _event_add(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         """Synchronously create a generic event as the authenticated actor."""

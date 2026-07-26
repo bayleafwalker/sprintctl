@@ -556,6 +556,18 @@ def test_item_create_resolves_track_server_side(conn, active_sprint):
     assert db.list_tracks(conn, active_sprint["id"])[0]["name"] == "served"
 
 
+def test_sprint_create_is_scoped_to_the_authenticated_repository(conn):
+    app = _application(store=conn, backend=db)
+    result = app.invoke(
+        "work.sprint.create",
+        {"name": "Dispatch", "goal": "Supervised dispatch", "status": "active"},
+        _context(actor="authorized-operator"),
+    )
+    assert result["repo_id"] == "test-repo"
+    assert result["sprint"]["name"] == "Dispatch"
+    assert result["sprint"]["status"] == "active"
+
+
 def test_click_next_work_and_application_handler_share_backend_semantics(
     conn, runner, active_sprint
 ):

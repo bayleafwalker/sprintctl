@@ -368,6 +368,25 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work:read", "read", "not-allowed",
     ),
     WorkOperationContract(
+        "work.sprint.create",
+        _object_schema(
+            {
+                "name": {"type": "string", "minLength": 1},
+                "goal": {"type": "string", "default": ""},
+                "start_date": {"type": ["string", "null"]},
+                "end_date": {"type": ["string", "null"]},
+                "status": {"enum": ["planned", "active", "closed"], "default": "planned"},
+                "kind": {"enum": ["active_sprint", "backlog", "archive"], "default": "active_sprint"},
+            },
+            required=("name",),
+        ),
+        _result_schema(
+            ("repo_id", "sprint"),
+            {"repo_id": {"type": "string"}, "sprint": {"type": "object"}},
+        ),
+        "work:sprint", "write", "not-allowed",
+    ),
+    WorkOperationContract(
         "work.event.add",
         _object_schema(
             {

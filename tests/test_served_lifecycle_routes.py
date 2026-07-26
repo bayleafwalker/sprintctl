@@ -781,6 +781,24 @@ def test_served_item_add_uses_facade_without_store(runner, tmp_path, monkeypatch
 
 
 @_requires_312
+def test_served_sprint_create_uses_facade_without_store(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    captured = {}
+
+    def fake_sprint_create(profile, **kwargs):
+        captured.update(kwargs)
+        return {"repo_id": kwargs["repo_id"], "sprint": {"id": 12, "name": kwargs["name"], "status": kwargs["status"]}}
+
+    monkeypatch.setattr(cli_module._served, "sprint_create", fake_sprint_create)
+    monkeypatch.setattr(cli_module, "_get_store", lambda _obj: pytest.fail("served command opened store"))
+    result = runner.invoke(cli, ["sprint", "create", "--name", "Dispatch", "--status", "active", "--json"])
+    assert result.exit_code == 0, result.output
+    assert captured["repo_id"] == tmp_path.name
+    assert captured["status"] == "active"
+    assert json.loads(result.output) == {"id": 12, "name": "Dispatch", "status": "active"}
+
+
+@_requires_312
 def test_served_write_text_output_and_error_report_resolved_context(runner, tmp_path, monkeypatch):
     _configure_served_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(

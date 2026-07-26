@@ -82,6 +82,35 @@ def read_sprints(
     )
 
 
+def sprint_create(
+    served_profile: ServedProfile,
+    *,
+    repo_id: str,
+    name: str,
+    goal: str,
+    start_date: str | None,
+    end_date: str | None,
+    status: str,
+    kind: str,
+) -> dict[str, Any]:
+    """Create a sprint through the separately authorized served operation."""
+    return asyncio.run(
+        _invoke_operation(
+            served_profile,
+            "work.sprint.create",
+            {
+                "name": name,
+                "goal": goal,
+                "start_date": start_date,
+                "end_date": end_date,
+                "status": status,
+                "kind": kind,
+            },
+            repo_id=repo_id,
+        )
+    )
+
+
 def read_item(
     served_profile: ServedProfile, *, repo_id: str, item_id: int
 ) -> dict[str, Any]:
@@ -558,6 +587,7 @@ _DOCTOR_PROBE_COMMAND_PATHS = (
     "handoff",
     "handoff.record",
     "sprint.list",
+    "sprint.create",
     "item.show",
     "item.list",
     "claim.list",
@@ -644,4 +674,5 @@ __all__ = [
     "read_next_work",
     "read_sprint",
     "read_sprints",
+    "sprint_create",
 ]
