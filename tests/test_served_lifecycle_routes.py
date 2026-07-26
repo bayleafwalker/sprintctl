@@ -199,6 +199,45 @@ def test_served_authority_sync_replays_lost_done_from_claim_response_with_sideca
 
 
 @_requires_312
+@pytest.mark.parametrize("outcome", ["accepted", "rejected"])
+def test_served_sync_skips_terminal_direct_finish_records(runner, tmp_path, monkeypatch, outcome):
+    _configure_served_repo(tmp_path, monkeypatch)
+    aggregate_uuid = str(uuid4())
+    monkeypatch.setattr(cli_module._served, "claim_context", lambda *a, **k: {"actor": "worker", "authority_repo_uuid": _manifest_repo_uuid(tmp_path), "claim": {"id": 9, "work_item_id": 3}, "claim_revision": "claim:9@sha256:" + "a" * 64})
+    monkeypatch.setattr(cli_module._served, "read_item", lambda *a, **k: {"item": {"id": 3, "aggregate_uuid": aggregate_uuid, "status": "active"}})
+    effect = {"item_id": 3, "previous_status": "active", "status": "done", "claim_released": True, "claim_still_present": False, "keep_claim": False}
+    monkeypatch.setattr(cli_module._served, "lifecycle_arbitrate", lambda *a, **k: {"outcome": outcome, "reason_code": "invalid-claim-proof", "reason_detail": "bad proof", "effect": effect})
+    direct = runner.invoke(cli, ["item", "done-from-claim", "--claim-id", "9", "--claim-token", "secret"])
+    assert direct.exit_code == (0 if outcome == "accepted" else 1)
+    monkeypatch.setattr(cli_module._served, "batch_apply", lambda *a, **k: pytest.fail("terminal direct command must not be resynced"))
+    synced = runner.invoke(cli, ["authority", "sync", "--json"])
+    assert synced.exit_code == 0, synced.output
+    payload = json.loads(synced.output)
+    assert payload["pending_command_event_ids"] == [] and payload["decisions"] == []
+
+
+@_requires_312
+def test_acknowledged_wrong_proof_finish_mints_a_new_correct_proof_command(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    aggregate_uuid = str(uuid4())
+    context = {"actor": "worker", "authority_repo_uuid": _manifest_repo_uuid(tmp_path), "claim": {"id": 9, "work_item_id": 3}, "claim_revision": "claim:9@sha256:" + "a" * 64}
+    monkeypatch.setattr(cli_module._served, "claim_context", lambda *a, **k: context)
+    monkeypatch.setattr(cli_module._served, "read_item", lambda *a, **k: {"item": {"id": 3, "aggregate_uuid": aggregate_uuid, "status": "active"}})
+    calls = []
+    def arbitrate(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return {"outcome": "rejected", "reason_code": "invalid-claim-proof", "reason_detail": "bad proof", "effect": {}}
+        return {"outcome": "accepted", "effect": {"item_id": 3, "previous_status": "active", "status": "done", "claim_released": True, "claim_still_present": False, "keep_claim": False}}
+    monkeypatch.setattr(cli_module._served, "lifecycle_arbitrate", arbitrate)
+    assert runner.invoke(cli, ["item", "done-from-claim", "--claim-id", "9", "--claim-token", "wrong"]).exit_code == 1
+    retry = runner.invoke(cli, ["item", "done-from-claim", "--claim-id", "9", "--claim-token", "correct", "--json"])
+    assert retry.exit_code == 0, retry.output
+    assert calls[0]["record"]["event_id"] != calls[1]["record"]["event_id"]
+    assert len(_outbox_records(tmp_path)) == 2
+
+
+@_requires_312
 def test_served_usage_context_uses_atomic_aggregate_without_opening_store(
     runner, tmp_path, monkeypatch
 ):

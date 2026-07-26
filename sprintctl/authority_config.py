@@ -26,6 +26,7 @@ _STATE_DIRECTORY_NAME = ".sprintctl"
 _CONFIG_FILENAME = "authority-command.json"
 _OUTBOX_FILENAME = "authority-command-outbox.db"
 _CREDENTIAL_DIRECTORY_NAME = "authority-credentials"
+_TERMINAL_DIRECTORY_NAME = "authority-terminal-decisions"
 
 
 class AuthorityCommandConfigError(ValueError):
@@ -47,6 +48,7 @@ class AuthorityCommandPaths:
     config_path: Path
     outbox_path: Path
     credential_dir: Path
+    terminal_dir: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,8 +148,9 @@ def _validated_paths(repo_root: Path) -> AuthorityCommandPaths:
         config_path=state_dir / _CONFIG_FILENAME,
         outbox_path=state_dir / _OUTBOX_FILENAME,
         credential_dir=state_dir / _CREDENTIAL_DIRECTORY_NAME,
+        terminal_dir=state_dir / _TERMINAL_DIRECTORY_NAME,
     )
-    for path in (paths.config_path, paths.outbox_path, paths.credential_dir):
+    for path in (paths.config_path, paths.outbox_path, paths.credential_dir, paths.terminal_dir):
         if not _is_within(path.resolve(), resolved_state):
             raise AuthorityCommandConfigError(
                 f"authority command path must remain under {state_dir}: {path}"
@@ -293,6 +296,17 @@ def _credential_path(paths: AuthorityCommandPaths, event_id: str | UUID) -> Path
         raise AuthorityCommandConfigError(
             "authority credential path must remain under its fixed directory"
         )
+    return path
+
+
+def _terminal_path(paths: AuthorityCommandPaths, event_id: str | UUID) -> Path:
+    expected = _validated_paths(paths.repo_root)
+    if paths != expected:
+        raise AuthorityCommandConfigError("authority command paths must be derived from the repo root")
+    canonical_event_id = _canonical_event_id(event_id)
+    path = paths.terminal_dir / f"{canonical_event_id}.json"
+    if not _is_within(path.resolve(), paths.terminal_dir.resolve()):
+        raise AuthorityCommandConfigError("authority terminal path must remain under its fixed directory")
     return path
 
 
@@ -488,6 +502,49 @@ def remove_pending_authority_credential(
     return True
 
 
+def mark_terminal_authority_decision(
+    paths: AuthorityCommandPaths, *, event_id: str | UUID, outcome: str,
+) -> None:
+    """Durably acknowledge a direct terminal response without altering outbox.
+
+    The producer log is immutable.  This local receipt lets sync skip a
+    command that was already conclusively accepted or rejected, while an
+    unknown transport outcome has no receipt and remains replayable.
+    """
+    if outcome not in {"accepted", "rejected"}:
+        raise AuthorityCommandConfigError("terminal authority outcome must be accepted or rejected")
+    path = _terminal_path(paths, event_id)
+    paths.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    paths.terminal_dir.mkdir(mode=0o700, exist_ok=True)
+    _require_private(paths.terminal_dir, directory=True)
+    payload = json.dumps({"event_id": _canonical_event_id(event_id), "outcome": outcome}, sort_keys=True) + "\n"
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=paths.terminal_dir, text=True)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload); handle.flush(); os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def is_terminal_authority_decision(paths: AuthorityCommandPaths, *, event_id: str | UUID) -> bool:
+    path = _terminal_path(paths, event_id)
+    if not path.exists():
+        return False
+    _require_private(paths.terminal_dir, directory=True)
+    _require_private(path, directory=False)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise AuthorityCommandConfigError(f"invalid authority terminal receipt {path}: {exc}") from exc
+    if not isinstance(value, dict) or value.get("event_id") != _canonical_event_id(event_id) or value.get("outcome") not in {"accepted", "rejected"}:
+        raise AuthorityCommandConfigError(f"invalid authority terminal receipt {path}")
+    return True
+
+
 __all__ = [
     "AUTHORITY_COMMAND_CONFIG_VERSION",
     "AuthorityCommandConfig",
@@ -500,6 +557,8 @@ __all__ = [
     "authority_command_status",
     "load_authority_command_config",
     "load_pending_authority_credential",
+    "is_terminal_authority_decision",
+    "mark_terminal_authority_decision",
     "remove_pending_authority_credential",
     "set_authority_command_mode",
     "store_pending_authority_credential",

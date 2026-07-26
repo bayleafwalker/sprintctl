@@ -72,6 +72,7 @@ def test_load_rejects_forged_paths(tmp_path):
         config_path=tmp_path / "escaped.json",
         outbox_path=paths.outbox_path,
         credential_dir=paths.credential_dir,
+        terminal_dir=paths.terminal_dir,
     )
     with pytest.raises(authority_config.AuthorityCommandConfigError, match="must be derived"):
         authority_config.load_authority_command_config(forged)

@@ -2146,6 +2146,9 @@ def _served_item_done_from_claim(config, item_id, claim_id, claim_token, actor, 
             repo_id=config.repo_id, record=_served_record_argument(pending),
             transient_credentials=dict(proof.credentials), resolved_context=resolved_context,
         )
+        _authority_config.mark_terminal_authority_decision(
+            rollout_paths, event_id=pending.event_id, outcome=decision["outcome"]
+        )
         _authority_config.remove_pending_authority_credential(
             rollout_paths, event_id=pending.event_id
         )
@@ -2197,6 +2200,9 @@ def _served_item_done_from_claim(config, item_id, claim_id, claim_token, actor, 
         "item done-from-claim", _served.lifecycle_arbitrate, config.served_profile,
         repo_id=config.repo_id, record=_served_record_argument(durable),
         transient_credentials=credentials, resolved_context=resolved_context,
+    )
+    _authority_config.mark_terminal_authority_decision(
+        rollout_paths, event_id=durable.event_id, outcome=decision["outcome"]
     )
     _authority_config.remove_pending_authority_credential(rollout_paths, event_id=durable.event_id)
     _render_served_done_from_claim_decision(
@@ -3108,6 +3114,9 @@ def _find_pending_served_item_status_record(
                 continue
             if not isinstance(command, _contracts.AuthorityCommand):
                 continue
+            paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+            if _authority_config.is_terminal_authority_decision(paths, event_id=record.event_id):
+                continue
             if (
                 command.refs.get("aggregate_id") == item_id
                 and command.refs.get("aggregate_uuid") == aggregate_uuid
@@ -3140,6 +3149,9 @@ def _find_pending_served_done_from_claim_record(
             except (TypeError, ValueError):
                 continue
             if not isinstance(command, _contracts.AuthorityCommand):
+                continue
+            paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+            if _authority_config.is_terminal_authority_decision(paths, event_id=record.event_id):
                 continue
             if (
                 command.payload.get("claim_id") == claim_id
@@ -3622,6 +3634,10 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
             continue
         if record.event_type == "capability-receipt.accept":
             unsupported_event_ids.append(record.event_id)
+            continue
+        if _authority_config.is_terminal_authority_decision(
+            rollout_paths, event_id=record.event_id
+        ):
             continue
         envelope = _contracts.record_from_dict(record.payload)
         required_refs = {
