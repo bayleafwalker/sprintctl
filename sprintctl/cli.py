@@ -228,6 +228,9 @@ def _get_project_stores(obj: dict, project_value: str | Path):
 _SERVED_SPRINT_LIST_ROUTE = _served_routes.routes_for("sprint.list")[0]
 _SERVED_ITEM_SHOW_ROUTE = _served_routes.routes_for("item.show")[0]
 _SERVED_EVENT_LIST_ROUTE = _served_routes.routes_for("event.list")[0]
+_SERVED_EVENT_ADD_ROUTE = _served_routes.routes_for("event.add")[0]
+_SERVED_ITEM_ADD_ROUTE = _served_routes.routes_for("item.add")[0]
+_SERVED_SPRINT_SHOW_ROUTE = _served_routes.routes_for("sprint.show")[0]
 _SERVED_CLAIM_START_ROUTE = _served_routes.routes_for("claim.start")[0]
 _SERVED_ITEM_STATUS_ROUTE = _served_routes.routes_for("item.status")[0]
 _SERVED_SPRINT_STATUS_ROUTE = _served_routes.routes_for("sprint.status")[0]
@@ -239,6 +242,9 @@ _SERVED_NEXT_WORK_ROUTES = {
 assert _SERVED_SPRINT_LIST_ROUTE.operation == "work.read.sprints"
 assert _SERVED_ITEM_SHOW_ROUTE.operation == "work.read.item"
 assert _SERVED_EVENT_LIST_ROUTE.operation == "work.read.events"
+assert _SERVED_EVENT_ADD_ROUTE.operation == "work.event.add"
+assert _SERVED_ITEM_ADD_ROUTE.operation == "work.item.create"
+assert _SERVED_SPRINT_SHOW_ROUTE.operation == "work.read.sprint"
 assert _SERVED_CLAIM_START_ROUTE.operation == "work.claim.start"
 assert _SERVED_ITEM_STATUS_ROUTE.operation == "work.lifecycle.arbitrate"
 assert _SERVED_SPRINT_STATUS_ROUTE.operation == "work.lifecycle.arbitrate"
@@ -732,6 +738,43 @@ def sprint_show(obj, sprint_id, detail, watch_mode, interval, as_json) -> None:
         click.echo("Error: --interval must be > 0.", err=True)
         sys.exit(1)
 
+    config = _served_config_or_none(obj)
+    if config is not None:
+        if detail:
+            click.echo(
+                "Error: served sprint show --detail is not available: its health and "
+                "track aggregation has no catalog operation yet; omit --detail, or use "
+                "SPRINTCTL_BACKEND=local or remote.",
+                err=True,
+            )
+            sys.exit(1)
+
+        def render_once() -> None:
+            result = _run_served(
+                "sprint show", _served.read_sprint, config.served_profile,
+                repo_id=config.repo_id, sprint_id=sprint_id,
+            )
+            payload = _collect_sprint_show_payload(None, result["sprint"], detail=False)
+            if as_json:
+                click.echo(json.dumps(payload, indent=2))
+            else:
+                _emit_sprint_show_text(payload, detail=False)
+
+        if not watch_mode:
+            render_once()
+            return
+        try:
+            while True:
+                cleared = _clear_terminal_for_watch()
+                if not cleared:
+                    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    click.echo(f"\n--- sprintctl watch refresh {stamp} ---")
+                render_once()
+                time.sleep(interval)
+        except KeyboardInterrupt:
+            click.echo("\nWatch mode stopped.")
+        return
+
     store, m = _get_store(obj)
     def render_once() -> None:
         if sprint_id is not None:
@@ -1111,6 +1154,19 @@ def item_add(obj, sprint_id, track_name, title, description, assignee, priority,
             _db.validate_priority(priority)
         except ValueError as exc:
             raise click.BadParameter(str(exc), param_hint="--priority") from exc
+    config = _served_config_or_none(obj)
+    if config is not None:
+        result = _run_served(
+            "item add", _served.item_create, config.served_profile,
+            repo_id=config.repo_id, sprint_id=sprint_id, track_name=track_name,
+            title=title, description=description, assignee=assignee, priority=priority,
+        )
+        created = {**result["item"], "track_name": result["track_name"]}
+        if as_json:
+            click.echo(json.dumps(created, indent=2))
+            return
+        click.echo(f"Added item #{created['id']}: {created['title']}  [track: {created['track_name']}]")
+        return
     store, m = _get_store(obj)
     s = m.get_sprint(store, sprint_id)
     if s is None:
@@ -2500,13 +2556,6 @@ def _event_add_impl(
     payload: str | None,
     as_json: bool,
 ) -> None:
-    store, m = _get_store(obj)
-    if m.get_sprint(store, sprint_id) is None:
-        click.echo(f"Sprint #{sprint_id} not found.", err=True)
-        sys.exit(1)
-    if work_item_id is not None and m.get_work_item(store, work_item_id) is None:
-        click.echo(f"Work item #{work_item_id} not found.", err=True)
-        sys.exit(1)
     payload_dict: dict | None = None
     if payload:
         try:
@@ -2514,6 +2563,28 @@ def _event_add_impl(
         except json.JSONDecodeError as e:
             click.echo(f"Invalid JSON payload: {e}", err=True)
             sys.exit(1)
+    config = _served_config_or_none(obj)
+    if config is not None:
+        result = _run_served(
+            "event add", _served.event_add, config.served_profile,
+            repo_id=config.repo_id, sprint_id=sprint_id, event_type=event_type,
+            work_item_id=work_item_id, source_type=source_type, payload=payload_dict,
+        )
+        if as_json:
+            click.echo(json.dumps({"operation": "event_add", **result}, indent=2))
+            return
+        click.echo(f"Recorded event #{result['event_id']}: {result['type']}  (actor: {result['actor']})")
+        return
+    if not actor:
+        click.echo("Error: --actor is required for local or remote event writes.", err=True)
+        sys.exit(1)
+    store, m = _get_store(obj)
+    if m.get_sprint(store, sprint_id) is None:
+        click.echo(f"Sprint #{sprint_id} not found.", err=True)
+        sys.exit(1)
+    if work_item_id is not None and m.get_work_item(store, work_item_id) is None:
+        click.echo(f"Work item #{work_item_id} not found.", err=True)
+        sys.exit(1)
     try:
         eid = m.create_event(
             store, sprint_id, actor, event_type,
@@ -2551,7 +2622,11 @@ def _event_add_impl(
 @event.command("add")
 @click.option("--sprint-id", type=int, required=True, help="Sprint ID")
 @click.option("--type", "--event-type", "event_type", required=True, help="Event type")
-@click.option("--actor", required=True, help="Actor name")
+@click.option(
+    "--actor",
+    default=None,
+    help="Actor name for local/remote writes; served mode uses the authenticated server actor",
+)
 @click.option("--item-id", "work_item_id", type=int, default=None, help="Work item ID")
 @click.option(
     "--source",
@@ -2571,7 +2646,11 @@ def event_add(obj, sprint_id, event_type, actor, work_item_id, source_type, payl
 @event.command("log")
 @click.option("--sprint-id", type=int, required=True, help="Sprint ID")
 @click.option("--type", "--event-type", "event_type", required=True, help="Event type")
-@click.option("--actor", required=True, help="Actor name")
+@click.option(
+    "--actor",
+    default=None,
+    help="Actor name for local/remote writes; served mode uses the authenticated server actor",
+)
 @click.option("--item-id", "work_item_id", type=int, default=None, help="Work item ID")
 @click.option(
     "--source",

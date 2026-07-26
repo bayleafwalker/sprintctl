@@ -193,6 +193,77 @@ def test_served_event_list_preserves_type_filter_and_text_output(runner, tmp_pat
 
 
 # ---------------------------------------------------------------------------
+# event add / item add / sprint show
+# ---------------------------------------------------------------------------
+
+
+@_requires_312
+def test_served_event_add_uses_facade_and_ignores_client_actor(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    captured = {}
+
+    def fake_event_add(profile, **kwargs):
+        captured.update(kwargs)
+        return {"event_id": 9, "sprint_id": 11, "item_id": 3, "type": "decision", "actor": "authenticated", "source": "actor"}
+
+    monkeypatch.setattr(cli_module._served, "event_add", fake_event_add)
+    monkeypatch.setattr(cli_module, "_get_store", lambda _obj: pytest.fail("served command opened store"))
+    result = runner.invoke(cli, ["event", "add", "--sprint-id", "11", "--type", "decision", "--item-id", "3", "--payload", '{"summary":"x"}', "--json"])
+    assert result.exit_code == 0, result.output
+    assert captured["repo_id"] == tmp_path.name
+    assert captured["payload"] == {"summary": "x"}
+    assert "actor" not in captured
+    assert json.loads(result.output)["actor"] == "authenticated"
+
+
+@_requires_312
+def test_served_item_add_uses_facade_without_store(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served, "item_create",
+        lambda profile, **kwargs: {"item": {"id": 12, "title": kwargs["title"], "priority": kwargs["priority"]}, "track_name": kwargs["track_name"]},
+    )
+    monkeypatch.setattr(cli_module, "_get_store", lambda _obj: pytest.fail("served command opened store"))
+    result = runner.invoke(cli, ["item", "add", "--sprint-id", "11", "--track", "served", "--title", "Created", "--priority", "2", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {"id": 12, "title": "Created", "priority": 2, "track_name": "served"}
+
+
+@_requires_312
+def test_served_sprint_show_reads_basic_and_refuses_detail(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        cli_module._served, "read_sprint",
+        lambda profile, **kwargs: calls.append(kwargs) or {"sprint": {"id": 11, "name": "Sprint", "goal": "G", "start_date": None, "end_date": None, "status": "active", "kind": "active_sprint"}},
+    )
+    monkeypatch.setattr(cli_module, "_get_store", lambda _obj: pytest.fail("served command opened store"))
+    result = runner.invoke(cli, ["sprint", "show", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["id"] == 11
+    assert calls == [{"repo_id": tmp_path.name, "sprint_id": None}]
+    detail = runner.invoke(cli, ["sprint", "show", "--detail"])
+    assert detail.exit_code == 1
+    assert "has no catalog operation yet" in detail.output
+
+
+@_requires_312
+def test_served_sprint_show_watch_polls_facade_client_side(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        cli_module._served, "read_sprint",
+        lambda profile, **kwargs: calls.append(kwargs) or {"sprint": {"id": 11, "name": "Sprint", "goal": "G", "start_date": None, "end_date": None, "status": "active", "kind": "active_sprint"}},
+    )
+    monkeypatch.setattr(cli_module, "_clear_terminal_for_watch", lambda: False)
+    monkeypatch.setattr(cli_module.time, "sleep", lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt()))
+    result = runner.invoke(cli, ["sprint", "show", "--watch", "--interval", "0.01"])
+    assert result.exit_code == 0, result.output
+    assert len(calls) == 1
+    assert "Watch mode stopped." in result.output
+
+
+# ---------------------------------------------------------------------------
 # item status
 # ---------------------------------------------------------------------------
 

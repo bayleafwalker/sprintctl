@@ -241,8 +241,14 @@ only checks one call's rows would not catch the race this is fixing).
       reports the absent `maintain.check` catalog operation instead of
       claiming a clean result; a served `kctl doctor` is not an existing
       command to verify.
-- [ ] #1984 remaining sub-parts (event-add, item-add, sprint-show-basic):
-      each needs its own operation + served route + doctor-probe update +
-      tests; sprint-show's `--detail`/`--watch` handling needs the
-      dedicated design pass noted above before implementation starts.
+- [x] #1984 remaining sub-parts: `event add` (`work.event.add`, recording
+      actor forced to the authenticated identity), `item add`
+      (`work.item.create`, with server-side track creation), and plain
+      `sprint show` (`work.read.sprint`) landed in sprintctl. Each is routed,
+      doctor-probed, and covered by application/facade/CLI tests. `--watch`
+      safely polls `work.read.sprint` client-side. `--detail` deliberately
+      fails closed in served mode: its health/track aggregation needs the
+      dedicated catalog-design pass and has not been guessed or emulated with
+      local reads. Remaining: the shared adapter release/deployment and live
+      served verification authorized separately from this source change.
 - [x] Update this doc's status as work lands in more than one pass.

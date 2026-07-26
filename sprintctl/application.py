@@ -23,7 +23,7 @@ import socket
 from typing import Any, Protocol
 from uuid import uuid4
 
-from . import contracts, cutover, outbox
+from . import contracts, cutover, db, outbox
 
 
 CLAIM_COMMAND_TYPES = frozenset(
@@ -336,6 +336,9 @@ class WorkApplication:
             "work.read.records": target._read_records,
             "work.read.decisions": target._read_decisions,
             "work.read.events": target._read_events,
+            "work.read.sprint": target._read_sprint,
+            "work.event.add": target._event_add,
+            "work.item.create": target._item_create,
             "work.claim.start": target._claim_start,
             "work.claim.context": target._claim_context,
             "work.claim.arbitrate": target._claim_arbitrate,
@@ -426,6 +429,68 @@ class WorkApplication:
         if limit is not None:
             events = events[:limit]
         return {"repo_id": self.repo_id, "events": events}
+
+    def _read_sprint(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        return {"repo_id": self.repo_id, "sprint": self._resolve_sprint(arguments.get("sprint_id"))}
+
+    def _event_add(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        """Synchronously create a generic event as the authenticated actor."""
+        sprint_id = _positive_int(arguments.get("sprint_id"), "sprint_id")
+        event_type = _optional_text(arguments.get("event_type"), "event_type")
+        if not event_type:
+            raise ApplicationRejection("invalid-arguments", "event_type is required", 422)
+        if self.backend.get_sprint(self.store, sprint_id) is None:
+            raise ApplicationRejection("sprint-not-found", f"Sprint #{sprint_id} not found", 404)
+        work_item_id = _optional_positive_int(arguments.get("work_item_id"), "work_item_id")
+        if work_item_id is not None and self.backend.get_work_item(self.store, work_item_id) is None:
+            raise ApplicationRejection("item-not-found", f"Work item #{work_item_id} not found", 404)
+        source_type = arguments.get("source_type", "actor")
+        if source_type not in {"actor", "daemon", "system"}:
+            raise ApplicationRejection("invalid-arguments", "source_type must be actor, daemon, or system", 422)
+        payload = arguments.get("payload")
+        if payload is not None and not isinstance(payload, dict):
+            raise ApplicationRejection("invalid-arguments", "payload must be an object or null", 422)
+        try:
+            event_id = self.backend.create_event(
+                self.store, sprint_id, actor=context.identity.actor, event_type=event_type,
+                source_type=source_type, work_item_id=work_item_id, payload=payload,
+                expected_project=self.repo_id,
+            )
+        except ValueError as exc:
+            raise ApplicationRejection("event-rejected", str(exc)) from exc
+        return {"event_id": event_id, "sprint_id": sprint_id, "item_id": work_item_id,
+                "type": event_type, "actor": context.identity.actor, "source": source_type}
+
+    def _item_create(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        """Create an item and resolve its track in the server-side repository scope."""
+        sprint_id = _positive_int(arguments.get("sprint_id"), "sprint_id")
+        track_name = _optional_text(arguments.get("track_name"), "track_name")
+        title = _optional_text(arguments.get("title"), "title")
+        if not track_name or not title:
+            raise ApplicationRejection("invalid-arguments", "track_name and title are required", 422)
+        if self.backend.get_sprint(self.store, sprint_id) is None:
+            raise ApplicationRejection("sprint-not-found", f"Sprint #{sprint_id} not found", 404)
+        description = arguments.get("description")
+        if description is not None:
+            try:
+                db.validate_work_item_description(description)
+            except ValueError as exc:
+                raise ApplicationRejection("invalid-arguments", str(exc), 422) from exc
+        assignee = arguments.get("assignee")
+        if assignee is not None and not isinstance(assignee, str):
+            raise ApplicationRejection("invalid-arguments", "assignee must be a string or null", 422)
+        priority = arguments.get("priority")
+        try:
+            db.validate_priority(priority)
+            track_id = self.backend.get_or_create_track(self.store, sprint_id, track_name)
+            item_id = self.backend.create_work_item(self.store, sprint_id, track_id, title,
+                description=description or "", assignee=assignee, priority=priority)
+        except ValueError as exc:
+            raise ApplicationRejection("item-create-rejected", str(exc)) from exc
+        item = self.backend.get_work_item(self.store, item_id)
+        if item is None:  # pragma: no cover - backend postcondition
+            raise ApplicationRejection("item-create-failed", "created item could not be read back", 500)
+        return {"item": item, "track_name": track_name}
 
     def _resolve_sprint(
         self, requested: Any, *, prefer_backlog: bool = False

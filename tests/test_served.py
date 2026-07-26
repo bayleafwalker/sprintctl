@@ -159,6 +159,27 @@ def test_read_events_defaults_omit_work_item_filter_and_pagination(fake_vuoro_cl
     }
 
 
+def test_event_add_and_item_create_never_send_a_client_actor(fake_vuoro_client):
+    profile = _profile()
+    event = served.event_add(
+        profile, repo_id="repo-x", sprint_id=9, event_type="decision",
+        work_item_id=3, source_type="daemon", payload={"summary": "s"},
+    )
+    assert event["operation"] == "work.event.add"
+    assert event["arguments"] == {
+        "sprint_id": 9, "event_type": "decision", "work_item_id": 3,
+        "source_type": "daemon", "payload": {"summary": "s"},
+    }
+    created = served.item_create(
+        profile, repo_id="repo-x", sprint_id=9, track_name="served", title="T",
+    )
+    assert created["operation"] == "work.item.create"
+    assert "actor" not in created["arguments"]
+    sprint = served.read_sprint(profile, repo_id="repo-x")
+    assert sprint["operation"] == "work.read.sprint"
+    assert sprint["arguments"] == {"sprint_id": None}
+
+
 def test_claim_start_sends_full_shape_and_never_an_actor_field(fake_vuoro_client):
     profile = _profile()
     result = served.claim_start(
@@ -381,6 +402,9 @@ def test_credential_resolver_passed_to_client_is_resolve_file_credential(fake_vu
         lambda profile: served.project_next_work(profile),
         lambda profile: served.claim_start(profile, repo_id="repo-x", item_id=1),
         lambda profile: served.read_events(profile, repo_id="repo-x", sprint_id=1),
+        lambda profile: served.read_sprint(profile, repo_id="repo-x"),
+        lambda profile: served.event_add(profile, repo_id="repo-x", sprint_id=1, event_type="update"),
+        lambda profile: served.item_create(profile, repo_id="repo-x", sprint_id=1, track_name="t", title="T"),
     ],
 )
 def test_each_operation_constructs_a_fresh_client_per_call(fake_vuoro_client, call):
@@ -414,7 +438,7 @@ def test_catalog_operation_names_uses_a_fresh_client_and_returns_names(fake_vuor
     assert client.invocations == [], "catalog discovery must not invoke an operation"
 
 
-def test_expected_operations_matches_the_thirteen_served_routes_command_paths():
+def test_expected_operations_matches_all_served_cli_command_paths():
     expected = {
         route.operation
         for path in (
@@ -431,11 +455,14 @@ def test_expected_operations_matches_the_thirteen_served_routes_command_paths():
             "pilot.cutover-evidence",
             "authority.sync",
             "event.list",
+            "event.add",
+            "item.add",
+            "sprint.show",
         )
         for route in routes_for(path)
     }
     assert served.EXPECTED_OPERATIONS == expected
-    assert len(served.EXPECTED_OPERATIONS) == 11
+    assert len(served.EXPECTED_OPERATIONS) == 14
     assert served.EXPECTED_OPERATIONS == {
         "work.read.sprints",
         "work.read.item",
@@ -448,6 +475,9 @@ def test_expected_operations_matches_the_thirteen_served_routes_command_paths():
         "work.pilot.cutover-evidence",
         "work.batch.apply",
         "work.read.events",
+        "work.event.add",
+        "work.item.create",
+        "work.read.sprint",
     }
 
 

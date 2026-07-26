@@ -255,6 +255,56 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "not-allowed",
     ),
     WorkOperationContract(
+        "work.read.sprint",
+        _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
+        _result_schema(
+            ("repo_id", "sprint"),
+            {"repo_id": {"type": "string"}, "sprint": {"type": "object"}},
+        ),
+        "work:read", "read", "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.event.add",
+        _object_schema(
+            {
+                "sprint_id": {"type": "integer", "minimum": 1},
+                "event_type": {"type": "string", "minLength": 1},
+                "work_item_id": {"type": ["integer", "null"], "minimum": 1},
+                "source_type": {"enum": ["actor", "daemon", "system"]},
+                "payload": {"type": ["object", "null"]},
+            }, required=("sprint_id", "event_type"),
+        ),
+        _result_schema(
+            ("event_id", "sprint_id", "item_id", "type", "actor", "source"),
+            {
+                "event_id": {"type": "integer", "minimum": 1},
+                "sprint_id": {"type": "integer", "minimum": 1},
+                "item_id": {"type": ["integer", "null"]},
+                "type": {"type": "string"}, "actor": {"type": "string"},
+                "source": {"type": "string"},
+            },
+        ),
+        "work:evidence", "write", "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.item.create",
+        _object_schema(
+            {
+                "sprint_id": {"type": "integer", "minimum": 1},
+                "track_name": {"type": "string", "minLength": 1},
+                "title": {"type": "string", "minLength": 1},
+                "description": {"type": ["string", "null"]},
+                "assignee": {"type": ["string", "null"]},
+                "priority": {"type": ["integer", "null"], "minimum": 1, "maximum": 9},
+            }, required=("sprint_id", "track_name", "title"),
+        ),
+        _result_schema(
+            ("item", "track_name"),
+            {"item": {"type": "object"}, "track_name": {"type": "string"}},
+        ),
+        "work:lifecycle", "write", "not-allowed",
+    ),
+    WorkOperationContract(
         "work.claim.start",
         _object_schema(
             {

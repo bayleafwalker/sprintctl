@@ -256,6 +256,9 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
     assert {
         "work.read.next-work",
         "work.read.events",
+        "work.read.sprint",
+        "work.event.add",
+        "work.item.create",
         "work.claim.start",
         "work.claim.arbitrate",
         "work.lifecycle.arbitrate",
@@ -386,6 +389,44 @@ def test_read_events_rejects_missing_sprint_before_backend(conn):
         app.invoke("work.read.events", {"sprint_id": 999999}, _context())
     assert excinfo.value.http_status == 404
     assert excinfo.value.code == "sprint-not-found"
+
+
+def test_read_sprint_resolves_explicit_or_active_sprint(conn, active_sprint):
+    app = _application(store=conn, backend=db)
+    explicit = app.invoke("work.read.sprint", {"sprint_id": active_sprint["id"]}, _context())
+    implicit = app.invoke("work.read.sprint", {"sprint_id": None}, _context())
+    assert explicit["sprint"]["id"] == active_sprint["id"]
+    assert implicit["sprint"]["id"] == active_sprint["id"]
+
+
+def test_event_add_uses_authenticated_actor(conn, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "served")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Target")
+    app = _application(store=conn, backend=db)
+    result = app.invoke(
+        "work.event.add",
+        {"sprint_id": active_sprint["id"], "event_type": "decision", "work_item_id": item_id,
+         "source_type": "daemon", "payload": {"summary": "served"}},
+        _context(actor="authenticated-actor"),
+    )
+    assert result["actor"] == "authenticated-actor"
+    event = next(event for event in db.list_events(conn, active_sprint["id"]) if event["id"] == result["event_id"])
+    assert event["actor"] == "authenticated-actor"
+    assert event["source_type"] == "daemon"
+
+
+def test_item_create_resolves_track_server_side(conn, active_sprint):
+    app = _application(store=conn, backend=db)
+    result = app.invoke(
+        "work.item.create",
+        {"sprint_id": active_sprint["id"], "track_name": "served", "title": "Created",
+         "description": "Implementation scope", "priority": 2},
+        _context(actor="authenticated-actor"),
+    )
+    assert result["track_name"] == "served"
+    assert result["item"]["title"] == "Created"
+    assert result["item"]["priority"] == 2
+    assert db.list_tracks(conn, active_sprint["id"])[0]["name"] == "served"
 
 
 def test_click_next_work_and_application_handler_share_backend_semantics(

@@ -135,6 +135,37 @@ def read_events(
     )
 
 
+def read_sprint(
+    served_profile: ServedProfile, *, repo_id: str, sprint_id: int | None = None
+) -> dict[str, Any]:
+    """Invoke ``work.read.sprint`` (plain ``sprintctl sprint show``)."""
+    return asyncio.run(
+        _invoke_operation(served_profile, "work.read.sprint", {"sprint_id": sprint_id}, repo_id=repo_id)
+    )
+
+
+def event_add(
+    served_profile: ServedProfile, *, repo_id: str, sprint_id: int, event_type: str,
+    work_item_id: int | None = None, source_type: str = "actor", payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Invoke direct ``work.event.add``; the server chooses the actor."""
+    return asyncio.run(_invoke_operation(served_profile, "work.event.add", {
+        "sprint_id": sprint_id, "event_type": event_type, "work_item_id": work_item_id,
+        "source_type": source_type, "payload": payload,
+    }, repo_id=repo_id))
+
+
+def item_create(
+    served_profile: ServedProfile, *, repo_id: str, sprint_id: int, track_name: str, title: str,
+    description: str | None = None, assignee: str | None = None, priority: int | None = None,
+) -> dict[str, Any]:
+    """Invoke direct ``work.item.create``; track resolution is server-side."""
+    return asyncio.run(_invoke_operation(served_profile, "work.item.create", {
+        "sprint_id": sprint_id, "track_name": track_name, "title": title,
+        "description": description, "assignee": assignee, "priority": priority,
+    }, repo_id=repo_id))
+
+
 def project_next_work(
     served_profile: ServedProfile, *, sprint_id: int | None = None
 ) -> dict[str, Any]:
@@ -422,6 +453,9 @@ _DOCTOR_PROBE_COMMAND_PATHS = (
     "pilot.cutover-evidence",
     "authority.sync",
     "event.list",
+    "event.add",
+    "item.add",
+    "sprint.show",
 )
 
 EXPECTED_OPERATIONS: frozenset[str] = frozenset(
@@ -458,10 +492,13 @@ __all__ = [
     "claim_context",
     "claim_start",
     "cutover_evidence",
+    "event_add",
+    "item_create",
     "lifecycle_arbitrate",
     "project_next_work",
     "read_events",
     "read_item",
     "read_next_work",
+    "read_sprint",
     "read_sprints",
 ]
