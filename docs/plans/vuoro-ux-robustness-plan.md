@@ -334,6 +334,14 @@ whole acceptance list and must not be read as a release/deployment claim.
   rejection. Their focused lifecycle suite passed with 53 tests, and GitHub
   CI run `30192405825` passed its full Python, disposable-Postgres, and
   producer-contract jobs. JSON result contracts remain unchanged.
+- `53092ce`, `8790add`, and `1bf4a68` complete the remaining supported served
+  command paths: claim heartbeat/release/handoff, `item show` service errors,
+  `authority sync`, and `pilot cutover-evidence` now carry context through
+  their text success and served-error paths. Direct lifecycle and served-sync
+  suites passed with 68 tests, and GitHub CI run `30192601734` passed both
+  full Python suites, disposable-Postgres integration, and the
+  producer-contract job. This is source verification only; it does not
+  establish runtime deployment evidence.
 
 ## Acceptance checks
 
