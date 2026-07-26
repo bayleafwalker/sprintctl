@@ -187,6 +187,17 @@ def test_unknown_fields_missing_basis_and_unstable_refs_are_rejected():
         _command("item.done", refs=refs)
 
 
+@pytest.mark.parametrize(
+    ("aggregate_type", "field"),
+    [("claim", "repo_id"), ("item", "repo_id"), ("item", "aggregate_uuid")],
+)
+def test_authority_refs_reject_missing_required_uuids_with_value_error(aggregate_type, field):
+    refs = _refs(aggregate_type)
+    refs[field] = None
+    with pytest.raises(ValueError, match=rf"refs\.{field} must be a UUID"):
+        _command("claim.release" if aggregate_type == "claim" else "item.done", refs=refs)
+
+
 def test_item_done_is_strictly_done_and_decision_taxonomy_covers_claim_completion():
     with pytest.raises(ValueError, match="must be 'done'"):
         _command("item.done", payload={"to_status": "blocked"})

@@ -58,6 +58,10 @@ def _configure_served_repo(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("SPRINTCTL_URL", raising=False)
 
 
+def _manifest_repo_uuid(tmp_path) -> str:
+    return json.loads((tmp_path / "sprintctl.dispatch.json").read_text(encoding="utf-8"))["repo_id"]
+
+
 def _outbox_records(tmp_path):
     producer = outbox.open_outbox(tmp_path / ".sprintctl" / "authority-command-outbox.db")
     try:
@@ -311,6 +315,46 @@ def test_served_item_status_surfaces_a_rejected_decision(runner, tmp_path, monke
     )
     assert result.exit_code != 0
     assert "invalid-transition" in result.output
+
+
+@_requires_312
+def test_served_item_status_preserves_failed_request_and_refuses_later_sequence(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    item = {"id": 5, "aggregate_uuid": str(uuid4()), "status": "active"}
+    monkeypatch.setattr(
+        cli_module._served, "read_item", lambda profile, *, repo_id=None, item_id: {"item": item}
+    )
+
+    def failed_arbitration(profile, *, repo_id=None, record):
+        raise RuntimeError("expected sequence 3, received 4")
+
+    monkeypatch.setattr(cli_module._served, "lifecycle_arbitrate", failed_arbitration)
+    first = runner.invoke(
+        cli, ["item", "status", "--id", "5", "--status", "done", "--actor", "worker"]
+    )
+    assert first.exit_code != 0
+    assert "preserving durable authority request" in first.output
+    assert "origin stream" in first.output
+    assert "sequence 1" in first.output
+    assert "replayed in origin-sequence order" in first.output
+
+    monkeypatch.setattr(
+        cli_module._served,
+        "lifecycle_arbitrate",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not re-arbitrate")),
+    )
+    retry = runner.invoke(
+        cli, ["item", "status", "--id", "5", "--status", "done", "--actor", "worker"]
+    )
+    assert retry.exit_code != 0
+    assert "already has a durable authority request" in retry.output
+    assert "sequence 1" in retry.output
+    assert "replayed in origin-sequence order" in retry.output
+    records = _outbox_records(tmp_path)
+    assert len(records) == 1
+    assert records[0].origin_seq == 1
 
 
 # ---------------------------------------------------------------------------
@@ -689,7 +733,7 @@ def test_served_claim_heartbeat_omits_metadata_when_all_fields_are_none(
         monkeypatch,
         claim_id=1,
         actor="worker-1",
-        authority_repo_uuid=str(uuid4()),
+        authority_repo_uuid=None,
         claim_revision="claim:1@sha256:" + "b" * 64,
     )
     captured = {}
@@ -714,6 +758,7 @@ def test_served_claim_heartbeat_omits_metadata_when_all_fields_are_none(
     payload = captured["record"]["payload"]["payload"]
     assert "runtime_session_id" not in payload.get("metadata", {})
     assert "branch" not in payload.get("metadata", {})
+    assert captured["record"]["payload"]["refs"]["repo_id"] == _manifest_repo_uuid(tmp_path)
 
 
 @_requires_312
@@ -849,7 +894,7 @@ def test_served_claim_release_clears_sidecar_on_accepted_decision(
         monkeypatch,
         claim_id=6,
         actor="worker-1",
-        authority_repo_uuid=str(uuid4()),
+        authority_repo_uuid=None,
         claim_revision="claim:6@sha256:" + "1" * 64,
     )
     captured = {}
@@ -873,6 +918,7 @@ def test_served_claim_release_clears_sidecar_on_accepted_decision(
     record = captured["record"]
     assert record["event_type"] == "claim.release"
     assert record["actor"] == "worker-1"
+    assert record["payload"]["refs"]["repo_id"] == _manifest_repo_uuid(tmp_path)
     payload = record["payload"]["payload"]
     assert set(payload) == {"claim_id", "credential_ref"}
     assert payload["claim_id"] == 6
@@ -988,12 +1034,11 @@ def test_served_claim_handoff_rotate_mints_new_token_and_bumps_lease_epoch(
     runner, tmp_path, monkeypatch
 ):
     _configure_served_repo(tmp_path, monkeypatch)
-    authority_repo_uuid = str(uuid4())
     _stub_claim_context(
         monkeypatch,
         claim_id=20,
         actor="worker-1",
-        authority_repo_uuid=authority_repo_uuid,
+        authority_repo_uuid=None,
         claim_revision="claim:20@sha256:" + "5" * 64,
     )
     _stub_read_item(monkeypatch, item={"id": 3, "sprint_id": 55, "title": "Do the thing"})
@@ -1034,6 +1079,7 @@ def test_served_claim_handoff_rotate_mints_new_token_and_bumps_lease_epoch(
     assert record["event_type"] == "claim.handoff"
     assert record["actor"] == "worker-1"  # authenticated actor, not the recipient
     assert record["basis_revision"] == "claim:20@sha256:" + "5" * 64
+    assert record["payload"]["refs"]["repo_id"] == _manifest_repo_uuid(tmp_path)
 
     payload = record["payload"]["payload"]
     assert payload["claim_id"] == 20

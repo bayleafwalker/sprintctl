@@ -1764,6 +1764,24 @@ def _served_item_status(config, item_id, new_status, actor, claim_id, claim_toke
     record_type = "item.done" if new_status == "done" else "item.transition"
     actor_value = (actor or os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown").strip()
     rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+    pending = _find_pending_served_item_status_record(
+        rollout_paths.outbox_path,
+        record_type=record_type,
+        item_id=item_id,
+        aggregate_uuid=it["aggregate_uuid"],
+        to_status=new_status,
+        basis_revision=_authority.item_revision(it),
+    )
+    if pending is not None:
+        click.echo(
+            "Error: served item status already has a durable authority request "
+            f"{pending.event_id} (origin stream {pending.origin_stream_id}, "
+            f"sequence {pending.origin_seq}) for this unchanged transition. "
+            "It must be replayed in origin-sequence order; do not retry this command. "
+            "Review the durable outbox and use `sprintctl authority sync` only when authorized.",
+            err=True,
+        )
+        sys.exit(1)
     try:
         durable = _mint_authority_command_record(
             record_type=record_type,
@@ -1781,13 +1799,22 @@ def _served_item_status(config, item_id, new_status, actor, claim_id, claim_toke
     except (TypeError, ValueError) as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
-    decision = _run_served(
-        "item status",
-        _served.lifecycle_arbitrate,
-        config.served_profile,
-        repo_id=config.repo_id,
-        record=_served_record_argument(durable),
-    )
+    try:
+        decision = _served.lifecycle_arbitrate(
+            config.served_profile,
+            repo_id=config.repo_id,
+            record=_served_record_argument(durable),
+        )
+    except Exception as exc:
+        click.echo(
+            "Error: served item status failed after preserving durable authority request "
+            f"{durable.event_id} (origin stream {durable.origin_stream_id}, "
+            f"sequence {durable.origin_seq}): {exc}. Do not retry this command; "
+            "the durable record must be replayed in origin-sequence order. Review it "
+            "and use `sprintctl authority sync` only when authorized.",
+            err=True,
+        )
+        sys.exit(1)
     if decision["outcome"] != "accepted":
         click.echo(
             f"Error: {decision.get('reason_code')}: {decision.get('reason_detail')}",
@@ -2587,6 +2614,64 @@ def _authority_repo_uuid(repo_root: Path) -> str:
         raise _authority_config.AuthorityCommandConfigError(
             "authority commands require a committed UUID repo_id in sprintctl.dispatch.json"
         ) from exc
+
+
+def _served_claim_authority_repo_uuid(context: dict[str, object], repo_root: Path) -> object:
+    """Use the server's authority UUID when supplied, otherwise the local manifest.
+
+    Served composition intentionally has no authority-repo UUID registry, so
+    ``work.claim.context`` can return ``null`` for this compatibility field.
+    The local dispatch manifest is the canonical source already used by other
+    served authority-command callers.
+    """
+
+    authority_repo_uuid = context.get("authority_repo_uuid")
+    if authority_repo_uuid is not None:
+        return authority_repo_uuid
+    return _authority_repo_uuid(repo_root)
+
+
+def _find_pending_served_item_status_record(
+    outbox_path: Path,
+    *,
+    record_type: str,
+    item_id: int,
+    aggregate_uuid: str,
+    to_status: str,
+    basis_revision: str,
+) -> _outbox.OutboxRecord | None:
+    """Find an earlier durable request for the exact unchanged transition.
+
+    A direct served invocation can fail after append but before the authority
+    admits the record.  Re-minting creates a later origin sequence and can
+    only deepen that gap.  Keep the check deliberately conservative: callers
+    must use the ordered outbox replay path to resolve the prior request.
+    """
+
+    producer = _outbox.open_outbox(outbox_path)
+    try:
+        for record in _outbox.list_records(producer):
+            if (
+                record.record_class != _outbox.AUTHORITY_COMMAND
+                or record.event_type != record_type
+            ):
+                continue
+            try:
+                command = _contracts.record_from_dict(record.payload)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(command, _contracts.AuthorityCommand):
+                continue
+            if (
+                command.refs.get("aggregate_id") == item_id
+                and command.refs.get("aggregate_uuid") == aggregate_uuid
+                and command.payload.get("to_status") == to_status
+                and command.basis_revision == basis_revision
+            ):
+                return record
+    finally:
+        producer.close()
+    return None
 
 
 def _authority_rollout_status() -> _authority_config.AuthorityCommandStatus:
@@ -6433,12 +6518,15 @@ def _served_claim_heartbeat(
         payload["metadata"] = metadata
 
     rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+    authority_repo_uuid = _served_claim_authority_repo_uuid(
+        context, rollout_paths.repo_root
+    )
     try:
         durable = _mint_authority_command_record(
             record_type="claim.renew",
             actor=authenticated_actor,
             refs={
-                "repo_id": context["authority_repo_uuid"],
+                "repo_id": authority_repo_uuid,
                 "aggregate_type": "claim",
                 "aggregate_id": claim_id,
                 "claim_id": claim_id,
@@ -6634,12 +6722,15 @@ def _served_claim_release(config, claim_id, claim_token, actor) -> None:
     payload = {"claim_id": claim_id, "credential_ref": ref}
 
     rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+    authority_repo_uuid = _served_claim_authority_repo_uuid(
+        context, rollout_paths.repo_root
+    )
     try:
         durable = _mint_authority_command_record(
             record_type="claim.release",
             actor=authenticated_actor,
             refs={
-                "repo_id": context["authority_repo_uuid"],
+                "repo_id": authority_repo_uuid,
                 "aggregate_type": "claim",
                 "aggregate_id": claim_id,
                 "claim_id": claim_id,
@@ -6821,12 +6912,15 @@ def _served_claim_handoff(
         payload["note"] = note
 
     rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+    authority_repo_uuid = _served_claim_authority_repo_uuid(
+        context, rollout_paths.repo_root
+    )
     try:
         durable = _mint_authority_command_record(
             record_type="claim.handoff",
             actor=authenticated_actor,
             refs={
-                "repo_id": context["authority_repo_uuid"],
+                "repo_id": authority_repo_uuid,
                 "aggregate_type": "claim",
                 "aggregate_id": claim_id,
                 "claim_id": claim_id,

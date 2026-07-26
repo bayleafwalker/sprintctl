@@ -258,7 +258,8 @@ def _canonical_authority_refs(record_type: str, refs: Mapping[str, Any]) -> dict
         required.add("aggregate_uuid")
     source = _strict_fields(refs, field="refs", required=required, optional=optional)
     repo_id = _canonical_uuid(source["repo_id"], "refs.repo_id")
-    assert repo_id is not None
+    if repo_id is None:
+        raise ValueError("refs.repo_id must be a UUID")
     if source["aggregate_type"] != expected_aggregate:
         raise ValueError(
             f"refs.aggregate_type must be {expected_aggregate!r} for {record_type}"
@@ -271,7 +272,8 @@ def _canonical_authority_refs(record_type: str, refs: Mapping[str, Any]) -> dict
         result["claim_id"] = _positive_int(source["claim_id"], "refs.claim_id")
     else:
         aggregate_uuid = _canonical_uuid(source["aggregate_uuid"], "refs.aggregate_uuid")
-        assert aggregate_uuid is not None
+        if aggregate_uuid is None:
+            raise ValueError("refs.aggregate_uuid must be a UUID")
         result["aggregate_uuid"] = aggregate_uuid
     if "aggregate_id" in source:
         result["aggregate_id"] = _positive_int(source["aggregate_id"], "refs.aggregate_id")
