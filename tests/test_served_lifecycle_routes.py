@@ -116,6 +116,33 @@ def test_served_item_show_error_reports_resolved_context(runner, tmp_path, monke
     assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in result.output
 
 
+@_requires_312
+def test_served_item_show_text_reports_resolved_context(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served,
+        "read_item",
+        lambda profile, **kwargs: {
+            "item": {
+                "id": 12,
+                "status": "pending",
+                "title": "Contextual",
+                "sprint_id": 7,
+                "updated_at": "now",
+            },
+            "events": [],
+            "active_claims": [],
+            "refs": [],
+            "deps": {"blocked_by": [], "blocks": []},
+        },
+    )
+
+    result = runner.invoke(cli, ["item", "show", "--id", "12"])
+
+    assert result.exit_code == 0, result.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in result.output
+
+
 def test_item_show_rejects_conflicting_reference_and_global_scope(runner, db_path):
     result = runner.invoke(
         cli,
