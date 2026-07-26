@@ -100,7 +100,7 @@ def test_served_mode_requires_repo_identity(tmp_path):
             },
         )
     except backend.BackendConfigError as exc:
-        assert "cannot resolve repo_id for served mode" in str(exc)
+        assert "backend-uncorroborated" in str(exc)
     else:
         raise AssertionError("expected backend config error")
 
