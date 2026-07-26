@@ -316,10 +316,13 @@ whole acceptance list and must not be read as a release/deployment claim.
   (`backend-reachable-but-empty`) and SF3 (`backend-superseded`); all 20
   doctor tests passed.
 - `7cb278d` makes remote commands read the optional `superseded_marker` and
-  fail closed before schema handshake. Its unit coverage passed. The dedicated
-  disposable-Postgres test is committed but was skipped in this environment
-  because `SPRINTCTL_TEST_PG_URL` is unset, so D-new-1's real-fixture evidence
-  remains outstanding.
+  fail closed before schema handshake. `d6b759f` extends the remaining scoped
+  list/suggestion/context-candidate targets and restores local compatibility;
+  `fc4eecc` restores unscoped local capability-receipt event writes. GitHub CI
+  run `30191969056` passed both full Python suites and the disposable-Postgres
+  integration suite, including the tombstone fixture test. D-new-1's
+  real-fixture source evidence is therefore complete; deployment evidence is
+  still separate.
 
 ## Acceptance checks
 
