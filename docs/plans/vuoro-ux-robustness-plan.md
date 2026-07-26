@@ -323,6 +323,10 @@ whole acceptance list and must not be read as a release/deployment claim.
   integration suite, including the tombstone fixture test. D-new-1's
   real-fixture source evidence is therefore complete; deployment evidence is
   still separate.
+- `531df1d` scopes the generated commands in shared next-work guidance; GitHub
+  CI run `30192103641` passed its full Python, disposable-Postgres, and
+  producer-contract jobs. Local guidance retains its pre-existing bare-ID
+  forms.
 
 ## Acceptance checks
 
