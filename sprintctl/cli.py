@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TextIO
+from urllib.parse import urlsplit
 
 import click
 
@@ -151,6 +152,56 @@ def _redacted_postgres_error(exc: Exception, url: str | None) -> str:
         r"\1<redacted>@",
         message,
         flags=re.IGNORECASE,
+    )
+
+
+def _apply_scoped_id(obj: dict, value: str | int, *, field: str = "id") -> int:
+    """Resolve a dual-form ``repo#id`` option into an ID and repo scope.
+
+    A reference prefix is equivalent to the global ``--repo-id`` for this
+    invocation.  Conflicting explicit scopes fail before any backend read.
+    """
+    try:
+        reference_repo_id, identifier = _backend.parse_scoped_id(value, field=field)
+    except _backend.ReferenceParseError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if reference_repo_id is not None:
+        explicit_repo_id = obj.get("explicit_repo_id")
+        if explicit_repo_id is not None and explicit_repo_id != reference_repo_id:
+            raise click.ClickException(
+                f"Error: repo scope mismatch: --repo-id='{explicit_repo_id}' "
+                f"but {field} reference selects '{reference_repo_id}'."
+            )
+        obj["explicit_repo_id"] = reference_repo_id
+    return identifier
+
+
+def _backend_target(config) -> str:
+    if config.mode == "served":
+        assert config.served_profile is not None
+        return config.served_profile.endpoint
+    if config.mode == "remote" and config.url:
+        parsed = urlsplit(config.url)
+        host = parsed.hostname or "<unresolved>"
+        port = f":{parsed.port}" if parsed.port is not None else ""
+        return f"{host}{port}{parsed.path or '/'}"
+    return "local SQLite"
+
+
+def _resolved_context(config) -> dict[str, str | None]:
+    return {
+        "repo_id": config.repo_id,
+        "repo_source": config.repo_source,
+        "backend": config.mode,
+        "target": _backend_target(config),
+    }
+
+
+def _render_resolved_context(context: dict[str, str | None]) -> str:
+    return (
+        "Context: "
+        f"repo={context['repo_id']} (source={context['repo_source']}) "
+        f"backend={context['backend']} target={context['target']}"
     )
 
 
@@ -1454,11 +1505,12 @@ def _projection_item_events(projection_path: Path, item_id: int) -> list[dict]:
 
 
 @item.command("show")
-@click.option("--id", "item_id", type=int, required=True, help="Item ID")
+@click.option("--id", "item_id", type=str, required=True, help="Item ID or repo#id")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
-def item_show(obj, item_id, as_json) -> None:
+def item_show(obj, item_id: str, as_json) -> None:
     """Show a single work item with its recent events and active claims."""
+    item_id = _apply_scoped_id(obj, item_id, field="item")
     config = _served_config_or_none(obj)
     projection_status = None
     if config is not None:
@@ -1501,6 +1553,8 @@ def item_show(obj, item_id, as_json) -> None:
         blocking = m.list_deps_blocking(store, item_id)
         blocked_by_me = m.list_deps_blocked_by(store, item_id)
 
+    context = _resolved_context(obj["backend_config"])
+
     if as_json:
         payload = {
             "item": dict(it),
@@ -1508,13 +1562,15 @@ def item_show(obj, item_id, as_json) -> None:
             "active_claims": claims,
             "refs": refs,
             "deps": {"blocked_by": blocking, "blocks": blocked_by_me},
+            "resolved_context": context,
         }
         if projection_status is not None:
             payload["projection"] = projection_status
         click.echo(json.dumps(payload, indent=2))
         return
 
-    click.echo(f"#{it['id']}  [{it['status']}]  {it['title']}")
+    click.echo(f"{context['repo_id']}#{it['id']}  [{it['status']}]  {it['title']}")
+    click.echo(_render_resolved_context(context))
     if projection_status is not None:
         status_line = _projection_status_line(projection_status)
         if status_line:

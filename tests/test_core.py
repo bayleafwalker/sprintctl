@@ -1188,7 +1188,7 @@ class TestItemNote:
 # ---------------------------------------------------------------------------
 
 class TestItemShow:
-    def test_item_show_basic(self, runner, conn, active_sprint, db_path):
+    def test_item_show_basic(self, runner, conn, active_sprint, db_path, tmp_path):
         tid = db.get_or_create_track(conn, active_sprint["id"], "backend")
         iid = db.create_work_item(
             conn, active_sprint["id"], tid, "Build API", "Implement the API"
@@ -1198,8 +1198,10 @@ class TestItemShow:
         assert "Build API" in result.output
         assert "Implement the API" in result.output
         assert "pending" in result.output
+        assert f"{tmp_path.name}#{iid}" in result.output
+        assert "Context: repo=" in result.output
 
-    def test_item_show_json(self, runner, conn, active_sprint, db_path):
+    def test_item_show_json(self, runner, conn, active_sprint, db_path, tmp_path):
         tid = db.get_or_create_track(conn, active_sprint["id"], "backend")
         iid = db.create_work_item(conn, active_sprint["id"], tid, "Build API")
         result = runner.invoke(cli, ["item", "show", "--id", str(iid), "--json"])
@@ -1208,6 +1210,12 @@ class TestItemShow:
         assert data["item"]["title"] == "Build API"
         assert "events" in data
         assert "active_claims" in data
+        assert data["resolved_context"] == {
+            "repo_id": tmp_path.name,
+            "repo_source": "cwd",
+            "backend": "local",
+            "target": "local SQLite",
+        }
 
     def test_item_show_includes_events(self, runner, conn, active_sprint, db_path):
         tid = db.get_or_create_track(conn, active_sprint["id"], "backend")

@@ -76,6 +76,40 @@ def _outbox_records(tmp_path):
         producer.close()
 
 
+@_requires_312
+def test_served_item_show_accepts_scoped_reference_and_reports_context(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    captured = {}
+    monkeypatch.setattr(
+        cli_module._served,
+        "read_item",
+        lambda profile, *, repo_id=None, item_id: captured.update(repo_id=repo_id, item_id=item_id) or {
+            "item": {"id": item_id, "status": "pending", "title": "Scoped", "sprint_id": 7, "updated_at": "now"},
+            "events": [], "active_claims": [], "refs": [], "deps": {"blocked_by": [], "blocks": []},
+        },
+    )
+
+    result = runner.invoke(cli, ["item", "show", "--id", f"{tmp_path.name}#12", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert captured == {"repo_id": tmp_path.name, "item_id": 12}
+    assert payload["resolved_context"]["repo_id"] == tmp_path.name
+    assert payload["resolved_context"]["repo_source"] == "flag"
+    assert payload["resolved_context"]["backend"] == "served"
+    assert payload["resolved_context"]["target"] == "https://vuoro-shared.example/"
+
+
+def test_item_show_rejects_conflicting_reference_and_global_scope(runner, db_path):
+    result = runner.invoke(
+        cli,
+        ["--repo-id", "one", "item", "show", "--id", "two#12"],
+    )
+
+    assert result.exit_code == 1
+    assert "repo scope mismatch" in result.output
+
+
 # ---------------------------------------------------------------------------
 # event list
 # ---------------------------------------------------------------------------
