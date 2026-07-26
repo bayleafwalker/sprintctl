@@ -342,6 +342,10 @@ whole acceptance list and must not be read as a release/deployment claim.
   full Python suites, disposable-Postgres integration, and the
   producer-contract job. This is source verification only; it does not
   establish runtime deployment evidence.
+- `40160cb` adds direct text-success coverage for served `item show`, closing
+  the last D4/D6 evidence gap found during the source acceptance audit.
+  GitHub CI run `30192732608` is green across both full Python suites,
+  disposable-Postgres integration, and the producer-contract job.
 
 ## Acceptance checks
 
