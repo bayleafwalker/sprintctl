@@ -333,7 +333,7 @@ def test_served_item_status_active_to_done_appends_item_done_record(
 
     result = runner.invoke(
         cli,
-        ["item", "status", "--id", "7", "--status", "done", "--actor", "worker", "--json"],
+        ["item", "status", "--id", f"{tmp_path.name}#7", "--status", "done", "--actor", "worker", "--json"],
     )
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)

@@ -1962,7 +1962,7 @@ def _served_item_status(config, item_id, new_status, actor, claim_id, claim_toke
 
 
 @item.command("status")
-@click.option("--id", "item_id", type=int, required=True, help="Item ID")
+@click.option("--id", "item_id", type=str, required=True, help="Item ID or repo#id")
 @click.option(
     "--status",
     "new_status",
@@ -1975,8 +1975,9 @@ def _served_item_status(config, item_id, new_status, actor, claim_id, claim_toke
 @click.option("--claim-token", default=None, help="Claim token proving ownership of an active exclusive claim")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output status transition as JSON")
 @click.pass_obj
-def item_status(obj, item_id, new_status, actor, claim_id, claim_token, as_json) -> None:
+def item_status(obj, item_id: str, new_status, actor, claim_id, claim_token, as_json) -> None:
     """Update an item's status (enforces transitions, claims, and dependency safety)."""
+    item_id = _apply_scoped_id(obj, item_id, field="item")
     config = _served_config_or_none(obj)
     if config is not None:
         _served_item_status(config, item_id, new_status, actor, claim_id, claim_token, as_json)
