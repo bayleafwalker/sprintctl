@@ -634,6 +634,31 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "not-allowed",
     ),
     WorkOperationContract(
+        "work.project.items",
+        _object_schema(
+            {
+                "sprint_id": {"type": ["integer", "null"], "minimum": 1},
+                "track_name": {"type": ["string", "null"]},
+                "status": {
+                    "type": ["string", "null"],
+                    "enum": ["pending", "active", "done", "blocked", None],
+                },
+            }
+        ),
+        _result_schema(
+            ("contract_version", "project", "items", "repositories"),
+            {
+                "contract_version": {"const": "project-1"},
+                "project": {"type": "object"},
+                "items": {"type": "array", "items": {"type": "object"}},
+                "repositories": {"type": "array", "items": {"type": "object"}},
+            },
+        ),
+        "work:project-read",
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
         "work.project.next-work",
         _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
         _result_schema(

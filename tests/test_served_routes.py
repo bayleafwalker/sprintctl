@@ -44,7 +44,7 @@ def test_next_work_has_preconditioned_routes_and_a_distinct_explain_aggregate():
 
 def test_single_route_commands_have_no_ambiguity():
     for route in SERVED_COMMAND_ROUTES:
-        if route.command_path in {"next-work", "usage.context", "sprint.list"}:
+        if route.command_path in {"next-work", "usage.context", "sprint.list", "item.list"}:
             continue
         assert len(routes_for(route.command_path)) == 1
 

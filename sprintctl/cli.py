@@ -1785,11 +1785,32 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, project_path, as_json)
         sys.exit(1)
     config = _served_config_or_none(obj)
     if config is not None:
-        if project_path is not None or as_fzf:
-            _served_operation_unavailable("item list", replacement="--project and --fzf remain local-only served gaps.")
-        result = _run_served("item list", _served.read_items, config.served_profile,
-                             repo_id=config.repo_id, sprint_id=sprint_id, track_name=track_name,
-                             status=status, resolved_context=_resolved_context(config))
+        if as_fzf:
+            _served_operation_unavailable(
+                "item list --fzf",
+                replacement="Use --json or the table output in served mode.",
+            )
+        if project_path is None:
+            result = _run_served(
+                "item list",
+                _served.read_items,
+                config.served_profile,
+                repo_id=config.repo_id,
+                sprint_id=sprint_id,
+                track_name=track_name,
+                status=status,
+                resolved_context=_resolved_context(config),
+            )
+        else:
+            result = _run_served(
+                "project item list",
+                _served.project_items,
+                config.served_profile,
+                sprint_id=sprint_id,
+                track_name=track_name,
+                status=status,
+                resolved_context=_resolved_context(config),
+            )
         items = result["items"]
         if as_json:
             click.echo(json.dumps(items, indent=2))

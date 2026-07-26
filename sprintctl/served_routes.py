@@ -77,6 +77,12 @@ SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
     ),
     ServedRoute("item.show", "work.read.item"),
     ServedRoute("item.list", "work.read.items", precondition="project_path is None and not as_fzf"),
+    ServedRoute(
+        "item.list",
+        "work.project.items",
+        precondition="project_path is not None and not as_fzf",
+        notes="The catalog resolves its canonical project binding and authorizes every member.",
+    ),
     ServedRoute("claim.list", "work.read.claims"),
     ServedRoute("claim.list-sprint", "work.read.claims"),
     ServedRoute("claim.resume", "work.read.claims"),

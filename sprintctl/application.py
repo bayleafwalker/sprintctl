@@ -1451,12 +1451,23 @@ class ProjectWorkApplication:
         self, operation: str, arguments: Mapping[str, Any], context: InvocationContext
     ) -> dict[str, Any]:
         if operation == "work.project.next-work":
+            binding = self._binding()
+            self._require_member_authorization(context)
             repositories = []
             ready_items = []
             for member in self.members:
-                payload = member.application.next_work(
-                    arguments.get("sprint_id"), prefer_backlog=True
-                )
+                try:
+                    payload = self._in_member_snapshot(
+                        member,
+                        lambda application: application.next_work(
+                            arguments.get("sprint_id"), prefer_backlog=True
+                        ),
+                    )
+                except Exception as error:
+                    repositories.append(
+                        {**self._unavailable(member, error), "status": "unavailable"}
+                    )
+                    continue
                 tagged = [
                     {**item, "origin_repo": member.origin_repo}
                     for item in payload["ready_items"]
@@ -1475,9 +1486,12 @@ class ProjectWorkApplication:
             return {
                 "contract_version": "project-1",
                 "project_id": self.project_id,
+                "project": dict(binding),
                 "ready_items": ready_items,
                 "repositories": repositories,
             }
+        if operation == "work.project.items":
+            return self._items(arguments, context)
         if operation == "work.project.context":
             return self._context(arguments, context)
         if operation == "work.project.sprints":
@@ -1638,6 +1652,39 @@ class ProjectWorkApplication:
             "contract_version": "project-1",
             "project": dict(binding),
             "sprints": sprints,
+            "repositories": repositories,
+        }
+
+    def _items(
+        self, arguments: Mapping[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        binding = self._binding()
+        self._require_member_authorization(context)
+        items: list[dict[str, Any]] = []
+        repositories: list[dict[str, Any]] = []
+        for member in self.members:
+            try:
+                payload = self._in_member_snapshot(
+                    member,
+                    lambda application: application._read_items(dict(arguments), object()),
+                )
+            except Exception as error:
+                repositories.append(
+                    {**self._unavailable(member, error), "status": "unavailable"}
+                )
+                continue
+            tagged = [
+                {**item, "origin_repo": member.origin_repo}
+                for item in payload["items"]
+            ]
+            items.extend(tagged)
+            repositories.append(
+                {"origin_repo": member.origin_repo, "status": "ok", "items": tagged}
+            )
+        return {
+            "contract_version": "project-1",
+            "project": dict(binding),
+            "items": items,
             "repositories": repositories,
         }
 

@@ -601,12 +601,33 @@ def test_click_next_work_and_application_handler_share_backend_semantics(
     assert [item["id"] for item in cli_ready] == [ready_id, blocker_id]
 
     project = ProjectWorkApplication(
-        "vuoro", (ProjectMemberApplication("test-repo", app),)
+        "vuoro",
+        (ProjectMemberApplication("test-repo", app),),
+        canonical_binding={
+            "project_id": "vuoro",
+            "backlog_repos": ["test-repo"],
+        },
     )
-    project_payload = project.invoke("work.project.next-work", {}, _context())
+    project_payload = project.invoke(
+        "work.project.next-work",
+        {},
+        _context(repo_ids=frozenset({"test-repo"})),
+    )
     assert [item["title"] for item in project_payload["ready_items"]] == [
         "Not direct next-work"
     ]
+
+    project_items = project.invoke(
+        "work.project.items",
+        {"status": "pending"},
+        _context(repo_ids=frozenset({"test-repo"})),
+    )
+    assert {item["title"] for item in project_items["items"]} == {
+        "Ready",
+        "Blocker",
+        "Waiting",
+        "Not direct next-work",
+    }
 
 
 def test_next_work_explain_is_one_application_aggregate(conn, active_sprint):

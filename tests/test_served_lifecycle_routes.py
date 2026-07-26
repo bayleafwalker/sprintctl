@@ -707,6 +707,28 @@ def test_served_event_list_empty_and_error_report_resolved_context(runner, tmp_p
     assert "Project workspace" in project.output
     assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in project.output
 
+    monkeypatch.setattr(
+        cli_module._served,
+        "project_items",
+        lambda profile, **kwargs: {
+            "items": [
+                {
+                    "id": 9,
+                    "status": "pending",
+                    "priority": 2,
+                    "track_name": "build",
+                    "assignee": None,
+                    "title": "Cross-repo item",
+                    "origin_repo": "member",
+                }
+            ]
+        },
+    )
+    project_items = runner.invoke(cli, ["item", "list", "--project", "--json"])
+
+    assert project_items.exit_code == 0, project_items.output
+    assert json.loads(project_items.output)[0]["origin_repo"] == "member"
+
 
 # ---------------------------------------------------------------------------
 # next-work / event add / item add / sprint show

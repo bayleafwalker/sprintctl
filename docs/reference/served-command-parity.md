@@ -9,7 +9,7 @@ store.  `Unavailable` likewise never opens a store: it exits with the stable
 | Blind-agent loop command | Served status | Catalog operation / current guidance |
 | --- | --- | --- |
 | `usage --context` | Served | `work.read.context` returns the complete frozen ContextContract v1 from one server-side repeatable-read aggregate. `--project` uses `work.project.context` only with a canonical server binding and authorization for every member. |
-| `item list` | Served | `work.read.items` returns filtered repository-scoped rows; `--project` and `--fzf` remain unavailable. |
+| `item list` | Served | `work.read.items` returns filtered repository-scoped rows; `--project` uses `work.project.items`; `--fzf` remains unavailable. |
 | `item show` | Served | `work.read.item`, includes refs, dependencies, and active claims. |
 | `item ref list`, `item dep list` | Served | `work.read.item` supplies the exact item-scoped reference/dependency views. |
 | `item ref add/remove`, `item dep add/remove` | Served | `work.item.ref.*` and `work.item.dep.*` are repository-scoped shaping writes. |

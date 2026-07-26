@@ -297,6 +297,28 @@ def project_next_work(
     )
 
 
+def project_items(
+    served_profile: ServedProfile,
+    *,
+    sprint_id: int | None = None,
+    track_name: str | None = None,
+    status: str | None = None,
+) -> dict[str, Any]:
+    """List items across the canonical, server-authorized project binding."""
+
+    return asyncio.run(
+        _invoke_operation(
+            served_profile,
+            "work.project.items",
+            {
+                "sprint_id": sprint_id,
+                "track_name": track_name,
+                "status": status,
+            },
+        )
+    )
+
+
 def project_context(
     served_profile: ServedProfile, *, sprint_id: int | None = None
 ) -> dict[str, Any]:
@@ -674,6 +696,7 @@ __all__ = [
     "item_ref_remove",
     "lifecycle_arbitrate",
     "project_next_work",
+    "project_items",
     "project_context",
     "project_sprints",
     "read_events",

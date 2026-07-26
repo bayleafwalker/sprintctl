@@ -24,7 +24,7 @@ no migration or DDL.
 | Lifecycle | `work.lifecycle.arbitrate` | key equals immutable command `event_id` |
 | Evidence | `work.evidence.ingest` | key equals canonical record-batch digest |
 | Batching | `work.batch.apply` | key equals canonical record-batch digest |
-| Project | `work.project.context`, `work.project.sprints`, `work.project.next-work`, `work.project.batch` | aggregates require a canonical binding and authorization for every member; writes use canonical ordered-project-batch digest |
+| Project | `work.project.context`, `work.project.sprints`, `work.project.items`, `work.project.next-work`, `work.project.batch` | aggregates require a canonical binding and authorization for every member; writes use canonical ordered-project-batch digest |
 | Cutover evidence | `work.pilot.cutover-evidence` | key forbidden |
 
 Every operation declares JSON Schema 2020-12 input and result contracts,
