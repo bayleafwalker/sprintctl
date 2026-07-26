@@ -227,6 +227,7 @@ def _get_project_stores(obj: dict, project_value: str | Path):
 # immediately at import time instead of silently drifting.
 _SERVED_SPRINT_LIST_ROUTE = _served_routes.routes_for("sprint.list")[0]
 _SERVED_ITEM_SHOW_ROUTE = _served_routes.routes_for("item.show")[0]
+_SERVED_EVENT_LIST_ROUTE = _served_routes.routes_for("event.list")[0]
 _SERVED_CLAIM_START_ROUTE = _served_routes.routes_for("claim.start")[0]
 _SERVED_ITEM_STATUS_ROUTE = _served_routes.routes_for("item.status")[0]
 _SERVED_SPRINT_STATUS_ROUTE = _served_routes.routes_for("sprint.status")[0]
@@ -237,6 +238,7 @@ _SERVED_NEXT_WORK_ROUTES = {
 }
 assert _SERVED_SPRINT_LIST_ROUTE.operation == "work.read.sprints"
 assert _SERVED_ITEM_SHOW_ROUTE.operation == "work.read.item"
+assert _SERVED_EVENT_LIST_ROUTE.operation == "work.read.events"
 assert _SERVED_CLAIM_START_ROUTE.operation == "work.claim.start"
 assert _SERVED_ITEM_STATUS_ROUTE.operation == "work.lifecycle.arbitrate"
 assert _SERVED_SPRINT_STATUS_ROUTE.operation == "work.lifecycle.arbitrate"
@@ -3751,34 +3753,42 @@ def event_list(obj, sprint_id, work_item_id, event_type, knowledge_only, limit, 
     if knowledge_only and event_type is not None:
         click.echo("Error: --knowledge and --type are mutually exclusive.", err=True)
         sys.exit(1)
-    store, m = _get_store(obj)
-    if m.get_sprint(store, sprint_id) is None:
-        click.echo(f"Sprint #{sprint_id} not found.", err=True)
-        sys.exit(1)
-    if knowledge_only:
-        events = m.list_knowledge_candidates(store, sprint_id)
-        # list_knowledge_candidates already deserializes payload; re-serialize for JSON output
-        if work_item_id is not None:
-            events = [e for e in events if e.get("work_item_id") == work_item_id]
-        if limit is not None:
-            events = events[-limit:]
-        if as_json:
-            click.echo(json.dumps(events, indent=2))
-            return
-        if not events:
-            click.echo("No events found.")
-            return
-        for e in events:
-            item_label = f"  item #{e['work_item_id']}" if e.get("work_item_id") else ""
-            click.echo(
-                f"#{e['id']}  [{e['event_type']}]  {e['actor']}  "
-                f"{e['created_at']}{item_label}"
-            )
-        return
-    events = m.list_events(store, sprint_id)
+    config = _served_config_or_none(obj)
+    if config is not None:
+        # ``event list --limit`` means the most recent N events, whereas the
+        # catalog's pagination limit selects from the beginning of its ordered
+        # result. Fetch the complete sprint stream and apply the CLI's filters
+        # below to preserve the established flag semantics.
+        result = _run_served(
+            "event list",
+            _served.read_events,
+            config.served_profile,
+            repo_id=config.repo_id,
+            sprint_id=sprint_id,
+            work_item_id=work_item_id,
+            after_offset=0,
+            limit=None,
+        )
+        events = result["events"]
+        if knowledge_only:
+            events = [e for e in events if e.get("event_type") in _db.KNOWLEDGE_EVENT_TYPES]
+            # The store-backed knowledge query deserializes payloads. The
+            # read operation intentionally returns ordinary event rows, so
+            # normalize this one flag's established JSON output here.
+            events = [{**e, "payload": _event_payload(e)} for e in events]
+    else:
+        store, m = _get_store(obj)
+        if m.get_sprint(store, sprint_id) is None:
+            click.echo(f"Sprint #{sprint_id} not found.", err=True)
+            sys.exit(1)
+        if knowledge_only:
+            events = m.list_knowledge_candidates(store, sprint_id)
+        else:
+            events = m.list_events(store, sprint_id)
+
     if work_item_id is not None:
         events = [e for e in events if e.get("work_item_id") == work_item_id]
-    if event_type is not None:
+    if not knowledge_only and event_type is not None:
         events = [e for e in events if e.get("event_type") == event_type]
     if limit is not None:
         events = events[-limit:]

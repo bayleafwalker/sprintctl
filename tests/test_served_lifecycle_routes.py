@@ -67,6 +67,128 @@ def _outbox_records(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# event list
+# ---------------------------------------------------------------------------
+
+
+@_requires_312
+def test_served_event_list_preserves_knowledge_filter_limit_and_json_parity(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    captured = {}
+
+    def fake_read_events(
+        profile, *, repo_id=None, sprint_id, work_item_id=None, after_offset=0, limit=None
+    ):
+        captured.update(
+            repo_id=repo_id,
+            sprint_id=sprint_id,
+            work_item_id=work_item_id,
+            after_offset=after_offset,
+            limit=limit,
+        )
+        return {
+            "events": [
+                {
+                    "id": 1,
+                    "work_item_id": 3,
+                    "event_type": "update",
+                    "actor": "worker",
+                    "created_at": "2026-07-26T10:00:00Z",
+                    "payload": "{\"summary\": \"not knowledge\"}",
+                },
+                {
+                    "id": 2,
+                    "work_item_id": 3,
+                    "event_type": "decision",
+                    "actor": "worker",
+                    "created_at": "2026-07-26T10:01:00Z",
+                    "payload": "{\"summary\": \"older knowledge\"}",
+                },
+                {
+                    "id": 3,
+                    "work_item_id": 4,
+                    "event_type": "risk-accepted",
+                    "actor": "worker",
+                    "created_at": "2026-07-26T10:02:00Z",
+                    "payload": "{\"summary\": \"other item\"}",
+                },
+                {
+                    "id": 4,
+                    "work_item_id": 3,
+                    "event_type": "risk-accepted",
+                    "actor": "worker",
+                    "created_at": "2026-07-26T10:03:00Z",
+                    "payload": "{\"summary\": \"newest knowledge\"}",
+                },
+            ]
+        }
+
+    monkeypatch.setattr(cli_module._served, "read_events", fake_read_events)
+
+    result = runner.invoke(
+        cli,
+        [
+            "event", "list", "--sprint-id", "11", "--item-id", "3",
+            "--knowledge", "--limit", "1", "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["sprint_id"] == 11
+    assert captured["work_item_id"] == 3
+    assert captured["after_offset"] == 0
+    assert captured["limit"] is None
+    assert json.loads(result.output) == [
+        {
+            "id": 4,
+            "work_item_id": 3,
+            "event_type": "risk-accepted",
+            "actor": "worker",
+            "created_at": "2026-07-26T10:03:00Z",
+            "payload": {"summary": "newest knowledge"},
+        }
+    ]
+
+
+@_requires_312
+def test_served_event_list_preserves_type_filter_and_text_output(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+
+    def fake_read_events(
+        profile, *, repo_id=None, sprint_id, work_item_id=None, after_offset=0, limit=None
+    ):
+        assert sprint_id == 11
+        assert work_item_id is None
+        assert after_offset == 0
+        assert limit is None
+        return {
+            "events": [
+                {
+                    "id": 1,
+                    "event_type": "decision",
+                    "actor": "worker",
+                    "created_at": "2026-07-26T10:00:00Z",
+                },
+                {
+                    "id": 2,
+                    "event_type": "update",
+                    "actor": "worker",
+                    "created_at": "2026-07-26T10:01:00Z",
+                },
+            ]
+        }
+
+    monkeypatch.setattr(cli_module._served, "read_events", fake_read_events)
+
+    result = runner.invoke(cli, ["event", "list", "--sprint-id", "11", "--type", "update"])
+
+    assert result.exit_code == 0, result.output
+    assert result.output == "#2  [update]  worker  2026-07-26T10:01:00Z\n"
+
+
+# ---------------------------------------------------------------------------
 # item status
 # ---------------------------------------------------------------------------
 
