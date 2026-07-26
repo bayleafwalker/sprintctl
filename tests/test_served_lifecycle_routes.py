@@ -708,6 +708,7 @@ def test_served_item_note_calls_work_item_note_not_get_store(
     )
     assert result.exit_code == 0, result.output
     assert "Recorded note #42 (decision) on item #7: Chose served" in result.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in result.output
     assert captured["item_id"] == 7
     assert captured["note_type"] == "decision"
     assert captured["summary"] == "Chose served"
@@ -730,6 +731,7 @@ def test_served_item_note_surfaces_a_rejection(runner, tmp_path, monkeypatch):
     )
     assert result.exit_code != 0
     assert "item-not-found" in result.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in result.output
 
 
 # ---------------------------------------------------------------------------

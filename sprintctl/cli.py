@@ -1787,6 +1787,7 @@ def _served_item_note(
     """
 
     tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+    context = _resolved_context(config)
     result = _run_served(
         "item note",
         _served.item_note,
@@ -1802,11 +1803,13 @@ def _served_item_note(
         git_branch=git_branch,
         git_sha=git_sha,
         git_worktree=git_worktree,
+        resolved_context=context,
     )
     click.echo(
         f"Recorded note #{result['event_id']} ({result['note_type']}) "
         f"on item #{result['item_id']}: {result['summary']}"
     )
+    click.echo(_render_resolved_context(context))
 
 
 @item.command("note")
