@@ -115,6 +115,17 @@ def read_claim(served_profile: ServedProfile, *, repo_id: str, claim_id: int) ->
     return asyncio.run(_invoke_operation(served_profile, "work.read.claim", {"claim_id": claim_id}, repo_id=repo_id))
 
 
+def read_context(
+    served_profile: ServedProfile, *, repo_id: str, sprint_id: int | None = None
+) -> dict[str, Any]:
+    """Invoke the atomic ContextContract v1 aggregate for ``usage --context``."""
+    return asyncio.run(
+        _invoke_operation(
+            served_profile, "work.read.context", {"sprint_id": sprint_id}, repo_id=repo_id
+        )
+    )
+
+
 def item_ref_add(served_profile: ServedProfile, *, repo_id: str, item_id: int, ref_type: str, url: str, label: str = "") -> dict[str, Any]:
     return asyncio.run(_invoke_operation(served_profile, "work.item.ref.add", {"item_id": item_id, "ref_type": ref_type, "url": url, "label": label}, repo_id=repo_id))
 
@@ -477,6 +488,7 @@ def lifecycle_arbitrate(
 # pilot.cutover-evidence), meaning `doctor` was not actually verifying the
 # catalog before commands ran. See docs/plans/served-mode-gaps-plan.md.
 _DOCTOR_PROBE_COMMAND_PATHS = (
+    "usage.context",
     "sprint.list",
     "item.show",
     "item.list",
@@ -553,6 +565,7 @@ __all__ = [
     "read_items",
     "read_claims",
     "read_claim",
+    "read_context",
     "read_next_work",
     "read_sprint",
     "read_sprints",

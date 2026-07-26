@@ -254,6 +254,7 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
     names = [contract.name for contract in WORK_OPERATION_CONTRACTS]
     assert len(names) == len(set(names))
     assert {
+        "work.read.context",
         "work.read.next-work",
         "work.read.events",
         "work.read.sprint",
@@ -292,6 +293,22 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         if contract.name == "work.claim.start"
     )
     assert claim_start.idempotency == "not-allowed"
+
+
+def test_work_read_context_returns_the_exact_frozen_v1_contract(conn, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "served")
+    db.create_work_item(conn, active_sprint["id"], track, "Ready")
+    app = _application(store=conn, backend=db)
+    result = app.invoke("work.read.context", {"sprint_id": active_sprint["id"]}, _context())
+    assert list(result) == [
+        "contract_version", "sprint", "summary", "active_claims",
+        "active_unclaimed_items", "conflicts", "ready_items", "blocked_items",
+        "stale_items", "recent_decisions", "next_action",
+    ]
+    assert result["contract_version"] == "1"
+    assert result["sprint"]["id"] == active_sprint["id"]
+    assert result["summary"]["ready"] == 1
+    assert result["next_action"]["kind"] == "start-ready-item"
 
 
 def test_work_read_events_contract_shape():

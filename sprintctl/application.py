@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -23,7 +24,7 @@ import socket
 from typing import Any, Protocol
 from uuid import uuid4
 
-from . import contracts, cutover, db, outbox
+from . import context_contract, contracts, cutover, db, outbox
 
 
 CLAIM_COMMAND_TYPES = frozenset(
@@ -335,6 +336,7 @@ class WorkApplication:
             "work.read.items": target._read_items,
             "work.read.claims": target._read_claims,
             "work.read.claim": target._read_claim,
+            "work.read.context": target._read_context,
             "work.read.next-work": target._read_next_work,
             "work.read.records": target._read_records,
             "work.read.decisions": target._read_decisions,
@@ -471,6 +473,32 @@ class WorkApplication:
         # boundary so a serialization regression cannot publish a token.
         claim.pop("claim_token", None)
         return {"repo_id": self.repo_id, "claim": claim}
+
+    def _read_context(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        """Return ContextContract v1 from one repeatable-read server snapshot.
+
+        This intentionally returns the contract itself, with no transport
+        envelope fields: ``usage --context --json`` has a frozen top-level
+        shape.  PostgreSQL is the production served backend; the transaction
+        makes the several domain reads that feed the aggregate observe one
+        point in time instead of exposing a client-composed partial result.
+        """
+        now = datetime.now(timezone.utc)
+        conn = getattr(self.store, "conn", None)
+        if conn is not None and hasattr(conn, "transaction"):
+            with conn.transaction():
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+                    )
+                return context_contract.build_context_contract(
+                    self.store, self._resolve_sprint(arguments.get("sprint_id")), now,
+                    backend=self.backend
+                )
+        return context_contract.build_context_contract(
+            self.store, self._resolve_sprint(arguments.get("sprint_id")), now,
+            backend=self.backend,
+        )
 
     def _item_ref_add(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
         item_id = _positive_int(arguments.get("item_id"), "item_id")

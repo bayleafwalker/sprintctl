@@ -18,7 +18,7 @@ no migration or DDL.
 
 | Surface | Operations | Idempotency |
 | --- | --- | --- |
-| Reads | `work.read.sprints`, `work.read.item`, `work.read.next-work`, `work.read.records`, `work.read.decisions` | key forbidden |
+| Reads | `work.read.sprints`, `work.read.item`, `work.read.context`, `work.read.next-work`, `work.read.records`, `work.read.decisions` | key forbidden |
 | Claim start | `work.claim.start` | key forbidden; one-shot create plus activation flow |
 | Durable claims | `work.claim.arbitrate` | key equals immutable command `event_id` |
 | Lifecycle | `work.lifecycle.arbitrate` | key equals immutable command `event_id` |
@@ -33,6 +33,12 @@ schema features. Record schemas use local `$defs` references only.
 `work.pilot.cutover-evidence` is intentionally catalog-described rather than
 hard-coded into the client, so an already-installed protocol-v1 client can
 refresh discovery and invoke it.
+
+`work.read.context` is the server-side aggregate for `usage --context`. It
+returns the ContextContract v1 itself (rather than adding an envelope field),
+and PostgreSQL evaluates all of its sprint, claim, item, dependency, stale
+work, and decision reads in one repeatable-read, read-only transaction. A
+client must not recreate this operation by stitching together raw read calls.
 
 ## Authority and retry semantics
 

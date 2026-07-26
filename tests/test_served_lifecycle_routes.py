@@ -80,7 +80,7 @@ def _outbox_records(tmp_path):
 @pytest.mark.parametrize(
     "argv",
     [
-        ["usage", "--context"],
+        ["usage", "--context", "--project", "project.toml"],
         ["item", "done-from-claim", "--id", "3", "--claim-id", "4", "--claim-token", "secret"],
         ["claim", "recover", "--id", "3"],
         ["claim", "create", "--item-id", "3", "--actor", "agent"],
@@ -103,6 +103,31 @@ def test_unavailable_served_p0_commands_fail_closed_before_opening_store(
     assert result.exit_code == 1, result.output
     assert "served-operation-unavailable" in result.output
     assert "PostgreSQL" not in result.output
+
+
+@_requires_312
+def test_served_usage_context_uses_atomic_aggregate_without_opening_store(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module, "_get_store", lambda _obj: pytest.fail("served command opened store")
+    )
+    snapshot = {
+        "contract_version": "1",
+        "sprint": {"id": 3, "name": "served", "goal": "goal", "status": "active", "start_date": None, "end_date": None},
+        "summary": {"total": 0, "done": 0, "active": 0, "pending": 0, "blocked": 0, "stale": 0, "ready": 0, "waiting_on_dependencies": 0, "active_claims": 0, "active_unclaimed": 0},
+        "active_claims": [], "active_unclaimed_items": [], "conflicts": [],
+        "ready_items": [], "blocked_items": [], "stale_items": [],
+        "recent_decisions": [],
+        "next_action": {"kind": "no-action", "summary": "Nothing", "reason": "Nothing"},
+    }
+    monkeypatch.setattr(cli_module._served, "read_context", lambda *args, **kwargs: snapshot)
+
+    result = runner.invoke(cli, ["usage", "--context", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == snapshot
 
 
 @_requires_312

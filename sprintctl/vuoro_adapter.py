@@ -211,6 +211,29 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work:read", "read", "not-allowed",
     ),
     WorkOperationContract(
+        "work.read.context",
+        _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
+        _result_schema(
+            (
+                "contract_version", "sprint", "summary", "active_claims",
+                "active_unclaimed_items", "conflicts", "ready_items",
+                "blocked_items", "stale_items", "recent_decisions", "next_action",
+            ),
+            {
+                "contract_version": {"const": "1"}, "sprint": {"type": "object"},
+                "summary": {"type": "object"}, "active_claims": {"type": "array", "items": {"type": "object"}},
+                "active_unclaimed_items": {"type": "array", "items": {"type": "object"}},
+                "conflicts": {"type": "array", "items": {"type": "object"}},
+                "ready_items": {"type": "array", "items": {"type": "object"}},
+                "blocked_items": {"type": "array", "items": {"type": "object"}},
+                "stale_items": {"type": "array", "items": {"type": "object"}},
+                "recent_decisions": {"type": "array", "items": {"type": "object"}},
+                "next_action": {"type": "object"},
+            },
+        ),
+        "work:read", "read", "not-allowed",
+    ),
+    WorkOperationContract(
         "work.read.next-work",
         _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
         _result_schema(

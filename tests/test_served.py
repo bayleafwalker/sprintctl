@@ -115,6 +115,14 @@ def test_read_item_sends_only_item_id(fake_vuoro_client):
     assert result["arguments"] == {"item_id": 42}
 
 
+def test_read_context_sends_only_optional_sprint_id(fake_vuoro_client):
+    result = served.read_context(_profile(), repo_id="repo-x", sprint_id=7)
+    assert result["operation"] == "work.read.context"
+    assert result["arguments"] == {"sprint_id": 7}
+    _operation, _arguments, kwargs = fake_vuoro_client.instances[-1].invocations[0]
+    assert kwargs == {"repo_id": "repo-x"}
+
+
 def test_read_next_work_and_project_next_work_send_sprint_id(fake_vuoro_client):
     profile = _profile()
     single = served.read_next_work(profile, repo_id="repo-x", sprint_id=7)
@@ -398,6 +406,7 @@ def test_credential_resolver_passed_to_client_is_resolve_file_credential(fake_vu
     [
         lambda profile: served.read_sprints(profile, repo_id="repo-x"),
         lambda profile: served.read_item(profile, repo_id="repo-x", item_id=1),
+        lambda profile: served.read_context(profile, repo_id="repo-x"),
         lambda profile: served.read_next_work(profile, repo_id="repo-x"),
         lambda profile: served.project_next_work(profile),
         lambda profile: served.claim_start(profile, repo_id="repo-x", item_id=1),
@@ -441,37 +450,28 @@ def test_catalog_operation_names_uses_a_fresh_client_and_returns_names(fake_vuor
 def test_expected_operations_matches_all_served_cli_command_paths():
     expected = {
         route.operation
-        for path in (
-            "sprint.list",
-            "item.show",
-            "next-work",
-            "claim.start",
-            "item.status",
-            "sprint.status",
-            "claim.heartbeat",
-            "claim.handoff",
-            "claim.release",
-            "item.note",
-            "pilot.cutover-evidence",
-            "authority.sync",
-            "event.list",
-            "event.add",
-            "item.add",
-            "sprint.show",
-        )
+        for path in served._DOCTOR_PROBE_COMMAND_PATHS
         for route in routes_for(path)
     }
     assert served.EXPECTED_OPERATIONS == expected
-    assert len(served.EXPECTED_OPERATIONS) == 14
+    assert len(served.EXPECTED_OPERATIONS) == 22
     assert served.EXPECTED_OPERATIONS == {
         "work.read.sprints",
+        "work.read.context",
         "work.read.item",
+        "work.read.items",
+        "work.read.claims",
+        "work.read.claim",
         "work.read.next-work",
         "work.project.next-work",
         "work.claim.start",
         "work.lifecycle.arbitrate",
         "work.claim.arbitrate",
         "work.item.note",
+        "work.item.ref.add",
+        "work.item.ref.remove",
+        "work.item.dep.add",
+        "work.item.dep.remove",
         "work.pilot.cutover-evidence",
         "work.batch.apply",
         "work.read.events",

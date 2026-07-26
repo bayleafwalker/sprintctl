@@ -21,6 +21,7 @@ from . import backend as _backend
 from . import authority as _authority
 from . import authority_config as _authority_config
 from . import context_candidates as _context_candidates
+from . import context_contract as _context_contract
 from . import contracts as _contracts
 from . import cutover as _cutover
 from . import db as _db
@@ -5743,99 +5744,7 @@ def _command_step_kind(command: str) -> str:
 
 
 def _collect_context_contract(conn, sprint: dict, now: datetime, *, m=None) -> dict:
-    m = m or _db
-    active_claims = m.list_claims_by_sprint(conn, sprint["id"], active_only=True)
-    report = _maintain.check(conn, sprint["id"], now, _m=m)
-    stale_items = [
-        {
-            "id": item["id"],
-            "title": item["title"],
-            "status": item["status"],
-            "track": item["track_name"],
-            "idle_seconds": item["idle_seconds"],
-        }
-        for item in report["stale_items"]
-    ]
-
-    all_items = m.list_work_items(conn, sprint_id=sprint["id"])
-    blocked_items = [
-        {"id": item["id"], "title": item["title"], "track": item["track_name"]}
-        for item in all_items
-        if item["status"] == "blocked"
-    ]
-    active_items = [
-        {"id": item["id"], "title": item["title"], "track": item["track_name"]}
-        for item in all_items
-        if item["status"] == "active"
-    ]
-    active_unclaimed_items = _active_items_without_claims(active_items, active_claims)
-    ready_items = [
-        {
-            "id": item["id"],
-            "title": item["title"],
-            "track": item["track_name"],
-        }
-        for item in m.get_ready_items(conn, sprint["id"])
-    ]
-    dependency_waiting_items = _dependency_waiting_items(conn, sprint["id"], m=m)
-    knowledge = m.list_knowledge_candidates(conn, sprint["id"])
-    recent_decisions = [_summarize_event(event) for event in reversed(knowledge[-5:])]
-    conflicts = _derive_conflicts(
-        active_claims=active_claims,
-        active_unclaimed_items=active_unclaimed_items,
-        blocked_items=blocked_items,
-        stale_items=stale_items,
-        dependency_waiting_items=dependency_waiting_items,
-        now=now,
-    )
-    conflicts.extend(
-        finding
-        for finding in report["findings"]
-        if finding["reason_code"] != "active-item-without-live-claim"
-    )
-    next_action = _derive_next_action(
-        active_claims=active_claims,
-        active_unclaimed_items=active_unclaimed_items,
-        conflicts=conflicts,
-        ready_items=ready_items,
-        blocked_items=blocked_items,
-        stale_items=stale_items,
-        dependency_waiting_items=dependency_waiting_items,
-    )
-
-    done_items = [item for item in all_items if item["status"] == "done"]
-    pending_items = [item for item in all_items if item["status"] == "pending"]
-
-    return _contracts.ContextContract(
-        sprint={
-            "id": sprint["id"],
-            "name": sprint["name"],
-            "goal": sprint["goal"],
-            "status": sprint["status"],
-            "start_date": sprint.get("start_date"),
-            "end_date": sprint.get("end_date"),
-        },
-        summary={
-            "total": len(all_items),
-            "done": len(done_items),
-            "active": len(active_items),
-            "pending": len(pending_items),
-            "blocked": len(blocked_items),
-            "stale": len(stale_items),
-            "ready": len(ready_items),
-            "waiting_on_dependencies": len(dependency_waiting_items),
-            "active_claims": len(active_claims),
-            "active_unclaimed": len(active_unclaimed_items),
-        },
-        active_claims=active_claims,
-        active_unclaimed_items=active_unclaimed_items,
-        conflicts=conflicts,
-        ready_items=ready_items,
-        blocked_items=blocked_items,
-        stale_items=stale_items,
-        recent_decisions=recent_decisions,
-        next_action=next_action,
-    ).to_dict()
+    return _context_contract.build_context_contract(conn, sprint, now, backend=m or _db)
 
 
 def _render_context_text(snapshot: dict) -> str:
@@ -8578,10 +8487,22 @@ def usage_cmd(obj, as_context, sprint_id, project_path, as_json) -> None:
         raise click.ClickException("--project requires --context")
     if as_context:
         if _served_config_or_none(obj) is not None:
-            _served_operation_unavailable(
-                "usage --context",
-                replacement="The full context contract (staleness, conflicts, decisions, and action recommendation) is not yet served.",
+            if project_path is not None:
+                _served_operation_unavailable(
+                    "usage --context --project",
+                    replacement="Project context remains unavailable until a project-scoped aggregate operation is deployed.",
+                )
+            config = obj["backend_config"]
+            context = _resolved_context(config)
+            snapshot = _run_served(
+                "usage --context", _served.read_context, config.served_profile,
+                repo_id=config.repo_id, sprint_id=sprint_id, resolved_context=context,
             )
+            if as_json:
+                click.echo(json.dumps(snapshot, indent=2))
+            else:
+                click.echo(_render_context_text(snapshot))
+            return
         if project_path is not None:
             project, scopes = _get_project_stores(obj, project_path)
             resolved, unavailable = _project_sprints(scopes, sprint_id)

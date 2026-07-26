@@ -48,6 +48,7 @@ class ServedRoute:
 
 
 SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
+    ServedRoute("usage.context", "work.read.context", precondition="project_path is None"),
     ServedRoute(
         "sprint.list",
         "work.read.sprints",

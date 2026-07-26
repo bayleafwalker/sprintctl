@@ -8,7 +8,7 @@ store.  `Unavailable` likewise never opens a store: it exits with the stable
 
 | Blind-agent loop command | Served status | Catalog operation / current guidance |
 | --- | --- | --- |
-| `usage --context` | Unavailable | Needs aggregate `work.read.context`; compose `next-work` plus known-item inspection only as a temporary workaround. |
+| `usage --context` | Served | `work.read.context` returns the complete frozen ContextContract v1 from one server-side repeatable-read aggregate; `--project` remains unavailable. |
 | `item list` | Unavailable | Needs filtered `work.read.items`. |
 | `item show` | Served | `work.read.item`, includes refs, dependencies, and active claims. |
 | `item ref list`, `item dep list` | Unavailable | Inspect the corresponding sections of `item show` for a known item; dedicated routes remain P0. |
