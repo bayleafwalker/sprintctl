@@ -1894,6 +1894,7 @@ def test_served_cutover_evidence_text_output_matches_local_shape(
     assert "Cutover dogfood evidence (contract v1):" in result.output
     assert "Parity: not evaluated" in result.output
     assert "Promotable: True" in result.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in result.output
 
 
 @_requires_312
@@ -1910,3 +1911,4 @@ def test_served_cutover_evidence_surfaces_a_transport_failure(
     result = runner.invoke(cli, ["pilot", "cutover-evidence", "--skip-parity"])
     assert result.exit_code != 0
     assert "connection reset" in result.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in result.output

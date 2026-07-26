@@ -3342,6 +3342,7 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
     accepted behavior for #1195 Group C -- not something this sync path
     attempts to detect or repair.
     """
+    resolved_context = _resolved_context(config)
     rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
     producer = _outbox.open_outbox(rollout_paths.outbox_path)
     try:
@@ -3406,6 +3407,7 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
             records=[_served_record_argument(r) for r in chunk],
             idempotency_key=key,
             transient_credentials=transient_credentials,
+            resolved_context=resolved_context,
         )
         for item in result.get("results", []):
             if item.get("kind") == "decision":
@@ -3452,6 +3454,7 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
                 f"operation; unsupported event ids: {', '.join(unsupported_event_ids)}",
                 err=True,
             )
+        click.echo(_render_resolved_context(resolved_context))
 
 
 @authority_commands.command("sync")
@@ -3811,12 +3814,16 @@ def _served_cutover_evidence(
     the pilot was never enabled, local mode leaves ``parity`` as ``None``
     without erroring, and this does too.
     """
+    resolved_context = _resolved_context(config)
     parity_payload = None
     if not skip_parity:
         try:
             status = _pilot.shadow_pilot_status(cwd=Path.cwd())
         except _pilot.ShadowPilotConfigError as exc:
-            click.echo(f"Error: {exc}", err=True)
+            click.echo(
+                f"Error: {exc}\n{_render_resolved_context(resolved_context)}",
+                err=True,
+            )
             sys.exit(1)
         if status.enabled:
             click.echo(
@@ -3824,7 +3831,8 @@ def _served_cutover_evidence(
                 "read operation exposes a sprint's authoritative event history "
                 "(work.read.item only returns one item's events, not the sprint-wide "
                 "event log parity computation needs); pass --skip-parity, or use "
-                "SPRINTCTL_BACKEND=local or remote for a full parity computation.",
+                "SPRINTCTL_BACKEND=local or remote for a full parity computation.\n"
+                f"{_render_resolved_context(resolved_context)}",
                 err=True,
             )
             sys.exit(1)
@@ -3839,12 +3847,14 @@ def _served_cutover_evidence(
         parity=parity_payload,
         max_watermark_age_seconds=max_watermark_age_seconds,
         rehearse=not skip_rollback_rehearsal,
+        resolved_context=resolved_context,
     )
 
     if as_json:
         click.echo(json.dumps(payload, indent=2))
         return
     _emit_cutover_evidence_text(payload)
+    click.echo(_render_resolved_context(resolved_context))
 
 
 @pilot.command("cutover-evidence")

@@ -389,6 +389,7 @@ def test_served_authority_sync_text_output_reports_unsupported(runner, tmp_path,
     assert "1 unsupported" in result.output
     assert "capability-receipt.accept is not supported over the served batch operation" in result.output
     assert unsupported.event_id in result.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in result.output
 
 
 # ---------------------------------------------------------------------------
