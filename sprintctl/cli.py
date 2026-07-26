@@ -672,35 +672,8 @@ def _collect_sprint_show_payload(conn, s: dict, detail: bool, *, m=None) -> dict
     }
     if not detail:
         return out
-
-    from . import calc as _calc
-
-    now = datetime.now(timezone.utc)
-    items = m.list_work_items(conn, sprint_id=s["id"])
-    tracks = m.list_tracks(conn, s["id"])
-    active_items = [it for it in items if it["status"] == "active"]
-    risk = _calc.sprint_overrun_risk(s, len(active_items), now)
-    pending_threshold = _maintain._pending_stale_threshold()
-    stale_count = sum(
-        1 for it in items if _calc.item_staleness(it, now, pending_threshold=pending_threshold)["is_stale"]
-    )
-    items_by_track: dict[int, list] = {}
-    for it in items:
-        items_by_track.setdefault(it["track_id"], []).append(it)
-    track_health_out = {}
-    for t in tracks:
-        track_health_out[t["name"]] = _calc.track_health(items_by_track.get(t["id"], []))
-    active_takeups = m.list_active_takeups(conn, s["id"])
-    out["detail"] = {
-        "risk": risk,
-        "stale_count": stale_count,
-        "track_health": track_health_out,
-        "takeup": {
-            "active_count": len(active_takeups),
-            "active": active_takeups,
-        },
-    }
-    return out
+    from . import sprint_detail
+    return sprint_detail.build_sprint_show_detail(conn, s, backend=m)
 
 
 def _resolve_implicit_sprint(conn, *, option_name: str = "--sprint-id", m=None) -> dict | None:
@@ -838,26 +811,19 @@ def sprint_show(obj, sprint_id: str | None, detail, watch_mode, interval, as_jso
 
     config = _served_config_or_none(obj)
     if config is not None:
-        if detail:
-            click.echo(
-                "Error: served sprint show --detail is not available: its health and "
-                "track aggregation has no catalog operation yet; omit --detail, or use "
-                "SPRINTCTL_BACKEND=local or remote.",
-                err=True,
-            )
-            sys.exit(1)
-
         def render_once() -> None:
             context = _resolved_context(config)
             result = _run_served(
-                "sprint show", _served.read_sprint, config.served_profile,
+                "sprint show --detail" if detail else "sprint show",
+                _served.read_sprint_detail if detail else _served.read_sprint,
+                config.served_profile,
                 repo_id=config.repo_id, sprint_id=sprint_id, resolved_context=context,
             )
-            payload = _collect_sprint_show_payload(None, result["sprint"], detail=False)
+            payload = result["sprint"] if detail else _collect_sprint_show_payload(None, result["sprint"], detail=False)
             if as_json:
                 click.echo(json.dumps(payload, indent=2))
             else:
-                _emit_sprint_show_text(payload, detail=False)
+                _emit_sprint_show_text(payload, detail=detail)
                 click.echo(_render_resolved_context(context))
 
         if not watch_mode:

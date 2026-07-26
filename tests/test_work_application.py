@@ -260,6 +260,7 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         "work.read.next-work-explain",
         "work.read.events",
         "work.read.sprint",
+        "work.read.sprint-detail",
         "work.event.add",
         "work.handoff.record",
         "work.item.create",
@@ -482,6 +483,23 @@ def test_read_sprint_resolves_explicit_or_active_sprint(conn, active_sprint):
     implicit = app.invoke("work.read.sprint", {"sprint_id": None}, _context())
     assert explicit["sprint"]["id"] == active_sprint["id"]
     assert implicit["sprint"]["id"] == active_sprint["id"]
+
+
+def test_read_sprint_detail_builds_the_local_json_contract_server_side(conn, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "served-detail")
+    db.create_work_item(conn, active_sprint["id"], track, "Ready")
+    app = _application(store=conn, backend=db)
+
+    result = app.invoke(
+        "work.read.sprint-detail", {"sprint_id": active_sprint["id"]}, _context()
+    )
+
+    assert result["repo_id"] == "test-repo"
+    payload = result["sprint"]
+    assert payload["id"] == active_sprint["id"]
+    assert payload["detail"]["stale_count"] >= 0
+    assert payload["detail"]["track_health"]["served-detail"]["total"] == 1
+    assert payload["detail"]["takeup"] == {"active_count": 0, "active": []}
 
 
 def test_event_add_uses_authenticated_actor(conn, active_sprint):

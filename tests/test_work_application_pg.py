@@ -328,6 +328,32 @@ def test_context_aggregate_uses_a_fresh_snapshot_after_a_reused_connection_read(
     store.conn.close()
 
 
+def test_sprint_detail_aggregate_uses_a_fresh_snapshot_after_a_reused_connection_read(
+    store_factory,
+):
+    store = store_factory("sprint-detail-reused-connection")
+    sprint_id = pg.create_sprint(store, "Detail", status="active")
+    track_id = pg.get_or_create_track(store, sprint_id, "work")
+    pg.create_work_item(store, sprint_id, track_id, "Ready")
+    store.conn.commit()
+
+    # A shared service connection may already have an implicit transaction;
+    # the aggregate must leave it untouched while using its own snapshot.
+    assert pg.list_sprints(store)
+    shared_transaction_status = store.conn.info.transaction_status
+
+    result = _application(store, {}).invoke(
+        "work.read.sprint-detail", {"sprint_id": sprint_id},
+        _context("reader", None, None),
+    )
+
+    assert result["sprint"]["id"] == sprint_id
+    assert result["sprint"]["detail"]["track_health"]["work"]["total"] == 1
+    assert store.conn.info.transaction_status == shared_transaction_status
+    store.conn.rollback()
+    store.conn.close()
+
+
 @pytest.mark.parametrize(
     ("operation", "mismatch", "expected_code"),
     [

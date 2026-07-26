@@ -213,6 +213,17 @@ def read_sprint(
     )
 
 
+def read_sprint_detail(
+    served_profile: ServedProfile, *, repo_id: str, sprint_id: int | None = None
+) -> dict[str, Any]:
+    """Invoke the atomic server-built ``sprint show --detail`` aggregate."""
+    return asyncio.run(
+        _invoke_operation(
+            served_profile, "work.read.sprint-detail", {"sprint_id": sprint_id}, repo_id=repo_id
+        )
+    )
+
+
 def event_add(
     served_profile: ServedProfile, *, repo_id: str, sprint_id: int, event_type: str,
     work_item_id: int | None = None, source_type: str = "actor", payload: dict[str, Any] | None = None,
@@ -543,6 +554,7 @@ _DOCTOR_PROBE_COMMAND_PATHS = (
     "event.add",
     "item.add",
     "sprint.show",
+    "sprint.show.detail",
 )
 
 EXPECTED_OPERATIONS: frozenset[str] = frozenset(

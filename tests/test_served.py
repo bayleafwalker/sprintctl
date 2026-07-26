@@ -196,6 +196,14 @@ def test_event_add_and_item_create_never_send_a_client_actor(fake_vuoro_client):
     assert sprint["arguments"] == {"sprint_id": None}
 
 
+def test_read_sprint_detail_sends_only_optional_sprint_id(fake_vuoro_client):
+    result = served.read_sprint_detail(_profile(), repo_id="repo-x", sprint_id=7)
+    assert result["operation"] == "work.read.sprint-detail"
+    assert result["arguments"] == {"sprint_id": 7}
+    _operation, _arguments, kwargs = fake_vuoro_client.instances[-1].invocations[0]
+    assert kwargs == {"repo_id": "repo-x"}
+
+
 def test_claim_start_sends_full_shape_and_never_an_actor_field(fake_vuoro_client):
     profile = _profile()
     result = served.claim_start(
@@ -462,7 +470,7 @@ def test_expected_operations_matches_all_served_cli_command_paths():
         for route in routes_for(path)
     }
     assert served.EXPECTED_OPERATIONS == expected
-    assert len(served.EXPECTED_OPERATIONS) == 25
+    assert len(served.EXPECTED_OPERATIONS) == 26
     assert served.EXPECTED_OPERATIONS == {
         "work.read.sprints",
         "work.read.context",
@@ -489,6 +497,7 @@ def test_expected_operations_matches_all_served_cli_command_paths():
         "work.handoff.record",
         "work.item.create",
         "work.read.sprint",
+        "work.read.sprint-detail",
     }
 
 

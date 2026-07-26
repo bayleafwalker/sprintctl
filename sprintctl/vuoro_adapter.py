@@ -338,6 +338,15 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work:read", "read", "not-allowed",
     ),
     WorkOperationContract(
+        "work.read.sprint-detail",
+        _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
+        _result_schema(
+            ("repo_id", "sprint"),
+            {"repo_id": {"type": "string"}, "sprint": {"type": "object"}},
+        ),
+        "work:read", "read", "not-allowed",
+    ),
+    WorkOperationContract(
         "work.event.add",
         _object_schema(
             {

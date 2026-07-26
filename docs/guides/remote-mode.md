@@ -111,6 +111,14 @@ Claim mechanics are identical in both modes. The only difference is that the
 **local claim recovery file** (`claim-recovery/claim-<id>.json`) is not written
 in remote mode — PostgreSQL is the single source of truth.
 
+### Sprint orientation detail
+
+`sprintctl sprint show --detail` returns the same JSON and text contract in
+local, direct-remote, and served modes. In served mode it invokes the single
+server-side `work.read.sprint-detail` aggregate: risk, stale count, per-track
+health, and active takeups are read from one snapshot. The CLI does not open a
+local store or compose those fields from separate served reads.
+
 ### Resuming a claim
 
 ```sh

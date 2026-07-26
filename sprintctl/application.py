@@ -25,7 +25,7 @@ import socket
 from typing import Any, Protocol
 from uuid import uuid4
 
-from . import context_contract, contracts, cutover, db, handoff, outbox
+from . import context_contract, contracts, cutover, db, handoff, outbox, sprint_detail
 
 
 CLAIM_COMMAND_TYPES = frozenset(
@@ -453,6 +453,7 @@ class WorkApplication:
             "work.read.decisions": target._read_decisions,
             "work.read.events": target._read_events,
             "work.read.sprint": target._read_sprint,
+            "work.read.sprint-detail": target._read_sprint_detail,
             "work.event.add": target._event_add,
             "work.handoff.record": target._handoff_record,
             "work.item.create": target._item_create,
@@ -701,6 +702,33 @@ class WorkApplication:
 
     def _read_sprint(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
         return {"repo_id": self.repo_id, "sprint": self._resolve_sprint(arguments.get("sprint_id"))}
+
+    def _read_sprint_detail(
+        self, arguments: dict[str, Any], _context: InvocationContext
+    ) -> dict[str, Any]:
+        """Build the complete detail view within one server-side snapshot."""
+        now = datetime.now(timezone.utc)
+        snapshot = getattr(self.backend, "repeatable_read_snapshot", None)
+        if callable(snapshot):
+            # A request may follow an unrelated read on the shared service
+            # connection.  Use a sibling read-only repeatable snapshot, just
+            # like ``work.read.context``, rather than reconfiguring it.
+            with snapshot(self.store) as snapshot_store:
+                snapshot_app = replace(self, store=snapshot_store)
+                sprint = snapshot_app._resolve_sprint(arguments.get("sprint_id"))
+                return {
+                    "repo_id": self.repo_id,
+                    "sprint": sprint_detail.build_sprint_show_detail(
+                        snapshot_store, sprint, backend=self.backend, now=now
+                    ),
+                }
+        sprint = self._resolve_sprint(arguments.get("sprint_id"))
+        return {
+            "repo_id": self.repo_id,
+            "sprint": sprint_detail.build_sprint_show_detail(
+                self.store, sprint, backend=self.backend, now=now
+            ),
+        }
 
     def _event_add(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         """Synchronously create a generic event as the authenticated actor."""

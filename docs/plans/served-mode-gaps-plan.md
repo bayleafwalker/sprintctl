@@ -265,9 +265,11 @@ only checks one call's rows would not catch the race this is fixing).
       (`work.item.create`, with server-side track creation), and plain
       `sprint show` (`work.read.sprint`) landed in sprintctl. Each is routed,
       doctor-probed, and covered by application/facade/CLI tests. `--watch`
-      safely polls `work.read.sprint` client-side. `--detail` deliberately
-      fails closed in served mode: its health/track aggregation needs the
-      dedicated catalog-design pass and has not been guessed or emulated with
-      local reads. Remaining: the shared adapter release/deployment and live
-      served verification authorized separately from this source change.
+      safely polls the selected read operation client-side. Follow-up source
+      work added the dedicated `work.read.sprint-detail` aggregate: it builds
+      health, stale count, track health, and takeup from one server-side
+      snapshot, and the CLI preserves the local JSON/text contract without
+      opening a local store. Remaining: the shared adapter release/deployment
+      and live served verification authorized separately from this source
+      change.
 - [x] Update this doc's status as work lands in more than one pass.

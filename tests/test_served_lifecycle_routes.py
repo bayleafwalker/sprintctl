@@ -790,7 +790,7 @@ def test_served_claim_start_text_reports_resolved_context(runner, tmp_path, monk
 
 
 @_requires_312
-def test_served_sprint_show_reads_basic_and_refuses_detail(runner, tmp_path, monkeypatch):
+def test_served_sprint_show_reads_basic_and_server_aggregate_detail(runner, tmp_path, monkeypatch):
     _configure_served_repo(tmp_path, monkeypatch)
     calls = []
     monkeypatch.setattr(
@@ -802,9 +802,23 @@ def test_served_sprint_show_reads_basic_and_refuses_detail(runner, tmp_path, mon
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["id"] == 11
     assert calls == [{"repo_id": tmp_path.name, "sprint_id": 11}]
-    detail = runner.invoke(cli, ["sprint", "show", "--detail"])
-    assert detail.exit_code == 1
-    assert "has no catalog operation yet" in detail.output
+    detail_calls = []
+    detail_payload = {
+        "id": 11, "name": "Sprint", "goal": "G", "start_date": None,
+        "end_date": None, "status": "active", "kind": "active_sprint",
+        "detail": {
+            "risk": {"overdue": False, "at_risk": False, "date_bound": False, "active_items": 0},
+            "stale_count": 0, "track_health": {}, "takeup": {"active_count": 0, "active": []},
+        },
+    }
+    monkeypatch.setattr(
+        cli_module._served, "read_sprint_detail",
+        lambda profile, **kwargs: detail_calls.append(kwargs) or {"sprint": detail_payload},
+    )
+    detail = runner.invoke(cli, ["sprint", "show", "--detail", "--json"])
+    assert detail.exit_code == 0, detail.output
+    assert json.loads(detail.output) == detail_payload
+    assert detail_calls == [{"repo_id": tmp_path.name, "sprint_id": None}]
 
 
 @_requires_312
