@@ -229,7 +229,38 @@ def test_served_event_list_preserves_type_filter_and_text_output(runner, tmp_pat
     result = runner.invoke(cli, ["event", "list", "--sprint-id", "11", "--type", "update"])
 
     assert result.exit_code == 0, result.output
-    assert result.output == "#2  [update]  worker  2026-07-26T10:01:00Z\n"
+    assert result.output == (
+        "#2  [update]  worker  2026-07-26T10:01:00Z\n"
+        f"Context: repo={tmp_path.name} (source=marker) backend=served "
+        "target=https://vuoro-shared.example/\n"
+    )
+
+
+@_requires_312
+def test_served_event_list_empty_and_error_report_resolved_context(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served,
+        "read_events",
+        lambda profile, **kwargs: {"events": []},
+    )
+
+    empty = runner.invoke(cli, ["event", "list", "--sprint-id", "11"])
+
+    assert empty.exit_code == 0, empty.output
+    assert "No events found." in empty.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in empty.output
+
+    monkeypatch.setattr(
+        cli_module._served,
+        "read_events",
+        lambda profile, **kwargs: (_ for _ in ()).throw(ValueError("Sprint #11 not found.")),
+    )
+    missing = runner.invoke(cli, ["event", "list", "--sprint-id", "11"])
+
+    assert missing.exit_code == 1
+    assert "Sprint #11 not found." in missing.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in missing.output
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +316,58 @@ def test_served_sprint_show_reads_basic_and_refuses_detail(runner, tmp_path, mon
     detail = runner.invoke(cli, ["sprint", "show", "--detail"])
     assert detail.exit_code == 1
     assert "has no catalog operation yet" in detail.output
+
+
+@_requires_312
+def test_served_sprint_show_text_reports_resolved_context(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served,
+        "read_sprint",
+        lambda profile, **kwargs: {
+            "sprint": {
+                "id": 11, "name": "Sprint", "goal": "G", "start_date": None,
+                "end_date": None, "status": "active", "kind": "active_sprint",
+            }
+        },
+    )
+
+    result = runner.invoke(cli, ["sprint", "show", "--id", "11"])
+
+    assert result.exit_code == 0, result.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in result.output
+
+
+@_requires_312
+def test_served_sprint_list_text_and_empty_output_report_resolved_context(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served,
+        "read_sprints",
+        lambda profile, **kwargs: {
+            "sprints": [
+                {
+                    "id": 11, "name": "Sprint", "status": "active",
+                    "kind": "active_sprint", "start_date": None, "end_date": None,
+                }
+            ]
+        },
+    )
+
+    listed = runner.invoke(cli, ["sprint", "list"])
+
+    assert listed.exit_code == 0, listed.output
+    assert "Sprint" in listed.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in listed.output
+
+    monkeypatch.setattr(cli_module._served, "read_sprints", lambda profile, **kwargs: {"sprints": []})
+    empty = runner.invoke(cli, ["sprint", "list"])
+
+    assert empty.exit_code == 0, empty.output
+    assert "No sprints found." in empty.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in empty.output
 
 
 @_requires_312

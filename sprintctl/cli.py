@@ -335,14 +335,17 @@ def _served_config_or_none(obj: dict):
     return config
 
 
-def _run_served(operation_label: str, func, *args, **kwargs):
+def _run_served(operation_label: str, func, *args, resolved_context: dict[str, str | None] | None = None, **kwargs):
     """Invoke a sprintctl.served facade function, translating any failure
     (transport, catalog validation, or an operation rejection) into the same
     'Error: ...' + exit(1) convention the local/remote store paths use."""
     try:
         return func(*args, **kwargs)
     except Exception as exc:  # noqa: BLE001 - surface any served-mode failure uniformly
-        click.echo(f"Error: served {operation_label} failed: {exc}", err=True)
+        message = f"Error: served {operation_label} failed: {exc}"
+        if resolved_context is not None:
+            message = f"{message}\n{_render_resolved_context(resolved_context)}"
+        click.echo(message, err=True)
         sys.exit(1)
 
 
@@ -819,15 +822,17 @@ def sprint_show(obj, sprint_id: str | None, detail, watch_mode, interval, as_jso
             sys.exit(1)
 
         def render_once() -> None:
+            context = _resolved_context(config)
             result = _run_served(
                 "sprint show", _served.read_sprint, config.served_profile,
-                repo_id=config.repo_id, sprint_id=sprint_id,
+                repo_id=config.repo_id, sprint_id=sprint_id, resolved_context=context,
             )
             payload = _collect_sprint_show_payload(None, result["sprint"], detail=False)
             if as_json:
                 click.echo(json.dumps(payload, indent=2))
             else:
                 _emit_sprint_show_text(payload, detail=False)
+                click.echo(_render_resolved_context(context))
 
         if not watch_mode:
             render_once()
@@ -1083,6 +1088,7 @@ def sprint_list(obj, include_backlog, include_archive, active_only, project_path
             include_backlog=include_backlog,
             include_archive=include_archive,
             active_only=active_only,
+            resolved_context=_resolved_context(config),
         )
         sprints: list[dict] = result["sprints"]
     else:
@@ -1113,6 +1119,8 @@ def sprint_list(obj, include_backlog, include_archive, active_only, project_path
         return
     if not sprints:
         click.echo("No sprints found.")
+        if config is not None:
+            click.echo(_render_resolved_context(_resolved_context(config)))
         return
     rows: list[list[str]] = []
     for s in sprints:
@@ -1138,6 +1146,8 @@ def sprint_list(obj, include_backlog, include_archive, active_only, project_path
     headers.extend(["STATUS", "KIND", "NAME", "DATES"])
     for line in _render_table(headers, rows):
         click.echo(line)
+    if config is not None:
+        click.echo(_render_resolved_context(_resolved_context(config)))
 
 
 @sprint.command("kind")
@@ -4032,6 +4042,7 @@ def event_list(obj, sprint_id, work_item_id, event_type, knowledge_only, limit, 
             work_item_id=work_item_id,
             after_offset=0,
             limit=None,
+            resolved_context=_resolved_context(config),
         )
         events = result["events"]
         if knowledge_only:
@@ -4061,6 +4072,8 @@ def event_list(obj, sprint_id, work_item_id, event_type, knowledge_only, limit, 
         return
     if not events:
         click.echo("No events found.")
+        if config is not None:
+            click.echo(_render_resolved_context(_resolved_context(config)))
         return
     for e in events:
         item_label = f"  item #{e['work_item_id']}" if e.get("work_item_id") else ""
@@ -4068,6 +4081,8 @@ def event_list(obj, sprint_id, work_item_id, event_type, knowledge_only, limit, 
             f"#{e['id']}  [{e['event_type']}]  {e['actor']}  "
             f"{e['created_at']}{item_label}"
         )
+    if config is not None:
+        click.echo(_render_resolved_context(_resolved_context(config)))
 
 
 # ---------------------------------------------------------------------------
