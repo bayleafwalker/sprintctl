@@ -303,6 +303,19 @@ def test_context_aggregate_uses_a_fresh_snapshot_after_a_reused_connection_read(
     # This is the ordinary non-autocommit reuse case: an earlier read leaves
     # the shared connection in a transaction before the next invocation.
     assert pg.list_sprints(store)
+    shared_transaction_status = store.conn.info.transaction_status
+
+    # Exercise the snapshot helper through the database, rather than trusting
+    # its SQL string: PostgreSQL must report both required properties.
+    with pg.repeatable_read_snapshot(store) as snapshot_store:
+        with snapshot_store.conn.cursor() as cursor:
+            cursor.execute("SHOW transaction_isolation")
+            isolation = cursor.fetchone()["transaction_isolation"]
+            cursor.execute("SHOW transaction_read_only")
+            read_only = cursor.fetchone()["transaction_read_only"]
+    assert isolation == "repeatable read"
+    assert read_only == "on"
+
     result = _application(store, {}).invoke(
         "work.read.context", {"sprint_id": sprint_id}, _context("reader", None, None)
     )
@@ -310,6 +323,7 @@ def test_context_aggregate_uses_a_fresh_snapshot_after_a_reused_connection_read(
     assert result["contract_version"] == "1"
     assert result["summary"]["ready"] == 1
     assert result["next_action"]["kind"] == "start-ready-item"
+    assert store.conn.info.transaction_status == shared_transaction_status
     store.conn.rollback()
     store.conn.close()
 
