@@ -8075,10 +8075,25 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
     if config is not None:
         context = _resolved_context(config)
         if explain:
-            _served_operation_unavailable(
+            if project_path is not None:
+                _served_operation_unavailable(
+                    "project next-work --explain",
+                    replacement="The project explain aggregate is not yet served.",
+                )
+            payload = _run_served(
                 "next-work --explain",
-                replacement="The full exclusion/conflict explanation contract is not yet served.",
+                _served.read_next_work_explain,
+                config.served_profile,
+                repo_id=config.repo_id,
+                sprint_id=sprint_id,
+                resolved_context=context,
             )
+            if as_json:
+                click.echo(json.dumps(payload, indent=2))
+            else:
+                click.echo(_render_next_work_explained_text(payload))
+                click.echo(_render_resolved_context(context))
+            return
         if project_path is None:
             result = _run_served(
                 "next-work",

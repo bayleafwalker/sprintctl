@@ -256,6 +256,7 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
     assert {
         "work.read.context",
         "work.read.next-work",
+        "work.read.next-work-explain",
         "work.read.events",
         "work.read.sprint",
         "work.event.add",
@@ -518,6 +519,24 @@ def test_click_next_work_and_application_handler_share_backend_semantics(
     assert [item["title"] for item in project_payload["ready_items"]] == [
         "Not direct next-work"
     ]
+
+
+def test_next_work_explain_is_one_application_aggregate(conn, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "served")
+    ready_id = db.create_work_item(conn, active_sprint["id"], track, "Ready")
+    blocker_id = db.create_work_item(conn, active_sprint["id"], track, "Blocker")
+    waiting_id = db.create_work_item(conn, active_sprint["id"], track, "Waiting")
+    db.add_dep(conn, blocker_id, waiting_id)
+
+    payload = _application(store=conn, backend=db).invoke(
+        "work.read.next-work-explain", {"sprint_id": active_sprint["id"]}, _context()
+    )
+
+    assert payload["contract_version"] == "1"
+    assert [item["id"] for item in payload["ready_items"]] == [ready_id, blocker_id]
+    assert payload["dependency_waiting_items"][0]["id"] == waiting_id
+    assert payload["next_action"]["kind"] == "unblock-dependent-work"
+    assert payload["recommended_command_bundle"]["bundle_version"] == "1"
 
 
 def test_authority_handlers_enforce_actor_basis_and_idempotency_before_backend():

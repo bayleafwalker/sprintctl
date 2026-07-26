@@ -9,7 +9,7 @@ def test_every_route_targets_a_published_operation():
         assert route.operation in _KNOWN_OPERATIONS, route
 
 
-def test_next_work_has_two_preconditioned_routes():
+def test_next_work_has_preconditioned_routes_and_a_distinct_explain_aggregate():
     routes = routes_for("next-work")
     assert {route.operation for route in routes} == {
         "work.read.next-work",
@@ -17,6 +17,10 @@ def test_next_work_has_two_preconditioned_routes():
     }
     for route in routes:
         assert route.precondition, "next-work routes must be preconditioned"
+    explain = routes_for("next-work.explain")
+    assert len(explain) == 1
+    assert explain[0].operation == "work.read.next-work-explain"
+    assert explain[0].precondition
 
 
 def test_single_route_commands_have_no_ambiguity():

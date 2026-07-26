@@ -248,6 +248,24 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "read",
         "not-allowed",
     ),
+    WorkOperationContract(
+        "work.read.next-work-explain",
+        _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
+        _result_schema(
+            ("contract_version", "sprint", "summary", "ready_items", "dependency_waiting_items", "active_claims", "active_unclaimed_items", "conflicts", "next_action", "recommended_commands", "recommended_command_bundle"),
+            {
+                "contract_version": {"const": "1"}, "sprint": {"type": "object"},
+                "summary": {"type": "object"}, "ready_items": {"type": "array", "items": {"type": "object"}},
+                "dependency_waiting_items": {"type": "array", "items": {"type": "object"}},
+                "active_claims": {"type": "array", "items": {"type": "object"}},
+                "active_unclaimed_items": {"type": "array", "items": {"type": "object"}},
+                "conflicts": {"type": "array", "items": {"type": "object"}}, "next_action": {"type": "object"},
+                "recommended_commands": {"type": "array", "items": {"type": "string"}},
+                "recommended_command_bundle": {"type": "object"},
+            },
+        ),
+        "work:read", "read", "not-allowed",
+    ),
     *(
         WorkOperationContract(
             name,
@@ -593,6 +611,10 @@ LEGACY_REMOTE_COMMAND_PARITY: tuple[dict[str, str], ...] = (
     {"legacy": "sprintctl sprint list --json", "operation": "work.read.sprints"},
     {"legacy": "sprintctl item show --id ID --json", "operation": "work.read.item"},
     {"legacy": "sprintctl next-work --json", "operation": "work.read.next-work"},
+    {
+        "legacy": "sprintctl next-work --json --explain",
+        "operation": "work.read.next-work-explain",
+    },
     {
         "legacy": "sprintctl claim start",
         "operation": "work.claim.start",

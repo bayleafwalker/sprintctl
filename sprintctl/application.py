@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import socket
 from typing import Any, Protocol
 from uuid import uuid4
@@ -221,6 +222,114 @@ def _ingest_result(value: Any) -> dict[str, Any]:
     }
 
 
+def _parse_utc_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+
+
+def _dependency_waiting_items(backend: Any, store: Any, sprint_id: int) -> list[dict]:
+    waiting: list[dict] = []
+    for item in backend.list_work_items(store, sprint_id=sprint_id, status="pending"):
+        unresolved = [
+            blocker for blocker in backend.list_deps_blocking(store, item["id"])
+            if blocker["blocker_status"] != "done"
+        ]
+        if unresolved:
+            waiting.append({
+                "id": item["id"], "title": item["title"], "track": item["track_name"],
+                "assignee": item.get("assignee"), "unresolved_blockers": len(unresolved),
+                "unresolved_blocker_ids": [row["item_id"] for row in unresolved],
+                "unresolved_blocker_titles": [row["blocker_title"] for row in unresolved],
+            })
+    return waiting
+
+
+def _derive_next_work_conflicts(
+    active_claims: list[dict], active_unclaimed: list[dict], waiting: list[dict], now: datetime
+) -> list[dict]:
+    conflicts: list[dict] = []
+    legacy = [claim for claim in active_claims if claim.get("identity_status") != "proven"]
+    if legacy:
+        conflicts.append({"kind": "claim-identity", "severity": "warning", "summary": f"{len(legacy)} active claim(s) have ambiguous ownership proof and require explicit adoption or expiry.", "claim_ids": [claim["claim_id"] for claim in legacy], "item_ids": [claim["work_item_id"] for claim in legacy]})
+    expiring = [claim for claim in active_claims if (expires := _parse_utc_timestamp(claim.get("expires_at"))) is not None and (expires - now).total_seconds() <= 120]
+    if expiring:
+        conflicts.append({"kind": "claim-expiry", "severity": "warning", "summary": f"{len(expiring)} active claim(s) expire within 120 seconds and may need heartbeat or handoff.", "claim_ids": [claim["claim_id"] for claim in expiring], "item_ids": [claim["work_item_id"] for claim in expiring]})
+    if active_unclaimed:
+        conflicts.append({"kind": "unclaimed-active-work", "reason_code": "active-item-without-live-claim", "severity": "warning", "summary": f"{len(active_unclaimed)} active item(s) have no live claim and need resume, handoff, or status triage.", "item_ids": [item["id"] for item in active_unclaimed]})
+    if waiting:
+        conflicts.append({"kind": "dependency-blocked", "severity": "warning", "summary": f"{len(waiting)} pending item(s) are waiting on unresolved blockers.", "item_ids": [item["id"] for item in waiting], "blocker_ids": sorted({blocker for item in waiting for blocker in item["unresolved_blocker_ids"]})})
+    return conflicts
+
+
+def _next_work_action(active_claims: list[dict], active_unclaimed: list[dict], conflicts: list[dict], ready: list[dict], waiting: list[dict]) -> dict:
+    if conflicts:
+        first = conflicts[0]
+        if first["kind"] == "claim-identity":
+            return {"kind": "resolve-claim-identity", "summary": "Resolve ambiguous active claim ownership before resuming or starting new work.", "claim_id": first["claim_ids"][0], "item_id": first["item_ids"][0], "reason": first["summary"]}
+        if first["kind"] == "claim-expiry":
+            return {"kind": "refresh-claim", "summary": "Heartbeat or hand off the next expiring claim before it lapses.", "claim_id": first["claim_ids"][0], "item_id": first["item_ids"][0], "reason": first["summary"]}
+        if first["kind"] == "unclaimed-active-work":
+            item = active_unclaimed[0]
+            return {"kind": "resume-unclaimed-active-item", "summary": f"Resume or triage active item #{item['id']} because it has no live claim.", "item_id": item["id"], "reason": first["summary"]}
+        waiting_item = waiting[0]
+        return {"kind": "unblock-dependent-work", "summary": f"Resolve blocker #{waiting_item['unresolved_blocker_ids'][0]} to unblock item #{waiting_item['id']}.", "item_id": waiting_item["id"], "blocker_item_id": waiting_item["unresolved_blocker_ids"][0], "reason": first["summary"]}
+    if active_claims:
+        claim = active_claims[0]
+        return {"kind": "inspect-active-claim", "summary": f"Inspect claimed item #{claim['work_item_id']} before starting new work.", "claim_id": claim["claim_id"], "item_id": claim["work_item_id"], "reason": "Active claimed work already exists in this sprint."}
+    if ready:
+        item = ready[0]
+        return {"kind": "start-ready-item", "summary": f"Start ready item #{item['id']} because it is unblocked and no active claims are open.", "item_id": item["id"], "reason": "Ready work is available now."}
+    if waiting:
+        item = waiting[0]
+        return {"kind": "resolve-blocker", "summary": f"Resolve blocker #{item['unresolved_blocker_ids'][0]} to unblock item #{item['id']}.", "item_id": item["id"], "blocker_item_id": item["unresolved_blocker_ids"][0], "reason": "All pending work is currently waiting on dependencies."}
+    return {"kind": "no-action", "summary": "No immediate action is suggested from current sprint state.", "reason": "There is no ready, active, blocked, or stale work to prioritize."}
+
+
+def _scoped_ref(repo_id: str | None, identifier: int) -> str:
+    return f"{repo_id}#{identifier}" if repo_id else str(identifier)
+
+
+def _next_work_commands(sprint_id: int, action: dict, repo_id: str | None) -> list[str]:
+    kind, item_id, claim_id, blocker_id = (action.get(key) for key in ("kind", "item_id", "claim_id", "blocker_item_id"))
+    item_ref = lambda value: _scoped_ref(repo_id, value)
+    if kind == "resolve-claim-identity":
+        return ["sprintctl claim resume --json", *([f"sprintctl claim handoff --id {claim_id} --actor <name> --mode rotate --allow-legacy-adopt --json"] if claim_id is not None else [])]
+    if kind == "refresh-claim":
+        return [] if claim_id is None else [f"sprintctl claim heartbeat --id {claim_id} --claim-token <token> --ttl 600 --actor <name>", f"sprintctl claim handoff --id {claim_id} --claim-token <token> --actor <next-agent> --mode rotate --json"]
+    if kind in {"unblock-dependent-work", "resolve-blocker"}:
+        commands = ([f"sprintctl item show --id {item_ref(blocker_id)}"] if blocker_id is not None else []) + ([f"sprintctl item show --id {item_ref(item_id)}"] if item_id is not None else [])
+        return [*commands, f"sprintctl next-work --sprint-id {_scoped_ref(repo_id, sprint_id)} --json --explain"]
+    if kind == "inspect-active-claim":
+        return ([f"sprintctl item show --id {item_ref(item_id)}"] if item_id is not None else []) + ([] if claim_id is None else [f"sprintctl claim heartbeat --id {claim_id} --claim-token <token> --ttl 600 --actor <name>", f"sprintctl claim handoff --id {claim_id} --claim-token <token> --actor <next-agent> --mode rotate --json"])
+    if kind in {"resume-unclaimed-active-item", "start-ready-item"}:
+        return [] if item_id is None else [f"sprintctl claim start --item-id {item_ref(item_id)} --actor <name> --ttl 600 --json", f"sprintctl item show --id {item_ref(item_id)}"]
+    if kind == "no-action":
+        sprint_ref = _scoped_ref(repo_id, sprint_id)
+        return [f"sprintctl usage --context --sprint-id {sprint_ref} --json", f"sprintctl next-work --sprint-id {sprint_ref} --json --explain"]
+    return []
+
+
+def _command_step_kind(command: str) -> str:
+    for prefix, kind in (("sprintctl claim start", "claim-start"), ("sprintctl claim resume", "claim-resume"), ("sprintctl claim heartbeat", "claim-heartbeat"), ("sprintctl claim handoff", "claim-handoff"), ("sprintctl item show", "item-show"), ("sprintctl usage --context", "usage-context"), ("sprintctl next-work", "next-work")):
+        if command.startswith(prefix): return kind
+    return "other"
+
+
+def _next_work_explain_contract(backend: Any, store: Any, sprint: dict, *, repo_id: str | None, now: datetime) -> dict:
+    ready = backend.get_ready_items(store, sprint["id"])
+    waiting = _dependency_waiting_items(backend, store, sprint["id"])
+    active_claims = backend.list_claims_by_sprint(store, sprint["id"], active_only=True)
+    active_items = [{"id": item["id"], "title": item["title"], "track": item["track_name"]} for item in backend.list_work_items(store, sprint_id=sprint["id"], status="active")]
+    claimed_ids = {claim["work_item_id"] for claim in active_claims}
+    active_unclaimed = [item for item in active_items if item["id"] not in claimed_ids]
+    conflicts = _derive_next_work_conflicts(active_claims, active_unclaimed, waiting, now)
+    action = _next_work_action(active_claims, active_unclaimed, conflicts, ready, waiting)
+    commands = _next_work_commands(sprint["id"], action, repo_id)
+    refs = backend.list_refs_for_items(store, [item["id"] for item in ready])
+    return {"contract_version": "1", "sprint": {key: sprint[key] for key in ("id", "name", "status")}, "summary": {"pending_total": len(ready) + len(waiting), "ready": len(ready), "waiting_on_dependencies": len(waiting), "active_claims": len(active_claims), "active_unclaimed": len(active_unclaimed)}, "ready_items": [{**item, "reason_code": "ready-unblocked", "reason": "No unresolved blocking dependencies.", "refs": refs.get(item["id"], [])} for item in ready], "dependency_waiting_items": [{**item, "reason_code": "waiting-on-dependencies", "reason": "One or more blocking dependencies are not done."} for item in waiting], "active_claims": [{key: claim.get(key) for key in ("claim_id", "work_item_id", "agent", "claim_type", "expires_at", "identity_status")} for claim in active_claims], "active_unclaimed_items": active_unclaimed, "conflicts": conflicts, "next_action": action, "recommended_commands": commands, "recommended_command_bundle": {"bundle_version": "1", "next_action_kind": action.get("kind"), "steps": [{"step": index, "kind": _command_step_kind(command), "command": command, "placeholders": re.findall(r"<[^>\n]+>", command), "requires_input": bool(re.findall(r"<[^>\n]+>", command)), "is_executable": not bool(re.findall(r"<[^>\n]+>", command))} for index, command in enumerate(commands, 1)]}}
+
+
 @dataclass(slots=True)
 class WorkApplication:
     """One repository-scoped work authority application."""
@@ -338,6 +447,7 @@ class WorkApplication:
             "work.read.claim": target._read_claim,
             "work.read.context": target._read_context,
             "work.read.next-work": target._read_next_work,
+            "work.read.next-work-explain": target._read_next_work_explain,
             "work.read.records": target._read_records,
             "work.read.decisions": target._read_decisions,
             "work.read.events": target._read_events,
@@ -660,6 +770,21 @@ class WorkApplication:
         self, arguments: dict[str, Any], _context: InvocationContext
     ) -> dict[str, Any]:
         return self.next_work(arguments.get("sprint_id"))
+
+    def _read_next_work_explain(
+        self, arguments: dict[str, Any], _context: InvocationContext
+    ) -> dict[str, Any]:
+        """Return the complete, server-assembled next-work explain contract.
+
+        This is intentionally one authority operation.  A served CLI must not
+        reproduce this aggregate by opening a local store or by making a
+        sequence of independently-versioned read calls.
+        """
+        sprint = self._resolve_sprint(arguments.get("sprint_id"))
+        return _next_work_explain_contract(
+            self.backend, self.store, sprint, repo_id=self.repo_id,
+            now=datetime.now(timezone.utc),
+        )
 
     def next_work(
         self, sprint_id: Any = None, *, prefer_backlog: bool = False

@@ -13,7 +13,7 @@ store.  `Unavailable` likewise never opens a store: it exits with the stable
 | `item show` | Served | `work.read.item`, includes refs, dependencies, and active claims. |
 | `item ref list`, `item dep list` | Unavailable | Inspect the corresponding sections of `item show` for a known item; dedicated routes remain P0. |
 | `item ref add/remove`, `item dep add/remove` | Unavailable | Need authenticated shaping-write operations. |
-| `next-work` | Served, except `--explain` | `work.read.next-work`; `--explain` needs conflict/exclusion data. |
+| `next-work` | Served; project `--explain` unavailable | `work.read.next-work` preserves the list contract; `work.read.next-work-explain` returns the complete atomic explanation contract. |
 | `claim start/heartbeat/handoff/release` | Served | `work.claim.start` / `work.claim.arbitrate`. |
 | `claim list`, `claim list-sprint`, `claim show`, `claim resume` | Unavailable | Item inspection exposes active claims only; resume and proof disclosure require dedicated designs. |
 | `item add`, `item note`, `item status`, `event add/list` | Served | Existing catalog routes. |

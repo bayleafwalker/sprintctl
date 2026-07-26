@@ -73,6 +73,11 @@ SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
         precondition="project_path is None",
     ),
     ServedRoute(
+        "next-work.explain",
+        "work.read.next-work-explain",
+        precondition="project_path is None and explain",
+    ),
+    ServedRoute(
         "next-work",
         "work.project.next-work",
         precondition="project_path is not None",

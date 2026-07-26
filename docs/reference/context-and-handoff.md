@@ -55,7 +55,10 @@ top-level contract.
 ## `next-work --explain`
 
 `next-work --explain` enriches readiness output with exclusion reasons,
-conflicts, and a local next-step recommendation.
+conflicts, and a next-step recommendation. In served mode it invokes the
+single `work.read.next-work-explain` catalog aggregate; the client only
+renders that response and never reads a local store. Project `--explain`
+remains unavailable until a project aggregate is published.
 
 - text mode (`next-work --explain`) renders a human-readable summary
 - JSON mode (`next-work --json --explain`) emits the full typed contract below

@@ -134,6 +134,14 @@ def test_read_next_work_and_project_next_work_send_sprint_id(fake_vuoro_client):
     assert project["arguments"] == {"sprint_id": None}
 
 
+def test_read_next_work_explain_sends_only_optional_sprint_id(fake_vuoro_client):
+    result = served.read_next_work_explain(_profile(), repo_id="repo-x", sprint_id=7)
+    assert result["operation"] == "work.read.next-work-explain"
+    assert result["arguments"] == {"sprint_id": 7}
+    _operation, _arguments, kwargs = fake_vuoro_client.instances[-1].invocations[0]
+    assert kwargs == {"repo_id": "repo-x"}
+
+
 def test_read_events_sends_sprint_id_filter_and_pagination(fake_vuoro_client):
     profile = _profile()
     result = served.read_events(
@@ -454,7 +462,7 @@ def test_expected_operations_matches_all_served_cli_command_paths():
         for route in routes_for(path)
     }
     assert served.EXPECTED_OPERATIONS == expected
-    assert len(served.EXPECTED_OPERATIONS) == 22
+    assert len(served.EXPECTED_OPERATIONS) == 23
     assert served.EXPECTED_OPERATIONS == {
         "work.read.sprints",
         "work.read.context",
@@ -463,6 +471,7 @@ def test_expected_operations_matches_all_served_cli_command_paths():
         "work.read.claims",
         "work.read.claim",
         "work.read.next-work",
+        "work.read.next-work-explain",
         "work.project.next-work",
         "work.claim.start",
         "work.lifecycle.arbitrate",

@@ -155,6 +155,17 @@ def read_next_work(
     )
 
 
+def read_next_work_explain(
+    served_profile: ServedProfile, *, repo_id: str, sprint_id: int | None = None
+) -> dict[str, Any]:
+    """Invoke the atomic served aggregate for ``next-work --explain``."""
+    return asyncio.run(
+        _invoke_operation(
+            served_profile, "work.read.next-work-explain", {"sprint_id": sprint_id}, repo_id=repo_id
+        )
+    )
+
+
 def read_events(
     served_profile: ServedProfile,
     *,
@@ -472,8 +483,8 @@ def lifecycle_arbitrate(
 
 # The subset of served_routes.py's allowlist that doctor's served probe
 # checks for -- the exact catalog operations #1195 (and its #1247 completion
-# gap) wire through this facade (next-work contributes two:
-# work.read.next-work and work.project.next-work; item.status and
+# gap) wire through this facade (next-work contributes three:
+# work.read.next-work, work.read.next-work-explain, and work.project.next-work; item.status and
 # sprint.status share one operation, work.lifecycle.arbitrate;
 # claim.heartbeat, claim.handoff, and claim.release share one operation,
 # work.claim.arbitrate). Excludes event.observation.add: it is a registered
@@ -503,6 +514,7 @@ _DOCTOR_PROBE_COMMAND_PATHS = (
     "item.dep.list",
     "item.dep.remove",
     "next-work",
+    "next-work.explain",
     "claim.start",
     "item.status",
     "sprint.status",
