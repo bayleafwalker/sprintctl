@@ -258,6 +258,7 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
     names = [contract.name for contract in WORK_OPERATION_CONTRACTS]
     assert len(names) == len(set(names))
     assert {
+        "work.identity.current",
         "work.read.context",
         "work.maintain.check",
         "work.read.handoff",
@@ -298,6 +299,14 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         "work.batch.apply",
         "work.project.batch",
     }
+
+
+def test_work_identity_current_returns_authenticated_actor(conn):
+    app = _application(store=conn, backend=db)
+
+    result = app.invoke("work.identity.current", {}, _context(actor="served-actor"))
+
+    assert result == {"repo_id": "test-repo", "actor": "served-actor"}
 
 
 def test_served_handoff_uses_shared_bundle_and_authenticated_append_only_record(conn, active_sprint):

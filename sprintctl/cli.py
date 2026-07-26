@@ -953,7 +953,21 @@ def _served_sprint_status(config, sprint_id, new_status, actor, as_json) -> None
         sys.exit(1)
 
     context = _resolved_context(config)
-    actor = (actor or os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown").strip()
+    identity = _run_served(
+        "sprint status",
+        _served.identity_current,
+        config.served_profile,
+        repo_id=config.repo_id,
+        resolved_context=context,
+    )
+    authenticated_actor = identity["actor"]
+    if actor is not None and actor != authenticated_actor:
+        click.echo(
+            f"Note: served mode records the authenticated identity "
+            f"({authenticated_actor}); --actor {actor!r} was not sent and is ignored.",
+            err=True,
+        )
+    actor = authenticated_actor
     read_result = _run_served(
         "sprint status",
         _served.read_sprints,
@@ -2016,7 +2030,20 @@ def _served_item_status(config, item_id, new_status, actor, claim_id, claim_toke
     it = read_result["item"]
     current = it["status"]
     record_type = "item.done" if new_status == "done" else "item.transition"
-    actor_value = (actor or os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown").strip()
+    identity = _run_served(
+        "item status",
+        _served.identity_current,
+        config.served_profile,
+        repo_id=config.repo_id,
+        resolved_context=context,
+    )
+    actor_value = identity["actor"]
+    if actor is not None and actor != actor_value:
+        click.echo(
+            f"Note: served mode records the authenticated identity "
+            f"({actor_value}); --actor {actor!r} was not sent and is ignored.",
+            err=True,
+        )
     rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
     pending = _find_pending_served_item_status_record(
         rollout_paths.outbox_path,

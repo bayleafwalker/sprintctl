@@ -108,6 +108,15 @@ def test_read_sprints_shapes_arguments(fake_vuoro_client):
     }
 
 
+def test_identity_current_invokes_authenticated_operation(fake_vuoro_client):
+    result = served.identity_current(_profile(), repo_id="repo-x")
+
+    assert result == {
+        "operation": "work.identity.current",
+        "arguments": {},
+    }
+
+
 def test_sprint_create_sends_only_authoritative_sprint_fields(fake_vuoro_client):
     result = served.sprint_create(
         _profile(),
@@ -513,8 +522,9 @@ def test_expected_operations_matches_all_served_cli_command_paths():
         for route in routes_for(path)
     }
     assert served.EXPECTED_OPERATIONS == expected
-    assert len(served.EXPECTED_OPERATIONS) == 29
+    assert len(served.EXPECTED_OPERATIONS) == 30
     assert served.EXPECTED_OPERATIONS == {
+        "work.identity.current",
         "work.read.sprints",
         "work.sprint.create",
         "work.read.context",

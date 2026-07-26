@@ -440,6 +440,7 @@ class WorkApplication:
             )
         target = self._scoped_for(requested_repo_id)
         handlers = {
+            "work.identity.current": target._identity_current,
             "work.read.sprints": target._read_sprints,
             "work.read.item": target._read_item,
             "work.read.items": target._read_items,
@@ -484,6 +485,12 @@ class WorkApplication:
             raise
         except ValueError as exc:
             raise ApplicationRejection("validation-failed", str(exc), 422) from exc
+
+    def _identity_current(
+        self, _arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        """Return the authenticated work actor without exposing credentials."""
+        return {"repo_id": self.repo_id, "actor": context.identity.actor}
 
     def _read_sprints(
         self, arguments: dict[str, Any], _context: InvocationContext

@@ -82,6 +82,17 @@ def read_sprints(
     )
 
 
+def identity_current(
+    served_profile: ServedProfile, *, repo_id: str
+) -> dict[str, Any]:
+    """Return the authenticated work actor used by durable command records."""
+    return asyncio.run(
+        _invoke_operation(
+            served_profile, "work.identity.current", {}, repo_id=repo_id
+        )
+    )
+
+
 def sprint_create(
     served_profile: ServedProfile,
     *,
@@ -583,6 +594,7 @@ def lifecycle_arbitrate(
 # pilot.cutover-evidence), meaning `doctor` was not actually verifying the
 # catalog before commands ran. See docs/plans/served-mode-gaps-plan.md.
 _DOCTOR_PROBE_COMMAND_PATHS = (
+    "identity.current",
     "usage.context",
     "handoff",
     "handoff.record",
@@ -667,6 +679,7 @@ __all__ = [
     "read_events",
     "read_item",
     "read_items",
+    "identity_current",
     "read_claims",
     "read_claim",
     "read_context",

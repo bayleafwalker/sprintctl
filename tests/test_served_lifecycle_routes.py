@@ -62,6 +62,14 @@ def _configure_served_repo(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("SPRINTCTL_BACKEND", "served")
     monkeypatch.setenv("SPRINTCTL_VUORO_PROFILE", str(profile_path))
     monkeypatch.delenv("SPRINTCTL_URL", raising=False)
+    monkeypatch.setattr(
+        cli_module._served,
+        "identity_current",
+        lambda profile, *, repo_id=None: {
+            "repo_id": repo_id,
+            "actor": "served-actor",
+        },
+    )
 
 
 def _manifest_repo_uuid(tmp_path) -> str:
@@ -987,7 +995,7 @@ def test_served_item_status_active_to_done_appends_item_done_record(
 
     result = runner.invoke(
         cli,
-        ["item", "status", "--id", f"{tmp_path.name}#7", "--status", "done", "--actor", "worker", "--json"],
+        ["item", "status", "--id", f"{tmp_path.name}#7", "--status", "done", "--actor", "served-actor", "--json"],
     )
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
@@ -995,7 +1003,7 @@ def test_served_item_status_active_to_done_appends_item_done_record(
 
     assert captured["record"]["event_type"] == "item.done"
     assert captured["record"]["payload"]["payload"]["to_status"] == "done"
-    assert captured["record"]["actor"] == "worker"
+    assert captured["record"]["actor"] == "served-actor"
     assert captured["record"]["basis_revision"] == f"item:{item['aggregate_uuid']}@status:active"
 
     records = _outbox_records(tmp_path)
@@ -1026,7 +1034,7 @@ def test_served_item_status_pending_to_active_uses_item_transition_record(
     monkeypatch.setattr(cli_module._served, "lifecycle_arbitrate", fake_lifecycle_arbitrate)
 
     result = runner.invoke(
-        cli, ["item", "status", "--id", "3", "--status", "active", "--actor", "worker"]
+        cli, ["item", "status", "--id", "3", "--status", "active", "--actor", "served-actor"]
     )
     assert result.exit_code == 0, result.output
     assert "pending -> active" in result.output
@@ -1076,7 +1084,7 @@ def test_served_item_status_surfaces_a_rejected_decision(runner, tmp_path, monke
     )
 
     result = runner.invoke(
-        cli, ["item", "status", "--id", "4", "--status", "active", "--actor", "worker"]
+        cli, ["item", "status", "--id", "4", "--status", "active", "--actor", "served-actor"]
     )
     assert result.exit_code != 0
     assert "invalid-transition" in result.output
@@ -1098,7 +1106,7 @@ def test_served_item_status_preserves_failed_request_and_refuses_later_sequence(
 
     monkeypatch.setattr(cli_module._served, "lifecycle_arbitrate", failed_arbitration)
     first = runner.invoke(
-        cli, ["item", "status", "--id", "5", "--status", "done", "--actor", "worker"]
+        cli, ["item", "status", "--id", "5", "--status", "done", "--actor", "served-actor"]
     )
     assert first.exit_code != 0
     assert "preserving durable authority request" in first.output
@@ -1112,7 +1120,7 @@ def test_served_item_status_preserves_failed_request_and_refuses_later_sequence(
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not re-arbitrate")),
     )
     retry = runner.invoke(
-        cli, ["item", "status", "--id", "5", "--status", "done", "--actor", "worker"]
+        cli, ["item", "status", "--id", "5", "--status", "done", "--actor", "served-actor"]
     )
     assert retry.exit_code != 0
     assert "already has a durable authority request" in retry.output
@@ -1211,7 +1219,7 @@ def test_served_sprint_status_activate_appends_sprint_activate_record(
 
     result = runner.invoke(
         cli,
-        ["sprint", "status", "--id", "11", "--status", "active", "--actor", "operator", "--json"],
+        ["sprint", "status", "--id", "11", "--status", "active", "--actor", "served-actor", "--json"],
     )
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
@@ -1252,7 +1260,7 @@ def test_served_sprint_status_close_surfaces_boundary_event(runner, tmp_path, mo
 
     result = runner.invoke(
         cli,
-        ["sprint", "status", "--id", "12", "--status", "closed", "--actor", "operator", "--json"],
+        ["sprint", "status", "--id", "12", "--status", "closed", "--actor", "served-actor", "--json"],
     )
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
@@ -1287,7 +1295,7 @@ def test_served_sprint_status_not_found(runner, tmp_path, monkeypatch):
     )
 
     result = runner.invoke(
-        cli, ["sprint", "status", "--id", "42", "--status", "active", "--actor", "operator"]
+        cli, ["sprint", "status", "--id", "42", "--status", "active", "--actor", "served-actor"]
     )
     assert result.exit_code != 0
     assert "Sprint #42 not found" in result.output

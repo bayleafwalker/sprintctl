@@ -50,6 +50,11 @@ actor, nested command actor and authenticated identity must match; for
 single-command invocation's basis revision and idempotency key must match the
 canonical record. Claim proof bytes are resolved by service composition and
 are never accepted in authority-command invocation arguments or the catalog.
+`work.identity.current` returns only the authenticated work actor and
+repository scope. Served lifecycle clients use it before minting a durable
+command so a local OS username or operator-supplied label cannot create a
+permanently unflushable actor-mismatch record; credentials and token material
+are never returned.
 
 `work.claim.start` is the transitional Click-free equivalent of the legacy
 one-shot command: it creates an exclusive execute claim for the authenticated
@@ -97,6 +102,7 @@ record contracts and authority handlers during rollout:
 | --- | --- |
 | `sprintctl sprint list --json` | `work.read.sprints` |
 | `sprintctl item show --id ID --json` | `work.read.item` |
+| authenticated durable-command actor discovery | `work.identity.current` |
 | `sprintctl next-work --json` | `work.read.next-work` |
 | claim start | `work.claim.start` |
 | claim heartbeat, handoff and release | `work.claim.arbitrate` |

@@ -153,6 +153,17 @@ _REPO_RESULTS = _result_schema(
 
 WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
     WorkOperationContract(
+        "work.identity.current",
+        _object_schema({}),
+        _result_schema(
+            ("repo_id", "actor"),
+            {"repo_id": {"type": "string"}, "actor": {"type": "string"}},
+        ),
+        "work:read",
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
         "work.read.sprints",
         _object_schema(
             {

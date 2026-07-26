@@ -49,6 +49,11 @@ class ServedRoute:
 
 
 SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
+    ServedRoute(
+        "identity.current",
+        "work.identity.current",
+        notes="Internal dependency for authenticated durable-command actor selection.",
+    ),
     ServedRoute("usage.context", "work.read.context", precondition="project_path is None"),
     ServedRoute(
         "usage.context",
