@@ -75,8 +75,8 @@
     "enabled": true,
     "worker_routes": ["bulk"],
     "commands": {
-      "sprintctl.served.catalog.tests": "uv run pytest tests/test_served_lifecycle_routes.py tests/test_vuoro_work_adapter_integration.py -q",
-      "sprintctl.suite": "uv run pytest -q"
+      "sprintctl.served.catalog.tests": "uv run --extra dev --extra served pytest tests/test_served_lifecycle_routes.py tests/test_vuoro_work_adapter_integration.py -q",
+      "sprintctl.suite": "uv run --extra dev --extra served pytest -q"
     },
     "protected_paths": [
       "sprintctl.dispatch.json",
