@@ -165,7 +165,11 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     "event add": "catalog",
     "event log": "catalog",
     "event list": "catalog",
-    "authority status": "unavailable",
+    # This reads only the local durable outbox and terminal-decision receipts.
+    # It is the diagnostic needed to recover an ordered served sync stream;
+    # unlike the other authority administration commands it never opens a
+    # database backend or mutates authority state.
+    "authority status": "local",
     "authority mode": "unavailable",
     "authority submit": "unavailable",
     "authority sync": "catalog",

@@ -551,6 +551,46 @@ def test_served_authority_sync_clears_sidecar_on_rejected_decision(
     assert result.exit_code == 0, result.output
     # Even a would-be-recovery-eligible type is cleared once rejected.
     assert list(_credential_dir(tmp_path).glob("*")) == []
+    assert cli_module._authority_config.is_terminal_authority_decision(
+        _rollout_paths(tmp_path), event_id=command.event_id
+    )
+
+
+@_requires_312
+def test_served_authority_sync_skips_a_terminal_rejection_and_replays_followup(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    rejected = _mint_command(
+        tmp_path,
+        record_type="item.transition",
+        refs=_item_refs(4),
+        payload={"to_status": "active"},
+        actor="wrong-actor",
+    )
+    followup = _mint_command(
+        tmp_path,
+        record_type="item.transition",
+        refs=_item_refs(5),
+        payload={"to_status": "active"},
+    )
+    cli_module._authority_config.mark_terminal_authority_decision(
+        _rollout_paths(tmp_path), event_id=rejected.event_id, outcome="rejected"
+    )
+    captured = {}
+
+    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key, transient_credentials=None):
+        captured["event_ids"] = [record["event_id"] for record in records]
+        return {"repo_id": "repo-x", "results": [_decision_result(followup)]}
+
+    monkeypatch.setattr(cli_module._served, "batch_apply", fake_batch_apply)
+
+    result = runner.invoke(cli, ["authority", "sync"])
+    assert result.exit_code == 0, result.output
+    assert captured["event_ids"] == [followup.event_id]
+    assert cli_module._authority_config.is_terminal_authority_decision(
+        _rollout_paths(tmp_path), event_id=followup.event_id
+    )
 
 
 # ---------------------------------------------------------------------------

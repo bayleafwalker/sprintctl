@@ -3419,10 +3419,28 @@ def authority_status(as_json: bool) -> None:
     payload = status.to_dict()
     payload["outbox_records"] = 0
     payload["pending_credentials"] = 0
+    payload["pending_records"] = []
     if status.paths.outbox_path.exists():
         producer = _outbox.open_outbox(status.paths.outbox_path)
         try:
-            payload["outbox_records"] = len(_outbox.list_records(producer))
+            records = _outbox.list_records(producer)
+            payload["outbox_records"] = len(records)
+            payload["pending_records"] = [
+                {
+                    "event_id": record.event_id,
+                    "origin_stream_id": record.origin_stream_id,
+                    "origin_seq": record.origin_seq,
+                    "record_class": record.record_class,
+                    "event_type": record.event_type,
+                }
+                for record in records
+                if not (
+                    record.record_class == _outbox.AUTHORITY_COMMAND
+                    and _authority_config.is_terminal_authority_decision(
+                        status.paths, event_id=record.event_id
+                    )
+                )
+            ]
         finally:
             producer.close()
     if status.paths.credential_dir.exists():
@@ -3434,6 +3452,13 @@ def authority_status(as_json: bool) -> None:
     else:
         click.echo(f"Authority command mode: {payload['mode']}")
         click.echo(f"Durable producer records: {payload['outbox_records']}")
+        click.echo(f"Pending producer records: {len(payload['pending_records'])}")
+        for record in payload["pending_records"]:
+            click.echo(
+                "  "
+                f"{record['origin_stream_id']}#{record['origin_seq']} "
+                f"{record['event_type']} ({record['event_id']})"
+            )
         click.echo(f"Pending proof sidecars: {payload['pending_credentials']}")
 
 
@@ -3788,9 +3813,17 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
     for decision in decisions:
         event_id = decision.get("event_id")
         record = commands_by_event_id.get(event_id)
+        if record is None:
+            raise click.ClickException(
+                "served authority sync returned a decision for a record that was not sent"
+            )
+        _authority_config.mark_terminal_authority_decision(
+            rollout_paths,
+            event_id=record.event_id,
+            outcome=decision.get("outcome"),
+        )
         keep_for_recovery = (
             decision.get("outcome") == "accepted"
-            and record is not None
             and (
                 record.event_type == "claim.acquire"
                 or (
