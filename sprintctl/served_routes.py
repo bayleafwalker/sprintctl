@@ -170,10 +170,16 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     # unlike the other authority administration commands it never opens a
     # database backend or mutates authority state.
     "authority status": "local",
-    "authority mode": "unavailable",
+    # Per-repository rollout configuration is local state.  It must remain
+    # reachable in served consumers so a named pilot can be enabled without a
+    # fictitious catalog operation.
+    "authority mode": "local",
     "authority submit": "unavailable",
     "authority sync": "catalog",
-    "authority reconcile": "catalog",
+    # Reconciliation reads the served authority ledger through its dedicated
+    # client and writes only local terminal receipts; it is not a catalog
+    # operation and must not be rejected by the generic served guard.
+    "authority reconcile": "local",
     "authority recover-proof": "unavailable",
     "authority clear-proof": "unavailable",
     "pilot status": "unavailable",

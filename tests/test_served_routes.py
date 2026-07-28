@@ -152,3 +152,23 @@ def test_catalog_classified_command_still_never_opens_store_in_served_mode(
 
     assert result.exit_code == 0, result.output
     assert result.output.strip() == "[]"
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 12),
+    reason="served mode requires Python 3.12+",
+)
+def test_authority_mode_is_a_local_served_consumer_command(runner, tmp_path, monkeypatch):
+    """A non-sprintctl manifest can enable its named local rollout pilot."""
+    _configure_served_repo(tmp_path, monkeypatch)
+    (tmp_path / "vuoro.dispatch.json").write_text(
+        '{"schema_version": 1, "repo_id": "vuoro"}', encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        cli_module, "_get_store", lambda _obj: pytest.fail("authority mode opened a store")
+    )
+
+    result = runner.invoke(cli, ["authority", "mode", "--set", "enforce", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert '"mode": "enforce"' in result.output
