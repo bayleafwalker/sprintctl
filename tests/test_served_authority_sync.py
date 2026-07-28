@@ -295,6 +295,14 @@ def test_served_authority_reconcile_quarantines_cursor_only_historic_records(
         _rollout_paths(tmp_path), event_id=second.event_id
     )
 
+    # The immutable rows remain for audit, but terminal local receipts must
+    # not be surfaced as a future pending replay candidate.
+    rerun = runner.invoke(cli, ["authority", "reconcile", "--json"])
+    assert rerun.exit_code == 0, rerun.output
+    rerun_payload = json.loads(rerun.output)
+    assert rerun_payload["pending_after_served_high_water"] == []
+    assert rerun_payload["absent_from_served_ledger"] == []
+
 
 def test_authority_quarantine_is_local_only_and_requires_apply(runner, tmp_path, monkeypatch):
     _configure_served_repo(tmp_path, monkeypatch)

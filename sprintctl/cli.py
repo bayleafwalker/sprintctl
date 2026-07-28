@@ -3503,8 +3503,16 @@ def authority_reconcile(obj, apply_changes: bool, as_json: bool) -> None:
     paths = _authority_config.authority_command_paths(cwd=Path.cwd())
     producer = _outbox.open_outbox(paths.outbox_path)
     try:
-        local = [r for r in _outbox.list_records(producer)
-                 if r.record_class == _outbox.AUTHORITY_COMMAND]
+        # Terminal receipts are local dispositions, not retry candidates.  Keep
+        # immutable command rows for audit, but never report a quarantined or
+        # served-confirmed row as pending on a later reconciliation.
+        local = [
+            r for r in _outbox.list_records(producer)
+            if r.record_class == _outbox.AUTHORITY_COMMAND
+            and not _authority_config.is_terminal_authority_decision(
+                paths, event_id=r.event_id
+            )
+        ]
     finally:
         producer.close()
 
