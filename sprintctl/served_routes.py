@@ -181,6 +181,7 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     # operation and must not be rejected by the generic served guard.
     "authority reconcile": "local",
     "authority quarantine": "local",
+    "authority rollover": "local",
     "authority recover-proof": "unavailable",
     "authority clear-proof": "unavailable",
     "pilot status": "unavailable",

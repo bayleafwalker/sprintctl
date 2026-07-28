@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -317,6 +318,32 @@ def test_authority_quarantine_is_local_only_and_requires_apply(runner, tmp_path,
     assert cli_module._authority_config.is_terminal_authority_decision(
         _rollout_paths(tmp_path), event_id=command.event_id
     )
+
+
+def test_authority_rollover_archives_only_a_fully_terminal_stream(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    command = _mint_command(
+        tmp_path, record_type="item.done", refs=_item_refs(4), payload={"to_status": "done"}
+    )
+    paths = _rollout_paths(tmp_path)
+    cli_module._authority_config.mark_terminal_authority_decision(
+        paths, event_id=command.event_id, outcome="quarantined-divergent-stream",
+        quarantine_reason="test terminal recovery",
+    )
+    argv = ["authority", "rollover", "--reason", "test stream exhausted", "--json"]
+    preview = runner.invoke(cli, argv)
+    assert preview.exit_code == 0, preview.output
+    assert json.loads(preview.output)["applied"] is False
+    applied = runner.invoke(cli, [*argv[:-1], "--apply", "--json"])
+    assert applied.exit_code == 0, applied.output
+    payload = json.loads(applied.output)
+    assert payload["applied"] is True
+    assert Path(payload["archive_path"]).is_file()
+    producer = outbox.open_outbox(paths.outbox_path)
+    try:
+        assert outbox.list_records(producer) == []
+    finally:
+        producer.close()
 
 
 # ---------------------------------------------------------------------------

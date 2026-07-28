@@ -3693,6 +3693,65 @@ def authority_quarantine(stream_id: str, reason: str, apply_changes: bool, as_js
         click.echo(f"{action} {len(records)} local authority command(s) in stream {canonical_stream_id}.")
 
 
+@authority_commands.command("rollover")
+@click.option("--reason", required=True, help="Auditable reason the terminal stream is being retired.")
+@click.option("--apply", "apply_changes", is_flag=True, default=False,
+              help="Archive the terminal local outbox; without it, only audit rollover fitness.")
+@click.option("--json", "as_json", is_flag=True, default=False)
+def authority_rollover(reason: str, apply_changes: bool, as_json: bool) -> None:
+    """Start a fresh producer stream after every command in the old one is terminal.
+
+    The old SQLite outbox is retained byte-for-byte under ``.sprintctl``.  This
+    is the only local recovery for a quarantined stream whose next sequence
+    cannot be admitted by the served cursor; it never replays or mutates the
+    old stream.
+    """
+    if not reason.strip():
+        raise click.ClickException("reason must be non-empty")
+    paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+    producer = _outbox.open_outbox(paths.outbox_path)
+    try:
+        records = [record for record in _outbox.list_records(producer)
+                   if record.record_class == _outbox.AUTHORITY_COMMAND]
+        origin_stream_id = _outbox.get_origin_stream_id(producer)
+    finally:
+        producer.close()
+    if origin_stream_id is None or not records:
+        raise click.ClickException("authority outbox has no command stream to roll over")
+    streams = {record.origin_stream_id for record in records}
+    if streams != {origin_stream_id}:
+        raise click.ClickException("authority outbox contains multiple command streams; manual recovery required")
+    pending = [record for record in records if not _authority_config.is_terminal_authority_decision(
+        paths, event_id=record.event_id
+    )]
+    if pending:
+        raise click.ClickException("authority stream has pending commands; reconcile or quarantine them first")
+    archive = paths.state_dir / f"authority-command-outbox.{origin_stream_id}.quarantined.db"
+    if apply_changes:
+        try:
+            archive = _authority_config.archive_terminal_authority_outbox(
+                paths, origin_stream_id=origin_stream_id, reason=reason,
+            )
+        except _authority_config.AuthorityCommandConfigError as exc:
+            raise click.ClickException(str(exc)) from exc
+        fresh = _outbox.open_outbox(paths.outbox_path)
+        fresh.close()
+    payload = {
+        "local_only": True,
+        "origin_stream_id": origin_stream_id,
+        "reason": reason.strip(),
+        "terminal_command_count": len(records),
+        "archive_path": str(archive),
+        "fresh_outbox_path": str(paths.outbox_path),
+        "applied": apply_changes,
+    }
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+    else:
+        action = "Rolled over" if apply_changes else "Would roll over"
+        click.echo(f"{action} terminal authority stream {origin_stream_id}.")
+
+
 @authority_commands.command("mode")
 @click.option(
     "--set",

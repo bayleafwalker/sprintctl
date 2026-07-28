@@ -560,6 +560,51 @@ def mark_terminal_authority_decision(
             temporary.unlink()
 
 
+def archive_terminal_authority_outbox(
+    paths: AuthorityCommandPaths, *, origin_stream_id: str, reason: str,
+) -> Path:
+    """Archive a fully-terminal authority outbox before starting a new stream.
+
+    The immutable SQLite database is retained under ``.sprintctl``.  This
+    function never edits producer records or served state; callers must first
+    prove every authority command has a terminal local receipt.
+    """
+    if not isinstance(reason, str) or not reason.strip():
+        raise AuthorityCommandConfigError("authority stream rollover requires a non-empty reason")
+    canonical_stream = _canonical_event_id(origin_stream_id)
+    source = paths.outbox_path
+    if not source.exists():
+        raise AuthorityCommandConfigError("authority outbox does not exist")
+    paths.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    archive = paths.state_dir / f"authority-command-outbox.{canonical_stream}.quarantined.db"
+    if archive.exists():
+        raise AuthorityCommandConfigError(f"authority outbox archive already exists: {archive}")
+    os.replace(source, archive)
+    os.chmod(archive, 0o600)
+    manifest = paths.state_dir / f"authority-command-outbox.{canonical_stream}.rollover.json"
+    payload = json.dumps({
+        "origin_stream_id": canonical_stream,
+        "archived_outbox": archive.name,
+        "reason": reason.strip(),
+    }, sort_keys=True) + "\n"
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{manifest.name}.", dir=paths.state_dir, text=True)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload); handle.flush(); os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, manifest)
+        directory_fd = os.open(paths.state_dir, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return archive
+
+
 def is_terminal_authority_decision(paths: AuthorityCommandPaths, *, event_id: str | UUID) -> bool:
     path = _terminal_path(paths, event_id)
     if not path.exists():
@@ -593,6 +638,7 @@ __all__ = [
     "PendingAuthorityCredential",
     "authority_command_paths",
     "authority_command_status",
+    "archive_terminal_authority_outbox",
     "load_authority_command_config",
     "load_pending_authority_credential",
     "is_terminal_authority_decision",
