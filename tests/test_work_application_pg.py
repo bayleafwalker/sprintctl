@@ -64,6 +64,7 @@ def store_factory():
             authority_repo_uuid=str(
                 uuid.uuid5(uuid.NAMESPACE_URL, f"sprintctl-repo:{repo_id}")
             ),
+            connection_factory=lambda: psycopg.connect(_PG_URL, row_factory=dict_row),
         )
         pg.init_db(store)
         return store
@@ -446,12 +447,23 @@ def test_authenticated_actor_binding_rejects_before_pg_mutation(
         key = batch_idempotency_key([record])
     context = _context(authenticated_actor, record.basis_revision, key)
 
-    with pytest.raises(ApplicationRejection) as rejected:
-        _application(store, credentials).invoke(operation, arguments, context)
-
-    assert rejected.value.code == expected_code
+    if operation == "work.claim.arbitrate":
+        with pytest.raises(ApplicationRejection) as rejected:
+            _application(store, credentials).invoke(operation, arguments, context)
+        assert rejected.value.code == expected_code
+    else:
+        # Batch application deliberately lets authority commands reach
+        # arbitration so the producer stream receives a durable rejection.
+        result = _application(store, credentials).invoke(operation, arguments, context)
+        decision = result["results"][0]
+        # Authority binds every actor-bearing claim field as one durable
+        # actor-mismatch decision; the direct route preserves its more
+        # granular pre-backend claim-agent rejection.
+        assert decision["reason_code"] == "actor-mismatch"
+        assert decision["outcome"] == "rejected"
     assert pg.list_claims(store, item_id, active_only=False) == []
-    assert authority.list_authority_decisions(store, after_offset=0, limit=None) == []
+    decisions = authority.list_authority_decisions(store, after_offset=0, limit=None)
+    assert len(decisions) == (0 if operation == "work.claim.arbitrate" else 1)
     store.conn.close()
 
 

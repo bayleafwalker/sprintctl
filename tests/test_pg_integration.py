@@ -1174,7 +1174,7 @@ class TestWorkItem:
         audit = next(event for event in events if event["id"] == edited["event_id"])
         assert audit["event_type"] == contracts.ITEM_EDITED_EVENT_TYPE
         assert audit["actor"] == "pg-editor"
-        assert set(audit["payload"]) == {
+        assert set(json.loads(audit["payload"])) == {
             "summary",
             "field",
             "previous_description",
