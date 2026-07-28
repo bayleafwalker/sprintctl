@@ -3633,6 +3633,66 @@ def authority_reconcile(obj, apply_changes: bool, as_json: bool) -> None:
                    f"{len(pending)} pending, {len(conflicts)} conflicts.")
 
 
+@authority_commands.command("quarantine")
+@click.option("--stream-id", required=True, help="Origin stream UUID to close locally.")
+@click.option("--reason", required=True, help="Auditable reason the stream cannot be reconciled.")
+@click.option("--apply", "apply_changes", is_flag=True, default=False,
+              help="Write local quarantine receipts; without it, only audit the target.")
+@click.option("--json", "as_json", is_flag=True, default=False)
+def authority_quarantine(stream_id: str, reason: str, apply_changes: bool, as_json: bool) -> None:
+    """Quarantine one irreconcilable local authority stream without replaying it.
+
+    This is intentionally local-only.  It neither reads nor writes served
+    state, leaves immutable outbox rows untouched, and requires an explicit
+    rationale recorded beside every terminal receipt.  Use only after a
+    served-led reconciliation audit cannot establish a safe outcome.
+    """
+    try:
+        canonical_stream_id = str(uuid.UUID(stream_id))
+    except (TypeError, ValueError) as exc:
+        raise click.ClickException("stream-id must be a UUID") from exc
+    if canonical_stream_id != stream_id:
+        raise click.ClickException("stream-id must be a canonical UUID")
+    if not reason.strip():
+        raise click.ClickException("reason must be non-empty")
+    paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+    producer = _outbox.open_outbox(paths.outbox_path)
+    try:
+        records = [
+            record for record in _outbox.list_records(producer)
+            if record.record_class == _outbox.AUTHORITY_COMMAND
+            and record.origin_stream_id == canonical_stream_id
+            and not _authority_config.is_terminal_authority_decision(paths, event_id=record.event_id)
+        ]
+    finally:
+        producer.close()
+    if not records:
+        raise click.ClickException("no pending authority commands found for stream-id")
+    if apply_changes:
+        for record in records:
+            _authority_config.mark_terminal_authority_decision(
+                paths, event_id=record.event_id, outcome="quarantined-divergent-stream",
+                quarantine_reason=reason,
+            )
+            _authority_config.remove_pending_authority_credential(paths, event_id=record.event_id)
+    payload = {
+        "local_only": True,
+        "stream_id": canonical_stream_id,
+        "reason": reason.strip(),
+        "records": [
+            {"event_id": record.event_id, "origin_seq": record.origin_seq,
+             "event_type": record.event_type}
+            for record in records
+        ],
+        "applied": apply_changes,
+    }
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+    else:
+        action = "Quarantined" if apply_changes else "Would quarantine"
+        click.echo(f"{action} {len(records)} local authority command(s) in stream {canonical_stream_id}.")
+
+
 @authority_commands.command("mode")
 @click.option(
     "--set",

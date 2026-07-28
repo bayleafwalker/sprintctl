@@ -180,6 +180,7 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     # client and writes only local terminal receipts; it is not a catalog
     # operation and must not be rejected by the generic served guard.
     "authority reconcile": "local",
+    "authority quarantine": "local",
     "authority recover-proof": "unavailable",
     "authority clear-proof": "unavailable",
     "pilot status": "unavailable",

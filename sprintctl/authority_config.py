@@ -505,6 +505,7 @@ def remove_pending_authority_credential(
 def mark_terminal_authority_decision(
     paths: AuthorityCommandPaths, *, event_id: str | UUID, outcome: str,
     served_decision: Mapping[str, object] | None = None,
+    quarantine_reason: str | None = None,
 ) -> None:
     """Durably acknowledge a direct terminal response without altering outbox.
 
@@ -512,12 +513,22 @@ def mark_terminal_authority_decision(
     command that was already conclusively accepted or rejected, while an
     unknown transport outcome has no receipt and remains replayable.
     """
-    if outcome not in {"accepted", "rejected", "absent-from-served-ledger"}:
+    if outcome not in {
+        "accepted", "rejected", "absent-from-served-ledger", "quarantined-divergent-stream",
+    }:
         raise AuthorityCommandConfigError(
-            "terminal authority outcome must be accepted, rejected, or absent-from-served-ledger"
+            "terminal authority outcome must be accepted, rejected, absent-from-served-ledger, "
+            "or quarantined-divergent-stream"
         )
     if outcome == "absent-from-served-ledger" and served_decision is not None:
         raise AuthorityCommandConfigError("an absent served record cannot carry a served decision")
+    if outcome == "quarantined-divergent-stream":
+        if not isinstance(quarantine_reason, str) or not quarantine_reason.strip():
+            raise AuthorityCommandConfigError("a quarantined stream requires a non-empty reason")
+        if served_decision is not None:
+            raise AuthorityCommandConfigError("a quarantined stream cannot carry a served decision")
+    elif quarantine_reason is not None:
+        raise AuthorityCommandConfigError("only a quarantined stream may carry a quarantine reason")
     path = _terminal_path(paths, event_id)
     paths.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     paths.terminal_dir.mkdir(mode=0o700, exist_ok=True)
@@ -529,6 +540,8 @@ def mark_terminal_authority_decision(
         # Durable local recovery evidence, never an authority decision of its
         # own.  The served decision remains authoritative.
         payload_value["served_decision"] = dict(served_decision)
+    if quarantine_reason is not None:
+        payload_value["quarantine_reason"] = quarantine_reason.strip()
     payload = json.dumps(payload_value, sort_keys=True) + "\n"
     fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=paths.terminal_dir, text=True)
     temporary = Path(temporary_name)
@@ -557,7 +570,15 @@ def is_terminal_authority_decision(paths: AuthorityCommandPaths, *, event_id: st
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise AuthorityCommandConfigError(f"invalid authority terminal receipt {path}: {exc}") from exc
-    if not isinstance(value, dict) or value.get("event_id") != _canonical_event_id(event_id) or value.get("outcome") not in {"accepted", "rejected", "absent-from-served-ledger"}:
+    if not isinstance(value, dict) or value.get("event_id") != _canonical_event_id(event_id):
+        raise AuthorityCommandConfigError(f"invalid authority terminal receipt {path}")
+    outcome = value.get("outcome")
+    if outcome not in {"accepted", "rejected", "absent-from-served-ledger", "quarantined-divergent-stream"}:
+        raise AuthorityCommandConfigError(f"invalid authority terminal receipt {path}")
+    if outcome == "quarantined-divergent-stream":
+        if not isinstance(value.get("quarantine_reason"), str) or not value["quarantine_reason"].strip():
+            raise AuthorityCommandConfigError(f"invalid authority terminal receipt {path}")
+    elif "quarantine_reason" in value:
         raise AuthorityCommandConfigError(f"invalid authority terminal receipt {path}")
     return True
 

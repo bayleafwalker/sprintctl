@@ -295,6 +295,30 @@ def test_served_authority_reconcile_quarantines_cursor_only_historic_records(
     )
 
 
+def test_authority_quarantine_is_local_only_and_requires_apply(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    command = _mint_command(
+        tmp_path, record_type="item.done", refs=_item_refs(4), payload={"to_status": "done"}
+    )
+    argv = [
+        "authority", "quarantine", "--stream-id", command.origin_stream_id,
+        "--reason", "served audit has no authoritative disposition", "--json",
+    ]
+    preview = runner.invoke(cli, argv)
+    assert preview.exit_code == 0, preview.output
+    assert json.loads(preview.output)["applied"] is False
+    assert not cli_module._authority_config.is_terminal_authority_decision(
+        _rollout_paths(tmp_path), event_id=command.event_id
+    )
+
+    applied = runner.invoke(cli, [*argv[:-1], "--apply", "--json"])
+    assert applied.exit_code == 0, applied.output
+    assert json.loads(applied.output)["local_only"] is True
+    assert cli_module._authority_config.is_terminal_authority_decision(
+        _rollout_paths(tmp_path), event_id=command.event_id
+    )
+
+
 # ---------------------------------------------------------------------------
 # Mixed observation + command batch
 # ---------------------------------------------------------------------------
