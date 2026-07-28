@@ -196,6 +196,68 @@ def test_served_authority_sync_flushes_observation_only_batch(runner, tmp_path, 
     assert captured["idempotency_key"] == expected_key
 
 
+@_requires_312
+def test_served_authority_reconcile_uses_served_decision_as_local_receipt(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    command = _mint_command(
+        tmp_path,
+        record_type="item.done",
+        refs=_item_refs(4),
+        payload={"to_status": "done"},
+    )
+
+    monkeypatch.setattr(
+        cli_module._served, "read_records",
+        lambda *args, **kwargs: {"records": [{"ingest_offset": 12, "record": cli_module._served_record_argument(command)}]},
+    )
+    monkeypatch.setattr(
+        cli_module._served, "read_decisions",
+        lambda *args, **kwargs: {"decisions": [_decision_result(command, outcome="rejected")]},
+    )
+
+    result = runner.invoke(cli, ["authority", "reconcile", "--apply", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["served_authoritative"] is True
+    assert payload["applied_confirmed"] == 1
+    assert cli_module._authority_config.is_terminal_authority_decision(
+        _rollout_paths(tmp_path), event_id=command.event_id
+    )
+
+
+@_requires_312
+def test_served_authority_reconcile_quarantines_only_old_absent_records(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    first = _mint_command(
+        tmp_path, record_type="item.done", refs=_item_refs(4), payload={"to_status": "done"}
+    )
+    second = _mint_command(
+        tmp_path, record_type="item.done", refs=_item_refs(5), payload={"to_status": "done"}
+    )
+    remote = cli_module._served_record_argument(second)
+    monkeypatch.setattr(
+        cli_module._served, "read_records",
+        lambda *args, **kwargs: {"records": [{"ingest_offset": 12, "record": remote}]},
+    )
+    monkeypatch.setattr(
+        cli_module._served, "read_decisions",
+        lambda *args, **kwargs: {"decisions": [_decision_result(second)]},
+    )
+
+    result = runner.invoke(cli, ["authority", "reconcile", "--apply", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["applied_absent"] == 1
+    assert payload["applied_confirmed"] == 1
+    assert cli_module._authority_config.is_terminal_authority_decision(
+        _rollout_paths(tmp_path), event_id=first.event_id
+    )
+
+
 # ---------------------------------------------------------------------------
 # Mixed observation + command batch
 # ---------------------------------------------------------------------------

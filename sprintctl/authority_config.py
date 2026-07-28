@@ -504,6 +504,7 @@ def remove_pending_authority_credential(
 
 def mark_terminal_authority_decision(
     paths: AuthorityCommandPaths, *, event_id: str | UUID, outcome: str,
+    served_decision: Mapping[str, object] | None = None,
 ) -> None:
     """Durably acknowledge a direct terminal response without altering outbox.
 
@@ -511,13 +512,24 @@ def mark_terminal_authority_decision(
     command that was already conclusively accepted or rejected, while an
     unknown transport outcome has no receipt and remains replayable.
     """
-    if outcome not in {"accepted", "rejected"}:
-        raise AuthorityCommandConfigError("terminal authority outcome must be accepted or rejected")
+    if outcome not in {"accepted", "rejected", "absent-from-served-ledger"}:
+        raise AuthorityCommandConfigError(
+            "terminal authority outcome must be accepted, rejected, or absent-from-served-ledger"
+        )
+    if outcome == "absent-from-served-ledger" and served_decision is not None:
+        raise AuthorityCommandConfigError("an absent served record cannot carry a served decision")
     path = _terminal_path(paths, event_id)
     paths.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     paths.terminal_dir.mkdir(mode=0o700, exist_ok=True)
     _require_private(paths.terminal_dir, directory=True)
-    payload = json.dumps({"event_id": _canonical_event_id(event_id), "outcome": outcome}, sort_keys=True) + "\n"
+    payload_value: dict[str, object] = {
+        "event_id": _canonical_event_id(event_id), "outcome": outcome,
+    }
+    if served_decision is not None:
+        # Durable local recovery evidence, never an authority decision of its
+        # own.  The served decision remains authoritative.
+        payload_value["served_decision"] = dict(served_decision)
+    payload = json.dumps(payload_value, sort_keys=True) + "\n"
     fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=paths.terminal_dir, text=True)
     temporary = Path(temporary_name)
     try:
@@ -545,7 +557,7 @@ def is_terminal_authority_decision(paths: AuthorityCommandPaths, *, event_id: st
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise AuthorityCommandConfigError(f"invalid authority terminal receipt {path}: {exc}") from exc
-    if not isinstance(value, dict) or value.get("event_id") != _canonical_event_id(event_id) or value.get("outcome") not in {"accepted", "rejected"}:
+    if not isinstance(value, dict) or value.get("event_id") != _canonical_event_id(event_id) or value.get("outcome") not in {"accepted", "rejected", "absent-from-served-ledger"}:
         raise AuthorityCommandConfigError(f"invalid authority terminal receipt {path}")
     return True
 

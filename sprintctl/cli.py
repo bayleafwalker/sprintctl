@@ -31,6 +31,7 @@ from . import dualwrite as _dualwrite
 from . import maintain as _maintain
 from . import observations as _observations
 from . import outbox as _outbox
+from . import pg as _pg
 from . import pilot as _pilot
 from . import project as _project
 from . import projection as _projection
@@ -3460,6 +3461,155 @@ def authority_status(as_json: bool) -> None:
                 f"{record['event_type']} ({record['event_id']})"
             )
         click.echo(f"Pending proof sidecars: {payload['pending_credentials']}")
+
+
+def _served_authority_pages(
+    read_page, *, page_size: int = 250, offset_key: str = "ingest_offset",
+) -> list[dict[str, object]]:
+    """Read an offset-paginated served authority stream to completion."""
+    after = 0
+    values: list[dict[str, object]] = []
+    while True:
+        page = read_page(after, page_size)
+        if not isinstance(page, list):
+            raise click.ClickException("served authority audit returned an invalid page")
+        values.extend(page)
+        if len(page) < page_size:
+            return values
+        last = page[-1]
+        try:
+            after = int(last[offset_key])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise click.ClickException("served authority audit returned an invalid offset") from exc
+
+
+@authority_commands.command("reconcile")
+@click.option("--apply", "apply_changes", is_flag=True, default=False,
+              help="Write local receipts from the served ledger after a clean audit.")
+@click.option("--json", "as_json", is_flag=True, default=False)
+@click.pass_obj
+def authority_reconcile(obj, apply_changes: bool, as_json: bool) -> None:
+    """Audit the local outbox against the authoritative served ledger.
+
+    This is deliberately served-led.  It never replays a record, changes a
+    served cursor, or reconstructs a decision.  ``--apply`` writes only local
+    receipts: served decisions settle matching commands; an old local sequence
+    below the served stream high-water but absent from that ledger is marked as
+    absent, so it cannot block newer served work forever.
+    """
+    config = _served_config_or_none(obj)
+    if config is None:
+        raise click.ClickException("authority reconcile requires a served backend")
+    paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+    producer = _outbox.open_outbox(paths.outbox_path)
+    try:
+        local = [r for r in _outbox.list_records(producer)
+                 if r.record_class == _outbox.AUTHORITY_COMMAND]
+    finally:
+        producer.close()
+
+    remote_entries = _served_authority_pages(
+        lambda after, limit: _served.read_records(
+            config.served_profile, repo_id=config.repo_id,
+            after_offset=after, limit=limit,
+        ).get("records"),
+    )
+    decisions = _served_authority_pages(
+        lambda after, limit: _served.read_decisions(
+            config.served_profile, repo_id=config.repo_id,
+            after_offset=after, limit=limit,
+        ).get("decisions"), offset_key="decision_ingest_offset",
+    )
+    remote_by_event: dict[str, tuple[_outbox.OutboxRecord, int]] = {}
+    remote_high_water: dict[str, int] = {}
+    for entry in remote_entries:
+        try:
+            record_data = entry["record"]
+            if not isinstance(record_data, dict):
+                raise TypeError("record is not an object")
+            record = _outbox.OutboxRecord(**record_data)
+            offset = int(entry["ingest_offset"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise click.ClickException("served authority audit returned an invalid record") from exc
+        remote_by_event[record.event_id] = (record, offset)
+        remote_high_water[record.origin_stream_id] = max(
+            remote_high_water.get(record.origin_stream_id, 0), record.origin_seq
+        )
+    decisions_by_request = {
+        str(value["request_event_id"]): value for value in decisions
+        if isinstance(value.get("request_event_id"), str)
+    }
+
+    allowed = frozenset({_outbox.OBSERVATION, _outbox.AUTHORITY_COMMAND})
+    confirmed: list[tuple[_outbox.OutboxRecord, dict[str, object]]] = []
+    absent: list[_outbox.OutboxRecord] = []
+    conflicts: list[dict[str, object]] = []
+    pending: list[_outbox.OutboxRecord] = []
+    for record in local:
+        remote = remote_by_event.get(record.event_id)
+        if remote is None:
+            if record.origin_seq <= remote_high_water.get(record.origin_stream_id, 0):
+                absent.append(record)
+            else:
+                pending.append(record)
+            continue
+        remote_record, offset = remote
+        local_hash = _pg._prepare_ingest_record(record, allowed_classes=allowed).record_sha256
+        remote_hash = _pg._prepare_ingest_record(remote_record, allowed_classes=allowed).record_sha256
+        if local_hash != remote_hash:
+            conflicts.append({"event_id": record.event_id, "origin_seq": record.origin_seq,
+                              "served_ingest_offset": offset, "reason": "semantic-record-mismatch"})
+            continue
+        decision = decisions_by_request.get(record.event_id)
+        if decision is None:
+            conflicts.append({"event_id": record.event_id, "origin_seq": record.origin_seq,
+                              "served_ingest_offset": offset, "reason": "served-decision-missing"})
+            continue
+        outcome = decision.get("outcome")
+        if outcome not in {"accepted", "rejected"}:
+            conflicts.append({"event_id": record.event_id, "origin_seq": record.origin_seq,
+                              "served_ingest_offset": offset, "reason": "served-decision-invalid"})
+            continue
+        confirmed.append((record, decision))
+
+    if apply_changes and conflicts:
+        raise click.ClickException("served authority reconciliation has conflicts; no local receipts were written")
+    applied_confirmed = 0
+    applied_absent = 0
+    if apply_changes:
+        for record, decision in confirmed:
+            _authority_config.mark_terminal_authority_decision(
+                paths, event_id=record.event_id, outcome=str(decision["outcome"]),
+                served_decision=decision,
+            )
+            _authority_config.remove_pending_authority_credential(paths, event_id=record.event_id)
+            applied_confirmed += 1
+        for record in absent:
+            _authority_config.mark_terminal_authority_decision(
+                paths, event_id=record.event_id, outcome="absent-from-served-ledger",
+            )
+            _authority_config.remove_pending_authority_credential(paths, event_id=record.event_id)
+            applied_absent += 1
+    payload = {
+        "served_authoritative": True,
+        "remote_record_count": len(remote_entries),
+        "remote_stream_high_water": remote_high_water,
+        "confirmed": [{"event_id": r.event_id, "origin_seq": r.origin_seq,
+                       "outcome": d["outcome"]} for r, d in confirmed],
+        "absent_from_served_ledger": [{"event_id": r.event_id, "origin_seq": r.origin_seq}
+                                       for r in absent],
+        "pending_after_served_high_water": [{"event_id": r.event_id, "origin_seq": r.origin_seq}
+                                              for r in pending],
+        "conflicts": conflicts,
+        "applied_confirmed": applied_confirmed,
+        "applied_absent": applied_absent,
+    }
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+    else:
+        click.echo("Served-authoritative reconciliation: "
+                   f"{len(confirmed)} confirmed, {len(absent)} absent, "
+                   f"{len(pending)} pending, {len(conflicts)} conflicts.")
 
 
 @authority_commands.command("mode")

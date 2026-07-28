@@ -173,6 +173,7 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     "authority mode": "unavailable",
     "authority submit": "unavailable",
     "authority sync": "catalog",
+    "authority reconcile": "catalog",
     "authority recover-proof": "unavailable",
     "authority clear-proof": "unavailable",
     "pilot status": "unavailable",

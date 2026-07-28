@@ -1301,7 +1301,10 @@ def _iso(value: Any) -> str | None:
             value = value.replace(tzinfo=timezone.utc)
         else:
             value = value.astimezone(timezone.utc)
-        return value.strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Preserve fractional seconds.  Producer ledger hashes cover these
+        # timestamps, so truncating them on a read turns an otherwise identical
+        # served record into a different record when a client audits it.
+        return value.isoformat().replace("+00:00", "Z")
     return str(value)
 
 

@@ -110,6 +110,28 @@ completed or rejected commands are removed.
 Treat `recover-proof` output as a secret. Do not paste it into notes, logs,
 JSON artifacts, or command payloads.
 
+## Served-authoritative recovery
+
+When a served stream has historical local records that cannot be replayed,
+audit it before making any local recovery change:
+
+```sh
+sprintctl authority reconcile --json
+sprintctl authority reconcile --apply --json
+```
+
+`reconcile` reads the served record and decision ledgers and treats them as
+authoritative. `--apply` is refused on a semantic conflict. It writes local
+receipts only: matching served decisions settle their local producer records;
+an older local sequence that is absent below the served stream high-water is
+recorded as `absent-from-served-ledger` and is never replayed. It does not
+rewrite a local outbox, advance or rewind a served cursor, or invent a served
+decision. Preserve the JSON audit output with the incident record.
+
+The producer outbox fingerprint and served ingestion fingerprint are distinct
+integrity domains. Compare canonical record content through `reconcile`, not
+their separately stored `record_sha256` columns.
+
 ## Decision evidence and atomicity
 
 The remote transaction admits the command request, applies or rejects the

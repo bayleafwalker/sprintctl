@@ -205,6 +205,28 @@ def read_next_work(
     )
 
 
+def read_records(
+    served_profile: ServedProfile, *, repo_id: str, after_offset: int = 0,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    """Read the authoritative served ledger for local recovery/audit."""
+    return asyncio.run(_invoke_operation(
+        served_profile, "work.read.records",
+        {"after_offset": after_offset, "limit": limit}, repo_id=repo_id,
+    ))
+
+
+def read_decisions(
+    served_profile: ServedProfile, *, repo_id: str, after_offset: int = 0,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    """Read served authority decisions for local recovery/audit."""
+    return asyncio.run(_invoke_operation(
+        served_profile, "work.read.decisions",
+        {"after_offset": after_offset, "limit": limit}, repo_id=repo_id,
+    ))
+
+
 def read_next_work_explain(
     served_profile: ServedProfile, *, repo_id: str, sprint_id: int | None = None
 ) -> dict[str, Any]:
