@@ -73,7 +73,7 @@
   ],
   "hybrid": {
     "enabled": true,
-    "worker_routes": ["bulk"],
+    "worker_routes": ["mechanical_bulk"],
     "commands": {
       "sprintctl.served.catalog.tests": "uv run --extra dev --extra served pytest tests/test_served_lifecycle_routes.py tests/test_vuoro_work_adapter_integration.py -q",
       "sprintctl.suite": "uv run --extra dev --extra served pytest -q"
@@ -90,9 +90,12 @@
     "worktree_root": "/var/lib/agentops/hybrid-dispatch/worktrees",
     "max_timeout_seconds": 1800,
     "max_cost_usd": 3.0,
+    "soft_token_ceiling": 500000,
+    "hard_token_ceiling": 1000000,
     "notes": [
-      "Real bounded Sprintctl implementation work is admitted through frozen packets, cold registered gates, captured session evidence, and independent review.",
-      "Packets that change claim, authority, migration, or credential semantics require the declared risk-surface verification and coordinator review; worker authority remains limited to its disposable worktree."
+      "Only low-risk mechanical implementation with frozen interfaces, an externally defined worker-immutable oracle, and coordinator-authored discriminating gates is worker-eligible.",
+      "Parity fixtures, test-oracle construction, tests as the primary deliverable, cross-layer SQLite/PostgreSQL behavioural proof, and packets that change claim, authority, migration, recovery, compatibility, or credential semantics are coordinator-only.",
+      "One rejected worker attempt ends the packet unless a coordinator authors a materially revised packet; worker authority remains limited to its disposable worktree."
     ]
   },
   "verification": {

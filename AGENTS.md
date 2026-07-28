@@ -299,6 +299,18 @@ or SQLite/PostgreSQL parity. `survey` and `reconcile` are read-only; product
 repair requires separate authorization. Run concurrent histories only against
 temporary SQLite databases and disposable PostgreSQL repository scopes.
 
+## Hybrid dispatch
+
+Only `mechanical_bulk` packets are worker-eligible: low-risk implementation
+against frozen interfaces, a coordinator-owned oracle the worker cannot
+modify, and explicit registered gates that fail for each relevant incorrect
+behaviour. One rejected attempt returns to the coordinator.
+
+Parity fixtures, test-oracle construction, tests as the primary deliverable,
+SQLite/PostgreSQL behavioural proof, and claim, authority, compatibility,
+migration, recovery, or credential semantics are coordinator-only regardless
+of diff size.
+
 ## Environment variables
 
 | Variable | Purpose |
