@@ -258,6 +258,43 @@ def test_served_authority_reconcile_quarantines_only_old_absent_records(
     )
 
 
+@_requires_312
+def test_served_authority_reconcile_quarantines_cursor_only_historic_records(
+    runner, tmp_path, monkeypatch
+):
+    """Cursor evidence is sufficient when the served ledger omits old rows."""
+    _configure_served_repo(tmp_path, monkeypatch)
+    first = _mint_command(
+        tmp_path, record_type="item.done", refs=_item_refs(4), payload={"to_status": "done"}
+    )
+    second = _mint_command(
+        tmp_path, record_type="item.done", refs=_item_refs(5), payload={"to_status": "done"}
+    )
+    monkeypatch.setattr(
+        cli_module._served, "read_records",
+        lambda *args, **kwargs: {
+            "records": [],
+            "stream_high_water": {first.origin_stream_id: second.origin_seq},
+        },
+    )
+    monkeypatch.setattr(
+        cli_module._served, "read_decisions", lambda *args, **kwargs: {"decisions": []}
+    )
+
+    result = runner.invoke(cli, ["authority", "reconcile", "--apply", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["remote_stream_high_water"] == {first.origin_stream_id: 2}
+    assert payload["applied_absent"] == 2
+    assert payload["pending_after_served_high_water"] == []
+    assert cli_module._authority_config.is_terminal_authority_decision(
+        _rollout_paths(tmp_path), event_id=first.event_id
+    )
+    assert cli_module._authority_config.is_terminal_authority_decision(
+        _rollout_paths(tmp_path), event_id=second.event_id
+    )
+
+
 # ---------------------------------------------------------------------------
 # Mixed observation + command batch
 # ---------------------------------------------------------------------------

@@ -930,6 +930,21 @@ class WorkApplication:
     ) -> dict[str, Any]:
         after, limit = _pagination(arguments)
         records = self.list_records(after, limit)
+        # A ledger page may legitimately omit historic rows while the served
+        # authority still retains sequence-admission cursors.  Expose those
+        # cursors as read-only recovery evidence; never infer or mutate them
+        # from a client-side outbox.
+        stream_high_water: dict[str, int] = {}
+        try:
+            from . import pg
+
+            if hasattr(self.store, "conn") and hasattr(self.store, "repo_id"):
+                stream_high_water = pg.list_ingest_stream_high_water(self.store)
+        except (AttributeError, TypeError):
+            # Local/test application compositions have no PostgreSQL ingest
+            # stream table.  Their existing records-only contract remains
+            # valid with an empty cursor map.
+            pass
         return {
             "repo_id": self.repo_id,
             "records": [
@@ -939,6 +954,7 @@ class WorkApplication:
                 }
                 for value in records
             ],
+            "stream_high_water": stream_high_water,
         }
 
     def _read_decisions(

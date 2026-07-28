@@ -1030,6 +1030,28 @@ def list_ingested_records(
     return [_ingested_record_from_row(row) for row in rows]
 
 
+def list_ingest_stream_high_water(store: PgStore) -> dict[str, int]:
+    """Return authoritative per-producer stream cursors for one repository.
+
+    This deliberately exposes only each stream's admitted sequence high-water,
+    not producer records or cursor mutation.  Recovery uses it when historic
+    ledger rows are unavailable but the authority still retains sequence
+    admission state.
+    """
+    with store.conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT origin_stream_id, highest_origin_seq
+            FROM ingest_stream
+            WHERE repo_id = %s
+            ORDER BY origin_stream_id ASC
+            """,
+            (store.repo_id,),
+        )
+        rows = cur.fetchall()
+    return {str(row["origin_stream_id"]): int(row["highest_origin_seq"]) for row in rows}
+
+
 def get_ingest_high_water(store: PgStore) -> int:
     """Return the captured public high-water mark for this repository."""
     with store.conn.cursor() as cur:

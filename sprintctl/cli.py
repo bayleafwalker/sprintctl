@@ -3508,12 +3508,31 @@ def authority_reconcile(obj, apply_changes: bool, as_json: bool) -> None:
     finally:
         producer.close()
 
-    remote_entries = _served_authority_pages(
-        lambda after, limit: _served.read_records(
+    remote_stream_high_water: dict[str, int] = {}
+
+    def read_record_page(after: int, limit: int) -> object:
+        response = _served.read_records(
             config.served_profile, repo_id=config.repo_id,
             after_offset=after, limit=limit,
-        ).get("records"),
-    )
+        )
+        cursors = response.get("stream_high_water", {})
+        if not isinstance(cursors, dict):
+            raise click.ClickException("served authority audit returned invalid stream cursors")
+        for stream_id, high_water in cursors.items():
+            if not isinstance(stream_id, str) or isinstance(high_water, bool):
+                raise click.ClickException("served authority audit returned invalid stream cursors")
+            try:
+                parsed_high_water = int(high_water)
+            except (TypeError, ValueError) as exc:
+                raise click.ClickException("served authority audit returned invalid stream cursors") from exc
+            if parsed_high_water < 0:
+                raise click.ClickException("served authority audit returned invalid stream cursors")
+            remote_stream_high_water[stream_id] = max(
+                remote_stream_high_water.get(stream_id, 0), parsed_high_water
+            )
+        return response.get("records")
+
+    remote_entries = _served_authority_pages(read_record_page)
     decisions = _served_authority_pages(
         lambda after, limit: _served.read_decisions(
             config.served_profile, repo_id=config.repo_id,
@@ -3535,6 +3554,8 @@ def authority_reconcile(obj, apply_changes: bool, as_json: bool) -> None:
         remote_high_water[record.origin_stream_id] = max(
             remote_high_water.get(record.origin_stream_id, 0), record.origin_seq
         )
+    for stream_id, high_water in remote_stream_high_water.items():
+        remote_high_water[stream_id] = max(remote_high_water.get(stream_id, 0), high_water)
     decisions_by_request = {
         str(value["request_event_id"]): value for value in decisions
         if isinstance(value.get("request_event_id"), str)

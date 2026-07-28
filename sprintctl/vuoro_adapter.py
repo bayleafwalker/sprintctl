@@ -313,30 +313,47 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         ),
         "work:read", "read", "not-allowed",
     ),
-    *(
-        WorkOperationContract(
-            name,
-            _object_schema(
-                {
-                    "after_offset": {"type": "integer", "minimum": 0, "default": 0},
-                    "limit": {"type": ["integer", "null"], "minimum": 1},
-                }
-            ),
-            _result_schema(
-                ("repo_id", result_key),
-                {
-                    "repo_id": {"type": "string"},
-                    result_key: {"type": "array", "items": {"type": "object"}},
+    WorkOperationContract(
+        "work.read.records",
+        _object_schema(
+            {
+                "after_offset": {"type": "integer", "minimum": 0, "default": 0},
+                "limit": {"type": ["integer", "null"], "minimum": 1},
+            }
+        ),
+        _result_schema(
+            ("repo_id", "records", "stream_high_water"),
+            {
+                "repo_id": {"type": "string"},
+                "records": {"type": "array", "items": {"type": "object"}},
+                "stream_high_water": {
+                    "type": "object",
+                    "additionalProperties": {"type": "integer", "minimum": 0},
                 },
-            ),
-            "work:read",
-            "read",
-            "not-allowed",
-        )
-        for name, result_key in (
-            ("work.read.records", "records"),
-            ("work.read.decisions", "decisions"),
-        )
+            },
+        ),
+        "work:read",
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.read.decisions",
+        _object_schema(
+            {
+                "after_offset": {"type": "integer", "minimum": 0, "default": 0},
+                "limit": {"type": ["integer", "null"], "minimum": 1},
+            }
+        ),
+        _result_schema(
+            ("repo_id", "decisions"),
+            {
+                "repo_id": {"type": "string"},
+                "decisions": {"type": "array", "items": {"type": "object"}},
+            },
+        ),
+        "work:read",
+        "read",
+        "not-allowed",
     ),
     WorkOperationContract(
         "work.read.events",
