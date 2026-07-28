@@ -71,6 +71,30 @@
       "required_on_change": true
     }
   ],
+  "hybrid": {
+    "enabled": true,
+    "worker_routes": ["bulk"],
+    "commands": {
+      "sprintctl.served.catalog.tests": "uv run pytest tests/test_served_lifecycle_routes.py tests/test_vuoro_work_adapter_integration.py -q",
+      "sprintctl.suite": "uv run pytest -q"
+    },
+    "protected_paths": [
+      "sprintctl.dispatch.json",
+      ".agents/**",
+      ".claude/**",
+      ".github/**",
+      "pyproject.toml",
+      "uv.lock",
+      "migrations/**"
+    ],
+    "worktree_root": "/var/lib/agentops/hybrid-dispatch/worktrees",
+    "max_timeout_seconds": 1800,
+    "max_cost_usd": 3.0,
+    "notes": [
+      "Real bounded Sprintctl implementation work is admitted through frozen packets, cold registered gates, captured session evidence, and independent review.",
+      "Packets that change claim, authority, migration, or credential semantics require the declared risk-surface verification and coordinator review; worker authority remains limited to its disposable worktree."
+    ]
+  },
   "verification": {
     "command_families": ["unit", "integration", "docs", "full-suite"],
     "targeted_first": true,
