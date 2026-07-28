@@ -56,6 +56,14 @@ command so a local OS username or operator-supplied label cannot create a
 permanently unflushable actor-mismatch record; credentials and token material
 are never returned.
 
+For `work.batch.apply` only, an already-durable authority command with an
+actor or claim-agent mismatch is admitted in its producer order and receives a
+durable `command.rejected` decision with reason `actor-mismatch`. This consumes
+the immutable origin sequence without applying a domain effect, allowing the
+next record to replay. Direct single-command operations still reject the same
+mismatch before authority admission; the batch exception exists solely for
+recovery of an existing ordered producer log.
+
 `work.claim.start` is the transitional Click-free equivalent of the legacy
 one-shot command: it creates an exclusive execute claim for the authenticated
 actor, moves a non-active item to active with that proof, and releases the new

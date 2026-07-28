@@ -135,6 +135,7 @@ def _append_authority_command(
     payload,
     aggregate_uuid=None,
     claim_id=None,
+    actor="authority-test",
 ):
     refs = {
         "repo_id": _authority_repo_uuid(store),
@@ -148,7 +149,7 @@ def _append_authority_command(
         event_id=str(uuid.uuid4()),
         record_type=record_type,
         schema_version="1",
-        actor="authority-test",
+        actor=actor,
         authored_at="2026-07-14T18:00:00Z",
         refs=refs,
         payload=payload,
@@ -2287,6 +2288,39 @@ class TestAuthorityCommandArbitration:
         assert [entry.ingest_offset for entry in history] == [1, 2]
         assert decision.decision_ingest_offset == 2
         assert pg.get_ingest_high_water(isolated) == 2
+
+    def test_authenticated_actor_mismatch_is_durably_rejected_and_consumes_sequence(
+        self, store, tmp_path
+    ):
+        sprint_id = pg.create_sprint(store, f"Actor-mismatch-{_uid()}", status="active")
+        track_id = pg.get_or_create_track(store, sprint_id, "authority")
+        item_id = pg.create_work_item(store, sprint_id, track_id, "Actor mismatch command")
+        item = pg.get_work_item(store, item_id)
+        producer = outbox.open_outbox(tmp_path / "actor-mismatch.db")
+        try:
+            command = _append_authority_command(
+                producer,
+                store,
+                record_type="item.transition",
+                aggregate_type="item",
+                aggregate_uuid=item["aggregate_uuid"],
+                basis_revision=authority.item_revision(item),
+                payload={"to_status": "active"},
+                actor="stale-actor",
+            )
+            rejected = authority.arbitrate_command(
+                store, command, authenticated_actor="served-actor"
+            )
+            retried = authority.arbitrate_command(
+                store, command, authenticated_actor="served-actor"
+            )
+        finally:
+            producer.close()
+
+        assert rejected.outcome == "rejected"
+        assert rejected.reason_code == "actor-mismatch"
+        assert retried.to_dict() == {**rejected.to_dict(), "duplicate": True}
+        assert pg.get_work_item(store, item_id)["status"] == "pending"
 
     def test_item_transition_retry_and_stale_rejection_are_durable(self, store, tmp_path):
         sprint_id = pg.create_sprint(store, f"Command-{_uid()}", status="active")

@@ -96,7 +96,7 @@ CredentialResolver = Callable[
     [InvocationContext, outbox.OutboxRecord], Mapping[str, str] | None
 ]
 RecordIngestor = Callable[[list[outbox.OutboxRecord]], Sequence[Any]]
-CommandArbiter = Callable[[outbox.OutboxRecord, Mapping[str, str]], Any]
+CommandArbiter = Callable[[outbox.OutboxRecord, Mapping[str, str], str | None], Any]
 RecordReader = Callable[[int, int | None], Sequence[Any]]
 DecisionReader = Callable[[int, int | None], Sequence[Any]]
 
@@ -377,8 +377,11 @@ class WorkApplication:
 
         return {
             "ingest_records": lambda records: pg.ingest_records(store, records),
-            "arbitrate_command": lambda record, credentials: authority.arbitrate_command(
-                store, record, credentials=credentials
+            "arbitrate_command": lambda record, credentials, authenticated_actor=None: authority.arbitrate_command(
+                store,
+                record,
+                credentials=credentials,
+                authenticated_actor=authenticated_actor,
             ),
             "list_records": lambda after, limit: pg.list_ingested_records(
                 store, after_offset=after, limit=limit
@@ -1127,7 +1130,9 @@ class WorkApplication:
                 422,
             )
         credentials = self._credentials(context, record)
-        return _json_value(self.arbitrate_command(record, credentials))
+        return _json_value(
+            self.arbitrate_command(record, credentials, context.identity.actor)
+        )
 
     def _evidence_ingest(
         self, arguments: dict[str, Any], context: InvocationContext
@@ -1214,7 +1219,16 @@ class WorkApplication:
     def _batch_apply(
         self, arguments: dict[str, Any], context: InvocationContext
     ) -> dict[str, Any]:
-        records = self._records(arguments, context, SUPPORTED_BATCH_TYPES)
+        # A command whose producer actor does not match this invocation must
+        # reach authority arbitration so the authority can consume its origin
+        # sequence with a durable rejection.  Ordinary one-command operations
+        # remain fail-closed before the backend.
+        records = self._records(
+            arguments,
+            context,
+            SUPPORTED_BATCH_TYPES,
+            allow_authority_actor_mismatch=True,
+        )
         self._require_batch_key(records, context)
         return self.apply_records(records, context)
 
@@ -1240,7 +1254,9 @@ class WorkApplication:
                 continue
             flush_observations()
             decision = self.arbitrate_command(
-                record, self._credentials(context, record)
+                record,
+                self._credentials(context, record),
+                context.identity.actor,
             )
             results.append(
                 {
@@ -1257,6 +1273,8 @@ class WorkApplication:
         arguments: dict[str, Any],
         context: InvocationContext,
         allowed_types: frozenset[str],
+        *,
+        allow_authority_actor_mismatch: bool = False,
     ) -> list[outbox.OutboxRecord]:
         raw = arguments.get("records")
         if not isinstance(raw, list) or not raw:
@@ -1267,7 +1285,13 @@ class WorkApplication:
             record_from_dict(_required_mapping(value, "record")) for value in raw
         ]
         return [
-            self._validate_record(record, context, allowed_types) for record in records
+            self._validate_record(
+                record,
+                context,
+                allowed_types,
+                allow_authority_actor_mismatch=allow_authority_actor_mismatch,
+            )
+            for record in records
         ]
 
     def _validate_record(
@@ -1275,6 +1299,8 @@ class WorkApplication:
         record: outbox.OutboxRecord,
         context: InvocationContext,
         allowed_types: frozenset[str],
+        *,
+        allow_authority_actor_mismatch: bool = False,
     ) -> outbox.OutboxRecord:
         if record.event_type not in allowed_types:
             raise ApplicationRejection(
@@ -1305,7 +1331,11 @@ class WorkApplication:
                 "record payload digest does not match its canonical payload",
                 422,
             )
-        if record.actor != context.identity.actor:
+        permit_actor_mismatch = (
+            allow_authority_actor_mismatch
+            and record.record_class == contracts.RecordClass.AUTHORITY_COMMAND.value
+        )
+        if record.actor != context.identity.actor and not permit_actor_mismatch:
             raise ApplicationRejection(
                 "actor-mismatch",
                 "record actor must match the authenticated identity",
@@ -1332,7 +1362,7 @@ class WorkApplication:
                     "authority-command envelope must use its canonical form",
                     422,
                 )
-            if envelope.actor != context.identity.actor:
+            if envelope.actor != context.identity.actor and not permit_actor_mismatch:
                 raise ApplicationRejection(
                     "actor-mismatch",
                     "outer record, command actor, and authenticated identity must match",
@@ -1341,6 +1371,7 @@ class WorkApplication:
             if (
                 envelope.record_type == "claim.acquire"
                 and envelope.payload["agent"] != context.identity.actor
+                and not permit_actor_mismatch
             ):
                 raise ApplicationRejection(
                     "claim-agent-mismatch",

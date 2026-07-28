@@ -995,6 +995,7 @@ def arbitrate_command(
     record: outbox.OutboxRecord,
     *,
     credentials: Mapping[str, str] | None = None,
+    authenticated_actor: str | None = None,
 ) -> AuthorityDecision:
     """Admit, arbitrate, and decide one command in one PostgreSQL transaction.
 
@@ -1041,27 +1042,40 @@ def arbitrate_command(
                 if rejection.current_revision is not None:
                     effect["current_revision"] = rejection.current_revision
             else:
-                cur.execute("SAVEPOINT authority_effect")
-                try:
-                    effect = _apply_command(cur, store, envelope, credentials)
-                    outcome = "accepted"
-                    reason_code = None
-                    reason_detail = None
-                except _RejectedCommand as rejection:
-                    cur.execute("ROLLBACK TO SAVEPOINT authority_effect")
+                if authenticated_actor is not None and (
+                    request.record.actor != authenticated_actor
+                    or envelope.actor != authenticated_actor
+                    or (
+                        envelope.record_type == "claim.acquire"
+                        and envelope.payload["agent"] != authenticated_actor
+                    )
+                ):
                     outcome = "rejected"
-                    reason_code = rejection.reason_code
-                    reason_detail = rejection.detail
+                    reason_code = "actor-mismatch"
+                    reason_detail = "record actor must match the authenticated identity"
                     effect = {}
-                    if rejection.current_revision is not None:
-                        effect["current_revision"] = rejection.current_revision
-                except ValueError as rejection:
-                    cur.execute("ROLLBACK TO SAVEPOINT authority_effect")
-                    outcome = "rejected"
-                    reason_code = "validation-failed"
-                    reason_detail = str(rejection)
-                    effect = {}
-                cur.execute("RELEASE SAVEPOINT authority_effect")
+                else:
+                    cur.execute("SAVEPOINT authority_effect")
+                    try:
+                        effect = _apply_command(cur, store, envelope, credentials)
+                        outcome = "accepted"
+                        reason_code = None
+                        reason_detail = None
+                    except _RejectedCommand as rejection:
+                        cur.execute("ROLLBACK TO SAVEPOINT authority_effect")
+                        outcome = "rejected"
+                        reason_code = rejection.reason_code
+                        reason_detail = rejection.detail
+                        effect = {}
+                        if rejection.current_revision is not None:
+                            effect["current_revision"] = rejection.current_revision
+                    except ValueError as rejection:
+                        cur.execute("ROLLBACK TO SAVEPOINT authority_effect")
+                        outcome = "rejected"
+                        reason_code = "validation-failed"
+                        reason_detail = str(rejection)
+                        effect = {}
+                    cur.execute("RELEASE SAVEPOINT authority_effect")
 
             decision_record, decision = _decision_record(
                 cur,

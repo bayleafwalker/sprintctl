@@ -237,8 +237,10 @@ def _application(
             results.append(_IngestResult(record, offset, duplicate))
         return results
 
-    def arbitrate(record, credentials):
-        calls.append((repo_id, "arbitrate", record.event_id, dict(credentials)))
+    def arbitrate(record, credentials, authenticated_actor=None):
+        calls.append(
+            (repo_id, "arbitrate", record.event_id, dict(credentials), authenticated_actor)
+        )
         duplicate = record.event_id in decided
         decided.add(record.event_id)
         return _Decision(record, duplicate)
@@ -703,7 +705,6 @@ def test_authority_handlers_enforce_actor_basis_and_idempotency_before_backend()
     assert retried == {**accepted, "duplicate": True}
 
 
-@pytest.mark.parametrize("operation", ["work.claim.arbitrate", "work.batch.apply"])
 @pytest.mark.parametrize(
     ("record", "expected_code"),
     [
@@ -726,27 +727,53 @@ def test_authority_handlers_enforce_actor_basis_and_idempotency_before_backend()
         ),
     ],
 )
-def test_authority_actor_binding_rejects_single_and_batch_before_backend(
-    operation, record, expected_code
-):
+def test_authority_actor_binding_rejects_single_command_before_backend(record, expected_code):
     calls = []
     app = _application(calls=calls)
-    if operation == "work.claim.arbitrate":
-        arguments = {"record": record_to_dict(record)}
-        key = record.event_id
-    else:
-        arguments = {"records": [record_to_dict(record)]}
-        key = batch_idempotency_key([record])
+    arguments = {"record": record_to_dict(record)}
+    key = record.event_id
 
     with pytest.raises(ApplicationRejection) as rejected:
         app.invoke(
-            operation,
+            "work.claim.arbitrate",
             arguments,
             _context(basis_revision=record.basis_revision, idempotency_key=key),
         )
 
     assert rejected.value.code == expected_code
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        _claim_record(
+            sequence=10,
+            command_actor="nested-actor",
+            claim_agent="nested-actor",
+            outer_actor="served-test",
+        ),
+        _claim_record(
+            sequence=11,
+            command_actor="served-test",
+            claim_agent="different-agent",
+        ),
+    ],
+)
+def test_batch_routes_actor_mismatches_to_authority_for_durable_rejection(record):
+    calls = []
+    app = _application(calls=calls)
+
+    result = app.invoke(
+        "work.batch.apply",
+        {"records": [record_to_dict(record)]},
+        _context(idempotency_key=batch_idempotency_key([record])),
+    )
+
+    assert result["results"][0]["event_id"] == record.event_id
+    assert calls == [
+        ("test-repo", "arbitrate", record.event_id, {}, "served-test")
+    ]
 
 
 def test_click_free_claim_start_matches_cli_state_flow(conn, runner, active_sprint):
@@ -895,7 +922,7 @@ def test_batch_is_content_bound_idempotent_and_preserves_producer_order():
 
     expected_calls = [
         ("test-repo", "ingest", [records[0].event_id]),
-        ("test-repo", "arbitrate", records[1].event_id, {}),
+        ("test-repo", "arbitrate", records[1].event_id, {}, "served-test"),
         ("test-repo", "ingest", [records[2].event_id]),
     ]
     assert calls[:3] == expected_calls
