@@ -20,9 +20,16 @@ store.  `Unavailable` likewise never opens a store: it exits with the stable
 | `item done-from-claim` | Served | One durable `item.done-from-claim` authority command through `work.lifecycle.arbitrate`; the claim proof is transient and retries reuse its immutable event id. |
 | `handoff` | Served | `work.read.handoff` builds the tracker snapshot; after local artifact output, `work.handoff.record` appends the authenticated tracker record. An unconfirmed record exits nonzero without discarding the artifact. |
 
-`claim recover` remains recovery-only because it reads a local token sidecar;
-in served mode it fails closed rather than opening that local store.  It must
-never be represented as remote proof discovery. `sprint list --project` uses
+`claim recover` is served-catalog-aware.  It reads the served active claim
+(via `work.read.claim` or `work.read.claims`) and reads a caller-local sidecar
+file.  Before returning the token it validates sidecar object shape, a nonempty
+string token, and exact equality of `claim_id`, `work_item_id`, `actor`, and
+`claim_type` between the sidecar and the served active claim.  Both `--id` and
+`--item-id` reject inactive claims, malformed/missing/empty sidecars, and every
+identity mismatch without printing a token.  The sidecar is written by
+`claim start` (and other claim-minting commands) to the local filesystem even
+in served mode; it never opens a local work store or writes authority/outbox
+state. `sprint list --project` uses
 `work.project.sprints` under the same canonical-binding and per-member-
 authorization gate. Project aggregates never read a client-side `project.toml`;
 without the server binding they fail closed. Each member uses its own

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -88,7 +89,6 @@ def _outbox_records(tmp_path):
 @pytest.mark.parametrize(
     "argv",
     [
-        ["claim", "recover", "--id", "3"],
         ["claim", "create", "--item-id", "3", "--actor", "agent"],
         ["session", "resume"],
     ],
@@ -355,24 +355,481 @@ def test_served_project_aggregates_do_not_open_store_and_keep_sprint_list_json_a
     assert json.loads(context.output)["project"] == project
 
 
+# ---------------------------------------------------------------------------
+# claim recover (served-mode sidecar recovery with identity match)
+# ---------------------------------------------------------------------------
+
+
+def _write_served_sidecar(tmp_path, filename_claim_id, **overrides) -> Path:
+    """Write a claim recovery sidecar file under ``tmp_path`` and return its path."""
+    recovery_dir = tmp_path / ".sprintctl" / "claim-recovery"
+    recovery_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    recovery_dir.chmod(0o700)
+    sidecar = {
+        "claim_id": filename_claim_id,
+        "work_item_id": 5,
+        "actor": "served-actor",
+        "claim_type": "execute",
+        "claim_token": "recovered-secret",
+        "runtime_session_id": None,
+        "instance_id": None,
+        "written_at": "2026-07-27T00:00:00Z",
+    }
+    sidecar.update(overrides)
+    path = recovery_dir / f"claim-{filename_claim_id}.json"
+    path.write_text(json.dumps(sidecar) + "\n")
+    path.chmod(0o600)
+    return path
+
+
+def _patch_served_sidecar_db_path(monkeypatch, tmp_path):
+    """Point _db.get_db_path so sidecar resolution uses tmp_path."""
+    monkeypatch.setattr(
+        cli_module._db, "get_db_path",
+        lambda: tmp_path / ".sprintctl" / "sprintctl.db",
+    )
+
+
 @_requires_312
-def test_served_claim_recover_fails_closed_before_opening_local_connection(
+def test_served_claim_recover_reads_served_claim_and_local_sidecar_without_store(
     runner, tmp_path, monkeypatch
 ):
-    """Recovery is a local-sidecar operation, never a served backend read."""
+    """Successful recovery by --id: never opens a store, returns token on identity match."""
     _configure_served_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(
-        cli_module, "_get_conn", lambda _obj: pytest.fail("served recovery opened SQLite")
+        cli_module, "_get_store", lambda _obj: pytest.fail("served command opened store")
     )
     monkeypatch.setattr(
-        cli_module, "_get_store", lambda _obj: pytest.fail("served recovery opened store")
+        cli_module, "_get_conn", lambda _obj: pytest.fail("served command opened SQLite")
     )
+    monkeypatch.setattr(
+        cli_module._served, "read_claim",
+        lambda profile, *, repo_id=None, claim_id: {
+            "claim": {
+                "claim_id": 3, "work_item_id": 5, "actor": "served-actor",
+                "claim_type": "execute", "status": "active", "expires_at": "2099-01-01T00:00:00Z",
+            },
+        },
+    )
+    _write_served_sidecar(tmp_path, 3)
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
+
+    result = runner.invoke(cli, ["claim", "recover", "--id", "3", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["claim_token"] == "recovered-secret"
+    assert payload["claim"]["claim_id"] == 3
+
+
+@_requires_312
+def test_served_claim_recover_by_item_id_returns_token(
+    runner, tmp_path, monkeypatch
+):
+    """Successful recovery by --item-id: resolves single active claim."""
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module, "_get_store", lambda _obj: pytest.fail("served command opened store")
+    )
+    monkeypatch.setattr(
+        cli_module._served, "read_claims",
+        lambda profile, *, repo_id=None, item_id, **kw: {
+            "claims": [
+                {
+                    "claim_id": 3, "work_item_id": 5, "actor": "served-actor",
+                    "claim_type": "execute", "status": "active", "expires_at": "2099-01-01T00:00:00Z",
+                },
+            ],
+        },
+    )
+    _write_served_sidecar(tmp_path, 3)
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
+
+    result = runner.invoke(cli, ["claim", "recover", "--item-id", "5", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["claim_token"] == "recovered-secret"
+    assert payload["claim"]["claim_id"] == 3
+
+
+@_requires_312
+def test_served_claim_recover_rejects_inactive_claim_by_id(
+    runner, tmp_path, monkeypatch
+):
+    """--id rejects a claim whose status is not 'active'."""
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served, "read_claim",
+        lambda profile, *, repo_id=None, claim_id: {
+            "claim": {
+                "claim_id": 4, "work_item_id": 5, "actor": "served-actor",
+                "claim_type": "execute", "status": "done",
+            },
+        },
+    )
+    _write_served_sidecar(tmp_path, 4)
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
+
+    result = runner.invoke(cli, ["claim", "recover", "--id", "4", "--json"])
+
+    assert result.exit_code == 1, result.output
+    assert "not active" in result.output
+    assert "recovered-secret" not in result.output
+
+
+@_requires_312
+def test_served_claim_recover_rejects_inactive_claim_by_item_id(
+    runner, tmp_path, monkeypatch
+):
+    """--item-id independently verifies a catalog response is still active."""
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served, "read_claims",
+        lambda profile, *, repo_id=None, item_id, **kw: {
+            "claims": [{
+                "claim_id": 4, "work_item_id": 5, "actor": "served-actor",
+                "claim_type": "execute", "status": "done",
+            }],
+        },
+    )
+    _write_served_sidecar(tmp_path, 4)
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
+
+    result = runner.invoke(cli, ["claim", "recover", "--item-id", "5", "--json"])
+
+    assert result.exit_code == 1, result.output
+    assert "not active" in result.output
+    assert "recovered-secret" not in result.output
+
+
+@_requires_312
+def test_served_claim_recover_rejects_misrouted_claim_response(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli_module._served, "read_claim", lambda *a, **kw: {"claim": {
+        "claim_id": 4, "work_item_id": 5, "actor": "served-actor", "claim_type": "execute",
+        "status": "active", "expires_at": "2099-01-01T00:00:00Z",
+    }})
+    _write_served_sidecar(tmp_path, 4)
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
+    result = runner.invoke(cli, ["claim", "recover", "--id", "3", "--json"])
+    assert result.exit_code == 1, result.output
+    assert "does not match requested claim" in result.output
+    assert "recovered-secret" not in result.output
+
+
+@_requires_312
+def test_served_claim_recover_rejects_misrouted_item_response(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli_module._served, "read_claims", lambda *a, **kw: {"claims": [{
+        "claim_id": 3, "work_item_id": 6, "actor": "served-actor", "claim_type": "execute",
+        "status": "active", "expires_at": "2099-01-01T00:00:00Z",
+    }]})
+    _write_served_sidecar(tmp_path, 3, work_item_id=6)
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
+    result = runner.invoke(cli, ["claim", "recover", "--item-id", "5", "--json"])
+    assert result.exit_code == 1, result.output
+    assert "does not match requested item" in result.output
+    assert "recovered-secret" not in result.output
+
+
+@pytest.mark.parametrize("expires_at", ["2000-01-01T00:00:00Z", "not-a-time", "2099-01-01T00:00:00"])
+@_requires_312
+def test_served_claim_recover_rejects_non_live_or_invalid_expiry(runner, tmp_path, monkeypatch, expires_at):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli_module._served, "read_claim", lambda *a, **kw: {"claim": {
+        "claim_id": 3, "work_item_id": 5, "actor": "served-actor", "claim_type": "execute",
+        "status": "active", "expires_at": expires_at,
+    }})
+    _write_served_sidecar(tmp_path, 3)
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
+    result = runner.invoke(cli, ["claim", "recover", "--id", "3", "--json"])
+    assert result.exit_code == 1, result.output
+    assert "recovered-secret" not in result.output
+
+
+@_requires_312
+def test_served_claim_recover_rejects_broad_or_symlinked_sidecar(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli_module._served, "read_claim", lambda *a, **kw: {"claim": {
+        "claim_id": 3, "work_item_id": 5, "actor": "served-actor", "claim_type": "execute",
+        "status": "active", "expires_at": "2099-01-01T00:00:00Z",
+    }})
+    sidecar = _write_served_sidecar(tmp_path, 3)
+    sidecar.chmod(0o644)
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
+    result = runner.invoke(cli, ["claim", "recover", "--id", "3", "--json"])
+    assert result.exit_code == 1, result.output
+    assert "recovered-secret" not in result.output
+    sidecar.chmod(0o600)
+    target = tmp_path / "outside.json"
+    target.write_text('{"claim_token":"recovered-secret"}')
+    sidecar.unlink(); sidecar.symlink_to(target)
+    result = runner.invoke(cli, ["claim", "recover", "--id", "3", "--json"])
+    assert result.exit_code == 1, result.output
+    assert "recovered-secret" not in result.output
+
+
+@_requires_312
+def test_claim_recovery_writer_uses_private_directory_and_file_modes(tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
+    path = cli_module._write_claim_recovery_record({
+        "claim_id": 3, "work_item_id": 5, "actor": "served-actor", "claim_type": "execute",
+        "claim_token": "recovered-secret",
+    })
+    assert path is not None
+    assert (path.parent.stat().st_mode & 0o777) == 0o700
+    assert path.is_file()
+    assert (path.stat().st_mode & 0o777) == 0o600
+
+
+@_requires_312
+def test_served_claim_recover_rejects_missing_sidecar(
+    runner, tmp_path, monkeypatch
+):
+    """--id rejects when no sidecar file exists."""
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served, "read_claim",
+        lambda profile, *, repo_id=None, claim_id: {
+            "claim": {
+                "claim_id": 3, "work_item_id": 5, "actor": "served-actor",
+                "claim_type": "execute", "status": "active", "expires_at": "2099-01-01T00:00:00Z",
+            },
+        },
+    )
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
+
+    result = runner.invoke(cli, ["claim", "recover", "--id", "3", "--json"])
+
+    assert result.exit_code == 1, result.output
+    assert "No local recovery token file" in result.output
+    payload = json.loads(result.output)
+    assert payload.get("claim_token") is None
+
+
+@_requires_312
+def test_served_claim_recover_rejects_empty_token_sidecar(
+    runner, tmp_path, monkeypatch
+):
+    """--id rejects a sidecar with an empty claim_token."""
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served, "read_claim",
+        lambda profile, *, repo_id=None, claim_id: {
+            "claim": {
+                "claim_id": 3, "work_item_id": 5, "actor": "served-actor",
+                "claim_type": "execute", "status": "active", "expires_at": "2099-01-01T00:00:00Z",
+            },
+        },
+    )
+    _write_served_sidecar(tmp_path, 3, claim_token="")
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
+
+    result = runner.invoke(cli, ["claim", "recover", "--id", "3", "--json"])
+
+    assert result.exit_code == 1, result.output
+    assert "malformed" in result.output
+    payload = json.loads(result.output)
+    assert payload.get("claim_token") is None
+
+
+@_requires_312
+def test_served_claim_recover_rejects_claim_id_mismatch(
+    runner, tmp_path, monkeypatch
+):
+    """Sidecar claim_id differs from the served active claim."""
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served, "read_claim",
+        lambda profile, *, repo_id=None, claim_id: {
+            "claim": {
+                "claim_id": 3, "work_item_id": 5, "actor": "served-actor",
+                "claim_type": "execute", "status": "active", "expires_at": "2099-01-01T00:00:00Z",
+            },
+        },
+    )
+    _write_served_sidecar(tmp_path, 3, claim_id=99)
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
+
+    result = runner.invoke(cli, ["claim", "recover", "--id", "3", "--json"])
+
+    assert result.exit_code == 1, result.output
+    assert "Identity mismatch" in result.output
+    assert "claim_id" in result.output
+    payload = json.loads(result.output)
+    assert payload.get("claim_token") is None
+
+
+@_requires_312
+def test_served_claim_recover_rejects_work_item_id_mismatch(
+    runner, tmp_path, monkeypatch
+):
+    """Sidecar work_item_id differs from the served active claim."""
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served, "read_claim",
+        lambda profile, *, repo_id=None, claim_id: {
+            "claim": {
+                "claim_id": 3, "work_item_id": 5, "actor": "served-actor",
+                "claim_type": "execute", "status": "active", "expires_at": "2099-01-01T00:00:00Z",
+            },
+        },
+    )
+    _write_served_sidecar(tmp_path, 3, work_item_id=99)
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
+
+    result = runner.invoke(cli, ["claim", "recover", "--id", "3", "--json"])
+
+    assert result.exit_code == 1, result.output
+    assert "Identity mismatch" in result.output
+    assert "work_item_id" in result.output
+    payload = json.loads(result.output)
+    assert payload.get("claim_token") is None
+
+
+@_requires_312
+def test_served_claim_recover_rejects_actor_mismatch(
+    runner, tmp_path, monkeypatch
+):
+    """Sidecar actor differs from the served active claim."""
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served, "read_claim",
+        lambda profile, *, repo_id=None, claim_id: {
+            "claim": {
+                "claim_id": 3, "work_item_id": 5, "actor": "served-actor",
+                "claim_type": "execute", "status": "active", "expires_at": "2099-01-01T00:00:00Z",
+            },
+        },
+    )
+    _write_served_sidecar(tmp_path, 3, actor="different-actor")
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
+
+    result = runner.invoke(cli, ["claim", "recover", "--id", "3", "--json"])
+
+    assert result.exit_code == 1, result.output
+    assert "Identity mismatch" in result.output
+    assert "actor" in result.output
+    payload = json.loads(result.output)
+    assert payload.get("claim_token") is None
+
+
+@_requires_312
+def test_served_claim_recover_rejects_claim_type_mismatch(
+    runner, tmp_path, monkeypatch
+):
+    """Sidecar claim_type differs from the served active claim."""
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served, "read_claim",
+        lambda profile, *, repo_id=None, claim_id: {
+            "claim": {
+                "claim_id": 3, "work_item_id": 5, "actor": "served-actor",
+                "claim_type": "execute", "status": "active", "expires_at": "2099-01-01T00:00:00Z",
+            },
+        },
+    )
+    _write_served_sidecar(tmp_path, 3, claim_type="observe")
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
+
+    result = runner.invoke(cli, ["claim", "recover", "--id", "3", "--json"])
+
+    assert result.exit_code == 1, result.output
+    assert "Identity mismatch" in result.output
+    assert "claim_type" in result.output
+    payload = json.loads(result.output)
+    assert payload.get("claim_token") is None
+
+
+@_requires_312
+def test_served_claim_recover_text_output_reports_context(
+    runner, tmp_path, monkeypatch
+):
+    """Text output includes claim details and resolved context."""
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module, "_get_store", lambda _obj: pytest.fail("served command opened store")
+    )
+    monkeypatch.setattr(
+        cli_module._served, "read_claim",
+        lambda profile, *, repo_id=None, claim_id: {
+            "claim": {
+                "claim_id": 3, "work_item_id": 5, "actor": "served-actor",
+                "claim_type": "execute", "status": "active", "expires_at": "2099-01-01T00:00:00Z",
+            },
+        },
+    )
+    _write_served_sidecar(tmp_path, 3)
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
 
     result = runner.invoke(cli, ["claim", "recover", "--id", "3"])
 
+    assert result.exit_code == 0, result.output
+    assert "Claim #3 recovered for item #5 (execute)" in result.output
+    assert "Claim token: recovered-secret" in result.output
+    assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in result.output
+
+
+@_requires_312
+def test_served_claim_recover_rejects_multiple_active_claims(
+    runner, tmp_path, monkeypatch
+):
+    """--item-id rejects when multiple active claims exist."""
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served, "read_claims",
+        lambda profile, *, repo_id=None, item_id, **kw: {
+            "claims": [
+                {"claim_id": 3, "work_item_id": 5, "actor": "a", "claim_type": "execute", "status": "active"},
+                {"claim_id": 4, "work_item_id": 5, "actor": "b", "claim_type": "execute", "status": "active"},
+            ],
+        },
+    )
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
+
+    result = runner.invoke(cli, ["claim", "recover", "--item-id", "5", "--json"])
+
     assert result.exit_code == 1, result.output
-    assert "served-operation-unavailable" in result.output
-    assert "local-sidecar-only" in result.output
+    assert "Multiple active claims" in result.output
+    assert "--id" in result.output
+
+
+@_requires_312
+def test_served_claim_recover_rejects_no_active_claims(
+    runner, tmp_path, monkeypatch
+):
+    """--item-id rejects when no active claims exist."""
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served, "read_claims",
+        lambda profile, *, repo_id=None, item_id, **kw: {"claims": []},
+    )
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
+
+    result = runner.invoke(cli, ["claim", "recover", "--item-id", "5", "--json"])
+
+    assert result.exit_code == 1, result.output
+    assert "No active claims found" in result.output
+
+
+@_requires_312
+def test_served_claim_recover_rejects_claim_not_found(
+    runner, tmp_path, monkeypatch
+):
+    """--id rejects a claim ID that does not exist."""
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module._served, "read_claim",
+        lambda profile, *, repo_id=None, claim_id: {"claim": {}},
+    )
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
+
+    result = runner.invoke(cli, ["claim", "recover", "--id", "42", "--json"])
+
+    assert result.exit_code == 1, result.output
+    assert "not found" in result.output
 
 
 @_requires_312

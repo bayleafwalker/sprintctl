@@ -49,7 +49,7 @@ never fall back to a local or direct-Postgres store.
 
 The following remain deliberately fail-closed until their *full* contracts are
 served: `usage --context`, `next-work --explain`, `session resume`, sprint
-`handoff`, `claim recover`, coordinator `claim create`, and
+`handoff`, coordinator `claim create`, and
 atomic `item done-from-claim`.  A raw aggregate read is not context parity:
 the context contract also owns stale-work, conflict, decision, and next-action
 derivation.  `sprintctl doctor` probes every operation used by the supported

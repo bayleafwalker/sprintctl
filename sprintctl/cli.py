@@ -4,6 +4,7 @@ import re
 import secrets
 import sqlite3
 import socket
+import stat
 import subprocess
 import sys
 import time
@@ -391,10 +392,6 @@ def _guard_served_command(command_path: str, params: dict[str, object]) -> None:
             "Use served 'claim start' for a single execute claim; "
             "coordinator/subclaim creation is not yet catalogued."
         ),
-        "claim recover": (
-            "Claim recovery is local-sidecar-only; use an existing claim token "
-            "or an authorized handoff."
-        ),
         "session resume": "The combined session-resume contract is not yet served.",
     }
     _served_operation_unavailable(command_path, replacement=replacements.get(command_path))
@@ -519,7 +516,7 @@ def _tag_context_payload(payload: dict, repo_id: str) -> dict:
 def _local_recovery_available() -> bool:
     try:
         config = _backend.load_backend_config()
-        return config.mode == "local"
+        return config.mode in ("local", "served")
     except _backend.BackendConfigError:
         return False
 
@@ -532,6 +529,29 @@ def _claim_recovery_path(claim_id: int) -> Path:
     return _claim_recovery_dir() / f"claim-{claim_id}.json"
 
 
+def _secure_claim_recovery_dir(*, create: bool) -> Path:
+    """Return the private recovery directory, refusing unsafe local paths."""
+    directory = _claim_recovery_dir()
+    if create:
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = directory.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or (info.st_mode & 0o777) != 0o700:
+        raise OSError("claim recovery directory is not a private owner-controlled directory")
+    return directory
+
+
+def _claim_recovery_file_is_safe(path: Path) -> bool:
+    try:
+        info = path.lstat()
+    except OSError:
+        return False
+    return (
+        stat.S_ISREG(info.st_mode)
+        and info.st_uid == os.getuid()
+        and (info.st_mode & 0o777) == 0o600
+    )
+
+
 def _write_claim_recovery_record(claim: dict) -> Path | None:
     if not _local_recovery_available():
         return None
@@ -540,7 +560,6 @@ def _write_claim_recovery_record(claim: dict) -> Path | None:
     if claim_id is None or not claim_token:
         return None
     path = _claim_recovery_path(int(claim_id))
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "claim_id": claim["claim_id"],
         "work_item_id": claim["work_item_id"],
@@ -551,7 +570,22 @@ def _write_claim_recovery_record(claim: dict) -> Path | None:
         "instance_id": claim.get("instance_id"),
         "written_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    path.write_text(json.dumps(payload, indent=2) + "\n")
+    try:
+        directory = _secure_claim_recovery_dir(create=True)
+        temporary = directory / f".{path.name}.{uuid.uuid4().hex}.tmp"
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, indent=2) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+    except OSError:
+        return None
     return path
 
 
@@ -559,16 +593,37 @@ def _remove_claim_recovery_record(claim_id: int) -> None:
     if not _local_recovery_available():
         return
     path = _claim_recovery_path(claim_id)
-    if path.exists():
-        path.unlink()
+    try:
+        directory = _secure_claim_recovery_dir(create=False)
+        if not _claim_recovery_file_is_safe(path):
+            return
+        directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.unlink(path.name, dir_fd=directory_fd)
+        finally:
+            os.close(directory_fd)
+    except OSError:
+        return
 
 
 def _load_claim_recovery_record(claim_id: int) -> dict | None:
     path = _claim_recovery_path(claim_id)
-    if not path.exists():
-        return None
     try:
-        return json.loads(path.read_text())
+        _secure_claim_recovery_dir(create=False)
+        if not _claim_recovery_file_is_safe(path):
+            return None
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or (info.st_mode & 0o777) != 0o600:
+                return None
+            with os.fdopen(fd, "r", encoding="utf-8") as handle:
+                return json.load(handle)
+        finally:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
     except (OSError, json.JSONDecodeError):
         return None
 
@@ -7075,8 +7130,8 @@ def claim_start(
                 err=True,
             )
         cid = result["claim_id"]
-        # No-op outside local mode: _local_recovery_available() gates this on
-        # config.mode == "local", so served mode never writes a recovery file.
+        # Served and local modes both persist a recovery sidecar so
+        # ``claim recover`` can restore the token after context loss.
         recovery_path = _write_claim_recovery_record(claim)
         if as_json:
             click.echo(json.dumps({
@@ -8164,6 +8219,158 @@ def claim_resume(obj, item_id, instance_id, runtime_session_id, hostname, pid, a
     click.echo("Use 'claim handoff --allow-legacy-adopt' if the token is lost and the claim has no secret.")
 
 
+def _served_claim_recover(
+    config: _backend.BackendConfig,
+    claim_id: int | None,
+    item_id: int | None,
+    as_json: bool,
+) -> None:
+    """Served-mode claim recover: validate sidecar identity against the served
+    active claim before returning the token. Never opens a local work store."""
+    context = _resolved_context(config)
+
+    def require_live_claim(claim: dict, *, selector: str) -> None:
+        if claim.get("status") != "active":
+            click.echo(
+                f"Error: Claim #{claim.get('claim_id')} is not active (status={claim.get('status')}).",
+                err=True,
+            )
+            sys.exit(1)
+        try:
+            expires_at = datetime.fromisoformat(str(claim["expires_at"]).replace("Z", "+00:00"))
+            if expires_at.tzinfo is None or expires_at.utcoffset() is None:
+                raise ValueError("expiry timezone is required")
+        except (KeyError, TypeError, ValueError):
+            click.echo(f"Error: Claim #{claim.get('claim_id')} has no valid expiry.", err=True)
+            sys.exit(1)
+        if expires_at <= datetime.now(timezone.utc):
+            click.echo(f"Error: Claim #{claim.get('claim_id')} is expired.", err=True)
+            sys.exit(1)
+
+    if claim_id is not None:
+        result = _run_served(
+            "claim recover",
+            _served.read_claim,
+            config.served_profile,
+            repo_id=config.repo_id,
+            claim_id=claim_id,
+            resolved_context=context,
+        )
+        claim = (result or {}).get("claim", {})
+        if not claim:
+            click.echo(f"Error: Claim #{claim_id} not found.", err=True)
+            sys.exit(1)
+        if claim.get("claim_id") != claim_id:
+            click.echo(f"Error: served claim response does not match requested claim #{claim_id}.", err=True)
+            sys.exit(1)
+        require_live_claim(claim, selector="claim")
+        served_claim_id = claim["claim_id"]
+    else:
+        assert item_id is not None
+        result = _run_served(
+            "claim recover",
+            _served.read_claims,
+            config.served_profile,
+            repo_id=config.repo_id,
+            item_id=item_id,
+            active_only=True,
+            resolved_context=context,
+        )
+        claims = (result or {}).get("claims", [])
+        if not claims:
+            click.echo(
+                f"Error: No active claims found for item #{item_id}.", err=True
+            )
+            sys.exit(1)
+        if len(claims) > 1:
+            candidates = ", ".join(str(c["claim_id"]) for c in claims)
+            click.echo(
+                "Error: Multiple active claims found for item "
+                f"#{item_id}; rerun with --id. Candidates: {candidates}",
+                err=True,
+            )
+            sys.exit(1)
+        claim = claims[0]
+        if claim.get("work_item_id") != item_id:
+            click.echo(f"Error: served claim response does not match requested item #{item_id}.", err=True)
+            sys.exit(1)
+        require_live_claim(claim, selector="item")
+        served_claim_id = claim["claim_id"]
+
+    record = _load_claim_recovery_record(served_claim_id)
+    if record is None:
+        message = (
+            f"No local recovery token file exists for claim #{served_claim_id}. "
+            f"Expected {_claim_recovery_path(served_claim_id)}"
+        )
+        if as_json:
+            click.echo(json.dumps(
+                {"claim": claim, "claim_token": None, "error": message}, indent=2,
+            ))
+        else:
+            click.echo(f"Error: {message}", err=True)
+        sys.exit(1)
+
+    token = record.get("claim_token") if isinstance(record, dict) else None
+    if not token or not isinstance(token, str):
+        message = (
+            "Local recovery token file for claim "
+            f"#{served_claim_id} is malformed (missing or empty claim_token)."
+        )
+        if as_json:
+            click.echo(json.dumps(
+                {"claim": claim, "claim_token": None, "error": message}, indent=2,
+            ))
+        else:
+            click.echo(f"Error: {message}", err=True)
+        sys.exit(1)
+
+    mismatches: list[str] = []
+    if record.get("claim_id") != served_claim_id:
+        mismatches.append(
+            f"claim_id: sidecar={record.get('claim_id')}, served={served_claim_id}"
+        )
+    if record.get("work_item_id") != claim.get("work_item_id"):
+        mismatches.append(
+            f"work_item_id: sidecar={record.get('work_item_id')}, "
+            f"served={claim.get('work_item_id')}"
+        )
+    if record.get("actor") != claim.get("actor"):
+        mismatches.append(
+            f"actor: sidecar={record.get('actor')!r}, "
+            f"served={claim.get('actor')!r}"
+        )
+    if record.get("claim_type") != claim.get("claim_type"):
+        mismatches.append(
+            f"claim_type: sidecar={record.get('claim_type')!r}, "
+            f"served={claim.get('claim_type')!r}"
+        )
+
+    if mismatches:
+        message = (
+            "Identity mismatch between sidecar and served active claim "
+            f"for claim #{served_claim_id}: {'; '.join(mismatches)}"
+        )
+        if as_json:
+            click.echo(json.dumps(
+                {"claim": claim, "claim_token": None, "error": message}, indent=2,
+            ))
+        else:
+            click.echo(f"Error: {message}", err=True)
+        sys.exit(1)
+
+    if as_json:
+        click.echo(json.dumps({"claim": claim, "claim_token": token}, indent=2))
+        return
+
+    click.echo(
+        f"Claim #{served_claim_id} recovered for item "
+        f"#{claim['work_item_id']} ({claim['claim_type']})"
+    )
+    click.echo(f"Claim token: {token}")
+    click.echo(_render_resolved_context(context))
+
+
 @claim.command("recover")
 @click.option("--id", "claim_id", type=int, default=None, help="Claim ID to recover")
 @click.option("--item-id", type=str, default=None, help="Recover the only active claim for a work item or repo#id")
@@ -8178,11 +8385,8 @@ def claim_recover(obj, claim_id, item_id, as_json) -> None:
         item_id = _apply_scoped_id(obj, item_id, field="item")
     config = _served_config_or_none(obj)
     if config is not None:
-        _served_operation_unavailable(
-            "claim recover",
-            replacement="Claim recovery is local-sidecar-only; use an existing claim token or an authorized handoff.",
-        )
-    assert config is None
+        _served_claim_recover(config, claim_id, item_id, as_json)
+        return
     try:
         config = _backend.load_backend_config()
     except _backend.BackendConfigError as e:

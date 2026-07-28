@@ -215,7 +215,7 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     "claim list-sprint": "catalog",
     "claim show": "catalog",
     "claim resume": "catalog",
-    "claim recover": "unavailable",
+    "claim recover": "catalog",
     "handoff": "catalog",
     "agent-protocol": "local",
     "next-work": "catalog",
