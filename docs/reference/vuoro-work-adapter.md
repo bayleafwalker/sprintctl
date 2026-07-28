@@ -19,6 +19,7 @@ no migration or DDL.
 | Surface | Operations | Idempotency |
 | --- | --- | --- |
 | Reads | `work.read.sprints`, `work.read.item`, `work.read.context`, `work.read.next-work`, `work.read.records`, `work.read.decisions` | key forbidden |
+| Item edit | `work.item.edit` | key forbidden; required `expected_revision` compare-and-swap |
 | Claim start | `work.claim.start` | key forbidden; one-shot create plus activation flow |
 | Durable claims | `work.claim.arbitrate` | key equals immutable command `event_id` |
 | Lifecycle | `work.lifecycle.arbitrate` | key equals immutable command `event_id` |
@@ -33,6 +34,15 @@ schema features. Record schemas use local `$defs` references only.
 `work.pilot.cutover-evidence` is intentionally catalog-described rather than
 hard-coded into the client, so an already-installed protocol-v1 client can
 refresh discovery and invoke it.
+
+`work.read.item` includes an `edit_revision` derived from the item identity,
+the current description digest, and the append-only count of prior
+`item-edited` events. `work.item.edit` requires that revision and locks the
+item while comparing it. A successful edit updates the description and
+appends one `item-edited` event in the same transaction; the event records the
+old/new revisions and descriptions. Existing events and item identity are
+never rewritten. A stale revision is rejected as `item-edit-conflict`, and an
+unchanged description is rejected without creating another revision.
 
 `work.read.context` is the server-side aggregate for `usage --context`. It
 returns the ContextContract v1 itself (rather than adding an envelope field),
@@ -110,6 +120,7 @@ record contracts and authority handlers during rollout:
 | --- | --- |
 | `sprintctl sprint list --json` | `work.read.sprints` |
 | `sprintctl item show --id ID --json` | `work.read.item` |
+| `sprintctl item edit --id ID --description TEXT` | `work.item.edit` |
 | authenticated durable-command actor discovery | `work.identity.current` |
 | `sprintctl next-work --json` | `work.read.next-work` |
 | claim start | `work.claim.start` |

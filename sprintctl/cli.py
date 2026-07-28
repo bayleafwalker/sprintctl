@@ -303,6 +303,7 @@ _SERVED_ITEM_SHOW_ROUTE = _served_routes.routes_for("item.show")[0]
 _SERVED_EVENT_LIST_ROUTE = _served_routes.routes_for("event.list")[0]
 _SERVED_EVENT_ADD_ROUTE = _served_routes.routes_for("event.add")[0]
 _SERVED_ITEM_ADD_ROUTE = _served_routes.routes_for("item.add")[0]
+_SERVED_ITEM_EDIT_ROUTE = _served_routes.routes_for("item.edit")[0]
 _SERVED_SPRINT_SHOW_ROUTE = _served_routes.routes_for("sprint.show")[0]
 _SERVED_CLAIM_START_ROUTE = _served_routes.routes_for("claim.start")[0]
 _SERVED_ITEM_STATUS_ROUTE = _served_routes.routes_for("item.status")[0]
@@ -318,6 +319,7 @@ assert _SERVED_ITEM_SHOW_ROUTE.operation == "work.read.item"
 assert _SERVED_EVENT_LIST_ROUTE.operation == "work.read.events"
 assert _SERVED_EVENT_ADD_ROUTE.operation == "work.event.add"
 assert _SERVED_ITEM_ADD_ROUTE.operation == "work.item.create"
+assert _SERVED_ITEM_EDIT_ROUTE.operation == "work.item.edit"
 assert _SERVED_SPRINT_SHOW_ROUTE.operation == "work.read.sprint"
 assert _SERVED_CLAIM_START_ROUTE.operation == "work.claim.start"
 assert _SERVED_ITEM_STATUS_ROUTE.operation == "work.lifecycle.arbitrate"
@@ -1423,47 +1425,86 @@ def item_add(obj, sprint_id: str, track_name, title, description, assignee, prio
 @click.option("--id", "item_id", type=str, required=True, help="Item ID or repo#id")
 @click.option("--description", required=True, help="Non-empty implementation scope or objective")
 @click.option("--actor", default=None, help="Actor name (default: actor)")
+@click.option(
+    "--expected-revision",
+    default=None,
+    help="Expected description revision (defaults to a fresh item read)",
+)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output updated item as JSON")
 @click.pass_obj
-def item_edit(obj, item_id: str, description, actor, as_json) -> None:
-    """Replace a work item's description."""
+def item_edit(obj, item_id: str, description, actor, expected_revision, as_json) -> None:
+    """Replace a work item's description with revision protection."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
     try:
         _db.validate_work_item_description(description)
     except ValueError as exc:
         raise click.BadParameter(str(exc), param_hint="--description") from exc
 
+    config = _served_config_or_none(obj)
+    context = _resolved_context(obj["backend_config"])
+    if config is not None:
+        if not expected_revision:
+            current = _run_served(
+                "item show",
+                _served.read_item,
+                config.served_profile,
+                repo_id=config.repo_id,
+                item_id=item_id,
+                resolved_context=context,
+            )
+            expected_revision = current["item"]["edit_revision"]
+        result = _run_served(
+            "item edit",
+            _served.item_edit,
+            config.served_profile,
+            repo_id=config.repo_id,
+            item_id=item_id,
+            description=description,
+            expected_revision=expected_revision,
+            resolved_context=context,
+        )
+        updated = {**result["item"], "edit_revision": result["revision"]}
+        if as_json:
+            click.echo(json.dumps(updated, indent=2))
+            return
+        click.echo(_item_edit_success_message(item_id, result))
+        click.echo(_render_resolved_context(context))
+        return
+
     store, m = _get_store(obj)
-    existing = m.get_work_item(store, item_id)
-    if existing is None:
+    current = m.get_work_item_with_edit_revision(store, item_id)
+    if current is None:
         click.echo(f"Item #{item_id} not found.", err=True)
         sys.exit(1)
+    _existing, current_revision = current
     try:
-        m.update_work_item_description(store, item_id, description)
+        result = m.update_work_item_description(
+            store,
+            item_id,
+            description,
+            expected_revision=expected_revision or current_revision,
+            actor=actor or "actor",
+        )
+    except _db.EditConflict as exc:
+        click.echo(f"Error: item-edit-conflict: {exc}", err=True)
+        sys.exit(1)
     except ValueError as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
 
-    m.create_event(
-        store,
-        existing["sprint_id"],
-        actor=actor or "actor",
-        event_type="item-edited",
-        source_type="actor",
-        work_item_id=item_id,
-        payload={
-            "summary": f"Item #{item_id} description edited",
-            "previous_description": existing["description"],
-            "description": description,
-        },
-    )
-
-    updated = m.get_work_item(store, item_id)
-    assert updated is not None
+    updated = {**result["item"], "edit_revision": result["revision"]}
     if as_json:
         click.echo(json.dumps(updated, indent=2))
         return
-    click.echo(f"Updated item #{item_id} description.")
+    click.echo(_item_edit_success_message(item_id, result))
+
+
+def _item_edit_success_message(item_id: int, result: dict) -> str:
+    """Render the backend-independent successful edit summary."""
+    return (
+        f"Updated item #{item_id} description "
+        f"({result['previous_revision']} -> {result['revision']})."
+    )
 
 
 @item.command("priority")
@@ -1695,13 +1736,15 @@ def item_show(obj, item_id: str, as_json) -> None:
         blocked_by_me = result["deps"]["blocks"]
     else:
         store, m = _get_store(obj)
-        it = m.get_work_item(store, item_id)
-        if it is None:
+        current = m.get_work_item_with_edit_revision(store, item_id)
+        if current is None:
             click.echo(
                 f"Item #{item_id} not found.\n{_render_resolved_context(context)}",
                 err=True,
             )
             sys.exit(1)
+        it, edit_revision = current
+        it = {**it, "edit_revision": edit_revision}
 
         # Item core fields (status, title, assignee, ...) only ever change via
         # authority commands, which the shadow pilot never mirrors -- so they

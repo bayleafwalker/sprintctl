@@ -66,6 +66,7 @@ async def test_preexisting_generic_client_discovers_cutover_evidence(monkeypatch
                     actor="served-test",
                     environment="vuoro-dev",
                     authorities=frozenset({"work:pilot-read"}),
+                    repo_ids=frozenset({"sprintctl"}),
                 )
             }
         ),
@@ -81,8 +82,9 @@ async def test_preexisting_generic_client_discovers_cutover_evidence(monkeypatch
         register_work_catalog(registry, work)
         result = await client.invoke(
             "work.pilot.cutover-evidence",
-            {"rehearse": False, "max_watermark_age_seconds": 60},
-            request_id="old-client-new-work-operation",
+                {"rehearse": False, "max_watermark_age_seconds": 60},
+                request_id="old-client-new-work-operation",
+                repo_id="sprintctl",
         )
 
     assert result == evidence
@@ -121,6 +123,7 @@ async def test_generic_client_invokes_click_free_claim_start(tmp_path):
                     actor="served-claimant",
                     environment="vuoro-dev",
                     authorities=frozenset({"work:claim"}),
+                    repo_ids=frozenset({"sprintctl"}),
                 )
             }
         ),
@@ -139,9 +142,10 @@ async def test_generic_client_invokes_click_free_claim_start(tmp_path):
                     "instance_id": "served-instance",
                     "hostname": "served-host",
                     "pid": 4242,
-                },
-                request_id="generic-client-claim-start",
-            )
+                    },
+                    request_id="generic-client-claim-start",
+                    repo_id="sprintctl",
+                )
     finally:
         connection.close()
 
@@ -151,3 +155,100 @@ async def test_generic_client_invokes_click_free_claim_start(tmp_path):
     assert result["item_status_before"] == "pending"
     assert result["item_status_after"] == "active"
     assert result["status_transition_applied"] is True
+
+
+@pytest.mark.anyio
+async def test_generic_client_round_trips_create_edit_show_with_audit(tmp_path):
+    connection = db.get_connection(tmp_path / "served-edit.db")
+    db.init_db(connection)
+    sprint_id = db.create_sprint(connection, "Served edit", status="active")
+    work = WorkApplication(
+        repo_id="sprintctl",
+        store=connection,
+        backend=db,
+        ingest_records=lambda records: [],
+        arbitrate_command=lambda record, credentials: None,
+        list_records=lambda after, limit: [],
+        list_decisions=lambda after, limit: [],
+    )
+    registry = CatalogRegistry()
+    register_work_catalog(registry, work)
+    app = create_app(
+        settings=ServiceSettings(
+            environment_name="vuoro-dev",
+            environment_class="development",
+            compatibility_state="compatible",
+        ),
+        registry=registry,
+        identity_resolver=StaticBearerIdentityResolver(
+            {
+                "identity": Identity(
+                    actor="served-editor",
+                    environment="vuoro-dev",
+                    authorities=frozenset({"work:lifecycle", "work:read"}),
+                    repo_ids=frozenset({"sprintctl"}),
+                )
+            }
+        ),
+    )
+    try:
+        async with AsyncVuoroClient(
+            Profile("dev", "http://test", "identity-ref", "vuoro-dev"),
+            lambda _reference: "identity",
+            transport=httpx.ASGITransport(app=app),
+        ) as client:
+            created = await client.invoke(
+                "work.item.create",
+                {
+                    "sprint_id": sprint_id,
+                    "track_name": "served",
+                    "title": "Editable through catalog",
+                    "description": "Original scope",
+                    "assignee": None,
+                    "priority": None,
+                },
+                request_id="create-editable-item",
+                repo_id="sprintctl",
+            )
+            item_id = created["item"]["id"]
+            before = await client.invoke(
+                "work.read.item",
+                {"item_id": item_id},
+                request_id="read-edit-revision",
+                repo_id="sprintctl",
+            )
+            edited = await client.invoke(
+                "work.item.edit",
+                {
+                    "item_id": item_id,
+                    "description": "Corrected scope",
+                    "expected_revision": before["item"]["edit_revision"],
+                },
+                request_id="edit-item",
+                repo_id="sprintctl",
+            )
+            after = await client.invoke(
+                "work.read.item",
+                {"item_id": item_id},
+                request_id="show-edited-item",
+                repo_id="sprintctl",
+            )
+    finally:
+        connection.close()
+
+    assert edited["item"]["id"] == item_id
+    assert edited["item_id"] == item_id
+    assert edited["actor"] == "served-editor"
+    assert edited["item"]["aggregate_uuid"] == before["item"]["aggregate_uuid"]
+    assert after["item"]["description"] == "Corrected scope"
+    assert after["item"]["edit_revision"] == edited["revision"]
+    assert [event["id"] for event in before["events"]] == [
+        event["id"]
+        for event in after["events"]
+        if event["id"] != edited["event_id"]
+    ]
+    audit = next(
+        event for event in after["events"] if event["id"] == edited["event_id"]
+    )
+    assert audit["event_type"] == "item-edited"
+    assert audit["actor"] == "served-editor"

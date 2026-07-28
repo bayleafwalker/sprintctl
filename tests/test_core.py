@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from sprintctl import db
+from sprintctl import contracts, db
 import sprintctl.cli as cli_module
 from sprintctl.cli import cli
 from sprintctl.render import render_sprint_doc
@@ -363,6 +363,9 @@ class TestItemCRUD:
         data = json.loads(result.output)
         assert data["id"] == item_id
         assert data["description"] == "New shaped scope"
+        assert data["edit_revision"].startswith(
+            f"item:{data['aggregate_uuid']}@description:v1@sha256:"
+        )
         assert db.get_work_item(conn, item_id)["description"] == "New shaped scope"
 
         events = db.list_events(conn, active_sprint["id"])
@@ -371,6 +374,15 @@ class TestItemCRUD:
         payload = json.loads(edit_events[0]["payload"])
         assert payload["previous_description"] == "Old scope"
         assert payload["description"] == "New shaped scope"
+        assert payload["previous_revision"] != payload["revision"]
+        assert set(payload) == {
+            "summary",
+            "field",
+            "previous_description",
+            "description",
+            "previous_revision",
+            "revision",
+        }
         assert edit_events[0]["work_item_id"] == item_id
 
     def test_item_edit_rejects_empty_description_without_mutation(
@@ -417,6 +429,72 @@ class TestItemCRUD:
             db.update_work_item_description(conn, item_id, "invalid\x00scope")
         with pytest.raises(ValueError, match="Item #9999 not found"):
             db.update_work_item_description(conn, 9999, "Valid scope")
+
+    def test_two_readers_cannot_apply_the_same_edit_revision(
+        self, conn, db_path, active_sprint
+    ):
+        track_id = db.get_or_create_track(conn, active_sprint["id"], "backend")
+        item_id = db.create_work_item(
+            conn, active_sprint["id"], track_id, "CAS item", "Original scope"
+        )
+        other = db.get_connection(db_path)
+        try:
+            first = db.get_work_item_with_edit_revision(conn, item_id)
+            second = db.get_work_item_with_edit_revision(other, item_id)
+            assert first is not None and second is not None
+            assert first[1] == second[1]
+
+            db.update_work_item_description(
+                conn,
+                item_id,
+                "First correction",
+                expected_revision=first[1],
+                actor="first",
+            )
+            with pytest.raises(db.EditConflict, match="revision mismatch"):
+                db.update_work_item_description(
+                    other,
+                    item_id,
+                    "Stale correction",
+                    expected_revision=second[1],
+                    actor="second",
+                )
+        finally:
+            other.close()
+
+        assert db.get_work_item(conn, item_id)["description"] == "First correction"
+        edits = [
+            event
+            for event in db.list_events(conn, active_sprint["id"])
+            if event["event_type"] == contracts.ITEM_EDITED_EVENT_TYPE
+        ]
+        assert len(edits) == 1
+
+    def test_item_edit_rolls_back_description_when_audit_insert_fails(
+        self, conn, active_sprint, monkeypatch
+    ):
+        track_id = db.get_or_create_track(conn, active_sprint["id"], "backend")
+        item_id = db.create_work_item(
+            conn, active_sprint["id"], track_id, "Atomic edit", "Original scope"
+        )
+        current = db.get_work_item_with_edit_revision(conn, item_id)
+        assert current is not None
+
+        def fail_event_insert(*args, **kwargs):
+            raise RuntimeError("injected audit insert failure")
+
+        monkeypatch.setattr(db, "_insert_event", fail_event_insert)
+        with pytest.raises(RuntimeError, match="injected audit insert failure"):
+            db.update_work_item_description(
+                conn,
+                item_id,
+                "Must roll back",
+                expected_revision=current[1],
+                actor="editor",
+            )
+
+        assert db.get_work_item(conn, item_id)["description"] == "Original scope"
+        assert db.list_events(conn, active_sprint["id"]) == []
 
 
 # ---------------------------------------------------------------------------

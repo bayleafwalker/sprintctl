@@ -246,6 +246,23 @@ def test_event_add_and_item_create_never_send_a_client_actor(fake_vuoro_client):
     assert sprint["arguments"] == {"sprint_id": None}
 
 
+def test_item_edit_sends_required_revision_and_never_a_client_actor(fake_vuoro_client):
+    result = served.item_edit(
+        _profile(),
+        repo_id="repo-x",
+        item_id=7,
+        description="Corrected scope",
+        expected_revision="item:uuid@description:v2@sha256:" + "a" * 64,
+    )
+    assert result["operation"] == "work.item.edit"
+    assert result["arguments"] == {
+        "item_id": 7,
+        "description": "Corrected scope",
+        "expected_revision": "item:uuid@description:v2@sha256:" + "a" * 64,
+    }
+    assert "actor" not in result["arguments"]
+
+
 def test_read_sprint_detail_sends_only_optional_sprint_id(fake_vuoro_client):
     result = served.read_sprint_detail(_profile(), repo_id="repo-x", sprint_id=7)
     assert result["operation"] == "work.read.sprint-detail"
@@ -522,7 +539,7 @@ def test_expected_operations_matches_all_served_cli_command_paths():
         for route in routes_for(path)
     }
     assert served.EXPECTED_OPERATIONS == expected
-    assert len(served.EXPECTED_OPERATIONS) == 31
+    assert len(served.EXPECTED_OPERATIONS) == 32
     assert served.EXPECTED_OPERATIONS == {
         "work.identity.current",
         "work.read.sprints",
@@ -553,6 +570,7 @@ def test_expected_operations_matches_all_served_cli_command_paths():
         "work.event.add",
         "work.handoff.record",
         "work.item.create",
+        "work.item.edit",
         "work.read.sprint",
         "work.read.sprint-detail",
     }

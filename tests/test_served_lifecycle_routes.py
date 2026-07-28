@@ -19,7 +19,7 @@ from uuid import uuid4
 import pytest
 
 import sprintctl.cli as cli_module
-from sprintctl import outbox
+from sprintctl import db, outbox
 from sprintctl.cli import cli
 
 _requires_312 = pytest.mark.skipif(
@@ -1608,6 +1608,209 @@ def test_served_item_status_preserves_failed_request_and_refuses_later_sequence(
     records = _outbox_records(tmp_path)
     assert len(records) == 1
     assert records[0].origin_seq == 1
+
+
+# ---------------------------------------------------------------------------
+# item edit
+# ---------------------------------------------------------------------------
+
+
+@_requires_312
+def test_served_item_edit_reads_revision_then_calls_catalog_not_store(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module,
+        "_get_store",
+        lambda _obj: pytest.fail("served item edit opened a direct store"),
+    )
+    revision = "item:uuid@description:v3@sha256:" + "a" * 64
+    monkeypatch.setattr(
+        cli_module._served,
+        "read_item",
+        lambda profile, **kwargs: {
+            "item": {"id": kwargs["item_id"], "edit_revision": revision}
+        },
+    )
+    captured = {}
+
+    def fake_item_edit(profile, **kwargs):
+        captured.update(kwargs)
+        return {
+            "repo_id": tmp_path.name,
+            "item": {
+                "id": kwargs["item_id"],
+                "description": kwargs["description"],
+            },
+            "event_id": 42,
+            "previous_revision": kwargs["expected_revision"],
+            "revision": "item:uuid@description:v4@sha256:" + "b" * 64,
+        }
+
+    monkeypatch.setattr(cli_module._served, "item_edit", fake_item_edit)
+
+    result = runner.invoke(
+        cli,
+        [
+            "item",
+            "edit",
+            "--id",
+            "7",
+            "--description",
+            "Corrected served scope",
+            "--actor",
+            "ignored-local-actor",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["id"] == 7
+    assert payload["description"] == "Corrected served scope"
+    assert payload["edit_revision"].endswith("b" * 64)
+    assert captured["item_id"] == 7
+    assert captured["description"] == "Corrected served scope"
+    assert captured["expected_revision"] == revision
+    assert "actor" not in captured
+
+
+@_requires_312
+def test_served_item_edit_distinguishes_operation_absence_from_missing_item(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+
+    def unavailable(profile, **kwargs):
+        raise RuntimeError("served-operation-unavailable: work.item.edit")
+
+    monkeypatch.setattr(cli_module._served, "item_edit", unavailable)
+    absent = runner.invoke(
+        cli,
+        [
+            "item",
+            "edit",
+            "--id",
+            "7",
+            "--description",
+            "Corrected",
+            "--expected-revision",
+            "known-revision",
+        ],
+    )
+    assert absent.exit_code != 0
+    assert "served-operation-unavailable" in absent.output
+    assert "item-not-found" not in absent.output
+
+    def missing(profile, **kwargs):
+        raise RuntimeError("item-not-found: Item #7 not found")
+
+    monkeypatch.setattr(cli_module._served, "read_item", missing)
+    missing_result = runner.invoke(
+        cli,
+        ["item", "edit", "--id", "7", "--description", "Corrected"],
+    )
+    assert missing_result.exit_code != 0
+    assert "item-not-found" in missing_result.output
+    assert "served-operation-unavailable" not in missing_result.output
+
+
+@_requires_312
+def test_item_edit_local_and_served_json_and_text_are_shape_compatible(
+    runner, conn, active_sprint, tmp_path, monkeypatch
+):
+    track = db.get_or_create_track(conn, active_sprint["id"], "edit-parity")
+    text_item = db.create_work_item(
+        conn, active_sprint["id"], track, "Text parity", "Old text scope"
+    )
+    json_item = db.create_work_item(
+        conn, active_sprint["id"], track, "JSON parity", "Old JSON scope"
+    )
+    text_before = db.get_work_item_with_edit_revision(conn, text_item)
+    json_before = db.get_work_item_with_edit_revision(conn, json_item)
+    assert text_before is not None and json_before is not None
+
+    local_text = runner.invoke(
+        cli,
+        [
+            "item",
+            "edit",
+            "--id",
+            str(text_item),
+            "--description",
+            "New text scope",
+        ],
+    )
+    local_json_result = runner.invoke(
+        cli,
+        [
+            "item",
+            "edit",
+            "--id",
+            str(json_item),
+            "--description",
+            "New JSON scope",
+            "--json",
+        ],
+    )
+    assert local_text.exit_code == 0, local_text.output
+    assert local_json_result.exit_code == 0, local_json_result.output
+    local_json = json.loads(local_json_result.output)
+
+    text_after = db.get_work_item_with_edit_revision(conn, text_item)
+    json_after = db.get_work_item_with_edit_revision(conn, json_item)
+    assert text_after is not None and json_after is not None
+    final = {
+        text_item: (text_after[0], text_before[1], text_after[1]),
+        json_item: (json_after[0], json_before[1], json_after[1]),
+    }
+
+    _configure_served_repo(tmp_path, monkeypatch)
+
+    def fake_item_edit(profile, **kwargs):
+        item, previous_revision, revision = final[kwargs["item_id"]]
+        assert kwargs["expected_revision"] == previous_revision
+        return {
+            "repo_id": tmp_path.name,
+            "item": item,
+            "event_id": 99,
+            "previous_revision": previous_revision,
+            "revision": revision,
+        }
+
+    monkeypatch.setattr(cli_module._served, "item_edit", fake_item_edit)
+    served_text = runner.invoke(
+        cli,
+        [
+            "item",
+            "edit",
+            "--id",
+            str(text_item),
+            "--description",
+            "New text scope",
+            "--expected-revision",
+            text_before[1],
+        ],
+    )
+    served_json_result = runner.invoke(
+        cli,
+        [
+            "item",
+            "edit",
+            "--id",
+            str(json_item),
+            "--description",
+            "New JSON scope",
+            "--expected-revision",
+            json_before[1],
+            "--json",
+        ],
+    )
+    assert served_text.exit_code == 0, served_text.output
+    assert served_json_result.exit_code == 0, served_json_result.output
+    assert served_text.output.splitlines()[0] == local_text.output.strip()
+    assert json.loads(served_json_result.output) == local_json
 
 
 # ---------------------------------------------------------------------------

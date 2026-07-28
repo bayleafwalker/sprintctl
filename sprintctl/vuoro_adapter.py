@@ -455,6 +455,46 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         ),
         "work:lifecycle", "write", "not-allowed",
     ),
+    WorkOperationContract(
+        "work.item.edit",
+        _object_schema(
+            {
+                "item_id": {"type": "integer", "minimum": 1},
+                "description": {"type": "string", "minLength": 1},
+                "expected_revision": {
+                    "type": "string",
+                    "pattern": (
+                        "^item:[0-9a-fA-F-]{36}@description:v[0-9]+"
+                        "@sha256:[0-9a-f]{64}$"
+                    ),
+                },
+            },
+            required=("item_id", "description", "expected_revision"),
+        ),
+        _result_schema(
+            (
+                "repo_id",
+                "item_id",
+                "item",
+                "event_id",
+                "actor",
+                "previous_revision",
+                "revision",
+            ),
+            {
+                "repo_id": {"type": "string"},
+                "item_id": {"type": "integer", "minimum": 1},
+                "item": {"type": "object"},
+                "event_id": {"type": "integer", "minimum": 1},
+                "actor": {"type": "string", "minLength": 1},
+                "previous_revision": {"type": "string", "minLength": 1},
+                "revision": {"type": "string", "minLength": 1},
+            },
+        ),
+        "work:lifecycle",
+        "write",
+        "not-allowed",
+    ),
     *(
         WorkOperationContract(name, _object_schema(properties, required=required), _result_schema(("repo_id", "item_id", result_id), {"repo_id": {"type": "string"}, "item_id": {"type": "integer", "minimum": 1}, result_id: {"type": "integer", "minimum": 1}}), "work:lifecycle", "write", "not-allowed")
         for name, properties, required, result_id in (
@@ -795,6 +835,7 @@ LEGACY_REMOTE_COMMAND_PARITY: tuple[dict[str, str], ...] = (
     {"legacy": "sprintctl authority sync", "operation": "work.batch.apply"},
     {"legacy": "sprintctl event observation add", "operation": "work.evidence.ingest"},
     {"legacy": "sprintctl item note", "operation": "work.item.note"},
+    {"legacy": "sprintctl item edit", "operation": "work.item.edit"},
     {"legacy": "sprintctl next-work --project", "operation": "work.project.next-work"},
     {"legacy": "project dispatch batching", "operation": "work.project.batch"},
     {

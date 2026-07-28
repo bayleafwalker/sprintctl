@@ -272,6 +272,7 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         "work.event.add",
         "work.handoff.record",
         "work.item.create",
+        "work.item.edit",
         "work.claim.start",
         "work.claim.arbitrate",
         "work.lifecycle.arbitrate",
@@ -398,6 +399,25 @@ def test_work_read_events_contract_shape():
     assert contract.result_schema["properties"]["events"] == {
         "type": "array",
         "items": {"type": "object"},
+    }
+
+
+def test_work_item_edit_contract_requires_revision_and_is_repo_scoped_write():
+    contract = next(
+        c for c in WORK_OPERATION_CONTRACTS if c.name == "work.item.edit"
+    )
+    assert contract.required_authority == "work:lifecycle"
+    assert contract.execution_semantics == "write"
+    assert contract.idempotency == "not-allowed"
+    assert contract.input_schema["required"] == [
+        "item_id",
+        "description",
+        "expected_revision",
+    ]
+    assert set(contract.input_schema["properties"]) == {
+        "item_id",
+        "description",
+        "expected_revision",
     }
 
 
@@ -888,6 +908,166 @@ def test_item_note_rejects_a_missing_item_before_any_write(conn):
             _context(actor="worker"),
         )
     assert rejected.value.code == "item-not-found"
+
+
+def test_item_edit_is_cas_protected_and_appends_authenticated_audit(conn, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "edit")
+    item_id = db.create_work_item(
+        conn, active_sprint["id"], track, "Editable", "Original scope"
+    )
+    blocker_id = db.create_work_item(
+        conn, active_sprint["id"], track, "Edit blocker", "Blocker scope"
+    )
+    db.add_ref(conn, item_id, "doc", "docs/edit-contract.md", "edit-contract")
+    db.add_dep(conn, blocker_id, item_id)
+    db.create_claim(conn, item_id, "claim-owner", claim_type="inspect", exclusive=False)
+    app = _application(store=conn, backend=db)
+    before = app.invoke("work.read.item", {"item_id": item_id}, _context())
+    revision = before["item"]["edit_revision"]
+    prior_event_ids = [event["id"] for event in before["events"]]
+
+    edited = app.invoke(
+        "work.item.edit",
+        {
+            "item_id": item_id,
+            "description": "Corrected scope",
+            "expected_revision": revision,
+        },
+        _context(actor="authenticated-editor"),
+    )
+
+    assert edited["item"]["id"] == item_id
+    assert edited["item_id"] == item_id
+    assert edited["event_id"] > 0
+    assert edited["actor"] == "authenticated-editor"
+    assert edited["item"]["description"] == "Corrected scope"
+    assert edited["previous_revision"] == revision
+    assert edited["revision"] != revision
+    after = app.invoke("work.read.item", {"item_id": item_id}, _context())
+    assert after["item"]["aggregate_uuid"] == before["item"]["aggregate_uuid"]
+    assert after["item"]["edit_revision"] == edited["revision"]
+    assert after["item"]["title"] == before["item"]["title"]
+    assert after["item"]["status"] == before["item"]["status"]
+    assert after["active_claims"] == before["active_claims"]
+    assert after["refs"] == before["refs"]
+    assert after["deps"] == before["deps"]
+    assert prior_event_ids == [
+        event["id"] for event in after["events"] if event["id"] in prior_event_ids
+    ]
+    audit = next(event for event in after["events"] if event["id"] == edited["event_id"])
+    assert audit["event_type"] == contracts.ITEM_EDITED_EVENT_TYPE
+    assert audit["actor"] == "authenticated-editor"
+    payload = json.loads(audit["payload"])
+    assert payload["previous_revision"] == revision
+    assert payload["revision"] == edited["revision"]
+    assert set(payload) == {
+        "summary",
+        "field",
+        "previous_description",
+        "description",
+        "previous_revision",
+        "revision",
+    }
+
+    with pytest.raises(ApplicationRejection) as stale:
+        app.invoke(
+            "work.item.edit",
+            {
+                "item_id": item_id,
+                "description": "Stale overwrite",
+                "expected_revision": revision,
+            },
+            _context(actor="other-editor"),
+        )
+    assert stale.value.code == "item-edit-conflict"
+    assert stale.value.http_status == 409
+    assert db.get_work_item(conn, item_id)["description"] == "Corrected scope"
+    assert len(db.list_events(conn, active_sprint["id"])) == len(after["events"])
+
+    with pytest.raises(ApplicationRejection) as noop:
+        app.invoke(
+            "work.item.edit",
+            {
+                "item_id": item_id,
+                "description": "Corrected scope",
+                "expected_revision": edited["revision"],
+            },
+            _context(actor="authenticated-editor"),
+        )
+    assert noop.value.code == "item-edit-rejected"
+    assert len(db.list_events(conn, active_sprint["id"])) == len(after["events"])
+
+
+def test_item_edit_distinguishes_missing_item_and_required_revision(
+    conn, active_sprint
+):
+    app = _application(store=conn, backend=db)
+    with pytest.raises(ApplicationRejection) as missing:
+        app.invoke(
+            "work.item.edit",
+            {
+                "item_id": 999999,
+                "description": "Corrected scope",
+                "expected_revision": (
+                    "item:00000000-0000-4000-8000-000000000000"
+                    "@description:v0@sha256:" + "0" * 64
+                ),
+            },
+            _context(),
+        )
+    assert missing.value.code == "item-not-found"
+    assert missing.value.http_status == 404
+
+    track = db.get_or_create_track(conn, active_sprint["id"], "edit")
+    item_id = db.create_work_item(
+        conn, active_sprint["id"], track, "Editable", "Scope"
+    )
+    with pytest.raises(ApplicationRejection) as invalid:
+        app.invoke(
+            "work.item.edit",
+            {"item_id": item_id, "description": "Corrected scope"},
+            _context(),
+        )
+    assert invalid.value.code == "invalid-arguments"
+
+    with pytest.raises(ApplicationRejection) as malformed:
+        app.invoke(
+            "work.item.edit",
+            {
+                "item_id": item_id,
+                "description": "Corrected scope",
+                "expected_revision": "not-a-revision",
+            },
+            _context(),
+        )
+    assert malformed.value.code == "invalid-arguments"
+    assert malformed.value.http_status == 422
+
+
+def test_generic_event_add_cannot_forge_an_item_edit_audit(conn, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "edit")
+    item_id = db.create_work_item(
+        conn, active_sprint["id"], track, "Forgery target", "Original scope"
+    )
+    app = _application(store=conn, backend=db)
+
+    with pytest.raises(ApplicationRejection) as forged:
+        app.invoke(
+            "work.event.add",
+            {
+                "sprint_id": active_sprint["id"],
+                "work_item_id": item_id,
+                "event_type": contracts.ITEM_EDITED_EVENT_TYPE,
+                "source_type": "actor",
+                "payload": {"summary": "forged"},
+                "actor": "forged-client-actor",
+            },
+            _context(actor="authenticated-caller"),
+        )
+
+    assert forged.value.code == "event-rejected"
+    assert "reserved; use the item edit operation" in forged.value.message
+    assert db.list_events(conn, active_sprint["id"]) == []
 
 
 def test_batch_is_content_bound_idempotent_and_preserves_producer_order():

@@ -463,6 +463,7 @@ class WorkApplication:
             "work.event.add": target._event_add,
             "work.handoff.record": target._handoff_record,
             "work.item.create": target._item_create,
+            "work.item.edit": target._item_edit,
             "work.item.ref.add": target._item_ref_add,
             "work.item.ref.remove": target._item_ref_remove,
             "work.item.dep.add": target._item_dep_add,
@@ -517,14 +518,15 @@ class WorkApplication:
         self, arguments: dict[str, Any], _context: InvocationContext
     ) -> dict[str, Any]:
         item_id = _positive_int(arguments.get("item_id"), "item_id")
-        item = self.backend.get_work_item(self.store, item_id)
-        if item is None:
+        current = self.backend.get_work_item_with_edit_revision(self.store, item_id)
+        if current is None:
             raise ApplicationRejection(
                 "item-not-found", f"Item #{item_id} not found", 404
             )
+        item, edit_revision = current
         return {
             "repo_id": self.repo_id,
-            "item": item,
+            "item": {**item, "edit_revision": edit_revision},
             "events": [
                 event
                 for event in self.backend.list_events(self.store, item["sprint_id"])
@@ -863,6 +865,50 @@ class WorkApplication:
         if item is None:  # pragma: no cover - backend postcondition
             raise ApplicationRejection("item-create-failed", "created item could not be read back", 500)
         return {"item": item, "track_name": track_name}
+
+    def _item_edit(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        """CAS-edit an item and append an audit event as the authenticated actor."""
+        item_id = _positive_int(arguments.get("item_id"), "item_id")
+        description = arguments.get("description")
+        try:
+            db.validate_work_item_description(description)
+        except ValueError as exc:
+            raise ApplicationRejection("invalid-arguments", str(exc), 422) from exc
+        expected_revision = _optional_text(
+            arguments.get("expected_revision"), "expected_revision"
+        )
+        if not expected_revision:
+            raise ApplicationRejection(
+                "invalid-arguments", "expected_revision is required", 422
+            )
+        try:
+            db.validate_item_edit_revision(expected_revision)
+        except ValueError as exc:
+            raise ApplicationRejection("invalid-arguments", str(exc), 422) from exc
+        if self.backend.get_work_item(self.store, item_id) is None:
+            raise ApplicationRejection(
+                "item-not-found", f"Item #{item_id} not found", 404
+            )
+        try:
+            result = self.backend.update_work_item_description(
+                self.store,
+                item_id,
+                description,
+                expected_revision=expected_revision,
+                actor=context.identity.actor,
+            )
+        except db.EditConflict as exc:
+            raise ApplicationRejection("item-edit-conflict", str(exc), 409) from exc
+        except ValueError as exc:
+            raise ApplicationRejection("item-edit-rejected", str(exc), 422) from exc
+        return {
+            "repo_id": self.repo_id,
+            "item_id": item_id,
+            "actor": context.identity.actor,
+            **result,
+        }
 
     def _resolve_sprint(
         self, requested: Any, *, prefer_backlog: bool = False

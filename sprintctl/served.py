@@ -308,6 +308,29 @@ def item_create(
     }, repo_id=repo_id))
 
 
+def item_edit(
+    served_profile: ServedProfile,
+    *,
+    repo_id: str,
+    item_id: int,
+    description: str,
+    expected_revision: str,
+) -> dict[str, Any]:
+    """Invoke CAS-protected ``work.item.edit`` as the authenticated actor."""
+    return asyncio.run(
+        _invoke_operation(
+            served_profile,
+            "work.item.edit",
+            {
+                "item_id": item_id,
+                "description": description,
+                "expected_revision": expected_revision,
+            },
+            repo_id=repo_id,
+        )
+    )
+
+
 def project_next_work(
     served_profile: ServedProfile, *, sprint_id: int | None = None
 ) -> dict[str, Any]:
@@ -671,6 +694,7 @@ _DOCTOR_PROBE_COMMAND_PATHS = (
     "event.list",
     "event.add",
     "item.add",
+    "item.edit",
     "sprint.show",
     "sprint.show.detail",
 )
