@@ -18,6 +18,9 @@ OPERATION_NAME = "work.claim.recover-terminal/v1"
 RECOVERY_CAPABILITY = "work:claim-recovery"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _AUDIT_REF = re.compile(r"^ad:[0-9A-HJKMNP-TV-Z]{26}$")
+_CAPABILITY_REF = re.compile(
+    r"^capref:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
 _SECRET_NAMES = frozenset({
     "claim_token", "token", "credential", "secret", "password", "api_key",
     "access_token", "authorization", "private_key",
@@ -52,9 +55,10 @@ def _audit_ref(value: str, field: str) -> str:
     return value
 
 
-def _opaque_reference(value: str, field: str) -> str:
-    if not isinstance(value, str) or not value or value != value.strip():
-        raise ValueError(f"{field} must be a non-empty opaque reference")
+def _capability_ref(value: str, field: str) -> str:
+    """Accept only an opaque capability handle, never a credential-shaped value."""
+    if not isinstance(value, str) or not _CAPABILITY_REF.fullmatch(value):
+        raise ValueError(f"{field} must be a capref:<canonical UUID> opaque reference")
     if any(secret in value.lower().replace("-", "_") for secret in _SECRET_NAMES):
         raise ValueError(f"{field} must not contain a secret-bearing reference")
     return value
@@ -95,7 +99,7 @@ class TerminalRecoveryRequest:
         object.__setattr__(self, "expected_lease_epoch", _positive_int(self.expected_lease_epoch, "expected_lease_epoch"))
         object.__setattr__(self, "terminal_disposition", TerminalDisposition(self.terminal_disposition))
         object.__setattr__(self, "terminal_request_digest", _sha256(self.terminal_request_digest, "terminal_request_digest"))
-        object.__setattr__(self, "recovery_capability_ref", _opaque_reference(self.recovery_capability_ref, "recovery_capability_ref"))
+        object.__setattr__(self, "recovery_capability_ref", _capability_ref(self.recovery_capability_ref, "recovery_capability_ref"))
         object.__setattr__(self, "incident_audit_ref", _audit_ref(self.incident_audit_ref, "incident_audit_ref"))
         object.__setattr__(self, "operator_approval_audit_ref", _audit_ref(self.operator_approval_audit_ref, "operator_approval_audit_ref"))
 
@@ -150,6 +154,9 @@ class VerifiedRecoveryCapability:
     terminal_request_id: str
     terminal_disposition: TerminalDisposition
     expected_lease_epoch: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "capability_ref", _capability_ref(self.capability_ref, "capability_ref"))
 
 
 class RecoveryCapabilityVerifier(Protocol):

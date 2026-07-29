@@ -73,6 +73,8 @@ reveals a claim token.
 `sprintctl/terminal_recovery_contract.py` is intentionally transport-free. It
 defines the lookup-only request identity, the four result classes, a narrow
 conflict disclosure shape, and the `RecoveryCapabilityVerifier` interface.
+The client-visible capability handle is only `capref:<canonical UUID>`; bearer
+strings, JWT-shaped values, whitespace, and provider credentials are invalid.
 Its sole required configuration is a deployed identity authority capable of
 online scope/expiry/revocation verification; Sprintctl does not configure an
 issuer, store a credential, or offer a local fallback. The ledger key is

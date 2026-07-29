@@ -13,6 +13,7 @@ from sprintctl.terminal_recovery_contract import (
     TerminalRecoveryDecision,
     TerminalRecoveryRequest,
     TerminalRecoveryResultClass,
+    VerifiedRecoveryCapability,
 )
 
 
@@ -33,7 +34,7 @@ def _request(**changes):
         "expected_lease_epoch": 3,
         "terminal_disposition": TerminalDisposition.CLAIM_RELEASE,
         "terminal_request_digest": "a" * 64,
-        "recovery_capability_ref": "identity-grant:recovery-2026-07-29",
+        "recovery_capability_ref": f"capref:{REQUEST_ID}",
         "incident_audit_ref": AUDIT_REF,
         "operator_approval_audit_ref": AUDIT_REF,
     }
@@ -51,10 +52,44 @@ def test_terminal_recovery_freezes_lookup_only_token_free_request_identity():
     assert "claim_token" not in request.__dataclass_fields__
 
 
-@pytest.mark.parametrize("field", ["claim_token", "token", "credential", "authorization"])
-def test_terminal_recovery_rejects_secret_bearing_capability_reference(field):
-    with pytest.raises(ValueError, match="secret-bearing"):
-        _request(recovery_capability_ref=f"{field}:not-a-reference")
+@pytest.mark.parametrize(
+    "capability_ref",
+    [
+        "Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature",
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJjb29yZGluYXRvciJ9.signature",
+        f"capref:{REQUEST_ID} ",
+        f"capref:{REQUEST_ID}\n",
+        "identity-grant:recovery-2026-07-29",
+        "capref:claim_token",
+    ],
+)
+def test_terminal_recovery_rejects_bearer_jwt_and_noncanonical_capability_references(capability_ref):
+    with pytest.raises(ValueError, match="capref:<canonical UUID>|secret-bearing"):
+        _request(recovery_capability_ref=capability_ref)
+
+
+def test_identity_verifier_output_uses_the_same_safe_capability_reference_grammar():
+    verified = VerifiedRecoveryCapability(
+        capability_ref=f"capref:{REQUEST_ID}",
+        subject_id=str(uuid4()),
+        repo_id=REPO_ID,
+        claim_id=17,
+        terminal_request_id=REQUEST_ID,
+        terminal_disposition="claim.release",
+        expected_lease_epoch=3,
+    )
+    assert verified.capability_ref == f"capref:{REQUEST_ID}"
+
+    with pytest.raises(ValueError, match="capref:<canonical UUID>"):
+        VerifiedRecoveryCapability(
+            capability_ref="eyJhbGciOiJIUzI1NiJ9.payload.signature",
+            subject_id=str(uuid4()),
+            repo_id=REPO_ID,
+            claim_id=17,
+            terminal_request_id=REQUEST_ID,
+            terminal_disposition="claim.release",
+            expected_lease_epoch=3,
+        )
 
 
 @pytest.mark.parametrize("audit_ref", ["incident:123", "ad:lowercase-not-a-ulid", "ad:01ARZ3NDEKTSV4RRFFQ69G5FAV:extra"])
