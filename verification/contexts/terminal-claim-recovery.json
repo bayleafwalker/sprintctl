@@ -5,7 +5,7 @@
   "subject": "lookup-only-privileged-terminal-claim-recovery",
   "contract_ref": {
     "doc_id": "sprintctl-authority-recovery-and-actor-convention",
-    "revision": "git:dc65d5fea79c68cbd77f9fa9dba8f5709077209d"
+    "revision": "git:09db1a3a5bd38068cfc56fc48a900ed4f9a6e34a"
   },
   "contract_status": "ratified",
   "source_of_truth": "immutable-terminal-request-decision-ledger-before-current-claim-state",
