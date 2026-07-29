@@ -78,6 +78,18 @@ class TerminalRecoveryResultClass(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
+class TerminalRecoveryMismatchClass(StrEnum):
+    REPOSITORY = "repository-mismatch"
+    CLAIM = "claim-mismatch"
+    REQUEST_ID = "request-id-mismatch"
+    REQUEST_DIGEST = "request-digest-mismatch"
+    DISPOSITION = "disposition-mismatch"
+    LEASE_EPOCH = "lease-epoch-mismatch"
+    TERMINALITY = "non-terminal-request"
+    ACTIVE_CLAIM = "active-claim"
+    SUPERSEDED_CLAIM = "superseded-claim"
+
+
 @dataclass(frozen=True, slots=True)
 class TerminalRecoveryRequest:
     """Lookup-only recovery request; raw proof and worker identity are absent."""
@@ -117,7 +129,7 @@ class TerminalRecoveryDecision:
     decision_id: str | None = None
     terminal_event_id: str | None = None
     resulting_item_state: str | None = None
-    mismatch_class: str | None = None
+    mismatch_class: TerminalRecoveryMismatchClass | None = None
     conflicting_request_id: str | None = None
 
     def __post_init__(self) -> None:
@@ -135,8 +147,16 @@ class TerminalRecoveryDecision:
             if self.mismatch_class is not None or self.conflicting_request_id is not None:
                 raise ValueError("settled must not disclose conflict fields")
         elif result is TerminalRecoveryResultClass.CONFLICT:
-            if not self.mismatch_class or self.conflicting_request_id is None:
+            if self.mismatch_class is None or self.conflicting_request_id is None:
                 raise ValueError("conflict requires mismatch_class and conflicting_request_id")
+            try:
+                object.__setattr__(
+                    self,
+                    "mismatch_class",
+                    TerminalRecoveryMismatchClass(self.mismatch_class),
+                )
+            except ValueError as exc:
+                raise ValueError("mismatch_class must be a defined non-secret mismatch class") from exc
             if any((self.decision_id, self.terminal_event_id, self.resulting_item_state)):
                 raise ValueError("conflict must not disclose terminal state")
         elif any((self.decision_id, self.terminal_event_id, self.resulting_item_state, self.mismatch_class, self.conflicting_request_id)):
@@ -157,6 +177,49 @@ class VerifiedRecoveryCapability:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "capability_ref", _capability_ref(self.capability_ref, "capability_ref"))
+        if not isinstance(self.subject_id, str) or not self.subject_id or self.subject_id != self.subject_id.strip():
+            raise ValueError("subject_id must be a non-empty authenticated principal without whitespace")
+        object.__setattr__(self, "repo_id", _uuid(self.repo_id, "repo_id"))
+        object.__setattr__(self, "claim_id", _positive_int(self.claim_id, "claim_id"))
+        object.__setattr__(self, "terminal_request_id", _uuid(self.terminal_request_id, "terminal_request_id"))
+        object.__setattr__(self, "terminal_disposition", TerminalDisposition(self.terminal_disposition))
+        object.__setattr__(self, "expected_lease_epoch", _positive_int(self.expected_lease_epoch, "expected_lease_epoch"))
+
+
+def require_verified_capability_scope(
+    request: TerminalRecoveryRequest,
+    verified: VerifiedRecoveryCapability,
+) -> None:
+    """Reject a verified capability unless it binds exactly to this request.
+
+    A served adapter must call this after online verification and before any
+    immutable-ledger or current-claim query.
+    """
+    fields = (
+        "capability_ref",
+        "repo_id",
+        "claim_id",
+        "terminal_request_id",
+        "terminal_disposition",
+        "expected_lease_epoch",
+    )
+    mismatches = [
+        field for field in fields
+        if getattr(verified, field) != getattr(request, "recovery_capability_ref" if field == "capability_ref" else field)
+    ]
+    if mismatches:
+        raise ValueError("verified capability scope does not exactly match recovery request: " + ", ".join(mismatches))
+
+
+def require_authenticated_coordinator_principal(
+    authenticated_principal: str | None,
+    verified: VerifiedRecoveryCapability,
+) -> None:
+    """Bind the adapter invocation identity to the verified recovery subject."""
+    if not isinstance(authenticated_principal, str) or not authenticated_principal or authenticated_principal != authenticated_principal.strip():
+        raise ValueError("authenticated coordinator principal is required")
+    if authenticated_principal != verified.subject_id:
+        raise ValueError("authenticated coordinator principal does not match verified recovery capability subject")
 
 
 class RecoveryCapabilityVerifier(Protocol):
@@ -167,4 +230,21 @@ class RecoveryCapabilityVerifier(Protocol):
 
         Implementations fail closed on authority/revocation lookup failure and do
         not return raw credentials, claim proof, or provider secrets.
+        """
+
+
+class TerminalRecoveryAdapter(Protocol):
+    """Future served boundary; no implementation is registered by this module."""
+
+    def recover_terminal(
+        self,
+        request: TerminalRecoveryRequest,
+        *,
+        authenticated_coordinator_principal: str,
+    ) -> TerminalRecoveryDecision:
+        """Fail closed unless principal and verified scope bind before ledger I/O.
+
+        The implementation order is online verification, exact scope binding,
+        exact principal/subject binding, then immutable-ledger lookup before any
+        current-claim inspection.
         """

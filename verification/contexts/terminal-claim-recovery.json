@@ -5,8 +5,9 @@
   "subject": "lookup-only-privileged-terminal-claim-recovery",
   "contract_ref": {
     "doc_id": "sprintctl-authority-recovery-and-actor-convention",
-    "revision": "git:57e23c10e37bcad9f024531b676b2019736fa85d"
+    "revision": "git:dc65d5fea79c68cbd77f9fa9dba8f5709077209d"
   },
+  "contract_status": "ratified",
   "source_of_truth": "immutable-terminal-request-decision-ledger-before-current-claim-state",
   "depth": 2,
   "backends": ["future-served-work-adapter", "postgresql-immutable-ledger", "deployed-identity-authority"],
@@ -27,6 +28,7 @@
     "immutable-ledger-lookup-precedes-current-claim-state-inspection",
     "exact-replay-after-later-lineage-change-returns-recorded-settlement",
     "online-revocation-or-identity-lookup-failure-is-fail-closed",
+    "verified-capability-scope-and-authenticated-principal-bind-before-ledger-or-claim-inspection",
     "conflict-disclosure-contains-only-non-secret-identifiers-and-mismatch-class",
     "new-normal-operation-after-not-settled-requires-named-human-operator-approval",
     "active-sidecar-claim-recover-remains-proof-only-and-is-not-terminal-recovery-authority"

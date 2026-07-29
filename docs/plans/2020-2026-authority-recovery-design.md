@@ -35,8 +35,8 @@ credential and it never creates or retries a mutation.
 
 Input is:
 
-- canonical UUID `repo_id`, `claim_id`, and immutable terminal UUID
-  `request_id`;
+- canonical UUID `repo_id`, positive numeric `claim_id`, and immutable
+  terminal UUID `request_id`;
 - `expected_lease_epoch`, a closed terminal disposition, and the SHA-256
   digest of the original immutable terminal request;
 - a server-validated, scope-bound coordinator recovery capability covering the
@@ -75,6 +75,12 @@ defines the lookup-only request identity, the four result classes, a narrow
 conflict disclosure shape, and the `RecoveryCapabilityVerifier` interface.
 The client-visible capability handle is only `capref:<canonical UUID>`; bearer
 strings, JWT-shaped values, whitespace, and provider credentials are invalid.
+The verifier must return the same strict capability reference plus exact
+`repo_id`, numeric `claim_id`, terminal request UUID, disposition, and lease
+epoch. The adapter compares every one of those fields to the request and
+requires its authenticated coordinator invocation principal to equal the
+verified capability subject before it reads the ledger or current claim state;
+an absent or mismatched principal fails closed.
 Its sole required configuration is a deployed identity authority capable of
 online scope/expiry/revocation verification; Sprintctl does not configure an
 issuer, store a credential, or offer a local fallback. The ledger key is

@@ -11,9 +11,12 @@ from sprintctl.terminal_recovery_contract import (
     RECOVERY_CAPABILITY,
     TerminalDisposition,
     TerminalRecoveryDecision,
+    TerminalRecoveryMismatchClass,
     TerminalRecoveryRequest,
     TerminalRecoveryResultClass,
     VerifiedRecoveryCapability,
+    require_authenticated_coordinator_principal,
+    require_verified_capability_scope,
 )
 
 
@@ -92,6 +95,56 @@ def test_identity_verifier_output_uses_the_same_safe_capability_reference_gramma
         )
 
 
+def _verified(**changes):
+    values = {
+        "capability_ref": f"capref:{REQUEST_ID}",
+        "subject_id": "coordinator:recovery-a",
+        "repo_id": REPO_ID,
+        "claim_id": 17,
+        "terminal_request_id": REQUEST_ID,
+        "terminal_disposition": "claim.release",
+        "expected_lease_epoch": 3,
+    }
+    values.update(changes)
+    return VerifiedRecoveryCapability(**values)
+
+
+def test_verified_capability_must_exactly_bind_every_recovery_scope_field_before_ledger_lookup():
+    request = _request()
+    require_verified_capability_scope(request, _verified())
+
+    with pytest.raises(ValueError, match="claim_id"):
+        require_verified_capability_scope(request, _verified(claim_id=18))
+    with pytest.raises(ValueError, match="terminal_disposition"):
+        require_verified_capability_scope(request, _verified(terminal_disposition="item.done-from-claim"))
+
+
+def test_authenticated_coordinator_principal_must_equal_verified_capability_subject():
+    verified = _verified()
+    require_authenticated_coordinator_principal("coordinator:recovery-a", verified)
+
+    with pytest.raises(ValueError, match="is required"):
+        require_authenticated_coordinator_principal(None, verified)
+    with pytest.raises(ValueError, match="does not match"):
+        require_authenticated_coordinator_principal("coordinator:other", verified)
+
+
+def test_conflict_mismatch_class_is_closed_and_non_secret():
+    decision = TerminalRecoveryDecision(
+        result="conflict",
+        mismatch_class="request-digest-mismatch",
+        conflicting_request_id=CONFLICT_ID,
+    )
+    assert decision.mismatch_class is TerminalRecoveryMismatchClass.REQUEST_DIGEST
+
+    with pytest.raises(ValueError, match="defined non-secret"):
+        TerminalRecoveryDecision(
+            result="conflict",
+            mismatch_class="raw claim token was unexpected",
+            conflicting_request_id=CONFLICT_ID,
+        )
+
+
 @pytest.mark.parametrize("audit_ref", ["incident:123", "ad:lowercase-not-a-ulid", "ad:01ARZ3NDEKTSV4RRFFQ69G5FAV:extra"])
 def test_terminal_recovery_requires_auditctl_event_reference(audit_ref):
     with pytest.raises(ValueError, match="auditctl event reference"):
@@ -113,7 +166,7 @@ def test_terminal_recovery_result_classes_preserve_redaction_boundary():
 
     with pytest.raises(ValueError, match="must not disclose terminal state"):
         TerminalRecoveryDecision(
-            result="conflict", mismatch_class="epoch-mismatch",
+            result="conflict", mismatch_class="lease-epoch-mismatch",
             conflicting_request_id=CONFLICT_ID, resulting_item_state="done",
         )
     with pytest.raises(ValueError, match="must not include decision or conflict detail"):
@@ -128,4 +181,5 @@ def test_terminal_recovery_context_is_complete_and_preserves_sidecar_separation(
     assert packet["source_of_truth"].startswith("immutable-terminal-request-decision-ledger")
     assert "immutable-ledger-lookup-precedes-current-claim-state-inspection" in packet["invariants"]
     assert "online-revocation-or-identity-lookup-failure-is-fail-closed" in packet["invariants"]
+    assert "verified-capability-scope-and-authenticated-principal-bind-before-ledger-or-claim-inspection" in packet["invariants"]
     assert "active-sidecar-claim-recover-remains-proof-only-and-is-not-terminal-recovery-authority" in packet["invariants"]
