@@ -488,6 +488,7 @@ def _handle_done_from_claim(
         "aggregate_type": "item", "aggregate_uuid": str(updated["aggregate_uuid"]),
         "item_id": int(updated["id"]), "previous_status": item["status"],
         "status": updated["status"], "claim_id": claim_id,
+        "lease_epoch": int(claim["lease_epoch"]),
         "claim_released": not keep_claim, "claim_still_present": keep_claim,
         "keep_claim": keep_claim, "revision": item_revision(updated),
     }

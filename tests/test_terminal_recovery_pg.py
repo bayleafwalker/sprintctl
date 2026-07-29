@@ -165,3 +165,93 @@ def test_authority_terminal_release_writes_ledger_and_rolls_back_atomically(tmp_
         producer.close()
         cleanup_test_repositories(conn, [repo_id])
         conn.close()
+
+
+@pytest.mark.parametrize(
+    ("record_type", "payload_extra", "expected_disposition"),
+    [
+        ("claim.release", {}, "claim.release"),
+        ("item.done-from-claim", {"keep_claim": False}, "item.done-from-claim"),
+        ("item.done", {}, "item.transition.done"),
+        ("item.transition", {"to_status": "blocked"}, "item.transition.blocked"),
+    ],
+)
+def test_authority_terminal_disposition_matrix_populates_immutable_ledger(
+    tmp_path, record_type, payload_extra, expected_disposition,
+):
+    from psycopg import connect
+    from psycopg.rows import dict_row
+    conn = connect(PG_URL, row_factory=dict_row)
+    assert_disposable_connection(conn)
+    repo_id = new_test_repo_uuid()
+    store = pg.PgStore(conn=conn, repo_id=repo_id, authority_repo_uuid=repo_id)
+    producer = outbox.open_outbox(tmp_path / f"terminal-{record_type}.db")
+    try:
+        pg.init_db(store)
+        sprint_id = pg.create_sprint(store, "Matrix", "", status="active")
+        track_id = pg.get_or_create_track(store, sprint_id, "recovery")
+        item_id = pg.create_work_item(store, sprint_id, track_id, record_type)
+        # done is only terminal from active in the normal lifecycle graph.
+        if record_type == "item.done":
+            with conn.cursor() as cur:
+                cur.execute("UPDATE work_item SET status = 'active' WHERE repo_id = %s AND id = %s", (repo_id, item_id))
+            conn.commit()
+        claim = pg.create_claim(store, item_id, "coordinator", ttl_seconds=300)
+        item = pg.get_work_item(store, item_id)
+        credential_ref = authority.credential_ref(claim["claim_token"])
+        if record_type == "claim.release":
+            refs = {"repo_id": repo_id, "aggregate_type": "claim", "claim_id": claim["id"]}
+            basis = authority.claim_revision(claim)
+        else:
+            refs = {"repo_id": repo_id, "aggregate_type": "item", "aggregate_uuid": item["aggregate_uuid"]}
+            basis = authority.item_revision(item)
+        payload = {"claim_id": claim["id"], "credential_ref": credential_ref, **payload_extra}
+        command = contracts.AuthorityCommand(
+            event_id=str(uuid4()), record_type=record_type, schema_version="1", actor="coordinator",
+            authored_at="2026-07-29T00:00:00Z", refs=refs, payload=payload,
+            basis_revision=basis, correlation_id=str(uuid4()),
+        )
+        decision = authority.arbitrate_command(
+            store, outbox.append_authority_command(producer, command),
+            credentials={credential_ref: claim["claim_token"]},
+        )
+        assert decision.accepted
+        with conn.cursor() as cur:
+            cur.execute("SELECT terminal_disposition, lease_epoch FROM terminal_recovery_ledger WHERE repo_id = %s AND terminal_request_id = %s", (repo_id, command.event_id))
+            assert dict(cur.fetchone()) == {"terminal_disposition": expected_disposition, "lease_epoch": claim["lease_epoch"]}
+    finally:
+        producer.close()
+        cleanup_test_repositories(conn, [repo_id])
+        conn.close()
+
+
+def test_authority_ledger_failure_rolls_back_terminal_settlement(tmp_path, monkeypatch):
+    """An injected ledger fault rolls back the normal authority decision too."""
+    from psycopg import connect
+    from psycopg.rows import dict_row
+    conn = connect(PG_URL, row_factory=dict_row)
+    assert_disposable_connection(conn)
+    repo_id = new_test_repo_uuid()
+    store = pg.PgStore(conn=conn, repo_id=repo_id, authority_repo_uuid=repo_id)
+    producer = outbox.open_outbox(tmp_path / "terminal-fault.db")
+    try:
+        pg.init_db(store)
+        sprint_id = pg.create_sprint(store, "Fault", "", status="active")
+        track_id = pg.get_or_create_track(store, sprint_id, "recovery")
+        item_id = pg.create_work_item(store, sprint_id, track_id, "release")
+        claim = pg.create_claim(store, item_id, "coordinator", ttl_seconds=300)
+        ref = authority.credential_ref(claim["claim_token"])
+        command = contracts.AuthorityCommand(event_id=str(uuid4()), record_type="claim.release", schema_version="1", actor="coordinator", authored_at="2026-07-29T00:00:00Z", refs={"repo_id": repo_id, "aggregate_type": "claim", "claim_id": claim["id"]}, payload={"claim_id": claim["id"], "credential_ref": ref}, basis_revision=authority.claim_revision(claim), correlation_id=str(uuid4()))
+        monkeypatch.setattr(authority, "append_terminal_settlement_from_authority", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("ledger fault")))
+        with pytest.raises(RuntimeError, match="ledger fault"):
+            authority.arbitrate_command(store, outbox.append_authority_command(producer, command), credentials={ref: claim["claim_token"]})
+        assert pg.get_claim(store, claim["id"]) is not None
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS n FROM terminal_recovery_ledger WHERE repo_id = %s", (repo_id,))
+            assert cur.fetchone()["n"] == 0
+            cur.execute("SELECT count(*) AS n FROM terminal_recovery_audit WHERE repo_id = %s", (repo_id,))
+            assert cur.fetchone()["n"] == 0
+    finally:
+        producer.close()
+        cleanup_test_repositories(conn, [repo_id])
+        conn.close()
