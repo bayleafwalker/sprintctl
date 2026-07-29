@@ -1278,6 +1278,63 @@ def _apply_schema_version_4(cur: Any) -> None:
     )
 
 
+def _apply_schema_version_5(cur: Any) -> None:
+    """Install immutable server-only terminal-recovery evidence tables."""
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS terminal_recovery_ledger (
+            repo_id text NOT NULL,
+            terminal_request_id uuid NOT NULL,
+            claim_id bigint NOT NULL CHECK (claim_id > 0),
+            lease_epoch integer NOT NULL CHECK (lease_epoch > 0),
+            terminal_disposition text NOT NULL,
+            terminal_request_digest text NOT NULL CHECK (terminal_request_digest ~ '^[0-9a-f]{64}$'),
+            decision_id uuid NOT NULL,
+            terminal_event_id uuid NOT NULL,
+            resulting_item_state text NOT NULL CHECK (resulting_item_state IN ('pending', 'active', 'done', 'blocked')),
+            recorded_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (repo_id, terminal_request_id)
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS terminal_recovery_audit (
+            repo_id text NOT NULL,
+            terminal_request_id uuid NOT NULL,
+            audit_event_id uuid NOT NULL,
+            recovery_capability_ref text NOT NULL,
+            coordinator_subject text NOT NULL,
+            incident_audit_ref text NOT NULL,
+            operator_approval_audit_ref text NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (repo_id, terminal_request_id),
+            UNIQUE (repo_id, audit_event_id),
+            FOREIGN KEY (repo_id, terminal_request_id)
+                REFERENCES terminal_recovery_ledger(repo_id, terminal_request_id)
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE OR REPLACE FUNCTION sprintctl_terminal_recovery_immutable()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            RAISE EXCEPTION 'terminal recovery ledger/audit records are immutable';
+        END;
+        $$
+        """
+    )
+    for table in ("terminal_recovery_ledger", "terminal_recovery_audit"):
+        cur.execute(
+            f"DROP TRIGGER IF EXISTS {table}_immutable ON {table}"
+        )
+        cur.execute(
+            f"CREATE TRIGGER {table}_immutable BEFORE UPDATE OR DELETE ON {table} "
+            "FOR EACH ROW EXECUTE FUNCTION sprintctl_terminal_recovery_immutable()"
+        )
+
+
 def compatibility_handshake(store: PgStore) -> dict[str, Any]:
     """Return the public read-only work API/schema handshake."""
     return _pg_migrations.compatibility_handshake(store)

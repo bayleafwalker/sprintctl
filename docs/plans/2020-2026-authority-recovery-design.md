@@ -1,16 +1,17 @@
 ---
 doc_id: sprintctl-authority-recovery-and-actor-convention
-status: proposed-coordinator-decision
+status: ratified
 items: [2020, 2026]
 date: 2026-07-28
 ---
 
 # Coordinator decisions: terminal-claim recovery and actor convention
 
-This document resolves design work only.  It neither grants a new authority nor
-changes a claim implementation.  Both follow-up implementations require the
-claim-ownership protocol gate at depth 2 and a fresh review of the released
-Vuoro operation/identity contract.
+This document records ratified architecture, not an identity grant or a
+deployed recovery endpoint. The first implementation layer freezes a
+transport-free request/result contract and depth-2 fixtures only. A later
+server implementation requires the claim-ownership protocol gate at depth 2
+and a fresh review of the released Vuoro operation/identity contract.
 
 ## #2026: privileged terminal-claim recovery
 
@@ -23,7 +24,7 @@ outcome**, not evidence that a coordinator may issue a new or changed terminal
 mutation.  Exact replay of the original immutable terminal record remains the
 normal, retry-safe path and must return its recorded decision.
 
-The future server operation is `work.claim.recover-terminal/v1`.  It is an
+The server operation is `work.claim.recover-terminal/v1`. It is an
 explicit, separately authorized recovery operation, not a variant of the
 normal claim-arbitration authority.  It may only inspect and resolve a
 terminal claim-release or lifecycle-arbitration request identified by its
@@ -34,20 +35,26 @@ credential and it never creates or retries a mutation.
 
 Input is:
 
-- `repo_id`, `claim_id`, and the immutable terminal `request_id`;
-- `expected_lease_epoch` and the requested terminal disposition;
+- canonical UUID `repo_id`, positive numeric `claim_id`, and immutable
+  terminal UUID `request_id`;
+- `expected_lease_epoch`, a closed terminal disposition, and the SHA-256
+  digest of the original immutable terminal request;
 - a server-validated, scope-bound coordinator recovery capability covering the
   repository, claim, request, disposition, and epoch, with expiry/revocation;
-- a coordinator incident reference and a human/operator authorization
-  reference, both immutable audit evidence;
+- a coordinator incident reference and a named human/operator approval
+  reference, both immutable auditctl event references using `ad:<ULID>`;
 - no bearer proof and no client-selected worker actor.
 
 The response is one of `settled`, `not-settled`, `conflict`, or `unavailable`.
 `settled` returns the durable terminal event identity and resulting item state;
 `not-settled` is the only result that may permit a new, separately authorized
 normal operation.  `conflict` includes no secret material and requires human
-disposition.  `unavailable` is the stable served-operation-unavailable class
-until the operation, identity grant, and deployment evidence exist.
+disposition. `unavailable` is the stable served-operation-unavailable class
+until the operation, online identity/revocation interface, and deployment
+evidence exist. Capability validation is against the deployed identity
+authority; issuer credentials, provider syntax, and keys are intentionally
+neither represented nor invented in Sprintctl. Failure to obtain an online
+scope, expiry, or revocation decision is fail-closed.
 
 The server looks up the immutable request/decision ledger before inspecting
 current claim state.  A matching historical settled record returns `settled`
@@ -60,6 +67,32 @@ Recovery is idempotent for the exact tuple and appends at most one
 deterministically identified recovery-audit event linked to the validated
 capability, incident, and authorization references.  It never mints or
 reveals a claim token.
+
+### Frozen contract layer
+
+`sprintctl/terminal_recovery_contract.py` is intentionally transport-free. It
+defines the lookup-only request identity, the four result classes, a narrow
+conflict disclosure shape, and the `RecoveryCapabilityVerifier` interface.
+The client-visible capability handle is only `capref:<canonical UUID>`; bearer
+strings, JWT-shaped values, whitespace, and provider credentials are invalid.
+The verifier must return the same strict capability reference plus exact
+`repo_id`, numeric `claim_id`, terminal request UUID, disposition, and lease
+epoch. The adapter compares every one of those fields to the request and
+requires its authenticated coordinator invocation principal to equal the
+verified capability subject before it reads the ledger or current claim state;
+an absent or mismatched principal fails closed.
+Its sole required configuration is a deployed identity authority capable of
+online scope/expiry/revocation verification; Sprintctl does not configure an
+issuer, store a credential, or offer a local fallback. The ledger key is
+`(repo_id, terminal_request_id)` and must be read before current claim state.
+
+The ledger and recovery audit records are retained for at least the claim
+history plus the incident-retention horizon. Archives retain an immutable
+digest chain over ordered ledger/audit records. A `not-settled` result permits
+no automatic retry: a named human operator must approve a new normal
+operation. A `conflict` exposes only the conflicting immutable request ID and
+mismatch class, never proof, capability material, current claimant metadata,
+or a terminal state.
 
 ### Authority and rollout constraints
 
