@@ -52,6 +52,7 @@ from sprintctl.pg_testing import (
     assert_disposable_connection,
     cleanup_test_repositories,
     new_test_repo_id,
+    new_test_repo_uuid,
     write_cleanup_report,
 )
 
@@ -69,8 +70,8 @@ def pg_test_scope():
     assert_disposable_connection(conn)
     repo_ids: set[str] = set()
 
-    def register(label: str = "scope") -> str:
-        repo_id = new_test_repo_id(label)
+    def register(label: str = "scope", *, canonical_uuid: bool = False) -> str:
+        repo_id = new_test_repo_uuid() if canonical_uuid else new_test_repo_id(label)
         repo_ids.add(repo_id)
         return repo_id
 

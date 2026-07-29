@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 import re
 from typing import Any, Iterable
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 
 TEST_REPO_PREFIX = "itest-"
@@ -20,6 +20,8 @@ TEST_ROLE_PREFIX = "sprintctl_test_"
 TEST_DATABASE_PREFIX = "sprintctl_test_"
 DISPOSABLE_DATABASE_COMMENT = "sprintctl:disposable-integration-test"
 REPO_TABLES = (
+    "terminal_recovery_audit",
+    "terminal_recovery_ledger",
     "authority_decision",
     "ingest_record",
     "ingest_stream",
@@ -134,6 +136,11 @@ def new_test_repo_id(label: str = "scope") -> str:
     return f"{TEST_REPO_PREFIX}{normalized}-{uuid4().hex[:12]}"
 
 
+def new_test_repo_uuid() -> str:
+    """Return a canonical tenant id for contracts that intentionally require UUIDs."""
+    return str(uuid4())
+
+
 def cleanup_test_repositories(conn: Any, repo_ids: Iterable[str]) -> dict[str, Any]:
     """Delete registered test scopes and prove that no rows remain.
 
@@ -142,7 +149,15 @@ def cleanup_test_repositories(conn: Any, repo_ids: Iterable[str]) -> dict[str, A
     """
     identity = assert_disposable_connection(conn)
     scopes = sorted(set(repo_ids))
-    invalid = [repo_id for repo_id in scopes if not repo_id.startswith(TEST_REPO_PREFIX)]
+    def safe_scope(repo_id: str) -> bool:
+        if repo_id.startswith(TEST_REPO_PREFIX):
+            return True
+        try:
+            UUID(repo_id)
+        except ValueError:
+            return False
+        return True
+    invalid = [repo_id for repo_id in scopes if not safe_scope(repo_id)]
     if invalid:
         raise UnsafePostgresTestTarget(
             "refusing cleanup of non-test repository scopes: " + ", ".join(invalid)
