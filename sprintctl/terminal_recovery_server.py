@@ -14,6 +14,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from .terminal_recovery_contract import (
     OPERATION_NAME,
     RecoveryCapabilityVerifier,
+    TerminalDisposition,
     TerminalRecoveryDecision,
     TerminalRecoveryMismatchClass as Mismatch,
     TerminalRecoveryRequest,
@@ -92,11 +93,16 @@ class PostgresTerminalRecoveryAdapter:
             if decision.result is Result.SETTLED:
                 # A unique key makes duplicate/lost-response recovery evidence
                 # deterministic and at-most-once.
-                append_recovery_audit(
-                    self.store,
-                    request,
-                    coordinator_subject=verified.subject_id,
-                )
+                try:
+                    append_recovery_audit(
+                        self.store,
+                        request,
+                        coordinator_subject=verified.subject_id,
+                    )
+                    self.store.conn.commit()
+                except Exception:
+                    self.store.conn.rollback()
+                    return TerminalRecoveryDecision(result=Result.UNAVAILABLE)
             return decision
 
         if claim is None:
@@ -144,38 +150,99 @@ def append_terminal_settlement(
     """
     UUID(decision_id)
     UUID(terminal_event_id)
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
+    cur = store.conn.cursor()
+    try:
+        append_terminal_settlement_row(
+            cur,
+            request=request,
+            decision_id=decision_id,
+            terminal_event_id=terminal_event_id,
+            resulting_item_state=resulting_item_state,
+        )
+    finally:
+        cur.close()
+
+
+def append_terminal_settlement_row(
+    cur: Any,
+    *,
+    request: TerminalRecoveryRequest,
+    decision_id: str,
+    terminal_event_id: str,
+    resulting_item_state: str,
+) -> None:
+    """Transaction-owned variant used by the normal authority arbiter."""
+    UUID(decision_id)
+    UUID(terminal_event_id)
+    cur.execute(
+        """
             INSERT INTO terminal_recovery_ledger (
                 repo_id, terminal_request_id, claim_id, lease_epoch,
                 terminal_disposition, terminal_request_digest, decision_id,
                 terminal_event_id, resulting_item_state
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (repo_id, terminal_request_id) DO NOTHING
-            """,
-            (request.repo_id, request.terminal_request_id, request.claim_id,
-             request.expected_lease_epoch, request.terminal_disposition.value,
-             request.terminal_request_digest, decision_id, terminal_event_id,
-             resulting_item_state),
+        """,
+        (request.repo_id, request.terminal_request_id, request.claim_id,
+         request.expected_lease_epoch, request.terminal_disposition.value,
+         request.terminal_request_digest, decision_id, terminal_event_id,
+         resulting_item_state),
+    )
+    if cur.rowcount == 0:
+        cur.execute(
+            "SELECT claim_id, lease_epoch, terminal_disposition, terminal_request_digest, "
+            "decision_id, terminal_event_id, resulting_item_state "
+            "FROM terminal_recovery_ledger WHERE repo_id = %s AND terminal_request_id = %s",
+            request.ledger_key,
         )
-        if cur.rowcount == 0:
-            cur.execute(
-                "SELECT claim_id, lease_epoch, terminal_disposition, terminal_request_digest, "
-                "decision_id, terminal_event_id, resulting_item_state "
-                "FROM terminal_recovery_ledger WHERE repo_id = %s AND terminal_request_id = %s",
-                request.ledger_key,
-            )
-            existing = dict(cur.fetchone())
-            expected = (request.claim_id, request.expected_lease_epoch,
-                        request.terminal_disposition.value, request.terminal_request_digest,
-                        decision_id, terminal_event_id, resulting_item_state)
-            actual = tuple(existing[name] for name in (
-                "claim_id", "lease_epoch", "terminal_disposition", "terminal_request_digest",
-                "decision_id", "terminal_event_id", "resulting_item_state"))
-            if actual != expected:
-                raise ValueError("terminal recovery ledger record is immutable")
-    store.conn.commit()
+        existing = dict(cur.fetchone())
+        expected = (request.claim_id, request.expected_lease_epoch,
+                    request.terminal_disposition.value, request.terminal_request_digest,
+                    decision_id, terminal_event_id, resulting_item_state)
+        actual = tuple(existing[name] for name in (
+            "claim_id", "lease_epoch", "terminal_disposition", "terminal_request_digest",
+            "decision_id", "terminal_event_id", "resulting_item_state"))
+        if actual != expected:
+            raise ValueError("terminal recovery ledger record is immutable")
+
+
+def append_terminal_settlement_from_authority(
+    cur: Any,
+    *,
+    repo_id: str,
+    claim_id: int,
+    lease_epoch: int,
+    terminal_request_id: str,
+    terminal_disposition: TerminalDisposition,
+    terminal_request_digest: str,
+    decision_id: str,
+    terminal_event_id: str,
+    resulting_item_state: str,
+) -> None:
+    """Bind a normal authority settlement to the recovery ledger in its tx.
+
+    Capability and approval references belong exclusively to a later recovery
+    invocation and are deliberately not invented for the original settlement.
+    The contract object is used here only to validate its immutable identity.
+    """
+    request = TerminalRecoveryRequest(
+        repo_id=repo_id,
+        claim_id=claim_id,
+        terminal_request_id=terminal_request_id,
+        expected_lease_epoch=lease_epoch,
+        terminal_disposition=terminal_disposition,
+        terminal_request_digest=terminal_request_digest,
+        recovery_capability_ref=f"capref:{terminal_request_id}",
+        incident_audit_ref="ad:01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        operator_approval_audit_ref="ad:01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    )
+    append_terminal_settlement_row(
+        cur,
+        request=request,
+        decision_id=decision_id,
+        terminal_event_id=terminal_event_id,
+        resulting_item_state=resulting_item_state,
+    )
 
 
 def append_recovery_audit(
@@ -186,20 +253,37 @@ def append_recovery_audit(
 ) -> str:
     """Append the deterministic, at-most-once audit linkage for a recovery."""
     audit_id = _audit_id(request)
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
+    cur = store.conn.cursor()
+    try:
+        return append_recovery_audit_row(
+            cur,
+            request=request,
+            coordinator_subject=coordinator_subject,
+        )
+    finally:
+        cur.close()
+
+
+def append_recovery_audit_row(
+    cur: Any,
+    *,
+    request: TerminalRecoveryRequest,
+    coordinator_subject: str,
+) -> str:
+    """Transaction-owned at-most-once audit insertion."""
+    audit_id = _audit_id(request)
+    cur.execute(
+        """
             INSERT INTO terminal_recovery_audit (
                 repo_id, terminal_request_id, audit_event_id, recovery_capability_ref,
                 coordinator_subject, incident_audit_ref, operator_approval_audit_ref
             ) VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (repo_id, terminal_request_id) DO NOTHING
             """,
-            (request.repo_id, request.terminal_request_id, audit_id,
-             request.recovery_capability_ref, coordinator_subject,
-             request.incident_audit_ref, request.operator_approval_audit_ref),
-        )
-    store.conn.commit()
+        (request.repo_id, request.terminal_request_id, audit_id,
+         request.recovery_capability_ref, coordinator_subject,
+         request.incident_audit_ref, request.operator_approval_audit_ref),
+    )
     return audit_id
 
 
@@ -216,6 +300,9 @@ __all__ = [
     "OPERATION_NAME",
     "PostgresTerminalRecoveryAdapter",
     "append_recovery_audit",
+    "append_recovery_audit_row",
     "append_terminal_settlement",
+    "append_terminal_settlement_from_authority",
+    "append_terminal_settlement_row",
     "configured_terminal_recovery_adapter",
 ]

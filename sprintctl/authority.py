@@ -17,6 +17,8 @@ from typing import Any, Mapping
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from . import contracts, outbox, pg
+from .terminal_recovery_contract import TerminalDisposition
+from .terminal_recovery_server import append_terminal_settlement_from_authority
 from .db import CLAIM_TYPES, SPRINT_TRANSITIONS, VALID_TRANSITIONS, _claim_event_identity
 
 
@@ -442,6 +444,11 @@ def _handle_item(
         "previous_status": current,
         "status": updated["status"],
         "revision": item_revision(updated),
+        **(
+            {"claim_id": int(active_claim["id"]), "lease_epoch": int(active_claim["lease_epoch"])}
+            if to_status in {"done", "blocked"} and active_claim is not None
+            else {}
+        ),
     }
 
 
@@ -904,6 +911,47 @@ def _apply_command(
     raise _RejectedCommand("unsupported-command", f"unsupported authority command {envelope.record_type}")
 
 
+def _append_terminal_settlement_if_applicable(
+    cur: Any,
+    store: pg.PgStore,
+    envelope: contracts.AuthorityCommand | None,
+    effect: Mapping[str, Any],
+    *,
+    request_digest: str,
+    decision_id: str,
+) -> None:
+    """Persist accepted claim-terminal decisions beside their authority receipt."""
+    if envelope is None:
+        return
+    disposition = {
+        "claim.release": TerminalDisposition.CLAIM_RELEASE,
+        "item.done-from-claim": TerminalDisposition.ITEM_DONE_FROM_CLAIM,
+    }.get(envelope.record_type)
+    if envelope.record_type in {"item.transition", "item.done"}:
+        disposition = {
+            "done": TerminalDisposition.ITEM_TRANSITION_DONE,
+            "blocked": TerminalDisposition.ITEM_TRANSITION_BLOCKED,
+        }.get(str(effect.get("status")))
+    if disposition is None or "claim_id" not in effect or "lease_epoch" not in effect:
+        return
+    # The authority command has a canonical repository UUID reference.  The
+    # tenant string is intentionally not substituted: recovery scope must be
+    # portable and canonical across the served authority boundary.
+    repo_id = str(envelope.refs.get("repo_id", ""))
+    append_terminal_settlement_from_authority(
+        cur,
+        repo_id=repo_id,
+        claim_id=int(effect["claim_id"]),
+        lease_epoch=int(effect["lease_epoch"]),
+        terminal_request_id=envelope.event_id,
+        terminal_disposition=disposition,
+        terminal_request_digest=request_digest,
+        decision_id=decision_id,
+        terminal_event_id=decision_id,
+        resulting_item_state=str(effect.get("status", "active")),
+    )
+
+
 def _decision_record(
     cur: Any,
     store: pg.PgStore,
@@ -1088,6 +1136,15 @@ def arbitrate_command(
                 effect=effect,
                 ingest_offset=cursor_start + 2,
             )
+            if outcome == "accepted":
+                _append_terminal_settlement_if_applicable(
+                    cur,
+                    store,
+                    envelope,
+                    effect,
+                    request_digest=prepared.record_sha256,
+                    decision_id=decision.event_id,
+                )
             pg._advance_ingest_repo_cursor(cur, store, cursor_start + 2)
             cur.execute(
                 """

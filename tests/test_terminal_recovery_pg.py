@@ -8,13 +8,13 @@ import pytest
 
 pytest.importorskip("psycopg")
 
-from sprintctl import pg
+from sprintctl import authority, contracts, outbox, pg
 from sprintctl.pg_testing import assert_disposable_connection, cleanup_test_repositories, new_test_repo_uuid
 from sprintctl.terminal_recovery_contract import (
     TerminalDisposition, TerminalRecoveryRequest, VerifiedRecoveryCapability,
 )
 from sprintctl.terminal_recovery_server import (
-    append_terminal_settlement, configured_terminal_recovery_adapter,
+    append_recovery_audit, append_terminal_settlement, configured_terminal_recovery_adapter,
 )
 
 
@@ -114,5 +114,54 @@ def test_postgres_identity_fault_is_unavailable_before_ledger_or_claim_io(monkey
             cur.execute("SELECT count(*) AS n FROM terminal_recovery_ledger WHERE repo_id = %s", (repo_id,))
             assert cur.fetchone()["n"] == 0
     finally:
+        cleanup_test_repositories(conn, [repo_id])
+        conn.close()
+
+
+def test_authority_terminal_release_writes_ledger_and_rolls_back_atomically(tmp_path):
+    from psycopg import connect
+    from psycopg.rows import dict_row
+    conn = connect(PG_URL, row_factory=dict_row)
+    assert_disposable_connection(conn)
+    repo_id = new_test_repo_uuid()
+    store = pg.PgStore(conn=conn, repo_id=repo_id, authority_repo_uuid=repo_id)
+    producer = outbox.open_outbox(tmp_path / "terminal-authority.db")
+    try:
+        pg.init_db(store)
+        sprint_id = pg.create_sprint(store, "Authority terminal", "", status="active")
+        track_id = pg.get_or_create_track(store, sprint_id, "recovery")
+        item_id = pg.create_work_item(store, sprint_id, track_id, "release")
+        claim = pg.create_claim(store, item_id, "coordinator", ttl_seconds=300)
+        command = contracts.AuthorityCommand(
+            event_id=str(uuid4()), record_type="claim.release", schema_version="1",
+            actor="coordinator", authored_at="2026-07-29T00:00:00Z",
+            refs={"repo_id": repo_id, "aggregate_type": "claim", "claim_id": claim["id"]},
+            payload={"claim_id": claim["id"], "credential_ref": authority.credential_ref(claim["claim_token"])},
+            basis_revision=authority.claim_revision(claim), correlation_id=str(uuid4()),
+        )
+        record = outbox.append_authority_command(producer, command)
+        result = authority.arbitrate_command(
+            store, record, credentials={command.payload["credential_ref"]: claim["claim_token"]},
+        )
+        assert result.accepted
+        with conn.cursor() as cur:
+            cur.execute("SELECT terminal_request_id, claim_id FROM terminal_recovery_ledger WHERE repo_id = %s", (repo_id,))
+            assert dict(cur.fetchone()) == {"terminal_request_id": command.event_id, "claim_id": claim["id"]}
+
+        # Helpers do not commit: an enclosing failure rolls back both original
+        # settlement and audit evidence together, leaving no partial row.
+        aborted = request(repo_id, claim_id=claim["id"], expected_lease_epoch=claim["lease_epoch"])
+        with pytest.raises(RuntimeError):
+            with conn.transaction():
+                append_terminal_settlement(store, aborted, decision_id=str(uuid4()), terminal_event_id=str(uuid4()), resulting_item_state="done")
+                append_recovery_audit(store, aborted, coordinator_subject="coordinator:terminal-recovery")
+                raise RuntimeError("fault after recovery evidence")
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS n FROM terminal_recovery_ledger WHERE repo_id = %s", (repo_id,))
+            assert cur.fetchone()["n"] == 1
+            cur.execute("SELECT count(*) AS n FROM terminal_recovery_audit WHERE repo_id = %s", (repo_id,))
+            assert cur.fetchone()["n"] == 0
+    finally:
+        producer.close()
         cleanup_test_repositories(conn, [repo_id])
         conn.close()
