@@ -1,0 +1,38 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.terminal-claim-recovery",
+  "owner_repo": "sprintctl",
+  "subject": "lookup-only-privileged-terminal-claim-recovery",
+  "contract_ref": {
+    "doc_id": "sprintctl-authority-recovery-and-actor-convention",
+    "revision": "git:57e23c10e37bcad9f024531b676b2019736fa85d"
+  },
+  "source_of_truth": "immutable-terminal-request-decision-ledger-before-current-claim-state",
+  "depth": 2,
+  "backends": ["future-served-work-adapter", "postgresql-immutable-ledger", "deployed-identity-authority"],
+  "actors": ["named-coordinator-recovery-identity", "served-work-adapter", "identity-authority", "human-operator"],
+  "initial_state": ["terminal-request-may-have-lost-response", "claim-lineage-may-have-advanced", "capability-revocation-is-online"],
+  "operations": [
+    {"name": "lookup-immutable-terminal-request-before-claim-state", "actors": ["served-work-adapter"], "synchronization": "ledger key is repo_id plus terminal_request_id"},
+    {"name": "verify-scope-expiry-and-revocation-online", "actors": ["identity-authority", "served-work-adapter"], "synchronization": "unavailable or revocation lookup failure is deny"},
+    {"name": "return-existing-terminal-decision", "actors": ["served-work-adapter"], "synchronization": "exact request identity and digest return one recorded decision"},
+    {"name": "reject-unrecorded-or-conflicting-recovery", "actors": ["served-work-adapter", "human-operator"], "synchronization": "no mutation; conflict exposes only IDs and mismatch class"}
+  ],
+  "consistency": {"target": "application-invariant", "object": "ledger-first-lookup-only-terminal-recovery"},
+  "assumptions": {"isolation": "future authority transaction couples recovery audit append to a validated ledger decision", "clock": "identity authority evaluates capability expiry and revocation", "fairness": "none"},
+  "bounds": {"request_identities": 2, "claim_lineage_advances": 1, "recovery_attempts": 2, "identity_authorities": 1},
+  "invariants": [
+    "terminal-recovery-never-accepts-or-reveals-a-claim-proof",
+    "terminal-recovery-never-creates-or-retries-a-terminal-mutation",
+    "immutable-ledger-lookup-precedes-current-claim-state-inspection",
+    "exact-replay-after-later-lineage-change-returns-recorded-settlement",
+    "online-revocation-or-identity-lookup-failure-is-fail-closed",
+    "conflict-disclosure-contains-only-non-secret-identifiers-and-mismatch-class",
+    "new-normal-operation-after-not-settled-requires-named-human-operator-approval",
+    "active-sidecar-claim-recover-remains-proof-only-and-is-not-terminal-recovery-authority"
+  ],
+  "faults": ["lost-terminal-response", "duplicate-recovery", "request-id-or-digest-mismatch", "stale-epoch", "wrong-repository", "expired-or-revoked-capability", "identity-authority-unavailable", "active-or-superseded-unrecorded-claim"],
+  "oracles": ["immutable-ledger-query-before-claim-query", "identity-verifier-call-history", "token-redaction-scan", "recovery-decision-and-audit-event-query", "conflict-shape-validation"],
+  "implementation_anchors": ["sprintctl/terminal_recovery_contract.py:TerminalRecoveryRequest", "sprintctl/terminal_recovery_contract.py:TerminalRecoveryDecision", "sprintctl/terminal_recovery_contract.py:RecoveryCapabilityVerifier", "tests/test_terminal_recovery_contract.py"],
+  "expansions": ["semantic-doc", "stateful-test", "concurrent-history", "fault-scenario"]
+}
