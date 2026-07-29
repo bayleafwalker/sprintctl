@@ -277,10 +277,10 @@ class TestInitDb:
 
             assert not any(thread.is_alive() for thread in threads)
             assert not errors
-            assert sorted(result["applied_versions"] for result in results) == [[], [2, 3, 4]]
+            assert sorted(result["applied_versions"] for result in results) == [[], [2, 3, 4, 5]]
             with store.conn.cursor() as cur:
                 cur.execute(f'SELECT version FROM "{schema}".schema_version')
-                assert cur.fetchone()["version"] == 4
+                assert cur.fetchone()["version"] == 5
             store.conn.rollback()
         finally:
             with store.conn.cursor() as cur:
@@ -346,10 +346,10 @@ class TestInitDb:
             assert [str(exc) for exc in failures] == [
                 "injected failure before ledger advance"
             ]
-            assert [result["applied_versions"] for result in results] == [[3, 4]]
+            assert [result["applied_versions"] for result in results] == [[3, 4, 5]]
             with store.conn.cursor() as cur:
                 cur.execute(f'SELECT version FROM "{schema}".schema_version')
-                assert cur.fetchone()["version"] == 4
+                assert cur.fetchone()["version"] == 5
             store.conn.rollback()
         finally:
             for conn in connections:
@@ -489,7 +489,7 @@ class TestInitDb:
 
     @pytest.mark.parametrize(
         ("legacy_version", "applied_versions"),
-        [(1, [2, 3, 4]), (2, [3, 4])],
+        [(1, [2, 3, 4, 5]), (2, [3, 4, 5])],
     )
     def test_interleaved_legacy_offsets_backfill_per_repository_and_translate_fk(
         self, pg_test_scope, legacy_version, applied_versions
