@@ -8272,7 +8272,9 @@ def _served_claim_recover(
     active claim before returning the token. Never opens a local work store."""
     context = _resolved_context(config)
 
-    def require_live_claim(claim: dict, *, selector: str) -> None:
+    def require_recoverable_claim(
+        claim: dict, *, require_live_expiry: bool
+    ) -> None:
         if claim.get("status") != "active":
             click.echo(
                 f"Error: Claim #{claim.get('claim_id')} is not active (status={claim.get('status')}).",
@@ -8286,7 +8288,7 @@ def _served_claim_recover(
         except (KeyError, TypeError, ValueError):
             click.echo(f"Error: Claim #{claim.get('claim_id')} has no valid expiry.", err=True)
             sys.exit(1)
-        if expires_at <= datetime.now(timezone.utc):
+        if require_live_expiry and expires_at <= datetime.now(timezone.utc):
             click.echo(f"Error: Claim #{claim.get('claim_id')} is expired.", err=True)
             sys.exit(1)
 
@@ -8306,7 +8308,11 @@ def _served_claim_recover(
         if claim.get("claim_id") != claim_id:
             click.echo(f"Error: served claim response does not match requested claim #{claim_id}.", err=True)
             sys.exit(1)
-        require_live_claim(claim, selector="claim")
+        # Explicit identity-bound recovery is also the supported route to
+        # proof-bound cleanup after lease expiry. The authority still verifies
+        # the recovered proof before accepting claim.release. Broad item
+        # discovery below remains live-only.
+        require_recoverable_claim(claim, require_live_expiry=False)
         served_claim_id = claim["claim_id"]
     else:
         assert item_id is not None
@@ -8337,7 +8343,7 @@ def _served_claim_recover(
         if claim.get("work_item_id") != item_id:
             click.echo(f"Error: served claim response does not match requested item #{item_id}.", err=True)
             sys.exit(1)
-        require_live_claim(claim, selector="item")
+        require_recoverable_claim(claim, require_live_expiry=True)
         served_claim_id = claim["claim_id"]
 
     record = _load_claim_recovery_record(served_claim_id)
