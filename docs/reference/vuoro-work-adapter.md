@@ -18,7 +18,7 @@ no migration or DDL.
 
 | Surface | Operations | Idempotency |
 | --- | --- | --- |
-| Reads | `work.read.sprints`, `work.read.item`, `work.read.context`, `work.read.next-work`, `work.read.records`, `work.read.decisions` | key forbidden |
+| Reads | `work.read.sprints`, `work.read.item`, `work.read.context`, `work.read.context-candidates`, `work.read.next-work`, `work.read.records`, `work.read.decisions` | key forbidden |
 | Item edit | `work.item.edit` | key forbidden; required `expected_revision` compare-and-swap |
 | Claim start | `work.claim.start` | key forbidden; one-shot create plus activation flow |
 | Durable claims | `work.claim.arbitrate` | key equals immutable command `event_id` |
@@ -49,6 +49,12 @@ returns the ContextContract v1 itself (rather than adding an envelope field),
 and PostgreSQL evaluates all of its sprint, claim, item, dependency, stale
 work, and decision reads in one repeatable-read, read-only transaction. A
 client must not recreate this operation by stitching together raw read calls.
+
+`work.read.context-candidates` is the server-side Tier-1 dispatch packet for
+ActionQ and other bounded workers. It uses the established deterministic
+ranking function over one repository's ready items and refs. An explicit
+pending target is the only claim-eligible result; invocation never claims or
+starts work.
 
 ## Authority and retry semantics
 

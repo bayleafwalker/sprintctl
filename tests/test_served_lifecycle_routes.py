@@ -270,6 +270,36 @@ def test_served_usage_context_uses_atomic_aggregate_without_opening_store(
 
 
 @_requires_312
+def test_served_context_candidates_uses_catalog_without_opening_store(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli_module, "_get_store", lambda _obj: pytest.fail("served command opened store"))
+    packet = {
+        "contract_version": "1",
+        "explicit_target": {"item_id": 3, "found": True},
+        "bound": 5,
+        "truncated": False,
+        "watermark": None,
+        "candidates": [{"item_id": 3, "rank": 1, "claim_eligible": True, "title": "Target"}],
+        "sprint": {"id": 7, "name": "served"},
+        "projection": {"enabled": False, "source": "backend", "fallback_reason": "served-authority", "watermark_offset": None, "watermark_age_seconds": None, "schema_version": None},
+    }
+    captured = {}
+    def context_candidates(*args, **kwargs):
+        captured.update(kwargs)
+        return packet
+    monkeypatch.setattr(cli_module._served, "context_candidates", context_candidates)
+
+    result = runner.invoke(cli, ["context-candidates", "--sprint-id", "7", "--item-id", "3", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == packet
+    assert captured["repo_id"] == tmp_path.name
+    assert captured["item_id"] == 3
+
+
+@_requires_312
 def test_served_next_work_explain_uses_atomic_aggregate_without_opening_store(
     runner, tmp_path, monkeypatch
 ):

@@ -9136,54 +9136,61 @@ def context_candidates_cmd(obj, sprint_id, explicit_item_id, target_paths, query
         sprint_id = _apply_scoped_id(obj, sprint_id, field="sprint")
     if explicit_item_id is not None:
         explicit_item_id = _apply_scoped_id(obj, explicit_item_id, field="item")
-    store, m = _get_store(obj)
-    if sprint_id is not None:
-        s = m.get_sprint(store, sprint_id)
-        if s is None:
-            click.echo(f"Sprint #{sprint_id} not found.", err=True)
-            sys.exit(1)
-    else:
-        s = _resolve_implicit_sprint(store, m=m)
-        if s is None:
-            click.echo("No active sprint found. Use --sprint-id to specify one.", err=True)
-            sys.exit(1)
-
-    ready_items = m.get_ready_items(store, s["id"])
-    refs_by_item = m.list_refs_for_items(store, [item["id"] for item in ready_items])
-
-    explicit_item = None
-    if explicit_item_id is not None:
-        explicit_item = m.get_work_item(store, explicit_item_id)
-
-    # next-work-style read: current item/dependency state is never mirrored
-    # into the cached projection (only observation events are), so ranking
-    # itself always reads backend directly; only freshness disclosure is
-    # flag-gated, matching next_work_cmd's rationale above.
-    projection_status = _projection_surface_status(_projection_health(), supported=False)
-    watermark = None
-    if projection_status["watermark_offset"] is not None:
-        watermark = {
-            "ingest_offset": projection_status["watermark_offset"],
-            "age_seconds": projection_status["watermark_age_seconds"],
-        }
-
-    try:
-        payload = _context_candidates.build_context_candidates(
-            ready_items=ready_items,
-            refs_by_item=refs_by_item,
-            explicit_item_id=explicit_item_id,
-            explicit_item=explicit_item,
-            target_paths=target_paths,
+    config = _served_config_or_none(obj)
+    if config is not None:
+        payload = _run_served(
+            "context-candidates",
+            _served.context_candidates,
+            config.served_profile,
+            repo_id=config.repo_id,
+            sprint_id=sprint_id,
+            item_id=explicit_item_id,
+            target_paths=list(target_paths),
             query=query,
             limit=limit,
-            watermark=watermark,
         )
-    except _context_candidates.ContextCandidatesError as exc:
-        click.echo(f"Error: {exc}", err=True)
-        sys.exit(1)
+    else:
+        store, m = _get_store(obj)
+        if sprint_id is not None:
+            s = m.get_sprint(store, sprint_id)
+            if s is None:
+                click.echo(f"Sprint #{sprint_id} not found.", err=True)
+                sys.exit(1)
+        else:
+            s = _resolve_implicit_sprint(store, m=m)
+            if s is None:
+                click.echo("No active sprint found. Use --sprint-id to specify one.", err=True)
+                sys.exit(1)
+        ready_items = m.get_ready_items(store, s["id"])
+        refs_by_item = m.list_refs_for_items(store, [item["id"] for item in ready_items])
+        explicit_item = m.get_work_item(store, explicit_item_id) if explicit_item_id is not None else None
+        projection_status = _projection_surface_status(_projection_health(), supported=False)
+        watermark = None
+        if projection_status["watermark_offset"] is not None:
+            watermark = {
+                "ingest_offset": projection_status["watermark_offset"],
+                "age_seconds": projection_status["watermark_age_seconds"],
+            }
+        try:
+            payload = _context_candidates.build_context_candidates(
+                ready_items=ready_items,
+                refs_by_item=refs_by_item,
+                explicit_item_id=explicit_item_id,
+                explicit_item=explicit_item,
+                target_paths=target_paths,
+                query=query,
+                limit=limit,
+                watermark=watermark,
+            )
+        except _context_candidates.ContextCandidatesError as exc:
+            click.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
+        payload["sprint"] = {"id": s["id"], "name": s["name"]}
+        payload["projection"] = projection_status
 
-    payload["sprint"] = {"id": s["id"], "name": s["name"]}
-    payload["projection"] = projection_status
+    s = payload["sprint"]
+    projection_status = payload["projection"]
+    watermark = payload["watermark"]
 
     if as_json:
         click.echo(json.dumps(payload, indent=2))

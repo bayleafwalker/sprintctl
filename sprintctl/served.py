@@ -166,6 +166,33 @@ def read_context(
     )
 
 
+def context_candidates(
+    served_profile: ServedProfile,
+    *,
+    repo_id: str,
+    sprint_id: int | None,
+    item_id: int | None,
+    target_paths: list[str],
+    query: str | None,
+    limit: int,
+) -> dict[str, Any]:
+    """Read the authoritative Tier-1 dispatch packet without opening a store."""
+    return asyncio.run(
+        _invoke_operation(
+            served_profile,
+            "work.read.context-candidates",
+            {
+                "sprint_id": sprint_id,
+                "item_id": item_id,
+                "target_paths": target_paths,
+                "query": query,
+                "limit": limit,
+            },
+            repo_id=repo_id,
+        )
+    )
+
+
 def read_handoff(served_profile: ServedProfile, *, repo_id: str, sprint_id: int | None, events_limit: int, git_context: dict | None) -> dict[str, Any]:
     """Fetch one server-built handoff bundle; client git state is explicit."""
     return asyncio.run(_invoke_operation(served_profile, "work.read.handoff", {"sprint_id": sprint_id, "events_limit": events_limit, "git_context": git_context}, repo_id=repo_id))
@@ -663,6 +690,7 @@ def lifecycle_arbitrate(
 _DOCTOR_PROBE_COMMAND_PATHS = (
     "identity.current",
     "usage.context",
+    "context-candidates",
     "handoff",
     "handoff.record",
     "sprint.list",
@@ -729,6 +757,7 @@ __all__ = [
     "EXPECTED_OPERATIONS",
     "batch_apply",
     "catalog_operation_names",
+    "context_candidates",
     "claim_arbitrate",
     "claim_context",
     "handoff_record",

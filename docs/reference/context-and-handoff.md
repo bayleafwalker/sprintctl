@@ -174,6 +174,11 @@ the pool (ready items, plus a found explicit target) than fit within
 this doc (`null` if no projection watermark is available); `--limit`
 caps at the command's configured maximum regardless of the value passed.
 
+In served mode this packet is returned by `work.read.context-candidates` from
+the repository authority. Its `projection` field explicitly reports the
+authority-backed read (`fallback_reason: "served-authority"`); a served client
+never opens a local projection or a direct database to assemble the packet.
+
 ## Opt-in project union contracts
 
 The `--project PROJECT_TOML` option adds a read-only multi-repository form to

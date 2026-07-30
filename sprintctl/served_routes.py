@@ -55,6 +55,7 @@ SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
         notes="Internal dependency for authenticated durable-command actor selection.",
     ),
     ServedRoute("usage.context", "work.read.context", precondition="project_path is None"),
+    ServedRoute("context-candidates", "work.read.context-candidates"),
     ServedRoute(
         "usage.context",
         "work.project.context",
@@ -220,7 +221,7 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     "handoff": "catalog",
     "agent-protocol": "local",
     "next-work": "catalog",
-    "context-candidates": "unavailable",
+    "context-candidates": "catalog",
     "session resume": "unavailable",
     # The no-option form prints static command help. ``usage --context`` is
     # catalog-backed; the CLI selects that disposition from parsed options.

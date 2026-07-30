@@ -25,7 +25,7 @@ import socket
 from typing import Any, Protocol
 from uuid import uuid4
 
-from . import context_contract, contracts, cutover, db, handoff, maintain, outbox, sprint_detail
+from . import context_candidates, context_contract, contracts, cutover, db, handoff, maintain, outbox, sprint_detail
 
 
 CLAIM_COMMAND_TYPES = frozenset(
@@ -450,6 +450,7 @@ class WorkApplication:
             "work.read.claims": target._read_claims,
             "work.read.claim": target._read_claim,
             "work.read.context": target._read_context,
+            "work.read.context-candidates": target._read_context_candidates,
             "work.read.handoff": target._read_handoff,
             "work.read.next-work": target._read_next_work,
             "work.read.next-work-explain": target._read_next_work_explain,
@@ -627,6 +628,53 @@ class WorkApplication:
             self.store, self._resolve_sprint(arguments.get("sprint_id")), now,
             backend=self.backend,
         )
+
+    def _read_context_candidates(
+        self, arguments: dict[str, Any], _context: InvocationContext
+    ) -> dict[str, Any]:
+        """Build the bounded, read-only Tier-1 dispatch packet at the authority."""
+        sprint = self._resolve_sprint(arguments.get("sprint_id"))
+        explicit_item_id = _optional_positive_int(arguments.get("item_id"), "item_id")
+        raw_paths = arguments.get("target_paths", [])
+        if not isinstance(raw_paths, list) or any(
+            not isinstance(path, str) or not path for path in raw_paths
+        ):
+            raise ApplicationRejection(
+                "invalid-arguments", "target_paths must be an array of non-empty strings", 422
+            )
+        query = _optional_text(arguments.get("query"), "query")
+        limit = _positive_int(
+            arguments.get("limit", context_candidates.DEFAULT_CANDIDATE_LIMIT), "limit"
+        )
+        ready_items = self.backend.get_ready_items(self.store, sprint["id"])
+        refs_by_item = self.backend.list_refs_for_items(
+            self.store, [item["id"] for item in ready_items]
+        )
+        explicit_item = (
+            self.backend.get_work_item(self.store, explicit_item_id)
+            if explicit_item_id is not None
+            else None
+        )
+        payload = context_candidates.build_context_candidates(
+            ready_items=ready_items,
+            refs_by_item=refs_by_item,
+            explicit_item_id=explicit_item_id,
+            explicit_item=explicit_item,
+            target_paths=raw_paths,
+            query=query,
+            limit=limit,
+            watermark=None,
+        )
+        payload["sprint"] = {"id": sprint["id"], "name": sprint["name"]}
+        payload["projection"] = {
+            "enabled": False,
+            "source": "backend",
+            "fallback_reason": "served-authority",
+            "watermark_offset": None,
+            "watermark_age_seconds": None,
+            "schema_version": None,
+        }
+        return payload
 
     def _maintain_check(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
         """Return the owning maintenance diagnostic from one server snapshot."""
