@@ -639,10 +639,15 @@ def _handle_claim_mutation(
     claim = _lock_claim(cur, store, claim_id)
     current_revision = claim_revision(claim)
     _check_basis(envelope, current_revision)
-    _require_live_claim(cur, claim)
-    _verify_claim_secret(claim, envelope.payload.get("credential_ref"), credentials)
     command = envelope.record_type
     if command == "claim.release":
+        # Release is proof-bound cleanup, not lease use. The legacy SQLite and
+        # PostgreSQL backends allow an owner to remove its claim after expiry;
+        # requiring a live lease here strands a row that renew and handoff
+        # correctly refuse to revive.
+        _verify_claim_secret(
+            claim, envelope.payload.get("credential_ref"), credentials
+        )
         effect = _claim_effect(claim)
         cur.execute(
             "DELETE FROM claim WHERE repo_id = %s AND id = %s",
@@ -651,6 +656,8 @@ def _handle_claim_mutation(
         effect["released"] = True
         return effect
 
+    _require_live_claim(cur, claim)
+    _verify_claim_secret(claim, envelope.payload.get("credential_ref"), credentials)
     ttl = _positive_int(envelope.payload.get("ttl_seconds", 300), "ttl_seconds")
     if command == "claim.renew":
         # Same "only apply non-null values" semantics as legacy
