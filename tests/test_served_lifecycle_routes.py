@@ -563,9 +563,27 @@ def test_served_claim_recover_rejects_misrouted_item_response(runner, tmp_path, 
     assert "recovered-secret" not in result.output
 
 
-@pytest.mark.parametrize("expires_at", ["2000-01-01T00:00:00Z", "not-a-time", "2099-01-01T00:00:00"])
 @_requires_312
-def test_served_claim_recover_rejects_non_live_or_invalid_expiry(runner, tmp_path, monkeypatch, expires_at):
+def test_served_claim_recover_by_id_allows_expired_claim_for_cleanup(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli_module._served, "read_claim", lambda *a, **kw: {"claim": {
+        "claim_id": 3, "work_item_id": 5, "actor": "served-actor", "claim_type": "execute",
+        "status": "active", "expires_at": "2000-01-01T00:00:00Z",
+    }})
+    _write_served_sidecar(tmp_path, 3)
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
+
+    result = runner.invoke(cli, ["claim", "recover", "--id", "3", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["claim_token"] == "recovered-secret"
+
+
+@pytest.mark.parametrize("expires_at", ["not-a-time", "2099-01-01T00:00:00"])
+@_requires_312
+def test_served_claim_recover_by_id_rejects_invalid_expiry(runner, tmp_path, monkeypatch, expires_at):
     _configure_served_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(cli_module._served, "read_claim", lambda *a, **kw: {"claim": {
         "claim_id": 3, "work_item_id": 5, "actor": "served-actor", "claim_type": "execute",
@@ -575,6 +593,25 @@ def test_served_claim_recover_rejects_non_live_or_invalid_expiry(runner, tmp_pat
     _patch_served_sidecar_db_path(monkeypatch, tmp_path)
     result = runner.invoke(cli, ["claim", "recover", "--id", "3", "--json"])
     assert result.exit_code == 1, result.output
+    assert "recovered-secret" not in result.output
+
+
+@_requires_312
+def test_served_claim_recover_by_item_id_rejects_expired_claim(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli_module._served, "read_claims", lambda *a, **kw: {"claims": [{
+        "claim_id": 3, "work_item_id": 5, "actor": "served-actor", "claim_type": "execute",
+        "status": "active", "expires_at": "2000-01-01T00:00:00Z",
+    }]})
+    _write_served_sidecar(tmp_path, 3)
+    _patch_served_sidecar_db_path(monkeypatch, tmp_path)
+
+    result = runner.invoke(cli, ["claim", "recover", "--item-id", "5", "--json"])
+
+    assert result.exit_code == 1, result.output
+    assert "is expired" in result.output
     assert "recovered-secret" not in result.output
 
 
