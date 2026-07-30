@@ -169,6 +169,28 @@ def _renew_command(store, claim, token, event_id, *, metadata=None):
     return command, {reference: token}
 
 
+def _release_command(store, claim, token, event_id):
+    reference = authority.credential_ref(token)
+    command = contracts.AuthorityCommand(
+        event_id=event_id,
+        record_type="claim.release",
+        schema_version="1",
+        actor=claim["agent"],
+        authored_at="2026-07-21T12:00:00Z",
+        refs={
+            "repo_id": store.authority_repo_uuid,
+            "aggregate_type": "claim",
+            "claim_id": claim["id"],
+        },
+        payload={
+            "claim_id": claim["id"],
+            "credential_ref": reference,
+        },
+        basis_revision=authority.claim_revision(claim),
+    )
+    return command, {reference: token}
+
+
 def _handoff_command(
     store,
     claim,
@@ -855,6 +877,71 @@ def test_claim_renew_applies_metadata_with_legacy_heartbeat_semantics(
     assert after_three["branch"] == "feature/two"
     assert after_three["runtime_session_id"] == "session-one"
     assert after_three["pid"] == 111
+    store.conn.close()
+
+
+def test_expired_claim_release_accepts_valid_proof_and_rejects_wrong_proof(
+    store_factory, tmp_path
+):
+    store = store_factory("expired-claim-release")
+    sprint_id = pg.create_sprint(store, "Expired claim release", status="active")
+    track_id = pg.get_or_create_track(store, sprint_id, "work")
+    item_id = pg.create_work_item(store, sprint_id, track_id, "Release item")
+    item = pg.get_work_item(store, item_id)
+
+    acquire, acquire_credentials = _claim_command(
+        store, item, "release-owner", "release-proof", str(uuid.uuid4())
+    )
+    acquire_record = _command_record(tmp_path / "release-acquire.db", acquire)
+    acquired = _application(store, acquire_credentials).invoke(
+        "work.claim.arbitrate",
+        {"record": record_to_dict(acquire_record)},
+        _context(
+            "release-owner",
+            acquire_record.basis_revision,
+            acquire_record.event_id,
+        ),
+    )
+    claim_id = acquired["effect"]["claim_id"]
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE claim SET expires_at = now() - interval '1 second' "
+            "WHERE repo_id = %s AND id = %s",
+            (store.repo_id, claim_id),
+        )
+    store.conn.commit()
+
+    expired = pg.get_claim(store, claim_id, include_secret=True)
+    wrong_command, wrong_credentials = _release_command(
+        store, expired, "wrong-proof", str(uuid.uuid4())
+    )
+    wrong_record = _command_record(tmp_path / "release-wrong.db", wrong_command)
+    wrong = _application(store, wrong_credentials).invoke(
+        "work.claim.arbitrate",
+        {"record": record_to_dict(wrong_record)},
+        _context("release-owner", wrong_record.basis_revision, wrong_record.event_id),
+    )
+    assert wrong["outcome"] == "rejected"
+    assert wrong["reason_code"] == "invalid-claim-proof"
+    assert pg.get_claim(store, claim_id, include_secret=False) is not None
+
+    release_command, release_credentials = _release_command(
+        store, expired, "release-proof", str(uuid.uuid4())
+    )
+    release_record = _command_record(tmp_path / "release-valid.db", release_command)
+    released = _application(store, release_credentials).invoke(
+        "work.claim.arbitrate",
+        {"record": record_to_dict(release_record)},
+        _context(
+            "release-owner",
+            release_record.basis_revision,
+            release_record.event_id,
+        ),
+    )
+    assert released["outcome"] == "accepted"
+    assert released["effect"]["released"] is True
+    assert released["effect"]["status"] == "active"
+    assert pg.get_claim(store, claim_id, include_secret=False) is None
     store.conn.close()
 
 
