@@ -210,6 +210,34 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work:read", "read", "not-allowed",
     ),
     WorkOperationContract(
+        "work.read.context-candidates",
+        _object_schema(
+            {
+                "sprint_id": {"type": ["integer", "null"], "minimum": 1},
+                "item_id": {"type": ["integer", "null"], "minimum": 1},
+                "target_paths": {"type": "array", "items": {"type": "string", "minLength": 1}, "default": []},
+                "query": {"type": ["string", "null"]},
+                "limit": {"type": "integer", "minimum": 1, "default": 5},
+            }
+        ),
+        _result_schema(
+            ("contract_version", "explicit_target", "bound", "truncated", "watermark", "candidates", "sprint", "projection"),
+            {
+                "contract_version": {"const": "1"},
+                "explicit_target": {"type": ["object", "null"]},
+                "bound": {"type": "integer", "minimum": 1},
+                "truncated": {"type": "boolean"},
+                "watermark": {"type": ["object", "null"]},
+                "candidates": {"type": "array", "items": {"type": "object"}},
+                "sprint": {"type": "object"},
+                "projection": {"type": "object"},
+            },
+        ),
+        "work:read",
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
         "work.read.claims",
         _object_schema({"item_id": {"type": ["integer", "null"], "minimum": 1}, "sprint_id": {"type": ["integer", "null"], "minimum": 1}, "active_only": {"type": "boolean", "default": True}, "instance_id": {"type": ["string", "null"]}, "runtime_session_id": {"type": ["string", "null"]}, "hostname": {"type": ["string", "null"]}, "pid": {"type": ["integer", "null"], "minimum": 1}}),
         _result_schema(("repo_id", "claims"), {"repo_id": {"type": "string"}, "claims": {"type": "array", "items": {"type": "object"}}}),
@@ -812,6 +840,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
 
 
 LEGACY_REMOTE_COMMAND_PARITY: tuple[dict[str, str], ...] = (
+    {"legacy": "sprintctl context-candidates --json", "operation": "work.read.context-candidates"},
     {"legacy": "sprintctl sprint list --json", "operation": "work.read.sprints"},
     {"legacy": "sprintctl item show --id ID --json", "operation": "work.read.item"},
     {"legacy": "sprintctl next-work --json", "operation": "work.read.next-work"},

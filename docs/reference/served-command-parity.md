@@ -9,6 +9,7 @@ store.  `Unavailable` likewise never opens a store: it exits with the stable
 | Blind-agent loop command | Served status | Catalog operation / current guidance |
 | --- | --- | --- |
 | `usage --context` | Served | `work.read.context` returns the complete frozen ContextContract v1 from one server-side repeatable-read aggregate. `--project` uses `work.project.context` only with a canonical server binding and authorization for every member. |
+| `context-candidates` | Served | `work.read.context-candidates` builds the bounded Tier-1 packet at the repository authority. Only a found, pending explicit target is claim-eligible; this read never acquires a claim. |
 | `item list` | Served | `work.read.items` returns filtered repository-scoped rows; `--project` uses `work.project.items`; `--fzf` remains unavailable. |
 | `item show` | Served | `work.read.item`, includes refs, dependencies, and active claims. |
 | `item ref list`, `item dep list` | Served | `work.read.item` supplies the exact item-scoped reference/dependency views. |
