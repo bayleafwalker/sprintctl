@@ -42,7 +42,7 @@ SPRINT_KINDS = ("active_sprint", "backlog", "archive")
 
 # Single source of truth for the local schema version; init_db() must end by
 # migrating to exactly this version, and doctor compares databases against it.
-CURRENT_SCHEMA_VERSION = 15
+CURRENT_SCHEMA_VERSION = 16
 
 _MIGRATIONS: list[str] = [
     # Migration 1: initial schema
@@ -541,6 +541,66 @@ def _migration_15(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_16(conn: sqlite3.Connection) -> None:
+    """Install the exact-plan-bound maintenance capability ledger."""
+    _execute_statements(
+        conn,
+        """
+        CREATE TABLE IF NOT EXISTS maintenance_capability (
+            capability_id text PRIMARY KEY,
+            envelope_id text NOT NULL UNIQUE,
+            envelope_digest text NOT NULL CHECK (length(envelope_digest) = 64),
+            envelope_json text NOT NULL,
+            plan_ref text NOT NULL,
+            operator_identity text NOT NULL,
+            not_before text NOT NULL,
+            expires_at text NOT NULL,
+            state text NOT NULL CHECK (state IN ('prepared','attested','active','observing','reconciled','aborted','revoked','expired')),
+            revision integer NOT NULL CHECK (revision >= 1),
+            next_sequence integer NOT NULL DEFAULT 1 CHECK (next_sequence >= 1),
+            created_at text NOT NULL,
+            updated_at text NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS maintenance_capability_receipt (
+            capability_id text NOT NULL REFERENCES maintenance_capability(capability_id) ON DELETE RESTRICT,
+            request_id text NOT NULL,
+            action text NOT NULL CHECK (action IN ('prepare','attest','activate','observe','reconcile','abort','revoke')),
+            outcome text NOT NULL CHECK (outcome IN ('accepted','expired')),
+            from_state text,
+            to_state text NOT NULL,
+            result_revision text NOT NULL,
+            step_id text,
+            command_ref text,
+            effect_ref text,
+            audit_bundle_json text,
+            request_digest text NOT NULL CHECK (length(request_digest) = 64),
+            actor text NOT NULL,
+            created_at text NOT NULL,
+            PRIMARY KEY (capability_id, request_id)
+        );
+        CREATE TABLE IF NOT EXISTS maintenance_capability_recovery (
+            capability_id text NOT NULL REFERENCES maintenance_capability(capability_id) ON DELETE RESTRICT,
+            record_id text NOT NULL,
+            kind text NOT NULL CHECK (kind IN ('observation','requested-command')),
+            payload_ref text NOT NULL,
+            actor text NOT NULL,
+            created_at text NOT NULL,
+            PRIMARY KEY (capability_id, record_id)
+        );
+        """,
+    )
+    for table, label in (
+        ("maintenance_capability_receipt", "maintenance capability receipts"),
+        ("maintenance_capability_recovery", "maintenance capability recovery records"),
+    ):
+        for operation in ("UPDATE", "DELETE"):
+            conn.execute(
+                f"CREATE TRIGGER IF NOT EXISTS {table}_immutable_{operation.lower()} "
+                f"BEFORE {operation} ON {table} BEGIN "
+                f"SELECT RAISE(ABORT, '{label} are immutable'); END"
+            )
+
+
 def _run_migration(
     conn: sqlite3.Connection,
     target_version: int,
@@ -585,7 +645,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     _run_migration(conn, 12, _migration_12)
     _run_migration(conn, 13, _migration_13)
     _run_migration(conn, 14, _migration_14, foreign_keys_off=True)
-    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_15, foreign_keys_off=True)
+    _run_migration(conn, 15, _migration_15, foreign_keys_off=True)
+    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_16)
 
 
 # --- Sprint ---
@@ -1590,6 +1651,15 @@ def create_claim(
         claim_token = _generate_claim_token()
         try:
             conn.execute("BEGIN IMMEDIATE")
+            active_capability = conn.execute(
+                "SELECT capability_id FROM maintenance_capability "
+                "WHERE state IN ('active','observing') "
+                "AND julianday(expires_at) > julianday('now') LIMIT 1"
+            ).fetchone()
+            if active_capability is not None:
+                raise ClaimConflict(
+                    "ordinary claims are disabled while an exact-plan maintenance capability is active"
+                )
             if exclusive:
                 conflict = _get_active_exclusive_claim_row(conn, work_item_id)
                 if conflict:

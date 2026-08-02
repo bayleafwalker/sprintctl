@@ -55,6 +55,11 @@ from sprintctl.pg_testing import (
     new_test_repo_uuid,
     write_cleanup_report,
 )
+from sprintctl.maintenance_capability import (
+    MaintenanceCapabilityError,
+    PostgresMaintenanceCapabilityStore,
+)
+from tests.test_maintenance_capability import CAPABILITY_ID, AT, envelope
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +218,164 @@ def work_item_id(store, sprint_id, track_id):
 # Schema
 # ---------------------------------------------------------------------------
 
+class TestMaintenanceCapabilityLifecycle:
+    def test_postgres_matches_exact_plan_lifecycle_and_replay(self, store, pg_test_scope):
+        repo_id = pg_test_scope("maintenance-lifecycle")
+        lifecycle = PostgresMaintenanceCapabilityStore(
+            pg.PgStore(conn=store.conn, repo_id=repo_id)
+        )
+        capability_id = f"mcap:{uuid.uuid4()}"
+        prepare_id = str(uuid.uuid4())
+        prepared = lifecycle.prepare(capability_id=capability_id, request_id=prepare_id, envelope=envelope(), actor="operator", at=AT)
+        assert lifecycle.prepare(capability_id=capability_id, request_id=prepare_id, envelope=envelope(), actor="operator", at=AT)["duplicate"] is True
+        attested = lifecycle.transition(capability_id=capability_id, request_id=str(uuid.uuid4()), action="attest", expected_revision=prepared["revision"], actor="operator", at=AT, effect_ref="sha256:" + "0" * 64)
+        active = lifecycle.transition(capability_id=capability_id, request_id=str(uuid.uuid4()), action="activate", expected_revision=attested["revision"], actor="operator", at=AT, step_id="attest-backup", command_id="verify-backup", command_ref="sha256:" + "c" * 64, effect_ref="sha256:" + "d" * 64)
+        assert active["state"] == "active"
+        recovery = lifecycle.append_recovery_record(capability_id=capability_id, record_id=str(uuid.uuid4()), kind="requested-command", payload_ref="artifact:sha256:" + "e" * 64, actor="recovery", at=AT)
+        assert recovery["authority"] == "none"
+        assert lifecycle.get(capability_id)["state"] == "active"
+
+    def test_claim_activation_race_has_exactly_one_authority_winner(
+        self, store, pg_test_scope
+    ):
+        repo_id = pg_test_scope("maintenance-race")
+        setup_store = pg.PgStore(conn=store.conn, repo_id=repo_id)
+        sprint_id = pg.create_sprint(setup_store, f"Maintenance Race-{_uid()}", status="active")
+        track_id = pg.get_or_create_track(setup_store, sprint_id, "authority")
+        item_id = pg.create_work_item(setup_store, sprint_id, track_id, "Race target")
+
+        capability_id = f"mcap:{uuid.uuid4()}"
+        lifecycle = PostgresMaintenanceCapabilityStore(setup_store)
+        prepared = lifecycle.prepare(
+            capability_id=capability_id,
+            request_id=str(uuid.uuid4()),
+            envelope=envelope(),
+            actor="operator",
+            at=AT,
+        )
+        attested = lifecycle.transition(
+            capability_id=capability_id,
+            request_id=str(uuid.uuid4()),
+            action="attest",
+            expected_revision=prepared["revision"],
+            actor="operator",
+            at=AT,
+            effect_ref="sha256:" + "0" * 64,
+        )
+
+        barrier = threading.Barrier(3)
+        outcomes: dict[str, str] = {}
+
+        def activate() -> None:
+            conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+            try:
+                actor_store = pg.PgStore(conn=conn, repo_id=repo_id)
+                barrier.wait()
+                PostgresMaintenanceCapabilityStore(actor_store).transition(
+                    capability_id=capability_id,
+                    request_id=str(uuid.uuid4()),
+                    action="activate",
+                    expected_revision=attested["revision"],
+                    actor="operator",
+                    at=AT,
+                    step_id="attest-backup",
+                    command_id="verify-backup",
+                    command_ref="sha256:" + "c" * 64,
+                    effect_ref="sha256:" + "d" * 64,
+                )
+                outcomes["activation"] = "accepted"
+            except MaintenanceCapabilityError as exc:
+                outcomes["activation"] = f"rejected:{exc}"
+            finally:
+                conn.close()
+
+        def claim() -> None:
+            conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+            try:
+                actor_store = pg.PgStore(conn=conn, repo_id=repo_id)
+                barrier.wait()
+                pg.create_claim(actor_store, item_id, "ordinary-agent")
+                outcomes["claim"] = "accepted"
+            except ClaimConflict as exc:
+                outcomes["claim"] = f"rejected:{exc}"
+            finally:
+                conn.close()
+
+        workers = [threading.Thread(target=activate), threading.Thread(target=claim)]
+        for worker in workers:
+            worker.start()
+        barrier.wait()
+        for worker in workers:
+            worker.join(timeout=10)
+            assert not worker.is_alive(), "shared claim/capability arbitration deadlocked"
+
+        assert sorted(value.split(":", 1)[0] for value in outcomes.values()) == [
+            "accepted",
+            "rejected",
+        ]
+        with setup_store.conn.cursor() as cur:
+            cur.execute(
+                "SELECT state FROM maintenance_capability WHERE repo_id=%s AND capability_id=%s",
+                (repo_id, capability_id),
+            )
+            capability_active = cur.fetchone()["state"] == "active"
+            cur.execute(
+                "SELECT count(*) AS count FROM claim WHERE repo_id=%s AND status='active' AND expires_at > now()",
+                (repo_id,),
+            )
+            live_claims = int(cur.fetchone()["count"])
+        assert not (capability_active and live_claims), outcomes
+
+    def test_rejected_claim_rolls_back_repo_arbitration_on_retained_connection(
+        self, store, pg_test_scope
+    ):
+        repo_id = pg_test_scope("maintenance-conflict-rollback")
+        retained = psycopg.connect(_PG_URL, row_factory=dict_row)
+        contender = psycopg.connect(_PG_URL, row_factory=dict_row)
+        try:
+            retained_store = pg.PgStore(conn=retained, repo_id=repo_id)
+            sprint_id = pg.create_sprint(retained_store, f"Conflict rollback-{_uid()}", status="active")
+            track_id = pg.get_or_create_track(retained_store, sprint_id, "authority")
+            item_id = pg.create_work_item(retained_store, sprint_id, track_id, "Rejected claim")
+            lifecycle = PostgresMaintenanceCapabilityStore(retained_store)
+            prepared = lifecycle.prepare(capability_id=f"mcap:{uuid.uuid4()}", request_id=str(uuid.uuid4()), envelope=envelope(), actor="operator", at=AT)
+            attested = lifecycle.transition(capability_id=prepared["capability_id"], request_id=str(uuid.uuid4()), action="attest", expected_revision=prepared["revision"], actor="operator", at=AT, effect_ref="sha256:" + "0" * 64)
+            lifecycle.transition(capability_id=prepared["capability_id"], request_id=str(uuid.uuid4()), action="activate", expected_revision=attested["revision"], actor="operator", at=AT, step_id="attest-backup", command_id="verify-backup", command_ref="sha256:" + "1" * 64, effect_ref="sha256:" + "2" * 64)
+
+            with pytest.raises(ClaimConflict):
+                pg.create_claim(retained_store, item_id, "ordinary-agent")
+            assert retained.info.transaction_status == psycopg.pq.TransactionStatus.IDLE
+            with contender.cursor() as cur:
+                cur.execute(
+                    "SELECT pg_try_advisory_xact_lock(hashtextextended(%s, 0)) AS acquired",
+                    (repo_id,),
+                )
+                assert cur.fetchone()["acquired"] is True
+            contender.rollback()
+        finally:
+            retained.close()
+            contender.close()
+
+    def test_postgres_receipt_and_recovery_evidence_reject_mutation(
+        self, store, pg_test_scope
+    ):
+        repo_id = pg_test_scope("maintenance-evidence-immutable")
+        scoped_store = pg.PgStore(conn=store.conn, repo_id=repo_id)
+        lifecycle = PostgresMaintenanceCapabilityStore(scoped_store)
+        capability_id = f"mcap:{uuid.uuid4()}"
+        lifecycle.prepare(capability_id=capability_id, request_id=str(uuid.uuid4()), envelope=envelope(), actor="operator", at=AT)
+        lifecycle.append_recovery_record(capability_id=capability_id, record_id=str(uuid.uuid4()), kind="observation", payload_ref="artifact:sha256:" + "3" * 64, actor="observer", at=AT)
+        for statement in (
+            "UPDATE maintenance_capability_receipt SET actor='tampered' WHERE repo_id=%s",
+            "DELETE FROM maintenance_capability_receipt WHERE repo_id=%s",
+            "UPDATE maintenance_capability_recovery SET actor='tampered' WHERE repo_id=%s",
+            "DELETE FROM maintenance_capability_recovery WHERE repo_id=%s",
+        ):
+            with pytest.raises(psycopg.errors.RaiseException, match="immutable"):
+                with scoped_store.conn.cursor() as cur:
+                    cur.execute(statement, (repo_id,))
+            scoped_store.conn.rollback()
+
 class TestRemoteSafety:
     def test_superseded_marker_is_read_from_disposable_temp_table(self, store):
         """The marker probe is read-only; the temporary fixture disappears with this connection."""
@@ -277,10 +440,10 @@ class TestInitDb:
 
             assert not any(thread.is_alive() for thread in threads)
             assert not errors
-            assert sorted(result["applied_versions"] for result in results) == [[], [2, 3, 4, 5]]
+            assert sorted(result["applied_versions"] for result in results) == [[], [2, 3, 4, 5, 6]]
             with store.conn.cursor() as cur:
                 cur.execute(f'SELECT version FROM "{schema}".schema_version')
-                assert cur.fetchone()["version"] == 5
+                assert cur.fetchone()["version"] == 6
             store.conn.rollback()
         finally:
             with store.conn.cursor() as cur:
@@ -346,10 +509,10 @@ class TestInitDb:
             assert [str(exc) for exc in failures] == [
                 "injected failure before ledger advance"
             ]
-            assert [result["applied_versions"] for result in results] == [[3, 4, 5]]
+            assert [result["applied_versions"] for result in results] == [[3, 4, 5, 6]]
             with store.conn.cursor() as cur:
                 cur.execute(f'SELECT version FROM "{schema}".schema_version')
-                assert cur.fetchone()["version"] == 5
+                assert cur.fetchone()["version"] == 6
             store.conn.rollback()
         finally:
             for conn in connections:
@@ -489,7 +652,7 @@ class TestInitDb:
 
     @pytest.mark.parametrize(
         ("legacy_version", "applied_versions"),
-        [(1, [2, 3, 4, 5]), (2, [3, 4, 5])],
+        [(1, [2, 3, 4, 5, 6]), (2, [3, 4, 5, 6])],
     )
     def test_interleaved_legacy_offsets_backfill_per_repository_and_translate_fk(
         self, pg_test_scope, legacy_version, applied_versions
@@ -1577,7 +1740,7 @@ class TestClaim:
         with pytest.raises(ClaimConflict):
             pg.create_claim(store, iid, "ag-2", ttl_seconds=300)
 
-    def test_concurrent_exclusive_claims_serialize_on_work_item_row(
+    def test_concurrent_exclusive_claims_serialize_on_repo_authority_lock(
         self, store, sprint_id, track_id, monkeypatch
     ):
         iid = pg.create_work_item(store, sprint_id, track_id, f"Cr-{_uid()}")
@@ -1585,19 +1748,19 @@ class TestClaim:
         release_first = threading.Event()
         second_attempted = threading.Event()
         second_locked = threading.Event()
-        original_lock = pg._lock_claim_arbitration_row
+        original_lock = pg._lock_repo_claim_capability_arbitration
 
-        def instrumented_lock(cur, independent_store, work_item_id):
+        def instrumented_lock(cur, repo_id):
             if threading.current_thread().name == "claim-worker-b":
                 second_attempted.set()
-            original_lock(cur, independent_store, work_item_id)
+            original_lock(cur, repo_id)
             if threading.current_thread().name == "claim-worker-a":
                 first_locked.set()
                 assert release_first.wait(timeout=5)
             else:
                 second_locked.set()
 
-        monkeypatch.setattr(pg, "_lock_claim_arbitration_row", instrumented_lock)
+        monkeypatch.setattr(pg, "_lock_repo_claim_capability_arbitration", instrumented_lock)
         outcomes = []
         outcomes_lock = threading.Lock()
 

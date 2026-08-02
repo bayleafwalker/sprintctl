@@ -20,6 +20,9 @@ TEST_ROLE_PREFIX = "sprintctl_test_"
 TEST_DATABASE_PREFIX = "sprintctl_test_"
 DISPOSABLE_DATABASE_COMMENT = "sprintctl:disposable-integration-test"
 REPO_TABLES = (
+    "maintenance_capability_recovery",
+    "maintenance_capability_receipt",
+    "maintenance_capability",
     "terminal_recovery_audit",
     "terminal_recovery_ledger",
     "authority_decision",
@@ -167,12 +170,25 @@ def cleanup_test_repositories(conn: Any, repo_ids: Iterable[str]) -> dict[str, A
     remaining_rows = {table: 0 for table in REPO_TABLES}
     try:
         with conn.cursor() as cur:
+            # Production evidence is deliberately undeletable.  This helper is
+            # the sole exception: it has just revalidated the dedicated,
+            # commented disposable database and constrained every repo scope.
+            # ALTER TABLE is transactional, so any failure restores the
+            # triggers when the transaction rolls back.
+            immutable_tables = (
+                "maintenance_capability_receipt",
+                "maintenance_capability_recovery",
+            )
+            for table in immutable_tables:
+                cur.execute(f"ALTER TABLE {table} DISABLE TRIGGER USER")  # noqa: S608
             for table in REPO_TABLES:
                 cur.execute(
                     f"DELETE FROM {table} WHERE repo_id = ANY(%s)",  # noqa: S608
                     (scopes,),
                 )
                 deleted_rows[table] = cur.rowcount
+            for table in immutable_tables:
+                cur.execute(f"ALTER TABLE {table} ENABLE TRIGGER USER")  # noqa: S608
             for table in REPO_TABLES:
                 cur.execute(
                     f"SELECT count(*) AS count FROM {table} WHERE repo_id = ANY(%s)",  # noqa: S608
