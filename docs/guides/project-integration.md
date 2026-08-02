@@ -57,7 +57,7 @@ Add this to `.envrc`:
 export SPRINTCTL_DB="${PWD}/.sprintctl/sprintctl.db"
 ```
 
-The repository already ships [envrc.example](../envrc.example) for this.
+The repository already ships [envrc.example](../../envrc.example) for this.
 
 ### 2. Ignore local state
 
@@ -85,7 +85,7 @@ sprint-snapshot:
 	sprintctl render > docs/sprint-snapshots/sprint-current.txt
 ```
 
-See [docs/examples/Makefile.sprintctl.mk](examples/Makefile.sprintctl.mk) for a copyable sample.
+See [docs/examples/Makefile.sprintctl.mk](../examples/Makefile.sprintctl.mk) for a copyable sample.
 
 ### 4. Teach agents the operating rules
 
@@ -100,7 +100,7 @@ Put a short `sprintctl` section in `AGENTS.md` so agents know:
 - treat `claim_id + claim_token` as the only ownership proof
 - refresh the shared snapshot after material sprint-state changes
 
-See [docs/examples/AGENTS.sprintctl.md](examples/AGENTS.sprintctl.md) for a sample section.
+See [docs/examples/AGENTS.sprintctl.md](../examples/AGENTS.sprintctl.md) for a sample section.
 
 ## Working Loop
 
@@ -236,8 +236,8 @@ That is enough to reproduce the strongest parts of the reference usage without i
 
 To initialize `sprintctl` on a fresh repository using an agent session, see:
 
-- [docs/examples/bootstrap-prompt.md](examples/bootstrap-prompt.md) — copy-paste prompt for agent onboarding
-- [docs/examples/bootstrap-workflow.md](examples/bootstrap-workflow.md) — minimal walkthrough of the setup + work loop
+- [docs/examples/bootstrap-prompt.md](../examples/bootstrap-prompt.md) — copy-paste prompt for agent onboarding
+- [docs/examples/bootstrap-workflow.md](../examples/bootstrap-workflow.md) — minimal walkthrough of the setup + work loop
 
 For a complete worked example — including AGENTS.md, sprint naming conventions, all five workflow patterns (idea-to-backlog, direct implementation, review, knowledge promotion, fresh-repo bootstrap), and a sample rendered sprint — see the separate bootstrap template repository:
 
