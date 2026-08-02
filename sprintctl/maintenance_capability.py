@@ -376,13 +376,17 @@ class SQLiteMaintenanceCapabilityStore:
         now = _time(at, "at")
         if now >= frozen.expires_at:
             raise MaintenanceCapabilityError("expired envelopes cannot be prepared")
-        payload_digest = hashlib.sha256(_canonical({"capability_id": capability_id, "envelope_digest": frozen.digest, "actor": actor, "at": at})).hexdigest()
+        # ``at`` is an authority-clock observation, not caller-authored request
+        # content.  Excluding it lets a response-loss retry with the same
+        # request identity remain idempotent while the first receipt retains
+        # the actual server timestamp.
+        payload_digest = hashlib.sha256(_canonical({"capability_id": capability_id, "envelope_digest": frozen.digest, "actor": actor})).hexdigest()
         return self._write_prepare(capability_id, request_id, frozen, _canonical(envelope).decode(), actor, at, payload_digest)
 
     def transition(self, *, capability_id: str, request_id: str, action: str, expected_revision: str, actor: str, at: str, step_id: str | None = None, command_id: str | None = None, command_ref: str | None = None, effect_ref: str | None = None, reconciliation: Mapping[str, Any] | None = None) -> dict[str, Any]:
         request_id = _request_id(request_id)
         now = _time(at, "at")
-        payload = {"capability_id": capability_id, "action": action, "expected_revision": expected_revision, "actor": actor, "at": at, "step_id": step_id, "command_id": command_id, "command_ref": command_ref, "effect_ref": effect_ref, "reconciliation": reconciliation}
+        payload = {"capability_id": capability_id, "action": action, "expected_revision": expected_revision, "actor": actor, "step_id": step_id, "command_id": command_id, "command_ref": command_ref, "effect_ref": effect_ref, "reconciliation": reconciliation}
         digest = hashlib.sha256(_canonical(payload)).hexdigest()
         try:
             self.conn.execute("BEGIN IMMEDIATE")
@@ -535,7 +539,7 @@ class PostgresMaintenanceCapabilityStore:
         now = _time(at, "at")
         if now >= frozen.expires_at:
             raise MaintenanceCapabilityError("expired envelopes cannot be prepared")
-        digest = hashlib.sha256(_canonical({"capability_id": capability_id, "envelope_digest": frozen.digest, "actor": actor, "at": at})).hexdigest()
+        digest = hashlib.sha256(_canonical({"capability_id": capability_id, "envelope_digest": frozen.digest, "actor": actor})).hexdigest()
         try:
             with self.conn.cursor() as cur:
                 duplicate = self._duplicate(cur, capability_id, request_id, digest)
@@ -557,7 +561,7 @@ class PostgresMaintenanceCapabilityStore:
     def transition(self, *, capability_id: str, request_id: str, action: str, expected_revision: str, actor: str, at: str, step_id: str | None = None, command_id: str | None = None, command_ref: str | None = None, effect_ref: str | None = None, reconciliation: Mapping[str, Any] | None = None) -> dict[str, Any]:
         request_id = _request_id(request_id)
         now = _time(at, "at")
-        payload = {"capability_id": capability_id, "action": action, "expected_revision": expected_revision, "actor": actor, "at": at, "step_id": step_id, "command_id": command_id, "command_ref": command_ref, "effect_ref": effect_ref, "reconciliation": reconciliation}
+        payload = {"capability_id": capability_id, "action": action, "expected_revision": expected_revision, "actor": actor, "step_id": step_id, "command_id": command_id, "command_ref": command_ref, "effect_ref": effect_ref, "reconciliation": reconciliation}
         digest = hashlib.sha256(_canonical(payload)).hexdigest()
         try:
             with self.conn.cursor() as cur:

@@ -23,6 +23,7 @@ from sprintctl.vuoro_adapter import (
     SCHEMA_DIALECT,
     WORK_OPERATION_CONTRACTS,
 )
+from tests.test_maintenance_capability import AT, CAPABILITY_ID, envelope
 
 
 def _context(
@@ -31,6 +32,7 @@ def _context(
     basis_revision: str | None = None,
     idempotency_key: str | None = None,
     repo_ids: frozenset[str] | None = None,
+    request_id: str = "request-1",
 ):
     identity = SimpleNamespace(
         actor=actor,
@@ -41,7 +43,7 @@ def _context(
         identity.authorizes_repo = lambda repo_id: repo_id in repo_ids
     return SimpleNamespace(
         identity=identity,
-        request_id="request-1",
+        request_id=request_id,
         basis_revision=basis_revision,
         catalog_revision="catalog-1",
         idempotency_requirement="required" if idempotency_key else "not-allowed",
@@ -283,6 +285,10 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         "work.project.sprints",
         "work.project.next-work",
         "work.project.batch",
+        "work.read.maintenance-capability",
+        "work.maintenance.prepare",
+        "work.maintenance.transition",
+        "work.maintenance.recovery-record",
         "work.pilot.cutover-evidence",
     } <= set(names)
     assert {row["operation"] for row in LEGACY_REMOTE_COMMAND_PARITY} <= set(names)
@@ -302,6 +308,9 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         "work.evidence.ingest",
         "work.batch.apply",
         "work.project.batch",
+        "work.maintenance.prepare",
+        "work.maintenance.transition",
+        "work.maintenance.recovery-record",
     }
 
 
@@ -442,6 +451,136 @@ def test_work_item_edit_contract_requires_revision_and_is_repo_scoped_write():
         "description",
         "expected_revision",
     }
+
+
+def test_maintenance_catalog_is_closed_and_least_authority():
+    contracts_by_name = {contract.name: contract for contract in WORK_OPERATION_CONTRACTS}
+    assert {
+        "work.read.maintenance-capability",
+        "work.maintenance.prepare",
+        "work.maintenance.transition",
+        "work.maintenance.recovery-record",
+    } <= set(contracts_by_name)
+    assert contracts_by_name["work.read.maintenance-capability"].required_authority == "work:maintenance"
+    assert contracts_by_name["work.read.maintenance-capability"].idempotency == "not-allowed"
+    assert contracts_by_name["work.maintenance.prepare"].execution_semantics == "admin"
+    assert contracts_by_name["work.maintenance.prepare"].idempotency == "required"
+    transition = contracts_by_name["work.maintenance.transition"]
+    assert transition.input_schema["properties"]["action"]["enum"] == [
+        "attest", "activate", "observe", "reconcile", "abort", "revoke"
+    ]
+    recovery = contracts_by_name["work.maintenance.recovery-record"]
+    assert recovery.required_authority == "work:maintenance-audit"
+    assert recovery.result_schema["properties"]["authority"] == {"const": "none"}
+    for name in (
+        "work.read.maintenance-capability",
+        "work.maintenance.prepare",
+        "work.maintenance.transition",
+        "work.maintenance.recovery-record",
+    ):
+        assert contracts_by_name[name].input_schema["additionalProperties"] is False
+
+
+def test_maintenance_application_delegates_lifecycle_and_recovery_audit_only(
+    conn, monkeypatch
+):
+    monkeypatch.setattr(WorkApplication, "_maintenance_now", staticmethod(lambda: AT))
+    app = _application(store=conn, backend=db)
+    prepare_id = "11111111-1111-4111-8111-111111111111"
+    prepare_context = _context(
+        actor="operator", request_id=prepare_id, idempotency_key=prepare_id
+    )
+    prepared = app.invoke(
+        "work.maintenance.prepare",
+        {"capability_id": CAPABILITY_ID, "envelope": envelope()},
+        prepare_context,
+    )
+    assert prepared["state"] == "prepared"
+    assert prepared["duplicate"] is False
+
+    # A later authority-clock observation does not change semantic replay.
+    monkeypatch.setattr(
+        WorkApplication,
+        "_maintenance_now",
+        staticmethod(lambda: "2026-08-02T20:01:00Z"),
+    )
+    replay = app.invoke(
+        "work.maintenance.prepare",
+        {"capability_id": CAPABILITY_ID, "envelope": envelope()},
+        prepare_context,
+    )
+    assert replay["duplicate"] is True
+    assert replay["revision"] == prepared["revision"]
+
+    status = app.invoke(
+        "work.read.maintenance-capability",
+        {"capability_id": CAPABILITY_ID},
+        _context(actor="operator"),
+    )
+    assert status["capability"]["state"] == "prepared"
+    assert "envelope_json" not in status["capability"]
+
+    stale_id = "44444444-4444-4444-8444-444444444444"
+    with pytest.raises(ApplicationRejection) as stale:
+        app.invoke(
+            "work.maintenance.transition",
+            {
+                "capability_id": CAPABILITY_ID,
+                "action": "attest",
+                "expected_revision": "mcap:stale:prepared:1",
+                "effect_ref": "sha256:" + "0" * 64,
+            },
+            _context(actor="operator", request_id=stale_id, idempotency_key=stale_id),
+        )
+    assert stale.value.code == "maintenance-revision-conflict"
+    assert stale.value.http_status == 409
+    assert app.invoke(
+        "work.read.maintenance-capability",
+        {"capability_id": CAPABILITY_ID},
+        _context(actor="operator"),
+    )["capability"]["state"] == "prepared"
+
+    recovery_id = "22222222-2222-4222-8222-222222222222"
+    recovery = app.invoke(
+        "work.maintenance.recovery-record",
+        {
+            "capability_id": CAPABILITY_ID,
+            "kind": "requested-command",
+            "payload_ref": "artifact:sha256:" + "7" * 64,
+        },
+        _context(actor="observer", request_id=recovery_id, idempotency_key=recovery_id),
+    )
+    assert recovery["authority"] == "none"
+    assert app.invoke(
+        "work.read.maintenance-capability",
+        {"capability_id": CAPABILITY_ID},
+        _context(actor="operator"),
+    )["capability"]["state"] == "prepared"
+
+
+def test_maintenance_application_rejects_actor_and_idempotency_substitution(
+    conn, monkeypatch
+):
+    monkeypatch.setattr(WorkApplication, "_maintenance_now", staticmethod(lambda: AT))
+    app = _application(store=conn, backend=db)
+    request_id = "33333333-3333-4333-8333-333333333333"
+    with pytest.raises(ApplicationRejection) as actor_rejected:
+        app.invoke(
+            "work.maintenance.prepare",
+            {"capability_id": CAPABILITY_ID, "envelope": envelope()},
+            _context(actor="not-operator", request_id=request_id, idempotency_key=request_id),
+        )
+    assert actor_rejected.value.code == "maintenance-actor-mismatch"
+    assert conn.execute("SELECT count(*) FROM maintenance_capability").fetchone()[0] == 0
+
+    with pytest.raises(ApplicationRejection) as replay_rejected:
+        app.invoke(
+            "work.maintenance.prepare",
+            {"capability_id": CAPABILITY_ID, "envelope": envelope()},
+            _context(actor="operator", request_id=request_id, idempotency_key="different"),
+        )
+    assert replay_rejected.value.code == "idempotency-mismatch"
+    assert conn.execute("SELECT count(*) FROM maintenance_capability").fetchone()[0] == 0
 
 
 def test_served_item_links_and_claim_reads_use_backend_contracts(conn, active_sprint):

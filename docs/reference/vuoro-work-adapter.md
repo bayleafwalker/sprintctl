@@ -26,6 +26,8 @@ no migration or DDL.
 | Evidence | `work.evidence.ingest` | key equals canonical record-batch digest |
 | Batching | `work.batch.apply` | key equals canonical record-batch digest |
 | Project | `work.project.context`, `work.project.sprints`, `work.project.items`, `work.project.next-work`, `work.project.batch` | aggregates require a canonical binding and authorization for every member; writes use canonical ordered-project-batch digest |
+| Maintenance capability | `work.read.maintenance-capability`, `work.maintenance.prepare`, `work.maintenance.transition` | read forbids a key; mutations require the invocation key to equal the immutable request ID |
+| Maintenance recovery evidence | `work.maintenance.recovery-record` | key equals the immutable recovery record ID; the result always declares `authority=none` |
 | Cutover evidence | `work.pilot.cutover-evidence` | key forbidden |
 
 Every operation declares JSON Schema 2020-12 input and result contracts,
@@ -116,6 +118,34 @@ locks the authoritative work-item row. Independent connections demonstrate
 that two unrelated overlapping exclusive claim commands produce one accepted
 and one rejected decision. This is `concurrency-tested` application-invariant
 evidence, not a general fencing or cross-operation linearizability claim.
+
+## Maintenance capability boundary
+
+The served maintenance operations expose the lifecycle owned by
+`sprintctl.maintenance_capability`; they do not introduce a second state
+machine. Preparation accepts the complete frozen `maintenance-envelope/v1`
+and derives the operator from the authenticated invocation identity. The
+catalog rejects unknown top-level envelope and operation fields, while the
+domain validator remains the normative exact validator for every nested
+contract object. Client-supplied authority time is not accepted: the
+application supplies its trusted current time to the lifecycle store.
+
+`work.maintenance.transition` exposes only the lifecycle actions `attest`,
+`activate`, `observe`, `reconcile`, `abort`, and `revoke`. Every mutation binds
+the Vuoro invocation idempotency key to its request ID. The semantic request
+digest deliberately excludes the server observation time, so retrying the
+same request after response loss returns the first receipt as a duplicate;
+changed bytes under the same identity are rejected. Expected revisions remain
+the capability store's compare-and-swap tokens and stale revisions produce a
+stable `maintenance-revision-conflict` response.
+
+The read projection returns lifecycle identity, state, revision, sequencing,
+and timestamps only. It does not expose the frozen envelope bytes, receipts,
+reconciliation bundle, or recovery records. Recovery callers require the
+narrow `work:maintenance-audit` authority. Their `observation` and
+`requested-command` records are append-only audit evidence and never grant or
+exercise execution authority. Repository scope is inherited from the served
+application binding on both SQLite and PostgreSQL.
 
 ## Transitional CLI parity inventory
 

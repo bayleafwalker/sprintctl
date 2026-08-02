@@ -126,6 +126,9 @@ def test_replay_is_idempotent_but_changed_request_is_rejected(store):
     kwargs = dict(capability_id=CAPABILITY_ID, request_id=request_id, envelope=envelope(), actor="operator", at=AT)
     first = store.prepare(**kwargs)
     assert store.prepare(**kwargs) == first | {"duplicate": True}
+    assert store.prepare(**(kwargs | {"at": "2026-08-02T20:01:00Z"})) == first | {
+        "duplicate": True
+    }
     changed = copy.deepcopy(envelope())
     changed["operator"]["identity"] = "other"
     with pytest.raises(MaintenanceCapabilityError, match="changed immutable"):
@@ -138,6 +141,22 @@ def test_stale_revision_has_no_effect(store):
     with pytest.raises(StaleCapabilityRevision):
         transition(store, prepared, "activate", step_id="attest-backup", command_id="verify-backup", command_ref="sha256:" + "c" * 64, effect_ref="sha256:" + "d" * 64)
     assert store.get(CAPABILITY_ID)["state"] == attested["state"]
+
+
+def test_transition_response_loss_replay_ignores_later_authority_clock(store):
+    prepared = prepare(store)
+    request_id = str(uuid4())
+    arguments = dict(
+        capability_id=CAPABILITY_ID,
+        request_id=request_id,
+        action="attest",
+        expected_revision=prepared["revision"],
+        actor="operator",
+        effect_ref="sha256:" + "0" * 64,
+    )
+    first = store.transition(**arguments, at=AT)
+    replay = store.transition(**arguments, at="2026-08-02T20:01:00Z")
+    assert replay == first | {"duplicate": True}
 
 
 def test_activation_requires_zero_live_ordinary_claims(store, conn, active_sprint):

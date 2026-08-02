@@ -150,6 +150,57 @@ _REPO_RESULTS = _result_schema(
     },
 )
 
+_CAPABILITY_ID_SCHEMA = {
+    "type": "string",
+    "pattern": "^mcap:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+}
+_SHA256_REF_SCHEMA = {
+    "type": "string",
+    "pattern": "^(artifact:)?sha256:[0-9a-f]{64}$",
+}
+_MAINTENANCE_ENVELOPE_SCHEMA = {
+    "type": "object",
+    "required": [
+        "contract_id", "envelope_id", "plan_ref", "issued_at", "window",
+        "operator", "repositories", "command_registry_ref", "command_registry",
+        "operations", "jit_fields", "jit_bindings", "start_gate", "steps",
+        "abort", "recovery_policy", "audit_reconciliation",
+    ],
+    "properties": {
+        "contract_id": {"const": "maintenance-envelope/v1"},
+        "envelope_id": {"type": "string", "minLength": 1},
+        "plan_ref": {"type": "string", "pattern": "^artifact:sha256:[0-9a-f]{64}$"},
+        "issued_at": {"type": "string", "format": "date-time"},
+        "window": {"type": "object"},
+        "operator": {"type": "object"},
+        "repositories": {"type": "array", "minItems": 1},
+        "command_registry_ref": {"type": "string", "pattern": "^artifact:sha256:[0-9a-f]{64}$"},
+        "command_registry": {"type": "array", "minItems": 1},
+        "operations": {"type": "array", "minItems": 1},
+        "jit_fields": {"type": "array", "minItems": 3, "maxItems": 3},
+        "jit_bindings": {"type": "array"},
+        "start_gate": {"type": "object"},
+        "steps": {"type": "array", "minItems": 1},
+        "abort": {"type": "object"},
+        "recovery_policy": {"type": "object"},
+        "audit_reconciliation": {"type": "object"},
+    },
+    "additionalProperties": False,
+}
+_MAINTENANCE_EFFECT_RESULT = _result_schema(
+    ("repo_id", "capability_id", "request_id", "action", "outcome", "state", "revision", "duplicate"),
+    {
+        "repo_id": {"type": "string"},
+        "capability_id": _CAPABILITY_ID_SCHEMA,
+        "request_id": {"type": "string", "format": "uuid"},
+        "action": {"enum": ["prepare", "attest", "activate", "observe", "reconcile", "abort", "revoke"]},
+        "outcome": {"enum": ["accepted", "rejected", "duplicate", "expired", "aborted", "incomplete"]},
+        "state": {"enum": ["prepared", "attested", "active", "observing", "reconciled", "aborted", "revoked", "expired"]},
+        "revision": {"type": "string", "minLength": 1},
+        "duplicate": {"type": "boolean"},
+    },
+)
+
 
 WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
     WorkOperationContract(
@@ -796,6 +847,97 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "write",
         "required",
         ("json-schema-draft-2020-12", "local-defs-ref"),
+    ),
+    WorkOperationContract(
+        "work.read.maintenance-capability",
+        _object_schema({"capability_id": _CAPABILITY_ID_SCHEMA}, required=("capability_id",)),
+        _result_schema(
+            ("repo_id", "capability"),
+            {
+                "repo_id": {"type": "string"},
+                "capability": {
+                    "type": "object",
+                    "required": [
+                        "capability_id", "envelope_id", "envelope_digest", "plan_ref",
+                        "operator_identity", "not_before", "expires_at", "state",
+                        "revision", "next_sequence", "created_at", "updated_at",
+                    ],
+                    "properties": {
+                        "capability_id": _CAPABILITY_ID_SCHEMA,
+                        "envelope_id": {"type": "string"},
+                        "envelope_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                        "plan_ref": {"type": "string", "pattern": "^artifact:sha256:[0-9a-f]{64}$"},
+                        "operator_identity": {"type": "string"},
+                        "not_before": {"type": "string"},
+                        "expires_at": {"type": "string"},
+                        "state": {"enum": ["prepared", "attested", "active", "observing", "reconciled", "aborted", "revoked", "expired"]},
+                        "revision": {"type": "integer", "minimum": 1},
+                        "next_sequence": {"type": "integer", "minimum": 1},
+                        "created_at": {"type": "string"},
+                        "updated_at": {"type": "string"},
+                    },
+                    "additionalProperties": False,
+                },
+            },
+        ),
+        "work:maintenance",
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.maintenance.prepare",
+        _object_schema(
+            {"capability_id": _CAPABILITY_ID_SCHEMA, "envelope": _MAINTENANCE_ENVELOPE_SCHEMA},
+            required=("capability_id", "envelope"),
+        ),
+        _MAINTENANCE_EFFECT_RESULT,
+        "work:maintenance",
+        "admin",
+        "required",
+    ),
+    WorkOperationContract(
+        "work.maintenance.transition",
+        _object_schema(
+            {
+                "capability_id": _CAPABILITY_ID_SCHEMA,
+                "action": {"enum": ["attest", "activate", "observe", "reconcile", "abort", "revoke"]},
+                "expected_revision": {"type": "string", "minLength": 1},
+                "step_id": {"type": ["string", "null"]},
+                "command_id": {"type": ["string", "null"]},
+                "command_ref": {"anyOf": [_SHA256_REF_SCHEMA, {"type": "null"}]},
+                "effect_ref": {"anyOf": [_SHA256_REF_SCHEMA, {"type": "null"}]},
+                "reconciliation": {"type": ["object", "null"]},
+            },
+            required=("capability_id", "action", "expected_revision"),
+        ),
+        _MAINTENANCE_EFFECT_RESULT,
+        "work:maintenance",
+        "admin",
+        "required",
+    ),
+    WorkOperationContract(
+        "work.maintenance.recovery-record",
+        _object_schema(
+            {
+                "capability_id": _CAPABILITY_ID_SCHEMA,
+                "kind": {"enum": ["observation", "requested-command"]},
+                "payload_ref": _SHA256_REF_SCHEMA,
+            },
+            required=("capability_id", "kind", "payload_ref"),
+        ),
+        _result_schema(
+            ("repo_id", "capability_id", "record_id", "kind", "authority"),
+            {
+                "repo_id": {"type": "string"},
+                "capability_id": _CAPABILITY_ID_SCHEMA,
+                "record_id": {"type": "string", "format": "uuid"},
+                "kind": {"enum": ["observation", "requested-command"]},
+                "authority": {"const": "none"},
+            },
+        ),
+        "work:maintenance-audit",
+        "write",
+        "required",
     ),
     WorkOperationContract(
         "work.pilot.cutover-evidence",
