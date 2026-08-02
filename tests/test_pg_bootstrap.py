@@ -39,15 +39,17 @@ class _SchemaCursor:
         return self
 
     def fetchone(self):
-        if "maintenance_capability') IS NOT NULL" in self._query:
+        if "AS catalog_fingerprint" in self._query:
+            if self._conn.maintenance_relations == 4 and self._conn.maintenance_triggers == 2:
+                fingerprint = pg_migrations.MAINTENANCE_CATALOG_FINGERPRINT
+            elif self._conn.maintenance_relations == 3 and self._conn.maintenance_triggers == 2:
+                fingerprint = pg_migrations.LEGACY_SCHEMA6_MAINTENANCE_CATALOG_FINGERPRINT
+            else:
+                fingerprint = "malformed"
             return {
-                "maintenance_capability": self._conn.maintenance_relations >= 1,
-                "maintenance_capability_receipt": self._conn.maintenance_relations >= 2,
-                "maintenance_capability_recovery": self._conn.maintenance_relations >= 3,
-                "sprintctl_schema_capability": self._conn.maintenance_relations >= 4,
+                "relation_count": self._conn.maintenance_relations,
+                "catalog_fingerprint": fingerprint,
             }
-        if "COUNT(*) AS trigger_count FROM pg_trigger" in self._query:
-            return {"trigger_count": self._conn.maintenance_triggers}
         if "SELECT version FROM sprintctl_schema_capability" in self._query:
             return {"version": self._conn.marker_version}
         if "to_regclass" in self._query:
@@ -145,13 +147,9 @@ def test_runtime_compatibility_probe_is_read_only_and_publishes_work_api():
                 "schema_version": "sprintctl-maintenance-storage/v1",
                 "available": True,
                 "complete": True,
-                "relations": {
-                    "maintenance_capability": True,
-                    "maintenance_capability_receipt": True,
-                    "maintenance_capability_recovery": True,
-                    "sprintctl_schema_capability": True,
-                },
-                "immutable_trigger_count": 2,
+                "relation_count": 4,
+                "catalog_fingerprint": pg_migrations.MAINTENANCE_CATALOG_FINGERPRINT,
+                "expected_catalog_fingerprint": pg_migrations.MAINTENANCE_CATALOG_FINGERPRINT,
                 "marker_version": 1,
             },
             "repository_ingest_cursor": {
@@ -161,19 +159,9 @@ def test_runtime_compatibility_probe_is_read_only_and_publishes_work_api():
             }
         },
     }
-    assert [query for query, _ in conn.calls] == [
-        "SELECT to_regclass('schema_version') AS relation",
-        "SELECT COUNT(*) AS row_count, MIN(version) AS minimum_version, "
-        "MAX(version) AS maximum_version FROM schema_version",
-        "SELECT to_regclass('maintenance_capability') IS NOT NULL AS maintenance_capability, "
-        "to_regclass('maintenance_capability_receipt') IS NOT NULL AS maintenance_capability_receipt, "
-        "to_regclass('maintenance_capability_recovery') IS NOT NULL AS maintenance_capability_recovery, "
-        "to_regclass('sprintctl_schema_capability') IS NOT NULL AS sprintctl_schema_capability",
-        "SELECT COUNT(*) AS trigger_count FROM pg_trigger WHERE tgname IN "
-        "('maintenance_capability_receipt_immutable', 'maintenance_capability_recovery_immutable') "
-        "AND NOT tgisinternal",
-        "SELECT version FROM sprintctl_schema_capability WHERE capability = 'maintenance-storage'",
-    ]
+    queries = [query for query, _ in conn.calls]
+    assert all(query.lstrip().startswith(("SELECT", "WITH")) for query in queries)
+    assert any("information_schema.columns" in query for query in queries)
 
 
 def test_schema5_with_complete_staged_maintenance_storage_is_compatible():

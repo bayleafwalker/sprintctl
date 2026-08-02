@@ -45,6 +45,8 @@ MAINTENANCE_BRIDGE_RELATIONS = (
     "maintenance_capability_recovery",
     "sprintctl_schema_capability",
 )
+MAINTENANCE_CATALOG_FINGERPRINT = "e2fbaeb38769a8d0c41ffd2a8e49dd98"
+LEGACY_SCHEMA6_MAINTENANCE_CATALOG_FINGERPRINT = "8972c8191c6612e057f1f2fa972f7a61"
 
 
 def _value(row: Any, key: str, index: int = 0) -> Any:
@@ -82,57 +84,60 @@ def _read_schema_state(cur: Any) -> SchemaState:
 
 
 def _read_maintenance_bridge(cur: Any) -> dict[str, Any]:
-    """Fingerprint the additive maintenance storage using read-only probes."""
+    """Fingerprint the exact schema-qualified additive maintenance contract."""
     cur.execute(
-        "SELECT "
-        + ", ".join(
-            f"to_regclass('{relation}') IS NOT NULL AS {relation}"
-            for relation in MAINTENANCE_BRIDGE_RELATIONS
-        )
+        "WITH names(name) AS (VALUES "
+        "('maintenance_capability'),('maintenance_capability_receipt'),"
+        "('maintenance_capability_recovery'),('sprintctl_schema_capability')), "
+        "rels AS (SELECT count(*) AS relation_count FROM pg_class c "
+        "JOIN pg_namespace n ON n.oid=c.relnamespace JOIN names ON names.name=c.relname "
+        "WHERE n.nspname=current_schema() AND c.relkind='r'), "
+        "cols AS (SELECT jsonb_agg(jsonb_build_array(table_name,column_name,ordinal_position,"
+        "data_type,udt_name,is_nullable,COALESCE(column_default,'')) "
+        "ORDER BY table_name,ordinal_position) v FROM information_schema.columns "
+        "JOIN names ON names.name=table_name WHERE table_schema=current_schema()), "
+        "cons AS (SELECT jsonb_agg(jsonb_build_array(c.relname,con.conname,con.contype,"
+        "pg_get_constraintdef(con.oid,true)) ORDER BY c.relname,con.conname) v "
+        "FROM pg_constraint con JOIN pg_class c ON c.oid=con.conrelid "
+        "JOIN pg_namespace n ON n.oid=c.relnamespace JOIN names ON names.name=c.relname "
+        "WHERE n.nspname=current_schema()), "
+        "trigs AS (SELECT jsonb_agg(jsonb_build_array(c.relname,t.tgname,p.proname,"
+        "t.tgenabled,t.tgtype) ORDER BY c.relname,t.tgname) v FROM pg_trigger t "
+        "JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace "
+        "JOIN pg_proc p ON p.oid=t.tgfoid JOIN names ON names.name=c.relname "
+        "WHERE n.nspname=current_schema() AND NOT t.tgisinternal) "
+        "SELECT rels.relation_count, md5(jsonb_build_object('columns',cols.v,"
+        "'constraints',cons.v,'triggers',trigs.v)::text) AS catalog_fingerprint "
+        "FROM rels,cols,cons,trigs"
     )
     row = cur.fetchone()
-    present = {
-        relation: bool(_value(row, relation, index))
-        for index, relation in enumerate(MAINTENANCE_BRIDGE_RELATIONS)
-    }
-    cur.execute(
-        "SELECT COUNT(*) AS trigger_count FROM pg_trigger "
-        "WHERE tgname IN ('maintenance_capability_receipt_immutable', "
-        "'maintenance_capability_recovery_immutable') AND NOT tgisinternal"
-    )
-    trigger_count = int(_value(cur.fetchone(), "trigger_count") or 0)
+    relation_count = int(_value(row, "relation_count") or 0)
+    catalog_fingerprint = _value(row, "catalog_fingerprint", 1)
     marker_version = None
-    if present["sprintctl_schema_capability"]:
+    if relation_count == len(MAINTENANCE_BRIDGE_RELATIONS):
         cur.execute(
             "SELECT version FROM sprintctl_schema_capability "
             "WHERE capability = 'maintenance-storage'"
         )
         marker_version = _value(cur.fetchone(), "version")
-    count = sum(present.values())
-    fully_present = (
-        count == len(MAINTENANCE_BRIDGE_RELATIONS)
-        and trigger_count == 2
-        and marker_version == 1
-    )
+    fully_present = catalog_fingerprint == MAINTENANCE_CATALOG_FINGERPRINT and marker_version == 1
     return {
         "schema_version": "sprintctl-maintenance-storage/v1",
         "available": fully_present,
-        "complete": (count == 0 and trigger_count == 0) or (
-            fully_present
-        ),
-        "relations": present,
-        "immutable_trigger_count": trigger_count,
+        "complete": relation_count == 0 or fully_present,
+        "relation_count": relation_count,
+        "catalog_fingerprint": catalog_fingerprint,
+        "expected_catalog_fingerprint": MAINTENANCE_CATALOG_FINGERPRINT,
         "marker_version": marker_version,
     }
 
 
 def _is_legacy_schema6_maintenance_layout(layout: Mapping[str, Any]) -> bool:
     """Recognize only the exact 0.2.15 schema-6 layout lacking our marker."""
-    relations = layout["relations"]
     return (
-        all(relations[name] for name in MAINTENANCE_BRIDGE_RELATIONS[:3])
-        and not relations["sprintctl_schema_capability"]
-        and layout["immutable_trigger_count"] == 2
+        layout["relation_count"] == 3
+        and layout["catalog_fingerprint"]
+        == LEGACY_SCHEMA6_MAINTENANCE_CATALOG_FINGERPRINT
         and layout["marker_version"] is None
     )
 

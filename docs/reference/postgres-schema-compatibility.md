@@ -19,8 +19,11 @@ reports the minimum and maximum versions this runtime supports.
 Schema versions 5 and 6 are supported only when the complete maintenance
 storage capability is present. During the pre-migration window, version 5 may
 carry that additive capability while retaining its primary ledger version.
-The read-only probe requires all three maintenance relations, both immutable
-evidence triggers, and the exact `maintenance-storage` capability marker.
+The read-only probe hashes a schema-qualified PostgreSQL catalog description
+covering every required column, type, nullability/default, primary/unique/
+foreign/check constraint, and each immutable trigger's exact table, function,
+events, and enabled state. It also requires the exact `maintenance-storage`
+capability marker. Same-named objects in another schema do not participate.
 Missing or partial storage, a missing trigger or marker, a missing/ambiguous
 ledger, versions below 5, and versions above 6 fail closed before a runtime
 command is served. The check executes only `SELECT` probes and never attempts
