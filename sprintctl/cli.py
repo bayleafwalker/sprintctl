@@ -12,7 +12,7 @@ import uuid
 from functools import wraps
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TextIO
+from typing import Any, Mapping, TextIO
 from urllib.parse import urlsplit
 
 import click
@@ -589,6 +589,93 @@ def _write_claim_recovery_record(claim: dict) -> Path | None:
     except OSError:
         return None
     return path
+
+
+def _served_claim_recovery_projection(
+    effect: Mapping[str, Any],
+    *,
+    item_id: int,
+    actor: str,
+    claim_type: str,
+    claim_token: str,
+) -> dict[str, Any] | None:
+    """Normalize an accepted claim effect for the private recovery writer.
+
+    Authority releases originally returned the canonical ``claim_id`` / ``actor``
+    effect.  Deployed adapters can return the public claim-row representation
+    (``id`` / ``agent``), either directly or below ``claim``.  Accept those
+    equivalent representations, but never guess across disagreeing shapes: a
+    malformed or mismatched accepted effect must retain its pending command and
+    credential for an exact replay instead of writing proof for the wrong claim.
+    """
+
+    candidates: list[Mapping[str, Any]] = [effect]
+    nested = effect.get("claim")
+    if nested is not None:
+        if not isinstance(nested, Mapping):
+            return None
+        candidates.append(nested)
+
+    normalized: list[dict[str, Any]] = []
+    for candidate in candidates:
+        identity_keys = {
+            "claim_id", "id", "work_item_id", "actor", "agent", "claim_type",
+        }
+        if not identity_keys.intersection(candidate):
+            continue
+        claim_ids = [candidate[key] for key in ("claim_id", "id") if key in candidate]
+        actors = [candidate[key] for key in ("actor", "agent") if key in candidate]
+        if (
+            not claim_ids
+            or any(
+                not isinstance(value, int) or isinstance(value, bool) or value <= 0
+                for value in claim_ids
+            )
+            or len(set(claim_ids)) != 1
+            or not actors
+            or any(not isinstance(value, str) or not value for value in actors)
+            or len(set(actors)) != 1
+        ):
+            return None
+        claim_id = claim_ids[0]
+        work_item_id = candidate.get("work_item_id")
+        candidate_actor = actors[0]
+        candidate_type = candidate.get("claim_type")
+        if (
+            not isinstance(work_item_id, int)
+            or isinstance(work_item_id, bool)
+            or work_item_id <= 0
+            or not isinstance(candidate_type, str)
+            or not candidate_type
+        ):
+            return None
+        normalized.append({
+            **dict(candidate),
+            "claim_id": claim_id,
+            "work_item_id": work_item_id,
+            "actor": candidate_actor,
+            "claim_type": candidate_type,
+        })
+
+    if not normalized:
+        return None
+    identity = {
+        (
+            candidate["claim_id"], candidate["work_item_id"],
+            candidate["actor"], candidate["claim_type"],
+        )
+        for candidate in normalized
+    }
+    if len(identity) != 1:
+        return None
+    claim = normalized[-1]
+    if (
+        claim["work_item_id"] != item_id
+        or claim["actor"] != actor
+        or claim["claim_type"] != claim_type
+    ):
+        return None
+    return {**claim, "claim_token": claim_token}
 
 
 def _remove_claim_recovery_record(claim_id: int) -> None:
@@ -7257,14 +7344,20 @@ def _served_claim_create(
     effect = dict(decision["effect"])
     proposed_ref = request.payload["credential_ref"]
     claim_token = credentials[proposed_ref]
-    claim = {
-        **effect,
-        "work_item_id": item_id,
-        "claim_token": claim_token,
-        "runtime_session_id": effect.get("runtime_session_id", request.payload["metadata"].get("runtime_session_id")),
-        "instance_id": effect.get("instance_id", request.payload["metadata"].get("instance_id")),
-    }
-    recovery_path = _write_claim_recovery_record(claim)
+    claim = _served_claim_recovery_projection(
+        effect,
+        item_id=item_id,
+        actor=authenticated_actor,
+        claim_type=str(request.payload["claim_type"]),
+        claim_token=claim_token,
+    )
+    if claim is not None:
+        claim = {
+            **claim,
+            "runtime_session_id": claim.get("runtime_session_id", request.payload["metadata"].get("runtime_session_id")),
+            "instance_id": claim.get("instance_id", request.payload["metadata"].get("instance_id")),
+        }
+    recovery_path = _write_claim_recovery_record(claim) if claim is not None else None
     if recovery_path is None:
         click.echo(
             "Error: claim acquisition was accepted but its local recovery proof "

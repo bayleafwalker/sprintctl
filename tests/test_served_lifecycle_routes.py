@@ -124,6 +124,14 @@ def _served_claim_effect(*, claim_id=19, claim_type="coordinate"):
     }
 
 
+def _deployed_served_claim_effect(*, claim_id=19, claim_type="coordinate"):
+    """Public claim-row shape returned by deployed adapter revisions."""
+    effect = _served_claim_effect(claim_id=claim_id, claim_type=claim_type)
+    effect["id"] = effect.pop("claim_id")
+    effect["agent"] = effect.pop("actor")
+    return effect
+
+
 @_requires_312
 def test_served_claim_create_uses_authenticated_identity_and_existing_arbitration(
     runner, tmp_path, monkeypatch
@@ -198,6 +206,78 @@ def test_served_claim_create_passes_coordinate_proof_only_transiently(
 
 
 @_requires_312
+@pytest.mark.parametrize("nested", [False, True])
+def test_served_claim_create_recovers_deployed_accepted_effect_shape(
+    runner, tmp_path, monkeypatch, nested
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    aggregate_uuid = str(uuid4())
+    monkeypatch.setattr(cli_module._served, "read_item", lambda *a, **k: {
+        "item": {"id": 3, "aggregate_uuid": aggregate_uuid, "status": "pending"},
+        "refs": [],
+    })
+    effect = _deployed_served_claim_effect(claim_type="execute")
+    monkeypatch.setattr(
+        cli_module._served, "claim_arbitrate",
+        lambda *a, **k: {
+            "outcome": "accepted",
+            "effect": {"claim": effect} if nested else effect,
+        },
+    )
+
+    result = runner.invoke(cli, [
+        "claim", "create", "--item-id", "3", "--actor", "served-actor",
+        "--type", "execute", "--json",
+    ])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["claim_id"] == 19
+    assert payload["actor"] == "served-actor"
+    sidecar = tmp_path / "claim-recovery" / "claim-19.json"
+    assert sidecar.stat().st_mode & 0o777 == 0o600
+    assert json.loads(sidecar.read_text())["claim_token"] == payload["claim_token"]
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_served_claim_recovery_projection_accepts_matching_dual_aliases(nested):
+    claim = _served_claim_effect(claim_type="execute")
+    claim.update({"id": claim["claim_id"], "agent": claim["actor"]})
+    effect = {"claim": claim} if nested else claim
+
+    projection = cli_module._served_claim_recovery_projection(
+        effect, item_id=3, actor="served-actor", claim_type="execute",
+        claim_token="private-proof",
+    )
+
+    assert projection is not None
+    assert projection["claim_id"] == projection["id"] == 19
+    assert projection["actor"] == projection["agent"] == "served-actor"
+    assert projection["claim_token"] == "private-proof"
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"id": 20},
+        {"id": "19"},
+        {"agent": "other-actor"},
+        {"agent": 7},
+    ],
+)
+def test_served_claim_recovery_projection_rejects_conflicting_or_malformed_aliases(changes):
+    effect = _served_claim_effect(claim_type="execute")
+    effect.update(changes)
+
+    projection = cli_module._served_claim_recovery_projection(
+        effect, item_id=3, actor="served-actor", claim_type="execute",
+        claim_token="private-proof",
+    )
+
+    assert projection is None
+
+
+@_requires_312
 def test_served_claim_create_replays_one_request_after_unknown_outcome(
     runner, tmp_path, monkeypatch
 ):
@@ -244,7 +324,7 @@ def test_served_claim_create_keeps_accepted_request_replayable_until_recovery_is
         cli_module._served, "claim_arbitrate",
         lambda *a, **k: calls.append(k) or {
             "outcome": "accepted", "duplicate": len(calls) > 1,
-            "effect": _served_claim_effect(claim_type="coordinate"),
+            "effect": {"claim": _deployed_served_claim_effect(claim_type="coordinate")},
         },
     )
     writes = []
@@ -284,6 +364,72 @@ def test_served_claim_create_keeps_accepted_request_replayable_until_recovery_is
         token for ref, token in credentials.items()
         if ref == calls[1]["record"]["payload"]["payload"]["credential_ref"]
     )
+
+
+@_requires_312
+@pytest.mark.parametrize(
+    "mismatch",
+    [
+        "item", "actor", "type", "ambiguous", "malformed",
+        "conflicting-id-alias", "malformed-id-alias",
+        "conflicting-actor-alias", "malformed-actor-alias",
+    ],
+)
+def test_served_claim_create_replay_fails_closed_for_invalid_accepted_effect(
+    runner, tmp_path, monkeypatch, mismatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    aggregate_uuid = str(uuid4())
+    monkeypatch.setattr(cli_module._served, "read_item", lambda *a, **k: {
+        "item": {"id": 3, "aggregate_uuid": aggregate_uuid, "status": "pending"},
+        "refs": [],
+    })
+    deployed = _deployed_served_claim_effect(claim_type="execute")
+    if mismatch == "item":
+        deployed["work_item_id"] = 4
+    elif mismatch == "actor":
+        deployed["agent"] = "other-actor"
+    elif mismatch == "type":
+        deployed["claim_type"] = "review"
+    elif mismatch == "malformed":
+        deployed["id"] = "19"
+    elif mismatch == "conflicting-id-alias":
+        deployed["claim_id"] = 20
+    elif mismatch == "malformed-id-alias":
+        deployed["claim_id"] = "19"
+    elif mismatch == "conflicting-actor-alias":
+        deployed["actor"] = "other-actor"
+    elif mismatch == "malformed-actor-alias":
+        deployed["actor"] = 7
+    effect = {"claim": deployed}
+    if mismatch == "ambiguous":
+        effect.update(_served_claim_effect(claim_id=20, claim_type="execute"))
+    calls = []
+    monkeypatch.setattr(
+        cli_module._served, "claim_arbitrate",
+        lambda *a, **k: calls.append(k) or {
+            "outcome": "accepted", "duplicate": len(calls) > 1, "effect": effect,
+        },
+    )
+    argv = [
+        "claim", "create", "--item-id", "3", "--actor", "served-actor",
+        "--type", "execute", "--json",
+    ]
+
+    first = runner.invoke(cli, argv)
+    retry = runner.invoke(cli, argv)
+
+    assert first.exit_code == retry.exit_code == 1
+    assert "claim_token" not in first.output + retry.output
+    assert len(calls) == 2
+    assert calls[0]["record"]["event_id"] == calls[1]["record"]["event_id"]
+    assert calls[0]["transient_credentials"] == calls[1]["transient_credentials"]
+    assert len(_outbox_records(tmp_path)) == 1
+    event_id = calls[0]["record"]["event_id"]
+    terminal = tmp_path / ".sprintctl" / "authority-terminal-decisions" / f"{event_id}.json"
+    assert not terminal.exists()
+    assert list((tmp_path / ".sprintctl" / "authority-credentials").glob("*"))
+    assert not list((tmp_path / "claim-recovery").glob("claim-*.json"))
 
 
 @_requires_312
