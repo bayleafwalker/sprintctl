@@ -374,14 +374,12 @@ class SQLiteMaintenanceCapabilityStore:
         request_id = _request_id(request_id)
         frozen = freeze_envelope(envelope)
         now = _time(at, "at")
-        if now >= frozen.expires_at:
-            raise MaintenanceCapabilityError("expired envelopes cannot be prepared")
         # ``at`` is an authority-clock observation, not caller-authored request
         # content.  Excluding it lets a response-loss retry with the same
         # request identity remain idempotent while the first receipt retains
         # the actual server timestamp.
         payload_digest = hashlib.sha256(_canonical({"capability_id": capability_id, "envelope_digest": frozen.digest, "actor": actor})).hexdigest()
-        return self._write_prepare(capability_id, request_id, frozen, _canonical(envelope).decode(), actor, at, payload_digest)
+        return self._write_prepare(capability_id, request_id, frozen, _canonical(envelope).decode(), actor, at, now, payload_digest)
 
     def transition(self, *, capability_id: str, request_id: str, action: str, expected_revision: str, actor: str, at: str, step_id: str | None = None, command_id: str | None = None, command_ref: str | None = None, effect_ref: str | None = None, reconciliation: Mapping[str, Any] | None = None) -> dict[str, Any]:
         request_id = _request_id(request_id)
@@ -463,13 +461,15 @@ class SQLiteMaintenanceCapabilityStore:
         row = self.conn.execute("SELECT * FROM maintenance_capability WHERE capability_id = ?", (capability_id,)).fetchone()
         return dict(row) if row else None
 
-    def _write_prepare(self, capability_id: str, request_id: str, frozen: FrozenEnvelope, envelope_json: str, actor: str, at: str, digest: str) -> dict[str, Any]:
+    def _write_prepare(self, capability_id: str, request_id: str, frozen: FrozenEnvelope, envelope_json: str, actor: str, at: str, now: datetime, digest: str) -> dict[str, Any]:
         try:
             self.conn.execute("BEGIN IMMEDIATE")
             duplicate = self._duplicate(capability_id, request_id, digest)
             if duplicate:
                 self.conn.commit()
                 return duplicate
+            if now >= frozen.expires_at:
+                raise MaintenanceCapabilityError("expired envelopes cannot be prepared")
             if self.conn.execute("SELECT 1 FROM maintenance_capability WHERE capability_id = ?", (capability_id,)).fetchone():
                 raise MaintenanceCapabilityError("capability_id already exists; capabilities cannot be renewed or replaced")
             self.conn.execute("INSERT INTO maintenance_capability (capability_id, envelope_id, envelope_digest, envelope_json, plan_ref, operator_identity, not_before, expires_at, state, revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'prepared', 1, ?, ?)", (capability_id, frozen.envelope_id, frozen.digest, envelope_json, frozen.plan_ref, frozen.operator, frozen.not_before.isoformat(), frozen.expires_at.isoformat(), at, at))
@@ -537,8 +537,6 @@ class PostgresMaintenanceCapabilityStore:
         request_id = _request_id(request_id)
         frozen = freeze_envelope(envelope)
         now = _time(at, "at")
-        if now >= frozen.expires_at:
-            raise MaintenanceCapabilityError("expired envelopes cannot be prepared")
         digest = hashlib.sha256(_canonical({"capability_id": capability_id, "envelope_digest": frozen.digest, "actor": actor})).hexdigest()
         try:
             with self.conn.cursor() as cur:
@@ -546,6 +544,8 @@ class PostgresMaintenanceCapabilityStore:
                 if duplicate:
                     self.conn.commit()
                     return duplicate
+                if now >= frozen.expires_at:
+                    raise MaintenanceCapabilityError("expired envelopes cannot be prepared")
                 cur.execute("SELECT 1 FROM maintenance_capability WHERE repo_id = %s AND capability_id = %s FOR UPDATE", (self.repo_id, capability_id))
                 if cur.fetchone():
                     raise MaintenanceCapabilityError("capability_id already exists; capabilities cannot be renewed or replaced")

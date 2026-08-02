@@ -186,7 +186,7 @@ def test_maintenance_application_postgres_replay_and_repo_isolation(
     monkeypatch.setattr(
         WorkApplication,
         "_maintenance_now",
-        staticmethod(lambda: "2026-08-02T20:02:00Z"),
+        staticmethod(lambda: "2026-08-03T00:00:01Z"),
     )
     replay = app.invoke(
         "work.maintenance.prepare",

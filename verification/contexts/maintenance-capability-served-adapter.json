@@ -59,7 +59,7 @@
     "sprintctl/application.py:WorkApplication._maintenance_transition",
     "sprintctl/application.py:WorkApplication._maintenance_recovery_append",
     "sprintctl/vuoro_adapter.py:WORK_OPERATION_CONTRACTS",
-    "tests/test_vuoro_work_adapter_integration.py:test_generic_client_invokes_maintenance_capability_operations",
+    "tests/test_vuoro_work_adapter_integration.py:test_generic_client_discovers_and_replays_maintenance_authority",
     "tests/test_work_application_pg.py:test_maintenance_application_postgres_replay_and_repo_isolation"
   ],
   "expansions": ["semantic-doc", "stateful-test", "backend-parity", "fault-scenario"]

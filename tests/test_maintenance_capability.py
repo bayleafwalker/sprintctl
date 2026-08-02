@@ -126,7 +126,9 @@ def test_replay_is_idempotent_but_changed_request_is_rejected(store):
     kwargs = dict(capability_id=CAPABILITY_ID, request_id=request_id, envelope=envelope(), actor="operator", at=AT)
     first = store.prepare(**kwargs)
     assert store.prepare(**kwargs) == first | {"duplicate": True}
-    assert store.prepare(**(kwargs | {"at": "2026-08-02T20:01:00Z"})) == first | {
+    # The first durable receipt wins even when response recovery happens after
+    # the frozen execution window has expired.
+    assert store.prepare(**(kwargs | {"at": "2026-08-03T00:00:01Z"})) == first | {
         "duplicate": True
     }
     changed = copy.deepcopy(envelope())
