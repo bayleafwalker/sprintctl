@@ -231,6 +231,7 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     "render": "unavailable",
     "remote-schema check": "unavailable",
     "remote-schema migrate": "unavailable",
+    "remote-schema stage-maintenance-bridge": "unavailable",
     "migrate-to-remote": "unavailable",
     "remote-backfill": "unavailable",
     "repo list": "unavailable",

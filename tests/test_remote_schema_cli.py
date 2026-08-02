@@ -95,6 +95,33 @@ def test_remote_schema_migrate_command_returns_bounded_result(
     assert conn.closed is True
 
 
+def test_remote_schema_stage_maintenance_bridge_is_explicit_and_bounded(
+    tmp_path, monkeypatch, runner,
+):
+    _remote_repo(tmp_path, monkeypatch)
+    conn = _Connection()
+    store = pg.PgStore(conn=conn, repo_id=tmp_path.name)
+    monkeypatch.setattr(pg, "get_connection", lambda _url: store)
+    monkeypatch.setattr(
+        pg_migrations,
+        "stage_schema5_maintenance_bridge",
+        lambda _store: {
+            "schema_version": "sprintctl-schema5-maintenance-bridge-result/v1",
+            "remote_schema": 5,
+            "installed": True,
+            "compatibility": {"compatible": True},
+        },
+    )
+
+    result = runner.invoke(
+        cli, ["remote-schema", "stage-maintenance-bridge", "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["remote_schema"] == 5
+    assert conn.closed is True
+
+
 def test_remote_schema_connection_error_redacts_credentials(
     tmp_path,
     monkeypatch,
