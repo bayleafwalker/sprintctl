@@ -2105,133 +2105,101 @@ def item_note(
 
 
 def _served_item_status(config, item_id, new_status, actor, claim_id, claim_token, as_json) -> None:
-    """Served-mode ``item status``: routes to ``work.lifecycle.arbitrate``.
-
-    Every ``new_status`` choice has a record_type in authority.py's dispatch
-    table (``item.done`` for "done", ``item.transition`` -- generic via a
-    payload ``to_status`` field -- for "pending"/"active"/"blocked"), so
-    there is no unmapped-transition gap here the way ``sprint status`` has
-    for "planned".
-
-    The remaining gap is claim proof: per "Authority and retry semantics" in
-    docs/reference/vuoro-work-adapter.md, "Claim proof bytes are resolved by
-    service composition and are never accepted in authority-command
-    invocation arguments or the catalog" -- the same unresolved cross-repo
-    question that keeps claim heartbeat/handoff/release out of #1195's scope.
-    ``item.transition``/``item.done`` conditionally need that same proof
-    whenever the target item currently has an active exclusive claim
-    (mirrors ``_handle_item`` in authority.py and ``set_work_item_status`` in
-    db.py). Rather than silently dropping a caller-supplied
-    --claim-id/--claim-token (which would just surface later as a confusing
-    server-side "invalid-claim-proof" rejection), this fails closed
-    immediately when either is supplied. Omitting them still works whenever
-    the item has no active exclusive claim; the served application correctly
-    rejects the rest, matching local mode's ClaimConflict for that case.
-    """
+    """Run one immutable served item transition, with proof kept transient."""
     context = _resolved_context(config)
-    if claim_id is not None or claim_token is not None:
-        click.echo(
-            "Error: served item status cannot accept --claim-id/--claim-token: claim "
-            "proof bytes are never accepted in authority-command invocation arguments "
-            "(docs/reference/vuoro-work-adapter.md); use SPRINTCTL_BACKEND=local or "
-            "remote for a claim-proven transition.",
-            err=True,
-        )
+    if (claim_id is None) != (claim_token is None):
+        click.echo("Error: --claim-id and --claim-token must be supplied together.", err=True)
         sys.exit(1)
 
-    read_result = _run_served(
-        "item status",
-        _served.read_item,
-        config.served_profile,
-        repo_id=config.repo_id,
-        item_id=item_id,
-        resolved_context=context,
-    )
-    it = read_result["item"]
-    current = it["status"]
+    rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
     record_type = "item.done" if new_status == "done" else "item.transition"
+    durable = _find_pending_served_item_status_record(
+        rollout_paths.outbox_path, record_type=record_type,
+        item_id=item_id, to_status=new_status,
+    )
+    credentials: dict[str, str] = {}
+    if durable is not None:
+        command = _contracts.record_from_dict(durable.payload)
+        assert isinstance(command, _contracts.AuthorityCommand)
+        expected_id = command.payload.get("claim_id")
+        expected_ref = command.payload.get("credential_ref")
+        supplied_ref = _authority.credential_ref(claim_token) if claim_token is not None else None
+        if expected_id != claim_id or expected_ref != supplied_ref:
+            click.echo(
+                f"Error: durable item status request {durable.event_id} requires "
+                "the original claim proof; do not mint a new request.", err=True,
+            )
+            sys.exit(1)
+        if expected_ref is not None:
+            assert claim_token is not None
+            credentials[expected_ref] = claim_token
+        current = command.basis_revision.rsplit("@status:", 1)[-1]
+    else:
+        read_result = _run_served(
+            "item status", _served.read_item, config.served_profile,
+            repo_id=config.repo_id, item_id=item_id, resolved_context=context,
+        )
+        it = read_result["item"]
+        current = it["status"]
+
     identity = _run_served(
-        "item status",
-        _served.identity_current,
-        config.served_profile,
-        repo_id=config.repo_id,
-        resolved_context=context,
+        "item status", _served.identity_current, config.served_profile,
+        repo_id=config.repo_id, resolved_context=context,
     )
     actor_value = identity["actor"]
     if actor is not None and actor != actor_value:
         click.echo(
             f"Note: served mode records the authenticated identity "
-            f"({actor_value}); --actor {actor!r} was not sent and is ignored.",
-            err=True,
+            f"({actor_value}); --actor {actor!r} was not sent and is ignored.", err=True,
         )
-    rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
-    pending = _find_pending_served_item_status_record(
-        rollout_paths.outbox_path,
-        record_type=record_type,
-        item_id=item_id,
-        aggregate_uuid=it["aggregate_uuid"],
-        to_status=new_status,
-        basis_revision=_authority.item_revision(it),
-    )
-    if pending is not None:
-        click.echo(
-            "Error: served item status already has a durable authority request "
-            f"{pending.event_id} (origin stream {pending.origin_stream_id}, "
-            f"sequence {pending.origin_seq}) for this unchanged transition. "
-            "It must be replayed in origin-sequence order; do not retry this command. "
-            "Review the durable outbox and use `sprintctl authority sync` only when authorized.",
-            err=True,
-        )
-        sys.exit(1)
-    try:
-        durable = _mint_authority_command_record(
-            record_type=record_type,
-            actor=actor_value,
-            refs={
-                "repo_id": _authority_repo_uuid(rollout_paths.repo_root),
-                "aggregate_type": "item",
-                "aggregate_uuid": it["aggregate_uuid"],
-                "aggregate_id": item_id,
-            },
-            payload={"to_status": new_status},
-            basis_revision=_authority.item_revision(it),
-            outbox_path=rollout_paths.outbox_path,
-        )
-    except (TypeError, ValueError) as exc:
-        click.echo(f"Error: {exc}", err=True)
-        sys.exit(1)
+
+    if durable is None:
+        payload: dict[str, object] = {"to_status": new_status}
+        if claim_id is not None:
+            assert claim_token is not None
+            ref = _authority.credential_ref(claim_token)
+            payload.update({"claim_id": claim_id, "credential_ref": ref})
+            credentials[ref] = claim_token
+        try:
+            durable = _mint_authority_command_record(
+                record_type=record_type, actor=actor_value,
+                refs={
+                    "repo_id": _authority_repo_uuid(rollout_paths.repo_root),
+                    "aggregate_type": "item", "aggregate_uuid": it["aggregate_uuid"],
+                    "aggregate_id": item_id,
+                },
+                payload=payload, basis_revision=_authority.item_revision(it),
+                outbox_path=rollout_paths.outbox_path,
+            )
+        except (TypeError, ValueError) as exc:
+            click.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
     try:
         decision = _served.lifecycle_arbitrate(
-            config.served_profile,
-            repo_id=config.repo_id,
+            config.served_profile, repo_id=config.repo_id,
             record=_served_record_argument(durable),
+            **({"transient_credentials": credentials} if credentials else {}),
         )
     except Exception as exc:
         click.echo(
             "Error: served item status failed after preserving durable authority request "
             f"{durable.event_id} (origin stream {durable.origin_stream_id}, "
-            f"sequence {durable.origin_seq}): {exc}. Do not retry this command; "
-            "the durable record must be replayed in origin-sequence order. Review it "
-            "and use `sprintctl authority sync` only when authorized.",
-            err=True,
+            f"sequence {durable.origin_seq}): {exc}. Retry this exact command with "
+            "the original claim proof; do not mint a new request.", err=True,
         )
         sys.exit(1)
+    _authority_config.mark_terminal_authority_decision(
+        rollout_paths, event_id=durable.event_id, outcome=decision["outcome"]
+    )
     if decision["outcome"] != "accepted":
         click.echo(
             f"Error: {decision.get('reason_code')}: {decision.get('reason_detail')}\n"
-            f"{_render_resolved_context(context)}",
-            err=True,
+            f"{_render_resolved_context(context)}", err=True,
         )
         sys.exit(1)
-    effect = decision["effect"]
-    final_status = effect.get("status", new_status)
+    final_status = decision["effect"].get("status", new_status)
     if as_json:
-        click.echo(
-            json.dumps(
-                {"item_id": item_id, "previous": current, "status": final_status},
-                indent=2,
-            )
-        )
+        click.echo(json.dumps({"item_id": item_id, "previous": current, "status": final_status}, indent=2))
         return
     click.echo(f"Item #{item_id} status: {current} -> {final_status}")
     click.echo(_render_resolved_context(context))
@@ -3280,9 +3248,9 @@ def _find_pending_served_item_status_record(
     *,
     record_type: str,
     item_id: int,
-    aggregate_uuid: str,
     to_status: str,
-    basis_revision: str,
+    aggregate_uuid: str | None = None,
+    basis_revision: str | None = None,
 ) -> _outbox.OutboxRecord | None:
     """Find an earlier durable request for the exact unchanged transition.
 
@@ -3311,9 +3279,9 @@ def _find_pending_served_item_status_record(
                 continue
             if (
                 command.refs.get("aggregate_id") == item_id
-                and command.refs.get("aggregate_uuid") == aggregate_uuid
+                and (aggregate_uuid is None or command.refs.get("aggregate_uuid") == aggregate_uuid)
                 and command.payload.get("to_status") == to_status
-                and command.basis_revision == basis_revision
+                and (basis_revision is None or command.basis_revision == basis_revision)
             ):
                 return record
     finally:

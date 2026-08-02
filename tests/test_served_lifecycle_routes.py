@@ -1766,26 +1766,35 @@ def test_served_item_status_pending_to_active_uses_item_transition_record(
 
 
 @_requires_312
-def test_served_item_status_rejects_claim_proof_arguments(runner, tmp_path, monkeypatch):
+def test_served_item_status_sends_only_claim_ref_and_transient_proof(runner, tmp_path, monkeypatch):
     _configure_served_repo(tmp_path, monkeypatch)
-    # Neither _served.read_item nor _served.lifecycle_arbitrate should ever be
-    # reached: fail-closed happens before any served call.
+    item = {"id": 1, "aggregate_uuid": str(uuid4()), "status": "pending"}
     monkeypatch.setattr(
-        cli_module._served,
-        "read_item",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not be called")),
+        cli_module._served, "read_item",
+        lambda profile, *, repo_id=None, item_id: {"item": item},
     )
+    captured = {}
+
+    def arbitrate(profile, *, repo_id=None, record, transient_credentials):
+        captured.update(record=record, credentials=transient_credentials)
+        return {"outcome": "accepted", "effect": {"status": "active"}}
+
+    monkeypatch.setattr(cli_module._served, "lifecycle_arbitrate", arbitrate)
 
     result = runner.invoke(
         cli,
         [
-            "item", "status", "--id", "1", "--status", "done", "--actor", "worker",
+            "item", "status", "--id", "1", "--status", "active", "--actor", "worker",
             "--claim-id", "9", "--claim-token", "secret-token",
         ],
     )
-    assert result.exit_code != 0
-    assert "cannot accept --claim-id/--claim-token" in result.output
-    assert _outbox_records(tmp_path) == []
+    assert result.exit_code == 0, result.output
+    payload = captured["record"]["payload"]["payload"]
+    ref = payload["credential_ref"]
+    assert payload == {"to_status": "active", "claim_id": 9, "credential_ref": ref}
+    assert captured["credentials"] == {ref: "secret-token"}
+    assert "secret-token" not in json.dumps(captured["record"])
+    assert "secret-token" not in result.output
 
 
 @_requires_312
@@ -1815,7 +1824,7 @@ def test_served_item_status_surfaces_a_rejected_decision(runner, tmp_path, monke
 
 
 @_requires_312
-def test_served_item_status_preserves_failed_request_and_refuses_later_sequence(
+def test_served_item_status_response_loss_replays_exact_event(
     runner, tmp_path, monkeypatch
 ):
     _configure_served_repo(tmp_path, monkeypatch)
@@ -1824,34 +1833,45 @@ def test_served_item_status_preserves_failed_request_and_refuses_later_sequence(
         cli_module._served, "read_item", lambda profile, *, repo_id=None, item_id: {"item": item}
     )
 
-    def failed_arbitration(profile, *, repo_id=None, record):
+    def failed_arbitration(profile, *, repo_id=None, record, transient_credentials):
+        assert list(transient_credentials.values()) == ["original-secret"]
         raise RuntimeError("expected sequence 3, received 4")
 
     monkeypatch.setattr(cli_module._served, "lifecycle_arbitrate", failed_arbitration)
     first = runner.invoke(
-        cli, ["item", "status", "--id", "5", "--status", "done", "--actor", "served-actor"]
+        cli, ["item", "status", "--id", "5", "--status", "done", "--actor", "served-actor",
+              "--claim-id", "9", "--claim-token", "original-secret"]
     )
     assert first.exit_code != 0
     assert "preserving durable authority request" in first.output
     assert "origin stream" in first.output
     assert "sequence 1" in first.output
-    assert "replayed in origin-sequence order" in first.output
+    assert "Retry this exact command" in first.output
 
+    captured = []
     monkeypatch.setattr(
         cli_module._served,
         "lifecycle_arbitrate",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not re-arbitrate")),
+        lambda *args, **kwargs: captured.append(kwargs)
+        or {"outcome": "accepted", "effect": {"status": "done"}},
     )
+    mismatch = runner.invoke(
+        cli, ["item", "status", "--id", "5", "--status", "done", "--actor", "served-actor",
+              "--claim-id", "9", "--claim-token", "wrong-secret"]
+    )
+    assert mismatch.exit_code != 0
+    assert "requires the original claim proof" in mismatch.output
+    assert captured == []
     retry = runner.invoke(
-        cli, ["item", "status", "--id", "5", "--status", "done", "--actor", "served-actor"]
+        cli, ["item", "status", "--id", "5", "--status", "done", "--actor", "served-actor",
+              "--claim-id", "9", "--claim-token", "original-secret"]
     )
-    assert retry.exit_code != 0
-    assert "already has a durable authority request" in retry.output
-    assert "sequence 1" in retry.output
-    assert "replayed in origin-sequence order" in retry.output
+    assert retry.exit_code == 0, retry.output
     records = _outbox_records(tmp_path)
     assert len(records) == 1
     assert records[0].origin_seq == 1
+    assert captured[0]["record"]["event_id"] == records[0].event_id
+    assert list(captured[0]["transient_credentials"].values()) == ["original-secret"]
 
 
 # ---------------------------------------------------------------------------
