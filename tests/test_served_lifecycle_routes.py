@@ -89,7 +89,6 @@ def _outbox_records(tmp_path):
 @pytest.mark.parametrize(
     "argv",
     [
-        ["claim", "create", "--item-id", "3", "--actor", "agent"],
         ["session", "resume"],
     ],
 )
@@ -107,6 +106,184 @@ def test_unavailable_served_p0_commands_fail_closed_before_opening_store(
     assert result.exit_code == 1, result.output
     assert "served-operation-unavailable" in result.output
     assert "PostgreSQL" not in result.output
+
+
+def _served_claim_effect(*, claim_id=19, claim_type="coordinate"):
+    return {
+        "claim_id": claim_id,
+        "work_item_id": 3,
+        "actor": "served-actor",
+        "claim_type": claim_type,
+        "exclusive": True,
+        "heartbeat": "2026-08-02T00:00:00Z",
+        "expires_at": "2026-08-02T00:30:00Z",
+        "status": "active",
+        "lease_epoch": 1,
+        "runtime_session_id": "session-1",
+        "instance_id": "instance-1",
+    }
+
+
+@_requires_312
+def test_served_claim_create_uses_authenticated_identity_and_existing_arbitration(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    aggregate_uuid = str(uuid4())
+    monkeypatch.setattr(
+        cli_module._served, "read_item", lambda *a, **k: {
+            "item": {"id": 3, "aggregate_uuid": aggregate_uuid, "status": "pending"},
+            "refs": [],
+        },
+    )
+    captured = {}
+    monkeypatch.setattr(
+        cli_module._served, "claim_arbitrate",
+        lambda *a, **k: captured.update(k) or {
+            "outcome": "accepted", "effect": _served_claim_effect()
+        },
+    )
+
+    result = runner.invoke(cli, [
+        "claim", "create", "--item-id", "3", "--actor", "impersonator",
+        "--type", "coordinate", "--ttl", "1800", "--runtime-session-id", "session-1",
+        "--instance-id", "instance-1", "--json",
+    ])
+
+    assert result.exit_code == 0, result.output
+    assert "authenticated identity (served-actor)" in result.output
+    record = captured["record"]
+    command = record["payload"]
+    assert record["event_type"] == "claim.acquire"
+    assert command["actor"] == "served-actor"
+    assert command["payload"]["agent"] == "served-actor"
+    assert command["payload"]["claim_type"] == "coordinate"
+    assert command["payload"]["exclusive"] is True
+    proposed_ref = command["payload"]["credential_ref"]
+    assert set(captured["transient_credentials"]) == {proposed_ref}
+    sidecar = tmp_path / "claim-recovery" / "claim-19.json"
+    assert sidecar.stat().st_mode & 0o777 == 0o600
+    assert json.loads(sidecar.read_text())["claim_token"] == captured["transient_credentials"][proposed_ref]
+    assert [(r.record_class, r.event_type) for r in _outbox_records(tmp_path)] == [
+        ("authority-command", "claim.acquire")
+    ]
+
+
+@_requires_312
+def test_served_claim_create_passes_coordinate_proof_only_transiently(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    aggregate_uuid = str(uuid4())
+    monkeypatch.setattr(cli_module._served, "read_item", lambda *a, **k: {
+        "item": {"id": 3, "aggregate_uuid": aggregate_uuid, "status": "active"}, "refs": [],
+    })
+    captured = {}
+    monkeypatch.setattr(
+        cli_module._served, "claim_arbitrate",
+        lambda *a, **k: captured.update(k) or {
+            "outcome": "accepted", "effect": _served_claim_effect(claim_type="review")
+        },
+    )
+    result = runner.invoke(cli, [
+        "claim", "create", "--item-id", "3", "--actor", "served-actor",
+        "--type", "review", "--coordinate-claim-id", "7",
+        "--coordinate-claim-token", "coordinate-secret", "--json",
+    ])
+    assert result.exit_code == 0, result.output
+    payload = captured["record"]["payload"]["payload"]
+    assert payload["coordinate_claim_id"] == 7
+    assert "coordinate-secret" not in json.dumps(captured["record"])
+    assert captured["transient_credentials"][payload["coordinate_credential_ref"]] == "coordinate-secret"
+
+
+@_requires_312
+def test_served_claim_create_replays_one_request_after_unknown_outcome(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    aggregate_uuid = str(uuid4())
+    monkeypatch.setattr(cli_module._served, "read_item", lambda *a, **k: {
+        "item": {"id": 3, "aggregate_uuid": aggregate_uuid, "status": "pending"}, "refs": [],
+    })
+    calls = []
+    def lost(*args, **kwargs):
+        calls.append(kwargs)
+        raise RuntimeError("response lost after commit")
+    monkeypatch.setattr(cli_module._served, "claim_arbitrate", lost)
+    argv = ["claim", "create", "--item-id", "3", "--actor", "served-actor", "--json"]
+    first = runner.invoke(cli, argv)
+    assert first.exit_code == 1
+    event_id = calls[0]["record"]["event_id"]
+    assert len(_outbox_records(tmp_path)) == 1
+    monkeypatch.setattr(
+        cli_module._served, "claim_arbitrate",
+        lambda *a, **k: calls.append(k) or {
+            "outcome": "accepted", "duplicate": True,
+            "effect": _served_claim_effect(claim_type="execute"),
+        },
+    )
+    retry = runner.invoke(cli, argv)
+    assert retry.exit_code == 0, retry.output
+    assert calls[1]["record"]["event_id"] == event_id
+    assert calls[1]["transient_credentials"] == calls[0]["transient_credentials"]
+    assert len(_outbox_records(tmp_path)) == 1
+
+
+@_requires_312
+def test_served_claim_create_keeps_accepted_request_replayable_until_recovery_is_durable(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    aggregate_uuid = str(uuid4())
+    monkeypatch.setattr(cli_module._served, "read_item", lambda *a, **k: {
+        "item": {"id": 3, "aggregate_uuid": aggregate_uuid, "status": "pending"}, "refs": [],
+    })
+    calls = []
+    monkeypatch.setattr(
+        cli_module._served, "claim_arbitrate",
+        lambda *a, **k: calls.append(k) or {
+            "outcome": "accepted", "duplicate": len(calls) > 1,
+            "effect": _served_claim_effect(claim_type="coordinate"),
+        },
+    )
+    writes = []
+    real_writer = cli_module._write_claim_recovery_record
+    def fail_once(claim):
+        writes.append(claim)
+        return None if len(writes) == 1 else real_writer(claim)
+    monkeypatch.setattr(cli_module, "_write_claim_recovery_record", fail_once)
+    argv = [
+        "claim", "create", "--item-id", "3", "--actor", "served-actor",
+        "--type", "coordinate", "--json",
+    ]
+
+    first = runner.invoke(cli, argv)
+    assert first.exit_code == 1
+    assert "accepted but its local recovery proof could not be persisted" in first.output
+    assert "claim_token" not in first.output
+    records = _outbox_records(tmp_path)
+    assert len(records) == 1
+    event_id = records[0].event_id
+    credentials = calls[0]["transient_credentials"]
+    assert list((tmp_path / ".sprintctl" / "authority-credentials").glob("*"))
+    terminal = tmp_path / ".sprintctl" / "authority-terminal-decisions" / f"{event_id}.json"
+    assert not terminal.exists()
+
+    retry = runner.invoke(cli, argv)
+    assert retry.exit_code == 0, retry.output
+    assert len(calls) == 2
+    assert calls[1]["record"]["event_id"] == event_id
+    assert calls[1]["transient_credentials"] == credentials
+    assert len(_outbox_records(tmp_path)) == 1
+    assert not list((tmp_path / ".sprintctl" / "authority-credentials").glob("*"))
+    assert terminal.exists()
+    sidecar = tmp_path / "claim-recovery" / "claim-19.json"
+    assert sidecar.stat().st_mode & 0o777 == 0o600
+    assert json.loads(sidecar.read_text())["claim_token"] == next(
+        token for ref, token in credentials.items()
+        if ref == calls[1]["record"]["payload"]["payload"]["credential_ref"]
+    )
 
 
 @_requires_312

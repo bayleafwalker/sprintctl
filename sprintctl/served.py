@@ -710,6 +710,7 @@ _DOCTOR_PROBE_COMMAND_PATHS = (
     "next-work",
     "next-work.explain",
     "claim.start",
+    "claim.create",
     "item.status",
     "item.done-from-claim",
     "sprint.status",

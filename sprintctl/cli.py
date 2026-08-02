@@ -3321,6 +3321,45 @@ def _find_pending_served_item_status_record(
     return None
 
 
+def _find_pending_served_claim_acquire_record(
+    outbox_path: Path, *, item_id: int, aggregate_uuid: str
+) -> _outbox.OutboxRecord | None:
+    """Return the one unresolved immutable served claim-acquire request.
+
+    Claim creation is not safe to re-mint after an unknown outcome.  The
+    durable request plus its private credential sidecar is the retry identity.
+    Refuse ambiguity rather than selecting among multiple pending requests.
+    """
+    producer = _outbox.open_outbox(outbox_path)
+    try:
+        matches: list[_outbox.OutboxRecord] = []
+        for record in _outbox.list_records(producer):
+            if record.record_class != _outbox.AUTHORITY_COMMAND or record.event_type != "claim.acquire":
+                continue
+            try:
+                command = _contracts.record_from_dict(record.payload)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(command, _contracts.AuthorityCommand):
+                continue
+            paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+            if _authority_config.is_terminal_authority_decision(paths, event_id=record.event_id):
+                continue
+            if (
+                command.refs.get("aggregate_id") == item_id
+                and command.refs.get("aggregate_uuid") == aggregate_uuid
+            ):
+                matches.append(record)
+        if len(matches) > 1:
+            raise click.ClickException(
+                f"multiple pending claim.acquire requests exist for item #{item_id}; "
+                "reconcile them before retrying claim create"
+            )
+        return matches[0] if matches else None
+    finally:
+        producer.close()
+
+
 def _find_pending_served_done_from_claim_record(
     outbox_path: Path, *, claim_id: int, item_id: int | None, keep_claim: bool,
 ) -> _outbox.OutboxRecord | None:
@@ -7049,11 +7088,15 @@ def claim_create(
     an active coordinate claim without triggering a conflict error.
     """
     item_id = _apply_scoped_id(obj, item_id, field="item")
-    if _served_config_or_none(obj) is not None:
-        _served_operation_unavailable(
-            "claim create",
-            replacement="Use served 'claim start' for a single execute claim; coordinator/subclaim creation is not yet catalogued.",
+    config = _served_config_or_none(obj)
+    if config is not None:
+        _served_claim_create(
+            config, item_id, actor, claim_type, non_exclusive, ttl_seconds,
+            branch, worktree_path, commit_sha, pr_ref, runtime_session_id,
+            instance_id, hostname, pid, coordinate_claim_id,
+            coordinate_claim_token, as_json,
         )
+        return
     store, m = _get_store(obj)
     runtime_session_id = _detect_runtime_session_id(runtime_session_id)
     instance_id = _detect_instance_id(instance_id)
@@ -7100,6 +7143,193 @@ def claim_create(
     if recovery_path is not None:
         click.echo(f"Recovery token file: {recovery_path}")
     _echo_item_refs(refs, item_id)
+
+
+def _served_claim_create(
+    config,
+    item_id: int,
+    actor: str,
+    claim_type: str,
+    non_exclusive: bool,
+    ttl_seconds: int,
+    branch: str | None,
+    worktree_path: str | None,
+    commit_sha: str | None,
+    pr_ref: str | None,
+    runtime_session_id: str | None,
+    instance_id: str | None,
+    hostname: str | None,
+    pid: int | None,
+    coordinate_claim_id: int | None,
+    coordinate_claim_token: str | None,
+    as_json: bool,
+) -> None:
+    """Create any claim type through the existing claim arbitration operation."""
+    context = _resolved_context(config)
+    if (coordinate_claim_id is None) != (coordinate_claim_token is None):
+        click.echo(
+            "Error: --coordinate-claim-id and --coordinate-claim-token must be supplied together",
+            err=True,
+        )
+        sys.exit(1)
+    runtime_session_id = _detect_runtime_session_id(runtime_session_id)
+    instance_id = _detect_instance_id(instance_id)
+    hostname = _detect_hostname(hostname)
+    pid = _detect_pid(pid)
+    item_result = _run_served(
+        "claim create", _served.read_item, config.served_profile,
+        repo_id=config.repo_id, item_id=item_id, resolved_context=context,
+    )
+    item = item_result["item"]
+    identity = _run_served(
+        "claim create", _served.identity_current, config.served_profile,
+        repo_id=config.repo_id, resolved_context=context,
+    )
+    authenticated_actor = identity["actor"]
+    if actor != authenticated_actor:
+        click.echo(
+            f"Note: served mode claims as the authenticated identity "
+            f"({authenticated_actor}); --actor {actor!r} was not sent and is ignored.",
+            err=True,
+        )
+    rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+    pending = _find_pending_served_claim_acquire_record(
+        rollout_paths.outbox_path,
+        item_id=item_id,
+        aggregate_uuid=item["aggregate_uuid"],
+    )
+    credentials: dict[str, str]
+    if pending is not None:
+        request = _contracts.record_from_dict(pending.payload)
+        assert isinstance(request, _contracts.AuthorityCommand)
+        try:
+            saved = _authority_config.load_pending_authority_credential(
+                rollout_paths, event_id=pending.event_id
+            )
+        except _authority_config.AuthorityCommandConfigError as exc:
+            raise click.ClickException(str(exc)) from exc
+        if saved is None:
+            raise click.ClickException(
+                f"pending claim.acquire {pending.event_id} has no private credential sidecar"
+            )
+        credentials = dict(saved.credentials)
+        durable = pending
+    else:
+        proposed_token = secrets.token_urlsafe(24)
+        proposed_ref = _authority.credential_ref(proposed_token)
+        credentials = {proposed_ref: proposed_token}
+        metadata = {
+            key: value for key, value in {
+                "runtime_session_id": runtime_session_id,
+                "instance_id": instance_id,
+                "branch": branch,
+                "worktree_path": worktree_path,
+                "commit_sha": commit_sha,
+                "pr_ref": pr_ref,
+                "hostname": hostname,
+                "pid": pid,
+            }.items() if value is not None
+        }
+        payload: dict[str, object] = {
+            "agent": authenticated_actor,
+            "claim_type": claim_type,
+            "exclusive": not non_exclusive,
+            "ttl_seconds": ttl_seconds,
+            "credential_ref": proposed_ref,
+            "metadata": metadata,
+        }
+        if coordinate_claim_id is not None:
+            assert coordinate_claim_token is not None
+            coordinate_ref = _authority.credential_ref(coordinate_claim_token)
+            payload["coordinate_claim_id"] = coordinate_claim_id
+            payload["coordinate_credential_ref"] = coordinate_ref
+            credentials[coordinate_ref] = coordinate_claim_token
+        try:
+            durable = _mint_authority_command_record(
+                record_type="claim.acquire",
+                actor=authenticated_actor,
+                refs={
+                    "repo_id": _authority_repo_uuid(rollout_paths.repo_root),
+                    "aggregate_type": "item",
+                    "aggregate_uuid": item["aggregate_uuid"],
+                    "aggregate_id": item_id,
+                },
+                payload=payload,
+                basis_revision=_authority.item_revision(item),
+                outbox_path=rollout_paths.outbox_path,
+            )
+        except (TypeError, ValueError) as exc:
+            click.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
+        request = _contracts.record_from_dict(durable.payload)
+        assert isinstance(request, _contracts.AuthorityCommand)
+        _authority_config.store_pending_authority_credentials(
+            rollout_paths,
+            event_id=durable.event_id,
+            credentials=credentials,
+            recovery_credential_ref=request.payload["credential_ref"],
+        )
+    decision = _run_served(
+        "claim create", _served.claim_arbitrate, config.served_profile,
+        repo_id=config.repo_id, record=_served_record_argument(durable),
+        transient_credentials=credentials, resolved_context=context,
+    )
+    if decision["outcome"] != "accepted":
+        _authority_config.mark_terminal_authority_decision(
+            rollout_paths, event_id=durable.event_id, outcome=decision["outcome"]
+        )
+        _authority_config.remove_pending_authority_credential(
+            rollout_paths, event_id=durable.event_id
+        )
+        click.echo(
+            f"Error: {decision.get('reason_code')}: {decision.get('reason_detail')}\n"
+            f"{_render_resolved_context(context)}", err=True,
+        )
+        sys.exit(1)
+    effect = dict(decision["effect"])
+    proposed_ref = request.payload["credential_ref"]
+    claim_token = credentials[proposed_ref]
+    claim = {
+        **effect,
+        "work_item_id": item_id,
+        "claim_token": claim_token,
+        "runtime_session_id": effect.get("runtime_session_id", request.payload["metadata"].get("runtime_session_id")),
+        "instance_id": effect.get("instance_id", request.payload["metadata"].get("instance_id")),
+    }
+    recovery_path = _write_claim_recovery_record(claim)
+    if recovery_path is None:
+        click.echo(
+            "Error: claim acquisition was accepted but its local recovery proof "
+            f"could not be persisted. Immutable request {durable.event_id} remains "
+            "pending with private recovery credentials; retry this exact claim create "
+            "command to recover the accepted result without minting another claim.",
+            err=True,
+        )
+        sys.exit(1)
+    _authority_config.mark_terminal_authority_decision(
+        rollout_paths, event_id=durable.event_id, outcome=decision["outcome"]
+    )
+    _authority_config.remove_pending_authority_credential(
+        rollout_paths, event_id=durable.event_id
+    )
+    refs = item_result.get("refs", [])
+    claim["refs"] = refs
+    claim["local_recovery"] = {
+        "recovery_token_exists": recovery_path is not None,
+        "recovery_token_path": str(recovery_path) if recovery_path is not None else None,
+    }
+    if as_json:
+        click.echo(json.dumps(claim, indent=2))
+        return
+    click.echo(
+        f"Claim #{claim['claim_id']} created: {authenticated_actor} → item #{item_id} "
+        f"({claim_type}, ttl={ttl_seconds}s)"
+    )
+    click.echo(f"Claim token: {claim_token}")
+    if recovery_path is not None:
+        click.echo(f"Recovery token file: {recovery_path}")
+    _echo_item_refs(refs, item_id)
+    click.echo(_render_resolved_context(context))
 
 
 @claim.command("start")
