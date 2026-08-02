@@ -26,6 +26,12 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from . import context_candidates, context_contract, contracts, cutover, db, handoff, maintain, outbox, sprint_detail
+from .maintenance_capability import (
+    MaintenanceCapabilityError,
+    PostgresMaintenanceCapabilityStore,
+    SQLiteMaintenanceCapabilityStore,
+    StaleCapabilityRevision,
+)
 
 
 CLAIM_COMMAND_TYPES = frozenset(
@@ -460,6 +466,10 @@ class WorkApplication:
             "work.read.sprint": target._read_sprint,
             "work.read.sprint-detail": target._read_sprint_detail,
             "work.maintain.check": target._maintain_check,
+            "work.read.maintenance-capability": target._maintenance_get,
+            "work.maintenance.prepare": target._maintenance_prepare,
+            "work.maintenance.transition": target._maintenance_transition,
+            "work.maintenance.recovery-record": target._maintenance_recovery_append,
             "work.sprint.create": target._sprint_create,
             "work.event.add": target._event_add,
             "work.handoff.record": target._handoff_record,
@@ -488,6 +498,14 @@ class WorkApplication:
             return handler(dict(arguments), context)
         except ApplicationRejection:
             raise
+        except StaleCapabilityRevision as exc:
+            raise ApplicationRejection(
+                "maintenance-revision-conflict", str(exc), 409
+            ) from exc
+        except MaintenanceCapabilityError as exc:
+            raise ApplicationRejection(
+                "maintenance-capability-rejected", str(exc), 422
+            ) from exc
         except ValueError as exc:
             raise ApplicationRejection("validation-failed", str(exc), 422) from exc
 
@@ -709,6 +727,120 @@ class WorkApplication:
             with snapshot(self.store) as snapshot_store:
                 return build(snapshot_store)
         return build(self.store)
+
+    def _maintenance_store(self) -> Any:
+        """Bind the owner lifecycle to this invocation's repository scope."""
+        if hasattr(self.store, "repo_id") and hasattr(self.store, "conn"):
+            return PostgresMaintenanceCapabilityStore(self.store)
+        return SQLiteMaintenanceCapabilityStore(self.store)
+
+    @staticmethod
+    def _maintenance_request_identity(
+        context: InvocationContext, request_id: Any
+    ) -> str:
+        if not isinstance(request_id, str) or not request_id:
+            raise ApplicationRejection(
+                "invalid-arguments", "request_id must be a non-empty string", 422
+            )
+        if context.idempotency_key != request_id:
+            raise ApplicationRejection(
+                "idempotency-mismatch",
+                "idempotency_key must exactly equal the maintenance request_id",
+                409,
+            )
+        return request_id
+
+    @staticmethod
+    def _maintenance_now() -> str:
+        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    def _maintenance_get(
+        self, arguments: dict[str, Any], _context: InvocationContext
+    ) -> dict[str, Any]:
+        capability_id = _optional_text(arguments.get("capability_id"), "capability_id")
+        if capability_id is None:
+            raise ApplicationRejection(
+                "invalid-arguments", "capability_id is required", 422
+            )
+        row = self._maintenance_store().get(capability_id)
+        if row is None:
+            raise ApplicationRejection(
+                "maintenance-capability-not-found",
+                "unknown maintenance capability",
+                404,
+            )
+        public_fields = (
+            "capability_id", "envelope_id", "envelope_digest", "plan_ref",
+            "operator_identity", "not_before", "expires_at", "state",
+            "revision", "next_sequence", "created_at", "updated_at",
+        )
+        capability = {
+            field: (
+                value.isoformat().replace("+00:00", "Z")
+                if isinstance((value := row.get(field)), datetime)
+                else value
+            )
+            for field in public_fields
+        }
+        return {"repo_id": self.repo_id, "capability": capability}
+
+    def _maintenance_prepare(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        request_id = self._maintenance_request_identity(context, context.request_id)
+        envelope = arguments.get("envelope")
+        if not isinstance(envelope, Mapping):
+            raise ApplicationRejection(
+                "invalid-arguments", "envelope must be an object", 422
+            )
+        operator = envelope.get("operator")
+        if not isinstance(operator, Mapping) or operator.get("identity") != context.identity.actor:
+            raise ApplicationRejection(
+                "maintenance-actor-mismatch",
+                "authenticated actor must equal the frozen envelope operator",
+                403,
+            )
+        result = self._maintenance_store().prepare(
+            capability_id=arguments.get("capability_id"),
+            request_id=request_id,
+            envelope=envelope,
+            actor=context.identity.actor,
+            at=self._maintenance_now(),
+        )
+        return {"repo_id": self.repo_id, **result}
+
+    def _maintenance_transition(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        request_id = self._maintenance_request_identity(context, context.request_id)
+        result = self._maintenance_store().transition(
+            capability_id=arguments.get("capability_id"),
+            request_id=request_id,
+            action=arguments.get("action"),
+            expected_revision=arguments.get("expected_revision"),
+            actor=context.identity.actor,
+            at=self._maintenance_now(),
+            step_id=arguments.get("step_id"),
+            command_id=arguments.get("command_id"),
+            command_ref=arguments.get("command_ref"),
+            effect_ref=arguments.get("effect_ref"),
+            reconciliation=arguments.get("reconciliation"),
+        )
+        return {"repo_id": self.repo_id, **result}
+
+    def _maintenance_recovery_append(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        record_id = self._maintenance_request_identity(context, context.request_id)
+        result = self._maintenance_store().append_recovery_record(
+            capability_id=arguments.get("capability_id"),
+            record_id=record_id,
+            kind=arguments.get("kind"),
+            payload_ref=arguments.get("payload_ref"),
+            actor=context.identity.actor,
+            at=self._maintenance_now(),
+        )
+        return {"repo_id": self.repo_id, **result}
 
     def _read_handoff(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
         events_limit = _positive_int(arguments.get("events_limit"), "events_limit")

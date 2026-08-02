@@ -43,6 +43,7 @@ from sprintctl.pg_testing import (
     new_test_repo_id,
     write_cleanup_report,
 )
+from tests.test_maintenance_capability import AT, CAPABILITY_ID, envelope
 
 
 @pytest.fixture(scope="module")
@@ -102,6 +103,31 @@ def _context(actor, basis_revision, event_id, *, repo_id=None):
     )()
 
 
+def _maintenance_context(repo_id: str, request_id: str):
+    return type(
+        "MaintenanceContext",
+        (),
+        {
+            "identity": type(
+                "Identity",
+                (),
+                {
+                    "actor": "operator",
+                    "environment": "vuoro-dev",
+                    "authorities": frozenset({"work:maintenance"}),
+                },
+            )(),
+            "repo_id": repo_id,
+            "request_id": request_id,
+            "basis_revision": None,
+            "catalog_revision": "catalog-maintenance",
+            "idempotency_requirement": "required",
+            "idempotency_key": request_id,
+            "transient_credentials": None,
+        },
+    )()
+
+
 def _command_record(path, command):
     producer = outbox.open_outbox(path)
     try:
@@ -141,6 +167,56 @@ def _claim_command(store, item, actor, token, event_id, *, claim_agent=None):
         basis_revision=authority.item_revision(item),
     )
     return command, {reference: token}
+
+
+def test_maintenance_application_postgres_replay_and_repo_isolation(
+    store_factory, monkeypatch
+):
+    store_a = store_factory("maintenance-app-a")
+    store_b = store_factory("maintenance-app-b")
+    app = WorkApplication.postgres(store_a)
+    monkeypatch.setattr(WorkApplication, "_maintenance_now", staticmethod(lambda: AT))
+    request_id = "77777777-7777-4777-8777-777777777777"
+    context_a = _maintenance_context(store_a.repo_id, request_id)
+    prepared = app.invoke(
+        "work.maintenance.prepare",
+        {"capability_id": CAPABILITY_ID, "envelope": envelope()},
+        context_a,
+    )
+    monkeypatch.setattr(
+        WorkApplication,
+        "_maintenance_now",
+        staticmethod(lambda: "2026-08-03T00:00:01Z"),
+    )
+    replay = app.invoke(
+        "work.maintenance.prepare",
+        {"capability_id": CAPABILITY_ID, "envelope": envelope()},
+        context_a,
+    )
+    assert prepared["duplicate"] is False
+    assert replay["duplicate"] is True
+
+    with pytest.raises(ApplicationRejection) as other_repo:
+        app.invoke(
+            "work.read.maintenance-capability",
+            {"capability_id": CAPABILITY_ID},
+            _maintenance_context(
+                store_b.repo_id, "88888888-8888-4888-8888-888888888888"
+            ),
+        )
+    assert other_repo.value.code == "maintenance-capability-not-found"
+
+    status_a = app.invoke(
+        "work.read.maintenance-capability",
+        {"capability_id": CAPABILITY_ID},
+        _maintenance_context(
+            store_a.repo_id, "99999999-9999-4999-8999-999999999999"
+        ),
+    )
+    assert status_a["repo_id"] == store_a.repo_id
+    assert status_a["capability"]["state"] == "prepared"
+    store_a.conn.close()
+    store_b.conn.close()
 
 
 def _renew_command(store, claim, token, event_id, *, metadata=None):

@@ -1,0 +1,66 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.maintenance-capability.served-adapter",
+  "owner_repo": "sprintctl",
+  "subject": "vuoro-served-maintenance-capability-lifecycle",
+  "contract_ref": {
+    "doc_id": "sprintctl.maintenance-capability",
+    "revision": "git:ea8d15cd5670d5c591cd6acda7fc7c883bfed5e1:maintenance-envelope/v1"
+  },
+  "source_of_truth": "repository-scoped-capability-and-immutable-receipt-rows",
+  "depth": 2,
+  "backends": ["sqlite", "postgres", "vuoro-protocol-v1-service-shell"],
+  "actors": ["authenticated-operator", "maintenance-auditor", "work-adapter"],
+  "initial_state": [
+    "catalog-registers-four-maintenance-operations",
+    "capability-is-absent",
+    "invocation-is-bound-to-one-authorized-repository"
+  ],
+  "operations": [
+    {"name": "prepare-capability", "actors": ["authenticated-operator", "work-adapter"], "synchronization": "request-id-bound-idempotency-and-capability-transaction"},
+    {"name": "transition-capability", "actors": ["authenticated-operator", "work-adapter"], "synchronization": "expected-revision-compare-and-swap"},
+    {"name": "read-capability-projection", "actors": ["authenticated-operator", "work-adapter"], "synchronization": "repository-scoped-read"},
+    {"name": "append-recovery-evidence", "actors": ["maintenance-auditor", "work-adapter"], "synchronization": "append-only-record-id-bound-idempotency"}
+  ],
+  "consistency": {"target": "application-invariant", "object": "served-maintenance-capability-lifecycle"},
+  "assumptions": {
+    "isolation": "the owner lifecycle store supplies SQLite immediate-writer or PostgreSQL repository-lock semantics",
+    "clock": "server-trusted UTC observation time",
+    "fairness": "none"
+  },
+  "bounds": {"catalog_operations": 4, "backends": 2, "identical_retries_per_mutation": 1},
+  "invariants": [
+    "authenticated-identity-is-the-only-served-actor-source",
+    "idempotency-key-exactly-equals-request-id",
+    "server-time-is-not-client-controlled-and-does-not-change-semantic-replay",
+    "stale-revision-has-no-effect-and-returns-a-stable-conflict",
+    "read-projection-excludes-envelope-receipts-reconciliation-and-recovery-details",
+    "recovery-records-have-authority-none",
+    "repository-scope-is-preserved-on-sqlite-and-postgres",
+    "catalog-inputs-are-closed-and-results-are-schema-valid"
+  ],
+  "faults": [
+    "response-loss-followed-by-later-clock-retry",
+    "actor-substitution",
+    "idempotency-key-substitution",
+    "stale-revision",
+    "cross-repository-capability-read",
+    "recovery-request-treated-as-authority"
+  ],
+  "oracles": [
+    "generic-vuoro-client-schema-validation",
+    "sqlite-capability-and-receipt-query",
+    "disposable-postgresql-repository-isolation-query",
+    "stable-application-rejection-code",
+    "artifact-validator"
+  ],
+  "implementation_anchors": [
+    "sprintctl/application.py:WorkApplication._maintenance_prepare",
+    "sprintctl/application.py:WorkApplication._maintenance_transition",
+    "sprintctl/application.py:WorkApplication._maintenance_recovery_append",
+    "sprintctl/vuoro_adapter.py:WORK_OPERATION_CONTRACTS",
+    "tests/test_vuoro_work_adapter_integration.py:test_generic_client_discovers_and_replays_maintenance_authority",
+    "tests/test_work_application_pg.py:test_maintenance_application_postgres_replay_and_repo_isolation"
+  ],
+  "expansions": ["semantic-doc", "stateful-test", "backend-parity", "fault-scenario"]
+}
