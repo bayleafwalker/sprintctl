@@ -1,6 +1,6 @@
 # Served command parity matrix
 
-Status: current implementation inventory (2026-07-26).  This is the command
+Status: current implementation inventory (2026-08-02).  This is the command
 level companion to `docs/plans/vuoro-served-authority-alignment.md`.  A
 `served` command means it invokes the Vuoro catalog and never opens a direct
 store.  `Unavailable` likewise never opens a store: it exits with the stable
@@ -15,7 +15,7 @@ store.  `Unavailable` likewise never opens a store: it exits with the stable
 | `item ref list`, `item dep list` | Served | `work.read.item` supplies the exact item-scoped reference/dependency views. |
 | `item ref add/remove`, `item dep add/remove` | Served | `work.item.ref.*` and `work.item.dep.*` are repository-scoped shaping writes. |
 | `next-work` | Served; project `--explain` unavailable | `work.read.next-work` preserves the list contract; `work.read.next-work-explain` returns the complete atomic explanation contract. |
-| `claim start/heartbeat/handoff/release` | Served | `work.claim.start` / `work.claim.arbitrate`. |
+| `claim create/start/heartbeat/handoff/release` | Served | `claim create` uses the existing immutable `claim.acquire` command through `work.claim.arbitrate`; `claim start` uses `work.claim.start`; remaining mutations use `work.claim.arbitrate`. |
 | `claim list`, `claim list-sprint`, `claim show`, `claim resume` | Served | `work.read.claims` supports item/sprint/identity inspection; `work.read.claim` is deliberately non-secret. |
 | `item add`, `item note`, `item status`, `event add/list` | Served | Existing catalog routes. |
 | `item done-from-claim` | Served | One durable `item.done-from-claim` authority command through `work.lifecycle.arbitrate`; the claim proof is transient and retries reuse its immutable event id. |
