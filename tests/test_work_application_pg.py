@@ -727,6 +727,55 @@ def test_done_from_claim_is_atomic_and_retries_after_claim_delete(store_factory,
     store.conn.close()
 
 
+def test_item_transition_selects_delegated_execute_claim_not_older_coordinate(
+    store_factory, tmp_path
+):
+    store = store_factory("delegated-item-transition")
+    sprint_id = pg.create_sprint(store, "Delegated transition", status="active")
+    track_id = pg.get_or_create_track(store, sprint_id, "work")
+    item_id = pg.create_work_item(store, sprint_id, track_id, "Activate me")
+    item = pg.get_work_item(store, item_id)
+    coordinate_id = pg.create_claim(
+        store, item_id, "coordinator", claim_type="coordinate", ttl_seconds=600
+    )
+    coordinate = pg.get_claim(store, coordinate_id, include_secret=True)
+    execute_id = pg.create_claim(
+        store, item_id, "worker", claim_type="execute", ttl_seconds=600,
+        coordinate_claim_id=coordinate_id,
+        coordinate_claim_token=coordinate["claim_token"],
+    )
+    execute = pg.get_claim(store, execute_id, include_secret=True)
+
+    def transition(claim, proof, label):
+        ref = authority.credential_ref(proof)
+        command = contracts.AuthorityCommand(
+            event_id=str(uuid.uuid4()), record_type="item.transition", schema_version="1",
+            actor="worker", authored_at="2026-08-02T12:00:00Z",
+            refs={
+                "repo_id": store.authority_repo_uuid, "aggregate_type": "item",
+                "aggregate_uuid": item["aggregate_uuid"], "aggregate_id": item_id,
+            },
+            payload={"to_status": "active", "claim_id": claim["claim_id"], "credential_ref": ref},
+            basis_revision=authority.item_revision(item),
+        )
+        record = _command_record(tmp_path / f"{label}.db", command)
+        return _application(store, {ref: proof}).invoke(
+            "work.lifecycle.arbitrate", {"record": record_to_dict(record)},
+            _context("worker", record.basis_revision, record.event_id),
+        )
+
+    rejected = transition(coordinate, coordinate["claim_token"], "coordinate")
+    assert rejected["outcome"] == "rejected"
+    assert rejected["reason_code"] == "invalid-claim-proof"
+    assert pg.get_work_item(store, item_id)["status"] == "pending"
+
+    accepted = transition(execute, execute["claim_token"], "execute")
+    assert accepted["outcome"] == "accepted"
+    assert accepted["effect"]["status"] == "active"
+    assert pg.get_work_item(store, item_id)["status"] == "active"
+    store.conn.close()
+
+
 def test_claim_context_returns_non_secret_snapshot_and_current_revision(
     store_factory, tmp_path
 ):

@@ -1864,7 +1864,22 @@ def set_work_item_status(
                 f"Item #{item_id} is exclusively claimed by '{active_claim['agent']}' "
                 f"(claim #{active_claim['id']}). Provide --claim-id and --claim-token."
             )
-        if claim_id != active_claim["id"]:
+        with store.conn.cursor() as cur:
+            cur.execute(
+                "SELECT *, expires_at > now() AS live FROM claim "
+                "WHERE repo_id = %s AND id = %s FOR UPDATE",
+                (store.repo_id, claim_id),
+            )
+            selected_row = cur.fetchone()
+        selected_claim = _norm(selected_row) if selected_row else None
+        if (
+            selected_claim is None
+            or selected_claim["work_item_id"] != item_id
+            or not selected_claim["exclusive"]
+            or selected_claim["claim_type"] != "execute"
+            or selected_claim["status"] != "active"
+            or not selected_claim["live"]
+        ):
             _emit_claim_event(
                 store, active_claim,
                 event_type="coordination-failure",
@@ -1885,7 +1900,7 @@ def set_work_item_status(
                 f"Item #{item_id} is exclusively claimed by '{active_claim['agent']}' "
                 f"(claim #{active_claim['id']})."
             )
-        _require_claim_proof(active_claim, claim_token)
+        _require_claim_proof(selected_claim, claim_token)
     if new_status == "active":
         unresolved = [
             b for b in list_deps_blocking(store, item_id) if b["blocker_status"] != "done"
