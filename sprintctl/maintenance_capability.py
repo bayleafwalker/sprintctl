@@ -18,6 +18,14 @@ from uuid import UUID
 
 
 CONTRACT_ID = "maintenance-envelope/v1"
+TOP_FIELDS = frozenset({"contract_id", "envelope_id", "plan_ref", "issued_at", "window", "operator", "repositories", "command_registry_ref", "command_registry", "operations", "jit_fields", "jit_bindings", "start_gate", "steps", "abort", "recovery_policy", "audit_reconciliation"})
+JIT_NAMES = frozenset({"backup_name", "backup_uid", "drain_boundary_utc"})
+JIT_SOURCES = {"backup_name": "backup-observation", "backup_uid": "backup-observation", "drain_boundary_utc": "clock-observation"}
+ABORT_FORBIDDEN = frozenset({"delete-migration-ledger", "edit-released-migration", "unreviewed-commit", "recovery-request-authority"})
+RECOVERY_FORBIDDEN = frozenset({"grant", "claim", "approve", "publish", "reconcile", "advance", "bind-jit"})
+AUDIT_RECEIPTS = frozenset({"command", "effect", "review", "publication", "jit-binding", "start-gate", "abort", "reconciliation"})
+AUDIT_OUTCOMES = frozenset({"accepted", "rejected", "duplicate", "expired", "aborted", "incomplete"})
+AUDIT_REDACT = frozenset({"credentials", "claim-tokens", "capability-secrets"})
 CAPABILITY_ID = re.compile(r"^mcap:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 SHA256_REF = re.compile(r"^(?:artifact:)?sha256:[0-9a-f]{64}$")
 TERMINAL_STATES = frozenset({"reconciled", "aborted", "revoked", "expired"})
@@ -25,7 +33,7 @@ TRANSITIONS = {
     "attest": {"prepared": "attested"},
     "activate": {"attested": "active"},
     "observe": {"active": "observing", "observing": "observing"},
-    "reconcile": {"observing": "reconciled"},
+    "reconcile": {"active": "reconciled", "observing": "reconciled"},
     "abort": {"prepared": "aborted", "attested": "aborted", "active": "aborted", "observing": "aborted"},
     "revoke": {"prepared": "revoked", "attested": "revoked", "active": "revoked", "observing": "revoked"},
 }
@@ -95,27 +103,31 @@ def freeze_envelope(envelope: Any) -> FrozenEnvelope:
     """Validate the authority-bearing subset and return its canonical identity."""
     if not isinstance(envelope, dict) or envelope.get("contract_id") != CONTRACT_ID:
         raise MaintenanceCapabilityError(f"envelope must use {CONTRACT_ID}")
-    required = {"envelope_id", "plan_ref", "operator", "window", "command_registry", "steps", "jit_fields", "jit_bindings", "start_gate", "recovery_policy"}
-    if not required <= set(envelope):
-        raise MaintenanceCapabilityError(f"envelope is missing authority fields: {sorted(required - set(envelope))}")
+    if set(envelope) != TOP_FIELDS:
+        raise MaintenanceCapabilityError(f"envelope fields must exactly match {sorted(TOP_FIELDS)}")
     envelope_id = envelope["envelope_id"]
     if not isinstance(envelope_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", envelope_id):
         raise MaintenanceCapabilityError("envelope_id must be exact")
     plan_ref = _exact_ref(envelope["plan_ref"], "plan_ref")
     operator = envelope["operator"]
-    if not isinstance(operator, dict) or not isinstance(operator.get("identity"), str):
+    if not isinstance(operator, dict) or set(operator) != {"identity", "decision_ref"} or not isinstance(operator.get("identity"), str):
         raise MaintenanceCapabilityError("operator identity is required")
     _immutable_ref(operator.get("decision_ref"), "operator.decision_ref", {"artifact", "verification-result", "sprint-event"})
     window = envelope["window"]
-    if not isinstance(window, dict):
+    if not isinstance(window, dict) or set(window) != {"not_before", "expires_at"}:
         raise MaintenanceCapabilityError("window must be exact")
     not_before = _time(window.get("not_before"), "window.not_before")
     expires_at = _time(window.get("expires_at"), "window.expires_at")
+    issued_at = _time(envelope["issued_at"], "issued_at")
+    if issued_at > not_before:
+        raise MaintenanceCapabilityError("issued_at must not follow window.not_before")
     if expires_at <= not_before or expires_at - not_before > timedelta(hours=24):
         raise MaintenanceCapabilityError("window must be positive, immutable, and no longer than 24 hours")
 
     repositories: dict[str, str] = {}
-    for repository in envelope.get("repositories", []):
+    if not isinstance(envelope["repositories"], list) or not envelope["repositories"]:
+        raise MaintenanceCapabilityError("repositories must be non-empty")
+    for repository in envelope["repositories"]:
         if not isinstance(repository, dict) or set(repository) != {"id", "url", "commit"}:
             raise MaintenanceCapabilityError("repository bindings must be exact")
         repo_id, commit = repository["id"], repository["commit"]
@@ -136,8 +148,10 @@ def freeze_envelope(envelope: Any) -> FrozenEnvelope:
         raise MaintenanceCapabilityError("command_registry_ref must bind canonical exact argv")
 
     operations: dict[str, Mapping[str, Any]] = {}
-    for operation in envelope.get("operations", []):
-        if not isinstance(operation, dict) or operation.get("id") in operations:
+    if not isinstance(envelope["operations"], list) or not envelope["operations"]:
+        raise MaintenanceCapabilityError("operations must be non-empty")
+    for operation in envelope["operations"]:
+        if not isinstance(operation, dict) or set(operation) != {"id", "owner_repository", "command_id", "allowed_paths", "allowed_commands"} or operation.get("id") in operations:
             raise MaintenanceCapabilityError("operations must have unique exact IDs")
         owner = operation.get("owner_repository")
         commands = operation.get("allowed_commands")
@@ -157,7 +171,8 @@ def freeze_envelope(envelope: Any) -> FrozenEnvelope:
     prior: set[str] = set()
     repo_heads = dict(repositories)
     for index, step in enumerate(steps, 1):
-        if not isinstance(step, dict) or step.get("sequence") != index or not isinstance(step.get("id"), str):
+        step_fields = {"id", "sequence", "repository_id", "base_commit", "commit", "operation_id", "depends_on", "paths", "commands", "reviews", "verification_refs", "publication_ref", "phase"}
+        if not isinstance(step, dict) or set(step) != step_fields or step.get("sequence") != index or not isinstance(step.get("id"), str):
             raise MaintenanceCapabilityError("steps must have contiguous deterministic sequence")
         if step["id"] in prior or any(dep not in prior for dep in step.get("depends_on", [])):
             raise MaintenanceCapabilityError("step dependency graph must reference unique earlier steps")
@@ -187,9 +202,11 @@ def freeze_envelope(envelope: Any) -> FrozenEnvelope:
         prior.add(step["id"])
 
     definitions: dict[str, Mapping[str, Any]] = {}
+    if not isinstance(envelope["jit_fields"], list) or len(envelope["jit_fields"]) != 3:
+        raise MaintenanceCapabilityError("JIT definitions must contain the three fixed v1 fields")
     for definition in envelope["jit_fields"]:
         name = definition.get("name") if isinstance(definition, dict) else None
-        if name in definitions or definition.get("bind_before_step") not in prior or definition.get("required") is not True:
+        if not isinstance(definition, dict) or set(definition) != {"name", "source", "pattern", "bind_before_step", "bind_by", "required"} or name not in JIT_NAMES or name in definitions or definition.get("source") != JIT_SOURCES[name] or definition.get("bind_before_step") not in prior or definition.get("required") is not True:
             raise MaintenanceCapabilityError("JIT definitions must be unique, required, and step-scoped")
         bind_by = _time(definition.get("bind_by"), f"jit_fields.{name}.bind_by")
         if bind_by < not_before or bind_by >= expires_at:
@@ -198,10 +215,12 @@ def freeze_envelope(envelope: Any) -> FrozenEnvelope:
         if not isinstance(pattern, str) or len(pattern) > 256 or not pattern.startswith("^") or not pattern.endswith("$") or ".*" in pattern or ".+" in pattern:
             raise MaintenanceCapabilityError("JIT pattern must be bounded and anchored")
         definitions[name] = definition
+    if set(definitions) != JIT_NAMES:
+        raise MaintenanceCapabilityError("JIT definitions must contain exactly the fixed v1 fields")
     bindings: dict[str, Mapping[str, Any]] = {}
     for binding in envelope["jit_bindings"]:
         name = binding.get("name") if isinstance(binding, dict) else None
-        if name not in definitions or name in bindings:
+        if not isinstance(binding, dict) or set(binding) != {"name", "value", "observed_at", "bound_at", "evidence_ref", "receipt_ref"} or name not in definitions or name in bindings:
             raise MaintenanceCapabilityError("JIT bindings must be unique declared fields")
         if re.fullmatch(definitions[name]["pattern"], str(binding.get("value", ""))) is None:
             raise MaintenanceCapabilityError("JIT binding violates its frozen pattern")
@@ -215,17 +234,24 @@ def freeze_envelope(envelope: Any) -> FrozenEnvelope:
         bindings[name] = binding
 
     gate = envelope["start_gate"]
-    if not isinstance(gate, dict) or gate.get("plan") != "plan-1":
+    if not isinstance(gate, dict) or set(gate) != {"plan", "dependent_implementation_sessions", "active_normal_claims"} or gate.get("plan") != "plan-1":
         raise MaintenanceCapabilityError("activation requires plan-1")
     for name in ("dependent_implementation_sessions", "active_normal_claims"):
         predicate = gate.get(name)
-        if not isinstance(predicate, dict) or predicate.get("expected_count") != 0:
+        if not isinstance(predicate, dict) or set(predicate) != {"expected_count", "observed_at", "evidence_ref", "receipt_ref"} or predicate.get("expected_count") != 0:
             raise MaintenanceCapabilityError("plan-1 start predicates must require zero")
         _immutable_ref(predicate.get("evidence_ref"), f"start_gate.{name}.evidence_ref", {"verification-result"})
         _immutable_ref(predicate.get("receipt_ref"), f"start_gate.{name}.receipt_ref", {"artifact"})
+    abort = envelope["abort"]
+    if not isinstance(abort, dict) or set(abort) != {"before_migration", "after_migration", "forbidden"} or abort["before_migration"] != "restore-reviewed-pre-migration-state" or abort["after_migration"] not in {"restore-uid-attested-backup", "reviewed-forward-fix"} or set(abort["forbidden"]) != ABORT_FORBIDDEN:
+        raise MaintenanceCapabilityError("abort policy must exactly match maintenance-envelope/v1")
     recovery = envelope["recovery_policy"]
-    if recovery.get("authority") != "none" or recovery.get("record_kinds") != ["observation", "requested-command"]:
+    if not isinstance(recovery, dict) or set(recovery) != {"record_kinds", "authority", "forbidden_uses"} or recovery.get("authority") != "none" or recovery.get("record_kinds") != ["observation", "requested-command"] or set(recovery.get("forbidden_uses", [])) != RECOVERY_FORBIDDEN:
         raise MaintenanceCapabilityError("recovery records must remain non-authoritative")
+    audit = envelope["audit_reconciliation"]
+    audit_fields = {"incident_correlation_required", "immutable_receipts", "required_outcomes", "redact", "retention", "export_required", "independent_review_required"}
+    if not isinstance(audit, dict) or set(audit) != audit_fields or audit["incident_correlation_required"] is not True or audit["export_required"] is not True or audit["independent_review_required"] is not True or set(audit["immutable_receipts"]) != AUDIT_RECEIPTS or set(audit["required_outcomes"]) != AUDIT_OUTCOMES or set(audit["redact"]) != AUDIT_REDACT or audit["retention"] not in {"append-only-export", "content-addressed-export"}:
+        raise MaintenanceCapabilityError("audit reconciliation policy must exactly match maintenance-envelope/v1")
     digest = hashlib.sha256(_canonical(envelope)).hexdigest()
     return FrozenEnvelope(envelope_id, digest, plan_ref, operator["identity"], not_before, expires_at, tuple(steps), registry, definitions, bindings)
 
@@ -239,6 +265,20 @@ def _request_id(value: str) -> str:
         return str(UUID(value))
     except (ValueError, TypeError) as exc:
         raise MaintenanceCapabilityError("request_id must be a canonical UUID") from exc
+
+
+def _validate_reconciliation_bundle(value: Any) -> str:
+    if not isinstance(value, dict) or set(value) != {"incident_ref", "export_ref", "review_ref", "receipts"}:
+        raise MaintenanceCapabilityError("reconciliation requires the complete frozen audit bundle")
+    _immutable_ref(value["incident_ref"], "reconciliation.incident_ref", {"artifact", "verification-result"})
+    _immutable_ref(value["export_ref"], "reconciliation.export_ref", {"artifact"})
+    _immutable_ref(value["review_ref"], "reconciliation.review_ref", {"verification-result"})
+    receipts = value["receipts"]
+    if not isinstance(receipts, dict) or set(receipts) != AUDIT_RECEIPTS:
+        raise MaintenanceCapabilityError("reconciliation receipts must cover every frozen audit class")
+    for name, receipt in receipts.items():
+        _immutable_ref(receipt, f"reconciliation.receipts.{name}", {"artifact", "verification-result"})
+    return _canonical(value).decode()
 
 
 class SQLiteMaintenanceCapabilityStore:
@@ -258,10 +298,10 @@ class SQLiteMaintenanceCapabilityStore:
         payload_digest = hashlib.sha256(_canonical({"capability_id": capability_id, "envelope_digest": frozen.digest, "actor": actor, "at": at})).hexdigest()
         return self._write_prepare(capability_id, request_id, frozen, _canonical(envelope).decode(), actor, at, payload_digest)
 
-    def transition(self, *, capability_id: str, request_id: str, action: str, expected_revision: str, actor: str, at: str, step_id: str | None = None, command_id: str | None = None, command_ref: str | None = None, effect_ref: str | None = None) -> dict[str, Any]:
+    def transition(self, *, capability_id: str, request_id: str, action: str, expected_revision: str, actor: str, at: str, step_id: str | None = None, command_id: str | None = None, command_ref: str | None = None, effect_ref: str | None = None, reconciliation: Mapping[str, Any] | None = None) -> dict[str, Any]:
         request_id = _request_id(request_id)
         now = _time(at, "at")
-        payload = {"capability_id": capability_id, "action": action, "expected_revision": expected_revision, "actor": actor, "at": at, "step_id": step_id, "command_id": command_id, "command_ref": command_ref, "effect_ref": effect_ref}
+        payload = {"capability_id": capability_id, "action": action, "expected_revision": expected_revision, "actor": actor, "at": at, "step_id": step_id, "command_id": command_id, "command_ref": command_ref, "effect_ref": effect_ref, "reconciliation": reconciliation}
         digest = hashlib.sha256(_canonical(payload)).hexdigest()
         try:
             self.conn.execute("BEGIN IMMEDIATE")
@@ -279,6 +319,11 @@ class SQLiteMaintenanceCapabilityStore:
             if expected_revision != current_revision:
                 raise StaleCapabilityRevision(f"stale capability revision: expected {expected_revision!r}, current {current_revision!r}")
             expires_at = _time(current["expires_at"], "expires_at")
+            not_before = _time(current["not_before"], "not_before")
+            if action in {"activate", "observe", "reconcile"} and now < not_before:
+                raise MaintenanceCapabilityError("maintenance execution is before window.not_before")
+            next_sequence = current["next_sequence"]
+            audit_bundle_json = None
             if now >= expires_at:
                 target = "expired"
                 outcome = "expired"
@@ -289,18 +334,25 @@ class SQLiteMaintenanceCapabilityStore:
                 outcome = "accepted"
                 envelope = json.loads(current["envelope_json"])
                 if action in {"activate", "observe"}:
-                    self._authorize_step(envelope, current, action, step_id, command_id, command_ref, effect_ref, now)
+                    executed_sequence = self._authorize_step(envelope, current, action, step_id, command_id, command_ref, effect_ref, now)
+                    if executed_sequence != current["next_sequence"] or (action == "activate" and executed_sequence != 1):
+                        raise MaintenanceCapabilityError("step execution must follow the exact forward sequence cursor")
+                    next_sequence = executed_sequence + 1
                 elif action in {"attest", "reconcile", "abort", "revoke"}:
                     if command_ref is not None or effect_ref is None:
                         raise MaintenanceCapabilityError("authority transition requires one immutable effect receipt and no command substitution")
                     _exact_ref(effect_ref, "effect_ref")
+                if action == "reconcile":
+                    if current["next_sequence"] != len(envelope["steps"]) + 1:
+                        raise MaintenanceCapabilityError("reconciliation requires every reviewed step receipt in order")
+                    audit_bundle_json = _validate_reconciliation_bundle(reconciliation)
                 if action == "activate":
                     self._require_zero_ordinary_claims(now)
                     self._require_fresh_start_gate(envelope, now)
             next_revision = current["revision"] + 1
-            self.conn.execute("UPDATE maintenance_capability SET state = ?, revision = ?, updated_at = ? WHERE capability_id = ? AND revision = ?", (target, next_revision, at, capability_id, current["revision"]))
+            self.conn.execute("UPDATE maintenance_capability SET state = ?, revision = ?, next_sequence = ?, updated_at = ? WHERE capability_id = ? AND revision = ?", (target, next_revision, next_sequence, at, capability_id, current["revision"]))
             result_revision = revision(capability_id, target, next_revision)
-            self._receipt(capability_id, request_id, action, outcome, current["state"], target, result_revision, step_id, command_ref, effect_ref, digest, actor, at)
+            self._receipt(capability_id, request_id, action, outcome, current["state"], target, result_revision, step_id, command_ref, effect_ref, audit_bundle_json, digest, actor, at)
             self.conn.commit()
             return {"capability_id": capability_id, "request_id": request_id, "action": action, "outcome": outcome, "state": target, "revision": result_revision, "duplicate": False}
         except Exception:
@@ -337,7 +389,7 @@ class SQLiteMaintenanceCapabilityStore:
                 raise MaintenanceCapabilityError("capability_id already exists; capabilities cannot be renewed or replaced")
             self.conn.execute("INSERT INTO maintenance_capability (capability_id, envelope_id, envelope_digest, envelope_json, plan_ref, operator_identity, not_before, expires_at, state, revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'prepared', 1, ?, ?)", (capability_id, frozen.envelope_id, frozen.digest, envelope_json, frozen.plan_ref, frozen.operator, frozen.not_before.isoformat(), frozen.expires_at.isoformat(), at, at))
             result_revision = revision(capability_id, "prepared", 1)
-            self._receipt(capability_id, request_id, "prepare", "accepted", None, "prepared", result_revision, None, None, None, digest, actor, at)
+            self._receipt(capability_id, request_id, "prepare", "accepted", None, "prepared", result_revision, None, None, None, None, digest, actor, at)
             self.conn.commit()
             return {"capability_id": capability_id, "request_id": request_id, "action": "prepare", "outcome": "accepted", "state": "prepared", "revision": result_revision, "duplicate": False}
         except Exception:
@@ -353,8 +405,8 @@ class SQLiteMaintenanceCapabilityStore:
             raise MaintenanceCapabilityError("request_id replay changed immutable request content")
         return {"capability_id": capability_id, "request_id": request_id, "action": row["action"], "outcome": row["outcome"], "state": row["to_state"], "revision": row["result_revision"], "duplicate": True}
 
-    def _receipt(self, capability_id: str, request_id: str, action: str, outcome: str, from_state: str | None, to_state: str, result_revision: str, step_id: str | None, command_ref: str | None, effect_ref: str | None, digest: str, actor: str, at: str) -> None:
-        self.conn.execute("INSERT INTO maintenance_capability_receipt (capability_id, request_id, action, outcome, from_state, to_state, result_revision, step_id, command_ref, effect_ref, request_digest, actor, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (capability_id, request_id, action, outcome, from_state, to_state, result_revision, step_id, command_ref, effect_ref, digest, actor, at))
+    def _receipt(self, capability_id: str, request_id: str, action: str, outcome: str, from_state: str | None, to_state: str, result_revision: str, step_id: str | None, command_ref: str | None, effect_ref: str | None, audit_bundle_json: str | None, digest: str, actor: str, at: str) -> None:
+        self.conn.execute("INSERT INTO maintenance_capability_receipt (capability_id, request_id, action, outcome, from_state, to_state, result_revision, step_id, command_ref, effect_ref, audit_bundle_json, request_digest, actor, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (capability_id, request_id, action, outcome, from_state, to_state, result_revision, step_id, command_ref, effect_ref, audit_bundle_json, digest, actor, at))
 
     def _require_zero_ordinary_claims(self, now: datetime) -> None:
         row = self.conn.execute("SELECT COUNT(*) AS count FROM claim WHERE status = 'active' AND julianday(expires_at) > julianday(?)", (now.isoformat(),)).fetchone()
@@ -362,7 +414,7 @@ class SQLiteMaintenanceCapabilityStore:
         if count:
             raise MaintenanceCapabilityError("activation requires zero live ordinary claims")
 
-    def _authorize_step(self, envelope: Mapping[str, Any], current: Mapping[str, Any], action: str, step_id: str | None, command_id: str | None, command_ref: str | None, effect_ref: str | None, now: datetime) -> None:
+    def _authorize_step(self, envelope: Mapping[str, Any], current: Mapping[str, Any], action: str, step_id: str | None, command_id: str | None, command_ref: str | None, effect_ref: str | None, now: datetime) -> int:
         if not step_id or not command_id or not command_ref or not effect_ref:
             raise MaintenanceCapabilityError("step execution requires exact step, command, command receipt, and effect receipt")
         _exact_ref(command_ref, "command_ref")
@@ -377,6 +429,7 @@ class SQLiteMaintenanceCapabilityStore:
                 binding = next((item for item in envelope["jit_bindings"] if item["name"] == definition["name"]), None)
                 if binding is None or _time(binding["bound_at"], "bound_at") > _time(definition["bind_by"], "bind_by") or _time(binding["bound_at"], "bound_at") > now:
                     raise MaintenanceCapabilityError("required step-scoped JIT binding is absent or late")
+        return int(step["sequence"])
 
     def _require_fresh_start_gate(self, envelope: Mapping[str, Any], now: datetime) -> None:
         for name in ("dependent_implementation_sessions", "active_normal_claims"):
@@ -413,17 +466,17 @@ class PostgresMaintenanceCapabilityStore:
                     raise MaintenanceCapabilityError("capability_id already exists; capabilities cannot be renewed or replaced")
                 cur.execute("INSERT INTO maintenance_capability (repo_id, capability_id, envelope_id, envelope_digest, envelope_json, plan_ref, operator_identity, not_before, expires_at, state, revision, created_at, updated_at) VALUES (%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,'prepared',1,%s,%s)", (self.repo_id, capability_id, frozen.envelope_id, frozen.digest, _canonical(envelope).decode(), frozen.plan_ref, frozen.operator, frozen.not_before, frozen.expires_at, now, now))
                 result_revision = revision(capability_id, "prepared", 1)
-                self._receipt(cur, capability_id, request_id, "prepare", "accepted", None, "prepared", result_revision, None, None, None, digest, actor, now)
+                self._receipt(cur, capability_id, request_id, "prepare", "accepted", None, "prepared", result_revision, None, None, None, None, digest, actor, now)
             self.conn.commit()
             return {"capability_id": capability_id, "request_id": request_id, "action": "prepare", "outcome": "accepted", "state": "prepared", "revision": result_revision, "duplicate": False}
         except Exception:
             self.conn.rollback()
             raise
 
-    def transition(self, *, capability_id: str, request_id: str, action: str, expected_revision: str, actor: str, at: str, step_id: str | None = None, command_id: str | None = None, command_ref: str | None = None, effect_ref: str | None = None) -> dict[str, Any]:
+    def transition(self, *, capability_id: str, request_id: str, action: str, expected_revision: str, actor: str, at: str, step_id: str | None = None, command_id: str | None = None, command_ref: str | None = None, effect_ref: str | None = None, reconciliation: Mapping[str, Any] | None = None) -> dict[str, Any]:
         request_id = _request_id(request_id)
         now = _time(at, "at")
-        payload = {"capability_id": capability_id, "action": action, "expected_revision": expected_revision, "actor": actor, "at": at, "step_id": step_id, "command_id": command_id, "command_ref": command_ref, "effect_ref": effect_ref}
+        payload = {"capability_id": capability_id, "action": action, "expected_revision": expected_revision, "actor": actor, "at": at, "step_id": step_id, "command_id": command_id, "command_ref": command_ref, "effect_ref": effect_ref, "reconciliation": reconciliation}
         digest = hashlib.sha256(_canonical(payload)).hexdigest()
         try:
             with self.conn.cursor() as cur:
@@ -431,6 +484,8 @@ class PostgresMaintenanceCapabilityStore:
                 if duplicate:
                     self.conn.commit()
                     return duplicate
+                if action == "activate":
+                    cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (self.repo_id,))
                 cur.execute("SELECT * FROM maintenance_capability WHERE repo_id = %s AND capability_id = %s FOR UPDATE", (self.repo_id, capability_id))
                 row = cur.fetchone()
                 if row is None:
@@ -444,6 +499,13 @@ class PostgresMaintenanceCapabilityStore:
                 expires_at = current["expires_at"]
                 if expires_at.tzinfo is None:
                     expires_at = expires_at.replace(tzinfo=timezone.utc)
+                not_before = current["not_before"]
+                if not_before.tzinfo is None:
+                    not_before = not_before.replace(tzinfo=timezone.utc)
+                if action in {"activate", "observe", "reconcile"} and now < not_before:
+                    raise MaintenanceCapabilityError("maintenance execution is before window.not_before")
+                next_sequence = current["next_sequence"]
+                audit_bundle_json = None
                 if now >= expires_at:
                     target, outcome = "expired", "expired"
                 else:
@@ -455,20 +517,27 @@ class PostgresMaintenanceCapabilityStore:
                     if isinstance(envelope, str):
                         envelope = json.loads(envelope)
                     if action in {"activate", "observe"}:
-                        SQLiteMaintenanceCapabilityStore._authorize_step(self, envelope, current, action, step_id, command_id, command_ref, effect_ref, now)
+                        executed_sequence = SQLiteMaintenanceCapabilityStore._authorize_step(self, envelope, current, action, step_id, command_id, command_ref, effect_ref, now)
+                        if executed_sequence != current["next_sequence"] or (action == "activate" and executed_sequence != 1):
+                            raise MaintenanceCapabilityError("step execution must follow the exact forward sequence cursor")
+                        next_sequence = executed_sequence + 1
                     elif action in {"attest", "reconcile", "abort", "revoke"}:
                         if command_ref is not None or effect_ref is None:
                             raise MaintenanceCapabilityError("authority transition requires one immutable effect receipt and no command substitution")
                         _exact_ref(effect_ref, "effect_ref")
+                    if action == "reconcile":
+                        if current["next_sequence"] != len(envelope["steps"]) + 1:
+                            raise MaintenanceCapabilityError("reconciliation requires every reviewed step receipt in order")
+                        audit_bundle_json = _validate_reconciliation_bundle(reconciliation)
                     if action == "activate":
                         cur.execute("SELECT COUNT(*) AS count FROM claim WHERE repo_id = %s AND status = 'active' AND expires_at > %s", (self.repo_id, now))
                         if int(cur.fetchone()["count"]):
                             raise MaintenanceCapabilityError("activation requires zero live ordinary claims")
                         SQLiteMaintenanceCapabilityStore._require_fresh_start_gate(self, envelope, now)
                 next_revision = current["revision"] + 1
-                cur.execute("UPDATE maintenance_capability SET state=%s, revision=%s, updated_at=%s WHERE repo_id=%s AND capability_id=%s AND revision=%s", (target, next_revision, now, self.repo_id, capability_id, current["revision"]))
+                cur.execute("UPDATE maintenance_capability SET state=%s, revision=%s, next_sequence=%s, updated_at=%s WHERE repo_id=%s AND capability_id=%s AND revision=%s", (target, next_revision, next_sequence, now, self.repo_id, capability_id, current["revision"]))
                 result_revision = revision(capability_id, target, next_revision)
-                self._receipt(cur, capability_id, request_id, action, outcome, current["state"], target, result_revision, step_id, command_ref, effect_ref, digest, actor, now)
+                self._receipt(cur, capability_id, request_id, action, outcome, current["state"], target, result_revision, step_id, command_ref, effect_ref, audit_bundle_json, digest, actor, now)
             self.conn.commit()
             return {"capability_id": capability_id, "request_id": request_id, "action": action, "outcome": outcome, "state": target, "revision": result_revision, "duplicate": False}
         except Exception:
@@ -509,5 +578,5 @@ class PostgresMaintenanceCapabilityStore:
             raise MaintenanceCapabilityError("request_id replay changed immutable request content")
         return {"capability_id": capability_id, "request_id": request_id, "action": row["action"], "outcome": row["outcome"], "state": row["to_state"], "revision": row["result_revision"], "duplicate": True}
 
-    def _receipt(self, cur: Any, capability_id: str, request_id: str, action: str, outcome: str, from_state: str | None, to_state: str, result_revision: str, step_id: str | None, command_ref: str | None, effect_ref: str | None, digest: str, actor: str, at: datetime) -> None:
-        cur.execute("INSERT INTO maintenance_capability_receipt (repo_id,capability_id,request_id,action,outcome,from_state,to_state,result_revision,step_id,command_ref,effect_ref,request_digest,actor,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (self.repo_id, capability_id, request_id, action, outcome, from_state, to_state, result_revision, step_id, command_ref, effect_ref, digest, actor, at))
+    def _receipt(self, cur: Any, capability_id: str, request_id: str, action: str, outcome: str, from_state: str | None, to_state: str, result_revision: str, step_id: str | None, command_ref: str | None, effect_ref: str | None, audit_bundle_json: str | None, digest: str, actor: str, at: datetime) -> None:
+        cur.execute("INSERT INTO maintenance_capability_receipt (repo_id,capability_id,request_id,action,outcome,from_state,to_state,result_revision,step_id,command_ref,effect_ref,audit_bundle_json,request_digest,actor,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s)", (self.repo_id, capability_id, request_id, action, outcome, from_state, to_state, result_revision, step_id, command_ref, effect_ref, audit_bundle_json, digest, actor, at))

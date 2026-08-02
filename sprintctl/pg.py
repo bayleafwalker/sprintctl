@@ -1349,6 +1349,7 @@ def _apply_schema_version_6(cur: Any) -> None:
             expires_at timestamptz NOT NULL,
             state text NOT NULL CHECK (state IN ('prepared','attested','active','observing','reconciled','aborted','revoked','expired')),
             revision integer NOT NULL CHECK (revision >= 1),
+            next_sequence integer NOT NULL DEFAULT 1 CHECK (next_sequence >= 1),
             created_at timestamptz NOT NULL,
             updated_at timestamptz NOT NULL,
             PRIMARY KEY (repo_id, capability_id),
@@ -1367,6 +1368,7 @@ def _apply_schema_version_6(cur: Any) -> None:
             step_id text,
             command_ref text,
             effect_ref text,
+            audit_bundle_json jsonb,
             request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
             actor text NOT NULL,
             created_at timestamptz NOT NULL,
@@ -1386,6 +1388,19 @@ def _apply_schema_version_6(cur: Any) -> None:
         )
         """
     )
+    cur.execute(
+        """
+        CREATE OR REPLACE FUNCTION sprintctl_maintenance_evidence_immutable()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            RAISE EXCEPTION 'maintenance capability receipt/recovery records are immutable';
+        END;
+        $$
+        """
+    )
+    for table in ("maintenance_capability_receipt", "maintenance_capability_recovery"):
+        cur.execute(f"DROP TRIGGER IF EXISTS {table}_immutable ON {table}")
+        cur.execute(f"CREATE TRIGGER {table}_immutable BEFORE UPDATE OR DELETE ON {table} FOR EACH ROW EXECUTE FUNCTION sprintctl_maintenance_evidence_immutable()")
 
 
 def compatibility_handshake(store: PgStore) -> dict[str, Any]:
@@ -2342,6 +2357,11 @@ def _lock_claim_arbitration_row(cur: Any, store: PgStore, work_item_id: int) -> 
         raise ValueError(f"Work item #{work_item_id} not found")
 
 
+def _lock_repo_claim_capability_arbitration(cur: Any, repo_id: str) -> None:
+    """Serialize repo-wide ordinary-claim admission with maintenance activation."""
+    cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (repo_id,))
+
+
 # ---------------------------------------------------------------------------
 # Claim
 # ---------------------------------------------------------------------------
@@ -2387,6 +2407,18 @@ def create_claim(
         claim_token = _generate_claim_token()
         try:
             with store.conn.cursor() as cur:
+                _lock_repo_claim_capability_arbitration(cur, store.repo_id)
+                cur.execute(
+                    "SELECT capability_id FROM maintenance_capability "
+                    "WHERE repo_id=%s AND state IN ('active','observing') "
+                    "AND expires_at > now() LIMIT 1",
+                    (store.repo_id,),
+                )
+                active_capability = cur.fetchone()
+                if active_capability is not None:
+                    raise ClaimConflict(
+                        "ordinary claims are disabled while an exact-plan maintenance capability is active"
+                    )
                 if exclusive:
                     _lock_claim_arbitration_row(cur, store, work_item_id)
                 cur.execute(

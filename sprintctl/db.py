@@ -557,6 +557,7 @@ def _migration_16(conn: sqlite3.Connection) -> None:
             expires_at text NOT NULL,
             state text NOT NULL CHECK (state IN ('prepared','attested','active','observing','reconciled','aborted','revoked','expired')),
             revision integer NOT NULL CHECK (revision >= 1),
+            next_sequence integer NOT NULL DEFAULT 1 CHECK (next_sequence >= 1),
             created_at text NOT NULL,
             updated_at text NOT NULL
         );
@@ -571,6 +572,7 @@ def _migration_16(conn: sqlite3.Connection) -> None:
             step_id text,
             command_ref text,
             effect_ref text,
+            audit_bundle_json text,
             request_digest text NOT NULL CHECK (length(request_digest) = 64),
             actor text NOT NULL,
             created_at text NOT NULL,
@@ -587,6 +589,16 @@ def _migration_16(conn: sqlite3.Connection) -> None:
         );
         """,
     )
+    for table, label in (
+        ("maintenance_capability_receipt", "maintenance capability receipts"),
+        ("maintenance_capability_recovery", "maintenance capability recovery records"),
+    ):
+        for operation in ("UPDATE", "DELETE"):
+            conn.execute(
+                f"CREATE TRIGGER IF NOT EXISTS {table}_immutable_{operation.lower()} "
+                f"BEFORE {operation} ON {table} BEGIN "
+                f"SELECT RAISE(ABORT, '{label} are immutable'); END"
+            )
 
 
 def _run_migration(
@@ -1639,6 +1651,15 @@ def create_claim(
         claim_token = _generate_claim_token()
         try:
             conn.execute("BEGIN IMMEDIATE")
+            active_capability = conn.execute(
+                "SELECT capability_id FROM maintenance_capability "
+                "WHERE state IN ('active','observing') "
+                "AND julianday(expires_at) > julianday('now') LIMIT 1"
+            ).fetchone()
+            if active_capability is not None:
+                raise ClaimConflict(
+                    "ordinary claims are disabled while an exact-plan maintenance capability is active"
+                )
             if exclusive:
                 conflict = _get_active_exclusive_claim_row(conn, work_item_id)
                 if conflict:

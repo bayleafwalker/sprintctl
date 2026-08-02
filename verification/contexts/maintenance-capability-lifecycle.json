@@ -14,26 +14,30 @@
   "initial_state": ["capability=absent", "ordinary-claims=zero-or-coordinator-build-only", "recovery-authority=none"],
   "operations": [
     {"name": "prepare-attest", "actors": ["operator", "coordinator"], "synchronization": "capability-transaction"},
-    {"name": "activate-observe-reconcile", "actors": ["operator", "executor"], "synchronization": "cas-revision-and-zero-claim-gate"},
+    {"name": "activate-observe-reconcile", "actors": ["operator", "executor"], "synchronization": "cas-revision-forward-cursor-and-repository-claim-capability-arbitration"},
     {"name": "abort-revoke-expire", "actors": ["operator"], "synchronization": "capability-row-lock"},
     {"name": "append-recovery-record", "actors": ["recovery-observer"], "synchronization": "append-only-non-authoritative"}
   ],
   "consistency": {"target": "application-invariant", "object": "repository-scoped-capability-lifecycle"},
-  "assumptions": {"isolation": "sqlite-immediate-writer-or-postgres-row-lock", "clock": "explicit-evaluation-time", "fairness": "none"},
+  "assumptions": {"isolation": "sqlite-immediate-writer-or-postgres-shared-repository-advisory-lock-plus-capability-row-lock", "clock": "explicit-evaluation-time", "fairness": "none"},
   "bounds": {"requests_per_transition": 2, "independent_actors": 2, "backends": 2},
   "invariants": [
     "canonical-envelope-digest-and-plan-ref-never-change",
     "activation-requires-zero-live-ordinary-claims",
+    "claim-admission-and-capability-activation-share-one-repository-arbitration-point",
     "capability-is-not-a-claim-lease-credential-or-recovery-grant",
     "expected-revision-allows-one-winner-and-stale-request-has-no-effect",
     "same-request-and-bytes-is-idempotent-but-changed-replay-rejects",
     "step-command-jit-and-receipts-stay-inside-reviewed-envelope",
+    "steps-execute-once-in-contiguous-forward-sequence-before-reconciliation",
+    "receipt-and-recovery-evidence-rows-reject-update-and-delete",
+    "reconciliation-binds-the-complete-incident-export-review-and-receipt-bundle",
     "expiry-is-terminal-and-nonrenewable",
     "abort-and-revoke-are-terminal",
     "recovery-observation-and-requested-command-have-authority-none",
     "sqlite-and-postgres-produce-equivalent-accepted-and-rejected-histories"
   ],
-  "faults": ["response-loss-after-commit", "stale-revision", "duplicate-request-with-changed-bytes", "late-jit-binding", "active-ordinary-claim", "expired-window", "missing-effect-receipt", "recovery-request-substitution"],
+  "faults": ["response-loss-after-commit", "stale-revision", "duplicate-request-with-changed-bytes", "late-jit-binding", "pre-window-execution", "active-ordinary-claim", "claim-activation-race", "out-of-order-step", "receipt-mutation", "incomplete-reconciliation", "expired-window", "missing-effect-receipt", "recovery-request-substitution"],
   "oracles": ["sqlite-row-and-receipt-query", "postgres-row-and-receipt-query", "canonical-result-shape", "no-effect-count", "artifact-validator"],
   "implementation_anchors": ["sprintctl/maintenance_capability.py", "sprintctl/db.py:_migration_16", "sprintctl/pg.py:_apply_schema_version_6"],
   "expansions": ["semantic-doc", "stateful-test", "concurrent-history", "fault-scenario"]
