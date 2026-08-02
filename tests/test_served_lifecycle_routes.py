@@ -231,6 +231,62 @@ def test_served_claim_create_replays_one_request_after_unknown_outcome(
 
 
 @_requires_312
+def test_served_claim_create_keeps_accepted_request_replayable_until_recovery_is_durable(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    aggregate_uuid = str(uuid4())
+    monkeypatch.setattr(cli_module._served, "read_item", lambda *a, **k: {
+        "item": {"id": 3, "aggregate_uuid": aggregate_uuid, "status": "pending"}, "refs": [],
+    })
+    calls = []
+    monkeypatch.setattr(
+        cli_module._served, "claim_arbitrate",
+        lambda *a, **k: calls.append(k) or {
+            "outcome": "accepted", "duplicate": len(calls) > 1,
+            "effect": _served_claim_effect(claim_type="coordinate"),
+        },
+    )
+    writes = []
+    real_writer = cli_module._write_claim_recovery_record
+    def fail_once(claim):
+        writes.append(claim)
+        return None if len(writes) == 1 else real_writer(claim)
+    monkeypatch.setattr(cli_module, "_write_claim_recovery_record", fail_once)
+    argv = [
+        "claim", "create", "--item-id", "3", "--actor", "served-actor",
+        "--type", "coordinate", "--json",
+    ]
+
+    first = runner.invoke(cli, argv)
+    assert first.exit_code == 1
+    assert "accepted but its local recovery proof could not be persisted" in first.output
+    assert "claim_token" not in first.output
+    records = _outbox_records(tmp_path)
+    assert len(records) == 1
+    event_id = records[0].event_id
+    credentials = calls[0]["transient_credentials"]
+    assert list((tmp_path / ".sprintctl" / "authority-credentials").glob("*"))
+    terminal = tmp_path / ".sprintctl" / "authority-terminal-decisions" / f"{event_id}.json"
+    assert not terminal.exists()
+
+    retry = runner.invoke(cli, argv)
+    assert retry.exit_code == 0, retry.output
+    assert len(calls) == 2
+    assert calls[1]["record"]["event_id"] == event_id
+    assert calls[1]["transient_credentials"] == credentials
+    assert len(_outbox_records(tmp_path)) == 1
+    assert not list((tmp_path / ".sprintctl" / "authority-credentials").glob("*"))
+    assert terminal.exists()
+    sidecar = tmp_path / "claim-recovery" / "claim-19.json"
+    assert sidecar.stat().st_mode & 0o777 == 0o600
+    assert json.loads(sidecar.read_text())["claim_token"] == next(
+        token for ref, token in credentials.items()
+        if ref == calls[1]["record"]["payload"]["payload"]["credential_ref"]
+    )
+
+
+@_requires_312
 def test_served_done_from_claim_uses_one_lifecycle_command_and_transient_proof(
     runner, tmp_path, monkeypatch
 ):

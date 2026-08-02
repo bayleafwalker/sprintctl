@@ -7274,10 +7274,10 @@ def _served_claim_create(
         repo_id=config.repo_id, record=_served_record_argument(durable),
         transient_credentials=credentials, resolved_context=context,
     )
-    _authority_config.mark_terminal_authority_decision(
-        rollout_paths, event_id=durable.event_id, outcome=decision["outcome"]
-    )
     if decision["outcome"] != "accepted":
+        _authority_config.mark_terminal_authority_decision(
+            rollout_paths, event_id=durable.event_id, outcome=decision["outcome"]
+        )
         _authority_config.remove_pending_authority_credential(
             rollout_paths, event_id=durable.event_id
         )
@@ -7297,10 +7297,21 @@ def _served_claim_create(
         "instance_id": effect.get("instance_id", request.payload["metadata"].get("instance_id")),
     }
     recovery_path = _write_claim_recovery_record(claim)
-    if recovery_path is not None:
-        _authority_config.remove_pending_authority_credential(
-            rollout_paths, event_id=durable.event_id
+    if recovery_path is None:
+        click.echo(
+            "Error: claim acquisition was accepted but its local recovery proof "
+            f"could not be persisted. Immutable request {durable.event_id} remains "
+            "pending with private recovery credentials; retry this exact claim create "
+            "command to recover the accepted result without minting another claim.",
+            err=True,
         )
+        sys.exit(1)
+    _authority_config.mark_terminal_authority_decision(
+        rollout_paths, event_id=durable.event_id, outcome=decision["outcome"]
+    )
+    _authority_config.remove_pending_authority_credential(
+        rollout_paths, event_id=durable.event_id
+    )
     refs = item_result.get("refs", [])
     claim["refs"] = refs
     claim["local_recovery"] = {
