@@ -184,6 +184,8 @@ def test_activation_rejects_before_window_and_step_cursor_cannot_jump_or_reverse
     (lambda e: e["start_gate"]["active_normal_claims"].update(expected_count=1), "require zero"),
     (lambda e: e["recovery_policy"].update(authority="grant"), "non-authoritative"),
     (lambda e: e["jit_bindings"][0].update(bound_at="2026-08-02T20:01:00Z"), "deadline"),
+    (lambda e: (e["jit_fields"][0].update(pattern="^<backup>$"), e["jit_bindings"][0].update(value="<backup>")), "credential-free text"),
+    (lambda e: (e["jit_fields"][0].update(pattern="^[0-9]+$"), e["jit_bindings"][0].update(value=1234)), "credential-free text"),
     (lambda e: e["steps"][0].update(phase="arbitrary"), "phase"),
     (lambda e: e["steps"][0]["reviews"][0].update(authority=True), "fields must be exact"),
     (lambda e: e["start_gate"]["active_normal_claims"].update(observed_at="2026-08-02T18:59:00Z"), "inside the maintenance window"),

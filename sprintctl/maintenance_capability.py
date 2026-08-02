@@ -281,8 +281,8 @@ def freeze_envelope(envelope: Any) -> FrozenEnvelope:
         bind_by = _time(definition.get("bind_by"), f"jit_fields.{name}.bind_by")
         if bind_by < not_before or bind_by >= expires_at:
             raise MaintenanceCapabilityError("JIT binding deadline must be inside the envelope window")
-        pattern = definition.get("pattern")
-        if not isinstance(pattern, str) or len(pattern) > 256 or not pattern.startswith("^") or not pattern.endswith("$") or ".*" in pattern or ".+" in pattern:
+        pattern = _text(definition.get("pattern"), f"jit_fields.{name}.pattern")
+        if len(pattern) > 256 or not pattern.startswith("^") or not pattern.endswith("$") or ".*" in pattern or ".+" in pattern:
             raise MaintenanceCapabilityError("JIT pattern must be bounded and anchored")
         try:
             re.compile(pattern)
@@ -296,7 +296,8 @@ def freeze_envelope(envelope: Any) -> FrozenEnvelope:
         name = binding.get("name") if isinstance(binding, dict) else None
         if not isinstance(binding, dict) or set(binding) != {"name", "value", "observed_at", "bound_at", "evidence_ref", "receipt_ref"} or name not in definitions or name in bindings:
             raise MaintenanceCapabilityError("JIT bindings must be unique declared fields")
-        if re.fullmatch(definitions[name]["pattern"], str(binding.get("value", ""))) is None:
+        binding_value = _text(binding.get("value"), f"jit_bindings.{name}.value")
+        if re.fullmatch(definitions[name]["pattern"], binding_value) is None:
             raise MaintenanceCapabilityError("JIT binding violates its frozen pattern")
         observed = _time(binding.get("observed_at"), f"jit_bindings.{name}.observed_at")
         bound = _time(binding.get("bound_at"), f"jit_bindings.{name}.bound_at")
