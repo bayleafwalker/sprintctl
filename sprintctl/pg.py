@@ -2474,6 +2474,10 @@ def create_claim(
             store.conn.commit()
             return row["id"]
         except ClaimConflict:
+            # The repository arbitration lock is transaction-scoped.  A normal
+            # rejected admission must close its transaction before control
+            # returns to a caller that may retain and reuse this connection.
+            store.conn.rollback()
             raise
         except Exception as exc:
             store.conn.rollback()

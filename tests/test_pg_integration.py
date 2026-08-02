@@ -326,6 +326,56 @@ class TestMaintenanceCapabilityLifecycle:
             live_claims = int(cur.fetchone()["count"])
         assert not (capability_active and live_claims), outcomes
 
+    def test_rejected_claim_rolls_back_repo_arbitration_on_retained_connection(
+        self, store, pg_test_scope
+    ):
+        repo_id = pg_test_scope("maintenance-conflict-rollback")
+        retained = psycopg.connect(_PG_URL, row_factory=dict_row)
+        contender = psycopg.connect(_PG_URL, row_factory=dict_row)
+        try:
+            retained_store = pg.PgStore(conn=retained, repo_id=repo_id)
+            sprint_id = pg.create_sprint(retained_store, f"Conflict rollback-{_uid()}", status="active")
+            track_id = pg.get_or_create_track(retained_store, sprint_id, "authority")
+            item_id = pg.create_work_item(retained_store, sprint_id, track_id, "Rejected claim")
+            lifecycle = PostgresMaintenanceCapabilityStore(retained_store)
+            prepared = lifecycle.prepare(capability_id=f"mcap:{uuid.uuid4()}", request_id=str(uuid.uuid4()), envelope=envelope(), actor="operator", at=AT)
+            attested = lifecycle.transition(capability_id=prepared["capability_id"], request_id=str(uuid.uuid4()), action="attest", expected_revision=prepared["revision"], actor="operator", at=AT, effect_ref="sha256:" + "0" * 64)
+            lifecycle.transition(capability_id=prepared["capability_id"], request_id=str(uuid.uuid4()), action="activate", expected_revision=attested["revision"], actor="operator", at=AT, step_id="attest-backup", command_id="verify-backup", command_ref="sha256:" + "1" * 64, effect_ref="sha256:" + "2" * 64)
+
+            with pytest.raises(ClaimConflict):
+                pg.create_claim(retained_store, item_id, "ordinary-agent")
+            assert retained.info.transaction_status == psycopg.pq.TransactionStatus.IDLE
+            with contender.cursor() as cur:
+                cur.execute(
+                    "SELECT pg_try_advisory_xact_lock(hashtextextended(%s, 0)) AS acquired",
+                    (repo_id,),
+                )
+                assert cur.fetchone()["acquired"] is True
+            contender.rollback()
+        finally:
+            retained.close()
+            contender.close()
+
+    def test_postgres_receipt_and_recovery_evidence_reject_mutation(
+        self, store, pg_test_scope
+    ):
+        repo_id = pg_test_scope("maintenance-evidence-immutable")
+        scoped_store = pg.PgStore(conn=store.conn, repo_id=repo_id)
+        lifecycle = PostgresMaintenanceCapabilityStore(scoped_store)
+        capability_id = f"mcap:{uuid.uuid4()}"
+        lifecycle.prepare(capability_id=capability_id, request_id=str(uuid.uuid4()), envelope=envelope(), actor="operator", at=AT)
+        lifecycle.append_recovery_record(capability_id=capability_id, record_id=str(uuid.uuid4()), kind="observation", payload_ref="artifact:sha256:" + "3" * 64, actor="observer", at=AT)
+        for statement in (
+            "UPDATE maintenance_capability_receipt SET actor='tampered' WHERE repo_id=%s",
+            "DELETE FROM maintenance_capability_receipt WHERE repo_id=%s",
+            "UPDATE maintenance_capability_recovery SET actor='tampered' WHERE repo_id=%s",
+            "DELETE FROM maintenance_capability_recovery WHERE repo_id=%s",
+        ):
+            with pytest.raises(psycopg.errors.RaiseException, match="immutable"):
+                with scoped_store.conn.cursor() as cur:
+                    cur.execute(statement, (repo_id,))
+            scoped_store.conn.rollback()
+
 class TestRemoteSafety:
     def test_superseded_marker_is_read_from_disposable_temp_table(self, store):
         """The marker probe is read-only; the temporary fixture disappears with this connection."""

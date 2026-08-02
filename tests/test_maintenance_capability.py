@@ -175,13 +175,20 @@ def test_activation_rejects_before_window_and_step_cursor_cannot_jump_or_reverse
 
 
 @pytest.mark.parametrize("mutation,message", [
-    (lambda e: e.__setitem__("plan_ref", "main"), "immutable"),
+    (lambda e: e.__setitem__("plan_ref", "main"), "artifact"),
+    (lambda e: e.__setitem__("plan_ref", "sha256:" + "a" * 64), "artifact"),
+    (lambda e: e["repositories"][0].update(url="https://user:password@example.com/repo.git"), "credential-free"),
     (lambda e: e["command_registry"][0]["argv"].append("; reboot"), "safe exact"),
     (lambda e: e.__setitem__("command_registry_ref", "artifact:sha256:" + "0" * 64), "bind canonical"),
     (lambda e: e["steps"][0]["reviews"][0].update(reviewer="author"), "independent"),
     (lambda e: e["start_gate"]["active_normal_claims"].update(expected_count=1), "require zero"),
     (lambda e: e["recovery_policy"].update(authority="grant"), "non-authoritative"),
     (lambda e: e["jit_bindings"][0].update(bound_at="2026-08-02T20:01:00Z"), "deadline"),
+    (lambda e: e["steps"][0].update(phase="arbitrary"), "phase"),
+    (lambda e: e["steps"][0]["reviews"][0].update(authority=True), "fields must be exact"),
+    (lambda e: e["start_gate"]["active_normal_claims"].update(observed_at="2026-08-02T18:59:00Z"), "inside the maintenance window"),
+    (lambda e: e["operations"][0].update(allowed_commands=["verify-backup", "verify-backup"]), "sorted unique"),
+    (lambda e: e["operations"][0].update(allowed_paths=["clusters//main/vuoro"]), "normalized"),
 ])
 def test_envelope_authority_mutations_fail_closed(store, mutation, message):
     value = envelope()

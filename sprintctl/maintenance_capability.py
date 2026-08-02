@@ -13,7 +13,9 @@ import hashlib
 import json
 import re
 import sqlite3
+from pathlib import PurePosixPath
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 from uuid import UUID
 
 
@@ -28,6 +30,11 @@ AUDIT_OUTCOMES = frozenset({"accepted", "rejected", "duplicate", "expired", "abo
 AUDIT_REDACT = frozenset({"credentials", "claim-tokens", "capability-secrets"})
 CAPABILITY_ID = re.compile(r"^mcap:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 SHA256_REF = re.compile(r"^(?:artifact:)?sha256:[0-9a-f]{64}$")
+ARTIFACT_REF = re.compile(r"^artifact:sha256:[0-9a-f]{64}$")
+IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+PLACEHOLDER = re.compile(r"(?:REPLACE_AT_ACTIVATION|\$\{|<[^>]+>)")
+SENSITIVE = re.compile(r"(?:claim[_-]?token|credential|password|api[_-]?key|access[_-]?token)\s*[:=]", re.I)
+PHASE_ORDER = {"pre-migration": 0, "migration": 1, "post-migration": 2}
 TERMINAL_STATES = frozenset({"reconciled", "aborted", "revoked", "expired"})
 TRANSITIONS = {
     "attest": {"prepared": "attested"},
@@ -84,11 +91,51 @@ def _exact_ref(value: Any, field: str) -> str:
     return value
 
 
+def _text(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not value.strip() or PLACEHOLDER.search(value) or value in {"HEAD", "main", "latest"} or SENSITIVE.search(value):
+        raise MaintenanceCapabilityError(f"{field} must be nonblank, exact, credential-free text")
+    return value
+
+
+def _identifier(value: Any, field: str) -> str:
+    value = _text(value, field)
+    if not IDENTIFIER.fullmatch(value):
+        raise MaintenanceCapabilityError(f"{field} must be an identifier")
+    return value
+
+
+def _sorted_unique(values: Any, field: str, *, non_empty: bool = False) -> list[str]:
+    if not isinstance(values, list) or (non_empty and not values) or any(not isinstance(value, str) for value in values) or values != sorted(set(values)):
+        raise MaintenanceCapabilityError(f"{field} must be a sorted unique array")
+    return values
+
+
+def _relative_path(value: Any, field: str) -> str:
+    value = _text(value, field)
+    parsed = PurePosixPath(value)
+    if value.startswith("/") or "//" in value or any(part in {"", ".", ".."} for part in parsed.parts):
+        raise MaintenanceCapabilityError(f"{field} must be normalized, relative, and traversal-free")
+    return value.rstrip("/")
+
+
+def _repository_url(value: Any, field: str) -> str:
+    value = _text(value, field)
+    if value.startswith("git@"):
+        if not re.fullmatch(r"git@[A-Za-z0-9.-]+:[A-Za-z0-9._~/-]+(?:\.git)?", value):
+            raise MaintenanceCapabilityError(f"{field} must be a credential-free Git URL")
+        return value
+    parsed = urlsplit(value)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise MaintenanceCapabilityError(f"{field} must be a credential-free Git URL")
+    return value
+
+
 def _immutable_ref(value: Any, field: str, kinds: set[str]) -> Mapping[str, str]:
     if not isinstance(value, dict) or set(value) != {"kind", "source", "revision"}:
         raise MaintenanceCapabilityError(f"{field} must be an exact immutable reference")
-    if value["kind"] not in kinds or not isinstance(value["source"], str) or not value["source"]:
+    if value["kind"] not in kinds:
         raise MaintenanceCapabilityError(f"{field} has a disallowed immutable-reference kind")
+    _text(value["source"], f"{field}.source")
     revision = value["revision"]
     if value["kind"] == "sprint-event":
         valid = isinstance(revision, str) and re.fullmatch(r"event:[1-9][0-9]*", revision)
@@ -105,13 +152,14 @@ def freeze_envelope(envelope: Any) -> FrozenEnvelope:
         raise MaintenanceCapabilityError(f"envelope must use {CONTRACT_ID}")
     if set(envelope) != TOP_FIELDS:
         raise MaintenanceCapabilityError(f"envelope fields must exactly match {sorted(TOP_FIELDS)}")
-    envelope_id = envelope["envelope_id"]
-    if not isinstance(envelope_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", envelope_id):
-        raise MaintenanceCapabilityError("envelope_id must be exact")
-    plan_ref = _exact_ref(envelope["plan_ref"], "plan_ref")
+    envelope_id = _identifier(envelope["envelope_id"], "envelope_id")
+    plan_ref = envelope["plan_ref"]
+    if not isinstance(plan_ref, str) or not ARTIFACT_REF.fullmatch(plan_ref):
+        raise MaintenanceCapabilityError("plan_ref must be artifact:sha256:<digest>")
     operator = envelope["operator"]
-    if not isinstance(operator, dict) or set(operator) != {"identity", "decision_ref"} or not isinstance(operator.get("identity"), str):
+    if not isinstance(operator, dict) or set(operator) != {"identity", "decision_ref"}:
         raise MaintenanceCapabilityError("operator identity is required")
+    _identifier(operator["identity"], "operator.identity")
     _immutable_ref(operator.get("decision_ref"), "operator.decision_ref", {"artifact", "verification-result", "sprint-event"})
     window = envelope["window"]
     if not isinstance(window, dict) or set(window) != {"not_before", "expires_at"}:
@@ -130,17 +178,18 @@ def freeze_envelope(envelope: Any) -> FrozenEnvelope:
     for repository in envelope["repositories"]:
         if not isinstance(repository, dict) or set(repository) != {"id", "url", "commit"}:
             raise MaintenanceCapabilityError("repository bindings must be exact")
-        repo_id, commit = repository["id"], repository["commit"]
+        repo_id, commit = _identifier(repository["id"], "repository.id"), repository["commit"]
         if repo_id in repositories or not isinstance(commit, str) or re.fullmatch(r"[0-9a-f]{40}([0-9a-f]{24})?", commit) is None:
             raise MaintenanceCapabilityError("repository IDs and full commits must be unique and immutable")
+        _repository_url(repository["url"], "repository.url")
         repositories[repo_id] = commit
 
     registry: dict[str, tuple[str, ...]] = {}
     for command in envelope["command_registry"]:
         if not isinstance(command, dict) or set(command) != {"id", "argv"}:
             raise MaintenanceCapabilityError("command registry entries must be exact")
-        command_id, argv = command["id"], command["argv"]
-        if command_id in registry or not isinstance(argv, list) or not argv or any(not isinstance(arg, str) or any(c in arg for c in ";|`\r\n") for arg in argv):
+        command_id, argv = _identifier(command["id"], "command_registry.id"), command["argv"]
+        if command_id in registry or not isinstance(argv, list) or not argv or len(argv) > 32 or any(len(_text(arg, "command_registry.argv")) > 512 or any(c in arg for c in ";|`\r\n") for arg in argv):
             raise MaintenanceCapabilityError("command registry must contain unique safe exact argv")
         registry[command_id] = tuple(argv)
     expected_registry_ref = "artifact:sha256:" + hashlib.sha256(_canonical(envelope["command_registry"])).hexdigest()
@@ -153,13 +202,14 @@ def freeze_envelope(envelope: Any) -> FrozenEnvelope:
     for operation in envelope["operations"]:
         if not isinstance(operation, dict) or set(operation) != {"id", "owner_repository", "command_id", "allowed_paths", "allowed_commands"} or operation.get("id") in operations:
             raise MaintenanceCapabilityError("operations must have unique exact IDs")
-        owner = operation.get("owner_repository")
-        commands = operation.get("allowed_commands")
-        paths = operation.get("allowed_paths")
+        _identifier(operation["id"], "operation.id")
+        owner = _identifier(operation.get("owner_repository"), "operation.owner_repository")
+        commands = _sorted_unique(operation.get("allowed_commands"), "operation.allowed_commands", non_empty=True)
+        paths = _sorted_unique(operation.get("allowed_paths"), "operation.allowed_paths", non_empty=True)
         if owner not in repositories or not isinstance(commands, list) or not commands or any(command not in registry for command in commands):
             raise MaintenanceCapabilityError("operation must bind a repository and registered commands")
-        if not isinstance(paths, list) or not paths or any(not isinstance(path, str) or path.startswith("/") or ".." in path.split("/") for path in paths):
-            raise MaintenanceCapabilityError("operation paths must be closed traversal-free allowlists")
+        for path in paths:
+            _relative_path(path, "operation.allowed_paths")
         if operation.get("command_id") not in commands:
             raise MaintenanceCapabilityError("operation primary command must be allowlisted")
         operations[operation["id"]] = operation
@@ -170,13 +220,20 @@ def freeze_envelope(envelope: Any) -> FrozenEnvelope:
     step_ids: list[str] = []
     prior: set[str] = set()
     repo_heads = dict(repositories)
+    previous_phase = -1
     for index, step in enumerate(steps, 1):
         step_fields = {"id", "sequence", "repository_id", "base_commit", "commit", "operation_id", "depends_on", "paths", "commands", "reviews", "verification_refs", "publication_ref", "phase"}
-        if not isinstance(step, dict) or set(step) != step_fields or step.get("sequence") != index or not isinstance(step.get("id"), str):
+        if not isinstance(step, dict) or set(step) != step_fields or isinstance(step.get("sequence"), bool) or step.get("sequence") != index:
             raise MaintenanceCapabilityError("steps must have contiguous deterministic sequence")
-        if step["id"] in prior or any(dep not in prior for dep in step.get("depends_on", [])):
+        step_id = _identifier(step["id"], "step.id")
+        deps = _sorted_unique(step.get("depends_on"), "step.depends_on")
+        if step_id in prior or any(dep not in prior for dep in deps):
             raise MaintenanceCapabilityError("step dependency graph must reference unique earlier steps")
-        if any(command not in registry for command in step.get("commands", [])):
+        commands = _sorted_unique(step.get("commands"), "step.commands", non_empty=True)
+        paths = _sorted_unique(step.get("paths"), "step.paths", non_empty=True)
+        for path in paths:
+            _relative_path(path, "step.paths")
+        if any(command not in registry for command in commands):
             raise MaintenanceCapabilityError("steps may use only immutable registered commands")
         repo_id = step.get("repository_id")
         operation = operations.get(step.get("operation_id"))
@@ -191,13 +248,26 @@ def freeze_envelope(envelope: Any) -> FrozenEnvelope:
             raise MaintenanceCapabilityError("step path exceeds its operation allowlist")
         if not step.get("reviews") or not step.get("verification_refs") or not step.get("publication_ref"):
             raise MaintenanceCapabilityError("each step requires independent review, verification, and publication receipts")
+        review_refs: set[tuple[str, str, str]] = set()
         for review in step["reviews"]:
+            if not isinstance(review, dict) or set(review) != {"reviewer", "author", "verdict", "ref"}:
+                raise MaintenanceCapabilityError("step review fields must be exact")
+            _identifier(review["reviewer"], "step.review.reviewer")
+            _identifier(review["author"], "step.review.author")
             if review.get("reviewer") == review.get("author") or review.get("verdict") != "pass":
                 raise MaintenanceCapabilityError("step review must be independent and passing")
-            _immutable_ref(review.get("ref"), "step.review.ref", {"verification-result"})
+            review_ref = _immutable_ref(review.get("ref"), "step.review.ref", {"verification-result"})
+            key = (review_ref["kind"], review_ref["source"], review_ref["revision"])
+            if key in review_refs:
+                raise MaintenanceCapabilityError("step review refs must be unique")
+            review_refs.add(key)
         for ref in step["verification_refs"]:
             _immutable_ref(ref, "step.verification_ref", {"artifact", "verification-result"})
         _immutable_ref(step["publication_ref"], "step.publication_ref", {"artifact", "verification-result"})
+        phase = _text(step["phase"], "step.phase")
+        if phase not in PHASE_ORDER or PHASE_ORDER[phase] < previous_phase:
+            raise MaintenanceCapabilityError("step phase must be known and non-decreasing")
+        previous_phase = PHASE_ORDER[phase]
         step_ids.append(step["id"])
         prior.add(step["id"])
 
@@ -214,6 +284,10 @@ def freeze_envelope(envelope: Any) -> FrozenEnvelope:
         pattern = definition.get("pattern")
         if not isinstance(pattern, str) or len(pattern) > 256 or not pattern.startswith("^") or not pattern.endswith("$") or ".*" in pattern or ".+" in pattern:
             raise MaintenanceCapabilityError("JIT pattern must be bounded and anchored")
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise MaintenanceCapabilityError("JIT pattern must compile") from exc
         definitions[name] = definition
     if set(definitions) != JIT_NAMES:
         raise MaintenanceCapabilityError("JIT definitions must contain exactly the fixed v1 fields")
@@ -240,17 +314,23 @@ def freeze_envelope(envelope: Any) -> FrozenEnvelope:
         predicate = gate.get(name)
         if not isinstance(predicate, dict) or set(predicate) != {"expected_count", "observed_at", "evidence_ref", "receipt_ref"} or predicate.get("expected_count") != 0:
             raise MaintenanceCapabilityError("plan-1 start predicates must require zero")
+        observed = _time(predicate.get("observed_at"), f"start_gate.{name}.observed_at")
+        if observed < not_before or observed >= expires_at:
+            raise MaintenanceCapabilityError("start-gate observation must fall inside the maintenance window")
         _immutable_ref(predicate.get("evidence_ref"), f"start_gate.{name}.evidence_ref", {"verification-result"})
         _immutable_ref(predicate.get("receipt_ref"), f"start_gate.{name}.receipt_ref", {"artifact"})
     abort = envelope["abort"]
     if not isinstance(abort, dict) or set(abort) != {"before_migration", "after_migration", "forbidden"} or abort["before_migration"] != "restore-reviewed-pre-migration-state" or abort["after_migration"] not in {"restore-uid-attested-backup", "reviewed-forward-fix"} or set(abort["forbidden"]) != ABORT_FORBIDDEN:
         raise MaintenanceCapabilityError("abort policy must exactly match maintenance-envelope/v1")
     recovery = envelope["recovery_policy"]
-    if not isinstance(recovery, dict) or set(recovery) != {"record_kinds", "authority", "forbidden_uses"} or recovery.get("authority") != "none" or recovery.get("record_kinds") != ["observation", "requested-command"] or set(recovery.get("forbidden_uses", [])) != RECOVERY_FORBIDDEN:
+    if not isinstance(recovery, dict) or set(recovery) != {"record_kinds", "authority", "forbidden_uses"}:
+        raise MaintenanceCapabilityError("recovery records must remain non-authoritative")
+    recovery_forbidden = _sorted_unique(recovery["forbidden_uses"], "recovery_policy.forbidden_uses")
+    if recovery.get("authority") != "none" or recovery.get("record_kinds") != ["observation", "requested-command"] or set(recovery_forbidden) != RECOVERY_FORBIDDEN:
         raise MaintenanceCapabilityError("recovery records must remain non-authoritative")
     audit = envelope["audit_reconciliation"]
     audit_fields = {"incident_correlation_required", "immutable_receipts", "required_outcomes", "redact", "retention", "export_required", "independent_review_required"}
-    if not isinstance(audit, dict) or set(audit) != audit_fields or audit["incident_correlation_required"] is not True or audit["export_required"] is not True or audit["independent_review_required"] is not True or set(audit["immutable_receipts"]) != AUDIT_RECEIPTS or set(audit["required_outcomes"]) != AUDIT_OUTCOMES or set(audit["redact"]) != AUDIT_REDACT or audit["retention"] not in {"append-only-export", "content-addressed-export"}:
+    if not isinstance(audit, dict) or set(audit) != audit_fields or audit["incident_correlation_required"] is not True or audit["export_required"] is not True or audit["independent_review_required"] is not True or any(set(_sorted_unique(audit[field], f"audit_reconciliation.{field}")) != expected for field, expected in (("immutable_receipts", AUDIT_RECEIPTS), ("required_outcomes", AUDIT_OUTCOMES), ("redact", AUDIT_REDACT))) or audit["retention"] not in {"append-only-export", "content-addressed-export"}:
         raise MaintenanceCapabilityError("audit reconciliation policy must exactly match maintenance-envelope/v1")
     digest = hashlib.sha256(_canonical(envelope)).hexdigest()
     return FrozenEnvelope(envelope_id, digest, plan_ref, operator["identity"], not_before, expires_at, tuple(steps), registry, definitions, bindings)
