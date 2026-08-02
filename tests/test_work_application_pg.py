@@ -609,6 +609,105 @@ def test_served_claim_start_activates_or_releases_on_dependency_failure(
     store.conn.close()
 
 
+def test_served_claim_start_and_arbitrate_reacquire_expired_claims_exactly_once(
+    store_factory, tmp_path
+):
+    store = store_factory("served-expiry-reacquisition")
+    sprint_id = pg.create_sprint(store, "Served expiry", status="active")
+    track_id = pg.get_or_create_track(store, sprint_id, "work")
+    start_item_id = pg.create_work_item(store, sprint_id, track_id, "Start path")
+    app = _application(store, {})
+
+    first_start = app.invoke(
+        "work.claim.start",
+        {"item_id": start_item_id, "ttl_seconds": 300},
+        _context("start-owner", None, str(uuid.uuid4())),
+    )
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE claim SET expires_at = now() - interval '1 second' "
+            "WHERE repo_id = %s AND id = %s",
+            (store.repo_id, first_start["claim"]["claim_id"]),
+        )
+    store.conn.commit()
+    assert app.invoke(
+        "work.read.item",
+        {"item_id": start_item_id},
+        _context("reader", None, str(uuid.uuid4())),
+    )["active_claims"] == []
+    assert pg.list_claims(store, start_item_id) == []
+
+    second_start = app.invoke(
+        "work.claim.start",
+        {"item_id": start_item_id, "ttl_seconds": 300},
+        _context("replacement-owner", None, str(uuid.uuid4())),
+    )
+    start_history = pg.list_claims(store, start_item_id, active_only=False)
+    assert [claim["status"] for claim in start_history] == ["expired", "active"]
+    assert [claim["lease_epoch"] for claim in start_history] == [1, 2]
+    assert second_start["status_transition_applied"] is False
+
+    arbitrate_item_id = pg.create_work_item(
+        store, sprint_id, track_id, "Arbitrate path"
+    )
+    arbitrate_item = pg.get_work_item(store, arbitrate_item_id)
+    old_command, old_credentials = _claim_command(
+        store, arbitrate_item, "old-owner", "old-proof", str(uuid.uuid4())
+    )
+    old_record = _command_record(tmp_path / "old-acquire.db", old_command)
+    old_result = _application(store, old_credentials).invoke(
+        "work.claim.arbitrate",
+        {"record": record_to_dict(old_record)},
+        _context("old-owner", old_record.basis_revision, old_record.event_id),
+    )
+    old_claim_id = old_result["effect"]["claim_id"]
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE claim SET expires_at = now() - interval '1 second' "
+            "WHERE repo_id = %s AND id = %s",
+            (store.repo_id, old_claim_id),
+        )
+    store.conn.commit()
+
+    current_item = pg.get_work_item(store, arbitrate_item_id)
+    new_command, new_credentials = _claim_command(
+        store, current_item, "new-owner", "new-proof", str(uuid.uuid4())
+    )
+    new_record = _command_record(tmp_path / "new-acquire.db", new_command)
+    new_result = _application(store, new_credentials).invoke(
+        "work.claim.arbitrate",
+        {"record": record_to_dict(new_record)},
+        _context("new-owner", new_record.basis_revision, new_record.event_id),
+    )
+    retried = _application(store, new_credentials).invoke(
+        "work.claim.arbitrate",
+        {"record": record_to_dict(new_record)},
+        _context("new-owner", new_record.basis_revision, new_record.event_id),
+    )
+    history = pg.list_claims(store, arbitrate_item_id, active_only=False)
+    assert new_result["outcome"] == "accepted"
+    assert retried == {**new_result, "duplicate": True}
+    assert [claim["status"] for claim in history] == ["expired", "active"]
+    assert [claim["lease_epoch"] for claim in history] == [1, 2]
+    assert [claim["claim_id"] for claim in pg.list_claims(store, arbitrate_item_id)] == [
+        new_result["effect"]["claim_id"]
+    ]
+
+    expired = pg.get_claim(store, old_claim_id, include_secret=True)
+    stale_renew, stale_credentials = _renew_command(
+        store, expired, "old-proof", str(uuid.uuid4())
+    )
+    stale_record = _command_record(tmp_path / "stale-renew.db", stale_renew)
+    stale_result = _application(store, stale_credentials).invoke(
+        "work.claim.arbitrate",
+        {"record": record_to_dict(stale_record)},
+        _context("old-owner", stale_record.basis_revision, stale_record.event_id),
+    )
+    assert stale_result["outcome"] == "rejected"
+    assert stale_result["reason_code"] == "expired-grant"
+    store.conn.close()
+
+
 def test_concurrent_served_claims_have_one_durable_acceptance(store_factory, tmp_path):
     primary = store_factory("served-claim")
     sprint_id = pg.create_sprint(primary, "Served claims", status="active")

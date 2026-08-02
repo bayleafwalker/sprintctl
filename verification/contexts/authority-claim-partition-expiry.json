@@ -41,7 +41,7 @@
     "sprintctl/db.py:heartbeat_claim",
     "sprintctl/pg.py:create_claim",
     "sprintctl/pg.py:heartbeat_claim",
-    "tests/test_authority_fault_protocol.py:test_sqlite_partition_expiry_reassignment_then_stale_heartbeat_is_a_counterexample",
+    "tests/test_authority_fault_protocol.py:test_sqlite_partition_expiry_reassignment_rejects_stale_heartbeat",
     "tests/test_pg_integration.py:TestAuthorityFaultHistories"
   ],
   "expansions": ["semantic-doc", "concurrent-history", "fault-scenario"]

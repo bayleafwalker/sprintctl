@@ -53,8 +53,10 @@ Successful rotate-mode handoff mints a new token. After the handoff commit, the 
 Remote-mode expiry is append-only: maintenance and reacquisition mark a claim
 `expired` and retain its row instead of deleting it. Active-claim projections
 require both `status=active` and an expiry later than backend time. Local SQLite
-keeps its existing purge behavior; it carries the same columns for schema
-parity.
+uses the same append-only reacquisition boundary: an elapsed row is omitted
+from active projections immediately, then marked `expired` in the same reserved
+write transaction that grants its replacement. Explicit maintenance may still
+purge elapsed local rows when requested.
 
 TTL expiry alone is still not a fencing token.
 

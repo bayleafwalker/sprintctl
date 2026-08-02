@@ -1660,6 +1660,19 @@ def create_claim(
                 raise ClaimConflict(
                     "ordinary claims are disabled while an exact-plan maintenance capability is active"
                 )
+            # Expiry is projected lazily, but reacquisition is an authority
+            # boundary: close every elapsed row before checking conflicts so
+            # retained history and the newly granted lease agree.  Keep this
+            # inside the reserved write transaction to match PostgreSQL's
+            # work-item-row arbitration.
+            conn.execute(
+                """
+                UPDATE claim SET status = 'expired'
+                WHERE work_item_id = ? AND status = 'active'
+                  AND expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                """,
+                (work_item_id,),
+            )
             if exclusive:
                 conflict = _get_active_exclusive_claim_row(conn, work_item_id)
                 if conflict:
@@ -1685,14 +1698,19 @@ def create_claim(
                 INSERT INTO claim
                     (work_item_id, agent, claim_type, exclusive, expires_at,
                      branch, worktree_path, commit_sha, pr_ref,
-                     claim_token, runtime_session_id, instance_id, hostname, pid)
+                     claim_token, runtime_session_id, instance_id, hostname, pid,
+                     lease_epoch)
                 VALUES (?, ?, ?, ?,
                         strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds'),
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        COALESCE((SELECT MAX(lease_epoch) FROM claim
+                                  WHERE work_item_id = ?
+                                    AND status = 'expired'), 0) + 1)
                 """,
                 (work_item_id, agent, claim_type, 1 if exclusive else 0, ttl_seconds,
                  branch, worktree_path, commit_sha, pr_ref,
-                claim_token, runtime_session_id, instance_id, hostname, pid),
+                 claim_token, runtime_session_id, instance_id, hostname, pid,
+                 work_item_id),
             )
             conn.commit()
             return cur.lastrowid
