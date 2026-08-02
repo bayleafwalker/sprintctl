@@ -956,7 +956,19 @@ def set_work_item_status(
                 f"Item #{item_id} is exclusively claimed by '{active_claim['agent']}' "
                 f"(claim #{active_claim['id']}). Provide --claim-id and --claim-token."
             )
-        if claim_id != active_claim["id"]:
+        selected_claim = conn.execute(
+            "SELECT * FROM claim WHERE id = ?", (claim_id,)
+        ).fetchone()
+        if (
+            selected_claim is None
+            or selected_claim["work_item_id"] != item_id
+            or not selected_claim["exclusive"]
+            or selected_claim["claim_type"] != "execute"
+            or selected_claim["status"] != "active"
+            or selected_claim["expires_at"] <= conn.execute(
+                "SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now')"
+            ).fetchone()[0]
+        ):
             _emit_claim_event(
                 conn,
                 active_claim,
@@ -983,7 +995,7 @@ def set_work_item_status(
                 f"Item #{item_id} is exclusively claimed by '{active_claim['agent']}' "
                 f"(claim #{active_claim['id']})."
             )
-        _require_claim_proof(active_claim, claim_token)
+        _require_claim_proof(selected_claim, claim_token)
     if new_status == "active":
         unresolved = [
             blocker for blocker in list_deps_blocking(conn, item_id)

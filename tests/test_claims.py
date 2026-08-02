@@ -814,6 +814,71 @@ class TestClaimJSONAndCLI:
         )
         assert result.exit_code == 0, result.output
 
+    def test_item_status_accepts_delegated_execute_not_older_coordinate(
+        self, conn, active_sprint
+    ):
+        iid = _item(conn, active_sprint["id"])
+        coordinate_id = db.create_claim(
+            conn, iid, "coordinator", claim_type="coordinate", ttl_seconds=600
+        )
+        coordinate = db.get_claim(conn, coordinate_id, include_secret=True)
+        execute_id = db.create_claim(
+            conn, iid, "worker", claim_type="execute", ttl_seconds=600,
+            coordinate_claim_id=coordinate_id,
+            coordinate_claim_token=coordinate["claim_token"],
+        )
+        execute = db.get_claim(conn, execute_id, include_secret=True)
+
+        with pytest.raises(db.ClaimConflict):
+            db.set_work_item_status(
+                conn, iid, "active", actor="coordinator",
+                claim_id=coordinate_id, claim_token=coordinate["claim_token"],
+            )
+        assert db.get_work_item(conn, iid)["status"] == "pending"
+
+        db.set_work_item_status(
+            conn, iid, "active", actor="worker",
+            claim_id=execute_id, claim_token=execute["claim_token"],
+        )
+        assert db.get_work_item(conn, iid)["status"] == "active"
+
+    def test_item_status_rejects_ineligible_selected_claims(self, conn, active_sprint):
+        for case in ("wrong-token", "nonexclusive", "stale", "wrong-item"):
+            iid = _item(conn, active_sprint["id"], title=f"target-{case}")
+            coordinate_id = db.create_claim(
+                conn, iid, f"coord-{case}", claim_type="coordinate", ttl_seconds=600
+            )
+            coordinate = db.get_claim(conn, coordinate_id, include_secret=True)
+            selected_item_id = (
+                _item(conn, active_sprint["id"], title="other-item")
+                if case == "wrong-item" else iid
+            )
+            selected_id = db.create_claim(
+                conn, selected_item_id, f"worker-{case}", claim_type="execute",
+                exclusive=case != "nonexclusive", ttl_seconds=600,
+                **(
+                    {
+                        "coordinate_claim_id": coordinate_id,
+                        "coordinate_claim_token": coordinate["claim_token"],
+                    }
+                    if selected_item_id == iid and case != "nonexclusive" else {}
+                ),
+            )
+            selected = db.get_claim(conn, selected_id, include_secret=True)
+            if case == "stale":
+                conn.execute(
+                    "UPDATE claim SET expires_at = '2000-01-01T00:00:00Z' WHERE id = ?",
+                    (selected_id,),
+                )
+                conn.commit()
+            token = "wrong" if case == "wrong-token" else selected["claim_token"]
+            with pytest.raises(ValueError):
+                db.set_work_item_status(
+                    conn, iid, "active", actor=f"worker-{case}",
+                    claim_id=selected_id, claim_token=token,
+                )
+            assert db.get_work_item(conn, iid)["status"] == "pending"
+
     def test_claim_handoff_cmd_json_bundle(self, runner, conn, active_sprint, db_path):
         iid = _item(conn, active_sprint["id"])
         created = runner.invoke(

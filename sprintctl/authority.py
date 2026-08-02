@@ -401,12 +401,26 @@ def _handle_item(
         (store.repo_id, item["id"]),
     )
     active_claim = cur.fetchone()
+    selected_claim = None
     if active_claim is not None:
         claim_id = envelope.payload.get("claim_id")
-        if claim_id != active_claim["id"]:
+        if not isinstance(claim_id, int):
             raise _RejectedCommand("invalid-claim-proof", "active exclusive claim proof is required")
+        cur.execute(
+            "SELECT * FROM claim WHERE repo_id = %s AND id = %s FOR UPDATE",
+            (store.repo_id, claim_id),
+        )
+        selected_claim = cur.fetchone()
+        if (
+            selected_claim is None
+            or selected_claim["work_item_id"] != item["id"]
+            or not selected_claim["exclusive"]
+            or selected_claim["claim_type"] != "execute"
+        ):
+            raise _RejectedCommand("invalid-claim-proof", "claim is not an active exclusive execute grant for this item")
+        _require_live_claim(cur, selected_claim)
         _verify_claim_secret(
-            active_claim,
+            selected_claim,
             envelope.payload.get("credential_ref"),
             credentials,
         )
@@ -445,8 +459,8 @@ def _handle_item(
         "status": updated["status"],
         "revision": item_revision(updated),
         **(
-            {"claim_id": int(active_claim["id"]), "lease_epoch": int(active_claim["lease_epoch"])}
-            if to_status in {"done", "blocked"} and active_claim is not None
+            {"claim_id": int(selected_claim["id"]), "lease_epoch": int(selected_claim["lease_epoch"])}
+            if to_status in {"done", "blocked"} and selected_claim is not None
             else {}
         ),
     }
