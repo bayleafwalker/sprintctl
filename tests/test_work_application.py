@@ -1028,6 +1028,53 @@ def test_click_free_claim_start_matches_cli_state_flow(conn, runner, active_spri
     assert db.list_claims(conn, failing_item, active_only=False) == []
 
 
+def test_claim_start_reacquires_after_backend_expiry_and_retains_epoch_history(
+    conn, active_sprint
+):
+    track = db.get_or_create_track(conn, active_sprint["id"], "claim-expiry")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Reacquire")
+    app = _application(store=conn, backend=db)
+
+    first = app.invoke(
+        "work.claim.start",
+        {"item_id": item_id, "ttl_seconds": 300},
+        _context(actor="first-owner"),
+    )
+    conn.execute(
+        "UPDATE claim SET expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', "
+        "'now', '-1 second') WHERE id = ?",
+        (first["claim"]["claim_id"],),
+    )
+    conn.commit()
+
+    assert app.invoke(
+        "work.read.item", {"item_id": item_id}, _context()
+    )["active_claims"] == []
+    assert db.list_claims(conn, item_id) == []
+
+    second = app.invoke(
+        "work.claim.start",
+        {"item_id": item_id, "ttl_seconds": 300},
+        _context(actor="replacement-owner"),
+    )
+    history = db.list_claims(conn, item_id, active_only=False)
+
+    assert second["item_status_before"] == "active"
+    assert second["status_transition_applied"] is False
+    assert [claim["status"] for claim in history] == ["expired", "active"]
+    assert [claim["lease_epoch"] for claim in history] == [1, 2]
+    assert [claim["claim_id"] for claim in db.list_claims(conn, item_id)] == [
+        second["claim"]["claim_id"]
+    ]
+    with pytest.raises(ValueError, match="expired"):
+        db.heartbeat_claim(
+            conn,
+            first["claim"]["claim_id"],
+            first["claim_token"],
+            actor="first-owner",
+        )
+
+
 def test_item_note_records_an_event_bound_to_the_authenticated_actor_not_arguments(
     conn, active_sprint
 ):

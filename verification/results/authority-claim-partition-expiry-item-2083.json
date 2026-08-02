@@ -1,0 +1,75 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.authority.claim-partition-expiry",
+  "contract_ref": {
+    "doc_id": "sprintctl.claim-ownership",
+    "revision": "git:b0123169a69e19c3ea3d7ef29b4cc6ed06409d29"
+  },
+  "implementation_sha": "working-tree:item-2083-base-b0123169a69e19c3ea3d7ef29b4cc6ed06409d29",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary-sqlite-and-disposable-postgresql-16",
+    "isolation": "independent connections with deterministic backend expiry before replacement acquisition",
+    "tool_versions": {
+      "python": "3.12",
+      "pytest": "9",
+      "postgresql": "16-container"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 3,
+    "bounds": {
+      "backends": 2,
+      "actors": 2,
+      "claims_per_item": 2,
+      "independent_connections": 2,
+      "partitions": 1
+    },
+    "faults_exercised": [
+      "claim-expires-while-owner-is-partitioned",
+      "replacement-acquisition-after-expiry",
+      "old-owner-heartbeats-after-reassignment",
+      "replacement-response-retry"
+    ]
+  },
+  "claims": [
+    {
+      "property": "expired claims are absent from every active projection before reacquisition",
+      "result": "concurrency-tested",
+      "evidence": [
+        "SQLite work.read.item and list_claims returned no active claim after backend-clock expiry",
+        "PostgreSQL work.read.item and list_claims returned no active claim after backend-clock expiry"
+      ]
+    },
+    {
+      "property": "reacquisition terminalizes retained history and advances the lease epoch exactly once",
+      "result": "concurrency-tested",
+      "evidence": [
+        "work.claim.start histories on SQLite and PostgreSQL retained statuses [expired, active] with epochs [1, 2]",
+        "PostgreSQL work.claim.arbitrate accepted one replacement and returned the identical durable decision on retry"
+      ]
+    },
+    {
+      "property": "a replacement grant prevents an old proof from reviving exclusive authority",
+      "result": "concurrency-tested",
+      "evidence": [
+        "SQLite stale heartbeat rejected the terminalized old row",
+        "PostgreSQL authority arbitration rejected the stale renewal with expired-grant",
+        "both backends exposed only the replacement claim as active"
+      ]
+    },
+    {
+      "property": "claim expiry provides fencing against work outside sprintctl",
+      "result": "unknown",
+      "evidence": [
+        "lease_epoch is recorded and advanced but external commands do not yet require an expected epoch"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "This result supersedes the stale-heartbeat counterexample recorded for item 1157 without rewriting that historical result.",
+    "The PostgreSQL gate used a disposable database owned by a non-superuser role and reported zero residue after fixture cleanup."
+  ]
+}

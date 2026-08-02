@@ -1,8 +1,7 @@
 """Executable authority-fault histories governed by the outbox synchronization ADR.
 
-These tests intentionally do not repair authority semantics.  They distinguish
-current backend behavior from a bounded reference model that the future remote
-command arbiter must refine.
+These tests distinguish current backend behavior from the bounded authority
+model, including regressions that previously demonstrated known gaps.
 """
 
 from __future__ import annotations
@@ -40,7 +39,7 @@ def _missing_receipt_payload(project: str = "sprintctl") -> dict[str, str]:
     }
 
 
-def test_sqlite_partition_expiry_reassignment_then_stale_heartbeat_is_a_counterexample(db_path):
+def test_sqlite_partition_expiry_reassignment_rejects_stale_heartbeat(db_path):
     owner, replacement, _sprint_id, item_id = _sqlite_authority(db_path)
     history: list[tuple[str, str]] = []
     try:
@@ -59,23 +58,28 @@ def test_sqlite_partition_expiry_reassignment_then_stale_heartbeat_is_a_countere
         new_claim_id = db.create_claim(replacement, item_id, "replacement-owner")
         history.append(("replacement-claim", "accepted"))
 
-        db.heartbeat_claim(
-            owner,
-            old_claim_id,
-            old_claim["claim_token"],
-            actor="partitioned-owner",
-        )
-        history.append(("stale-heartbeat", "accepted"))
+        with pytest.raises(ValueError, match="expired"):
+            db.heartbeat_claim(
+                owner,
+                old_claim_id,
+                old_claim["claim_token"],
+                actor="partitioned-owner",
+            )
+        history.append(("stale-heartbeat", "rejected"))
 
         active_ids = {
             claim["claim_id"] for claim in db.list_claims(replacement, item_id, active_only=True)
         }
-        assert active_ids == {old_claim_id, new_claim_id}
+        assert active_ids == {new_claim_id}
+        assert [
+            (claim["status"], claim["lease_epoch"])
+            for claim in db.list_claims(replacement, item_id, active_only=False)
+        ] == [("expired", 1), ("active", 2)]
         assert history == [
             ("old-claim", "accepted"),
             ("partition-expiry", "observed"),
             ("replacement-claim", "accepted"),
-            ("stale-heartbeat", "accepted"),
+            ("stale-heartbeat", "rejected"),
         ]
     finally:
         owner.close()
