@@ -1,0 +1,40 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.maintenance-capability.lifecycle",
+  "owner_repo": "sprintctl",
+  "subject": "exact-plan-bound-maintenance-capability",
+  "contract_ref": {
+    "doc_id": "sprintctl.maintenance-capability",
+    "revision": "git:ea8d15cd5670d5c591cd6acda7fc7c883bfed5e1:maintenance-envelope/v1"
+  },
+  "source_of_truth": "backend-capability-and-immutable-receipt-rows",
+  "depth": 2,
+  "backends": ["sqlite", "postgres"],
+  "actors": ["operator", "coordinator", "executor", "recovery-observer"],
+  "initial_state": ["capability=absent", "ordinary-claims=zero-or-coordinator-build-only", "recovery-authority=none"],
+  "operations": [
+    {"name": "prepare-attest", "actors": ["operator", "coordinator"], "synchronization": "capability-transaction"},
+    {"name": "activate-observe-reconcile", "actors": ["operator", "executor"], "synchronization": "cas-revision-and-zero-claim-gate"},
+    {"name": "abort-revoke-expire", "actors": ["operator"], "synchronization": "capability-row-lock"},
+    {"name": "append-recovery-record", "actors": ["recovery-observer"], "synchronization": "append-only-non-authoritative"}
+  ],
+  "consistency": {"target": "application-invariant", "object": "repository-scoped-capability-lifecycle"},
+  "assumptions": {"isolation": "sqlite-immediate-writer-or-postgres-row-lock", "clock": "explicit-evaluation-time", "fairness": "none"},
+  "bounds": {"requests_per_transition": 2, "independent_actors": 2, "backends": 2},
+  "invariants": [
+    "canonical-envelope-digest-and-plan-ref-never-change",
+    "activation-requires-zero-live-ordinary-claims",
+    "capability-is-not-a-claim-lease-credential-or-recovery-grant",
+    "expected-revision-allows-one-winner-and-stale-request-has-no-effect",
+    "same-request-and-bytes-is-idempotent-but-changed-replay-rejects",
+    "step-command-jit-and-receipts-stay-inside-reviewed-envelope",
+    "expiry-is-terminal-and-nonrenewable",
+    "abort-and-revoke-are-terminal",
+    "recovery-observation-and-requested-command-have-authority-none",
+    "sqlite-and-postgres-produce-equivalent-accepted-and-rejected-histories"
+  ],
+  "faults": ["response-loss-after-commit", "stale-revision", "duplicate-request-with-changed-bytes", "late-jit-binding", "active-ordinary-claim", "expired-window", "missing-effect-receipt", "recovery-request-substitution"],
+  "oracles": ["sqlite-row-and-receipt-query", "postgres-row-and-receipt-query", "canonical-result-shape", "no-effect-count", "artifact-validator"],
+  "implementation_anchors": ["sprintctl/maintenance_capability.py", "sprintctl/db.py:_migration_16", "sprintctl/pg.py:_apply_schema_version_6"],
+  "expansions": ["semantic-doc", "stateful-test", "concurrent-history", "fault-scenario"]
+}

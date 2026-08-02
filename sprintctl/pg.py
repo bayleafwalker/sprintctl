@@ -1326,13 +1326,66 @@ def _apply_schema_version_5(cur: Any) -> None:
         """
     )
     for table in ("terminal_recovery_ledger", "terminal_recovery_audit"):
-        cur.execute(
-            f"DROP TRIGGER IF EXISTS {table}_immutable ON {table}"
-        )
+        cur.execute(f"DROP TRIGGER IF EXISTS {table}_immutable ON {table}")
         cur.execute(
             f"CREATE TRIGGER {table}_immutable BEFORE UPDATE OR DELETE ON {table} "
             "FOR EACH ROW EXECUTE FUNCTION sprintctl_terminal_recovery_immutable()"
         )
+
+
+def _apply_schema_version_6(cur: Any) -> None:
+    """Install repository-scoped exact-plan maintenance capability ledgers."""
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS maintenance_capability (
+            repo_id text NOT NULL,
+            capability_id text NOT NULL,
+            envelope_id text NOT NULL,
+            envelope_digest text NOT NULL CHECK (envelope_digest ~ '^[0-9a-f]{64}$'),
+            envelope_json jsonb NOT NULL,
+            plan_ref text NOT NULL,
+            operator_identity text NOT NULL,
+            not_before timestamptz NOT NULL,
+            expires_at timestamptz NOT NULL,
+            state text NOT NULL CHECK (state IN ('prepared','attested','active','observing','reconciled','aborted','revoked','expired')),
+            revision integer NOT NULL CHECK (revision >= 1),
+            created_at timestamptz NOT NULL,
+            updated_at timestamptz NOT NULL,
+            PRIMARY KEY (repo_id, capability_id),
+            UNIQUE (repo_id, envelope_id),
+            CHECK (expires_at > not_before)
+        );
+        CREATE TABLE IF NOT EXISTS maintenance_capability_receipt (
+            repo_id text NOT NULL,
+            capability_id text NOT NULL,
+            request_id uuid NOT NULL,
+            action text NOT NULL CHECK (action IN ('prepare','attest','activate','observe','reconcile','abort','revoke')),
+            outcome text NOT NULL CHECK (outcome IN ('accepted','expired')),
+            from_state text,
+            to_state text NOT NULL,
+            result_revision text NOT NULL,
+            step_id text,
+            command_ref text,
+            effect_ref text,
+            request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
+            actor text NOT NULL,
+            created_at timestamptz NOT NULL,
+            PRIMARY KEY (repo_id, capability_id, request_id),
+            FOREIGN KEY (repo_id, capability_id) REFERENCES maintenance_capability(repo_id, capability_id) ON DELETE RESTRICT
+        );
+        CREATE TABLE IF NOT EXISTS maintenance_capability_recovery (
+            repo_id text NOT NULL,
+            capability_id text NOT NULL,
+            record_id uuid NOT NULL,
+            kind text NOT NULL CHECK (kind IN ('observation','requested-command')),
+            payload_ref text NOT NULL,
+            actor text NOT NULL,
+            created_at timestamptz NOT NULL,
+            PRIMARY KEY (repo_id, capability_id, record_id),
+            FOREIGN KEY (repo_id, capability_id) REFERENCES maintenance_capability(repo_id, capability_id) ON DELETE RESTRICT
+        )
+        """
+    )
 
 
 def compatibility_handshake(store: PgStore) -> dict[str, Any]:

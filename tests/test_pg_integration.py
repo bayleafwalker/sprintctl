@@ -55,6 +55,8 @@ from sprintctl.pg_testing import (
     new_test_repo_uuid,
     write_cleanup_report,
 )
+from sprintctl.maintenance_capability import PostgresMaintenanceCapabilityStore
+from tests.test_maintenance_capability import CAPABILITY_ID, AT, envelope
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +214,20 @@ def work_item_id(store, sprint_id, track_id):
 # ---------------------------------------------------------------------------
 # Schema
 # ---------------------------------------------------------------------------
+
+class TestMaintenanceCapabilityLifecycle:
+    def test_postgres_matches_exact_plan_lifecycle_and_replay(self, store):
+        lifecycle = PostgresMaintenanceCapabilityStore(store)
+        capability_id = f"mcap:{uuid.uuid4()}"
+        prepare_id = str(uuid.uuid4())
+        prepared = lifecycle.prepare(capability_id=capability_id, request_id=prepare_id, envelope=envelope(), actor="operator", at=AT)
+        assert lifecycle.prepare(capability_id=capability_id, request_id=prepare_id, envelope=envelope(), actor="operator", at=AT)["duplicate"] is True
+        attested = lifecycle.transition(capability_id=capability_id, request_id=str(uuid.uuid4()), action="attest", expected_revision=prepared["revision"], actor="operator", at=AT, effect_ref="sha256:" + "0" * 64)
+        active = lifecycle.transition(capability_id=capability_id, request_id=str(uuid.uuid4()), action="activate", expected_revision=attested["revision"], actor="operator", at=AT, step_id="attest-backup", command_id="verify-backup", command_ref="sha256:" + "c" * 64, effect_ref="sha256:" + "d" * 64)
+        assert active["state"] == "active"
+        recovery = lifecycle.append_recovery_record(capability_id=capability_id, record_id=str(uuid.uuid4()), kind="requested-command", payload_ref="artifact:sha256:" + "e" * 64, actor="recovery", at=AT)
+        assert recovery["authority"] == "none"
+        assert lifecycle.get(capability_id)["state"] == "active"
 
 class TestRemoteSafety:
     def test_superseded_marker_is_read_from_disposable_temp_table(self, store):
