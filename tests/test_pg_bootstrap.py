@@ -50,6 +50,17 @@ class _SchemaCursor:
                 "relation_count": self._conn.maintenance_relations,
                 "catalog_fingerprint": fingerprint,
             }
+        if "AS function_body FROM pg_proc" in self._query:
+            body = (
+                "BEGIN RAISE EXCEPTION 'maintenance capability receipt/recovery "
+                "records are immutable'; END;"
+                if self._conn.function_valid else "BEGIN RETURN NEW; END;"
+            )
+            return {
+                "expected_schema": "public",
+                "function_schema": self._conn.function_schema,
+                "function_body": body,
+            }
         if "SELECT version FROM sprintctl_schema_capability" in self._query:
             return {"version": self._conn.marker_version}
         if "to_regclass" in self._query:
@@ -69,7 +80,7 @@ class _SchemaCursor:
 
 
 class _SchemaConnection:
-    def __init__(self, version=4, *, version_rows=1, fail_on=None, maintenance_relations=None, maintenance_triggers=None):
+    def __init__(self, version=4, *, version_rows=1, fail_on=None, maintenance_relations=None, maintenance_triggers=None, function_schema="public", function_valid=True):
         self.calls = []
         self.version = version
         self.version_rows = version_rows if version is not None else 0
@@ -77,6 +88,8 @@ class _SchemaConnection:
         self.maintenance_relations = (4 if version == 6 else 0) if maintenance_relations is None else maintenance_relations
         self.maintenance_triggers = (2 if self.maintenance_relations == 4 else 0) if maintenance_triggers is None else maintenance_triggers
         self.marker_version = 1 if self.maintenance_relations == 4 else None
+        self.function_schema = function_schema
+        self.function_valid = function_valid
         self.commits = 0
         self.rollbacks = 0
 
@@ -150,6 +163,10 @@ def test_runtime_compatibility_probe_is_read_only_and_publishes_work_api():
                 "relation_count": 4,
                 "catalog_fingerprint": pg_migrations.MAINTENANCE_CATALOG_FINGERPRINT,
                 "expected_catalog_fingerprint": pg_migrations.MAINTENANCE_CATALOG_FINGERPRINT,
+                "trigger_function_schema": "public",
+                "expected_schema": "public",
+                "trigger_function_fingerprint": pg_migrations.MAINTENANCE_TRIGGER_FUNCTION_FINGERPRINT,
+                "expected_trigger_function_fingerprint": pg_migrations.MAINTENANCE_TRIGGER_FUNCTION_FINGERPRINT,
                 "marker_version": 1,
             },
             "repository_ingest_cursor": {
@@ -181,6 +198,16 @@ def test_schema5_without_bridge_and_every_partial_bridge_fail_closed():
 
 def test_schema5_bridge_with_missing_immutability_trigger_fails_closed():
     store, _conn = _store(5, maintenance_relations=4, maintenance_triggers=1)
+    with pytest.raises(pg_migrations.RemoteSchemaCompatibilityError, match="maintenance-storage-partial"):
+        pg.require_compatible_schema(store)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    ({"function_schema": "decoy"}, {"function_valid": False}),
+)
+def test_schema5_bridge_rejects_wrong_or_mutated_trigger_function(kwargs):
+    store, _conn = _store(5, maintenance_relations=4, **kwargs)
     with pytest.raises(pg_migrations.RemoteSchemaCompatibilityError, match="maintenance-storage-partial"):
         pg.require_compatible_schema(store)
 

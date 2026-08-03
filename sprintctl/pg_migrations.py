@@ -9,6 +9,7 @@ operator compatibility mode retained for rollout rollback.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from typing import Any, Mapping
 
 
@@ -47,6 +48,7 @@ MAINTENANCE_BRIDGE_RELATIONS = (
 )
 MAINTENANCE_CATALOG_FINGERPRINT = "e2fbaeb38769a8d0c41ffd2a8e49dd98"
 LEGACY_SCHEMA6_MAINTENANCE_CATALOG_FINGERPRINT = "8972c8191c6612e057f1f2fa972f7a61"
+MAINTENANCE_TRIGGER_FUNCTION_FINGERPRINT = "5d7ab6ecc35d3b82f5a2975ae7a672a739af36728cb61e7d4afb5c68d217b6f9"
 
 
 def _value(row: Any, key: str, index: int = 0) -> Any:
@@ -113,6 +115,24 @@ def _read_maintenance_bridge(cur: Any) -> dict[str, Any]:
     row = cur.fetchone()
     relation_count = int(_value(row, "relation_count") or 0)
     catalog_fingerprint = _value(row, "catalog_fingerprint", 1)
+    cur.execute(
+        "SELECT current_schema() AS expected_schema, n.nspname AS function_schema, "
+        "p.prosrc AS function_body FROM pg_proc p "
+        "JOIN pg_namespace n ON n.oid=p.pronamespace WHERE p.oid = ("
+        "SELECT CASE WHEN count(DISTINCT t.tgfoid)=1 THEN min(t.tgfoid) END "
+        "FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid "
+        "JOIN pg_namespace tn ON tn.oid=c.relnamespace "
+        "WHERE tn.nspname=current_schema() AND c.relname IN "
+        "('maintenance_capability_receipt','maintenance_capability_recovery') "
+        "AND t.tgname IN ('maintenance_capability_receipt_immutable',"
+        "'maintenance_capability_recovery_immutable') AND NOT t.tgisinternal)"
+    )
+    function_row = cur.fetchone()
+    expected_schema = _value(function_row, "expected_schema")
+    function_schema = _value(function_row, "function_schema", 1)
+    function_body = _value(function_row, "function_body", 2)
+    normalized_body = "".join(str(function_body or "").split())
+    function_fingerprint = hashlib.sha256(normalized_body.encode()).hexdigest()
     marker_version = None
     if relation_count == len(MAINTENANCE_BRIDGE_RELATIONS):
         cur.execute(
@@ -120,7 +140,15 @@ def _read_maintenance_bridge(cur: Any) -> dict[str, Any]:
             "WHERE capability = 'maintenance-storage'"
         )
         marker_version = _value(cur.fetchone(), "version")
-    fully_present = catalog_fingerprint == MAINTENANCE_CATALOG_FINGERPRINT and marker_version == 1
+    function_exact = (
+        function_schema == expected_schema
+        and function_fingerprint == MAINTENANCE_TRIGGER_FUNCTION_FINGERPRINT
+    )
+    fully_present = (
+        catalog_fingerprint == MAINTENANCE_CATALOG_FINGERPRINT
+        and function_exact
+        and marker_version == 1
+    )
     return {
         "schema_version": "sprintctl-maintenance-storage/v1",
         "available": fully_present,
@@ -128,6 +156,10 @@ def _read_maintenance_bridge(cur: Any) -> dict[str, Any]:
         "relation_count": relation_count,
         "catalog_fingerprint": catalog_fingerprint,
         "expected_catalog_fingerprint": MAINTENANCE_CATALOG_FINGERPRINT,
+        "trigger_function_schema": function_schema,
+        "expected_schema": expected_schema,
+        "trigger_function_fingerprint": function_fingerprint,
+        "expected_trigger_function_fingerprint": MAINTENANCE_TRIGGER_FUNCTION_FINGERPRINT,
         "marker_version": marker_version,
     }
 
@@ -138,6 +170,9 @@ def _is_legacy_schema6_maintenance_layout(layout: Mapping[str, Any]) -> bool:
         layout["relation_count"] == 3
         and layout["catalog_fingerprint"]
         == LEGACY_SCHEMA6_MAINTENANCE_CATALOG_FINGERPRINT
+        and layout["trigger_function_fingerprint"]
+        == MAINTENANCE_TRIGGER_FUNCTION_FINGERPRINT
+        and layout["trigger_function_schema"] == layout["expected_schema"]
         and layout["marker_version"] is None
     )
 
