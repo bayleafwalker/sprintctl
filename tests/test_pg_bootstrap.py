@@ -178,7 +178,11 @@ def test_runtime_compatibility_probe_is_read_only_and_publishes_work_api():
     }
     queries = [query for query, _ in conn.calls]
     assert all(query.lstrip().startswith(("SELECT", "WITH")) for query in queries)
-    assert any("information_schema.columns" in query for query in queries)
+    # Column shape must come from pg_attribute, never information_schema, which
+    # hides relations the caller holds no privilege on and would make a
+    # least-privilege runtime role fingerprint a subset of the contract.
+    assert any("pg_attribute" in query for query in queries)
+    assert not any("information_schema" in query for query in queries)
 
 
 def test_schema5_with_complete_staged_maintenance_storage_is_compatible():

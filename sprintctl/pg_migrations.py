@@ -94,10 +94,21 @@ def _read_maintenance_bridge(cur: Any) -> dict[str, Any]:
         "rels AS (SELECT count(*) AS relation_count FROM pg_class c "
         "JOIN pg_namespace n ON n.oid=c.relnamespace JOIN names ON names.name=c.relname "
         "WHERE n.nspname=current_schema() AND c.relkind='r'), "
-        "cols AS (SELECT jsonb_agg(jsonb_build_array(table_name,column_name,ordinal_position,"
-        "data_type,udt_name,is_nullable,COALESCE(column_default,'')) "
-        "ORDER BY table_name,ordinal_position) v FROM information_schema.columns "
-        "JOIN names ON names.name=table_name WHERE table_schema=current_schema()), "
+        # pg_attribute rather than information_schema.columns: the latter hides
+        # relations the caller holds no privilege on, so a least-privilege
+        # runtime role would silently fingerprint a subset of the contract and
+        # fail closed against a correctly migrated ledger.
+        "cols AS (SELECT jsonb_agg(jsonb_build_array(c.relname,a.attname,a.attnum,"
+        "format_type(a.atttypid,a.atttypmod),t.typname,"
+        "CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END,"
+        "COALESCE(pg_get_expr(d.adbin,d.adrelid),'')) "
+        "ORDER BY c.relname,a.attnum) v FROM pg_attribute a "
+        "JOIN pg_class c ON c.oid=a.attrelid "
+        "JOIN pg_namespace n ON n.oid=c.relnamespace "
+        "JOIN names ON names.name=c.relname JOIN pg_type t ON t.oid=a.atttypid "
+        "LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum "
+        "WHERE n.nspname=current_schema() AND c.relkind='r' "
+        "AND a.attnum>0 AND NOT a.attisdropped), "
         "cons AS (SELECT jsonb_agg(jsonb_build_array(c.relname,con.conname,con.contype,"
         "pg_get_constraintdef(con.oid,true)) ORDER BY c.relname,con.conname) v "
         "FROM pg_constraint con JOIN pg_class c ON c.oid=con.conrelid "

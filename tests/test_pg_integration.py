@@ -46,6 +46,7 @@ pytestmark = [
 # Safe unconditional imports: pg.py handles missing psycopg gracefully.
 from sprintctl import authority, contracts, db, maintain, observations, pg, projection, sync
 from sprintctl import outbox
+from sprintctl import pg_migrations
 from sprintctl.cli import cli
 from sprintctl.db import ClaimConflict, InvalidTransition
 from sprintctl.pg_testing import (
@@ -534,6 +535,13 @@ class TestInitDb:
             cur.execute(f"GRANT USAGE ON SCHEMA public TO {probe_role}")
             cur.execute(f"GRANT SELECT ON schema_version TO {probe_role}")
             cur.execute(f"GRANT INSERT ON ingest_stream TO {probe_role}")
+            # The schema-6 maintenance bridge reads the capability marker row to
+            # distinguish a complete migration from a partial one. Structural
+            # verification is privilege-independent, but this row is real data,
+            # so a runtime role must be granted SELECT on it at migration time.
+            cur.execute(
+                f"GRANT SELECT ON sprintctl_schema_capability TO {probe_role}"
+            )
         store.conn.commit()
         try:
             probe = psycopg.connect(guard_url, row_factory=dict_row)
@@ -562,10 +570,68 @@ class TestInitDb:
                 probe.close()
         finally:
             with store.conn.cursor() as cur:
+                cur.execute(
+                    f"REVOKE SELECT ON sprintctl_schema_capability FROM {probe_role}"
+                )
                 cur.execute(f"REVOKE INSERT ON ingest_stream FROM {probe_role}")
                 cur.execute(f"REVOKE SELECT ON schema_version FROM {probe_role}")
                 cur.execute(f"REVOKE USAGE ON SCHEMA public FROM {probe_role}")
             store.conn.commit()
+
+    def test_maintenance_fingerprint_is_identical_under_least_privilege(self, store):
+        """A runtime role holding no privilege on the maintenance tables must
+        still fingerprint the contract exactly as its owner does.
+
+        information_schema hides relations the caller holds no privilege on, so
+        deriving the catalog fingerprint from it made a least-privilege runtime
+        role compute a subset of the contract and fail closed against a
+        correctly migrated ledger. Only the capability marker row -- real data,
+        not catalog shape -- is granted here, mirroring the production runtime
+        role; the other three maintenance relations stay ungranted.
+        """
+        guard_url = os.environ.get("SPRINTCTL_TEST_PG_PRODUCTION_GUARD_URL")
+        if not guard_url:
+            pytest.skip("SPRINTCTL_TEST_PG_PRODUCTION_GUARD_URL not set")
+
+        probe_role = "sprintctl_production_probe"
+        with store.conn.cursor() as cur:
+            owner_layout = pg_migrations._read_maintenance_bridge(cur)
+            cur.execute(f"GRANT USAGE ON SCHEMA public TO {probe_role}")
+            cur.execute(
+                f"GRANT SELECT ON sprintctl_schema_capability TO {probe_role}"
+            )
+        store.conn.commit()
+        assert owner_layout["relation_count"] == 4
+        assert owner_layout["available"] is True
+
+        try:
+            probe = psycopg.connect(guard_url, row_factory=dict_row)
+            try:
+                with probe.cursor() as cur:
+                    probe_layout = pg_migrations._read_maintenance_bridge(cur)
+            finally:
+                probe.close()
+        finally:
+            with store.conn.cursor() as cur:
+                cur.execute(
+                    f"REVOKE SELECT ON sprintctl_schema_capability FROM {probe_role}"
+                )
+                cur.execute(f"REVOKE USAGE ON SCHEMA public FROM {probe_role}")
+            store.conn.commit()
+
+        assert probe_layout["available"] is True
+        assert probe_layout["marker_version"] == owner_layout["marker_version"] == 1
+        assert probe_layout["relation_count"] == owner_layout["relation_count"]
+        assert (
+            probe_layout["catalog_fingerprint"]
+            == owner_layout["catalog_fingerprint"]
+            == pg_migrations.MAINTENANCE_CATALOG_FINGERPRINT
+        )
+        assert (
+            probe_layout["trigger_function_fingerprint"]
+            == owner_layout["trigger_function_fingerprint"]
+            == pg_migrations.MAINTENANCE_TRIGGER_FUNCTION_FINGERPRINT
+        )
 
     def test_phase26_ingest_schema_upgrades_before_authority_foreign_keys(
         self, pg_test_scope
