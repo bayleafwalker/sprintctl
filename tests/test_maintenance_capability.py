@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from uuid import uuid4
@@ -16,7 +17,22 @@ from sprintctl.maintenance_capability import (
 
 
 CAPABILITY_ID = "mcap:12345678-1234-4234-8234-123456789abc"
+
+# `at` is the caller-supplied event time. Since 0.2.17 it is audit data and
+# never decides admissibility, so it is deliberately left as a fixed instant
+# unrelated to the window: any test that still passes with it is proving the
+# database clock is in charge.
 AT = "2026-08-02T20:00:00Z"
+
+
+def _stamp(delta: timedelta) -> str:
+    """A window instant relative to the clock the database will observe.
+
+    Windows must never be pinned to fixed calendar dates: admissibility is
+    decided against the database clock, so a fixed window silently stops
+    exercising these paths the moment wall-clock time passes it.
+    """
+    return (datetime.now(timezone.utc) + delta).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def ref(kind="verification-result", digit="1"):
@@ -38,8 +54,8 @@ def envelope():
         "contract_id": "maintenance-envelope/v1",
         "envelope_id": "vuoro-cutover-exact-1",
         "plan_ref": "artifact:sha256:" + "a" * 64,
-        "issued_at": "2026-08-02T19:00:00Z",
-        "window": {"not_before": "2026-08-02T19:00:00Z", "expires_at": "2026-08-03T00:00:00Z"},
+        "issued_at": _stamp(timedelta(minutes=-30)),
+        "window": {"not_before": _stamp(timedelta(minutes=-30)), "expires_at": _stamp(timedelta(hours=4))},
         "operator": {"identity": "operator", "decision_ref": ref(kind="sprint-event")} | {"decision_ref": {"kind": "sprint-event", "source": "sprintctl:decision", "revision": "event:2253"}},
         "repositories": [{"id": "appservice", "url": "https://github.com/example/appservice.git", "commit": "a" * 40}],
         "command_registry_ref": "",
@@ -47,19 +63,19 @@ def envelope():
         "operations": [{"id": "targeted-maintenance", "owner_repository": "appservice", "command_id": "verify-backup", "allowed_paths": ["clusters/main/vuoro"], "allowed_commands": ["verify-backup"]}],
         "steps": [step],
         "jit_fields": [
-            {"name": "backup_name", "source": "backup-observation", "pattern": "^backup-[0-9]{4}$", "bind_before_step": "attest-backup", "bind_by": AT, "required": True},
-            {"name": "backup_uid", "source": "backup-observation", "pattern": "^[0-9a-f-]{36}$", "bind_before_step": "attest-backup", "bind_by": AT, "required": True},
-            {"name": "drain_boundary_utc", "source": "clock-observation", "pattern": "^[0-9TZ:-]{20}$", "bind_before_step": "attest-backup", "bind_by": AT, "required": True},
+            {"name": "backup_name", "source": "backup-observation", "pattern": "^backup-[0-9]{4}$", "bind_before_step": "attest-backup", "bind_by": _stamp(timedelta(hours=1)), "required": True},
+            {"name": "backup_uid", "source": "backup-observation", "pattern": "^[0-9a-f-]{36}$", "bind_before_step": "attest-backup", "bind_by": _stamp(timedelta(hours=1)), "required": True},
+            {"name": "drain_boundary_utc", "source": "clock-observation", "pattern": "^[0-9TZ:-]{20}$", "bind_before_step": "attest-backup", "bind_by": _stamp(timedelta(hours=1)), "required": True},
         ],
         "jit_bindings": [
-            {"name": "backup_name", "value": "backup-0001", "observed_at": "2026-08-02T19:58:00Z", "bound_at": "2026-08-02T19:59:00Z", "evidence_ref": ref(digit="4"), "receipt_ref": ref(kind="artifact", digit="5")},
-            {"name": "backup_uid", "value": "12345678-1234-1234-1234-123456789abc", "observed_at": "2026-08-02T19:58:00Z", "bound_at": "2026-08-02T19:59:00Z", "evidence_ref": ref(digit="4"), "receipt_ref": ref(kind="artifact", digit="5")},
-            {"name": "drain_boundary_utc", "value": "2026-08-02T19:50:00Z", "observed_at": "2026-08-02T19:58:00Z", "bound_at": "2026-08-02T19:59:00Z", "evidence_ref": ref(digit="4"), "receipt_ref": ref(kind="artifact", digit="5")},
+            {"name": "backup_name", "value": "backup-0001", "observed_at": _stamp(timedelta(minutes=-4)), "bound_at": _stamp(timedelta(minutes=-3)), "evidence_ref": ref(digit="4"), "receipt_ref": ref(kind="artifact", digit="5")},
+            {"name": "backup_uid", "value": "12345678-1234-1234-1234-123456789abc", "observed_at": _stamp(timedelta(minutes=-4)), "bound_at": _stamp(timedelta(minutes=-3)), "evidence_ref": ref(digit="4"), "receipt_ref": ref(kind="artifact", digit="5")},
+            {"name": "drain_boundary_utc", "value": _stamp(timedelta(minutes=-20)), "observed_at": _stamp(timedelta(minutes=-4)), "bound_at": _stamp(timedelta(minutes=-3)), "evidence_ref": ref(digit="4"), "receipt_ref": ref(kind="artifact", digit="5")},
         ],
         "start_gate": {
             "plan": "plan-1",
-            "dependent_implementation_sessions": {"expected_count": 0, "observed_at": "2026-08-02T19:59:00Z", "evidence_ref": ref(digit="6"), "receipt_ref": ref(kind="artifact", digit="7")},
-            "active_normal_claims": {"expected_count": 0, "observed_at": "2026-08-02T19:59:00Z", "evidence_ref": ref(digit="8"), "receipt_ref": ref(kind="artifact", digit="9")},
+            "dependent_implementation_sessions": {"expected_count": 0, "observed_at": _stamp(timedelta(minutes=-1)), "evidence_ref": ref(digit="6"), "receipt_ref": ref(kind="artifact", digit="7")},
+            "active_normal_claims": {"expected_count": 0, "observed_at": _stamp(timedelta(minutes=-1)), "evidence_ref": ref(digit="8"), "receipt_ref": ref(kind="artifact", digit="9")},
         },
         "abort": {"before_migration": "restore-reviewed-pre-migration-state", "after_migration": "restore-uid-attested-backup", "forbidden": ["delete-migration-ledger", "edit-released-migration", "recovery-request-authority", "unreviewed-commit"]},
         "recovery_policy": {"record_kinds": ["observation", "requested-command"], "authority": "none", "forbidden_uses": ["advance", "approve", "bind-jit", "claim", "grant", "publish", "reconcile"]},
@@ -81,6 +97,32 @@ def reconciliation_bundle():
 @pytest.fixture
 def store(conn):
     return SQLiteMaintenanceCapabilityStore(conn)
+
+
+def shifted_envelope(offset: timedelta):
+    """An envelope whose whole window is moved relative to the database clock.
+
+    Expiry and not-before are properties of the window, not of the caller's
+    `at`, so tests that want those states have to move the window.
+    """
+    value = envelope()
+    not_before = offset
+    expires_at = offset + timedelta(hours=1)
+    value["issued_at"] = _stamp(not_before - timedelta(minutes=5))
+    value["window"] = {"not_before": _stamp(not_before), "expires_at": _stamp(expires_at)}
+    bind_by = offset + timedelta(minutes=50)
+    observed = offset + timedelta(minutes=1)
+    bound = offset + timedelta(minutes=2)
+    for definition in value["jit_fields"]:
+        definition["bind_by"] = _stamp(bind_by)
+    for binding in value["jit_bindings"]:
+        binding["observed_at"] = _stamp(observed)
+        binding["bound_at"] = _stamp(bound)
+        if binding["name"] == "drain_boundary_utc":
+            binding["value"] = _stamp(observed)
+    for name in ("dependent_implementation_sessions", "active_normal_claims"):
+        value["start_gate"][name]["observed_at"] = _stamp(observed)
+    return value
 
 
 def prepare(store, value=None):
@@ -172,22 +214,33 @@ def test_activation_requires_zero_live_ordinary_claims(store, conn, active_sprin
 
 
 def test_capability_is_nonrenewable_and_expiry_terminalizes(store):
-    prepared = prepare(store)
+    prepare(store)
     with pytest.raises(MaintenanceCapabilityError, match="cannot be renewed"):
         prepare(store)
-    expired = store.transition(capability_id=CAPABILITY_ID, request_id=str(uuid4()), action="attest", expected_revision=prepared["revision"], actor="operator", at="2026-08-03T00:00:00Z")
+
+
+def test_expiry_terminalizes_on_the_database_clock(store):
+    """The window decides expiry, not the caller's `at`."""
+    prepared = prepare(store, shifted_envelope(timedelta(hours=-3)))
+    expired = store.transition(capability_id=CAPABILITY_ID, request_id=str(uuid4()), action="attest", expected_revision=prepared["revision"], actor="operator", at=AT)
     assert expired["state"] == expired["outcome"] == "expired"
 
 
-def test_activation_rejects_before_window_and_step_cursor_cannot_jump_or_reverse(store):
+def test_activation_before_the_window_is_rejected_on_the_database_clock(store):
+    """A future window is not admissible however recent the caller's `at` is."""
+    prepared = prepare(store, shifted_envelope(timedelta(hours=2)))
+    attested = store.transition(capability_id=CAPABILITY_ID, request_id=str(uuid4()), action="attest", expected_revision=prepared["revision"], actor="operator", at=AT, effect_ref="sha256:" + "0" * 64)
+    with pytest.raises(MaintenanceCapabilityError, match="not_before"):
+        store.transition(capability_id=CAPABILITY_ID, request_id=str(uuid4()), action="activate", expected_revision=attested["revision"], actor="operator", at=AT, step_id="attest-backup", command_id="verify-backup", command_ref="sha256:" + "1" * 64, effect_ref="sha256:" + "2" * 64)
+
+
+def test_step_cursor_cannot_jump_or_reverse(store):
     value = envelope()
     second = copy.deepcopy(value["steps"][0])
     second.update(id="migrate", sequence=2, base_commit="b" * 40, commit="c" * 40, depends_on=["attest-backup"])
     value["steps"].append(second)
-    prepared = store.prepare(capability_id=CAPABILITY_ID, request_id=str(uuid4()), envelope=value, actor="operator", at="2026-08-02T18:00:00Z")
-    attested = store.transition(capability_id=CAPABILITY_ID, request_id=str(uuid4()), action="attest", expected_revision=prepared["revision"], actor="operator", at="2026-08-02T18:00:00Z", effect_ref="sha256:" + "0" * 64)
-    with pytest.raises(MaintenanceCapabilityError, match="not_before"):
-        store.transition(capability_id=CAPABILITY_ID, request_id=str(uuid4()), action="activate", expected_revision=attested["revision"], actor="operator", at="2026-08-02T18:00:00Z", step_id="attest-backup", command_id="verify-backup", command_ref="sha256:" + "1" * 64, effect_ref="sha256:" + "2" * 64)
+    prepared = store.prepare(capability_id=CAPABILITY_ID, request_id=str(uuid4()), envelope=value, actor="operator", at=AT)
+    attested = store.transition(capability_id=CAPABILITY_ID, request_id=str(uuid4()), action="attest", expected_revision=prepared["revision"], actor="operator", at=AT, effect_ref="sha256:" + "0" * 64)
     with pytest.raises(MaintenanceCapabilityError, match="forward sequence"):
         store.transition(capability_id=CAPABILITY_ID, request_id=str(uuid4()), action="activate", expected_revision=attested["revision"], actor="operator", at=AT, step_id="migrate", command_id="verify-backup", command_ref="sha256:" + "1" * 64, effect_ref="sha256:" + "2" * 64)
     active = store.transition(capability_id=CAPABILITY_ID, request_id=str(uuid4()), action="activate", expected_revision=attested["revision"], actor="operator", at=AT, step_id="attest-backup", command_id="verify-backup", command_ref="sha256:" + "1" * 64, effect_ref="sha256:" + "2" * 64)
@@ -234,8 +287,22 @@ def test_wrong_actor_and_stale_start_evidence_fail_closed(store):
     with pytest.raises(MaintenanceCapabilityError, match="frozen operator"):
         store.transition(capability_id=CAPABILITY_ID, request_id=str(uuid4()), action="attest", expected_revision=prepared["revision"], actor="other", at=AT, effect_ref="sha256:" + "0" * 64)
     attested = transition(store, prepared, "attest")
+    assert attested["state"] == "attested"
+
+
+def test_stale_start_gate_evidence_is_judged_against_the_database_clock(store):
+    """Start-gate freshness is measured from the database clock.
+
+    Before 0.2.17 a caller could hold evidence fresh indefinitely by supplying
+    an `at` near its observation time, which is the whole point of the gate.
+    """
+    stale = envelope()
+    for name in ("dependent_implementation_sessions", "active_normal_claims"):
+        stale["start_gate"][name]["observed_at"] = _stamp(timedelta(minutes=-20))
+    prepared = prepare(store, stale)
+    attested = transition(store, prepared, "attest")
     with pytest.raises(MaintenanceCapabilityError, match="fresh start-gate"):
-        store.transition(capability_id=CAPABILITY_ID, request_id=str(uuid4()), action="activate", expected_revision=attested["revision"], actor="operator", at="2026-08-02T20:06:00Z", step_id="attest-backup", command_id="verify-backup", command_ref="sha256:" + "c" * 64, effect_ref="sha256:" + "d" * 64)
+        store.transition(capability_id=CAPABILITY_ID, request_id=str(uuid4()), action="activate", expected_revision=attested["revision"], actor="operator", at=_stamp(timedelta(minutes=-19)), step_id="attest-backup", command_id="verify-backup", command_ref="sha256:" + "c" * 64, effect_ref="sha256:" + "d" * 64)
 
 
 def test_recovery_requested_command_is_audited_without_authority(store):
@@ -268,3 +335,101 @@ def test_reconcile_requires_complete_audit_bundle(store):
     active = transition(store, attested, "activate", step_id="attest-backup", command_id="verify-backup", command_ref="sha256:" + "1" * 64, effect_ref="sha256:" + "2" * 64)
     with pytest.raises(MaintenanceCapabilityError, match="complete frozen audit bundle"):
         store.transition(capability_id=CAPABILITY_ID, request_id=str(uuid4()), action="reconcile", expected_revision=active["revision"], actor="operator", at=AT, effect_ref="sha256:" + "3" * 64, reconciliation={})
+
+
+# ---------------------------------------------------------------------------
+# #2093 -- database time authorizes transitions; caller `at` is audit data.
+#
+# Claim admission filters live capabilities on the database clock. If a caller
+# could authorize a transition with its own timestamp, a delayed, retried, or
+# replayed request could drive a capability into a state that admission no
+# longer honors, and the mutual exclusion Plan 1 depends on would not hold.
+# ---------------------------------------------------------------------------
+
+
+def _attested(store, value=None):
+    prepared = prepare(store, value)
+    return store.transition(
+        capability_id=CAPABILITY_ID, request_id=str(uuid4()), action="attest",
+        expected_revision=prepared["revision"], actor="operator", at=AT,
+        effect_ref="sha256:" + "0" * 64,
+    )
+
+
+def _receipts(store, *, action=None):
+    rows = store.conn.execute(
+        "SELECT action, outcome, created_at FROM maintenance_capability_receipt "
+        "WHERE capability_id = ? ORDER BY rowid", (CAPABILITY_ID,)
+    ).fetchall()
+    return [dict(row) for row in rows if action is None or row["action"] == action]
+
+
+def _activate(store, attested, at):
+    return store.transition(
+        capability_id=CAPABILITY_ID, request_id=str(uuid4()), action="activate",
+        expected_revision=attested["revision"], actor="operator", at=at,
+        step_id="attest-backup", command_id="verify-backup",
+        command_ref="sha256:" + "1" * 64, effect_ref="sha256:" + "2" * 64,
+    )
+
+
+def test_stale_pre_expiry_at_cannot_activate_after_database_expiry(store):
+    attested = _attested(store, shifted_envelope(timedelta(hours=-3)))
+    # `at` sits comfortably inside the window that has since closed.
+    result = _activate(store, attested, at=_stamp(timedelta(hours=-2, minutes=-30)))
+    assert result["state"] == result["outcome"] == "expired"
+    assert store.get(CAPABILITY_ID)["state"] == "expired"
+
+
+def test_future_at_cannot_make_a_transition_admissible_early(store):
+    attested = _attested(store, shifted_envelope(timedelta(hours=2)))
+    # `at` claims to be inside the window that has not opened yet.
+    with pytest.raises(MaintenanceCapabilityError, match="not_before"):
+        _activate(store, attested, at=_stamp(timedelta(hours=2, minutes=30)))
+    assert store.get(CAPABILITY_ID)["state"] == "attested"
+
+
+def test_replay_after_expiry_is_rejected(store):
+    attested = _attested(store, shifted_envelope(timedelta(hours=-3)))
+    first = _activate(store, attested, at=AT)
+    assert first["outcome"] == "expired"
+    # A replay of the same intent after expiry must not resurrect the window.
+    replay = store.transition(
+        capability_id=CAPABILITY_ID, request_id=str(uuid4()), action="activate",
+        expected_revision=first["revision"], actor="operator", at=AT,
+        step_id="attest-backup", command_id="verify-backup",
+        command_ref="sha256:" + "1" * 64, effect_ref="sha256:" + "2" * 64,
+    )
+    assert replay["outcome"] == "expired"
+    assert store.get(CAPABILITY_ID)["state"] == "expired"
+
+
+def test_expiry_boundary_is_deterministic(store):
+    """A window that closed a moment ago is expired, not admissible."""
+    attested = _attested(store, shifted_envelope(timedelta(hours=-1, seconds=-2)))
+    result = _activate(store, attested, at=AT)
+    assert result["state"] == result["outcome"] == "expired"
+
+
+def test_rejected_activation_leaves_no_misleading_active_state(store):
+    attested = _attested(store, shifted_envelope(timedelta(hours=2)))
+    with pytest.raises(MaintenanceCapabilityError):
+        _activate(store, attested, at=AT)
+    current = store.get(CAPABILITY_ID)
+    assert current["state"] == "attested"
+    # No activate receipt at all: the rejection left no partial trace.
+    assert _receipts(store, action="activate") == []
+
+
+def test_caller_time_and_database_decision_time_are_independently_observable(store):
+    """`at` is retained as the recorded event time and does not gate anything."""
+    attested = _attested(store)
+    active = _activate(store, attested, at=AT)
+    assert active["outcome"] == "accepted"
+    # The caller's `at` is what got recorded, unchanged and still auditable...
+    receipt = _receipts(store, action="activate")[-1]
+    assert receipt["created_at"] == AT
+    # ...even though it is nowhere near the database clock that admitted it,
+    # which is precisely the separation this change establishes.
+    recorded = datetime.fromisoformat(receipt["created_at"].replace("Z", "+00:00"))
+    assert abs((datetime.now(timezone.utc) - recorded).total_seconds()) > 3600
