@@ -128,6 +128,27 @@ def _uid() -> str:
     return uuid.uuid4().hex[:8]
 
 
+def _anchor_capability_window_to_db_clock(conn, repo_id, capability_id) -> None:
+    """Align a prepared capability's window with the database clock.
+
+    Claim admission filters live capabilities on the database clock
+    (``expires_at > now()``), while capability transitions evaluate the window
+    against the caller-supplied ``at``. In production those track each other;
+    the fixture envelope instead pins ``at`` to a fixed AT and its window to a
+    fixed instant, so once wall-clock time passes that instant the two
+    arbitration paths disagree and repo-wide mutual exclusion silently stops
+    being exercised. Anchoring the stored window to the database's own clock
+    keeps these races meaningful at any future date.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE maintenance_capability SET expires_at = now() + interval '1 hour' "
+            "WHERE repo_id = %s AND capability_id = %s",
+            (repo_id, capability_id),
+        )
+    conn.commit()
+
+
 def _authority_repo_uuid(store) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"sprintctl-repo:{store.repo_id}"))
 
@@ -254,6 +275,7 @@ class TestMaintenanceCapabilityLifecycle:
             actor="operator",
             at=AT,
         )
+        _anchor_capability_window_to_db_clock(store.conn, repo_id, capability_id)
         attested = lifecycle.transition(
             capability_id=capability_id,
             request_id=str(uuid.uuid4()),
@@ -340,6 +362,7 @@ class TestMaintenanceCapabilityLifecycle:
             item_id = pg.create_work_item(retained_store, sprint_id, track_id, "Rejected claim")
             lifecycle = PostgresMaintenanceCapabilityStore(retained_store)
             prepared = lifecycle.prepare(capability_id=f"mcap:{uuid.uuid4()}", request_id=str(uuid.uuid4()), envelope=envelope(), actor="operator", at=AT)
+            _anchor_capability_window_to_db_clock(retained, repo_id, prepared["capability_id"])
             attested = lifecycle.transition(capability_id=prepared["capability_id"], request_id=str(uuid.uuid4()), action="attest", expected_revision=prepared["revision"], actor="operator", at=AT, effect_ref="sha256:" + "0" * 64)
             lifecycle.transition(capability_id=prepared["capability_id"], request_id=str(uuid.uuid4()), action="activate", expected_revision=attested["revision"], actor="operator", at=AT, step_id="attest-backup", command_id="verify-backup", command_ref="sha256:" + "1" * 64, effect_ref="sha256:" + "2" * 64)
 
