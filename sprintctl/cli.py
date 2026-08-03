@@ -9960,6 +9960,27 @@ def remote_schema_migrate_cmd(pg_url: str | None, as_json: bool) -> None:
         )
 
 
+@remote_schema.command("stage-maintenance-bridge")
+@click.option("--url", "pg_url", default=None, help="Migration-role Postgres URL (default: $SPRINTCTL_URL)")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit the staging result as JSON")
+def remote_schema_stage_maintenance_bridge_cmd(pg_url: str | None, as_json: bool) -> None:
+    """Pre-provision complete maintenance storage on an exact v5 ledger."""
+    from . import pg_migrations as _pg_migrations  # noqa: PLC0415
+
+    store = _remote_schema_store(pg_url)
+    try:
+        result = _pg_migrations.stage_schema5_maintenance_bridge(store)
+    finally:
+        store.conn.close()
+    if as_json:
+        click.echo(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        click.echo(
+            "schema-5 maintenance bridge "
+            + ("installed" if result["installed"] else "already complete")
+        )
+
+
 # ---------------------------------------------------------------------------
 # migrate-to-remote — explicit SQLite-to-PostgreSQL state transfer
 # ---------------------------------------------------------------------------

@@ -16,10 +16,18 @@ create, alter, or repair schema objects.
 work API as `sprintctl-work/v1`, reports the actual remote schema version, and
 reports the minimum and maximum versions this runtime supports.
 
-Schema version 4 is the only supported version in this rollout. A missing
-ledger, versions 1-3, and any version greater than 4 fail closed before a runtime
-command is served. The check executes only `SELECT to_regclass(...)` and a
-`SELECT` over `schema_version`; it never attempts repair. Package version
+Schema versions 5 and 6 are supported only when the complete maintenance
+storage capability is present. During the pre-migration window, version 5 may
+carry that additive capability while retaining its primary ledger version.
+The read-only probe hashes a schema-qualified PostgreSQL catalog description
+covering every required column, type, nullability/default, primary/unique/
+foreign/check constraint, and each immutable trigger's exact table, function,
+events, and enabled state. It also requires the exact `maintenance-storage`
+capability marker. Same-named objects in another schema do not participate.
+Missing or partial storage, a missing trigger or marker, a missing/ambiguous
+ledger, versions below 5, and versions above 6 fail closed before a runtime
+command is served. The check executes only `SELECT` probes and never attempts
+repair. Package version
 strings are not protocol compatibility evidence.
 
 A pre-cutover client that has not upgraded reports this fail-closed state as
@@ -42,6 +50,24 @@ same offset. The internal identity-backed `ingest_id` remains globally unique
 inside the shared schema and is not a public paging cursor.
 
 ## Deployment migration job
+
+For the bounded schema-5 coexistence window, first pre-provision the complete
+additive maintenance store with the migration-role credential:
+
+```bash
+sprintctl remote-schema stage-maintenance-bridge --json
+```
+
+The command requires exact ledger version 5, takes the same global transaction
+lock as canonical migrations, and leaves the ledger at 5. It writes the exact
+capability marker only in the same transaction as the relations and immutable
+triggers. It refuses partial state rather than repairing it. Existing version-5
+runtime code does not reference these additive objects and can continue using
+an already-open connection; normal startup of the new runtime accepts the
+bridge only after the full structural fingerprint passes. Runtime credentials
+cannot invoke this DDL path.
+
+The later canonical migration remains:
 
 Run migrations with the migration-role credential from the appservice-owned
 deployment job:

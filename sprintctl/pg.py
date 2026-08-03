@@ -547,6 +547,7 @@ class PgStore:
     # aggregate reads need a sibling connection, so retain a closure over the
     # operator-supplied DSN without exposing it through store metadata.
     connection_factory: Callable[[], Any] | None = None
+    remote_schema_version: int | None = None
 
 
 @contextmanager
@@ -571,6 +572,7 @@ def repeatable_read_snapshot(store: PgStore):
         repo_id=store.repo_id,
         authority_repo_uuid=store.authority_repo_uuid,
         connection_factory=store.connection_factory,
+        remote_schema_version=store.remote_schema_version,
     )
     try:
         with snapshot_conn.transaction():
@@ -1401,6 +1403,14 @@ def _apply_schema_version_6(cur: Any) -> None:
     for table in ("maintenance_capability_receipt", "maintenance_capability_recovery"):
         cur.execute(f"DROP TRIGGER IF EXISTS {table}_immutable ON {table}")
         cur.execute(f"CREATE TRIGGER {table}_immutable BEFORE UPDATE OR DELETE ON {table} FOR EACH ROW EXECUTE FUNCTION sprintctl_maintenance_evidence_immutable()")
+    cur.execute(
+        "CREATE TABLE IF NOT EXISTS sprintctl_schema_capability ("
+        "capability text PRIMARY KEY, version integer NOT NULL CHECK (version > 0))"
+    )
+    cur.execute(
+        "INSERT INTO sprintctl_schema_capability (capability, version) "
+        "VALUES ('maintenance-storage', 1) ON CONFLICT (capability) DO NOTHING"
+    )
 
 
 def compatibility_handshake(store: PgStore) -> dict[str, Any]:
@@ -1410,7 +1420,9 @@ def compatibility_handshake(store: PgStore) -> dict[str, Any]:
 
 def require_compatible_schema(store: PgStore) -> dict[str, Any]:
     """Fail closed on missing, older, or newer remote schemas."""
-    return _pg_migrations.require_compatible_schema(store)
+    handshake = _pg_migrations.require_compatible_schema(store)
+    store.remote_schema_version = handshake["remote_schema"]["actual"]
+    return handshake
 
 
 def migrate_schema(store: PgStore) -> dict[str, Any]:

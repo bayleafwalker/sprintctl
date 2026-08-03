@@ -46,6 +46,7 @@ pytestmark = [
 # Safe unconditional imports: pg.py handles missing psycopg gracefully.
 from sprintctl import authority, contracts, db, maintain, observations, pg, projection, sync
 from sprintctl import outbox
+from sprintctl import pg_migrations
 from sprintctl.cli import cli
 from sprintctl.db import ClaimConflict, InvalidTransition
 from sprintctl.pg_testing import (
@@ -125,6 +126,27 @@ def store(pg_test_scope):
 
 def _uid() -> str:
     return uuid.uuid4().hex[:8]
+
+
+def _anchor_capability_window_to_db_clock(conn, repo_id, capability_id) -> None:
+    """Align a prepared capability's window with the database clock.
+
+    Claim admission filters live capabilities on the database clock
+    (``expires_at > now()``), while capability transitions evaluate the window
+    against the caller-supplied ``at``. In production those track each other;
+    the fixture envelope instead pins ``at`` to a fixed AT and its window to a
+    fixed instant, so once wall-clock time passes that instant the two
+    arbitration paths disagree and repo-wide mutual exclusion silently stops
+    being exercised. Anchoring the stored window to the database's own clock
+    keeps these races meaningful at any future date.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE maintenance_capability SET expires_at = now() + interval '1 hour' "
+            "WHERE repo_id = %s AND capability_id = %s",
+            (repo_id, capability_id),
+        )
+    conn.commit()
 
 
 def _authority_repo_uuid(store) -> str:
@@ -253,6 +275,7 @@ class TestMaintenanceCapabilityLifecycle:
             actor="operator",
             at=AT,
         )
+        _anchor_capability_window_to_db_clock(store.conn, repo_id, capability_id)
         attested = lifecycle.transition(
             capability_id=capability_id,
             request_id=str(uuid.uuid4()),
@@ -339,6 +362,7 @@ class TestMaintenanceCapabilityLifecycle:
             item_id = pg.create_work_item(retained_store, sprint_id, track_id, "Rejected claim")
             lifecycle = PostgresMaintenanceCapabilityStore(retained_store)
             prepared = lifecycle.prepare(capability_id=f"mcap:{uuid.uuid4()}", request_id=str(uuid.uuid4()), envelope=envelope(), actor="operator", at=AT)
+            _anchor_capability_window_to_db_clock(retained, repo_id, prepared["capability_id"])
             attested = lifecycle.transition(capability_id=prepared["capability_id"], request_id=str(uuid.uuid4()), action="attest", expected_revision=prepared["revision"], actor="operator", at=AT, effect_ref="sha256:" + "0" * 64)
             lifecycle.transition(capability_id=prepared["capability_id"], request_id=str(uuid.uuid4()), action="activate", expected_revision=attested["revision"], actor="operator", at=AT, step_id="attest-backup", command_id="verify-backup", command_ref="sha256:" + "1" * 64, effect_ref="sha256:" + "2" * 64)
 
@@ -534,6 +558,13 @@ class TestInitDb:
             cur.execute(f"GRANT USAGE ON SCHEMA public TO {probe_role}")
             cur.execute(f"GRANT SELECT ON schema_version TO {probe_role}")
             cur.execute(f"GRANT INSERT ON ingest_stream TO {probe_role}")
+            # The schema-6 maintenance bridge reads the capability marker row to
+            # distinguish a complete migration from a partial one. Structural
+            # verification is privilege-independent, but this row is real data,
+            # so a runtime role must be granted SELECT on it at migration time.
+            cur.execute(
+                f"GRANT SELECT ON sprintctl_schema_capability TO {probe_role}"
+            )
         store.conn.commit()
         try:
             probe = psycopg.connect(guard_url, row_factory=dict_row)
@@ -562,10 +593,68 @@ class TestInitDb:
                 probe.close()
         finally:
             with store.conn.cursor() as cur:
+                cur.execute(
+                    f"REVOKE SELECT ON sprintctl_schema_capability FROM {probe_role}"
+                )
                 cur.execute(f"REVOKE INSERT ON ingest_stream FROM {probe_role}")
                 cur.execute(f"REVOKE SELECT ON schema_version FROM {probe_role}")
                 cur.execute(f"REVOKE USAGE ON SCHEMA public FROM {probe_role}")
             store.conn.commit()
+
+    def test_maintenance_fingerprint_is_identical_under_least_privilege(self, store):
+        """A runtime role holding no privilege on the maintenance tables must
+        still fingerprint the contract exactly as its owner does.
+
+        information_schema hides relations the caller holds no privilege on, so
+        deriving the catalog fingerprint from it made a least-privilege runtime
+        role compute a subset of the contract and fail closed against a
+        correctly migrated ledger. Only the capability marker row -- real data,
+        not catalog shape -- is granted here, mirroring the production runtime
+        role; the other three maintenance relations stay ungranted.
+        """
+        guard_url = os.environ.get("SPRINTCTL_TEST_PG_PRODUCTION_GUARD_URL")
+        if not guard_url:
+            pytest.skip("SPRINTCTL_TEST_PG_PRODUCTION_GUARD_URL not set")
+
+        probe_role = "sprintctl_production_probe"
+        with store.conn.cursor() as cur:
+            owner_layout = pg_migrations._read_maintenance_bridge(cur)
+            cur.execute(f"GRANT USAGE ON SCHEMA public TO {probe_role}")
+            cur.execute(
+                f"GRANT SELECT ON sprintctl_schema_capability TO {probe_role}"
+            )
+        store.conn.commit()
+        assert owner_layout["relation_count"] == 4
+        assert owner_layout["available"] is True
+
+        try:
+            probe = psycopg.connect(guard_url, row_factory=dict_row)
+            try:
+                with probe.cursor() as cur:
+                    probe_layout = pg_migrations._read_maintenance_bridge(cur)
+            finally:
+                probe.close()
+        finally:
+            with store.conn.cursor() as cur:
+                cur.execute(
+                    f"REVOKE SELECT ON sprintctl_schema_capability FROM {probe_role}"
+                )
+                cur.execute(f"REVOKE USAGE ON SCHEMA public FROM {probe_role}")
+            store.conn.commit()
+
+        assert probe_layout["available"] is True
+        assert probe_layout["marker_version"] == owner_layout["marker_version"] == 1
+        assert probe_layout["relation_count"] == owner_layout["relation_count"]
+        assert (
+            probe_layout["catalog_fingerprint"]
+            == owner_layout["catalog_fingerprint"]
+            == pg_migrations.MAINTENANCE_CATALOG_FINGERPRINT
+        )
+        assert (
+            probe_layout["trigger_function_fingerprint"]
+            == owner_layout["trigger_function_fingerprint"]
+            == pg_migrations.MAINTENANCE_TRIGGER_FUNCTION_FINGERPRINT
+        )
 
     def test_phase26_ingest_schema_upgrades_before_authority_foreign_keys(
         self, pg_test_scope
