@@ -1,4 +1,4 @@
-__version__ = "0.2.16"
+__version__ = "0.2.17"
 
 # Keep these identifiers stable: the doctor command compares the running
 # package with the capabilities declared by a checked-out source tree.

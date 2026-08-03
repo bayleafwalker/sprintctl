@@ -403,11 +403,17 @@ class SQLiteMaintenanceCapabilityStore:
                 raise StaleCapabilityRevision(f"stale capability revision: expected {expected_revision!r}, current {current_revision!r}")
             expires_at = _time(current["expires_at"], "expires_at")
             not_before = _time(current["not_before"], "not_before")
-            if action in {"activate", "observe", "reconcile"} and now < not_before:
+            # Admissibility is decided by the database clock, never by the
+            # caller-supplied `at`. A delayed, retried, or replayed request
+            # carrying a stale pre-expiry `at` must not drive this capability
+            # into a state that claim admission -- which filters on database
+            # time -- no longer honors. `at` remains the recorded event time.
+            decided_at = self._decision_time()
+            if action in {"activate", "observe", "reconcile"} and decided_at < not_before:
                 raise MaintenanceCapabilityError("maintenance execution is before window.not_before")
             next_sequence = current["next_sequence"]
             audit_bundle_json = None
-            if now >= expires_at:
+            if decided_at >= expires_at:
                 target = "expired"
                 outcome = "expired"
             else:
@@ -417,7 +423,7 @@ class SQLiteMaintenanceCapabilityStore:
                 outcome = "accepted"
                 envelope = json.loads(current["envelope_json"])
                 if action in {"activate", "observe"}:
-                    executed_sequence = self._authorize_step(envelope, current, action, step_id, command_id, command_ref, effect_ref, now)
+                    executed_sequence = self._authorize_step(envelope, current, action, step_id, command_id, command_ref, effect_ref, decided_at)
                     if executed_sequence != current["next_sequence"] or (action == "activate" and executed_sequence != 1):
                         raise MaintenanceCapabilityError("step execution must follow the exact forward sequence cursor")
                     next_sequence = executed_sequence + 1
@@ -430,8 +436,8 @@ class SQLiteMaintenanceCapabilityStore:
                         raise MaintenanceCapabilityError("reconciliation requires every reviewed step receipt in order")
                     audit_bundle_json = _validate_reconciliation_bundle(reconciliation)
                 if action == "activate":
-                    self._require_zero_ordinary_claims(now)
-                    self._require_fresh_start_gate(envelope, now)
+                    self._require_zero_ordinary_claims(decided_at)
+                    self._require_fresh_start_gate(envelope, decided_at)
             next_revision = current["revision"] + 1
             self.conn.execute("UPDATE maintenance_capability SET state = ?, revision = ?, next_sequence = ?, updated_at = ? WHERE capability_id = ? AND revision = ?", (target, next_revision, next_sequence, at, capability_id, current["revision"]))
             result_revision = revision(capability_id, target, next_revision)
@@ -516,6 +522,20 @@ class SQLiteMaintenanceCapabilityStore:
                     raise MaintenanceCapabilityError("required step-scoped JIT binding is absent or late")
         return int(step["sequence"])
 
+    def _decision_time(self) -> datetime:
+        """Database-observed instant that authorizes this transition.
+
+        SQLite evaluates ``'now'`` per statement, so this is the analogue of
+        PostgreSQL's ``statement_timestamp()``: it advances while a transaction
+        waits, which is exactly the case a caller-supplied timestamp cannot
+        represent.
+        """
+        row = self.conn.execute(
+            "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') AS decided_at"
+        ).fetchone()
+        value = row["decided_at"] if hasattr(row, "keys") else row[0]
+        return _time(value, "decided_at")
+
     def _require_fresh_start_gate(self, envelope: Mapping[str, Any], now: datetime) -> None:
         for name in ("dependent_implementation_sessions", "active_normal_claims"):
             observed = _time(envelope["start_gate"][name]["observed_at"], f"start_gate.{name}.observed_at")
@@ -587,11 +607,19 @@ class PostgresMaintenanceCapabilityStore:
                 not_before = current["not_before"]
                 if not_before.tzinfo is None:
                     not_before = not_before.replace(tzinfo=timezone.utc)
-                if action in {"activate", "observe", "reconcile"} and now < not_before:
+                # Admissibility is decided by the database clock, never by the
+                # caller-supplied `at`. A delayed, retried, or replayed request
+                # carrying a stale pre-expiry `at` must not drive this
+                # capability into a state that claim admission -- which filters
+                # on database time -- no longer honors. `at` remains the
+                # recorded event time. Read after the FOR UPDATE lock above so
+                # a waiting request is judged by when it acquired the row.
+                decided_at = self._decision_time(cur)
+                if action in {"activate", "observe", "reconcile"} and decided_at < not_before:
                     raise MaintenanceCapabilityError("maintenance execution is before window.not_before")
                 next_sequence = current["next_sequence"]
                 audit_bundle_json = None
-                if now >= expires_at:
+                if decided_at >= expires_at:
                     target, outcome = "expired", "expired"
                 else:
                     target = TRANSITIONS.get(action, {}).get(current["state"])
@@ -602,7 +630,7 @@ class PostgresMaintenanceCapabilityStore:
                     if isinstance(envelope, str):
                         envelope = json.loads(envelope)
                     if action in {"activate", "observe"}:
-                        executed_sequence = SQLiteMaintenanceCapabilityStore._authorize_step(self, envelope, current, action, step_id, command_id, command_ref, effect_ref, now)
+                        executed_sequence = SQLiteMaintenanceCapabilityStore._authorize_step(self, envelope, current, action, step_id, command_id, command_ref, effect_ref, decided_at)
                         if executed_sequence != current["next_sequence"] or (action == "activate" and executed_sequence != 1):
                             raise MaintenanceCapabilityError("step execution must follow the exact forward sequence cursor")
                         next_sequence = executed_sequence + 1
@@ -615,10 +643,10 @@ class PostgresMaintenanceCapabilityStore:
                             raise MaintenanceCapabilityError("reconciliation requires every reviewed step receipt in order")
                         audit_bundle_json = _validate_reconciliation_bundle(reconciliation)
                     if action == "activate":
-                        cur.execute("SELECT COUNT(*) AS count FROM claim WHERE repo_id = %s AND status = 'active' AND expires_at > %s", (self.repo_id, now))
+                        cur.execute("SELECT COUNT(*) AS count FROM claim WHERE repo_id = %s AND status = 'active' AND expires_at > %s", (self.repo_id, decided_at))
                         if int(cur.fetchone()["count"]):
                             raise MaintenanceCapabilityError("activation requires zero live ordinary claims")
-                        SQLiteMaintenanceCapabilityStore._require_fresh_start_gate(self, envelope, now)
+                        SQLiteMaintenanceCapabilityStore._require_fresh_start_gate(self, envelope, decided_at)
                 next_revision = current["revision"] + 1
                 cur.execute("UPDATE maintenance_capability SET state=%s, revision=%s, next_sequence=%s, updated_at=%s WHERE repo_id=%s AND capability_id=%s AND revision=%s", (target, next_revision, next_sequence, now, self.repo_id, capability_id, current["revision"]))
                 result_revision = revision(capability_id, target, next_revision)
@@ -662,6 +690,22 @@ class PostgresMaintenanceCapabilityStore:
         if row["request_digest"] != digest:
             raise MaintenanceCapabilityError("request_id replay changed immutable request content")
         return {"capability_id": capability_id, "request_id": request_id, "action": row["action"], "outcome": row["outcome"], "state": row["to_state"], "revision": row["result_revision"], "duplicate": True}
+
+    def _decision_time(self, cur: Any) -> datetime:
+        """Database-observed instant that authorizes this transition.
+
+        ``statement_timestamp()`` rather than ``now()``: ``now()`` is fixed at
+        transaction start, so a transaction opened before expiry would still
+        look admissible after it. This is read after the capability row is
+        locked, so a request that waited on the lock is judged by the time it
+        actually got it.
+        """
+        cur.execute("SELECT statement_timestamp() AS decided_at")
+        row = cur.fetchone()
+        value = row["decided_at"] if isinstance(row, Mapping) else row[0]
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value
 
     def _receipt(self, cur: Any, capability_id: str, request_id: str, action: str, outcome: str, from_state: str | None, to_state: str, result_revision: str, step_id: str | None, command_ref: str | None, effect_ref: str | None, audit_bundle_json: str | None, digest: str, actor: str, at: datetime) -> None:
         cur.execute("INSERT INTO maintenance_capability_receipt (repo_id,capability_id,request_id,action,outcome,from_state,to_state,result_revision,step_id,command_ref,effect_ref,audit_bundle_json,request_digest,actor,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s)", (self.repo_id, capability_id, request_id, action, outcome, from_state, to_state, result_revision, step_id, command_ref, effect_ref, audit_bundle_json, digest, actor, at))
