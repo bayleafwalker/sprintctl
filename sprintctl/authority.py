@@ -32,6 +32,10 @@ from .db import (
 AUTHORITY_COMMAND = contracts.RecordClass.AUTHORITY_COMMAND.value
 REMOTE_DECISION = contracts.RecordClass.REMOTE_DECISION.value
 _REMOTE_ACTOR = "sprintctl-remote-authority"
+# PostgreSQL ``now()`` is transaction-scoped.  Authority workers can retain a
+# read transaction between requests, so lease effects and liveness checks must
+# use the database instant at the statement that admits the command.
+_CLAIM_CLOCK_SQL = "statement_timestamp()"
 
 
 class AuthorityCommandConflict(ValueError):
@@ -375,7 +379,7 @@ def _verify_claim_secret(row: Mapping[str, Any], ref: Any, credentials: Mapping[
 
 
 def _require_live_claim(cur: Any, row: Mapping[str, Any]) -> None:
-    cur.execute("SELECT now() AS now")
+    cur.execute(f"SELECT {_CLAIM_CLOCK_SQL} AS now")
     now = cur.fetchone()["now"]
     if row["status"] != "active" or row["expires_at"] <= now:
         raise _RejectedCommand("expired-grant", "claim grant has expired")
@@ -403,7 +407,7 @@ def _handle_item(
 
     cur.execute(
         "SELECT * FROM claim WHERE repo_id = %s AND work_item_id = %s "
-        "AND exclusive = true AND status = 'active' AND expires_at > now() "
+        f"AND exclusive = true AND status = 'active' AND expires_at > {_CLAIM_CLOCK_SQL} "
         "ORDER BY id LIMIT 1 FOR UPDATE",
         (store.repo_id, item["id"]),
     )
@@ -584,13 +588,13 @@ def _handle_claim_acquire(
     proposed_token = _resolve_credential(payload.get("credential_ref"), credentials)
     cur.execute(
         "UPDATE claim SET status = 'expired' WHERE repo_id = %s "
-        "AND work_item_id = %s AND status = 'active' AND expires_at <= now()",
+        f"AND work_item_id = %s AND status = 'active' AND expires_at <= {_CLAIM_CLOCK_SQL}",
         (store.repo_id, item["id"]),
     )
     if exclusive:
         cur.execute(
             "SELECT * FROM claim WHERE repo_id = %s AND work_item_id = %s "
-            "AND exclusive = true AND status = 'active' AND expires_at > now() "
+            f"AND exclusive = true AND status = 'active' AND expires_at > {_CLAIM_CLOCK_SQL} "
             "ORDER BY id LIMIT 1 FOR UPDATE",
             (store.repo_id, item["id"]),
         )
@@ -614,13 +618,13 @@ def _handle_claim_acquire(
         raise _RejectedCommand("credential-conflict", "proposed claim proof is already in use")
     metadata = dict(payload.get("metadata") or {})
     cur.execute(
-        """
+        f"""
         INSERT INTO claim (
             repo_id, work_item_id, agent, claim_type, exclusive, expires_at,
             branch, worktree_path, commit_sha, pr_ref, claim_token,
             runtime_session_id, instance_id, hostname, pid, lease_epoch
         ) VALUES (
-            %s, %s, %s, %s, %s, now() + (%s || ' seconds')::interval,
+            %s, %s, %s, %s, %s, {_CLAIM_CLOCK_SQL} + (%s || ' seconds')::interval,
             %s, %s, %s, %s, %s, %s, %s, %s, %s,
             COALESCE((SELECT MAX(lease_epoch) FROM claim
                       WHERE repo_id = %s AND work_item_id = %s
@@ -686,9 +690,9 @@ def _handle_claim_mutation(
         # field leaves the existing column untouched via COALESCE.
         metadata = dict(envelope.payload.get("metadata") or {})
         cur.execute(
-            """
-            UPDATE claim SET heartbeat = now(),
-                expires_at = now() + (%s || ' seconds')::interval,
+            f"""
+            UPDATE claim SET heartbeat = {_CLAIM_CLOCK_SQL},
+                expires_at = {_CLAIM_CLOCK_SQL} + (%s || ' seconds')::interval,
                 runtime_session_id = COALESCE(%s, runtime_session_id),
                 instance_id        = COALESCE(%s, instance_id),
                 branch             = COALESCE(%s, branch),
@@ -733,10 +737,10 @@ def _handle_claim_mutation(
             raise _RejectedCommand("credential-conflict", "proposed claim proof is already in use")
     metadata = dict(envelope.payload.get("metadata") or {})
     cur.execute(
-        """
+        f"""
         UPDATE claim SET agent = %s, claim_token = %s,
             lease_epoch = lease_epoch + CASE WHEN %s THEN 1 ELSE 0 END,
-            heartbeat = now(), expires_at = now() + (%s || ' seconds')::interval,
+            heartbeat = {_CLAIM_CLOCK_SQL}, expires_at = {_CLAIM_CLOCK_SQL} + (%s || ' seconds')::interval,
             runtime_session_id = %s, instance_id = %s, branch = %s,
             worktree_path = %s, commit_sha = %s, pr_ref = %s,
             hostname = %s, pid = %s

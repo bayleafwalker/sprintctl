@@ -1995,7 +1995,7 @@ def set_work_item_status(
                 )
             with store.conn.cursor() as cur:
                 cur.execute(
-                    "SELECT *, expires_at > now() AS live FROM claim "
+                    f"SELECT *, expires_at > {_CLAIM_CLOCK_SQL} AS live FROM claim "
                     "WHERE repo_id = %s AND id = %s FOR UPDATE",
                     (store.repo_id, claim_id),
                 )
@@ -2304,6 +2304,12 @@ def list_active_takeups(store: PgStore, sprint_id: int | None = None) -> list[di
 # Claim helpers
 # ---------------------------------------------------------------------------
 
+# A served worker intentionally reuses a non-autocommit PostgreSQL connection.
+# ``now()`` is the *transaction* timestamp in PostgreSQL, so a harmless read
+# can pin it for the lifetime of that connection.  Lease admission and expiry
+# must instead be judged at the statement that performs the operation.
+_CLAIM_CLOCK_SQL = "statement_timestamp()"
+
 def _serialize_claim(row: dict, *, include_secret: bool = False) -> dict:
     claim_token = row.get("claim_token")
     identity_status = _claim_identity_status(row)
@@ -2348,11 +2354,11 @@ def _serialize_claim(row: dict, *, include_secret: bool = False) -> dict:
 def _get_active_exclusive_claim_row(store: PgStore, work_item_id: int) -> dict | None:
     with store.conn.cursor() as cur:
         cur.execute(
-            """
+            f"""
             SELECT * FROM claim
             WHERE repo_id = %s AND work_item_id = %s AND exclusive = true
               AND status = 'active'
-              AND expires_at > now()
+              AND expires_at > {_CLAIM_CLOCK_SQL}
             ORDER BY created_at ASC
             LIMIT 1
             """,
@@ -2365,11 +2371,11 @@ def _get_active_exclusive_claim_row(store: PgStore, work_item_id: int) -> dict |
 def _get_active_coordinate_claim_row(store: PgStore, work_item_id: int) -> dict | None:
     with store.conn.cursor() as cur:
         cur.execute(
-            """
+            f"""
             SELECT * FROM claim
             WHERE repo_id = %s AND work_item_id = %s AND exclusive = true
               AND status = 'active'
-              AND claim_type = 'coordinate' AND expires_at > now()
+              AND claim_type = 'coordinate' AND expires_at > {_CLAIM_CLOCK_SQL}
             ORDER BY created_at ASC
             LIMIT 1
             """,
@@ -2484,9 +2490,9 @@ def create_claim(
             with store.conn.cursor() as cur:
                 _lock_repo_claim_capability_arbitration(cur, store.repo_id)
                 cur.execute(
-                    "SELECT capability_id FROM maintenance_capability "
+                    f"SELECT capability_id FROM maintenance_capability "
                     "WHERE repo_id=%s AND state IN ('active','observing') "
-                    "AND expires_at > now() LIMIT 1",
+                    f"AND expires_at > {_CLAIM_CLOCK_SQL} LIMIT 1",
                     (store.repo_id,),
                 )
                 active_capability = cur.fetchone()
@@ -2497,10 +2503,10 @@ def create_claim(
                 if exclusive:
                     _lock_claim_arbitration_row(cur, store, work_item_id)
                 cur.execute(
-                    """
+                    f"""
                     UPDATE claim SET status = 'expired'
                     WHERE repo_id = %s AND work_item_id = %s
-                      AND status = 'active' AND expires_at <= now()
+                      AND status = 'active' AND expires_at <= {_CLAIM_CLOCK_SQL}
                     """,
                     (store.repo_id, work_item_id),
                 )
@@ -2526,14 +2532,14 @@ def create_claim(
                                 f"(claim #{conflict['id']})"
                             )
                 cur.execute(
-                    """
+                    f"""
                     INSERT INTO claim
                         (repo_id, work_item_id, agent, claim_type, exclusive, expires_at,
                          branch, worktree_path, commit_sha, pr_ref,
                          claim_token, runtime_session_id, instance_id, hostname, pid,
                          lease_epoch)
                     VALUES (%s, %s, %s, %s, %s,
-                            now() + (%s || ' seconds')::interval,
+                            {_CLAIM_CLOCK_SQL} + (%s || ' seconds')::interval,
                             %s, %s, %s, %s, %s, %s, %s, %s, %s,
                             COALESCE((SELECT MAX(lease_epoch) FROM claim
                                       WHERE repo_id = %s AND work_item_id = %s
@@ -2615,10 +2621,10 @@ def heartbeat_claim(
         raise
     with store.conn.cursor() as cur:
         cur.execute(
-            """
+            f"""
             UPDATE claim
-            SET heartbeat = now(),
-                expires_at = now() + (%s || ' seconds')::interval,
+            SET heartbeat = {_CLAIM_CLOCK_SQL},
+                expires_at = {_CLAIM_CLOCK_SQL} + (%s || ' seconds')::interval,
                 runtime_session_id = COALESCE(%s, runtime_session_id),
                 instance_id        = COALESCE(%s, instance_id),
                 branch             = COALESCE(%s, branch),
@@ -2769,14 +2775,14 @@ def handoff_claim(
 
     with store.conn.cursor() as cur:
         cur.execute(
-            """
+            f"""
             UPDATE claim
             SET agent = %s, claim_token = %s,
                 lease_epoch = lease_epoch + CASE WHEN %s THEN 1 ELSE 0 END,
-                expires_at = now() + (%s || ' seconds')::interval,
+                expires_at = {_CLAIM_CLOCK_SQL} + (%s || ' seconds')::interval,
                 runtime_session_id = %s, instance_id = %s, branch = %s,
                 worktree_path = %s, commit_sha = %s, pr_ref = %s,
-                hostname = %s, pid = %s, heartbeat = now()
+                hostname = %s, pid = %s, heartbeat = {_CLAIM_CLOCK_SQL}
             WHERE repo_id = %s AND id = %s
             """,
             (actor, next_claim_token, mode == "rotate" or legacy_ambiguous, ttl_seconds,
@@ -2835,9 +2841,9 @@ def list_claims_by_sprint(
     """
     params: list = [store.repo_id, sprint_id]
     if active_only:
-        query += " AND c.status = 'active' AND c.expires_at > now()"
+        query += f" AND c.status = 'active' AND c.expires_at > {_CLAIM_CLOCK_SQL}"
     if expiring_within_seconds is not None:
-        query += " AND c.expires_at <= now() + (%s || ' seconds')::interval"
+        query += f" AND c.expires_at <= {_CLAIM_CLOCK_SQL} + (%s || ' seconds')::interval"
         params.append(expiring_within_seconds)
     query += " ORDER BY c.expires_at ASC"
     with store.conn.cursor() as cur:
@@ -2850,10 +2856,10 @@ def list_claims(store: PgStore, work_item_id: int, active_only: bool = True) -> 
     if active_only:
         with store.conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT * FROM claim
                 WHERE repo_id = %s AND work_item_id = %s
-                  AND status = 'active' AND expires_at > now()
+                  AND status = 'active' AND expires_at > {_CLAIM_CLOCK_SQL}
                 ORDER BY created_at ASC
                 """,
                 (store.repo_id, work_item_id),
@@ -2887,7 +2893,7 @@ def find_claim_by_identity(
     params: list = [store.repo_id]
     if active_only:
         conditions.append("status = 'active'")
-        conditions.append("expires_at > now()")
+        conditions.append(f"expires_at > {_CLAIM_CLOCK_SQL}")
     if instance_id:
         conditions.append("instance_id = %s")
         params.append(instance_id)
@@ -3141,13 +3147,13 @@ def purge_expired_claims(store: PgStore, sprint_id: int) -> int:
     """Mark expired claims while retaining their history. Returns count changed."""
     with store.conn.cursor() as cur:
         cur.execute(
-            """
+            f"""
             UPDATE claim SET status = 'expired'
             WHERE repo_id = %s
               AND work_item_id IN (
                 SELECT id FROM work_item WHERE repo_id = %s AND sprint_id = %s
               )
-              AND status = 'active' AND expires_at <= now()
+              AND status = 'active' AND expires_at <= {_CLAIM_CLOCK_SQL}
             """,
             (store.repo_id, store.repo_id, sprint_id),
         )
