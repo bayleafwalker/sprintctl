@@ -149,9 +149,13 @@ only for read operations, or for the small set of domain operations that
 require a non-empty durable idempotency key. A direct mutation whose outcome is
 unknown is never replayed; it returns the stable
 `postgres-runtime-unavailable` response instead. If replacement connection
-creation fails, eligible operations receive that same unavailable response.
-The next eligible request may establish a new connection after PostgreSQL
-readiness returns.
+creation fails, eligible operations receive that same unavailable response and
+the dead connection is removed from the shared store. The application exposes
+`WorkApplication.served_runtime_ready()` as false while that essential runtime
+dependency is unavailable and flips it to true only after a later eligible
+request establishes a fresh connection. The pinned Vuoro service shell must
+bind that signal into its HTTP readiness endpoint; its current static
+compatibility-only readiness handler does not yet provide an adapter hook.
 
 ## Rollout compatibility mode
 

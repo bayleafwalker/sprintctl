@@ -226,13 +226,14 @@ def test_admin_shutdown_reconnects_a_read_once_and_reuses_the_fresh_connection()
     assert stale.closed is True
 
 
-def test_admin_shutdown_never_retries_a_non_idempotent_mutation():
+def test_admin_shutdown_never_retries_a_non_idempotent_mutation_but_a_later_read_recovers():
     stale = _RuntimeConnection("stale")
+    fresh = _RuntimeConnection("fresh")
     backend = _RuntimeBackend(stale)
     factory_calls = []
     app = _runtime_application(
         backend,
-        lambda: factory_calls.append(True) or _RuntimeConnection("fresh"),
+        lambda: factory_calls.append(True) or fresh,
     )
 
     with pytest.raises(ApplicationRejection) as rejected:
@@ -243,6 +244,48 @@ def test_admin_shutdown_never_retries_a_non_idempotent_mutation():
     assert backend.write_calls == 1
     assert factory_calls == []
     assert stale.closed is True
+    assert app.store.conn is None
+    assert app.served_runtime_ready() is False
+
+    recovered = app.invoke("work.read.sprints", {}, _context())
+
+    assert recovered["sprints"] == [{"id": 1, "kind": "active_sprint"}]
+    assert backend.write_calls == 1
+    assert backend.read_calls == [fresh]
+    assert factory_calls == [True]
+    assert app.served_runtime_ready() is True
+
+
+def test_admin_shutdown_factory_failure_is_not_ready_until_a_later_read_recovers():
+    stale = _RuntimeConnection("stale")
+    fresh = _RuntimeConnection("fresh")
+    backend = _RuntimeBackend(stale)
+    factory_results = [RuntimeError("postgres is still restarting"), fresh]
+
+    def factory():
+        result = factory_results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    app = _runtime_application(backend, factory)
+
+    with pytest.raises(ApplicationRejection) as rejected:
+        app.invoke("work.read.sprints", {}, _context())
+
+    assert rejected.value.code == "postgres-runtime-unavailable"
+    assert rejected.value.http_status == 503
+    assert backend.read_calls == [stale]
+    assert stale.closed is True
+    assert app.store.conn is None
+    assert app.served_runtime_ready() is False
+
+    recovered = app.invoke("work.read.sprints", {}, _context())
+
+    assert recovered["sprints"] == [{"id": 1, "kind": "active_sprint"}]
+    assert backend.read_calls == [stale, fresh]
+    assert app.store.conn is fresh
+    assert app.served_runtime_ready() is True
 
 
 def test_admin_shutdown_retry_requires_an_explicit_idempotency_key_for_writes():
