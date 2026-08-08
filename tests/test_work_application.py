@@ -164,6 +164,142 @@ class _FakeTransientCredentialCarrier:
         return self._bindings.get(key)
 
 
+class _AdminShutdown(RuntimeError):
+    sqlstate = "57P01"
+
+
+class _RuntimeConnection:
+    def __init__(self, name: str):
+        self.name = name
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _RuntimeBackend:
+    def __init__(self, stale_connection: _RuntimeConnection):
+        self.stale_connection = stale_connection
+        self.read_calls: list[_RuntimeConnection] = []
+        self.write_calls = 0
+
+    def list_sprints(self, store):
+        self.read_calls.append(store.conn)
+        if store.conn is self.stale_connection:
+            raise _AdminShutdown("administrative shutdown")
+        return [{"id": 1, "kind": "active_sprint"}]
+
+    def create_sprint(self, *_args, **_kwargs):
+        self.write_calls += 1
+        raise _AdminShutdown("administrative shutdown")
+
+
+def _runtime_application(backend: _RuntimeBackend, factory):
+    from sprintctl.pg import PgStore
+
+    stale = backend.stale_connection
+    store = PgStore(conn=stale, repo_id="runtime-test", connection_factory=factory)
+    return WorkApplication(
+        repo_id="runtime-test",
+        store=store,
+        backend=backend,
+        ingest_records=lambda _records: [],
+        arbitrate_command=lambda _record, _credentials, _actor=None: None,
+        list_records=lambda _after, _limit: [],
+        list_decisions=lambda _after, _limit: [],
+    )
+
+
+def test_admin_shutdown_reconnects_a_read_once_and_reuses_the_fresh_connection():
+    stale = _RuntimeConnection("stale")
+    fresh = _RuntimeConnection("fresh")
+    backend = _RuntimeBackend(stale)
+    factory_calls = []
+    app = _runtime_application(backend, lambda: factory_calls.append(True) or fresh)
+
+    result = app.invoke("work.read.sprints", {}, _context())
+
+    assert result == {"repo_id": "runtime-test", "sprints": [{"id": 1, "kind": "active_sprint"}]}
+    assert factory_calls == [True]
+    assert backend.read_calls == [stale, fresh]
+    assert app.store.conn is fresh
+    assert stale.closed is True
+
+
+def test_admin_shutdown_never_retries_a_non_idempotent_mutation_but_a_later_read_recovers():
+    stale = _RuntimeConnection("stale")
+    fresh = _RuntimeConnection("fresh")
+    backend = _RuntimeBackend(stale)
+    factory_calls = []
+    app = _runtime_application(
+        backend,
+        lambda: factory_calls.append(True) or fresh,
+    )
+
+    with pytest.raises(ApplicationRejection) as rejected:
+        app.invoke("work.sprint.create", {"name": "No replay"}, _context())
+
+    assert rejected.value.code == "postgres-runtime-unavailable"
+    assert rejected.value.http_status == 503
+    assert backend.write_calls == 1
+    assert factory_calls == []
+    assert stale.closed is True
+    assert app.store.conn is None
+    assert app.served_runtime_ready() is False
+
+    recovered = app.invoke("work.read.sprints", {}, _context())
+
+    assert recovered["sprints"] == [{"id": 1, "kind": "active_sprint"}]
+    assert backend.write_calls == 1
+    assert backend.read_calls == [fresh]
+    assert factory_calls == [True]
+    assert app.served_runtime_ready() is True
+
+
+def test_admin_shutdown_factory_failure_is_not_ready_until_a_later_read_recovers():
+    stale = _RuntimeConnection("stale")
+    fresh = _RuntimeConnection("fresh")
+    backend = _RuntimeBackend(stale)
+    factory_results = [RuntimeError("postgres is still restarting"), fresh]
+
+    def factory():
+        result = factory_results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    app = _runtime_application(backend, factory)
+
+    with pytest.raises(ApplicationRejection) as rejected:
+        app.invoke("work.read.sprints", {}, _context())
+
+    assert rejected.value.code == "postgres-runtime-unavailable"
+    assert rejected.value.http_status == 503
+    assert backend.read_calls == [stale]
+    assert stale.closed is True
+    assert app.store.conn is None
+    assert app.served_runtime_ready() is False
+
+    recovered = app.invoke("work.read.sprints", {}, _context())
+
+    assert recovered["sprints"] == [{"id": 1, "kind": "active_sprint"}]
+    assert backend.read_calls == [stale, fresh]
+    assert app.store.conn is fresh
+    assert app.served_runtime_ready() is True
+
+
+def test_admin_shutdown_retry_requires_an_explicit_idempotency_key_for_writes():
+    assert WorkApplication._can_retry_after_admin_shutdown(
+        "work.claim.arbitrate", _context(idempotency_key="event-1")
+    )
+    assert not WorkApplication._can_retry_after_admin_shutdown(
+        "work.claim.arbitrate", _context()
+    )
+    assert not WorkApplication._can_retry_after_admin_shutdown(
+        "work.item.edit", _context(idempotency_key="revision-1")
+    )
+
+
 def _fake_authority_command_record(inner_payload: dict) -> outbox.OutboxRecord:
     """An ``authority-command``-classed record shaped only well enough for
     :func:`application.make_transient_credential_resolver` -- it never

@@ -388,6 +388,80 @@ def test_invoke_scopes_to_the_identitys_repo_id_not_the_application_constructor(
     store_b.conn.close()
 
 
+def _terminate_backend(connection_factory, target_connection):
+    """Terminate one disposable PostgreSQL backend through a sibling session."""
+    with target_connection.cursor() as cursor:
+        cursor.execute("SELECT pg_backend_pid() AS pid")
+        target_pid = cursor.fetchone()["pid"]
+    terminator = connection_factory()
+    try:
+        with terminator.cursor() as cursor:
+            cursor.execute(
+                "SELECT pg_terminate_backend(%s) AS terminated", (target_pid,)
+            )
+            assert cursor.fetchone()["terminated"] is True
+        terminator.commit()
+    finally:
+        terminator.close()
+
+
+def test_admin_shutdown_reconnects_a_served_read_after_real_backend_termination(
+    store_factory,
+):
+    """The served PostgreSQL entry replaces an actually terminated backend."""
+    store = store_factory("admin-shutdown-read")
+    old_connection = store.conn
+    factory = store.connection_factory
+    assert factory is not None
+    _terminate_backend(factory, old_connection)
+
+    app = WorkApplication.postgres(store)
+    result = app.invoke(
+        "work.read.sprints", {}, _context("reader", None, None)
+    )
+
+    assert result == {"repo_id": store.repo_id, "sprints": []}
+    assert store.conn is not old_connection
+    assert app.served_runtime_ready() is True
+    old_connection.close()
+    store.conn.close()
+
+
+def test_second_admin_shutdown_keeps_served_runtime_not_ready_until_later_recovery(
+    store_factory,
+):
+    """A second real termination returns 503 and leaves no dead connection live."""
+    store = store_factory("admin-shutdown-second")
+    old_connection = store.conn
+    original_factory = store.connection_factory
+    assert original_factory is not None
+    _terminate_backend(original_factory, old_connection)
+
+    def terminated_replacement():
+        replacement = original_factory()
+        _terminate_backend(original_factory, replacement)
+        return replacement
+
+    store.connection_factory = terminated_replacement
+    app = WorkApplication.postgres(store)
+
+    with pytest.raises(ApplicationRejection) as rejected:
+        app.invoke("work.read.sprints", {}, _context("reader", None, None))
+
+    assert rejected.value.code == "postgres-runtime-unavailable"
+    assert rejected.value.http_status == 503
+    assert store.conn is None
+    assert app.served_runtime_ready() is False
+
+    store.connection_factory = original_factory
+    recovered = app.invoke("work.read.sprints", {}, _context("reader", None, None))
+
+    assert recovered == {"repo_id": store.repo_id, "sprints": []}
+    assert app.served_runtime_ready() is True
+    old_connection.close()
+    store.conn.close()
+
+
 def test_context_aggregate_uses_a_fresh_snapshot_after_a_reused_connection_read(
     store_factory,
 ):

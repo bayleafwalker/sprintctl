@@ -141,6 +141,22 @@ Do not grant DDL merely to support an old workstation client. After runtime DDL
 is removed, old direct clients are expected to fail explicitly when their
 startup bootstrap encounters the restricted role.
 
+## Served runtime connection recovery
+
+The long-lived served work application classifies PostgreSQL administrative
+shutdown only by SQLSTATE `57P01`. It reconnects and retries the request once
+only for read operations, or for the small set of domain operations that
+require a non-empty durable idempotency key. A direct mutation whose outcome is
+unknown is never replayed; it returns the stable
+`postgres-runtime-unavailable` response instead. If replacement connection
+creation fails, eligible operations receive that same unavailable response and
+the dead connection is removed from the shared store. The application exposes
+`WorkApplication.served_runtime_ready()` as false while that essential runtime
+dependency is unavailable and flips it to true only after a later eligible
+request establishes a fresh connection. The pinned Vuoro service shell must
+bind that signal into its HTTP readiness endpoint; its current static
+compatibility-only readiness handler does not yet provide an adapter hook.
+
 ## Rollout compatibility mode
 
 Normal remote startup behaves as if

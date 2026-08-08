@@ -1,0 +1,82 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.served-postgres-runtime-reconnect",
+  "owner_repo": "sprintctl",
+  "subject": "long-lived-vuoro-served-postgresql-connection-lifecycle-after-administrative-shutdown",
+  "contract_ref": {
+    "doc_id": "sprintctl-postgres-schema-compatibility",
+    "revision": "operator:sprintctl#2110"
+  },
+  "source_of_truth": "postgresql-sqlstate-57P01-and-domain-owned-durable-idempotency-contracts",
+  "depth": 2,
+  "backends": ["postgres", "vuoro-protocol-v1-service-shell"],
+  "actors": ["served-vuoro-client", "work-application", "postgresql-administrator"],
+  "initial_state": [
+    "served-application-holds-one-runtime-postgresql-connection",
+    "essential-work-runtime-readiness-is-true",
+    "connection-factory-can-create-a-replacement-connection",
+    "operation-catalog-declares-idempotency-requirements"
+  ],
+  "operations": [
+    {
+      "name": "read-after-administrative-shutdown",
+      "actors": ["served-vuoro-client", "work-application"],
+      "synchronization": "one-connection-replacement-under-application-recovery-lock-and-one-retry"
+    },
+    {
+      "name": "idempotent-command-after-administrative-shutdown",
+      "actors": ["served-vuoro-client", "work-application"],
+      "synchronization": "non-empty-required-idempotency-key-before-one-retry"
+    },
+    {
+      "name": "direct-mutation-after-administrative-shutdown",
+      "actors": ["served-vuoro-client", "work-application"],
+      "synchronization": "no-replay-and-stable-unavailable-rejection"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "served-postgresql-reconnect-and-no-blind-mutation-retry"
+  },
+  "assumptions": {
+    "isolation": "one application-shared runtime connection with serialized replacement",
+    "clock": "none",
+    "fairness": "a later eligible request is allowed after PostgreSQL is ready"
+  },
+  "bounds": {
+    "retries_per_invocation": 1,
+    "replacement_connections_per-failed-connection": 1,
+    "blind_mutation_retries": 0
+  },
+  "invariants": [
+    "only-postgresql-sqlstate-57P01-enters-administrative-shutdown-recovery",
+    "reads-retry-at-most-once-on-a-replacement-connection",
+    "idempotent-retries-require-an-explicit-non-empty-durable-key",
+    "non-idempotent-mutations-are-never-replayed-after-an-unknown-outcome",
+    "replacement-failure-and-second-admin-shutdown-quarantine-the-connection-and-return-stable-503-unavailable",
+    "essential-work-runtime-readiness-is-false-while-the-shared-connection-is-quarantined-and-true-only-after-replacement"
+  ],
+  "faults": [
+    "postgresql-administrative-shutdown-during-read",
+    "postgresql-administrative-shutdown-during-direct-mutation",
+    "replacement-connection-unavailable",
+    "administrative-shutdown-on-retry"
+  ],
+  "oracles": [
+    "sqlstate-57P01-unit-double",
+    "runtime-connection-factory-call-history",
+    "disposable-postgresql-pg-terminate-backend-served-entry-reconnect-test",
+    "stable-application-rejection-code-and-status",
+    "artifact-validator"
+  ],
+  "implementation_anchors": [
+    "sprintctl/application.py:WorkApplication.invoke",
+    "sprintctl/application.py:WorkApplication._replace_admin_shutdown_connection",
+    "sprintctl/application.py:WorkApplication.served_runtime_ready",
+    "tests/test_work_application.py:test_admin_shutdown_reconnects_a_read_once_and_reuses_the_fresh_connection",
+    "tests/test_work_application.py:test_admin_shutdown_never_retries_a_non_idempotent_mutation",
+    "tests/test_work_application_pg.py:test_admin_shutdown_reconnects_a_served_read_after_real_backend_termination",
+    "tests/test_work_application_pg.py:test_second_admin_shutdown_keeps_served_runtime_not_ready_until_later_recovery"
+  ],
+  "expansions": ["stateful-test", "fault-scenario", "backend-parity"]
+}

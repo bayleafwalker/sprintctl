@@ -14,7 +14,7 @@ not add a second request ledger or a second state machine.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 import re
 import socket
+from threading import RLock
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -48,6 +49,31 @@ OBSERVATION_TYPES = frozenset(
 SUPPORTED_BATCH_TYPES = (
     CLAIM_COMMAND_TYPES | LIFECYCLE_COMMAND_TYPES | OBSERVATION_TYPES
 )
+
+# A connection termination can arrive after PostgreSQL has accepted a command
+# but before the service receives its result.  Only this explicit subset has a
+# durable idempotency identity owned by the domain authority; ordinary writes
+# such as item edits, notes, and claim start must never be replayed here.
+_ADMIN_SHUTDOWN_IDEMPOTENT_OPERATIONS = frozenset(
+    {
+        "work.claim.arbitrate",
+        "work.lifecycle.arbitrate",
+        "work.evidence.ingest",
+        "work.batch.apply",
+        "work.maintenance.prepare",
+        "work.maintenance.transition",
+        "work.maintenance.recovery-record",
+    }
+)
+_ADMIN_SHUTDOWN_READ_OPERATIONS = frozenset(
+    {
+        "work.identity.current",
+        "work.claim.context",
+        "work.maintain.check",
+        "work.pilot.cutover-evidence",
+    }
+)
+_POSTGRES_ADMIN_SHUTDOWN_SQLSTATE = "57P01"
 
 
 class InvocationIdentity(Protocol):
@@ -349,6 +375,8 @@ class WorkApplication:
     list_decisions: DecisionReader
     credential_resolver: CredentialResolver | None = None
     repo_root: Path | None = None
+    _connection_recovery_lock: RLock = field(default_factory=RLock, repr=False)
+    _postgres_runtime_available: bool = field(default=True, repr=False)
 
     @classmethod
     def postgres(
@@ -426,8 +454,120 @@ class WorkApplication:
             )
         return replace(self, repo_id=repo_id)
 
+    @staticmethod
+    def _is_postgres_admin_shutdown(error: BaseException) -> bool:
+        """Return whether psycopg reported PostgreSQL's AdminShutdown SQLSTATE.
+
+        Avoid importing psycopg into the standalone SQLite application path.
+        Psycopg exposes the SQLSTATE on both the concrete error and compatible
+        test/dialect exceptions, which is the stable recovery classification.
+        """
+        return getattr(error, "sqlstate", None) == _POSTGRES_ADMIN_SHUTDOWN_SQLSTATE
+
+    @staticmethod
+    def _can_retry_after_admin_shutdown(
+        operation: str, context: InvocationContext
+    ) -> bool:
+        if operation.startswith("work.read.") or operation in _ADMIN_SHUTDOWN_READ_OPERATIONS:
+            return True
+        return (
+            operation in _ADMIN_SHUTDOWN_IDEMPOTENT_OPERATIONS
+            and getattr(context, "idempotency_requirement", None) == "required"
+            and bool(getattr(context, "idempotency_key", None))
+        )
+
+    def _replace_admin_shutdown_connection(self, failed_connection: Any) -> bool:
+        """Replace the shared runtime connection once, without exposing its DSN.
+
+        A request-scoped ``PgStore`` is a dataclass copy that shares the root
+        application's connection.  Updating the root store means the retry and
+        later invocations both use the same fresh connection.  If a concurrent
+        request already replaced it, the caller can retry without opening
+        another connection.
+        """
+        factory = getattr(self.store, "connection_factory", None)
+        if not callable(factory):
+            self._mark_postgres_runtime_unavailable(failed_connection)
+            return False
+        with self._connection_recovery_lock:
+            if getattr(self.store, "conn", None) is not failed_connection:
+                self._postgres_runtime_available = getattr(self.store, "conn", None) is not None
+                return self._postgres_runtime_available
+            try:
+                replacement = factory()
+            except Exception:
+                self._mark_postgres_runtime_unavailable(failed_connection)
+                return False
+            if replacement is None:
+                self._mark_postgres_runtime_unavailable(failed_connection)
+                return False
+            previous = self.store.conn
+            self.store.conn = replacement
+            self._postgres_runtime_available = True
+            try:
+                previous.close()
+            except Exception:
+                pass
+            return True
+
+    def _mark_postgres_runtime_unavailable(self, failed_connection: Any) -> None:
+        """Quarantine a terminated connection without replaying a command.
+
+        A non-idempotent command has an unknown outcome after an administrative
+        shutdown, so it must return rather than reconnect-and-replay.  Closing
+        and clearing the shared connection prevents a later request from
+        issuing a new command through a known-dead socket.  A later eligible
+        read (or durable-idempotent command) can acquire a fresh connection
+        before its handler begins; an unsafe mutation cannot.
+        """
+        with self._connection_recovery_lock:
+            if getattr(self.store, "conn", None) is not failed_connection:
+                return
+            self.store.conn = None
+            self._postgres_runtime_available = False
+            if failed_connection is None:
+                return
+            try:
+                failed_connection.close()
+            except Exception:
+                pass
+
+    def served_runtime_ready(self) -> bool:
+        """Whether the essential served PostgreSQL runtime is usable.
+
+        Service composition can use this boolean for its readiness probe.  It
+        becomes false whenever the shared runtime connection is quarantined;
+        it becomes true only after a replacement was established successfully.
+        Local SQLite and test-only applications retain their initial true
+        state because they never enter PostgreSQL shutdown recovery.
+        """
+        with self._connection_recovery_lock:
+            return self._postgres_runtime_available
+
+    def _ensure_postgres_runtime_available(
+        self, operation: str, context: InvocationContext
+    ) -> bool:
+        """Acquire a replacement before an eligible handler sees ``conn=None``."""
+        if self.served_runtime_ready():
+            return True
+        if not self._can_retry_after_admin_shutdown(operation, context):
+            return False
+        return self._replace_admin_shutdown_connection(None)
+
+    def _admin_shutdown_unavailable(self) -> ApplicationRejection:
+        return ApplicationRejection(
+            "postgres-runtime-unavailable",
+            "served PostgreSQL runtime is unavailable after administrative shutdown; retry an eligible read or the exact idempotent command after readiness recovers",
+            503,
+        )
+
     def invoke(
-        self, operation: str, arguments: Mapping[str, Any], context: InvocationContext
+        self,
+        operation: str,
+        arguments: Mapping[str, Any],
+        context: InvocationContext,
+        *,
+        _admin_shutdown_retry: bool = False,
     ) -> dict[str, Any]:
         if not isinstance(arguments, Mapping):
             raise ApplicationRejection(
@@ -447,6 +587,8 @@ class WorkApplication:
                 "identity is not bound to a repository",
                 403,
             )
+        if not self._ensure_postgres_runtime_available(operation, context):
+            raise self._admin_shutdown_unavailable()
         target = self._scoped_for(requested_repo_id)
         handlers = {
             "work.identity.current": target._identity_current,
@@ -508,6 +650,26 @@ class WorkApplication:
             ) from exc
         except ValueError as exc:
             raise ApplicationRejection("validation-failed", str(exc), 422) from exc
+        except Exception as exc:
+            if not self._is_postgres_admin_shutdown(exc):
+                raise
+            if _admin_shutdown_retry or not self._can_retry_after_admin_shutdown(
+                operation, context
+            ):
+                self._mark_postgres_runtime_unavailable(
+                    getattr(target.store, "conn", None)
+                )
+                raise self._admin_shutdown_unavailable() from exc
+            if not self._replace_admin_shutdown_connection(
+                getattr(target.store, "conn", None)
+            ):
+                raise self._admin_shutdown_unavailable() from exc
+            return self.invoke(
+                operation,
+                arguments,
+                context,
+                _admin_shutdown_retry=True,
+            )
 
     def _identity_current(
         self, _arguments: dict[str, Any], context: InvocationContext
