@@ -683,6 +683,57 @@ def test_served_claim_start_activates_or_releases_on_dependency_failure(
     store.conn.close()
 
 
+def test_served_claim_start_uses_live_database_statement_time_after_reused_read_transaction(
+    store_factory,
+):
+    """A long-lived served connection must not mint an already-expired lease.
+
+    PostgreSQL's ``now()`` is pinned when the implicit transaction begins.
+    This deliberately leaves a read transaction open longer than the requested
+    one-second lease.  The claim response and the active-claim projection must
+    still be live according to a fresh database statement, rather than the
+    worker's transaction-start or host clock.
+    """
+    store = store_factory("served-claim-live-statement-clock")
+    sprint_id = pg.create_sprint(store, "Live statement-clock claim", status="active")
+    track_id = pg.get_or_create_track(store, sprint_id, "work")
+    item_id = pg.create_work_item(store, sprint_id, track_id, "Clock-sensitive claim")
+    app = _application(store, {})
+
+    # Open the reusable service connection's implicit transaction, then keep
+    # it open until the old transaction timestamp is more than the lease TTL
+    # behind the database's current statement time.
+    with store.conn.cursor() as cur:
+        cur.execute("SELECT now() AS pinned")
+        pinned = cur.fetchone()["pinned"]
+        cur.execute("SELECT pg_sleep(2)")
+        cur.execute(
+            "SELECT now() AS still_pinned, statement_timestamp() AS live"
+        )
+        clock = cur.fetchone()
+    assert clock["still_pinned"] == pinned
+    assert clock["live"] > pinned
+
+    started = app.invoke(
+        "work.claim.start",
+        {"item_id": item_id, "ttl_seconds": 1},
+        _context("served-clock-worker", None, str(uuid.uuid4())),
+    )
+
+    # Query the authority itself rather than comparing against local process
+    # time: that is the clock used for lease admission and expiry.
+    with store.conn.cursor() as cur:
+        cur.execute("SELECT statement_timestamp() AS observed_at")
+        observed_at = cur.fetchone()["observed_at"]
+
+    assert started["claim"]["expires_at"] > observed_at
+    assert [claim["claim_id"] for claim in pg.list_claims(store, item_id)] == [
+        started["claim_id"]
+    ]
+    assert pg.get_work_item(store, item_id)["status"] == "active"
+    store.conn.close()
+
+
 def test_served_claim_start_and_arbitrate_reacquire_expired_claims_exactly_once(
     store_factory, tmp_path
 ):
