@@ -342,7 +342,10 @@ class TestDepCLI:
         db.add_dep(conn, blocker, blocked)
         result = runner.invoke(
             cli,
-            ["item", "status", "--id", str(blocked), "--status", "active"],
+            [
+                "item", "status", "--id", str(blocked), "--status", "active",
+                "--expected-revision", db.item_status_revision(db.get_work_item(conn, blocked)),
+            ],
         )
         assert result.exit_code == 1
         assert "blockers remain unresolved" in result.output

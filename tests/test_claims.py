@@ -789,7 +789,11 @@ class TestClaimJSONAndCLI:
         iid = _item(conn, active_sprint["id"])
         runner.invoke(cli, ["claim", "create", "--item-id", str(iid), "--agent", "bot-1"])
         result = runner.invoke(
-            cli, ["item", "status", "--id", str(iid), "--status", "active", "--actor", "bot-1"]
+            cli,
+            [
+                "item", "status", "--id", str(iid), "--status", "active", "--actor", "bot-1",
+                "--expected-revision", db.item_status_revision(db.get_work_item(conn, iid)),
+            ],
         )
         assert result.exit_code == 1
         assert "Provide --claim-id and --claim-token" in result.output
@@ -810,6 +814,7 @@ class TestClaimJSONAndCLI:
                 "--actor", "bot-1",
                 "--claim-id", str(claim["claim_id"]),
                 "--claim-token", claim["claim_token"],
+                "--expected-revision", db.item_status_revision(db.get_work_item(conn, iid)),
             ],
         )
         assert result.exit_code == 0, result.output

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from sprintctl import db, maintain as maint
+from sprintctl import authority, db, maintain as maint
 from sprintctl.cli import cli
 
 
@@ -34,35 +34,92 @@ def _age_item(conn, item_id, hours: float):
 # ---------------------------------------------------------------------------
 
 class TestSprintStatusCmd:
+    def _status(self, runner, conn, sprint_id, status, *extra):
+        sprint = db.get_sprint(conn, sprint_id)
+        assert sprint is not None
+        return runner.invoke(
+            cli,
+            [
+                "sprint", "status", "--id", str(sprint_id), "--status", status,
+                "--expected-revision", db.sprint_status_revision(sprint), *extra,
+            ],
+        )
+
     def test_activate_planned_sprint(self, runner, conn, db_path):
         sid = db.create_sprint(conn, "P1", "", "2026-04-01", "2026-04-30", "planned")
-        result = runner.invoke(cli, ["sprint", "status", "--id", str(sid), "--status", "active"])
+        result = self._status(runner, conn, sid, "active")
         assert result.exit_code == 0, result.output
         assert "planned -> active" in result.output
         assert db.get_sprint(conn, sid)["status"] == "active"
 
     def test_close_active_sprint(self, runner, conn, db_path):
         sid = db.create_sprint(conn, "A1", "", "2026-04-01", "2026-04-30", "active")
-        result = runner.invoke(cli, ["sprint", "status", "--id", str(sid), "--status", "closed"])
+        result = self._status(runner, conn, sid, "closed")
         assert result.exit_code == 0, result.output
         assert "active -> closed" in result.output
         assert db.get_sprint(conn, sid)["status"] == "closed"
 
+    def test_close_rejects_stale_revision_without_second_boundary_event(
+        self, runner, conn, db_path
+    ):
+        sid = db.create_sprint(conn, "CAS close", status="active")
+        sprint = db.get_sprint(conn, sid)
+        assert sprint is not None
+        basis = db.sprint_status_revision(sprint)
+        assert basis == authority.sprint_revision(sprint)
+
+        accepted = runner.invoke(
+            cli,
+            [
+                "sprint", "status", "--id", str(sid), "--status", "closed",
+                "--expected-revision", basis,
+            ],
+        )
+        assert accepted.exit_code == 0, accepted.output
+        events_after_accept = db.list_events(conn, sid)
+        assert len(events_after_accept) == 1
+
+        stale = runner.invoke(
+            cli,
+            [
+                "sprint", "status", "--id", str(sid), "--status", "closed",
+                "--expected-revision", basis,
+            ],
+        )
+        assert stale.exit_code == 1
+        assert "status revision mismatch" in stale.output
+        assert db.get_sprint(conn, sid)["status"] == "closed"
+        assert db.list_events(conn, sid) == events_after_accept
+
     def test_invalid_planned_to_closed(self, runner, conn, db_path):
         sid = db.create_sprint(conn, "P2", "", "2026-04-01", "2026-04-30", "planned")
-        result = runner.invoke(cli, ["sprint", "status", "--id", str(sid), "--status", "closed"])
+        result = self._status(runner, conn, sid, "closed")
         assert result.exit_code == 1
         assert "cannot transition" in result.output
 
     def test_invalid_closed_is_terminal(self, runner, conn, db_path):
         sid = db.create_sprint(conn, "C1", "", "2026-04-01", "2026-04-30", "closed")
-        result = runner.invoke(cli, ["sprint", "status", "--id", str(sid), "--status", "active"])
+        result = self._status(runner, conn, sid, "active")
         assert result.exit_code == 1
         assert "cannot transition" in result.output
 
     def test_sprint_status_unknown_id(self, runner, db_path):
-        result = runner.invoke(cli, ["sprint", "status", "--id", "9999", "--status", "closed"])
+        result = runner.invoke(
+            cli,
+            [
+                "sprint", "status", "--id", "9999", "--status", "closed",
+                "--expected-revision", "sprint:00000000-0000-0000-0000-000000000000@status:active",
+            ],
+        )
         assert result.exit_code == 1
+
+    def test_sprint_status_requires_expected_revision(self, runner, conn, db_path):
+        sid = db.create_sprint(conn, "Missing CAS", status="active")
+        result = runner.invoke(
+            cli, ["sprint", "status", "--id", str(sid), "--status", "closed"]
+        )
+        assert result.exit_code == 2
+        assert "Missing option '--expected-revision'" in result.output
 
 
 # ---------------------------------------------------------------------------
