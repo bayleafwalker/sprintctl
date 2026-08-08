@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 from uuid import uuid4
 
-from sprintctl import authority, db, outbox
+from sprintctl import db, outbox
 from sprintctl.cli import cli
 
 
@@ -153,10 +152,19 @@ def test_authority_mode_defaults_off_and_shadow_submit_never_mutates(
     ]
 
 
-def test_authority_enforce_rejects_local_backend_before_mutation(runner, conn, tmp_path):
+def test_authority_submit_enforce_is_retired_before_store_or_mutation(
+    runner, conn, tmp_path, monkeypatch
+):
+    import sprintctl.cli as cli_module
+
     _configure_repo(tmp_path)
     sprint_id = db.create_sprint(conn, "Authority local", status="active")
     assert runner.invoke(cli, ["authority", "mode", "--set", "enforce"]).exit_code == 0
+    monkeypatch.setattr(
+        cli_module,
+        "_get_store",
+        lambda _obj: (_ for _ in ()).throw(AssertionError("enforce opened a store")),
+    )
 
     result = runner.invoke(
         cli,
@@ -173,141 +181,9 @@ def test_authority_enforce_rejects_local_backend_before_mutation(runner, conn, t
     )
 
     assert result.exit_code != 0
-    assert "requires a remote PostgreSQL backend" in result.output
+    assert "authority submit enforce is retired" in result.output
+    assert "direct PostgreSQL client" in result.output
     assert db.get_sprint(conn, sprint_id)["status"] == "active"
-
-
-def test_authority_enforce_appends_then_returns_remote_decision(
-    runner, conn, tmp_path, monkeypatch
-):
-    import sprintctl.cli as cli_module
-
-    _configure_repo(tmp_path)
-    sprint_id = db.create_sprint(conn, "Authority enforce", status="active")
-    track_id = db.get_or_create_track(conn, sprint_id, "authority")
-    item_id = db.create_work_item(conn, sprint_id, track_id, "Enforced item")
-    item = db.get_work_item(conn, item_id)
-    fake_store = SimpleNamespace(authority_repo_uuid=None)
-    fake_module = SimpleNamespace(get_work_item=lambda _store, _id: item)
-    calls = []
-
-    def fake_get_store(obj):
-        obj["backend_config"] = SimpleNamespace(mode="remote")
-        return fake_store, fake_module
-
-    def fake_arbitrate(store, record, *, credentials):
-        calls.append((store, record, credentials))
-        return authority.AuthorityDecision(
-            request_event_id=record.event_id,
-            decision_event_id=str(uuid4()),
-            decision_ingest_offset=17,
-            decision_type="item.transitioned",
-            outcome="accepted",
-            reason_code=None,
-            reason_detail=None,
-            effect={"item_id": item_id, "status": "active"},
-        )
-
-    monkeypatch.setattr(cli_module, "_get_store", fake_get_store)
-    monkeypatch.setattr(cli_module._authority, "arbitrate_command", fake_arbitrate)
-    assert runner.invoke(cli, ["authority", "mode", "--set", "enforce"]).exit_code == 0
-
-    result = runner.invoke(
-        cli,
-        [
-            "authority",
-            "submit",
-            "--type",
-            "item.transition",
-            "--aggregate-id",
-            str(item_id),
-            "--payload",
-            '{"to_status":"active"}',
-            "--actor",
-            "operator",
-            "--json",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
-    assert payload["status"] == "accepted"
-    assert payload["decision_type"] == "item.transitioned"
-    assert len(calls) == 1
-    producer = outbox.open_outbox(tmp_path / ".sprintctl" / "authority-command-outbox.db")
-    try:
-        assert [record.event_id for record in outbox.list_records(producer)] == [
-            payload["request_event_id"]
-        ]
-    finally:
-        producer.close()
-
-
-def test_authority_enforce_retries_stable_event_id_through_remote_duplicate(
-    runner, conn, tmp_path, monkeypatch
-):
-    import sprintctl.cli as cli_module
-
-    _configure_repo(tmp_path)
-    sprint_id = db.create_sprint(conn, "Authority duplicate", status="active")
-    track_id = db.get_or_create_track(conn, sprint_id, "authority")
-    item_id = db.create_work_item(conn, sprint_id, track_id, "Duplicate item")
-    item = db.get_work_item(conn, item_id)
-    fake_store = SimpleNamespace(authority_repo_uuid=None)
-    fake_module = SimpleNamespace(get_work_item=lambda _store, _id: item)
-    calls = []
-    event_id = str(uuid4())
-
-    def fake_get_store(obj):
-        obj["backend_config"] = SimpleNamespace(mode="remote")
-        return fake_store, fake_module
-
-    def fake_arbitrate(store, record, *, credentials):
-        calls.append((store, record, credentials))
-        return authority.AuthorityDecision(
-            request_event_id=record.event_id,
-            decision_event_id="a57ad11d-5425-4bd1-b1fe-a2432d6c97e8",
-            decision_ingest_offset=17,
-            decision_type="item.transitioned",
-            outcome="accepted",
-            reason_code=None,
-            reason_detail=None,
-            effect={"item_id": item_id, "status": "active"},
-            duplicate=len(calls) > 1,
-        )
-
-    monkeypatch.setattr(cli_module, "_get_store", fake_get_store)
-    monkeypatch.setattr(cli_module._authority, "arbitrate_command", fake_arbitrate)
-    assert runner.invoke(cli, ["authority", "mode", "--set", "enforce"]).exit_code == 0
-    command = [
-        "authority",
-        "submit",
-        "--type",
-        "item.transition",
-        "--aggregate-id",
-        str(item_id),
-        "--payload",
-        '{"to_status":"active"}',
-        "--event-id",
-        event_id,
-        "--actor",
-        "operator",
-        "--json",
-    ]
-
-    first = runner.invoke(cli, command)
-    assert first.exit_code == 0, first.output
-    second = runner.invoke(cli, command)
-    assert second.exit_code == 0, second.output
-    assert json.loads(second.output)["duplicate"] is True
-    assert [record.event_id for _store, record, _credentials in calls] == [event_id, event_id]
-    assert calls[0][1] == calls[1][1]
-
-    producer = outbox.open_outbox(tmp_path / ".sprintctl" / "authority-command-outbox.db")
-    try:
-        assert [record.event_id for record in outbox.list_records(producer)] == [event_id]
-    finally:
-        producer.close()
 
 
 def test_shadow_claim_acquire_persists_private_recoverable_proof(runner, conn, tmp_path):

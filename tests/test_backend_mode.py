@@ -19,6 +19,30 @@ def test_missing_backend_defaults_to_local(tmp_path, monkeypatch):
     assert config.repo_id == tmp_path.name
 
 
+def test_url_only_keeps_the_normal_client_local_and_never_opens_postgres(
+    tmp_path, monkeypatch, runner
+):
+    (tmp_path / ".git").mkdir()
+    db_path = tmp_path / "sprintctl.db"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("SPRINTCTL_BACKEND", raising=False)
+    monkeypatch.setenv("SPRINTCTL_URL", "postgresql://ignored@example.invalid/work")
+    monkeypatch.setenv("SPRINTCTL_DB", str(db_path))
+
+    config = backend.load_backend_config(cwd=tmp_path)
+    assert config.mode == "local"
+
+    from sprintctl import pg
+    monkeypatch.setattr(
+        pg,
+        "get_connection",
+        lambda _url: pytest.fail("URL-only local mode opened PostgreSQL"),
+    )
+    result = runner.invoke(cli, ["sprint", "list"])
+    assert result.exit_code == 0, result.output
+    assert db_path.exists()
+
+
 def test_invalid_backend_value_errors(tmp_path):
     try:
         backend.load_backend_config(
@@ -57,19 +81,20 @@ def test_invalid_backend_marker_shape_errors(tmp_path):
         raise AssertionError("expected backend config error")
 
 
-def test_remote_mode_requires_url(tmp_path):
+def test_remote_mode_is_retired_before_url_or_driver_resolution(tmp_path):
     try:
         backend.load_backend_config(
             cwd=tmp_path,
             environ={"SPRINTCTL_BACKEND": "remote"},
         )
     except backend.BackendConfigError as exc:
-        assert "SPRINTCTL_BACKEND=remote requires SPRINTCTL_URL" in str(exc)
+        assert "SPRINTCTL_BACKEND=remote is retired" in str(exc)
+        assert "will not open a direct PostgreSQL client" in str(exc)
     else:
         raise AssertionError("expected backend config error")
 
 
-def test_remote_mode_requires_repo_identity(tmp_path):
+def test_remote_mode_is_retired_before_repo_identity_resolution(tmp_path):
     try:
         backend.load_backend_config(
             cwd=tmp_path,
@@ -79,12 +104,12 @@ def test_remote_mode_requires_repo_identity(tmp_path):
             },
     )
     except backend.BackendConfigError as exc:
-        assert "backend-uncorroborated" in str(exc)
+        assert "SPRINTCTL_BACKEND=remote is retired" in str(exc)
     else:
         raise AssertionError("expected backend config error")
 
 
-def test_backend_marker_mode_mismatch_errors(tmp_path):
+def test_legacy_remote_marker_is_retired_even_when_local_is_selected(tmp_path):
     marker_dir = tmp_path / ".sprintctl"
     marker_dir.mkdir()
     (marker_dir / "backend.json").write_text(
@@ -98,8 +123,8 @@ def test_backend_marker_mode_mismatch_errors(tmp_path):
             environ={"SPRINTCTL_BACKEND": "local"},
         )
     except backend.BackendConfigError as exc:
-        assert f"SPRINTCTL_BACKEND=local cannot be used in repo '{tmp_path.name}'" in str(exc)
-        assert "repo marker requires remote" in str(exc)
+        assert "SPRINTCTL_BACKEND=remote is retired" in str(exc)
+        assert "Update the repository marker to 'served'" in str(exc)
     else:
         raise AssertionError("expected backend config error")
 
@@ -151,30 +176,34 @@ def test_scoped_id_parser_rejects_malformed_references():
             raise AssertionError(f"expected malformed reference error for {value!r}")
 
 
-def test_markerless_remote_requires_explicit_scoped_opt_in(tmp_path):
+def test_markerless_remote_cannot_bypass_retirement_with_scoped_opt_in(tmp_path):
+    repo = tmp_path / "explicit-repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
     environment = {
         "SPRINTCTL_BACKEND": "remote",
         "SPRINTCTL_URL": "postgresql://example/db",
         "SPRINTCTL_REPO_ID": "env-repo",
     }
     try:
-        backend.load_backend_config(cwd=tmp_path, environ=environment)
+        backend.load_backend_config(cwd=repo, environ=environment)
     except backend.BackendConfigError as exc:
-        assert "backend-uncorroborated" in str(exc)
+        assert "SPRINTCTL_BACKEND=remote is retired" in str(exc)
     else:
         raise AssertionError("expected marker-less remote backend to be rejected")
 
     config = backend.load_backend_config(
-        cwd=tmp_path,
+        cwd=repo,
         environ=environment,
-        explicit_repo_id="explicit-repo",
+        explicit_repo_id=repo.name,
         allow_markerless_nonlocal=True,
+        allow_legacy_direct_remote=True,
     )
-    assert config.repo_id == "explicit-repo"
+    assert config.repo_id == repo.name
     assert config.repo_source == "flag"
 
 
-def test_nonlocal_marker_without_a_repo_id_is_not_corroboration(tmp_path):
+def test_legacy_remote_marker_without_repo_id_is_retired(tmp_path):
     marker_dir = tmp_path / ".sprintctl"
     marker_dir.mkdir()
     (marker_dir / "backend.json").write_text(
@@ -186,12 +215,12 @@ def test_nonlocal_marker_without_a_repo_id_is_not_corroboration(tmp_path):
             environ={"SPRINTCTL_BACKEND": "remote", "SPRINTCTL_URL": "postgresql://example/db"},
         )
     except backend.BackendConfigError as exc:
-        assert "backend-uncorroborated" in str(exc)
+        assert "SPRINTCTL_BACKEND=remote is retired" in str(exc)
     else:
         raise AssertionError("expected marker without repo_id to be rejected")
 
 
-def test_remote_tombstone_fails_closed_before_schema_handshake(tmp_path, monkeypatch, runner):
+def test_normal_remote_command_fails_before_postgres_import(tmp_path, monkeypatch, runner):
     marker_dir = tmp_path / ".sprintctl"
     marker_dir.mkdir()
     (marker_dir / "backend.json").write_text(
@@ -202,31 +231,19 @@ def test_remote_tombstone_fails_closed_before_schema_handshake(tmp_path, monkeyp
     monkeypatch.setenv("SPRINTCTL_URL", "postgresql://example.invalid/sprintctl")
 
     from sprintctl import pg
-
-    class Connection:
-        def close(self):
-            return None
-
-    store = pg.PgStore(conn=Connection(), repo_id=tmp_path.name)
-    monkeypatch.setattr(pg, "get_connection", lambda _url: store)
     monkeypatch.setattr(
         pg,
-        "superseded_marker_message",
-        lambda _store: "this database was superseded; use served mode",
-    )
-    monkeypatch.setattr(
-        "sprintctl.pg_migrations.startup_schema_handshake",
-        lambda *_args: pytest.fail("schema handshake must not run after a tombstone"),
+        "get_connection",
+        lambda _url: pytest.fail("retired remote configuration opened PostgreSQL"),
     )
 
     result = runner.invoke(cli, ["sprint", "list"])
 
     assert result.exit_code == 1
-    assert "remote backend is superseded" in result.output
-    assert "this database was superseded; use served mode" in result.output
+    assert "SPRINTCTL_BACKEND=remote is retired" in result.output
 
 
-def test_explicit_scope_cannot_conflict_with_marker(tmp_path):
+def test_explicit_scope_cannot_bypass_legacy_remote_marker(tmp_path):
     marker_dir = tmp_path / ".sprintctl"
     marker_dir.mkdir()
     (marker_dir / "backend.json").write_text(
@@ -240,7 +257,7 @@ def test_explicit_scope_cannot_conflict_with_marker(tmp_path):
             explicit_repo_id="other-repo",
         )
     except backend.BackendConfigError as exc:
-        assert "repo scope mismatch" in str(exc)
+        assert "SPRINTCTL_BACKEND=remote is retired" in str(exc)
     else:
         raise AssertionError("expected conflicting explicit repo scope to be rejected")
 
@@ -285,7 +302,7 @@ def test_cli_preflight_errors_before_creating_local_db(tmp_path, monkeypatch, ru
     result = runner.invoke(cli, ["sprint", "list"])
 
     assert result.exit_code == 1
-    assert "backend-uncorroborated" in result.output
+    assert "SPRINTCTL_BACKEND=remote is retired" in result.output
     assert not (tmp_path / ".sprintctl").exists()
 
 
@@ -309,7 +326,7 @@ def test_markerless_remote_preflight_fails_closed_for_each_named_read(
     result = runner.invoke(cli, args)
 
     assert result.exit_code == 1
-    assert "backend-uncorroborated" in result.output
+    assert "SPRINTCTL_BACKEND=remote is retired" in result.output
     assert not (tmp_path / ".sprintctl").exists()
 
 
@@ -341,5 +358,5 @@ def test_cli_local_marker_mismatch_errors_before_sqlite_open(tmp_path, monkeypat
     result = runner.invoke(cli, ["sprint", "list"])
 
     assert result.exit_code == 1
-    assert "repo marker requires remote" in result.output
+    assert "SPRINTCTL_BACKEND=remote is retired" in result.output
     assert not (marker_dir / "sprintctl.db").exists()

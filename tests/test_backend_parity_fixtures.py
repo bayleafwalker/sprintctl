@@ -1,4 +1,4 @@
-"""Parity fixtures: same canonical data across local, remote, and served backends.
+"""Parity fixtures: same canonical data across local and served backends.
 
 Every field in the canonical data participates in assertions. No parity
 assertion uses an empty array or merely checks that the output is a list.
@@ -287,13 +287,12 @@ def _configure_served(tmp_path, monkeypatch) -> None:
 
 
 class TestSprintListParity:
-    """sprint list --json produces identical output across every backend."""
+    """sprint list --json produces identical output across supported backends."""
 
     @pytest.mark.parametrize(
         "backend,setup_fn_group",
         [
             pytest.param("local", "local", id="local"),
-            pytest.param("remote", "remote", id="remote"),
             pytest.param("served", "served", id="served", marks=_requires_312),
         ],
     )
@@ -301,16 +300,6 @@ class TestSprintListParity:
         if setup_fn_group == "local":
             monkeypatch.setenv("SPRINTCTL_BACKEND", "local")
             _populate_sqlite(tmp_path / "test.db")
-        elif setup_fn_group == "remote":
-            marker_dir = tmp_path / ".sprintctl"
-            marker_dir.mkdir()
-            (marker_dir / "backend.json").write_text(
-                json.dumps({"backend": "remote", "repo_id": tmp_path.name}),
-                encoding="utf-8",
-            )
-            monkeypatch.setenv("SPRINTCTL_BACKEND", "remote")
-            monkeypatch.setenv("SPRINTCTL_URL", "postgresql://test@localhost/test")
-            _mock_remote_pg(monkeypatch, tmp_path.name)
         elif setup_fn_group == "served":
             _configure_served(tmp_path, monkeypatch)
             monkeypatch.setattr(
@@ -344,13 +333,12 @@ class TestSprintListParity:
 
 
 class TestItemListParity:
-    """item list --json produces identical output across every backend."""
+    """item list --json produces identical output across supported backends."""
 
     @pytest.mark.parametrize(
         "backend,setup_fn_group",
         [
             pytest.param("local", "local", id="local"),
-            pytest.param("remote", "remote", id="remote"),
             pytest.param("served", "served", id="served", marks=_requires_312),
         ],
     )
@@ -358,16 +346,6 @@ class TestItemListParity:
         if setup_fn_group == "local":
             monkeypatch.setenv("SPRINTCTL_BACKEND", "local")
             _populate_sqlite(tmp_path / "test.db")
-        elif setup_fn_group == "remote":
-            marker_dir = tmp_path / ".sprintctl"
-            marker_dir.mkdir()
-            (marker_dir / "backend.json").write_text(
-                json.dumps({"backend": "remote", "repo_id": tmp_path.name}),
-                encoding="utf-8",
-            )
-            monkeypatch.setenv("SPRINTCTL_BACKEND", "remote")
-            monkeypatch.setenv("SPRINTCTL_URL", "postgresql://test@localhost/test")
-            _mock_remote_pg(monkeypatch, tmp_path.name)
         elif setup_fn_group == "served":
             _configure_served(tmp_path, monkeypatch)
             monkeypatch.setattr(

@@ -390,7 +390,20 @@ def evaluate_facts(facts: Mapping[str, Any]) -> dict[str, Any]:
 
     if not backend["valid"]:
         error = backend["error"] or "Backend configuration is invalid."
-        if "backend-uncorroborated" in error:
+        if "SPRINTCTL_BACKEND=remote is retired" in error:
+            findings.append(
+                _finding(
+                    "legacy-direct-remote-retired",
+                    "error",
+                    error,
+                    [
+                        "Use SPRINTCTL_BACKEND=served with SPRINTCTL_VUORO_PROFILE "
+                        "for shared work, or unset SPRINTCTL_BACKEND and "
+                        "SPRINTCTL_URL for local SQLite.",
+                    ],
+                )
+            )
+        elif "backend-uncorroborated" in error:
             findings.append(
                 _finding(
                     "backend-uncorroborated",
@@ -411,15 +424,6 @@ def evaluate_facts(facts: Mapping[str, Any]) -> dict[str, Any]:
                     ["Align SPRINTCTL_BACKEND, SPRINTCTL_URL, and .sprintctl/backend.json."],
                 )
             )
-    if backend["environment_mode"] == "remote" and not extras["remote"]["enabled"]:
-        findings.append(
-            _finding(
-                "remote-extra-missing",
-                "error",
-                "Remote mode is configured but psycopg is unavailable.",
-                [REINSTALL_GUIDANCE["remote_pipx"], REINSTALL_GUIDANCE["remote_uv"]],
-            )
-        )
     if backend["environment_mode"] == "served" and not extras.get("served", {}).get("enabled"):
         findings.append(
             _finding(
@@ -429,31 +433,6 @@ def evaluate_facts(facts: Mapping[str, Any]) -> dict[str, Any]:
                 ["Install the 'served' extra: pip install 'sprintctl[served]'."],
             )
         )
-    if backend["valid"] and backend["resolved_mode"] == "remote" and schema["status"] == "current":
-        if schema.get("has_active_sprint") is False:
-            findings.append(
-                _finding(
-                    "backend-reachable-but-empty",
-                    "warning",
-                    "Remote backend is reachable but holds no active sprint data (SF2-b).",
-                    [
-                        "Confirm SPRINTCTL_URL targets the current shared authority; "
-                        "doctor performed read-only checks only.",
-                    ],
-                )
-            )
-        if schema.get("superseded_marker"):
-            findings.append(
-                _finding(
-                    "backend-superseded",
-                    "error",
-                    f"Remote backend is superseded: {schema['superseded_marker']} (SF3).",
-                    [
-                        "Stop using this remote target and switch to the current served authority; "
-                        "doctor performed read-only checks only.",
-                    ],
-                )
-            )
     if schema["status"] == "mismatch":
         findings.append(
             _finding(
@@ -498,9 +477,7 @@ def collect_report(
             "requirement": "vuoro-client (the 'served' extra)",
         },
     }
-    if backend["valid"] and backend["resolved_mode"] == "remote":
-        schema = _probe_remote_schema(environ)
-    elif backend["valid"] and backend["resolved_mode"] == "served":
+    if backend["valid"] and backend["resolved_mode"] == "served":
         served_profile = None
         try:
             served_profile = _backend.load_backend_config(cwd=cwd, environ=environ).served_profile
@@ -513,7 +490,7 @@ def collect_report(
         schema = {
             "backend": backend["environment_mode"],
             "expected_version": (
-                REMOTE_SCHEMA_VERSION
+                "served-or-local-only"
                 if backend["environment_mode"] == "remote"
                 else sorted(_SERVED_EXPECTED_OPERATIONS)
                 if backend["environment_mode"] == "served"

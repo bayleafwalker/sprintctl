@@ -25,6 +25,32 @@ item only inventories gaps; it does not close them.
 | 9 | Export/recovery rehearsal (cross-backend) | Done | Owner: sprintctl #1219 — rehearsal completed 2026-07-24 against the live served authority using `sprintctl db recover-from-remote` (#1233, commit `b38937e`, CI run 30073378545 green). See "Row 9 rehearsal record" below. |
 | 10 | Production promotion evidence | Done | vuoro #1223 (done, 2026-07-24) — `vuoro-shared` deployment/image/migration state recorded; historical sprintctl data backfilled (repo_id=`sprintctl` scope, no prior tool existed for this — see record) with exact row-count parity (sprint 21, track 51, work_item 195, claim 3, dep 57, ref 141, event 469); post-promotion health/parity verified via a live served-mode read (`sprintctl doctor`, `sprint list`, `item show --id 1164` all correct against production). See sprintctl #1164 ref #348. |
 | 11 | Explicit operator gate | Done | Owner: sprintctl #1221 — decision event #1442 recorded on #1164 (2026-07-24), authorizing removal now that every row above is green and #1245 is deployed and verified live. Explicit operator sign-off obtained before recording (this is a human decision, not one an agent self-authorizes). Rollback procedure referenced: `sprintctl db recover-from-remote` against retained SQLite exports (#1219, #1233), rehearsed 2026-07-24. |
+| 12 | Normal-client direct-remote circuit breaker | Implemented; pending independent review, release, and consumer cutover proof | Current Wave 0 branch rejects legacy remote env/markers before driver import or connection; it retains only named schema/migration/recovery administration. `verification/contexts/direct-remote-circuit-breaker.json` is a **draft implementation context**, not closure evidence for #1164. |
+
+## Wave 0 circuit-breaker implementation (2026-08-08)
+
+This ledger is the governing draft evidence record for the direct-remote
+retirement context. The context must therefore keep `contract_status: draft`
+and reference this ledger's base revision (`git:c9725d39f6e2dc45b3c9934b43bfb2510d4b1e63`) until an
+authorized review and release record supersedes it.
+
+The implementation scope is intentionally narrower than a terminal #1164
+settlement:
+
+1. Normal configuration accepts local or served work only; `remote` env and
+   remote markers fail before a PostgreSQL driver or connection is reached.
+2. `SPRINTCTL_URL` alone does not choose direct remote mode; the default normal
+   client remains local and ignores it.
+3. Direct PostgreSQL remains only in named schema-owner, migration, and
+   point-in-time recovery utilities. Generic `authority submit`/local
+   `authority sync` enforce routes are retired rather than left as unreachable
+   normal-client paths.
+
+Before row 12 can be marked Done, record independent source review, a released
+Sprintctl artifact, development consumer install/pin evidence, served-profile
+success evidence, and proof that legacy marker/env consumers have been
+deliberately cut over. This implementation document does not grant any of
+those authorities or alter the prior operator decision in row 11.
 
 ## Expected-finding check
 

@@ -18,20 +18,22 @@ sprintctl authority mode --set shadow
 sprintctl authority mode --set enforce
 ```
 
-| Mode | Durable local request | Remote arbitration | Authority mutation |
-|---|---:|---:|---:|
-| `off` | no | no | only through the retained commands |
-| `shadow` | yes | no | never from the authority request |
-| `enforce` | yes | required | only with an accepted remote decision |
+| Mode | Generic `authority submit` | Authority mutation |
+|---|---:|---:|
+| `off` | no | only through the normal local or served commands |
+| `shadow` | appends a local pending record | never from that record |
+| `enforce` | retired; no direct PostgreSQL submission | through the corresponding served work command |
 
-`enforce` requires the configured remote PostgreSQL backend. It fails before
-appending when the repository is local, so it cannot make a local request look
-effective. `shadow` is useful for inspecting command shapes and proof handling,
-but a shadow request is pending evidence, not a successful transition.
+`authority submit` while the rollout mode is `enforce` no longer opens a direct
+PostgreSQL arbitration path. It fails before opening a normal backend store. Use the
+corresponding served lifecycle, claim, or work command; `authority sync` in a
+served environment retries an already-recorded request. `shadow` remains useful
+for inspecting command shapes and proof handling, but a shadow request is
+pending evidence, not a successful transition.
 
-## Submit commands
+## Shadow submit commands
 
-Every submission records a strict command envelope in
+Every **shadow** submission records a strict command envelope in
 `.sprintctl/authority-command-outbox.db`. Raw claim proofs are forbidden in the
 envelope; only their SHA-256 bindings are durable.
 
@@ -61,12 +63,11 @@ sprintctl authority submit \
   --json
 ```
 
-The CLI reads the current aggregate revision unless `--basis-revision` is
-given. PostgreSQL locks and revalidates current state, dependencies, active
-claims, expiry, proof, close boundaries, and receipt artifacts. A stale or
-invalid request commits as an immutable request plus `command.rejected`; it
-does not mutate the aggregate. Retrying the same event and stream identity
-returns the first decision.
+The CLI reads the current local aggregate revision unless `--basis-revision`
+is given. Shadow submissions do not mutate shared authority. The served
+authority validates the command basis, claims, expiry, proof, close boundaries,
+and receipt artifacts when a corresponding served command is invoked or an
+already-recorded request is retried through served `authority sync`.
 
 Use environment variables for existing proofs so they do not enter shell
 history:
@@ -101,11 +102,12 @@ sprintctl authority recover-proof --event-id <request-uuid>
 sprintctl authority clear-proof --event-id <request-uuid>
 ```
 
-`sync` retries pending commands only when all required proof bindings can be
-resolved. Commands without locally available proof remain pending and cannot
-change authority. Accepted acquire and rotating-handoff sidecars remain until
-the caller stores the new proof and runs `clear-proof`; sidecars for other
-completed or rejected commands are removed.
+In a served environment, `sync` retries pending commands only when all required
+proof bindings can be resolved. Commands without locally available proof remain
+pending and cannot change authority. Local direct-PostgreSQL `sync` is retired.
+Accepted acquire and rotating-handoff sidecars remain until the caller stores
+the new proof and runs `clear-proof`; sidecars for other completed or rejected
+commands are removed.
 
 Treat `recover-proof` output as a secret. Do not paste it into notes, logs,
 JSON artifacts, or command payloads.
@@ -132,13 +134,13 @@ The producer outbox fingerprint and served ingestion fingerprint are distinct
 integrity domains. Compare canonical record content through `reconcile`, not
 their separately stored `record_sha256` columns.
 
-## Decision evidence and atomicity
+## Served decision evidence and atomicity
 
-The remote transaction admits the command request, applies or rejects the
-semantic effect, appends the remote decision, and records its request/decision
-binding atomically. An infrastructure failure rolls all of those writes back.
-Semantic rejection rolls back only the attempted effect and commits the
-request plus rejection decision.
+The served authority admits the command request, applies or rejects the
+semantic effect, appends its decision, and records its request/decision binding
+atomically. An infrastructure failure rolls all of those writes back. Semantic
+rejection rolls back only the attempted effect and commits the request plus
+rejection decision.
 
 The local decision cache has an independent sparse watermark because command
 requests, observations, and decisions share the server ingest sequence. The

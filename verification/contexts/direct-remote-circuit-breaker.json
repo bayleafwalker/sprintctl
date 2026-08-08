@@ -1,0 +1,36 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.direct-remote-circuit-breaker",
+  "owner_repo": "sprintctl",
+  "subject": "normal-client-direct-postgresql-retirement-and-explicit-administration-boundary",
+  "contract_ref": {
+    "doc_id": "1164-gate-evidence-ledger",
+    "revision": "git:c9725d39f6e2dc45b3c9934b43bfb2510d4b1e63"
+  },
+  "contract_status": "draft",
+  "source_of_truth": "served-vuoro-work-authority-or-repository-local-sqlite-never-a-normal-direct-postgresql-client",
+  "depth": 1,
+  "backends": ["local-sqlite", "vuoro-served-work-adapter", "explicit-owner-recovery-postgresql"],
+  "actors": ["normal-cli-client", "served-authority", "named-schema-owner", "named-recovery-operator"],
+  "initial_state": ["legacy-remote-env-or-marker-may-remain", "normal-client-has-no-authority-to-open-postgresql"],
+  "operations": [
+    {"name": "resolve-normal-client-backend", "actors": ["normal-cli-client"], "synchronization": "configuration gate before driver import or connection"},
+    {"name": "run-served-work-operation", "actors": ["normal-cli-client", "served-authority"], "synchronization": "validated Vuoro profile and catalog route"},
+    {"name": "run-explicit-owner-or-recovery-utility", "actors": ["named-schema-owner", "named-recovery-operator"], "synchronization": "named command only; never normal backend selection"}
+  ],
+  "consistency": {"target": "fail-closed-routing", "object": "direct-postgresql-client-admission"},
+  "assumptions": {"isolation": "backend selection completes before psycopg import", "clock": "none", "fairness": "none"},
+  "bounds": {"legacy_configuration_sources": 2, "normal_backend_modes": 2, "explicit_administration_categories": 3},
+  "invariants": [
+    "normal-client-accepts-only-local-or-served",
+    "legacy-remote-env-fails-before-postgresql-import-or-connection",
+    "legacy-remote-marker-fails-before-postgresql-import-or-connection",
+    "doctor-never-probes-a-retired-normal-direct-postgresql-backend",
+    "served-catalog-gaps-never-fall-back-to-direct-postgresql",
+    "named-schema-migration-and-recovery-utilities-remain-explicitly-isolated"
+  ],
+  "faults": ["stale-remote-env", "stale-remote-marker", "missing-served-profile", "served-catalog-gap", "missing-legacy-recovery-url"],
+  "oracles": ["backend-config-error-shape", "postgres-connection-spy", "doctor-finding-code", "explicit-recovery-command-guard"],
+  "implementation_anchors": ["sprintctl/backend.py:load_backend_config", "sprintctl/cli.py:_get_store", "sprintctl/doctor.py:collect_report", "tests/test_backend_mode.py"],
+  "expansions": ["stateful-test", "deployment-cutover-evidence"]
+}

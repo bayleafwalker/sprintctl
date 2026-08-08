@@ -37,12 +37,10 @@ def test_stale_fixture_detects_uuid_json_extra_and_schema_mismatches():
         "executable-source-version-mismatch",
         "package-source-version-mismatch",
         "source-capability-mismatch",
-        "remote-extra-missing",
         "schema-version-mismatch",
     }
     assert "portable-aggregate-uuid-json/v1" in findings["source-capability-mismatch"]["message"]
     assert "pipx upgrade sprintctl" in findings["executable-source-version-mismatch"]["guidance"]
-    assert "sprintctl[remote]" in findings["remote-extra-missing"]["guidance"][0]
 
 
 def test_local_schema_probe_accepts_freshly_initialized_database(tmp_path):
@@ -133,21 +131,23 @@ def test_remote_schema_probe_enforces_read_only_connection(monkeypatch):
     assert observed["closed"] is True
 
 
-def test_doctor_labels_empty_and_superseded_remote_targets():
+def test_doctor_does_not_label_retired_remote_target_as_reachable():
     facts = _fixture("doctor-current.json")
-    facts["schema"] = {
-        **facts["schema"],
-        "has_active_sprint": False,
-        "superseded_marker": "this database was superseded; use served mode",
+    facts["backend"] = {
+        **facts["backend"],
+        "environment_mode": "remote",
+        "valid": False,
+        "resolved_mode": None,
+        "error": "Error: SPRINTCTL_BACKEND=remote is retired and will not open a direct PostgreSQL client.",
     }
 
     report = doctor.evaluate_facts(facts)
 
     findings = {finding["code"]: finding for finding in report["findings"]}
-    assert findings["backend-reachable-but-empty"]["severity"] == "warning"
-    assert "SF2-b" in findings["backend-reachable-but-empty"]["message"]
-    assert findings["backend-superseded"]["severity"] == "error"
-    assert "this database was superseded" in findings["backend-superseded"]["message"]
+    assert findings["legacy-direct-remote-retired"]["severity"] == "error"
+    assert "direct PostgreSQL client" in findings["legacy-direct-remote-retired"]["message"]
+    assert "backend-reachable-but-empty" not in findings
+    assert "backend-superseded" not in findings
 
 
 def test_remote_schema_error_redacts_credentials(monkeypatch):
@@ -187,9 +187,8 @@ def test_doctor_json_reports_config_without_exposing_remote_url(tmp_path, monkey
     assert payload["backend"]["url_configured"] is True
     assert "secret" not in result.output
     assert "password" not in result.output
-    assert {finding["code"] for finding in payload["findings"]} >= {
-        "remote-extra-missing",
-        "schema-unavailable",
+    assert {finding["code"] for finding in payload["findings"]} == {
+        "legacy-direct-remote-retired",
     }
 
 
@@ -208,7 +207,7 @@ def test_doctor_invalid_backend_does_not_create_database(tmp_path, monkeypatch, 
     assert not db_path.exists()
 
 
-def test_doctor_labels_markerless_remote_backend_as_uncorroborated(tmp_path):
+def test_doctor_labels_markerless_remote_backend_as_retired(tmp_path):
     report = doctor.collect_report(
         cwd=tmp_path,
         environ={
@@ -219,9 +218,9 @@ def test_doctor_labels_markerless_remote_backend_as_uncorroborated(tmp_path):
     )
 
     findings = {finding["code"]: finding for finding in report["findings"]}
-    assert "backend-uncorroborated" in findings
+    assert "legacy-direct-remote-retired" in findings
     assert "backend-config-invalid" not in findings
-    assert "--allow-markerless-nonlocal" in findings["backend-uncorroborated"]["guidance"][0]
+    assert "SPRINTCTL_VUORO_PROFILE" in findings["legacy-direct-remote-retired"]["guidance"][0]
     assert report["backend"]["repo_id"] == "sprintctl"
     assert report["backend"]["repo_source"] == "env"
 
