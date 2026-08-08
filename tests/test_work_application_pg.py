@@ -388,6 +388,40 @@ def test_invoke_scopes_to_the_identitys_repo_id_not_the_application_constructor(
     store_b.conn.close()
 
 
+def test_admin_shutdown_reconnects_a_served_read_on_a_disposable_postgres_store(
+    store_factory, monkeypatch
+):
+    """The long-lived served application replaces a terminated runtime connection.
+
+    The injected SQLSTATE models the error PostgreSQL emits after an
+    administrative shutdown, while the replacement is a real connection to the
+    disposable test authority.  This proves the entry point rebinds the shared
+    store and re-executes only the read once.
+    """
+    store = store_factory("admin-shutdown-read")
+    old_connection = store.conn
+    original = pg.list_sprints
+    calls = []
+
+    def fail_once(scoped_store, *args, **kwargs):
+        calls.append(scoped_store.conn)
+        if len(calls) == 1:
+            raise psycopg.errors.AdminShutdown("administrative shutdown")
+        return original(scoped_store, *args, **kwargs)
+
+    monkeypatch.setattr(pg, "list_sprints", fail_once)
+    result = WorkApplication.postgres(store).invoke(
+        "work.read.sprints", {}, _context("reader", None, None)
+    )
+
+    assert result == {"repo_id": store.repo_id, "sprints": []}
+    assert calls[0] is old_connection
+    assert calls[1] is store.conn
+    assert store.conn is not old_connection
+    old_connection.close()
+    store.conn.close()
+
+
 def test_context_aggregate_uses_a_fresh_snapshot_after_a_reused_connection_read(
     store_factory,
 ):
