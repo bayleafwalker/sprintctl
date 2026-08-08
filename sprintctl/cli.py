@@ -865,6 +865,8 @@ def _collect_sprint_show_payload(conn, s: dict, detail: bool, *, m=None) -> dict
         "status": s["status"],
         "kind": s["kind"],
     }
+    if s.get("aggregate_uuid"):
+        out["status_revision"] = m.sprint_status_revision(s)
     if not detail:
         return out
     from . import sprint_detail
@@ -1222,15 +1224,29 @@ def _served_sprint_status(config, sprint_id, new_status, actor, as_json) -> None
     help="New status",
 )
 @click.option("--actor", default=None, help="Actor name (defaults to the current OS user)")
+@click.option(
+    "--expected-revision",
+    default=None,
+    help="Required expected sprint status revision for direct local transitions",
+)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
-def sprint_status(obj, sprint_id, new_status, actor, as_json) -> None:
+def sprint_status(obj, sprint_id, new_status, actor, expected_revision, as_json) -> None:
     """Update a sprint's status (enforces allowed transitions)."""
     sprint_id = _apply_scoped_id(obj, sprint_id, field="sprint")
     config = _served_config_or_none(obj)
     if config is not None:
+        if expected_revision is not None:
+            click.echo(
+                "Error: --expected-revision is a direct-backend CAS option; "
+                "served lifecycle commands already carry their immutable basis revision.",
+                err=True,
+            )
+            sys.exit(1)
         _served_sprint_status(config, sprint_id, new_status, actor, as_json)
         return
+    if expected_revision is None:
+        raise click.UsageError("Missing option '--expected-revision' for direct sprint status.")
     store, m = _get_store(obj)
     s = m.get_sprint(store, sprint_id)
     if s is None:
@@ -1241,10 +1257,14 @@ def sprint_status(obj, sprint_id, new_status, actor, as_json) -> None:
     actor = (actor or os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown").strip()
     try:
         if new_status == "closed":
-            boundary_event_id = m.close_sprint_with_boundary_event(store, sprint_id, actor)
+            boundary_event_id = m.close_sprint_with_boundary_event(
+                store, sprint_id, actor, expected_revision=expected_revision
+            )
         else:
-            m.set_sprint_status(store, sprint_id, new_status)
-    except (_db.InvalidTransition, ValueError) as e:
+            m.set_sprint_status(
+                store, sprint_id, new_status, expected_revision=expected_revision
+            )
+    except (_db.InvalidTransition, _db.StatusConflict, ValueError) as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
     if new_status == "active":
@@ -1843,7 +1863,11 @@ def item_show(obj, item_id: str, as_json) -> None:
             )
             sys.exit(1)
         it, edit_revision = current
-        it = {**it, "edit_revision": edit_revision}
+        it = {
+            **it,
+            "edit_revision": edit_revision,
+            "status_revision": m.item_status_revision(it),
+        }
 
         # Item core fields (status, title, assignee, ...) only ever change via
         # authority commands, which the shadow pilot never mirrors -- so they
@@ -2316,15 +2340,31 @@ def _served_item_status(config, item_id, new_status, actor, claim_id, claim_toke
 @click.option("--actor", default=None, help="Actor name")
 @click.option("--claim-id", type=int, default=None, help="Claim ID to prove ownership of an active exclusive claim")
 @click.option("--claim-token", default=None, help="Claim token proving ownership of an active exclusive claim")
+@click.option(
+    "--expected-revision",
+    default=None,
+    help="Required expected item status revision for direct local transitions",
+)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output status transition as JSON")
 @click.pass_obj
-def item_status(obj, item_id: str, new_status, actor, claim_id, claim_token, as_json) -> None:
+def item_status(
+    obj, item_id: str, new_status, actor, claim_id, claim_token, expected_revision, as_json
+) -> None:
     """Update an item's status (enforces transitions, claims, and dependency safety)."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
     config = _served_config_or_none(obj)
     if config is not None:
+        if expected_revision is not None:
+            click.echo(
+                "Error: --expected-revision is a direct-backend CAS option; "
+                "served lifecycle commands already carry their immutable basis revision.",
+                err=True,
+            )
+            sys.exit(1)
         _served_item_status(config, item_id, new_status, actor, claim_id, claim_token, as_json)
         return
+    if expected_revision is None:
+        raise click.UsageError("Missing option '--expected-revision' for direct item status.")
     store, m = _get_store(obj)
     it = m.get_work_item(store, item_id)
     if it is None:
@@ -2339,8 +2379,9 @@ def item_status(obj, item_id: str, new_status, actor, claim_id, claim_token, as_
             actor=actor,
             claim_id=claim_id,
             claim_token=claim_token,
+            expected_revision=expected_revision,
         )
-    except (_db.InvalidTransition, _db.ClaimConflict) as e:
+    except (_db.InvalidTransition, _db.ClaimConflict, _db.StatusConflict, ValueError) as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
     if as_json:

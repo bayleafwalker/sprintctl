@@ -115,7 +115,13 @@ class TestSprintOpenedAudit:
         # Create a planned sprint to transition
         sid = db.create_sprint(conn, "Planned", "goal", None, None, "planned")
         calls = _captured_calls(monkeypatch)
-        result = runner.invoke(cli, ["sprint", "status", "--id", str(sid), "--status", "active"])
+        result = runner.invoke(
+            cli,
+            [
+                "sprint", "status", "--id", str(sid), "--status", "active",
+                "--expected-revision", db.sprint_status_revision(db.get_sprint(conn, sid)),
+            ],
+        )
         assert result.exit_code == 0, result.output
         audit = _audit_calls(calls)
         assert len(audit) == 1
@@ -133,7 +139,10 @@ class TestSprintClosedAudit:
         calls = _captured_calls(monkeypatch)
         result = runner.invoke(
             cli,
-            ["sprint", "status", "--id", str(active_sprint["id"]), "--status", "closed"],
+            [
+                "sprint", "status", "--id", str(active_sprint["id"]), "--status", "closed",
+                "--expected-revision", db.sprint_status_revision(active_sprint),
+            ],
         )
         assert result.exit_code == 0, result.output
         audit = _audit_calls(calls)
@@ -145,7 +154,13 @@ class TestSprintClosedAudit:
     def test_sprint_status_to_active_does_not_emit_closed(self, runner, conn, active_sprint, db_path, monkeypatch):
         sid = db.create_sprint(conn, "Planned", "goal", None, None, "planned")
         calls = _captured_calls(monkeypatch)
-        runner.invoke(cli, ["sprint", "status", "--id", str(sid), "--status", "active"])
+        runner.invoke(
+            cli,
+            [
+                "sprint", "status", "--id", str(sid), "--status", "active",
+                "--expected-revision", db.sprint_status_revision(db.get_sprint(conn, sid)),
+            ],
+        )
         audit = _audit_calls(calls)
         types = [c[c.index("--type") + 1] for c in audit]
         assert "sprint.closed" not in types
@@ -309,7 +324,13 @@ class TestAuditFailureDegradation:
             return subprocess.CompletedProcess(args, 1, stdout=b"", stderr=b"Error: db not found")
 
         monkeypatch.setattr(cli_module.subprocess, "run", fail_run)
-        result = runner.invoke(cli, ["sprint", "status", "--id", str(sid), "--status", "active"])
+        result = runner.invoke(
+            cli,
+            [
+                "sprint", "status", "--id", str(sid), "--status", "active",
+                "--expected-revision", db.sprint_status_revision(db.get_sprint(conn, sid)),
+            ],
+        )
         assert result.exit_code == 0
         assert "warning: auditctl emit failed" in result.output
 

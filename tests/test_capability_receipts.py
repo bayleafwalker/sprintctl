@@ -582,6 +582,8 @@ class TestExplicitSprintCloseBoundary:
                 "closed",
                 "--actor",
                 "operator",
+                "--expected-revision",
+                db.sprint_status_revision(db.get_sprint(conn, sprint_id)),
                 "--json",
             ],
         )

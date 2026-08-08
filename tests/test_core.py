@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from sprintctl import contracts, db
+from sprintctl import authority, contracts, db
 import sprintctl.cli as cli_module
 from sprintctl.cli import cli
 from sprintctl.render import render_sprint_doc
@@ -509,75 +509,135 @@ class TestStatusTransitions:
         assert result.exit_code == 0, result.output
         return int(result.output.split("#")[1].split(":")[0])
 
+    def _status(self, runner, conn, item_id, status, *extra):
+        item = db.get_work_item(conn, item_id)
+        assert item is not None
+        return runner.invoke(
+            cli,
+            [
+                "item", "status", "--id", str(item_id), "--status", status,
+                "--expected-revision", db.item_status_revision(item), *extra,
+            ],
+        )
+
     def test_valid_transition_pending_to_active(self, runner, conn, active_sprint):
         iid = self._add_item(runner, active_sprint["id"])
-        result = runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "active"])
+        result = self._status(runner, conn, iid, "active")
         assert result.exit_code == 0, result.output
         assert db.get_work_item(conn, iid)["status"] == "active"
 
     def test_valid_transition_active_to_done(self, runner, conn, active_sprint):
         iid = self._add_item(runner, active_sprint["id"])
-        runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "active"])
-        result = runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "done"])
+        self._status(runner, conn, iid, "active")
+        result = self._status(runner, conn, iid, "done")
         assert result.exit_code == 0, result.output
         assert db.get_work_item(conn, iid)["status"] == "done"
 
     def test_valid_transition_active_to_blocked(self, runner, conn, active_sprint):
         iid = self._add_item(runner, active_sprint["id"])
-        runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "active"])
-        result = runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "blocked"])
+        self._status(runner, conn, iid, "active")
+        result = self._status(runner, conn, iid, "blocked")
         assert result.exit_code == 0, result.output
         assert db.get_work_item(conn, iid)["status"] == "blocked"
 
-    def test_invalid_transition_pending_to_done(self, runner, active_sprint):
+    def test_invalid_transition_pending_to_done(self, runner, conn, active_sprint):
         iid = self._add_item(runner, active_sprint["id"])
-        result = runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "done"])
+        result = self._status(runner, conn, iid, "done")
         assert result.exit_code == 1
         assert "cannot transition" in result.output
 
-    def test_invalid_transition_pending_to_blocked(self, runner, active_sprint):
+    def test_invalid_transition_pending_to_blocked(self, runner, conn, active_sprint):
         iid = self._add_item(runner, active_sprint["id"])
-        result = runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "blocked"])
+        result = self._status(runner, conn, iid, "blocked")
         assert result.exit_code == 1
         assert "cannot transition" in result.output
 
-    def test_invalid_transition_done_is_terminal(self, runner, active_sprint):
+    def test_invalid_transition_done_is_terminal(self, runner, conn, active_sprint):
         iid = self._add_item(runner, active_sprint["id"])
-        runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "active"])
-        runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "done"])
-        result = runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "active"])
+        self._status(runner, conn, iid, "active")
+        self._status(runner, conn, iid, "done")
+        result = self._status(runner, conn, iid, "active")
         assert result.exit_code == 1
         assert "cannot transition" in result.output
 
     def test_blocked_can_revive_to_active(self, runner, conn, active_sprint):
         iid = self._add_item(runner, active_sprint["id"])
-        runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "active"])
-        runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "blocked"])
-        result = runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "active"])
+        self._status(runner, conn, iid, "active")
+        self._status(runner, conn, iid, "blocked")
+        result = self._status(runner, conn, iid, "active")
         assert result.exit_code == 0, result.output
         assert db.get_work_item(conn, iid)["status"] == "active"
 
-    def test_invalid_transition_blocked_to_done(self, runner, active_sprint):
+    def test_invalid_transition_blocked_to_done(self, runner, conn, active_sprint):
         iid = self._add_item(runner, active_sprint["id"])
-        runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "active"])
-        runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "blocked"])
-        result = runner.invoke(cli, ["item", "status", "--id", str(iid), "--status", "done"])
+        self._status(runner, conn, iid, "active")
+        self._status(runner, conn, iid, "blocked")
+        result = self._status(runner, conn, iid, "done")
         assert result.exit_code == 1
         assert "cannot transition" in result.output
 
     def test_item_status_unknown_item_id(self, runner, db_path):
-        result = runner.invoke(cli, ["item", "status", "--id", "9999", "--status", "active"])
+        result = runner.invoke(
+            cli,
+            [
+                "item", "status", "--id", "9999", "--status", "active",
+                "--expected-revision", "item:00000000-0000-0000-0000-000000000000@status:pending",
+            ],
+        )
         assert result.exit_code == 1
 
     def test_item_status_json_output(self, runner, conn, active_sprint):
         iid = self._add_item(runner, active_sprint["id"])
-        result = runner.invoke(
-            cli,
-            ["item", "status", "--id", str(iid), "--status", "active", "--json"],
-        )
+        result = self._status(runner, conn, iid, "active", "--json")
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         assert data == {"item_id": iid, "previous": "pending", "status": "active"}
+
+    def test_item_status_requires_expected_revision(self, runner, active_sprint):
+        iid = self._add_item(runner, active_sprint["id"])
+        result = runner.invoke(
+            cli, ["item", "status", "--id", str(iid), "--status", "active"]
+        )
+        assert result.exit_code == 2
+        assert "Missing option '--expected-revision'" in result.output
+
+    def test_item_status_rejects_stale_revision_without_row_or_event_effect(
+        self, runner, conn, active_sprint
+    ):
+        iid = self._add_item(runner, active_sprint["id"])
+        item = db.get_work_item(conn, iid)
+        assert item is not None
+        basis = db.item_status_revision(item)
+        assert basis == authority.item_revision(item)
+
+        accepted = runner.invoke(
+            cli,
+            [
+                "item", "status", "--id", str(iid), "--status", "active",
+                "--expected-revision", basis,
+            ],
+        )
+        assert accepted.exit_code == 0, accepted.output
+        events_after_accept = db.list_events(conn, active_sprint["id"])
+
+        stale = runner.invoke(
+            cli,
+            [
+                "item", "status", "--id", str(iid), "--status", "done",
+                "--expected-revision", basis,
+            ],
+        )
+        assert stale.exit_code == 1
+        assert "status revision mismatch" in stale.output
+        assert db.get_work_item(conn, iid)["status"] == "active"
+        assert db.list_events(conn, active_sprint["id"]) == events_after_accept
+
+    def test_item_show_exposes_status_revision(self, runner, conn, active_sprint):
+        iid = self._add_item(runner, active_sprint["id"])
+        result = runner.invoke(cli, ["item", "show", "--id", str(iid), "--json"])
+        assert result.exit_code == 0, result.output
+        item = json.loads(result.output)["item"]
+        assert item["status_revision"] == db.item_status_revision(item)
 
 
 # ---------------------------------------------------------------------------

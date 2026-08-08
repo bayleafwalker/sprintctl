@@ -19,7 +19,14 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 from . import contracts, outbox, pg
 from .terminal_recovery_contract import TerminalDisposition
 from .terminal_recovery_server import append_terminal_settlement_from_authority
-from .db import CLAIM_TYPES, SPRINT_TRANSITIONS, VALID_TRANSITIONS, _claim_event_identity
+from .db import (
+    CLAIM_TYPES,
+    SPRINT_TRANSITIONS,
+    VALID_TRANSITIONS,
+    _claim_event_identity,
+    item_status_revision,
+    sprint_status_revision,
+)
 
 
 AUTHORITY_COMMAND = contracts.RecordClass.AUTHORITY_COMMAND.value
@@ -101,11 +108,11 @@ def item_revision(item: Mapping[str, Any]) -> str:
     # Status is the authority field for transition validity. Descriptions and
     # assignees may change without invalidating an otherwise current command;
     # dependency and claim state are revalidated separately under locks.
-    return f"item:{item['aggregate_uuid']}@status:{item['status']}"
+    return item_status_revision(dict(item))
 
 
 def sprint_revision(sprint: Mapping[str, Any]) -> str:
-    return f"sprint:{sprint['aggregate_uuid']}@status:{sprint['status']}"
+    return sprint_status_revision(dict(sprint))
 
 
 def claim_revision(claim: Mapping[str, Any]) -> str:

@@ -1,0 +1,48 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.direct-status-cas",
+  "contract_ref": {
+    "doc_id": "v3-reservation-model-plan",
+    "revision": "git:350ae90e41a26c728e90fe6b9bc600e0dec73251"
+  },
+  "implementation_sha": "working-tree:codex/sprintctl-1235-cas",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary SQLite; PostgreSQL test target unavailable in this environment",
+    "isolation": "SQLite BEGIN IMMEDIATE; PostgreSQL test is implemented but was not invoked",
+    "tool_versions": {"python": "3.12.12", "pytest": "9.0.2"}
+  },
+  "execution": {
+    "seed": null,
+    "histories": 5,
+    "bounds": {"sqlite_stale_item": 1, "sqlite_stale_sprint_close": 1, "direct_missing_revision": 2, "postgres_races": 0},
+    "faults_exercised": ["missing-required-revision", "stale-basis", "repeated-close-after-commit"]
+  },
+  "claims": [
+    {
+      "property": "SQLite stale item transition leaves the item and its event history unchanged",
+      "result": "example-tested",
+      "evidence": ["tests/test_core.py::TestStatusTransitions::test_item_status_rejects_stale_revision_without_row_or_event_effect"]
+    },
+    {
+      "property": "SQLite stale sprint close leaves exactly the accepted close-boundary event",
+      "result": "example-tested",
+      "evidence": ["tests/test_maintain.py::TestSprintStatusCmd::test_close_rejects_stale_revision_without_second_boundary_event"]
+    },
+    {
+      "property": "Direct item and sprint status commands reject a missing expected revision before reading or mutating state",
+      "result": "example-tested",
+      "evidence": ["tests/test_core.py::TestStatusTransitions::test_item_status_requires_expected_revision", "tests/test_maintain.py::TestSprintStatusCmd::test_sprint_status_requires_expected_revision"]
+    },
+    {
+      "property": "PostgreSQL two-connection item-status and sprint-close CAS races each have one accepted writer and one stale conflict",
+      "result": "unknown",
+      "evidence": ["tests/test_pg_integration.py contains item-status and sprint-close races, but SPRINTCTL_TEST_PG_URL was unset"]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "The full local suite passed with PostgreSQL-marked tests skipped because this workstation has no configured disposable PostgreSQL test target.",
+    "A disposable PostgreSQL run is still required before this item can satisfy its Wave 1 concurrency exit gate."
+  ]
+}

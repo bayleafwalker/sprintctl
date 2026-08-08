@@ -1,0 +1,53 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.direct-status-cas",
+  "owner_repo": "sprintctl",
+  "subject": "direct-item-and-sprint-status-compare-and-swap",
+  "contract_ref": {
+    "doc_id": "v3-reservation-model-plan",
+    "revision": "git:350ae90e41a26c728e90fe6b9bc600e0dec73251"
+  },
+  "source_of_truth": "SQLite-or-repository-scoped-PostgreSQL-item-sprint-and-event-rows",
+  "depth": 2,
+  "backends": ["sqlite", "postgres"],
+  "actors": ["writer-a", "writer-b"],
+  "initial_state": ["item=pending", "sprint=active", "close-boundary-events=0"],
+  "operations": [
+    {"name": "read-status-revision", "actors": ["writer-a", "writer-b"], "synchronization": "independent reads before the first transition"},
+    {"name": "reject-missing-direct-revision", "actors": ["writer-a"], "synchronization": "before any direct status read or mutation"},
+    {"name": "transition-item", "actors": ["writer-a", "writer-b"], "synchronization": "one matching expected revision per writer"},
+    {"name": "close-sprint", "actors": ["writer-a"], "synchronization": "matching expected revision"},
+    {"name": "retry-stale-close", "actors": ["writer-b"], "synchronization": "basis retained from before the first close"}
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "single-item-or-sprint-status-transition"
+  },
+  "assumptions": {
+    "isolation": "SQLite BEGIN IMMEDIATE or PostgreSQL row lock under READ COMMITTED",
+    "clock": "not part of the CAS basis",
+    "fairness": "none"
+  },
+  "bounds": {"actors": 2, "independent_connections": 2, "item_transitions": 2, "sprint_closes": 2},
+  "invariants": [
+    "a-stale-status-revision-has-no-row-or-event-effect",
+    "a-direct-status-command-without-a-revision-is-rejected",
+    "a-matching-status-revision-applies-one-transition",
+    "one-postgresql-two-connection-race-has-one-accepted-writer",
+    "a-stale-sprint-close-does-not-add-a-second-boundary-event"
+  ],
+  "faults": ["stale-basis", "overlapping-writers", "repeated-close-after-commit"],
+  "oracles": ["item-status-query", "sprint-status-query", "event-count", "accepted-rejected-history"],
+  "implementation_anchors": [
+    "sprintctl/db.py:set_work_item_status",
+    "sprintctl/db.py:set_sprint_status",
+    "sprintctl/db.py:close_sprint_with_boundary_event",
+    "sprintctl/pg.py:set_work_item_status",
+    "sprintctl/pg.py:set_sprint_status",
+    "sprintctl/pg.py:close_sprint_with_boundary_event",
+    "tests/test_core.py:TestStatusTransitions",
+    "tests/test_maintain.py:TestSprintStatusCmd",
+    "tests/test_pg_integration.py:TestWorkItem",
+    "tests/test_pg_integration.py:TestSprint"
+  ]
+}

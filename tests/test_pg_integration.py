@@ -1313,6 +1313,63 @@ class TestSprint:
         pg.set_sprint_status(store, sid, "closed")
         assert pg.get_sprint(store, sid)["status"] == "closed"
 
+    def test_close_rejects_stale_revision_without_second_boundary_event(self, store):
+        sid = pg.create_sprint(store, f"Scas-{_uid()}", "G", status="active")
+        sprint = pg.get_sprint(store, sid)
+        assert sprint is not None
+        basis = db.sprint_status_revision(sprint)
+
+        pg.close_sprint_with_boundary_event(
+            store, sid, "winner", expected_revision=basis
+        )
+        events_after_accept = pg.list_events(store, sid)
+        with pytest.raises(db.StatusConflict, match="status revision mismatch"):
+            pg.close_sprint_with_boundary_event(
+                store, sid, "stale", expected_revision=basis
+            )
+
+        assert pg.get_sprint(store, sid)["status"] == "closed"
+        assert pg.list_events(store, sid) == events_after_accept
+
+    def test_two_connections_accept_exactly_one_sprint_close_cas_writer(self, store):
+        sid = pg.create_sprint(store, f"Scrace-{_uid()}", "G", status="active")
+        sprint = pg.get_sprint(store, sid)
+        assert sprint is not None
+        basis = db.sprint_status_revision(sprint)
+        barrier = threading.Barrier(2)
+        outcomes: list[str] = []
+
+        def close() -> None:
+            conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+            assert_disposable_connection(conn)
+            independent = pg.PgStore(conn=conn, repo_id=store.repo_id)
+            try:
+                barrier.wait(timeout=10)
+                try:
+                    pg.close_sprint_with_boundary_event(
+                        independent, sid, "closer", expected_revision=basis
+                    )
+                except db.StatusConflict:
+                    outcomes.append("conflict")
+                else:
+                    outcomes.append("accepted")
+            finally:
+                conn.close()
+
+        threads = [threading.Thread(target=close) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=15)
+        assert all(not thread.is_alive() for thread in threads)
+        assert sorted(outcomes) == ["accepted", "conflict"]
+        assert pg.get_sprint(store, sid)["status"] == "closed"
+        boundaries = [
+            event for event in pg.list_events(store, sid)
+            if event["event_type"] == "sprint-close-boundary"
+        ]
+        assert len(boundaries) == 1
+
     def test_explicit_close_appends_boundary_event_atomically(self, store):
         sid = pg.create_sprint(
             store,
@@ -1558,6 +1615,58 @@ class TestWorkItem:
     def test_set_status(self, store, sprint_id, track_id):
         iid = pg.create_work_item(store, sprint_id, track_id, f"Ss-{_uid()}")
         pg.set_work_item_status(store, iid, "active")
+        assert pg.get_work_item(store, iid)["status"] == "active"
+
+    def test_status_cas_rejects_stale_basis_without_row_or_event_effect(
+        self, store, sprint_id, track_id
+    ):
+        iid = pg.create_work_item(store, sprint_id, track_id, f"Cas-{_uid()}")
+        item = pg.get_work_item(store, iid)
+        assert item is not None
+        basis = db.item_status_revision(item)
+
+        pg.set_work_item_status(store, iid, "active", expected_revision=basis)
+        events_after_accept = pg.list_events(store, sprint_id)
+        with pytest.raises(db.StatusConflict, match="status revision mismatch"):
+            pg.set_work_item_status(store, iid, "done", expected_revision=basis)
+
+        assert pg.get_work_item(store, iid)["status"] == "active"
+        assert pg.list_events(store, sprint_id) == events_after_accept
+
+    def test_two_connections_accept_exactly_one_status_cas_writer(
+        self, store, sprint_id, track_id
+    ):
+        iid = pg.create_work_item(store, sprint_id, track_id, f"Race-{_uid()}")
+        item = pg.get_work_item(store, iid)
+        assert item is not None
+        basis = db.item_status_revision(item)
+        barrier = threading.Barrier(2)
+        outcomes: list[str] = []
+
+        def transition() -> None:
+            conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+            assert_disposable_connection(conn)
+            independent = pg.PgStore(conn=conn, repo_id=store.repo_id)
+            try:
+                barrier.wait(timeout=10)
+                try:
+                    pg.set_work_item_status(
+                        independent, iid, "active", expected_revision=basis
+                    )
+                except db.StatusConflict:
+                    outcomes.append("conflict")
+                else:
+                    outcomes.append("accepted")
+            finally:
+                conn.close()
+
+        threads = [threading.Thread(target=transition) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=15)
+        assert all(not thread.is_alive() for thread in threads)
+        assert sorted(outcomes) == ["accepted", "conflict"]
         assert pg.get_work_item(store, iid)["status"] == "active"
 
     def test_set_status_invalid_transition_raises(self, store, sprint_id, track_id):

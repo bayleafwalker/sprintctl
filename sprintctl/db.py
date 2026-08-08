@@ -25,6 +25,10 @@ class EditConflict(ValueError):
     """A work-item edit was based on a stale description revision."""
 
 
+class StatusConflict(ValueError):
+    """An item or sprint transition was based on a stale status revision."""
+
+
 VALID_TRANSITIONS: dict[str, set[str]] = {
     "pending": {"active"},
     "active": {"done", "blocked"},
@@ -834,11 +838,39 @@ def _description_revision(item: dict, version: int) -> str:
 _ITEM_EDIT_REVISION_RE = re.compile(
     r"^item:[0-9a-fA-F-]{36}@description:v[0-9]+@sha256:[0-9a-f]{64}$"
 )
+_ITEM_STATUS_REVISION_RE = re.compile(
+    r"^item:[0-9a-fA-F-]{36}@status:(pending|active|done|blocked)$"
+)
+_SPRINT_STATUS_REVISION_RE = re.compile(
+    r"^sprint:[0-9a-fA-F-]{36}@status:(planned|active|closed)$"
+)
 
 
 def validate_item_edit_revision(revision: str) -> str:
     if not isinstance(revision, str) or not _ITEM_EDIT_REVISION_RE.fullmatch(revision):
         raise ValueError("expected_revision must be a valid item description revision")
+    return revision
+
+
+def item_status_revision(item: dict) -> str:
+    """Return the CAS token for the status-transition state of one item."""
+    return f"item:{item['aggregate_uuid']}@status:{item['status']}"
+
+
+def sprint_status_revision(sprint: dict) -> str:
+    """Return the CAS token for the status-transition state of one sprint."""
+    return f"sprint:{sprint['aggregate_uuid']}@status:{sprint['status']}"
+
+
+def validate_item_status_revision(revision: str) -> str:
+    if not isinstance(revision, str) or not _ITEM_STATUS_REVISION_RE.fullmatch(revision):
+        raise ValueError("expected_revision must be a valid item status revision")
+    return revision
+
+
+def validate_sprint_status_revision(revision: str) -> str:
+    if not isinstance(revision, str) or not _SPRINT_STATUS_REVISION_RE.fullmatch(revision):
+        raise ValueError("expected_revision must be a valid sprint status revision")
     return revision
 
 
@@ -982,96 +1014,114 @@ def set_work_item_status(
     actor: str | None = None,
     claim_id: int | None = None,
     claim_token: str | None = None,
+    *,
+    expected_revision: str | None = None,
 ) -> None:
-    item = get_work_item(conn, item_id)
-    if item is None:
-        raise ValueError(f"Item #{item_id} not found")
-    current = item["status"]
-    if new_status not in VALID_TRANSITIONS[current]:
-        allowed = sorted(VALID_TRANSITIONS[current]) or "none (terminal)"
-        raise InvalidTransition(
-            f"cannot transition {current} -> {new_status}. Allowed: {allowed}"
-        )
-    active_claim = _get_active_exclusive_claim_row(conn, item_id)
-    if active_claim is not None:
-        if claim_id is None or claim_token is None:
-            _emit_claim_event(
-                conn,
-                active_claim,
-                event_type="coordination-failure",
-                actor=actor or "system",
-                payload={
-                    "summary": f"Item transition rejected for item #{item_id}",
-                    "detail": (
-                        "An exclusive claim blocked the transition because no "
-                        "valid claim proof was supplied."
-                    ),
-                    "tags": ["claims", "coordination", "ownership-proof"],
-                    "operation": "item-status",
-                    "reason": "missing-claim-proof",
-                    "required_claim": _claim_event_identity(active_claim),
-                    "attempted_by": _claim_attempt_identity(actor=actor),
-                },
+    if expected_revision is not None:
+        expected_revision = validate_item_status_revision(expected_revision)
+    try:
+        # SQLite's write transaction is the transition's linearization point.
+        # Re-read the item after acquiring it so a stale basis cannot create a
+        # coordination event or update a row.
+        conn.execute("BEGIN IMMEDIATE")
+        item = get_work_item(conn, item_id)
+        if item is None:
+            raise ValueError(f"Item #{item_id} not found")
+        current = item["status"]
+        current_revision = item_status_revision(item)
+        if expected_revision is not None and expected_revision != current_revision:
+            raise StatusConflict(
+                f"Item #{item_id} status revision mismatch: "
+                f"expected {expected_revision}, current {current_revision}"
             )
-            raise ClaimConflict(
-                f"Item #{item_id} is exclusively claimed by '{active_claim['agent']}' "
-                f"(claim #{active_claim['id']}). Provide --claim-id and --claim-token."
-            )
-        selected_claim = conn.execute(
-            "SELECT * FROM claim WHERE id = ?", (claim_id,)
-        ).fetchone()
-        if (
-            selected_claim is None
-            or selected_claim["work_item_id"] != item_id
-            or not selected_claim["exclusive"]
-            or selected_claim["claim_type"] != "execute"
-            or selected_claim["status"] != "active"
-            or selected_claim["expires_at"] <= conn.execute(
-                "SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now')"
-            ).fetchone()[0]
-        ):
-            _emit_claim_event(
-                conn,
-                active_claim,
-                event_type="coordination-failure",
-                actor=actor or "system",
-                payload={
-                    "summary": f"Item transition rejected for item #{item_id}",
-                    "detail": (
-                        "A transition supplied a claim proof for the wrong claim id "
-                        "while another exclusive claim was active."
-                    ),
-                    "tags": ["claims", "coordination", "ownership-proof"],
-                    "operation": "item-status",
-                    "reason": "wrong-claim-id",
-                    "required_claim": _claim_event_identity(active_claim),
-                    "attempted_by": _claim_attempt_identity(
-                        actor=actor,
-                        claim_id=claim_id,
-                        claim_token_present=claim_token is not None,
-                    ),
-                },
-            )
-            raise ClaimConflict(
-                f"Item #{item_id} is exclusively claimed by '{active_claim['agent']}' "
-                f"(claim #{active_claim['id']})."
-            )
-        _require_claim_proof(selected_claim, claim_token)
-    if new_status == "active":
-        unresolved = [
-            blocker for blocker in list_deps_blocking(conn, item_id)
-            if blocker["blocker_status"] != "done"
-        ]
-        if unresolved:
-            blocker_ids = [blocker["item_id"] for blocker in unresolved]
+        if new_status not in VALID_TRANSITIONS[current]:
+            allowed = sorted(VALID_TRANSITIONS[current]) or "none (terminal)"
             raise InvalidTransition(
-                f"cannot transition {current} -> active while blockers remain unresolved: {blocker_ids}"
+                f"cannot transition {current} -> {new_status}. Allowed: {allowed}"
             )
-    conn.execute(
-        "UPDATE work_item SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
-        (new_status, item_id),
-    )
-    conn.commit()
+        active_claim = _get_active_exclusive_claim_row(conn, item_id)
+        if active_claim is not None:
+            if claim_id is None or claim_token is None:
+                _emit_claim_event(
+                    conn,
+                    active_claim,
+                    event_type="coordination-failure",
+                    actor=actor or "system",
+                    payload={
+                        "summary": f"Item transition rejected for item #{item_id}",
+                        "detail": (
+                            "An exclusive claim blocked the transition because no "
+                            "valid claim proof was supplied."
+                        ),
+                        "tags": ["claims", "coordination", "ownership-proof"],
+                        "operation": "item-status",
+                        "reason": "missing-claim-proof",
+                        "required_claim": _claim_event_identity(active_claim),
+                        "attempted_by": _claim_attempt_identity(actor=actor),
+                    },
+                )
+                raise ClaimConflict(
+                    f"Item #{item_id} is exclusively claimed by '{active_claim['agent']}' "
+                    f"(claim #{active_claim['id']}). Provide --claim-id and --claim-token."
+                )
+            selected_claim = conn.execute(
+                "SELECT * FROM claim WHERE id = ?", (claim_id,)
+            ).fetchone()
+            if (
+                selected_claim is None
+                or selected_claim["work_item_id"] != item_id
+                or not selected_claim["exclusive"]
+                or selected_claim["claim_type"] != "execute"
+                or selected_claim["status"] != "active"
+                or selected_claim["expires_at"] <= conn.execute(
+                    "SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now')"
+                ).fetchone()[0]
+            ):
+                _emit_claim_event(
+                    conn,
+                    active_claim,
+                    event_type="coordination-failure",
+                    actor=actor or "system",
+                    payload={
+                        "summary": f"Item transition rejected for item #{item_id}",
+                        "detail": (
+                            "A transition supplied a claim proof for the wrong claim id "
+                            "while another exclusive claim was active."
+                        ),
+                        "tags": ["claims", "coordination", "ownership-proof"],
+                        "operation": "item-status",
+                        "reason": "wrong-claim-id",
+                        "required_claim": _claim_event_identity(active_claim),
+                        "attempted_by": _claim_attempt_identity(
+                            actor=actor,
+                            claim_id=claim_id,
+                            claim_token_present=claim_token is not None,
+                        ),
+                    },
+                )
+                raise ClaimConflict(
+                    f"Item #{item_id} is exclusively claimed by '{active_claim['agent']}' "
+                    f"(claim #{active_claim['id']})."
+                )
+            _require_claim_proof(selected_claim, claim_token)
+        if new_status == "active":
+            unresolved = [
+                blocker for blocker in list_deps_blocking(conn, item_id)
+                if blocker["blocker_status"] != "done"
+            ]
+            if unresolved:
+                blocker_ids = [blocker["item_id"] for blocker in unresolved]
+                raise InvalidTransition(
+                    f"cannot transition {current} -> active while blockers remain unresolved: {blocker_ids}"
+                )
+        conn.execute(
+            "UPDATE work_item SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+            (new_status, item_id),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def _validate_sprint_transition(current: str, new_status: str) -> None:
@@ -1082,13 +1132,32 @@ def _validate_sprint_transition(current: str, new_status: str) -> None:
         )
 
 
-def set_sprint_status(conn: sqlite3.Connection, sprint_id: int, new_status: str) -> None:
-    sprint = get_sprint(conn, sprint_id)
-    if sprint is None:
-        raise ValueError(f"Sprint #{sprint_id} not found")
-    _validate_sprint_transition(sprint["status"], new_status)
-    conn.execute("UPDATE sprint SET status = ? WHERE id = ?", (new_status, sprint_id))
-    conn.commit()
+def set_sprint_status(
+    conn: sqlite3.Connection,
+    sprint_id: int,
+    new_status: str,
+    *,
+    expected_revision: str | None = None,
+) -> None:
+    if expected_revision is not None:
+        expected_revision = validate_sprint_status_revision(expected_revision)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        sprint = get_sprint(conn, sprint_id)
+        if sprint is None:
+            raise ValueError(f"Sprint #{sprint_id} not found")
+        current_revision = sprint_status_revision(sprint)
+        if expected_revision is not None and expected_revision != current_revision:
+            raise StatusConflict(
+                f"Sprint #{sprint_id} status revision mismatch: "
+                f"expected {expected_revision}, current {current_revision}"
+            )
+        _validate_sprint_transition(sprint["status"], new_status)
+        conn.execute("UPDATE sprint SET status = ? WHERE id = ?", (new_status, sprint_id))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 # --- Event ---
@@ -1210,16 +1279,27 @@ def close_sprint_with_boundary_event(
     conn: sqlite3.Connection,
     sprint_id: int,
     actor: str,
+    *,
+    expected_revision: str | None = None,
 ) -> int:
     """Atomically close an active sprint and append its local boundary event."""
     if not isinstance(actor, str) or not actor.strip():
         raise ValueError("actor must be a non-empty string")
+    if expected_revision is not None:
+        expected_revision = validate_sprint_status_revision(expected_revision)
     try:
         conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute("SELECT status FROM sprint WHERE id = ?", (sprint_id,)).fetchone()
+        row = conn.execute("SELECT * FROM sprint WHERE id = ?", (sprint_id,)).fetchone()
         if row is None:
             raise ValueError(f"Sprint #{sprint_id} not found")
-        current = row["status"]
+        sprint = dict(row)
+        current = sprint["status"]
+        current_revision = sprint_status_revision(sprint)
+        if expected_revision is not None and expected_revision != current_revision:
+            raise StatusConflict(
+                f"Sprint #{sprint_id} status revision mismatch: "
+                f"expected {expected_revision}, current {current_revision}"
+            )
         _validate_sprint_transition(current, "closed")
         conn.execute("UPDATE sprint SET status = 'closed' WHERE id = ?", (sprint_id,))
         event_id = _insert_event(

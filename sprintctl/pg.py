@@ -49,6 +49,7 @@ from .db import (
     TAKEUP_EVENT_TYPES,
     InvalidTransition,
     EditConflict,
+    StatusConflict,
     ClaimConflict,
     CLAIM_IDENTITY_STATUS_PROVEN,
     CLAIM_IDENTITY_STATUS_LEGACY,
@@ -65,6 +66,10 @@ from .db import (
     process_takeup_events,
     _description_revision,
     validate_item_edit_revision,
+    item_status_revision,
+    sprint_status_revision,
+    validate_item_status_revision,
+    validate_sprint_status_revision,
     validate_work_item_description,
     validate_priority,
     effective_priority,
@@ -1597,22 +1602,47 @@ def list_sprints(store: PgStore) -> list[dict]:
     return [_norm(r) for r in rows]
 
 
-def set_sprint_status(store: PgStore, sprint_id: int, new_status: str) -> None:
-    sprint = get_sprint(store, sprint_id)
-    if sprint is None:
-        raise ValueError(f"Sprint #{sprint_id} not found")
-    current = sprint["status"]
-    if new_status not in SPRINT_TRANSITIONS[current]:
-        allowed = sorted(SPRINT_TRANSITIONS[current]) or "none (terminal)"
-        raise InvalidTransition(
-            f"cannot transition sprint {current} -> {new_status}. Allowed: {allowed}"
-        )
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "UPDATE sprint SET status = %s WHERE repo_id = %s AND id = %s",
-            (new_status, store.repo_id, sprint_id),
-        )
-    store.conn.commit()
+def set_sprint_status(
+    store: PgStore,
+    sprint_id: int,
+    new_status: str,
+    *,
+    expected_revision: str | None = None,
+) -> None:
+    if expected_revision is not None:
+        expected_revision = validate_sprint_status_revision(expected_revision)
+    try:
+        with store.conn.cursor() as cur:
+            # The row lock makes the status comparison and update one
+            # single-object CAS operation across independent connections.
+            cur.execute(
+                "SELECT * FROM sprint WHERE repo_id = %s AND id = %s FOR UPDATE",
+                (store.repo_id, sprint_id),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise ValueError(f"Sprint #{sprint_id} not found")
+            sprint = _norm(row)
+            current = sprint["status"]
+            current_revision = sprint_status_revision(sprint)
+            if expected_revision is not None and expected_revision != current_revision:
+                raise StatusConflict(
+                    f"Sprint #{sprint_id} status revision mismatch: "
+                    f"expected {expected_revision}, current {current_revision}"
+                )
+            if new_status not in SPRINT_TRANSITIONS[current]:
+                allowed = sorted(SPRINT_TRANSITIONS[current]) or "none (terminal)"
+                raise InvalidTransition(
+                    f"cannot transition sprint {current} -> {new_status}. Allowed: {allowed}"
+                )
+            cur.execute(
+                "UPDATE sprint SET status = %s WHERE repo_id = %s AND id = %s",
+                (new_status, store.repo_id, sprint_id),
+            )
+        store.conn.commit()
+    except Exception:
+        store.conn.rollback()
+        raise
 
 
 def activate_sprint(store: PgStore, sprint_id: int, actor: str, context: str = "sprintctl:sprint-activate") -> dict:
@@ -1912,90 +1942,112 @@ def set_work_item_status(
     actor: str | None = None,
     claim_id: int | None = None,
     claim_token: str | None = None,
+    *,
+    expected_revision: str | None = None,
 ) -> None:
     from .db import _require_claim_proof
-    item = get_work_item(store, item_id)
-    if item is None:
-        raise ValueError(f"Item #{item_id} not found")
-    current = item["status"]
-    if new_status not in VALID_TRANSITIONS[current]:
-        allowed = sorted(VALID_TRANSITIONS[current]) or "none (terminal)"
-        raise InvalidTransition(
-            f"cannot transition {current} -> {new_status}. Allowed: {allowed}"
-        )
-    active_claim = _get_active_exclusive_claim_row(store, item_id)
-    if active_claim is not None:
-        if claim_id is None or claim_token is None:
-            _emit_claim_event(
-                store, active_claim,
-                event_type="coordination-failure",
-                actor=actor or "system",
-                payload={
-                    "summary": f"Item transition rejected for item #{item_id}",
-                    "detail": "An exclusive claim blocked the transition because no valid claim proof was supplied.",
-                    "tags": ["claims", "coordination", "ownership-proof"],
-                    "operation": "item-status",
-                    "reason": "missing-claim-proof",
-                    "required_claim": _claim_event_identity(active_claim),
-                    "attempted_by": _claim_attempt_identity(actor=actor),
-                },
-            )
-            raise ClaimConflict(
-                f"Item #{item_id} is exclusively claimed by '{active_claim['agent']}' "
-                f"(claim #{active_claim['id']}). Provide --claim-id and --claim-token."
-            )
+    if expected_revision is not None:
+        expected_revision = validate_item_status_revision(expected_revision)
+    try:
+        # PostgreSQL retains this lock until commit/rollback, so the basis
+        # comparison below is the CAS linearization point for this item.
         with store.conn.cursor() as cur:
             cur.execute(
-                "SELECT *, expires_at > now() AS live FROM claim "
-                "WHERE repo_id = %s AND id = %s FOR UPDATE",
-                (store.repo_id, claim_id),
+                "SELECT * FROM work_item WHERE repo_id = %s AND id = %s FOR UPDATE",
+                (store.repo_id, item_id),
             )
-            selected_row = cur.fetchone()
-        selected_claim = _norm(selected_row) if selected_row else None
-        if (
-            selected_claim is None
-            or selected_claim["work_item_id"] != item_id
-            or not selected_claim["exclusive"]
-            or selected_claim["claim_type"] != "execute"
-            or selected_claim["status"] != "active"
-            or not selected_claim["live"]
-        ):
-            _emit_claim_event(
-                store, active_claim,
-                event_type="coordination-failure",
-                actor=actor or "system",
-                payload={
-                    "summary": f"Item transition rejected for item #{item_id}",
-                    "detail": "A transition supplied a claim proof for the wrong claim id.",
-                    "tags": ["claims", "coordination", "ownership-proof"],
-                    "operation": "item-status",
-                    "reason": "wrong-claim-id",
-                    "required_claim": _claim_event_identity(active_claim),
-                    "attempted_by": _claim_attempt_identity(
-                        actor=actor, claim_id=claim_id, claim_token_present=claim_token is not None,
-                    ),
-                },
+            row = cur.fetchone()
+        if row is None:
+            raise ValueError(f"Item #{item_id} not found")
+        item = _norm(row)
+        current = item["status"]
+        current_revision = item_status_revision(item)
+        if expected_revision is not None and expected_revision != current_revision:
+            raise StatusConflict(
+                f"Item #{item_id} status revision mismatch: "
+                f"expected {expected_revision}, current {current_revision}"
             )
-            raise ClaimConflict(
-                f"Item #{item_id} is exclusively claimed by '{active_claim['agent']}' "
-                f"(claim #{active_claim['id']})."
-            )
-        _require_claim_proof(selected_claim, claim_token)
-    if new_status == "active":
-        unresolved = [
-            b for b in list_deps_blocking(store, item_id) if b["blocker_status"] != "done"
-        ]
-        if unresolved:
+        if new_status not in VALID_TRANSITIONS[current]:
+            allowed = sorted(VALID_TRANSITIONS[current]) or "none (terminal)"
             raise InvalidTransition(
-                f"cannot transition {current} -> active while blockers remain unresolved: "
-                f"{[b['item_id'] for b in unresolved]}"
+                f"cannot transition {current} -> {new_status}. Allowed: {allowed}"
             )
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "UPDATE work_item SET status = %s, updated_at = now() WHERE repo_id = %s AND id = %s",
-            (new_status, store.repo_id, item_id),
-        )
-    store.conn.commit()
+        active_claim = _get_active_exclusive_claim_row(store, item_id)
+        if active_claim is not None:
+            if claim_id is None or claim_token is None:
+                _emit_claim_event(
+                    store, active_claim,
+                    event_type="coordination-failure",
+                    actor=actor or "system",
+                    payload={
+                        "summary": f"Item transition rejected for item #{item_id}",
+                        "detail": "An exclusive claim blocked the transition because no valid claim proof was supplied.",
+                        "tags": ["claims", "coordination", "ownership-proof"],
+                        "operation": "item-status",
+                        "reason": "missing-claim-proof",
+                        "required_claim": _claim_event_identity(active_claim),
+                        "attempted_by": _claim_attempt_identity(actor=actor),
+                    },
+                )
+                raise ClaimConflict(
+                    f"Item #{item_id} is exclusively claimed by '{active_claim['agent']}' "
+                    f"(claim #{active_claim['id']}). Provide --claim-id and --claim-token."
+                )
+            with store.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT *, expires_at > now() AS live FROM claim "
+                    "WHERE repo_id = %s AND id = %s FOR UPDATE",
+                    (store.repo_id, claim_id),
+                )
+                selected_row = cur.fetchone()
+            selected_claim = _norm(selected_row) if selected_row else None
+            if (
+                selected_claim is None
+                or selected_claim["work_item_id"] != item_id
+                or not selected_claim["exclusive"]
+                or selected_claim["claim_type"] != "execute"
+                or selected_claim["status"] != "active"
+                or not selected_claim["live"]
+            ):
+                _emit_claim_event(
+                    store, active_claim,
+                    event_type="coordination-failure",
+                    actor=actor or "system",
+                    payload={
+                        "summary": f"Item transition rejected for item #{item_id}",
+                        "detail": "A transition supplied a claim proof for the wrong claim id.",
+                        "tags": ["claims", "coordination", "ownership-proof"],
+                        "operation": "item-status",
+                        "reason": "wrong-claim-id",
+                        "required_claim": _claim_event_identity(active_claim),
+                        "attempted_by": _claim_attempt_identity(
+                            actor=actor, claim_id=claim_id, claim_token_present=claim_token is not None,
+                        ),
+                    },
+                )
+                raise ClaimConflict(
+                    f"Item #{item_id} is exclusively claimed by '{active_claim['agent']}' "
+                    f"(claim #{active_claim['id']})."
+                )
+            _require_claim_proof(selected_claim, claim_token)
+        if new_status == "active":
+            unresolved = [
+                b for b in list_deps_blocking(store, item_id) if b["blocker_status"] != "done"
+            ]
+            if unresolved:
+                raise InvalidTransition(
+                    f"cannot transition {current} -> active while blockers remain unresolved: "
+                    f"{[b['item_id'] for b in unresolved]}"
+                )
+        with store.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE work_item SET status = %s, updated_at = now() WHERE repo_id = %s AND id = %s",
+                (new_status, store.repo_id, item_id),
+            )
+        store.conn.commit()
+    except Exception:
+        store.conn.rollback()
+        raise
 
 
 def force_item_done_for_carryover(store: PgStore, item_id: int) -> None:
@@ -2111,20 +2163,31 @@ def close_sprint_with_boundary_event(
     store: PgStore,
     sprint_id: int,
     actor: str,
+    *,
+    expected_revision: str | None = None,
 ) -> int:
     """Atomically close an active sprint and append its local boundary event."""
     if not isinstance(actor, str) or not actor.strip():
         raise ValueError("actor must be a non-empty string")
+    if expected_revision is not None:
+        expected_revision = validate_sprint_status_revision(expected_revision)
     try:
         with store.conn.cursor() as cur:
             cur.execute(
-                "SELECT status FROM sprint WHERE repo_id = %s AND id = %s FOR UPDATE",
+                "SELECT * FROM sprint WHERE repo_id = %s AND id = %s FOR UPDATE",
                 (store.repo_id, sprint_id),
             )
             row = cur.fetchone()
             if row is None:
                 raise ValueError(f"Sprint #{sprint_id} not found")
-            current = row["status"]
+            sprint = _norm(row)
+            current = sprint["status"]
+            current_revision = sprint_status_revision(sprint)
+            if expected_revision is not None and expected_revision != current_revision:
+                raise StatusConflict(
+                    f"Sprint #{sprint_id} status revision mismatch: "
+                    f"expected {expected_revision}, current {current_revision}"
+                )
             _validate_sprint_transition(current, "closed")
             cur.execute(
                 "UPDATE sprint SET status = 'closed' WHERE repo_id = %s AND id = %s",
