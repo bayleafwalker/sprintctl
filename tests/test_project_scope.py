@@ -98,6 +98,22 @@ def test_project_binding_rejects_duplicate_members(tmp_path):
         raise AssertionError("duplicate project member was accepted")
 
 
+def test_project_binding_accepts_current_member_governance_fields(tmp_path):
+    project_path = _write_project(
+        tmp_path / "project.toml", [("agentops", True)], home_repo="agentops"
+    )
+    project_path.write_text(
+        project_path.read_text(encoding="utf-8")
+        + 'relationship = "governance"\naccess = "write"\n',
+        encoding="utf-8",
+    )
+
+    binding = project.load_project(project_path)
+
+    assert binding.members[0].relationship == "governance"
+    assert binding.members[0].access == "write"
+
+
 def test_remote_project_stores_use_each_repo_discriminator(tmp_path, monkeypatch):
     project_path = _write_project(
         tmp_path / "project.toml",

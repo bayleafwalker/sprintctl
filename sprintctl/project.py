@@ -12,6 +12,7 @@ from uuid import UUID
 
 _REPO_ID = re.compile(r"^[A-Za-z0-9._-]+$")
 _RENDER_LEVELS = {"full", "baseline", "none"}
+_MEMBER_ACCESS = {"write", "reference"}
 
 
 class ProjectConfigError(ValueError):
@@ -23,6 +24,8 @@ class ProjectMember:
     repo_id: str
     backlog: bool
     render: str
+    relationship: str | None
+    access: str | None
     path_notes: tuple[str, ...]
 
 
@@ -71,7 +74,9 @@ def _member(raw: object, index: int) -> ProjectMember:
     field = f"members[{index}]"
     if not isinstance(raw, dict):
         raise ProjectConfigError(f"project.toml {field} must be a table")
-    unknown = sorted(set(raw) - {"repo_id", "backlog", "render", "path_notes"})
+    unknown = sorted(
+        set(raw) - {"repo_id", "backlog", "render", "relationship", "access", "path_notes"}
+    )
     if unknown:
         raise ProjectConfigError(
             f"project.toml {field} has unknown fields: {', '.join(unknown)}"
@@ -89,12 +94,23 @@ def _member(raw: object, index: int) -> ProjectMember:
         raise ProjectConfigError(
             f"project.toml {field}.render must be one of: baseline, full, none"
         )
+    relationship_raw = raw.get("relationship")
+    relationship = (
+        _required_text(relationship_raw, f"{field}.relationship")
+        if relationship_raw is not None
+        else None
+    )
+    access_raw = raw.get("access")
+    if access_raw is not None and access_raw not in _MEMBER_ACCESS:
+        raise ProjectConfigError(
+            f"project.toml {field}.access must be one of: reference, write"
+        )
     notes = raw.get("path_notes", [])
     if not isinstance(notes, list) or not all(isinstance(note, str) for note in notes):
         raise ProjectConfigError(
             f"project.toml {field}.path_notes must be an array of strings"
         )
-    return ProjectMember(repo_id, backlog, render, tuple(notes))
+    return ProjectMember(repo_id, backlog, render, relationship, access_raw, tuple(notes))
 
 
 def load_project(path: Path) -> ProjectBinding:
