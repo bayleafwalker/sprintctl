@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from sprintctl import db
+from sprintctl import backend, db
 from sprintctl.cli import cli
 
 
@@ -221,6 +221,25 @@ class TestProvenance:
 
 
 class TestRecoverFromRemoteCLIGuards:
+    def test_explicit_recovery_helper_accepts_legacy_remote_configuration(
+        self, runner, monkeypatch, tmp_path
+    ):
+        marker_dir = tmp_path / ".sprintctl"
+        marker_dir.mkdir()
+        marker_dir.joinpath("backend.json").write_text(
+            json.dumps({"backend": "remote", "repo_id": tmp_path.name}),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("SPRINTCTL_BACKEND", "remote")
+        monkeypatch.setenv("SPRINTCTL_URL", "postgresql://recovery@example.invalid/work")
+
+        config = backend.require_remote_backend()
+
+        assert config.mode == "remote"
+        assert config.repo_id == tmp_path.name
+        assert config.url == "postgresql://recovery@example.invalid/work"
+
     def test_local_backend_is_rejected(self, tmp_path, runner, db_path):
         result = runner.invoke(
             cli, ["db", "recover-from-remote", "--output", str(tmp_path / "out.db")]

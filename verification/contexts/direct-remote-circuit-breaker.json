@@ -5,9 +5,9 @@
   "subject": "normal-client-direct-postgresql-retirement-and-explicit-administration-boundary",
   "contract_ref": {
     "doc_id": "1164-gate-evidence-ledger",
-    "revision": "git:pending-wave0-implementation"
+    "revision": "git:c9725d39f6e2dc45b3c9934b43bfb2510d4b1e63"
   },
-  "contract_status": "ratified",
+  "contract_status": "draft",
   "source_of_truth": "served-vuoro-work-authority-or-repository-local-sqlite-never-a-normal-direct-postgresql-client",
   "depth": 1,
   "backends": ["local-sqlite", "vuoro-served-work-adapter", "explicit-owner-recovery-postgresql"],

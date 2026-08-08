@@ -19,6 +19,30 @@ def test_missing_backend_defaults_to_local(tmp_path, monkeypatch):
     assert config.repo_id == tmp_path.name
 
 
+def test_url_only_keeps_the_normal_client_local_and_never_opens_postgres(
+    tmp_path, monkeypatch, runner
+):
+    (tmp_path / ".git").mkdir()
+    db_path = tmp_path / "sprintctl.db"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("SPRINTCTL_BACKEND", raising=False)
+    monkeypatch.setenv("SPRINTCTL_URL", "postgresql://ignored@example.invalid/work")
+    monkeypatch.setenv("SPRINTCTL_DB", str(db_path))
+
+    config = backend.load_backend_config(cwd=tmp_path)
+    assert config.mode == "local"
+
+    from sprintctl import pg
+    monkeypatch.setattr(
+        pg,
+        "get_connection",
+        lambda _url: pytest.fail("URL-only local mode opened PostgreSQL"),
+    )
+    result = runner.invoke(cli, ["sprint", "list"])
+    assert result.exit_code == 0, result.output
+    assert db_path.exists()
+
+
 def test_invalid_backend_value_errors(tmp_path):
     try:
         backend.load_backend_config(

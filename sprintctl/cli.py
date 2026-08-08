@@ -4024,18 +4024,26 @@ def authority_submit(
     proposed_claim_token,
     as_json,
 ) -> None:
-    """Durably append and, in enforce mode, remotely arbitrate one command."""
+    """Append one local shadow authority command.
+
+    The former ``enforce`` implementation arbitrated through Sprintctl's
+    retired normal direct-PostgreSQL backend.  It is deliberately unavailable
+    here: ordinary served lifecycle and claim commands mint and submit their
+    own catalog-authorized records, while ``authority sync`` is the retry
+    surface for records already retained locally.
+    """
     rollout = _authority_rollout_status()
     if rollout.mode is _authority_config.AuthorityCommandMode.OFF:
         raise click.ClickException(
             "authority command mode is off; use 'sprintctl authority mode --set shadow|enforce'"
         )
+    if rollout.mode is _authority_config.AuthorityCommandMode.ENFORCE:
+        raise click.ClickException(
+            "authority submit enforce is retired with the direct PostgreSQL client; "
+            "use the corresponding served work command, then use 'authority sync' "
+            "only to retry an already-recorded served request"
+        )
     store, m = _get_store(obj)
-    backend_config = obj["backend_config"]
-    if rollout.mode is _authority_config.AuthorityCommandMode.ENFORCE and backend_config.mode != "remote":
-        raise click.ClickException("authority enforce mode requires a remote PostgreSQL backend")
-    if backend_config.mode == "remote":
-        store.authority_repo_uuid = _authority_repo_uuid(rollout.paths.repo_root)
     try:
         command_payload = json.loads(payload)
     except json.JSONDecodeError as exc:
@@ -4157,24 +4165,6 @@ def authority_submit(
         "mode": rollout.mode.value,
         "status": "pending-shadow",
     }
-    exit_code = 0
-    if rollout.mode is _authority_config.AuthorityCommandMode.ENFORCE:
-        decision = _authority.arbitrate_command(store, durable, credentials=credentials)
-        result.update(decision.to_dict())
-        result["status"] = decision.outcome
-        retains_recovery_proof = request.record_type == "claim.acquire" or (
-            request.record_type == "claim.handoff"
-            and request.payload.get("mode", "rotate") == "rotate"
-        )
-        if retains_recovery_proof:
-            result["credential_recovery_event_id"] = request.event_id
-        if not decision.accepted or not retains_recovery_proof:
-            _authority_config.remove_pending_authority_credential(
-                rollout.paths,
-                event_id=durable.event_id,
-            )
-        if not decision.accepted:
-            exit_code = 2
     if as_json:
         click.echo(json.dumps(result, indent=2))
     else:
@@ -4189,8 +4179,6 @@ def authority_submit(
             )
         if result.get("reason_code"):
             click.echo(f"Reason: {result['reason_code']}: {result.get('reason_detail')}", err=True)
-    if exit_code:
-        raise click.exceptions.Exit(exit_code)
 
 
 def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
@@ -4375,95 +4363,10 @@ def authority_sync(obj, batch_size: int, as_json: bool) -> None:
     rollout = _authority_rollout_status()
     if rollout.mode is not _authority_config.AuthorityCommandMode.ENFORCE:
         raise click.ClickException("authority sync requires enforce mode")
-    store, _m = _get_store(obj)
-    if obj["backend_config"].mode != "remote":
-        raise click.ClickException("authority sync requires a remote PostgreSQL backend")
-    store.authority_repo_uuid = _authority_repo_uuid(rollout.paths.repo_root)
-    projection_path = rollout.paths.state_dir / "authority-command-projection.db"
-    if projection_path.exists():
-        existing = _projection.open_cached_projection(projection_path)
-        try:
-            needs_rebuild = (
-                _projection.get_schema_version(existing)
-                != _projection.PROJECTION_SCHEMA_VERSION
-            )
-        finally:
-            existing.close()
-        if needs_rebuild:
-            _sync.rebuild_ingest_projection(
-                store, projection_path, batch_size=batch_size
-            )
-    cache = _projection.open_cached_projection(
-        projection_path,
-        repo_id=store.repo_id,
+    raise click.ClickException(
+        "local authority sync through the retired direct PostgreSQL client is unavailable; "
+        "configure served mode and retry through the Vuoro authority"
     )
-    producer = _outbox.open_outbox(rollout.paths.outbox_path)
-
-    def resolve(record: _outbox.OutboxRecord) -> dict[str, str] | None:
-        envelope = _contracts.record_from_dict(record.payload)
-        required_refs = {
-            value
-            for key, value in envelope.payload.items()
-            if key.endswith("credential_ref") and isinstance(value, str)
-        }
-        pending = _authority_config.load_pending_authority_credential(
-            rollout.paths,
-            event_id=record.event_id,
-        )
-        if pending is None:
-            return None if required_refs else {}
-        credentials = dict(pending.credentials)
-        return credentials if required_refs <= set(credentials) else None
-
-    try:
-        result = _sync.synchronize_outbox(
-            producer,
-            store,
-            cache,
-            batch_size=batch_size,
-            credential_resolver=resolve,
-            apply_ingest_projection=False,
-        )
-        records_by_id = {
-            record.event_id: record for record in _outbox.list_records(producer)
-        }
-    finally:
-        producer.close()
-        cache.close()
-    for decision in result.command_decisions:
-        record = records_by_id.get(decision.request_event_id)
-        keep_for_recovery = (
-            decision.accepted
-            and record is not None
-            and (
-                record.event_type == "claim.acquire"
-                or (
-                    record.event_type == "claim.handoff"
-                    and record.payload.get("payload", {}).get("mode") == "rotate"
-                )
-            )
-        )
-        if not keep_for_recovery:
-            _authority_config.remove_pending_authority_credential(
-                rollout.paths,
-                event_id=decision.request_event_id,
-            )
-    payload = {
-        "decisions": [decision.to_dict() for decision in result.command_decisions],
-        "pending_command_event_ids": list(result.pending_command_event_ids),
-        "decision_applied_count": result.decision_applied_count,
-        "decision_watermark": (
-            result.decision_watermark.ingest_offset if result.decision_watermark else 0
-        ),
-    }
-    if as_json:
-        click.echo(json.dumps(payload, indent=2))
-    else:
-        click.echo(
-            f"Authority sync: {len(payload['decisions'])} decisions, "
-            f"{len(payload['pending_command_event_ids'])} pending; "
-            f"decision watermark {payload['decision_watermark']}."
-        )
 
 
 @authority_commands.command("recover-proof")

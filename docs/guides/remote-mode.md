@@ -8,9 +8,10 @@ accepts only these modes:
 | `local` (default) | A repository-local SQLite database. |
 | `served` | Shared work through the Vuoro service catalog. |
 
-A stale `SPRINTCTL_BACKEND=remote`, `SPRINTCTL_URL`, or
-`.sprintctl/backend.json` marker with `"backend": "remote"` fails before
-Sprintctl imports `psycopg` or opens PostgreSQL. The stable failure message
+A stale `SPRINTCTL_BACKEND=remote` or `.sprintctl/backend.json` marker with
+`"backend": "remote"` fails before Sprintctl imports `psycopg` or opens
+PostgreSQL. `SPRINTCTL_URL` **on its own does not select a backend**: normal
+resolution remains local and never reads that URL. The stable failure message
 names the migration path; it is intentionally a circuit breaker rather than a
 best-effort fallback.
 
@@ -32,12 +33,12 @@ as `served-operation-unavailable` rather than falling back to PostgreSQL.
 
 ## Local recovery
 
-For a standalone local database, remove stale direct-remote environment
-variables, point `SPRINTCTL_DB` at the intended SQLite file if necessary, and
-use the normal local commands:
+For a standalone local database, leave `SPRINTCTL_BACKEND` unset (an inherited
+`SPRINTCTL_URL` is ignored by the normal client), point `SPRINTCTL_DB` at the
+intended SQLite file if necessary, and use the normal local commands:
 
 ```sh
-unset SPRINTCTL_BACKEND SPRINTCTL_URL
+unset SPRINTCTL_BACKEND
 export SPRINTCTL_DB=/path/to/recovery.db
 sprintctl doctor
 ```
