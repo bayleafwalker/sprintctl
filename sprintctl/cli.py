@@ -210,7 +210,13 @@ def _render_resolved_context(context: dict[str, str | None]) -> str:
 
 
 def _get_store(obj: dict):
-    """Return (store, db_module) for the configured backend. Exits on error."""
+    """Return a normal local store only; served calls dispatch before this.
+
+    ``load_backend_config`` rejects legacy direct-remote configuration before
+    this function can import the PostgreSQL module.  Keep the remote branch
+    below solely as a defensive invariant for explicitly authorized internal
+    callers that may inject a prevalidated config during recovery work.
+    """
     try:
         config = _backend.load_backend_config(
             explicit_repo_id=obj.get("explicit_repo_id"),
@@ -363,7 +369,7 @@ def _served_operation_unavailable(command: str, *, replacement: str | None = Non
     if replacement:
         message += f" {replacement}"
     else:
-        message += " Use an explicitly configured local or remote recovery backend."
+        message += " Use local SQLite or an explicitly authorized recovery command."
     click.echo(message, err=True)
     sys.exit(1)
 
@@ -383,6 +389,12 @@ def _served_disposition(command_path: str, params: dict[str, object]) -> _served
 
 def _guard_served_command(command_path: str, params: dict[str, object]) -> None:
     """Fail unavailable served commands before their callback can open a store."""
+    # This guard is installed around every leaf, including the deliberately
+    # explicit schema/migration/recovery administration commands.  They must
+    # not resolve a retired normal-client configuration merely to determine a
+    # served disposition.
+    if os.environ.get("SPRINTCTL_BACKEND") != "served":
+        return
     disposition = _served_disposition(command_path, params)
     if disposition == "local":
         return
@@ -1092,7 +1104,7 @@ def _served_sprint_status(config, sprint_id, new_status, actor, as_json) -> None
         click.echo(
             "Error: served sprint status has no work.lifecycle.arbitrate mapping for "
             f"a transition to {new_status!r} (no sprint status ever transitions to "
-            "'planned'); use SPRINTCTL_BACKEND=local or remote.",
+            "'planned'); use SPRINTCTL_BACKEND=local.",
             err=True,
         )
         sys.exit(1)
@@ -3184,7 +3196,7 @@ def _event_add_impl(
         click.echo(_render_resolved_context(context))
         return
     if not actor:
-        click.echo("Error: --actor is required for local or remote event writes.", err=True)
+        click.echo("Error: --actor is required for local event writes.", err=True)
         sys.exit(1)
     store, m = _get_store(obj)
     if m.get_sprint(store, sprint_id) is None:
@@ -4724,7 +4736,7 @@ def _served_cutover_evidence(
                 "read operation exposes a sprint's authoritative event history "
                 "(work.read.item only returns one item's events, not the sprint-wide "
                 "event log parity computation needs); pass --skip-parity, or use "
-                "SPRINTCTL_BACKEND=local or remote for a full parity computation.\n"
+                "SPRINTCTL_BACKEND=local for a full parity computation.\n"
                 f"{_render_resolved_context(resolved_context)}",
                 err=True,
             )
@@ -8429,7 +8441,7 @@ def claim_list_sprint(obj, sprint_id, show_all, expiring_within, as_json) -> Non
 
 @claim.command("show")
 @click.option("--id", "claim_id", type=int, required=True, help="Claim ID")
-@click.option("--claim-token", required=False, help="Claim token (required only by local/remote backends)")
+@click.option("--claim-token", required=False, help="Claim token (required only by the local backend)")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
 def claim_show(obj, claim_id, claim_token, as_json) -> None:

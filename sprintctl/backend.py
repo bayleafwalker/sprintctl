@@ -10,6 +10,13 @@ from typing import Mapping
 
 SERVED_MIN_PYTHON = (3, 12)
 SERVED_PROFILE_SCHEMA_VERSION = "vuoro-client-profile/v1"
+LEGACY_DIRECT_REMOTE_MIGRATION_GUIDANCE = (
+    "Error: SPRINTCTL_BACKEND=remote is retired and will not open a direct "
+    "PostgreSQL client. Use SPRINTCTL_BACKEND=served with "
+    "SPRINTCTL_VUORO_PROFILE for shared work, or unset SPRINTCTL_BACKEND and "
+    "SPRINTCTL_URL for local SQLite. Legacy direct PostgreSQL access is limited "
+    "to explicit migration, schema-owner, and recovery commands."
+)
 
 
 class BackendConfigError(ValueError):
@@ -219,13 +226,21 @@ def load_backend_config(
     environ: Mapping[str, str] | None = None,
     explicit_repo_id: str | None = None,
     allow_markerless_nonlocal: bool = False,
+    allow_legacy_direct_remote: bool = False,
 ) -> BackendConfig:
     env = environ if environ is not None else os.environ
     mode = env.get("SPRINTCTL_BACKEND") or "local"
     if mode not in {"local", "remote", "served"}:
         raise BackendConfigError(
-            f"Error: invalid SPRINTCTL_BACKEND='{mode}'. Expected 'local', 'remote', or 'served'."
+            f"Error: invalid SPRINTCTL_BACKEND='{mode}'. Expected 'local' or 'served'."
         )
+    # Remote was a transitional workstation client.  It is deliberately
+    # rejected before identity resolution, driver import, or connection setup
+    # so a stale env var cannot silently reopen the retired PostgreSQL path.
+    # The narrow owner/recovery helper below is the only caller allowed to
+    # opt into the old configuration shape.
+    if mode == "remote" and not allow_legacy_direct_remote:
+        raise BackendConfigError(LEGACY_DIRECT_REMOTE_MIGRATION_GUIDANCE)
     url = env.get("SPRINTCTL_URL")
     if mode == "remote" and not url:
         raise BackendConfigError("Error: SPRINTCTL_BACKEND=remote requires SPRINTCTL_URL.")
@@ -252,6 +267,16 @@ def load_backend_config(
         served_profile = _load_served_profile(Path(profile_path_raw).expanduser())
 
     repo_root, inferred_repo_id, marker = resolve_repo_identity(cwd)
+    if (
+        marker is not None
+        and marker.backend == "remote"
+        and not allow_legacy_direct_remote
+    ):
+        raise BackendConfigError(
+            LEGACY_DIRECT_REMOTE_MIGRATION_GUIDANCE
+            + " Update the repository marker to 'served' only after its served "
+            "profile and cutover evidence are in place."
+        )
     # Local SQLite has always been usable from an ordinary directory without a
     # repository marker or Git metadata. Preserve that local compatibility
     # identity for presentation and item references; non-local modes still
@@ -330,7 +355,14 @@ def require_local_backend() -> BackendConfig:
 
 
 def require_remote_backend() -> BackendConfig:
-    config = load_backend_config()
+    """Return the retired direct backend for a named recovery operation only.
+
+    Normal CLI resolution must call :func:`load_backend_config`, which refuses
+    ``remote`` before importing ``psycopg``.  Keep this compatibility helper
+    private to explicitly named recovery commands until their served export
+    replacement is available.
+    """
+    config = load_backend_config(allow_legacy_direct_remote=True)
     if config.mode != "remote":
         raise BackendConfigError(
             "Error: this command requires SPRINTCTL_BACKEND=remote "

@@ -30,38 +30,22 @@ def _remote_repo(tmp_path, monkeypatch):
     monkeypatch.setenv("SPRINTCTL_URL", "postgresql://example.invalid/work")
 
 
-def test_normal_remote_command_uses_read_only_startup_handshake(
+def test_normal_remote_command_is_rejected_before_any_postgres_connection(
     tmp_path,
     monkeypatch,
     runner,
 ):
     _remote_repo(tmp_path, monkeypatch)
-    conn = _Connection()
-    store = pg.PgStore(conn=conn, repo_id=tmp_path.name)
-    observed = {}
-
-    monkeypatch.setattr(pg, "get_connection", lambda _url: store)
-    monkeypatch.setattr(pg, "superseded_marker_message", lambda _store: None)
     monkeypatch.setattr(
         pg,
-        "init_db",
-        lambda _store: pytest.fail("normal remote command entered migration"),
+        "get_connection",
+        lambda _url: pytest.fail("normal remote command opened PostgreSQL"),
     )
-
-    def handshake(value, environ):
-        observed["store"] = value
-        observed["mode"] = environ.get(pg_migrations.STARTUP_MODE_ENV)
-        return {"compatible": True}
-
-    monkeypatch.setattr(pg_migrations, "startup_schema_handshake", handshake)
-    monkeypatch.setattr(pg, "list_repos", lambda _conn: ["sprintctl"])
 
     result = runner.invoke(cli, ["repo", "list"])
 
-    assert result.exit_code == 0, result.output
-    assert result.output.strip() == "sprintctl"
-    assert observed == {"store": store, "mode": None}
-    assert conn.closed is True
+    assert result.exit_code == 1, result.output
+    assert "SPRINTCTL_BACKEND=remote is retired" in result.output
 
 
 def test_remote_schema_migrate_command_returns_bounded_result(
