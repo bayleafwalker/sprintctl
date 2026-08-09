@@ -14,7 +14,7 @@ FIXTURE = ROOT / "verification/fixtures/maintenance-resource-owner-v1/frozen-own
 EXPECTED_FREEZE = "263cfab83acb1070b1b97809b0df1e099ec8e232aa5499e545b71df4109e627d"
 EXPECTED_OPERATIONS = {"work.maintenance.resource.prepare", "work.maintenance.resource.get", "work.maintenance.resource.changes"}
 CANDIDATES = (
-    "pyproject.toml", "sprintctl/db.py", "sprintctl/pg.py",
+    "pyproject.toml", "uv.lock", "sprintctl/__init__.py", "sprintctl/db.py", "sprintctl/pg.py",
     "sprintctl/pg_migrations.py", "sprintctl/maintenance_capability.py",
     "sprintctl/maintenance_resource.py", "sprintctl/application.py",
     "sprintctl/vuoro_adapter.py", "sprintctl/pg_testing.py",
@@ -57,6 +57,7 @@ def main() -> None:
     assert set(semantic_branches) == set(freeze["required_histories"]) - transactional_names
     assert all(semantic_branches.values())
     required_falsifiers = {
+        "cursor-below-floor": ("threading.Thread", "CursorExpired", "sprintctl-maintenance-event-1"),
         "disconnect": (".close()", 'owner.prepare(**arguments)', 'duplicate'),
         "parallel-owner-decoders": ("threading.Thread", "decoded == expected", "after == before"),
         "prepare-response-loss": ('owner.prepare(**arguments)', 'reference_envelope', 'duplicate'),
@@ -81,6 +82,9 @@ def main() -> None:
             branch_text = "\n".join(ast.get_source_segment(source_text, statement) or "" for statement in branch.body)
             assert sum(isinstance(node, ast.Assert) for statement in branch.body for node in ast.walk(statement)) >= 2
             assert all(token in branch_text for token in tokens), (relative, history)
+    postgres_source = (ROOT / "tests/test_work_application_pg.py").read_text()
+    for token in ("non-disclosure-four-way", '"malformed"', '"absent"', '"foreign"', '"unauthorized"', "NOT_FOUND_PAYLOAD", "local_resource.visible"):
+        assert token in postgres_source
     source = (ROOT / "sprintctl/vuoro_adapter.py").read_text()
     for operation in EXPECTED_OPERATIONS:
         assert source.count(f'"{operation}"') >= 1

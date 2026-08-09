@@ -906,6 +906,15 @@ class WorkApplication:
     def _maintenance_resource_store(self) -> MaintenanceResourceStore:
         return MaintenanceResourceStore(self._maintenance_store())
 
+    def maintenance_resource_schema_available(self) -> bool:
+        """Gate catalog publication on the installed owner-storage release."""
+        if hasattr(self.store, "repo_id"):
+            return int(getattr(self.store, "remote_schema_version", 0) or 0) >= 7
+        if self.store is None or not hasattr(self.store, "execute"):
+            return False
+        row = self.store.execute("SELECT version FROM schema_version").fetchone()
+        return bool(row and int(row[0]) >= 17 and MaintenanceResourceStore.schema_exists(self._maintenance_store()))
+
     @staticmethod
     def _maintenance_request_identity(
         context: InvocationContext, request_id: Any

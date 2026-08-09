@@ -30,7 +30,7 @@ HISTORIES = (
 )
 
 TRANSACTIONAL_HISTORIES = frozenset({
-    "disconnect", "expiry-materialization-authorized-write",
+    "cursor-below-floor", "disconnect", "expiry-materialization-authorized-write",
     "parallel-owner-decoders", "prepare-response-loss", "restart-during-wait",
 })
 
@@ -234,9 +234,6 @@ def exercise_frozen_history(history, owner, store):
         assert before["cursor"] == "sprintctl-maintenance-cursor-1" and store.changes(reference, before["cursor"])["events"][-1]["terminal"] is True
     elif history == "cursor-at-floor":
         assert store.changes(reference, "sprintctl-maintenance-cursor-0")["events"][0]["event_id"].endswith("-1")
-    elif history == "cursor-below-floor":
-        store._execute("UPDATE maintenance_resource SET recovery_floor=1 WHERE resource_ref=?", (reference,)); store.conn.commit()
-        with pytest.raises(CursorExpired): store.changes(reference, "sprintctl-maintenance-cursor-0")
     elif history == "duplicate-delivery":
         assert store.changes(reference, "sprintctl-maintenance-cursor-0") == store.changes(reference, "sprintctl-maintenance-cursor-0")
     elif history == "expiry-read-does-not-mutate":
@@ -285,7 +282,7 @@ def test_frozen_history_manifest_is_executable(history, resource, tmp_path):
 
 
 def exercise_sqlite_transactional_history(history, tmp_path):
-    from sprintctl.maintenance_capability import SQLiteMaintenanceCapabilityStore
+    from sprintctl.maintenance_capability import MaintenanceCapabilityError, SQLiteMaintenanceCapabilityStore
     from tests.test_maintenance_capability import envelope
 
     path = tmp_path / f"{history}.db"
@@ -310,6 +307,31 @@ def exercise_sqlite_transactional_history(history, tmp_path):
         assert recovered.execute("SELECT count(*) FROM maintenance_resource").fetchone()[0] == 1
         assert recovered.execute("SELECT count(*) FROM maintenance_resource_event").fetchone()[0] == 1
         recovered.close()
+    elif history == "cursor-below-floor":
+        owner.prepare(**arguments)
+        resource = MaintenanceResourceStore(owner)
+        reference = resource.reference_envelope(capability_id)["reference"]
+        connection.execute(
+            "INSERT INTO maintenance_resource_event(resource_ref,position,state,updated_at) "
+            "SELECT ?,value,'active',? FROM json_each(?) WHERE value BETWEEN 2 AND 256",
+            (reference, arguments["at"], json.dumps(list(range(2, 257)))),
+        )
+        connection.execute("UPDATE maintenance_resource SET current_position=256 WHERE resource_ref=?", (reference,)); connection.commit()
+        gate = threading.Barrier(2); outcome = []
+        def prune():
+            writer = sqlite3.connect(path); writer.execute("BEGIN IMMEDIATE"); gate.wait()
+            writer.execute("INSERT INTO maintenance_resource_event VALUES(?,257,'active',?)", (reference, arguments["at"]))
+            writer.execute("DELETE FROM maintenance_resource_event WHERE resource_ref=? AND position<2", (reference,))
+            writer.execute("UPDATE maintenance_resource SET recovery_floor=1,current_position=257 WHERE resource_ref=?", (reference,)); writer.commit(); writer.close()
+        thread = threading.Thread(target=prune); thread.start(); gate.wait()
+        reader = sqlite3.connect(path); reader.row_factory = sqlite3.Row
+        try:
+            result = MaintenanceResourceStore(SQLiteMaintenanceCapabilityStore(reader)).changes(reference, "sprintctl-maintenance-cursor-0")
+            outcome.append(result["events"][0]["event_id"])
+        except CursorExpired:
+            outcome.append("cursor-expired")
+        thread.join(); assert not thread.is_alive(); reader.close(); connection.close()
+        assert outcome in [["cursor-expired"], ["sprintctl-maintenance-event-1"]]
     elif history == "parallel-owner-decoders":
         second_id = "mcap:22345678-1234-4234-8234-123456789abc"
         owner.prepare(**arguments)
@@ -335,7 +357,9 @@ def exercise_sqlite_transactional_history(history, tmp_path):
         owner.prepare(**(arguments | {"envelope": value}))
         reference = MaintenanceResourceStore(owner).reference_envelope(capability_id)["reference"]
         deadline = time.monotonic() + 3
-        while not owner.sweep_expired(capability_id, at=datetime.now(timezone.utc).isoformat()):
+        with pytest.raises(MaintenanceCapabilityError, match="scheduler authorization"):
+            owner.sweep_expired(capability_id, at=datetime.now(timezone.utc).isoformat(), principal="operator", authorized=False)
+        while not owner.sweep_expired(capability_id, at=datetime.now(timezone.utc).isoformat(), principal="maintenance-owner-scheduler", authorized=True):
             assert time.monotonic() < deadline
             time.sleep(.05)
         snapshot = MaintenanceResourceStore(owner).snapshot(reference)

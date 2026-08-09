@@ -373,6 +373,7 @@ def migrate_schema(store: Any) -> dict[str, Any]:
         raise RemoteSchemaMigrationError(
             "migration committed but the resulting schema is not compatible"
         )
+    store.remote_schema_version = CURRENT_SCHEMA_VERSION
     return {
         "schema_version": "sprintctl-remote-migration-result/v1",
         "from_version": starting_version,

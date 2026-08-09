@@ -226,7 +226,9 @@ def test_expiry_sweep_commits_terminal_projection_with_owner_state(store, monkey
     )
     binding = MaintenanceResourceStore(store).reference_envelope(CAPABILITY_ID)
     monkeypatch.setattr(store, "_decision_time", lambda: datetime.now(timezone.utc) + timedelta(days=1))
-    assert store.sweep_expired(CAPABILITY_ID, at=AT) is True
+    with pytest.raises(MaintenanceCapabilityError, match="scheduler authorization"):
+        store.sweep_expired(CAPABILITY_ID, at=AT, principal="operator", authorized=True)
+    assert store.sweep_expired(CAPABILITY_ID, at=AT, principal="maintenance-owner-scheduler", authorized=True) is True
     snapshot = MaintenanceResourceStore(store).snapshot(binding["reference"])
     assert snapshot["state"]["state"] == "expired"
     assert snapshot["terminal"] is True

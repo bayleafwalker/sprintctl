@@ -124,7 +124,8 @@ class MaintenanceResourceStore:
         if owner is None:
             raise ResourceNotFound("resource not found")
         scope, values = self._scope()
-        current_row = self._execute(f"SELECT current_position FROM maintenance_resource WHERE {scope}resource_ref=?", values + (resource_ref,)).fetchone()
+        lock = " FOR UPDATE" if self.postgres else ""
+        current_row = self._execute(f"SELECT current_position FROM maintenance_resource WHERE {scope}resource_ref=?{lock}", values + (resource_ref,)).fetchone()
         current = _value(current_row, 0, "current_position")
         existing = self._execute(f"SELECT state,updated_at FROM maintenance_resource_event WHERE {scope}resource_ref=? ORDER BY position DESC LIMIT 1", values + (resource_ref,)).fetchone()
         updated = _stamp(owner["updated_at"])
@@ -195,18 +196,46 @@ class MaintenanceResourceStore:
         after = _position(cursor)
         deadline = self.monotonic() + wait_seconds
         while True:
-            _capability_id, floor, current = self._binding(resource_ref)
+            result = self._changes_once(resource_ref, after)
+            if result["events"] or self.monotonic() >= deadline:
+                return result
+            self.pause(min(0.05, max(0.0, deadline - self.monotonic())))
+
+    def _changes_once(self, resource_ref: str, after: int) -> dict[str, Any]:
+        """Atomically hand off the committed floor/current state and events."""
+        scope, values = self._scope()
+        try:
+            if not self.postgres:
+                self.conn.execute("BEGIN")
+            lock = " FOR SHARE" if self.postgres else ""
+            binding = self._execute(
+                f"SELECT recovery_floor,current_position FROM maintenance_resource WHERE {scope}resource_ref=?{lock}",
+                values + (resource_ref,),
+            ).fetchone()
+            if binding is None:
+                raise ResourceNotFound("resource not found")
+            floor = int(_value(binding, 0, "recovery_floor"))
+            current = int(_value(binding, 1, "current_position"))
             if after < floor:
                 raise CursorExpired("fetch a fresh snapshot")
             if after > current:
                 raise ResourceNotFound("resource not found")
-            if current > after or self.monotonic() >= deadline:
-                break
-            self.pause(min(0.05, max(0.0, deadline - self.monotonic())))
-        scope, values = self._scope()
-        rows = self._execute(f"SELECT position,state,updated_at FROM maintenance_resource_event WHERE {scope}resource_ref=? AND position>? ORDER BY position LIMIT ?", values + (resource_ref, after, MAX_BATCH)).fetchall()
-        next_position = int(_value(rows[-1], 0, "position")) if rows else after
-        return {"schema_version": "resource-changes/v1", "reference": resource_ref, "next_cursor": _cursor(next_position), "events": [{"event_id": f"sprintctl-maintenance-event-{int(_value(row, 0, 'position'))}", "terminal": _value(row, 1, "state") in TERMINAL_STATES, "data": {"state": _value(row, 1, "state"), "updated_at": _stamp(_value(row, 2, "updated_at"))}} for row in rows]}
+            rows = self._execute(
+                f"SELECT position,state,updated_at FROM maintenance_resource_event WHERE {scope}resource_ref=? AND position>? ORDER BY position LIMIT ?",
+                values + (resource_ref, after, MAX_BATCH),
+            ).fetchall()
+            # A cursor below current must yield the immediate successor. This
+            # assertion turns any storage/pruning gap into expiry, never a
+            # silently advanced cursor or partial event stream.
+            if current > after and (not rows or int(_value(rows[0], 0, "position")) != after + 1):
+                raise CursorExpired("fetch a fresh snapshot")
+            next_position = int(_value(rows[-1], 0, "position")) if rows else after
+            result = {"schema_version": "resource-changes/v1", "reference": resource_ref, "next_cursor": _cursor(next_position), "events": [{"event_id": f"sprintctl-maintenance-event-{int(_value(row, 0, 'position'))}", "terminal": _value(row, 1, "state") in TERMINAL_STATES, "data": {"state": _value(row, 1, "state"), "updated_at": _stamp(_value(row, 2, "updated_at"))}} for row in rows]}
+            self.conn.commit()
+            return result
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def reference_envelope(self, capability_id: str) -> dict[str, Any]:
         scope, values = self._scope()

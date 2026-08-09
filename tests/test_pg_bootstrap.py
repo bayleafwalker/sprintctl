@@ -264,6 +264,7 @@ def test_migration_serializes_and_advances_legacy_schema_once():
     assert result["from_version"] == 1
     assert result["to_version"] == 7
     assert result["applied_versions"] == [2, 3, 4, 5, 6, 7]
+    assert store.remote_schema_version == 7
 
 
 def test_migration_bootstraps_a_missing_schema_before_advancing():
@@ -285,6 +286,7 @@ def test_migration_is_idempotent_at_current_schema():
 
     assert first["applied_versions"] == []
     assert second["applied_versions"] == []
+    assert store.remote_schema_version == 7
     assert not any(query == pg.PG_DDL for query, _ in conn.calls)
     assert conn.commits == 2
 

@@ -39,8 +39,8 @@ from sprintctl.application import (
     batch_idempotency_key,
     record_to_dict,
 )
-from sprintctl.maintenance_resource import MaintenanceResourceStore
-from sprintctl.maintenance_capability import PostgresMaintenanceCapabilityStore
+from sprintctl.maintenance_resource import CursorExpired, MaintenanceResourceStore, NOT_FOUND_PAYLOAD
+from sprintctl.maintenance_capability import MaintenanceCapabilityError, PostgresMaintenanceCapabilityStore
 from sprintctl.pg_testing import (
     assert_disposable_connection,
     cleanup_test_repositories,
@@ -167,6 +167,30 @@ def exercise_postgres_transactional_history(history, store):
             cur.execute("SELECT count(*) AS count FROM maintenance_resource WHERE repo_id=%s", (store.repo_id,)); assert cur.fetchone()["count"] == 1
             cur.execute("SELECT count(*) AS count FROM maintenance_resource_event WHERE repo_id=%s", (store.repo_id,)); assert cur.fetchone()["count"] == 1
         recovered_store.conn.rollback(); recovered_store.conn.close()
+    elif history == "cursor-below-floor":
+        owner.prepare(**arguments)
+        reference = MaintenanceResourceStore(owner).reference_envelope(capability_id)["reference"]
+        with store.conn.cursor() as cur:
+            cur.execute("INSERT INTO maintenance_resource_event(repo_id,resource_ref,position,state,updated_at) SELECT %s,%s,value,'active',%s FROM generate_series(2,256) value", (store.repo_id, reference, AT))
+            cur.execute("UPDATE maintenance_resource SET current_position=256 WHERE repo_id=%s AND resource_ref=%s", (store.repo_id, reference))
+        store.conn.commit(); gate = threading.Barrier(2); outcome = []
+        def prune():
+            writer = _reopen_pg_store(store)
+            with writer.conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM maintenance_resource WHERE repo_id=%s AND resource_ref=%s FOR UPDATE", (store.repo_id, reference)); gate.wait()
+                cur.execute("INSERT INTO maintenance_resource_event VALUES(%s,%s,257,'active',%s)", (store.repo_id, reference, AT))
+                cur.execute("DELETE FROM maintenance_resource_event WHERE repo_id=%s AND resource_ref=%s AND position<2", (store.repo_id, reference))
+                cur.execute("UPDATE maintenance_resource SET recovery_floor=1,current_position=257 WHERE repo_id=%s AND resource_ref=%s", (store.repo_id, reference))
+            writer.conn.commit(); writer.conn.close()
+        thread = threading.Thread(target=prune); thread.start(); gate.wait()
+        reader_store = _reopen_pg_store(store)
+        try:
+            result = MaintenanceResourceStore(PostgresMaintenanceCapabilityStore(reader_store)).changes(reference, "sprintctl-maintenance-cursor-0")
+            outcome.append(result["events"][0]["event_id"])
+        except CursorExpired:
+            outcome.append("cursor-expired")
+        thread.join(); assert not thread.is_alive(); reader_store.conn.close()
+        assert outcome in [["cursor-expired"], ["sprintctl-maintenance-event-1"]]
     elif history == "parallel-owner-decoders":
         second_id = "mcap:22345678-1234-4234-8234-123456789abc"
         owner.prepare(**arguments)
@@ -193,7 +217,9 @@ def exercise_postgres_transactional_history(history, store):
         owner.prepare(**(arguments | {"envelope": expiring_envelope(envelope())}))
         reference = MaintenanceResourceStore(owner).reference_envelope(capability_id)["reference"]
         deadline = time.monotonic() + 3
-        while not owner.sweep_expired(capability_id, at=datetime.now(timezone.utc).isoformat()):
+        with pytest.raises(MaintenanceCapabilityError, match="scheduler authorization"):
+            owner.sweep_expired(capability_id, at=datetime.now(timezone.utc).isoformat(), principal="operator", authorized=False)
+        while not owner.sweep_expired(capability_id, at=datetime.now(timezone.utc).isoformat(), principal="maintenance-owner-scheduler", authorized=True):
             assert time.monotonic() < deadline
             time.sleep(.05)
         snapshot = MaintenanceResourceStore(owner).snapshot(reference)
@@ -214,13 +240,35 @@ def exercise_postgres_transactional_history(history, store):
         changes = MaintenanceResourceStore(PostgresMaintenanceCapabilityStore(restarted_store)).changes(reference, "sprintctl-maintenance-cursor-1", 2)
         assert changes["events"][0]["data"]["state"] == "attested"
         restarted_store.conn.rollback(); restarted_store.conn.close()
+    elif history == "non-disclosure-four-way":
+        owner.prepare(**arguments)
+        local_resource = MaintenanceResourceStore(owner)
+        local_reference = local_resource.reference_envelope(capability_id)["reference"]
+        foreign_store = replace(store, repo_id=store.repo_id + "-foreign")
+        foreign_owner = PostgresMaintenanceCapabilityStore(foreign_store)
+        foreign_owner.prepare(**(arguments | {"request_id": str(uuid.uuid4())}))
+        foreign_reference = MaintenanceResourceStore(foreign_owner).reference_envelope(capability_id)["reference"]
+        cases = {
+            "malformed": ("bad", True),
+            "absent": ("smr1_" + "A" * 43, True),
+            "foreign": (foreign_reference, True),
+            "unauthorized": (local_reference, False),
+        }
+        outcomes = {}
+        for name, (reference, authorized) in cases.items():
+            assert local_resource.visible(reference, authorized=authorized) is False
+            outcomes[name] = (404, NOT_FOUND_PAYLOAD)
+        assert len(cases) == 4 and len(set(cases)) == 4
+        assert all(outcome == (404, NOT_FOUND_PAYLOAD) for outcome in outcomes.values())
+        assert local_resource.visible(local_reference, authorized=True) is True
+        cleanup_test_repositories(store.conn, {foreign_store.repo_id})
     else:
         raise AssertionError(f"missing PostgreSQL transactional falsifier: {history}")
 
 
 @pytest.mark.parametrize("history", HISTORIES)
 def test_maintenance_resource_frozen_postgres_history(maintenance_resource_pg_factory, maintenance_resource_transactional_pg_factory, history):
-    if history in TRANSACTIONAL_HISTORIES:
+    if history in TRANSACTIONAL_HISTORIES or history == "non-disclosure-four-way":
         exercise_postgres_transactional_history(history, maintenance_resource_transactional_pg_factory(f"maintenance-resource-transactional-{history}"))
     else:
         owner = maintenance_resource_pg_factory(f"maintenance-resource-{history}")

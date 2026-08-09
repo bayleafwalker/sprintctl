@@ -1102,7 +1102,15 @@ def register_work_catalog(
     )
 
     resource_kind_registered = False
+    resource_schema_available = application.maintenance_resource_schema_available()
+    resource_operations = {
+        "work.maintenance.resource.prepare",
+        "work.maintenance.resource.get",
+        "work.maintenance.resource.changes",
+    }
     for contract in WORK_OPERATION_CONTRACTS:
+        if contract.name in resource_operations and not resource_schema_available:
+            continue
         if contract.result_contract_resource_kind and not resource_kind_registered:
             registry.register_resource_kind(
                 ResourceKindDefinition(

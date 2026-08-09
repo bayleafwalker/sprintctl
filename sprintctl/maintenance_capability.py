@@ -466,8 +466,10 @@ class SQLiteMaintenanceCapabilityStore:
         self.conn.commit()
         return {"capability_id": capability_id, "record_id": record_id, "kind": kind, "authority": "none"}
 
-    def sweep_expired(self, capability_id: str, *, at: str) -> bool:
+    def sweep_expired(self, capability_id: str, *, at: str, principal: str, authorized: bool) -> bool:
         """Materialize expiry under the owner write lock; reads never call this."""
+        if not authorized or principal != "maintenance-owner-scheduler":
+            raise MaintenanceCapabilityError("maintenance owner scheduler authorization required")
         try:
             self.conn.execute("BEGIN IMMEDIATE")
             row = self.conn.execute("SELECT * FROM maintenance_capability WHERE capability_id=?", (capability_id,)).fetchone()
@@ -718,7 +720,9 @@ class PostgresMaintenanceCapabilityStore:
         self.conn.commit()
         return {"capability_id": capability_id, "record_id": record_id, "kind": kind, "authority": "none"}
 
-    def sweep_expired(self, capability_id: str, *, at: str) -> bool:
+    def sweep_expired(self, capability_id: str, *, at: str, principal: str, authorized: bool) -> bool:
+        if not authorized or principal != "maintenance-owner-scheduler":
+            raise MaintenanceCapabilityError("maintenance owner scheduler authorization required")
         try:
             with self.conn.cursor() as cur:
                 cur.execute("SELECT * FROM maintenance_capability WHERE repo_id=%s AND capability_id=%s FOR UPDATE", (self.repo_id, capability_id))

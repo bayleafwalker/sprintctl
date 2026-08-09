@@ -194,6 +194,7 @@ async def test_generic_client_discovers_and_replays_maintenance_authority(
     )
     prepare_id = "44444444-4444-4444-8444-444444444444"
     recovery_id = "55555555-5555-4555-8555-555555555555"
+    frozen_envelope = envelope()
     try:
         async with AsyncVuoroClient(
             Profile("dev", "http://test", "identity-ref", "vuoro-dev"),
@@ -202,13 +203,13 @@ async def test_generic_client_discovers_and_replays_maintenance_authority(
         ) as client:
             prepared = await client.invoke(
                 "work.maintenance.prepare",
-                {"capability_id": CAPABILITY_ID, "envelope": envelope()},
+                {"capability_id": CAPABILITY_ID, "envelope": frozen_envelope},
                 request_id=prepare_id, idempotency_key=prepare_id,
                 repo_id="sprintctl",
             )
             duplicate = await client.invoke(
                 "work.maintenance.prepare",
-                {"capability_id": CAPABILITY_ID, "envelope": envelope()},
+                {"capability_id": CAPABILITY_ID, "envelope": frozen_envelope},
                 request_id=prepare_id, idempotency_key=prepare_id,
                 repo_id="sprintctl",
             )
@@ -265,6 +266,37 @@ async def test_generic_client_observes_additive_maintenance_resource(tmp_path, m
             assert empty["events"] == []
     finally:
         connection.close()
+
+
+@pytest.mark.parametrize("legacy_version", [5, 16])
+def test_resource_operations_are_not_published_before_sqlite_schema_17(tmp_path, legacy_version):
+    connection = db.get_connection(tmp_path / f"legacy-{legacy_version}.db")
+    db.init_db(connection)
+    connection.execute("UPDATE schema_version SET version=?", (legacy_version,)); connection.commit()
+    work = WorkApplication(
+        repo_id="sprintctl", store=connection, backend=db,
+        ingest_records=lambda records: [], arbitrate_command=lambda record, credentials: None,
+        list_records=lambda after, limit: [], list_decisions=lambda after, limit: [],
+    )
+    registry = CatalogRegistry(); register_work_catalog(registry, work)
+    catalog = registry.catalog()
+    names = {operation.name for operation in catalog.operations}
+    assert not {name for name in names if name.startswith("work.maintenance.resource.")}
+    assert catalog.resource_kinds is None and catalog.observation_transports is None
+    connection.close()
+
+
+@pytest.mark.parametrize("remote_version, expected", [(5, False), (6, False), (7, True)])
+def test_resource_operations_follow_remote_schema_capability(remote_version, expected):
+    store = type("RemoteStore", (), {"repo_id": "sprintctl", "remote_schema_version": remote_version})()
+    work = WorkApplication(
+        repo_id="sprintctl", store=store, backend=object(),
+        ingest_records=lambda records: [], arbitrate_command=lambda record, credentials: None,
+        list_records=lambda after, limit: [], list_decisions=lambda after, limit: [],
+    )
+    registry = CatalogRegistry(); register_work_catalog(registry, work)
+    names = {operation.name for operation in registry.catalog().operations}
+    assert bool({name for name in names if name.startswith("work.maintenance.resource.")}) is expected
 
 @pytest.mark.anyio
 async def test_maintenance_catalog_denies_broad_work_authority(tmp_path, monkeypatch):
