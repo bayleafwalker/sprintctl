@@ -1,0 +1,23 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.release.0.2.22",
+  "owner_repo": "sprintctl",
+  "subject": "immutable-maintenance-resource-owner-release",
+  "source_of_truth": "annotated v0.2.22 tag and GitHub release assets",
+  "contract_ref": {"doc_id": "maintenance-resource-owner/v1", "revision": "git:159647d80c91fb4d0f7ae2090c7dec413ec91a8f"},
+  "depth": 2,
+  "backends": ["clean-local-test-environment", "github-release"],
+  "actors": ["release-operator", "artifact-consumer"],
+  "operations": [
+    {"name": "test", "synchronization": "exact merged source revision"},
+    {"name": "build", "synchronization": "PEP 517 source and wheel build"},
+    {"name": "publish", "synchronization": "annotated tag and immutable release assets"},
+    {"name": "verify", "synchronization": "independent download and SHA-256 comparison"}
+  ],
+  "consistency": {"target": "release-integrity", "object": "tag-source-artifact identity"},
+  "bounds": {"artifacts": 2, "test_cases_passed": 1489, "test_cases_skipped": 180},
+  "invariants": ["tag-resolves-to-reviewed-merged-source", "wheel-metadata-is-version-0.2.22", "owner-resource-and-vuoro-adapter-modules-are-packaged", "downloaded-assets-match-build-hashes", "no-deployment-or-rollout"],
+  "faults": ["dirty-source", "wrong-version", "missing-owner-module", "asset-digest-mismatch"],
+  "oracles": ["pytest", "wheel-metadata", "clean-install-smoke", "github-release-digest", "downloaded-sha256"],
+  "implementation_anchors": ["pyproject.toml", "sprintctl/maintenance_resource.py", "sprintctl/vuoro_adapter.py", "tests/test_vuoro_work_adapter_integration.py"]
+}

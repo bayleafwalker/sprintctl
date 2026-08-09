@@ -1,0 +1,17 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.release.0.2.22",
+  "contract_ref": {"doc_id": "maintenance-resource-owner/v1", "revision": "git:159647d80c91fb4d0f7ae2090c7dec413ec91a8f"},
+  "implementation_sha": "159647d80c91fb4d0f7ae2090c7dec413ec91a8f",
+  "depth": 2,
+  "environment": {"backend": "local-build-and-github-release", "isolation": "pytest temporary paths rooted under /var/tmp to avoid workstation /tmp Git metadata", "tool_versions": {"python": "3.12.13", "sprintctl": "0.2.22"}},
+  "execution": {"seed": null, "histories": 4, "bounds": {"passed": 1489, "skipped": 180, "artifacts": 2}, "faults_exercised": ["ambient-tmp-repository-identity", "wrong-wheel-version", "missing-module", "download-digest-mismatch"]},
+  "claims": [
+    {"property": "v0.2.22 identifies the reviewed merged owner source", "result": "example-tested", "evidence": ["annotated tag resolves to 159647d80c91fb4d0f7ae2090c7dec413ec91a8f"]},
+    {"property": "published wheel and source archive are immutable and independently verifiable", "result": "example-tested", "evidence": ["wheel sha256 bd508ff25f0a586cbcd5fee9a369188361b6f5c54f7a37160ba46e84756a72d8", "sdist sha256 739bf4d13fe7f0e40d6b2d3b541f7e3e0745ecadc58bd4c8c774ba4e09f333f0"]},
+    {"property": "release contains the maintenance resource owner and Vuoro adapter", "result": "example-tested", "evidence": ["wheel contents and clean-install import smoke passed", "1489 tests passed and 180 PostgreSQL/environment-gated tests skipped"]}
+  ],
+  "counterexamples": [],
+  "evidence": {"tag": "v0.2.22", "release_url": "https://github.com/bayleafwalker/sprintctl/releases/tag/v0.2.22", "wheel_url": "https://github.com/bayleafwalker/sprintctl/releases/download/v0.2.22/sprintctl-0.2.22-py3-none-any.whl", "wheel_sha256": "bd508ff25f0a586cbcd5fee9a369188361b6f5c54f7a37160ba46e84756a72d8", "sdist_sha256": "739bf4d13fe7f0e40d6b2d3b541f7e3e0745ecadc58bd4c8c774ba4e09f333f0", "test_result": "1489 passed, 180 skipped"},
+  "notes": ["No deployment, service rollout, migration, or runtime state change was performed."]
+}
