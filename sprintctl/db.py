@@ -610,13 +610,13 @@ def _migration_17(conn: sqlite3.Connection) -> None:
     _execute_statements(
         conn,
         """
-        CREATE TABLE maintenance_resource (
+        CREATE TABLE IF NOT EXISTS maintenance_resource (
             resource_ref TEXT PRIMARY KEY,
             capability_id TEXT NOT NULL UNIQUE REFERENCES maintenance_capability(capability_id) ON DELETE RESTRICT,
             recovery_floor INTEGER NOT NULL DEFAULT 0 CHECK (recovery_floor >= 0),
             current_position INTEGER NOT NULL DEFAULT 0 CHECK (current_position >= recovery_floor)
         );
-        CREATE TABLE maintenance_resource_event (
+        CREATE TABLE IF NOT EXISTS maintenance_resource_event (
             resource_ref TEXT NOT NULL REFERENCES maintenance_resource(resource_ref) ON DELETE RESTRICT,
             position INTEGER NOT NULL CHECK (position >= 1),
             state TEXT NOT NULL CHECK (state IN ('prepared','attested','active','observing','reconciled','aborted','revoked','expired')),
