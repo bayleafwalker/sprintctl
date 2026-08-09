@@ -2,7 +2,7 @@
   "schema_version": "verification-result/v1",
   "context_id": "sprintctl.maintenance-resource.owner-v1",
   "contract_ref": {"doc_id": "vuoro-2029-second-owner-proof-freeze", "revision": "git:cf7a097;sha256:263cfab83acb1070b1b97809b0df1e099ec8e232aa5499e545b71df4109e627d"},
-  "implementation_sha": "d5ed2cfb2d14b1dbf982736f2d29c37b6a6dc712",
+  "implementation_sha": "6e2524690772867972c257bfce319aa95fa7f925",
   "depth": 2,
   "environment": {
     "backend": "sqlite-memory-file-plus-isolated-postgresql-18",
@@ -18,16 +18,23 @@
   "claims": [
     {"property": "Sprintctl exposes exactly three additive maintenance resource operations while pre-existing maintenance descriptors and direct results remain byte-compatible", "result": "example-tested", "evidence": ["frozen operation-set assertion", "SHA-256 descriptor byte regression for both pre-existing maintenance operations", "served composition tests"]},
     {"property": "references, snapshots and changes match the published Vuoro goldens with strict projection redaction, bounded batches and finite resumable retention", "result": "example-tested", "evidence": ["published frozen fixture reproduced exactly", "SQLite pruning/wait/redaction tests", "21 disposable PostgreSQL histories"]},
-    {"property": "owner decoding occurs at Vuoro service registration and ordinary served operations retain compatibility", "result": "example-tested", "evidence": ["six local Vuoro-source ASGI composition histories passed", "resource prepare/get/changes round trip passed"]}
+    {"property": "Sprintctl exposes a read-only owner visibility lookup and owner decoding remains non-mutating while ordinary served operations retain compatibility", "result": "example-tested", "evidence": ["six local Vuoro-source ASGI composition histories passed", "resource prepare/get/changes round trip passed"]}
   ],
   "counterexamples": [],
   "evidence": {
     "candidate_paths": [
+      "pyproject.toml",
+      "sprintctl/db.py",
+      "sprintctl/pg.py",
+      "sprintctl/pg_migrations.py",
+      "sprintctl/maintenance_capability.py",
       "sprintctl/maintenance_resource.py",
       "sprintctl/application.py",
       "sprintctl/vuoro_adapter.py",
       "sprintctl/pg_testing.py",
+      "tests/test_maintenance_capability.py",
       "tests/test_maintenance_resource.py",
+      "tests/test_pg_bootstrap.py",
       "tests/test_work_application.py",
       "tests/test_work_application_pg.py",
       "tests/test_vuoro_work_adapter_integration.py",
@@ -36,16 +43,18 @@
       "verification/fixtures/maintenance-resource-owner-v1/frozen-owner-contract.json",
       "verification/validate_maintenance_resource_owner.py"
     ],
-    "candidate_digest": "d6379b9dffe195af8fac3c6e4de5f823695abb46470c9e78062ec5b46596a212",
+    "candidate_digest": "8540471fee0bc6f46276224bcb0b11c92d93530b7998594ee8160c10b812c750",
     "commands": {
-      "owner_targeted": "uv run pytest tests/test_maintenance_resource.py tests/test_work_application.py -q",
+      "owner_targeted": "uv run pytest tests/test_maintenance_resource.py tests/test_maintenance_capability.py tests/test_work_application.py tests/test_pg_bootstrap.py -q",
       "postgres": "SPRINTCTL_TEST_PG_URL=<disposable> uv run --extra remote pytest tests/test_work_application_pg.py::test_maintenance_resource_frozen_postgres_history -q",
       "composition": "PYTHONPATH=<sprintctl+local-vuoro> <vuoro-venv>/pytest tests/test_vuoro_work_adapter_integration.py -q"
     },
-    "results": {"owner_targeted": "83 passed", "postgres": "21 passed", "composition": "6 passed", "artifact_validators": "passed"}
+    "results": {"owner_targeted": "150 passed", "postgres": "21 passed", "composition": "6 passed", "artifact_validators": "passed"}
   },
   "notes": [
     "Claim 463 authority is recorded without its bearer token.",
+    "The served claim heartbeat was attempted during correction and rejected by the authority stream validator (expected sequence 1, received 4); the claim was deliberately not completed.",
+    "This owner proof does not claim Vuoro's final descriptor registration, authentication/authorization guard, or ASGI byte-identical four-way not-found boundary; those remain explicit downstream dependencies after owner GO.",
     "The repository-wide suite encountered unrelated existing process-cwd flaky scoped-reference tests during long runs; changed and adjacent suites are independently green.",
     "Independent review is required before Sprintctl item completion."
   ]
