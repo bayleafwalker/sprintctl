@@ -20,6 +20,8 @@ TEST_ROLE_PREFIX = "sprintctl_test_"
 TEST_DATABASE_PREFIX = "sprintctl_test_"
 DISPOSABLE_DATABASE_COMMENT = "sprintctl:disposable-integration-test"
 REPO_TABLES = (
+    "maintenance_resource_event",
+    "maintenance_resource",
     "maintenance_capability_recovery",
     "maintenance_capability_receipt",
     "maintenance_capability",

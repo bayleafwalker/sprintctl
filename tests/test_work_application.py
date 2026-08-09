@@ -425,6 +425,7 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         "work.maintenance.prepare",
         "work.maintenance.transition",
         "work.maintenance.recovery-record",
+        "work.maintenance.resource.prepare",
         "work.pilot.cutover-evidence",
     } <= set(names)
     assert {row["operation"] for row in LEGACY_REMOTE_COMMAND_PARITY} <= set(names)
@@ -447,7 +448,27 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         "work.maintenance.prepare",
         "work.maintenance.transition",
         "work.maintenance.recovery-record",
+        "work.maintenance.resource.prepare",
     }
+
+
+def test_preexisting_maintenance_descriptors_remain_byte_identical():
+    expected = {
+        "work.read.maintenance-capability": "9810bf641ed177dd815a2768f665b7594a097b51f1418182bd998f41ddc61a3c",
+        "work.maintenance.prepare": "918e7ab7c7add60816a9ffa5d3e326918f186360a67f2e84266cdc1d72fe3f81",
+    }
+    for contract in WORK_OPERATION_CONTRACTS:
+        if contract.name not in expected:
+            continue
+        value = {
+            key: getattr(contract, key)
+            for key in (
+                "name", "input_schema", "result_schema", "required_authority",
+                "execution_semantics", "idempotency", "required_client_schema_features",
+            )
+        }
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+        assert hashlib.sha256(encoded).hexdigest() == expected[contract.name]
 
 
 def test_work_identity_current_returns_authenticated_actor(conn):

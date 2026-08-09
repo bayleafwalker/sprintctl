@@ -33,6 +33,7 @@ from .maintenance_capability import (
     SQLiteMaintenanceCapabilityStore,
     StaleCapabilityRevision,
 )
+from .maintenance_resource import CursorExpired, MaintenanceResourceStore, ResourceNotFound
 
 
 CLAIM_COMMAND_TYPES = frozenset(
@@ -63,6 +64,7 @@ _ADMIN_SHUTDOWN_IDEMPOTENT_OPERATIONS = frozenset(
         "work.maintenance.prepare",
         "work.maintenance.transition",
         "work.maintenance.recovery-record",
+        "work.maintenance.resource.prepare",
     }
 )
 _ADMIN_SHUTDOWN_READ_OPERATIONS = frozenset(
@@ -71,6 +73,8 @@ _ADMIN_SHUTDOWN_READ_OPERATIONS = frozenset(
         "work.claim.context",
         "work.maintain.check",
         "work.pilot.cutover-evidence",
+        "work.maintenance.resource.get",
+        "work.maintenance.resource.changes",
     }
 )
 _POSTGRES_ADMIN_SHUTDOWN_SQLSTATE = "57P01"
@@ -612,6 +616,9 @@ class WorkApplication:
             "work.maintenance.prepare": target._maintenance_prepare,
             "work.maintenance.transition": target._maintenance_transition,
             "work.maintenance.recovery-record": target._maintenance_recovery_append,
+            "work.maintenance.resource.prepare": target._maintenance_resource_prepare,
+            "work.maintenance.resource.get": target._maintenance_resource_get,
+            "work.maintenance.resource.changes": target._maintenance_resource_changes,
             "work.sprint.create": target._sprint_create,
             "work.event.add": target._event_add,
             "work.handoff.record": target._handoff_record,
@@ -896,6 +903,9 @@ class WorkApplication:
             return PostgresMaintenanceCapabilityStore(self.store)
         return SQLiteMaintenanceCapabilityStore(self.store)
 
+    def _maintenance_resource_store(self) -> MaintenanceResourceStore:
+        return MaintenanceResourceStore(self._maintenance_store())
+
     @staticmethod
     def _maintenance_request_identity(
         context: InvocationContext, request_id: Any
@@ -988,7 +998,43 @@ class WorkApplication:
             effect_ref=arguments.get("effect_ref"),
             reconciliation=arguments.get("reconciliation"),
         )
+        lifecycle = self._maintenance_store()
+        if MaintenanceResourceStore.schema_exists(lifecycle):
+            MaintenanceResourceStore(lifecycle).record_if_registered(arguments.get("capability_id"))
         return {"repo_id": self.repo_id, **result}
+
+    def _maintenance_resource_prepare(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        result = self._maintenance_prepare(arguments, context)
+        self._maintenance_resource_store().record_current(result["capability_id"])
+        return result
+
+    def maintenance_resource_reference(self, result: dict[str, Any]) -> dict[str, Any]:
+        """Owner decoder registered at Vuoro's service composition boundary."""
+        return self._maintenance_resource_store().reference_envelope(result["capability_id"])
+
+    def _maintenance_resource_get(
+        self, arguments: dict[str, Any], _context: InvocationContext
+    ) -> dict[str, Any]:
+        try:
+            return self._maintenance_resource_store().snapshot(arguments.get("resource_ref"))
+        except ResourceNotFound as error:
+            raise ApplicationRejection("resource_not_found", "resource not found", 404) from error
+
+    def _maintenance_resource_changes(
+        self, arguments: dict[str, Any], _context: InvocationContext
+    ) -> dict[str, Any]:
+        try:
+            return self._maintenance_resource_store().changes(
+                arguments.get("resource_ref"), arguments.get("cursor"), arguments.get("wait_seconds", 0)
+            )
+        except ResourceNotFound as error:
+            raise ApplicationRejection("resource_not_found", "resource not found", 404) from error
+        except CursorExpired as error:
+            raise ApplicationRejection("cursor_expired", "fetch a fresh snapshot", 409) from error
+        except ValueError as error:
+            raise ApplicationRejection("invalid_wait", str(error), 400) from error
 
     def _maintenance_recovery_append(
         self, arguments: dict[str, Any], context: InvocationContext

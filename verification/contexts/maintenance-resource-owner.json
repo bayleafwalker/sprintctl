@@ -1,0 +1,26 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.maintenance-resource.owner-v1",
+  "owner_repo": "sprintctl",
+  "subject": "maintenance-capability-observable-resource-owner",
+  "contract_ref": {"doc_id": "vuoro-2029-second-owner-proof-freeze", "revision": "git:cf7a097;sha256:263cfab83acb1070b1b97809b0df1e099ec8e232aa5499e545b71df4109e627d"},
+  "source_of_truth": "repository-scoped-maintenance-capability-plus-owner-observation-tables",
+  "depth": 2,
+  "backends": ["sqlite", "postgres"],
+  "actors": ["authenticated-maintenance-operator", "owner-sweeper", "observer"],
+  "initial_state": ["maintenance-capability-absent", "resource-reference-absent", "recovery-floor-zero"],
+  "operations": [
+    {"name": "resource-prepare", "actors": ["authenticated-maintenance-operator"], "synchronization": "owner-idempotency-plus-reference-mapping"},
+    {"name": "resource-get", "actors": ["observer"], "synchronization": "owner-snapshot"},
+    {"name": "resource-changes", "actors": ["observer"], "synchronization": "per-resource-position-and-bounded-wait"}
+  ],
+  "consistency": {"target": "owner-invariant", "object": "maintenance-resource-reference-snapshot-event-chain"},
+  "assumptions": {"isolation": "owner-transaction", "clock": "owner-monotonic-wait-and-database-expiry-clock", "fairness": "none"},
+  "bounds": {"events_retained": 256, "events_per_batch": 100, "wait_seconds": 30, "postgres_histories": 21},
+  "invariants": ["reference-is-random-and-non-authorizing", "snapshot-never-materializes-expiry", "recovery-floor-is-smallest-resumable-position", "floor-advances-only-with-pruning", "projection-is-strictly-redacted", "preexisting-operation-descriptors-and-results-are-byte-identical"],
+  "faults": ["response-loss", "duplicate-delivery", "cursor-expiry", "spurious-wake", "disconnect", "restart", "concurrent-terminal-transition"],
+  "oracles": ["published-golden-byte-equality", "sqlite-history-suite", "disposable-postgresql-history-suite", "served-vuoro-composition-suite", "full-sprintctl-suite", "artifact-validator"],
+  "implementation_anchors": ["sprintctl/maintenance_resource.py", "sprintctl/application.py", "sprintctl/vuoro_adapter.py", "tests/test_maintenance_resource.py", "tests/test_work_application_pg.py"],
+  "expansions": ["independent-owner-review", "vuoro-adapter-non-disclosure-proof"]
+}
+

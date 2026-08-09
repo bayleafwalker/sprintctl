@@ -1,0 +1,46 @@
+{
+  "schema_version": "second-owner-proof-freeze/v1",
+  "work_item": 2029,
+  "status": "frozen-awaiting-independent-go",
+  "selected_owner": "sprintctl",
+  "selected_owner_revision": "d5ed2cfb2d14b1dbf982736f2d29c37b6a6dc712",
+  "resource_kind": "work.maintenance-capability",
+  "operations": ["work.maintenance.resource.changes", "work.maintenance.resource.get", "work.maintenance.resource.prepare"],
+  "identity": {"authority_root": "repository-scoped-maintenance-capability", "reference_pattern": "^smr1_[A-Za-z0-9_-]{43}$", "opaque": true, "credential": false},
+  "token_grammar": {"revision": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$", "cursor": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$", "event_id": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+  "envelopes": ["resource-reference/v1", "resource-snapshot/v1", "resource-changes/v1"],
+  "terminal_states": ["aborted", "expired", "reconciled", "revoked"],
+  "snapshot_state_allowlist": ["expires_at", "not_before", "state", "updated_at"],
+  "event_data_allowlist": ["state", "updated_at"],
+  "forbidden_projection_classes": ["authority-decision", "capability-id", "command", "effect", "envelope", "operator", "plan", "receipt", "recovery-record", "repository-id", "secret-like", "step"],
+  "ordering": {"scope": "per-resource", "delivery": "at-least-once", "snapshot_handoff": ["one-statement", "repeatable-read"], "event_batch_maximum": 100},
+  "retention": {"events_per_resource": 256, "snapshot_pruned": false, "recovery_floor_nullable": false, "floor_changes_only_on_committed_pruning": true, "floor_meaning": "smallest-resumable-position", "below_floor": "cursor_expired"},
+  "bounded_wait": {"operation": "work.maintenance.resource.changes", "argument": "wait_seconds", "minimum_seconds": 0, "maximum_seconds": 30, "clock": "owner-controlled-monotonic", "wait_zero": "immediate-read", "early_wake": "newer-committed-event", "spurious_wake": "repeat-read-only-predicate", "disconnect_effect": "none", "sse": false},
+  "authorization": {"authority": "work:maintenance", "repository_scoped": true, "reference_grants_authority": false, "indistinguishable_rejections": ["absent", "foreign", "malformed", "unauthorized"]},
+  "compatibility": {"existing_operations_unchanged": ["work.maintenance.prepare", "work.read.maintenance-capability"], "preexisting_operation_descriptor_bytes_unchanged": true, "preexisting_direct_response_bytes_unchanged": true, "additive_catalog_bytes_and_revision_change_permitted": true, "direct_owner_result_unchanged": true, "vuoro_persistence": false, "client_owner_branches": false},
+  "expiry_materialization": {"reads_mutate": false, "authorized_writers": ["existing-maintenance-transition", "owner-sweep"], "clock": "database", "transaction": "row-lock-plus-state-update-plus-observation-event", "advances": ["observation-position", "revision"], "advances_recovery_floor": false, "authorization_before_lock": true},
+  "vuoro_non_disclosure": {
+    "descriptor": {"failure_disclosure": "resource-not-found/v1"},
+    "handler_invoked": false,
+    "visibility_guard_mutates": false,
+    "status": 404,
+    "ordered_headers": [["Cache-Control", "no-store"], ["Content-Type", "application/json"]],
+    "body_utf8": "{\"schema_version\":\"invocation-result/v1\",\"request_id\":\"00000000-0000-0000-0000-000000000000\",\"operation\":\"resource-observation\",\"catalog_revision\":\"redacted\",\"status\":\"rejected\",\"result\":null,\"error\":{\"code\":\"resource_not_found\",\"message\":\"resource not found\"}}"
+  },
+  "goldens": {
+    "reference": {"schema_version": "resource-reference/v1", "owner": "work", "resource_kind": "work.maintenance-capability", "reference": "smr1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "revision": "sprintctl-maintenance-revision-1"},
+    "snapshot": {"schema_version": "resource-snapshot/v1", "reference": "smr1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "revision": "sprintctl-maintenance-revision-3", "cursor": "sprintctl-maintenance-cursor-3", "terminal": false, "state": {"state": "active", "not_before": "2026-08-02T19:00:00Z", "expires_at": "2026-08-02T20:00:00Z", "updated_at": "2026-08-02T19:02:00Z"}},
+    "changes": {"schema_version": "resource-changes/v1", "reference": "smr1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "next_cursor": "sprintctl-maintenance-cursor-4", "events": [{"event_id": "sprintctl-maintenance-event-4", "terminal": true, "data": {"state": "reconciled", "updated_at": "2026-08-02T19:04:00Z"}}]},
+    "not_found": {"status": 404, "body": {"code": "resource_not_found", "message": "resource not found"}}
+  },
+  "required_sprintctl_backlog_item": {"title": "Maintenance capability observable-resource owner contract", "item_id": null, "creation_required_before_implementation": true},
+  "required_histories": ["concurrent-terminal-handoff", "cursor-at-floor", "cursor-below-floor", "disconnect", "duplicate-delivery", "expiry-materialization-authorized-write", "expiry-read-does-not-mutate", "immediate-client-compatibility", "max-100-batch", "non-disclosure-four-way", "parallel-owner-decoders", "postgres-parity", "prepare-response-loss", "prune-0-255-256-257", "redaction-canaries", "restart-during-wait", "spurious-wake", "sqlite-parity", "wait-0-immediate", "wait-30-controlled-clock", "wait-early-wake"],
+  "gates": ["independent-freeze-go", "sprintctl-owner-claim", "owner-artifacts", "independent-owner-go", "vuoro-adapter-claim", "vuoro-verification", "independent-vuoro-go"],
+  "source_files": {
+    "sprintctl/maintenance_capability.py": "a98c606a5e6582812d3d94b57829b91cc7cde1e8fec5c7a60a7d94f3939e2983",
+    "sprintctl/vuoro_adapter.py": "82159c14380a846bd4fc9a56b118632ea1de1498887d06842e0f8c5b414b9fae",
+    "verification/contexts/maintenance-capability-served-adapter.json": "6ee347dbad83a59b10611a780302bb2514ee3da4c3381cbe68c18ce370856bc5",
+    "tests/test_maintenance_capability.py": "f6c4cb0b4188b393d70ecfdd9b742b562cf1272ccd6626d0c11bd2a560ba986e",
+    "tests/test_vuoro_work_adapter_integration.py": "ef91aac19221da625ff0fdc972f3960fa20b8a63f0a64300f1604d8b65a7f391"
+  }
+}

@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""Dependency-free integrity checks for the #2130 owner proof."""
+
+from __future__ import annotations
+
+import ast
+import hashlib
+import json
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+FIXTURE = ROOT / "verification/fixtures/maintenance-resource-owner-v1/frozen-owner-contract.json"
+EXPECTED_FREEZE = "263cfab83acb1070b1b97809b0df1e099ec8e232aa5499e545b71df4109e627d"
+EXPECTED_OPERATIONS = {"work.maintenance.resource.prepare", "work.maintenance.resource.get", "work.maintenance.resource.changes"}
+CANDIDATES = (
+    "sprintctl/maintenance_resource.py", "sprintctl/application.py",
+    "sprintctl/vuoro_adapter.py", "sprintctl/pg_testing.py",
+    "tests/test_maintenance_resource.py", "tests/test_work_application.py",
+    "tests/test_work_application_pg.py", "tests/test_vuoro_work_adapter_integration.py",
+    "verification/claims/2130-owner-claim.json",
+    "verification/contexts/maintenance-resource-owner.json",
+    "verification/fixtures/maintenance-resource-owner-v1/frozen-owner-contract.json",
+    "verification/validate_maintenance_resource_owner.py",
+)
+
+
+def candidate_digest() -> str:
+    value = hashlib.sha256()
+    for relative in CANDIDATES:
+        value.update(relative.encode() + b"\0" + (ROOT / relative).read_bytes() + b"\0")
+    return value.hexdigest()
+
+
+def main() -> None:
+    assert hashlib.sha256(FIXTURE.read_bytes()).hexdigest() == EXPECTED_FREEZE
+    freeze = json.loads(FIXTURE.read_text())
+    assert set(freeze["operations"]) == EXPECTED_OPERATIONS
+    assert len(freeze["required_histories"]) == 21
+    assert freeze["retention"]["floor_changes_only_on_committed_pruning"] is True
+    assert freeze["expiry_materialization"]["advances_recovery_floor"] is False
+    assert freeze["compatibility"]["preexisting_operation_descriptor_bytes_unchanged"] is True
+    test_tree = ast.parse((ROOT / "tests/test_maintenance_resource.py").read_text())
+    histories = next(node.value for node in test_tree.body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "HISTORIES" for target in node.targets))
+    assert set(ast.literal_eval(histories)) == set(freeze["required_histories"])
+    source = (ROOT / "sprintctl/vuoro_adapter.py").read_text()
+    for operation in EXPECTED_OPERATIONS:
+        assert source.count(f'"{operation}"') >= 1
+    claim = json.loads((ROOT / "verification/claims/2130-owner-claim.json").read_text())
+    assert claim["claim_id"] == 463 and claim["claim_type"] == "execute"
+    assert claim["claim_token_recorded"] is False
+    result = json.loads((ROOT / "verification/results/maintenance-resource-owner-item-2130.json").read_text())
+    assert result["evidence"]["candidate_paths"] == list(CANDIDATES)
+    assert result["evidence"]["candidate_digest"] == candidate_digest()
+    print("maintenance-resource owner evidence: valid")
+
+
+if __name__ == "__main__":
+    main()

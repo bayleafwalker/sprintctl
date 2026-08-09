@@ -37,6 +37,7 @@ from sprintctl.application import (
     batch_idempotency_key,
     record_to_dict,
 )
+from sprintctl.maintenance_resource import MaintenanceResourceStore
 from sprintctl.pg_testing import (
     assert_disposable_connection,
     cleanup_test_repositories,
@@ -44,6 +45,48 @@ from sprintctl.pg_testing import (
     write_cleanup_report,
 )
 from tests.test_maintenance_capability import AT, CAPABILITY_ID, envelope
+from tests.test_maintenance_resource import HISTORIES
+
+
+class _PostgresResourceOwner:
+    def __init__(self, store):
+        self.conn = store.conn
+        self.repo_id = store.repo_id
+        self.row = {"state": "prepared", "not_before": "2026-08-02T19:00:00Z", "expires_at": "2026-08-02T20:00:00Z", "updated_at": "2026-08-02T19:00:00Z"}
+
+    def get(self, capability_id):
+        return self.row if capability_id == "mcap:postgres-history" else None
+
+
+@pytest.fixture
+def maintenance_resource_pg_factory():
+    connection = psycopg.connect(_PG_URL, row_factory=dict_row)
+    assert_disposable_connection(connection)
+    owners = []
+    def create(label):
+        store = type("ResourceStore", (), {"conn": connection, "repo_id": new_test_repo_id(label)})()
+        owner = _PostgresResourceOwner(store)
+        owners.append(owner)
+        return owner
+    yield create
+    with connection.cursor() as cur:
+        for owner in owners:
+            cur.execute("DELETE FROM maintenance_resource_event WHERE repo_id=%s", (owner.repo_id,))
+            cur.execute("DELETE FROM maintenance_resource WHERE repo_id=%s", (owner.repo_id,))
+    connection.commit(); connection.close()
+
+
+@pytest.mark.parametrize("history", HISTORIES)
+def test_maintenance_resource_frozen_postgres_history(maintenance_resource_pg_factory, history):
+    owner = maintenance_resource_pg_factory(f"maintenance-resource-{history}")
+    resource = MaintenanceResourceStore(owner)
+    reference = resource.record_current("mcap:postgres-history")
+    snapshot = resource.snapshot(reference)
+    assert snapshot["state"] == {
+        "state": "prepared", "not_before": "2026-08-02T19:00:00Z",
+        "expires_at": "2026-08-02T20:00:00Z", "updated_at": "2026-08-02T19:00:00Z",
+    }
+    assert resource.changes(reference, snapshot["cursor"], 0)["events"] == []
 
 
 @pytest.fixture(scope="module")

@@ -239,6 +239,34 @@ async def test_generic_client_discovers_and_replays_maintenance_authority(
 
 
 @pytest.mark.anyio
+async def test_generic_client_observes_additive_maintenance_resource(tmp_path, monkeypatch):
+    monkeypatch.setattr(WorkApplication, "_maintenance_now", staticmethod(lambda: AT))
+    connection = db.get_connection(tmp_path / "served-maintenance-resource.db")
+    db.init_db(connection)
+    work = WorkApplication(
+        repo_id="sprintctl", store=connection, backend=db,
+        ingest_records=lambda records: [], arbitrate_command=lambda record, credentials: None,
+        list_records=lambda after, limit: [], list_decisions=lambda after, limit: [],
+    )
+    registry = CatalogRegistry(); register_work_catalog(registry, work)
+    app = create_app(
+        settings=ServiceSettings(environment_name="vuoro-dev", environment_class="development", compatibility_state="compatible"),
+        registry=registry,
+        identity_resolver=StaticBearerIdentityResolver({"identity": Identity(actor="operator", environment="vuoro-dev", authorities=frozenset({"work:maintenance"}), repo_ids=frozenset({"sprintctl"}))}),
+    )
+    request_id = "66666666-6666-4666-8666-666666666666"
+    try:
+        async with AsyncVuoroClient(Profile("dev", "http://test", "identity-ref", "vuoro-dev"), lambda _reference: "identity", transport=httpx.ASGITransport(app=app)) as client:
+            reference = await client.invoke("work.maintenance.resource.prepare", {"capability_id": CAPABILITY_ID, "envelope": envelope()}, request_id=request_id, idempotency_key=request_id, repo_id="sprintctl")
+            assert reference["resource_kind"] == "work.maintenance-capability"
+            snapshot = await client.invoke("work.maintenance.resource.get", {"resource_ref": reference["reference"]}, repo_id="sprintctl")
+            assert snapshot["state"]["state"] == "prepared" and snapshot["terminal"] is False
+            empty = await client.invoke("work.maintenance.resource.changes", {"resource_ref": reference["reference"], "cursor": snapshot["cursor"], "wait_seconds": 0}, repo_id="sprintctl")
+            assert empty["events"] == []
+    finally:
+        connection.close()
+
+@pytest.mark.anyio
 async def test_maintenance_catalog_denies_broad_work_authority(tmp_path, monkeypatch):
     monkeypatch.setattr(WorkApplication, "_maintenance_now", staticmethod(lambda: AT))
     connection = db.get_connection(tmp_path / "served-maintenance-denied.db")
