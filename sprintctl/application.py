@@ -33,6 +33,7 @@ from .maintenance_capability import (
     SQLiteMaintenanceCapabilityStore,
     StaleCapabilityRevision,
 )
+from .maintenance_resource import CursorExpired, MaintenanceResourceStore, ResourceNotFound
 
 
 CLAIM_COMMAND_TYPES = frozenset(
@@ -63,6 +64,7 @@ _ADMIN_SHUTDOWN_IDEMPOTENT_OPERATIONS = frozenset(
         "work.maintenance.prepare",
         "work.maintenance.transition",
         "work.maintenance.recovery-record",
+        "work.maintenance.resource.prepare",
     }
 )
 _ADMIN_SHUTDOWN_READ_OPERATIONS = frozenset(
@@ -71,6 +73,8 @@ _ADMIN_SHUTDOWN_READ_OPERATIONS = frozenset(
         "work.claim.context",
         "work.maintain.check",
         "work.pilot.cutover-evidence",
+        "work.maintenance.resource.get",
+        "work.maintenance.resource.changes",
     }
 )
 _POSTGRES_ADMIN_SHUTDOWN_SQLSTATE = "57P01"
@@ -612,6 +616,9 @@ class WorkApplication:
             "work.maintenance.prepare": target._maintenance_prepare,
             "work.maintenance.transition": target._maintenance_transition,
             "work.maintenance.recovery-record": target._maintenance_recovery_append,
+            "work.maintenance.resource.prepare": target._maintenance_resource_prepare,
+            "work.maintenance.resource.get": target._maintenance_resource_get,
+            "work.maintenance.resource.changes": target._maintenance_resource_changes,
             "work.sprint.create": target._sprint_create,
             "work.event.add": target._event_add,
             "work.handoff.record": target._handoff_record,
@@ -896,6 +903,18 @@ class WorkApplication:
             return PostgresMaintenanceCapabilityStore(self.store)
         return SQLiteMaintenanceCapabilityStore(self.store)
 
+    def _maintenance_resource_store(self) -> MaintenanceResourceStore:
+        return MaintenanceResourceStore(self._maintenance_store())
+
+    def maintenance_resource_schema_available(self) -> bool:
+        """Gate catalog publication on the installed owner-storage release."""
+        if hasattr(self.store, "repo_id"):
+            return int(getattr(self.store, "remote_schema_version", 0) or 0) >= 7
+        if self.store is None or not hasattr(self.store, "execute"):
+            return False
+        row = self.store.execute("SELECT version FROM schema_version").fetchone()
+        return bool(row and int(row[0]) >= 17 and MaintenanceResourceStore.schema_exists(self._maintenance_store()))
+
     @staticmethod
     def _maintenance_request_identity(
         context: InvocationContext, request_id: Any
@@ -989,6 +1008,53 @@ class WorkApplication:
             reconciliation=arguments.get("reconciliation"),
         )
         return {"repo_id": self.repo_id, **result}
+
+    def _maintenance_resource_prepare(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        request_id = self._maintenance_request_identity(context, context.request_id)
+        envelope = arguments.get("envelope")
+        if not isinstance(envelope, Mapping):
+            raise ApplicationRejection("invalid-arguments", "envelope must be an object", 422)
+        operator = envelope.get("operator")
+        if not isinstance(operator, Mapping) or operator.get("identity") != context.identity.actor:
+            raise ApplicationRejection("maintenance-actor-mismatch", "authenticated actor must equal the frozen envelope operator", 403)
+        result = self._maintenance_store().prepare(
+            capability_id=arguments.get("capability_id"), request_id=request_id,
+            envelope=envelope, actor=context.identity.actor,
+            at=self._maintenance_now(), resource=True,
+        )
+        return {"repo_id": self.repo_id, **result}
+
+    def maintenance_resource_reference(self, result: dict[str, Any]) -> dict[str, Any]:
+        """Owner decoder registered at Vuoro's service composition boundary."""
+        return self._maintenance_resource_store().reference_envelope(result["capability_id"])
+
+    def maintenance_resource_visible(self, resource_ref: Any, *, authorized: bool) -> bool:
+        """Owner half of Vuoro's frozen non-disclosing visibility guard."""
+        return self._maintenance_resource_store().visible(resource_ref, authorized=authorized)
+
+    def _maintenance_resource_get(
+        self, arguments: dict[str, Any], _context: InvocationContext
+    ) -> dict[str, Any]:
+        try:
+            return self._maintenance_resource_store().snapshot(arguments.get("resource_ref"))
+        except ResourceNotFound as error:
+            raise ApplicationRejection("resource_not_found", "resource not found", 404) from error
+
+    def _maintenance_resource_changes(
+        self, arguments: dict[str, Any], _context: InvocationContext
+    ) -> dict[str, Any]:
+        try:
+            return self._maintenance_resource_store().changes(
+                arguments.get("resource_ref"), arguments.get("cursor"), arguments.get("wait_seconds", 0)
+            )
+        except ResourceNotFound as error:
+            raise ApplicationRejection("resource_not_found", "resource not found", 404) from error
+        except CursorExpired as error:
+            raise ApplicationRejection("cursor_expired", "fetch a fresh snapshot", 409) from error
+        except ValueError as error:
+            raise ApplicationRejection("invalid_wait", str(error), 400) from error
 
     def _maintenance_recovery_append(
         self, arguments: dict[str, Any], context: InvocationContext

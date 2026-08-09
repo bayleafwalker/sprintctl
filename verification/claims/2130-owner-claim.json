@@ -1,0 +1,15 @@
+{
+  "schema_version": "sprintctl-claim-authority-evidence/v1",
+  "work_item": "sprintctl#2130",
+  "claim_id": 463,
+  "claim_type": "execute",
+  "exclusive": true,
+  "actor": "devbox-agent-vuoro",
+  "lease_epoch": 1,
+  "status_at_start": "active",
+  "branch": "agentops-project/981b2073-d7af-4c28-bff3-3cf807495fba/dispatch-ready-20260802/sprintctl",
+  "worktree": "/projects/dev/_projects/vuoro-dispatch-ready/members/sprintctl",
+  "basis_commit": "d5ed2cfb2d14b1dbf982736f2d29c37b6a6dc712",
+  "claim_token_recorded": false,
+  "note": "The bearer claim token is intentionally excluded from repository evidence."
+}

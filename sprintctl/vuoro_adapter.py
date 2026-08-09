@@ -32,6 +32,7 @@ class WorkOperationContract:
     execution_semantics: Literal["read", "write", "enqueue", "admin"]
     idempotency: Literal["not-allowed", "optional", "required"]
     required_client_schema_features: tuple[str, ...] = ("json-schema-draft-2020-12",)
+    result_contract_resource_kind: str | None = None
 
 
 def _object_schema(
@@ -198,6 +199,42 @@ _MAINTENANCE_EFFECT_RESULT = _result_schema(
         "state": {"enum": ["prepared", "attested", "active", "observing", "reconciled", "aborted", "revoked", "expired"]},
         "revision": {"type": "string", "minLength": 1},
         "duplicate": {"type": "boolean"},
+    },
+)
+_RESOURCE_REFERENCE_RESULT = _result_schema(
+    ("schema_version", "owner", "resource_kind", "reference", "revision"),
+    {
+        "schema_version": {"const": "resource-reference/v1"},
+        "owner": {"const": "work"},
+        "resource_kind": {"const": "work.maintenance-capability"},
+        "reference": {"type": "string", "pattern": "^smr1_[A-Za-z0-9_-]{43}$"},
+        "revision": {"type": "string", "minLength": 1},
+    },
+)
+_RESOURCE_SNAPSHOT_RESULT = _result_schema(
+    ("schema_version", "reference", "revision", "cursor", "terminal", "state"),
+    {
+        "schema_version": {"const": "resource-snapshot/v1"},
+        "reference": {"type": "string", "pattern": "^smr1_[A-Za-z0-9_-]{43}$"},
+        "revision": {"type": "string", "minLength": 1},
+        "cursor": {"type": "string", "minLength": 1},
+        "terminal": {"type": "boolean"},
+        "state": _object_schema(
+            {"state": {"enum": ["prepared", "attested", "active", "observing", "reconciled", "aborted", "revoked", "expired"]}, "not_before": {"type": "string"}, "expires_at": {"type": "string"}, "updated_at": {"type": "string"}},
+            required=("state", "not_before", "expires_at", "updated_at"),
+        ),
+    },
+)
+_RESOURCE_CHANGES_RESULT = _result_schema(
+    ("schema_version", "reference", "next_cursor", "events"),
+    {
+        "schema_version": {"const": "resource-changes/v1"},
+        "reference": {"type": "string", "pattern": "^smr1_[A-Za-z0-9_-]{43}$"},
+        "next_cursor": {"type": "string", "minLength": 1},
+        "events": {"type": "array", "maxItems": 100, "items": _object_schema(
+            {"event_id": {"type": "string", "minLength": 1}, "terminal": {"type": "boolean"}, "data": _object_schema({"state": {"type": "string"}, "updated_at": {"type": "string"}}, required=("state", "updated_at"))},
+            required=("event_id", "terminal", "data"),
+        )},
     },
 )
 
@@ -896,6 +933,37 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "required",
     ),
     WorkOperationContract(
+        "work.maintenance.resource.get",
+        _object_schema({"resource_ref": {"type": "string", "minLength": 1}}, required=("resource_ref",)),
+        _RESOURCE_SNAPSHOT_RESULT,
+        "work:maintenance",
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.maintenance.resource.changes",
+        _object_schema(
+            {"resource_ref": {"type": "string", "minLength": 1}, "cursor": {"type": "string", "minLength": 1}, "wait_seconds": {"type": "integer", "minimum": 0, "maximum": 30}},
+            required=("resource_ref", "cursor", "wait_seconds"),
+        ),
+        _RESOURCE_CHANGES_RESULT,
+        "work:maintenance",
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.maintenance.resource.prepare",
+        _object_schema(
+            {"capability_id": _CAPABILITY_ID_SCHEMA, "envelope": _MAINTENANCE_ENVELOPE_SCHEMA},
+            required=("capability_id", "envelope"),
+        ),
+        _RESOURCE_REFERENCE_RESULT,
+        "work:maintenance",
+        "admin",
+        "required",
+        result_contract_resource_kind="work.maintenance-capability",
+    ),
+    WorkOperationContract(
         "work.maintenance.transition",
         _object_schema(
             {
@@ -1025,9 +1093,40 @@ def register_work_catalog(
     """Register the complete work operation catalog in a Vuoro registry."""
 
     from vuoro_service.catalog import OperationRejectedError
-    from vuoro_service.contracts import OperationDefinition
+    from vuoro_service.contracts import (
+        BoundedLongPollCapability,
+        OperationDefinition,
+        ResourceKindDefinition,
+        ResourceObservationContract,
+        ResourceResultContract,
+    )
 
+    resource_kind_registered = False
+    resource_schema_available = application.maintenance_resource_schema_available()
+    resource_operations = {
+        "work.maintenance.resource.prepare",
+        "work.maintenance.resource.get",
+        "work.maintenance.resource.changes",
+    }
     for contract in WORK_OPERATION_CONTRACTS:
+        if contract.name in resource_operations and not resource_schema_available:
+            continue
+        if contract.result_contract_resource_kind and not resource_kind_registered:
+            registry.register_resource_kind(
+                ResourceKindDefinition(
+                    resource_kind="work.maintenance-capability",
+                    observation=ResourceObservationContract(
+                        snapshot_operation="work.maintenance.resource.get",
+                        changes_operation="work.maintenance.resource.changes",
+                        cursor_schema="sprintctl-maintenance-cursor/v1",
+                        supports_terminality=True,
+                    ),
+                )
+            )
+            registry.register_observation_transport(
+                BoundedLongPollCapability(maximum_wait_seconds=30)
+            )
+            resource_kind_registered = True
         # work.project.* operations aggregate across a project's member
         # repos using an origin_repo field inside their own arguments (see
         # ProjectWorkApplication) -- they have no single repo_id to scope
@@ -1044,6 +1143,13 @@ def register_work_catalog(
             repo_scoped=not contract.name.startswith("work.project."),
             required_client_schema_features=list(
                 contract.required_client_schema_features
+            ),
+            result_contract=(
+                ResourceResultContract(
+                    resource_kind=contract.result_contract_resource_kind
+                )
+                if contract.result_contract_resource_kind
+                else None
             ),
         )
 
@@ -1065,7 +1171,18 @@ def register_work_catalog(
                     error.code, error.message, http_status=error.http_status
                 ) from error
 
-        registry.register(definition, handler)
+        registry.register(
+            definition,
+            handler,
+            result_decoder=(
+                (
+                    lambda result: application._scoped_for(
+                        result["repo_id"]
+                    ).maintenance_resource_reference(result)
+                )
+                if contract.result_contract_resource_kind else None
+            ),
+        )
 
 
 __all__ = [

@@ -7,7 +7,9 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from dataclasses import replace
 
 import pytest
@@ -37,6 +39,8 @@ from sprintctl.application import (
     batch_idempotency_key,
     record_to_dict,
 )
+from sprintctl.maintenance_resource import CursorExpired, MaintenanceResourceStore, NOT_FOUND_PAYLOAD
+from sprintctl.maintenance_capability import MaintenanceCapabilityError, PostgresMaintenanceCapabilityStore
 from sprintctl.pg_testing import (
     assert_disposable_connection,
     cleanup_test_repositories,
@@ -44,6 +48,51 @@ from sprintctl.pg_testing import (
     write_cleanup_report,
 )
 from tests.test_maintenance_capability import AT, CAPABILITY_ID, envelope
+from tests.test_maintenance_resource import (
+    HISTORIES, TRANSACTIONAL_HISTORIES, exercise_frozen_history, expiring_envelope,
+)
+
+
+class _PostgresResourceOwner:
+    def __init__(self, store):
+        self.conn = store.conn
+        self.repo_id = store.repo_id
+        self.row = {"state": "prepared", "not_before": "2026-08-02T19:00:00Z", "expires_at": "2026-08-02T20:00:00Z", "updated_at": "2026-08-02T19:00:00Z"}
+        with self.conn.cursor() as cur:
+            cur.execute("INSERT INTO maintenance_capability(repo_id,capability_id,envelope_id,envelope_digest,envelope_json,plan_ref,operator_identity,not_before,expires_at,state,revision,next_sequence,created_at,updated_at) VALUES(%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,'prepared',1,1,%s,%s)", (self.repo_id, "mcap:test", self.repo_id, "0" * 64, "{}", "artifact:sha256:" + "0" * 64, "operator", self.row["not_before"], self.row["expires_at"], self.row["updated_at"], self.row["updated_at"]))
+        self.conn.commit()
+
+    def get(self, capability_id):
+        return self.row if capability_id == "mcap:test" else None
+
+    def set(self, state, position):
+        updated_at = (datetime(2026, 8, 2, 19, tzinfo=timezone.utc) + timedelta(minutes=position)).isoformat().replace("+00:00", "Z")
+        self.row.update(state=state, updated_at=updated_at)
+        with self.conn.cursor() as cur:
+            cur.execute("UPDATE maintenance_capability SET state=%s,revision=revision+1,updated_at=%s WHERE repo_id=%s AND capability_id='mcap:test'", (state, self.row["updated_at"], self.repo_id))
+        self.conn.commit()
+
+
+@pytest.fixture
+def maintenance_resource_pg_factory():
+    connection = psycopg.connect(_PG_URL, row_factory=dict_row)
+    assert_disposable_connection(connection)
+    with connection.cursor() as cur:
+        pg._apply_schema_version_6(cur)
+        pg._apply_schema_version_7(cur)
+    connection.commit()
+    owners = []
+    def create(label):
+        store = type("ResourceStore", (), {"conn": connection, "repo_id": new_test_repo_id(label)})()
+        owner = _PostgresResourceOwner(store)
+        owners.append(owner)
+        return owner
+    yield create
+    with connection.cursor() as cur:
+        for owner in owners:
+            cur.execute("DELETE FROM maintenance_resource_event WHERE repo_id=%s", (owner.repo_id,))
+            cur.execute("DELETE FROM maintenance_resource WHERE repo_id=%s", (owner.repo_id,))
+    connection.commit(); connection.close()
 
 
 @pytest.fixture(scope="module")
@@ -77,6 +126,153 @@ def store_factory():
         if report_path := os.environ.get("SPRINTCTL_TEST_PG_CLEANUP_REPORT"):
             write_cleanup_report(report_path, report)
         administrative.close()
+
+
+@pytest.fixture
+def maintenance_resource_transactional_pg_factory():
+    administrative = psycopg.connect(_PG_URL, row_factory=dict_row)
+    assert_disposable_connection(administrative)
+    with administrative.cursor() as cur:
+        pg._apply_schema_version_6(cur); pg._apply_schema_version_7(cur)
+    administrative.commit(); repo_ids = set()
+    def create(label):
+        connection = psycopg.connect(_PG_URL, row_factory=dict_row)
+        repo_id = new_test_repo_id(label); repo_ids.add(repo_id)
+        return pg.PgStore(conn=connection, repo_id=repo_id, authority_repo_uuid=str(uuid.uuid4()), connection_factory=lambda: psycopg.connect(_PG_URL, row_factory=dict_row), remote_schema_version=7)
+    yield create
+    cleanup_test_repositories(administrative, repo_ids)
+    administrative.close()
+
+
+def _reopen_pg_store(store):
+    return replace(store, conn=psycopg.connect(_PG_URL, row_factory=dict_row))
+
+
+def exercise_postgres_transactional_history(history, store):
+    owner = PostgresMaintenanceCapabilityStore(store)
+    capability_id = "mcap:12345678-1234-4234-8234-123456789abc"
+    request_id = "12345678-1234-4234-8234-123456789abc"
+    arguments = dict(capability_id=capability_id, request_id=request_id, envelope=envelope(), actor="operator", at=AT, resource=True)
+
+    if history in {"disconnect", "prepare-response-loss"}:
+        first = owner.prepare(**arguments)
+        reference = MaintenanceResourceStore(owner).reference_envelope(capability_id)
+        store.conn.close()  # committed response is deliberately discarded
+        recovered_store = _reopen_pg_store(store); recovered_owner = PostgresMaintenanceCapabilityStore(recovered_store)
+        retry = recovered_owner.prepare(**(arguments | {"at": "2026-08-02T20:01:00Z"}))
+        recovered_resource = MaintenanceResourceStore(recovered_owner)
+        assert retry == first | {"duplicate": True}
+        assert recovered_resource.reference_envelope(capability_id) == reference
+        with recovered_store.conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS count FROM maintenance_resource WHERE repo_id=%s", (store.repo_id,)); assert cur.fetchone()["count"] == 1
+            cur.execute("SELECT count(*) AS count FROM maintenance_resource_event WHERE repo_id=%s", (store.repo_id,)); assert cur.fetchone()["count"] == 1
+        recovered_store.conn.rollback(); recovered_store.conn.close()
+    elif history == "cursor-below-floor":
+        owner.prepare(**arguments)
+        reference = MaintenanceResourceStore(owner).reference_envelope(capability_id)["reference"]
+        with store.conn.cursor() as cur:
+            cur.execute("INSERT INTO maintenance_resource_event(repo_id,resource_ref,position,state,updated_at) SELECT %s,%s,value,'active',%s FROM generate_series(2,256) value", (store.repo_id, reference, AT))
+            cur.execute("UPDATE maintenance_resource SET current_position=256 WHERE repo_id=%s AND resource_ref=%s", (store.repo_id, reference))
+        store.conn.commit(); gate = threading.Barrier(2); outcome = []
+        def prune():
+            writer = _reopen_pg_store(store)
+            with writer.conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM maintenance_resource WHERE repo_id=%s AND resource_ref=%s FOR UPDATE", (store.repo_id, reference)); gate.wait()
+                cur.execute("INSERT INTO maintenance_resource_event VALUES(%s,%s,257,'active',%s)", (store.repo_id, reference, AT))
+                cur.execute("DELETE FROM maintenance_resource_event WHERE repo_id=%s AND resource_ref=%s AND position<2", (store.repo_id, reference))
+                cur.execute("UPDATE maintenance_resource SET recovery_floor=1,current_position=257 WHERE repo_id=%s AND resource_ref=%s", (store.repo_id, reference))
+            writer.conn.commit(); writer.conn.close()
+        thread = threading.Thread(target=prune); thread.start(); gate.wait()
+        reader_store = _reopen_pg_store(store)
+        try:
+            result = MaintenanceResourceStore(PostgresMaintenanceCapabilityStore(reader_store)).changes(reference, "sprintctl-maintenance-cursor-0")
+            outcome.append(result["events"][0]["event_id"])
+        except CursorExpired:
+            outcome.append("cursor-expired")
+        thread.join(); assert not thread.is_alive(); reader_store.conn.close()
+        assert outcome in [["cursor-expired"], ["sprintctl-maintenance-event-1"]]
+    elif history == "parallel-owner-decoders":
+        second_id = "mcap:22345678-1234-4234-8234-123456789abc"
+        owner.prepare(**arguments)
+        second_envelope = envelope(); second_envelope["envelope_id"] = "vuoro-cutover-exact-2"
+        owner.prepare(**(arguments | {"capability_id": second_id, "request_id": str(uuid.uuid4()), "envelope": second_envelope}))
+        resource = MaintenanceResourceStore(owner)
+        expected = [resource.reference_envelope(capability_id), resource.reference_envelope(second_id)]
+        with store.conn.cursor() as cur:
+            cur.execute("SELECT (SELECT count(*) FROM maintenance_resource WHERE repo_id=%s) AS resources,(SELECT count(*) FROM maintenance_resource_event WHERE repo_id=%s) AS events", (store.repo_id, store.repo_id)); row = cur.fetchone(); before = (row["resources"], row["events"])
+        store.conn.rollback(); decoded = [None, None]
+        def decode(index, target):
+            sibling = _reopen_pg_store(store)
+            decoded[index] = MaintenanceResourceStore(PostgresMaintenanceCapabilityStore(sibling)).reference_envelope(target)
+            sibling.conn.rollback(); sibling.conn.close()
+        threads = [threading.Thread(target=decode, args=(0, capability_id)), threading.Thread(target=decode, args=(1, second_id))]
+        for thread in threads: thread.start()
+        for thread in threads: thread.join()
+        with store.conn.cursor() as cur:
+            cur.execute("SELECT (SELECT count(*) FROM maintenance_resource WHERE repo_id=%s) AS resources,(SELECT count(*) FROM maintenance_resource_event WHERE repo_id=%s) AS events", (store.repo_id, store.repo_id)); row = cur.fetchone(); after = (row["resources"], row["events"])
+        store.conn.rollback()
+        assert decoded == expected and len({item["reference"] for item in decoded}) == 2
+        assert after == before == (2, 2)
+    elif history == "expiry-materialization-authorized-write":
+        owner.prepare(**(arguments | {"envelope": expiring_envelope(envelope())}))
+        reference = MaintenanceResourceStore(owner).reference_envelope(capability_id)["reference"]
+        deadline = time.monotonic() + 3
+        with pytest.raises(MaintenanceCapabilityError, match="scheduler authorization"):
+            owner.sweep_expired(capability_id, at=datetime.now(timezone.utc).isoformat(), principal="operator", authorized=False)
+        while not owner.sweep_expired(capability_id, at=datetime.now(timezone.utc).isoformat(), principal="maintenance-owner-scheduler", authorized=True):
+            assert time.monotonic() < deadline
+            time.sleep(.05)
+        snapshot = MaintenanceResourceStore(owner).snapshot(reference)
+        assert owner.get(capability_id)["state"] == snapshot["state"]["state"] == "expired"
+        assert snapshot["terminal"] is True and snapshot["cursor"].endswith("-2")
+    elif history == "restart-during-wait":
+        prepared = owner.prepare(**arguments)
+        reference = MaintenanceResourceStore(owner).reference_envelope(capability_id)["reference"]
+        waiter_store = _reopen_pg_store(store); entered, release = threading.Event(), threading.Event(); interrupted = []
+        def pause(_seconds): entered.set(); release.wait(2)
+        def wait_request():
+            try: MaintenanceResourceStore(PostgresMaintenanceCapabilityStore(waiter_store), pause=pause).changes(reference, "sprintctl-maintenance-cursor-1", 2)
+            except psycopg.Error: interrupted.append(True)
+        thread = threading.Thread(target=wait_request); thread.start(); assert entered.wait(1)
+        waiter_store.conn.close(); release.set(); thread.join(2); assert interrupted == [True]
+        owner.transition(capability_id=capability_id, request_id=str(uuid.uuid4()), action="attest", expected_revision=prepared["revision"], actor="operator", at="2026-08-02T20:01:00Z", effect_ref="sha256:" + "0" * 64)
+        restarted_store = _reopen_pg_store(store)
+        changes = MaintenanceResourceStore(PostgresMaintenanceCapabilityStore(restarted_store)).changes(reference, "sprintctl-maintenance-cursor-1", 2)
+        assert changes["events"][0]["data"]["state"] == "attested"
+        restarted_store.conn.rollback(); restarted_store.conn.close()
+    elif history == "non-disclosure-four-way":
+        owner.prepare(**arguments)
+        local_resource = MaintenanceResourceStore(owner)
+        local_reference = local_resource.reference_envelope(capability_id)["reference"]
+        foreign_store = replace(store, repo_id=store.repo_id + "-foreign")
+        foreign_owner = PostgresMaintenanceCapabilityStore(foreign_store)
+        foreign_owner.prepare(**(arguments | {"request_id": str(uuid.uuid4())}))
+        foreign_reference = MaintenanceResourceStore(foreign_owner).reference_envelope(capability_id)["reference"]
+        cases = {
+            "malformed": ("bad", True),
+            "absent": ("smr1_" + "A" * 43, True),
+            "foreign": (foreign_reference, True),
+            "unauthorized": (local_reference, False),
+        }
+        outcomes = {}
+        for name, (reference, authorized) in cases.items():
+            assert local_resource.visible(reference, authorized=authorized) is False
+            outcomes[name] = (404, NOT_FOUND_PAYLOAD)
+        assert len(cases) == 4 and len(set(cases)) == 4
+        assert all(outcome == (404, NOT_FOUND_PAYLOAD) for outcome in outcomes.values())
+        assert local_resource.visible(local_reference, authorized=True) is True
+        cleanup_test_repositories(store.conn, {foreign_store.repo_id})
+    else:
+        raise AssertionError(f"missing PostgreSQL transactional falsifier: {history}")
+
+
+@pytest.mark.parametrize("history", HISTORIES)
+def test_maintenance_resource_frozen_postgres_history(maintenance_resource_pg_factory, maintenance_resource_transactional_pg_factory, history):
+    if history in TRANSACTIONAL_HISTORIES or history == "non-disclosure-four-way":
+        exercise_postgres_transactional_history(history, maintenance_resource_transactional_pg_factory(f"maintenance-resource-transactional-{history}"))
+    else:
+        owner = maintenance_resource_pg_factory(f"maintenance-resource-{history}")
+        exercise_frozen_history(history, owner, MaintenanceResourceStore(owner))
 
 
 def _context(actor, basis_revision, event_id, *, repo_id=None):
