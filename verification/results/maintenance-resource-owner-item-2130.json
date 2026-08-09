@@ -2,7 +2,7 @@
   "schema_version": "verification-result/v1",
   "context_id": "sprintctl.maintenance-resource.owner-v1",
   "contract_ref": {"doc_id": "vuoro-2029-second-owner-proof-freeze", "revision": "git:cf7a097;sha256:263cfab83acb1070b1b97809b0df1e099ec8e232aa5499e545b71df4109e627d"},
-  "implementation_sha": "6e2524690772867972c257bfce319aa95fa7f925",
+  "implementation_sha": "aab7408c66a65cf6fd85ac4c4c969e2298eef9e4",
   "depth": 2,
   "environment": {
     "backend": "sqlite-memory-file-plus-isolated-postgresql-18",
@@ -13,7 +13,7 @@
     "seed": null,
     "histories": 21,
     "bounds": {"retained_events": 256, "events_per_batch": 100, "maximum_wait_seconds": 30, "postgres_histories": 21},
-    "faults_exercised": ["concurrent-terminal-handoff", "cursor-expiry", "disconnect", "duplicate-delivery", "pruning", "response-loss", "restart", "spurious-wake"]
+    "faults_exercised": ["concurrent-terminal-handoff", "cursor-expiry", "committed-response-disconnect-and-reopen", "concurrent-owner-decoder-neutrality", "duplicate-delivery", "database-clock-authorized-expiry-sweep", "prepare-response-loss-original-binding", "pruning", "restart-interrupts-blocked-wait", "spurious-wake"]
   },
   "claims": [
     {"property": "Sprintctl exposes exactly three additive maintenance resource operations while pre-existing maintenance descriptors and direct results remain byte-compatible", "result": "example-tested", "evidence": ["frozen operation-set assertion", "SHA-256 descriptor byte regression for both pre-existing maintenance operations", "served composition tests"]},
@@ -43,13 +43,13 @@
       "verification/fixtures/maintenance-resource-owner-v1/frozen-owner-contract.json",
       "verification/validate_maintenance_resource_owner.py"
     ],
-    "candidate_digest": "8540471fee0bc6f46276224bcb0b11c92d93530b7998594ee8160c10b812c750",
+    "candidate_digest": "538fa5196f11efcc28c648a725e0ad6e07dc869c84ba2794d66b8f650a0966d9",
     "commands": {
-      "owner_targeted": "uv run pytest tests/test_maintenance_resource.py tests/test_maintenance_capability.py tests/test_work_application.py tests/test_pg_bootstrap.py -q",
+      "owner_targeted": "uv run pytest tests/test_release_integrity.py tests/test_maintenance_resource.py tests/test_maintenance_capability.py tests/test_work_application.py tests/test_pg_bootstrap.py -q",
       "postgres": "SPRINTCTL_TEST_PG_URL=<disposable> uv run --extra remote pytest tests/test_work_application_pg.py::test_maintenance_resource_frozen_postgres_history -q",
       "composition": "PYTHONPATH=<sprintctl+local-vuoro> <vuoro-venv>/pytest tests/test_vuoro_work_adapter_integration.py -q"
     },
-    "results": {"owner_targeted": "150 passed", "postgres": "21 passed", "composition": "6 passed", "artifact_validators": "passed"}
+    "results": {"owner_targeted": "159 passed", "postgres": "21 passed", "composition": "6 passed", "artifact_validators": "passed"}
   },
   "notes": [
     "Claim 463 authority is recorded without its bearer token.",
