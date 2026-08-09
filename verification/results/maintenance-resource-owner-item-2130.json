@@ -2,7 +2,7 @@
   "schema_version": "verification-result/v1",
   "context_id": "sprintctl.maintenance-resource.owner-v1",
   "contract_ref": {"doc_id": "vuoro-2029-second-owner-proof-freeze", "revision": "git:cf7a097;sha256:263cfab83acb1070b1b97809b0df1e099ec8e232aa5499e545b71df4109e627d"},
-  "implementation_sha": "2b5ebb8464cbdf335070c6ec21570b76ed38981f",
+  "implementation_sha": "6fd95f45b2a85b1061c976494b7ebdcfb5a5c98b",
   "depth": 2,
   "environment": {
     "backend": "sqlite-memory-file-plus-isolated-postgresql-18",
@@ -45,7 +45,7 @@
       "verification/fixtures/maintenance-resource-owner-v1/frozen-owner-contract.json",
       "verification/validate_maintenance_resource_owner.py"
     ],
-    "candidate_digest": "2690c4fa62a9d0355668b01c2752e32743311031c58de4974b43812446a74937",
+    "candidate_digest": "04bf6bee3db13282788616968be5f41eefa796859ced1db0cd53569a13133aa5",
     "commands": {
       "owner_targeted": "uv run pytest tests/test_release_integrity.py tests/test_maintenance_resource.py tests/test_maintenance_capability.py tests/test_work_application.py tests/test_pg_bootstrap.py -q",
       "postgres": "SPRINTCTL_TEST_PG_URL=<disposable> uv run --extra remote pytest tests/test_work_application_pg.py::test_maintenance_resource_frozen_postgres_history -q",
