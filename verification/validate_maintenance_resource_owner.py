@@ -52,8 +52,35 @@ def main() -> None:
         if isinstance(node, ast.If) and isinstance(node.test, ast.Compare) and len(node.test.comparators) == 1 and isinstance(node.test.comparators[0], ast.Constant) and isinstance(node.test.comparators[0].value, str):
             name = node.test.comparators[0].value
             semantic_branches[name] = any(isinstance(child, (ast.Assert, ast.With)) for statement in node.body for child in ast.walk(statement))
-    assert set(semantic_branches) == set(freeze["required_histories"])
+    transactional = next(node.value for node in test_tree.body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "TRANSACTIONAL_HISTORIES" for target in node.targets))
+    transactional_names = set(ast.literal_eval(transactional.args[0]))
+    assert set(semantic_branches) == set(freeze["required_histories"]) - transactional_names
     assert all(semantic_branches.values())
+    required_falsifiers = {
+        "disconnect": (".close()", 'owner.prepare(**arguments)', 'duplicate'),
+        "parallel-owner-decoders": ("threading.Thread", "decoded == expected", "after == before"),
+        "prepare-response-loss": ('owner.prepare(**arguments)', 'reference_envelope', 'duplicate'),
+        "expiry-materialization-authorized-write": ("sweep_expired", 'state"] == "expired"', 'cursor"].endswith("-2")'),
+        "restart-during-wait": ("threading.Event", "changes(", "interrupted == [True]"),
+    }
+    for relative, function_name in (
+        ("tests/test_maintenance_resource.py", "exercise_sqlite_transactional_history"),
+        ("tests/test_work_application_pg.py", "exercise_postgres_transactional_history"),
+    ):
+        source_text = (ROOT / relative).read_text()
+        tree = ast.parse(source_text)
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == function_name)
+        function_text = ast.get_source_segment(source_text, function)
+        assert function_text is not None
+        assert sum(isinstance(node, ast.Assert) for node in ast.walk(function)) >= 10
+        for history, tokens in required_falsifiers.items():
+            branch = next(
+                node for node in ast.walk(function)
+                if isinstance(node, ast.If) and history in ast.unparse(node.test)
+            )
+            branch_text = "\n".join(ast.get_source_segment(source_text, statement) or "" for statement in branch.body)
+            assert sum(isinstance(node, ast.Assert) for statement in branch.body for node in ast.walk(statement)) >= 2
+            assert all(token in branch_text for token in tokens), (relative, history)
     source = (ROOT / "sprintctl/vuoro_adapter.py").read_text()
     for operation in EXPECTED_OPERATIONS:
         assert source.count(f'"{operation}"') >= 1

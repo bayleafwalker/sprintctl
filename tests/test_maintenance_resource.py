@@ -3,6 +3,8 @@ from __future__ import annotations
 import sqlite3
 import json
 import threading
+import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -26,6 +28,25 @@ HISTORIES = (
     "redaction-canaries", "restart-during-wait", "spurious-wake", "sqlite-parity",
     "wait-0-immediate", "wait-30-controlled-clock", "wait-early-wake",
 )
+
+TRANSACTIONAL_HISTORIES = frozenset({
+    "disconnect", "expiry-materialization-authorized-write",
+    "parallel-owner-decoders", "prepare-response-loss", "restart-during-wait",
+})
+
+
+def expiring_envelope(value):
+    now = datetime.now(timezone.utc)
+    value["issued_at"] = value["window"]["not_before"] = (now - timedelta(seconds=2)).isoformat()
+    value["window"]["expires_at"] = (now + timedelta(seconds=1)).isoformat()
+    for definition in value["jit_fields"]: definition["bind_by"] = (now + timedelta(milliseconds=500)).isoformat()
+    for binding in value["jit_bindings"]:
+        binding["observed_at"] = (now - timedelta(seconds=1)).isoformat()
+        binding["bound_at"] = (now - timedelta(milliseconds=500)).isoformat()
+        if binding["name"] == "drain_boundary_utc": binding["value"] = (now - timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for name in ("dependent_implementation_sessions", "active_normal_claims"):
+        value["start_gate"][name]["observed_at"] = (now - timedelta(milliseconds=500)).isoformat()
+    return value
 
 
 class Owner:
@@ -216,12 +237,8 @@ def exercise_frozen_history(history, owner, store):
     elif history == "cursor-below-floor":
         store._execute("UPDATE maintenance_resource SET recovery_floor=1 WHERE resource_ref=?", (reference,)); store.conn.commit()
         with pytest.raises(CursorExpired): store.changes(reference, "sprintctl-maintenance-cursor-0")
-    elif history == "disconnect":
-        before = store.snapshot(reference); assert before == store.snapshot(reference)
     elif history == "duplicate-delivery":
         assert store.changes(reference, "sprintctl-maintenance-cursor-0") == store.changes(reference, "sprintctl-maintenance-cursor-0")
-    elif history == "expiry-materialization-authorized-write":
-        owner.set("expired", 2); store.record_current("mcap:test"); assert store.snapshot(reference)["terminal"] is True
     elif history == "expiry-read-does-not-mutate":
         before = dict(owner.get("mcap:test")); store.snapshot(reference); assert owner.get("mcap:test") == before
     elif history == "immediate-client-compatibility":
@@ -233,19 +250,13 @@ def exercise_frozen_history(history, owner, store):
         for value in ("malformed", "smr1_absent", "smr1_foreign", "smr1_unauthorized"):
             with pytest.raises(ResourceNotFound, match="resource not found"):
                 store.snapshot(value)
-    elif history == "parallel-owner-decoders":
-        assert store.reference_envelope("mcap:test")["owner"] == "work"
     elif history == "postgres-parity":
         assert set(store.snapshot(reference)) == {"schema_version", "reference", "revision", "cursor", "terminal", "state"}
-    elif history == "prepare-response-loss":
-        assert store.reference_envelope("mcap:test") == store.reference_envelope("mcap:test")
     elif history == "prune-0-255-256-257":
         for position in range(2, 258): owner.set("active", position); store.record_current("mcap:test")
         assert store._binding(reference)[1:] == (1, 257)
     elif history == "redaction-canaries":
         assert not ({"capability_id", "operator", "receipt", "command", "effect"} & set(store.snapshot(reference)["state"]))
-    elif history == "restart-during-wait":
-        exported = store.snapshot(reference)["cursor"]; restarted = MaintenanceResourceStore(owner); assert restarted.changes(reference, exported)["events"] == []
     elif history == "spurious-wake":
         clock = [0.0]; store.monotonic = lambda: clock[0]; store.pause = lambda seconds: clock.__setitem__(0, clock[0] + seconds)
         assert store.changes(reference, "sprintctl-maintenance-cursor-1", 1)["events"] == [] and clock[0] >= 1
@@ -266,5 +277,86 @@ def exercise_frozen_history(history, owner, store):
 
 
 @pytest.mark.parametrize("history", HISTORIES)
-def test_frozen_history_manifest_is_executable(history, resource):
-    exercise_frozen_history(history, *resource)
+def test_frozen_history_manifest_is_executable(history, resource, tmp_path):
+    if history in TRANSACTIONAL_HISTORIES:
+        exercise_sqlite_transactional_history(history, tmp_path)
+    else:
+        exercise_frozen_history(history, *resource)
+
+
+def exercise_sqlite_transactional_history(history, tmp_path):
+    from sprintctl.maintenance_capability import SQLiteMaintenanceCapabilityStore
+    from tests.test_maintenance_capability import envelope
+
+    path = tmp_path / f"{history}.db"
+    connection = sqlite3.connect(path, check_same_thread=False)
+    connection.row_factory = sqlite3.Row
+    db.init_db(connection)
+    owner = SQLiteMaintenanceCapabilityStore(connection)
+    capability_id = "mcap:12345678-1234-4234-8234-123456789abc"
+    request_id = "12345678-1234-4234-8234-123456789abc"
+    arguments = dict(capability_id=capability_id, request_id=request_id, envelope=envelope(), actor="operator", at="2026-08-02T20:00:00Z", resource=True)
+
+    if history in {"disconnect", "prepare-response-loss"}:
+        first = owner.prepare(**arguments)
+        reference = MaintenanceResourceStore(owner).reference_envelope(capability_id)
+        connection.close()  # committed response is deliberately discarded
+        recovered = sqlite3.connect(path); recovered.row_factory = sqlite3.Row
+        recovered_owner = SQLiteMaintenanceCapabilityStore(recovered)
+        retry = recovered_owner.prepare(**(arguments | {"at": "2026-08-02T20:01:00Z"}))
+        recovered_resource = MaintenanceResourceStore(recovered_owner)
+        assert retry == first | {"duplicate": True}
+        assert recovered_resource.reference_envelope(capability_id) == reference
+        assert recovered.execute("SELECT count(*) FROM maintenance_resource").fetchone()[0] == 1
+        assert recovered.execute("SELECT count(*) FROM maintenance_resource_event").fetchone()[0] == 1
+        recovered.close()
+    elif history == "parallel-owner-decoders":
+        second_id = "mcap:22345678-1234-4234-8234-123456789abc"
+        owner.prepare(**arguments)
+        second_envelope = envelope(); second_envelope["envelope_id"] = "vuoro-cutover-exact-2"
+        owner.prepare(**(arguments | {"capability_id": second_id, "request_id": str(uuid.uuid4()), "envelope": second_envelope}))
+        resource = MaintenanceResourceStore(owner)
+        expected = [resource.reference_envelope(capability_id), resource.reference_envelope(second_id)]
+        before = tuple(connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] for table in ("maintenance_resource", "maintenance_resource_event"))
+        decoded = [None, None]
+        def decode(index, target):
+            conn = sqlite3.connect(path); conn.row_factory = sqlite3.Row
+            decoded[index] = MaintenanceResourceStore(SQLiteMaintenanceCapabilityStore(conn)).reference_envelope(target)
+            conn.close()
+        threads = [threading.Thread(target=decode, args=(0, capability_id)), threading.Thread(target=decode, args=(1, second_id))]
+        for thread in threads: thread.start()
+        for thread in threads: thread.join()
+        after = tuple(connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] for table in ("maintenance_resource", "maintenance_resource_event"))
+        assert decoded == expected and len({item["reference"] for item in decoded}) == 2
+        assert after == before == (2, 2)
+        connection.close()
+    elif history == "expiry-materialization-authorized-write":
+        value = expiring_envelope(envelope())
+        owner.prepare(**(arguments | {"envelope": value}))
+        reference = MaintenanceResourceStore(owner).reference_envelope(capability_id)["reference"]
+        deadline = time.monotonic() + 3
+        while not owner.sweep_expired(capability_id, at=datetime.now(timezone.utc).isoformat()):
+            assert time.monotonic() < deadline
+            time.sleep(.05)
+        snapshot = MaintenanceResourceStore(owner).snapshot(reference)
+        assert owner.get(capability_id)["state"] == snapshot["state"]["state"] == "expired"
+        assert snapshot["terminal"] is True and snapshot["cursor"].endswith("-2")
+        connection.close()
+    elif history == "restart-during-wait":
+        prepared = owner.prepare(**arguments)
+        reference = MaintenanceResourceStore(owner).reference_envelope(capability_id)["reference"]
+        waiter_conn = sqlite3.connect(path, check_same_thread=False); waiter_conn.row_factory = sqlite3.Row
+        entered, release = threading.Event(), threading.Event(); interrupted = []
+        def pause(_seconds): entered.set(); release.wait(2)
+        def wait_request():
+            try: MaintenanceResourceStore(SQLiteMaintenanceCapabilityStore(waiter_conn), pause=pause).changes(reference, "sprintctl-maintenance-cursor-1", 2)
+            except sqlite3.ProgrammingError: interrupted.append(True)
+        thread = threading.Thread(target=wait_request); thread.start(); assert entered.wait(1)
+        waiter_conn.close(); release.set(); thread.join(2); assert interrupted == [True]
+        owner.transition(capability_id=capability_id, request_id=str(uuid.uuid4()), action="attest", expected_revision=prepared["revision"], actor="operator", at="2026-08-02T20:01:00Z", effect_ref="sha256:" + "0" * 64)
+        restarted = sqlite3.connect(path); restarted.row_factory = sqlite3.Row
+        changes = MaintenanceResourceStore(SQLiteMaintenanceCapabilityStore(restarted)).changes(reference, "sprintctl-maintenance-cursor-1", 2)
+        assert changes["events"][0]["data"]["state"] == "attested"
+        restarted.close(); connection.close()
+    else:
+        raise AssertionError(f"missing SQLite transactional falsifier: {history}")

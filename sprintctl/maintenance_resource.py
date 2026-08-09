@@ -114,7 +114,13 @@ class MaintenanceResourceStore:
 
     def record_current(self, capability_id: str, *, commit: bool = True) -> str:
         resource_ref = self.ensure_reference(capability_id, commit=False)
-        owner = self.lifecycle.get(capability_id)
+        if self.postgres:
+            owner = self._execute(
+                "SELECT state,not_before,expires_at,updated_at FROM maintenance_capability WHERE repo_id=? AND capability_id=?",
+                (self.repo_id, capability_id),
+            ).fetchone()
+        else:
+            owner = self.lifecycle.get(capability_id)
         if owner is None:
             raise ResourceNotFound("resource not found")
         scope, values = self._scope()

@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from dataclasses import replace
@@ -39,6 +40,7 @@ from sprintctl.application import (
     record_to_dict,
 )
 from sprintctl.maintenance_resource import MaintenanceResourceStore
+from sprintctl.maintenance_capability import PostgresMaintenanceCapabilityStore
 from sprintctl.pg_testing import (
     assert_disposable_connection,
     cleanup_test_repositories,
@@ -46,7 +48,9 @@ from sprintctl.pg_testing import (
     write_cleanup_report,
 )
 from tests.test_maintenance_capability import AT, CAPABILITY_ID, envelope
-from tests.test_maintenance_resource import HISTORIES, exercise_frozen_history
+from tests.test_maintenance_resource import (
+    HISTORIES, TRANSACTIONAL_HISTORIES, exercise_frozen_history, expiring_envelope,
+)
 
 
 class _PostgresResourceOwner:
@@ -91,13 +95,6 @@ def maintenance_resource_pg_factory():
     connection.commit(); connection.close()
 
 
-@pytest.mark.parametrize("history", HISTORIES)
-def test_maintenance_resource_frozen_postgres_history(maintenance_resource_pg_factory, history):
-    owner = maintenance_resource_pg_factory(f"maintenance-resource-{history}")
-    resource = MaintenanceResourceStore(owner)
-    exercise_frozen_history(history, owner, resource)
-
-
 @pytest.fixture(scope="module")
 def store_factory():
     if not _PG_URL or not _PSYCOPG_AVAILABLE:
@@ -129,6 +126,105 @@ def store_factory():
         if report_path := os.environ.get("SPRINTCTL_TEST_PG_CLEANUP_REPORT"):
             write_cleanup_report(report_path, report)
         administrative.close()
+
+
+@pytest.fixture
+def maintenance_resource_transactional_pg_factory():
+    administrative = psycopg.connect(_PG_URL, row_factory=dict_row)
+    assert_disposable_connection(administrative)
+    with administrative.cursor() as cur:
+        pg._apply_schema_version_6(cur); pg._apply_schema_version_7(cur)
+    administrative.commit(); repo_ids = set()
+    def create(label):
+        connection = psycopg.connect(_PG_URL, row_factory=dict_row)
+        repo_id = new_test_repo_id(label); repo_ids.add(repo_id)
+        return pg.PgStore(conn=connection, repo_id=repo_id, authority_repo_uuid=str(uuid.uuid4()), connection_factory=lambda: psycopg.connect(_PG_URL, row_factory=dict_row), remote_schema_version=7)
+    yield create
+    cleanup_test_repositories(administrative, repo_ids)
+    administrative.close()
+
+
+def _reopen_pg_store(store):
+    return replace(store, conn=psycopg.connect(_PG_URL, row_factory=dict_row))
+
+
+def exercise_postgres_transactional_history(history, store):
+    owner = PostgresMaintenanceCapabilityStore(store)
+    capability_id = "mcap:12345678-1234-4234-8234-123456789abc"
+    request_id = "12345678-1234-4234-8234-123456789abc"
+    arguments = dict(capability_id=capability_id, request_id=request_id, envelope=envelope(), actor="operator", at=AT, resource=True)
+
+    if history in {"disconnect", "prepare-response-loss"}:
+        first = owner.prepare(**arguments)
+        reference = MaintenanceResourceStore(owner).reference_envelope(capability_id)
+        store.conn.close()  # committed response is deliberately discarded
+        recovered_store = _reopen_pg_store(store); recovered_owner = PostgresMaintenanceCapabilityStore(recovered_store)
+        retry = recovered_owner.prepare(**(arguments | {"at": "2026-08-02T20:01:00Z"}))
+        recovered_resource = MaintenanceResourceStore(recovered_owner)
+        assert retry == first | {"duplicate": True}
+        assert recovered_resource.reference_envelope(capability_id) == reference
+        with recovered_store.conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS count FROM maintenance_resource WHERE repo_id=%s", (store.repo_id,)); assert cur.fetchone()["count"] == 1
+            cur.execute("SELECT count(*) AS count FROM maintenance_resource_event WHERE repo_id=%s", (store.repo_id,)); assert cur.fetchone()["count"] == 1
+        recovered_store.conn.rollback(); recovered_store.conn.close()
+    elif history == "parallel-owner-decoders":
+        second_id = "mcap:22345678-1234-4234-8234-123456789abc"
+        owner.prepare(**arguments)
+        second_envelope = envelope(); second_envelope["envelope_id"] = "vuoro-cutover-exact-2"
+        owner.prepare(**(arguments | {"capability_id": second_id, "request_id": str(uuid.uuid4()), "envelope": second_envelope}))
+        resource = MaintenanceResourceStore(owner)
+        expected = [resource.reference_envelope(capability_id), resource.reference_envelope(second_id)]
+        with store.conn.cursor() as cur:
+            cur.execute("SELECT (SELECT count(*) FROM maintenance_resource WHERE repo_id=%s) AS resources,(SELECT count(*) FROM maintenance_resource_event WHERE repo_id=%s) AS events", (store.repo_id, store.repo_id)); row = cur.fetchone(); before = (row["resources"], row["events"])
+        store.conn.rollback(); decoded = [None, None]
+        def decode(index, target):
+            sibling = _reopen_pg_store(store)
+            decoded[index] = MaintenanceResourceStore(PostgresMaintenanceCapabilityStore(sibling)).reference_envelope(target)
+            sibling.conn.rollback(); sibling.conn.close()
+        threads = [threading.Thread(target=decode, args=(0, capability_id)), threading.Thread(target=decode, args=(1, second_id))]
+        for thread in threads: thread.start()
+        for thread in threads: thread.join()
+        with store.conn.cursor() as cur:
+            cur.execute("SELECT (SELECT count(*) FROM maintenance_resource WHERE repo_id=%s) AS resources,(SELECT count(*) FROM maintenance_resource_event WHERE repo_id=%s) AS events", (store.repo_id, store.repo_id)); row = cur.fetchone(); after = (row["resources"], row["events"])
+        store.conn.rollback()
+        assert decoded == expected and len({item["reference"] for item in decoded}) == 2
+        assert after == before == (2, 2)
+    elif history == "expiry-materialization-authorized-write":
+        owner.prepare(**(arguments | {"envelope": expiring_envelope(envelope())}))
+        reference = MaintenanceResourceStore(owner).reference_envelope(capability_id)["reference"]
+        deadline = time.monotonic() + 3
+        while not owner.sweep_expired(capability_id, at=datetime.now(timezone.utc).isoformat()):
+            assert time.monotonic() < deadline
+            time.sleep(.05)
+        snapshot = MaintenanceResourceStore(owner).snapshot(reference)
+        assert owner.get(capability_id)["state"] == snapshot["state"]["state"] == "expired"
+        assert snapshot["terminal"] is True and snapshot["cursor"].endswith("-2")
+    elif history == "restart-during-wait":
+        prepared = owner.prepare(**arguments)
+        reference = MaintenanceResourceStore(owner).reference_envelope(capability_id)["reference"]
+        waiter_store = _reopen_pg_store(store); entered, release = threading.Event(), threading.Event(); interrupted = []
+        def pause(_seconds): entered.set(); release.wait(2)
+        def wait_request():
+            try: MaintenanceResourceStore(PostgresMaintenanceCapabilityStore(waiter_store), pause=pause).changes(reference, "sprintctl-maintenance-cursor-1", 2)
+            except psycopg.Error: interrupted.append(True)
+        thread = threading.Thread(target=wait_request); thread.start(); assert entered.wait(1)
+        waiter_store.conn.close(); release.set(); thread.join(2); assert interrupted == [True]
+        owner.transition(capability_id=capability_id, request_id=str(uuid.uuid4()), action="attest", expected_revision=prepared["revision"], actor="operator", at="2026-08-02T20:01:00Z", effect_ref="sha256:" + "0" * 64)
+        restarted_store = _reopen_pg_store(store)
+        changes = MaintenanceResourceStore(PostgresMaintenanceCapabilityStore(restarted_store)).changes(reference, "sprintctl-maintenance-cursor-1", 2)
+        assert changes["events"][0]["data"]["state"] == "attested"
+        restarted_store.conn.rollback(); restarted_store.conn.close()
+    else:
+        raise AssertionError(f"missing PostgreSQL transactional falsifier: {history}")
+
+
+@pytest.mark.parametrize("history", HISTORIES)
+def test_maintenance_resource_frozen_postgres_history(maintenance_resource_pg_factory, maintenance_resource_transactional_pg_factory, history):
+    if history in TRANSACTIONAL_HISTORIES:
+        exercise_postgres_transactional_history(history, maintenance_resource_transactional_pg_factory(f"maintenance-resource-transactional-{history}"))
+    else:
+        owner = maintenance_resource_pg_factory(f"maintenance-resource-{history}")
+        exercise_frozen_history(history, owner, MaintenanceResourceStore(owner))
 
 
 def _context(actor, basis_revision, event_id, *, repo_id=None):
