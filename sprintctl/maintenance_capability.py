@@ -368,7 +368,7 @@ class SQLiteMaintenanceCapabilityStore:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
 
-    def prepare(self, *, capability_id: str, request_id: str, envelope: Mapping[str, Any], actor: str, at: str) -> dict[str, Any]:
+    def prepare(self, *, capability_id: str, request_id: str, envelope: Mapping[str, Any], actor: str, at: str, resource: bool = False) -> dict[str, Any]:
         if not CAPABILITY_ID.fullmatch(capability_id):
             raise MaintenanceCapabilityError("capability_id must be mcap:<canonical UUID>")
         request_id = _request_id(request_id)
@@ -379,7 +379,7 @@ class SQLiteMaintenanceCapabilityStore:
         # request identity remain idempotent while the first receipt retains
         # the actual server timestamp.
         payload_digest = hashlib.sha256(_canonical({"capability_id": capability_id, "envelope_digest": frozen.digest, "actor": actor})).hexdigest()
-        return self._write_prepare(capability_id, request_id, frozen, _canonical(envelope).decode(), actor, at, now, payload_digest)
+        return self._write_prepare(capability_id, request_id, frozen, _canonical(envelope).decode(), actor, at, now, payload_digest, resource=resource)
 
     def transition(self, *, capability_id: str, request_id: str, action: str, expected_revision: str, actor: str, at: str, step_id: str | None = None, command_id: str | None = None, command_ref: str | None = None, effect_ref: str | None = None, reconciliation: Mapping[str, Any] | None = None) -> dict[str, Any]:
         request_id = _request_id(request_id)
@@ -442,6 +442,9 @@ class SQLiteMaintenanceCapabilityStore:
             self.conn.execute("UPDATE maintenance_capability SET state = ?, revision = ?, next_sequence = ?, updated_at = ? WHERE capability_id = ? AND revision = ?", (target, next_revision, next_sequence, at, capability_id, current["revision"]))
             result_revision = revision(capability_id, target, next_revision)
             self._receipt(capability_id, request_id, action, outcome, current["state"], target, result_revision, step_id, command_ref, effect_ref, audit_bundle_json, digest, actor, at)
+            from .maintenance_resource import MaintenanceResourceStore
+            if MaintenanceResourceStore.schema_exists(self):
+                MaintenanceResourceStore(self).record_if_registered(capability_id, commit=False)
             self.conn.commit()
             return {"capability_id": capability_id, "request_id": request_id, "action": action, "outcome": outcome, "state": target, "revision": result_revision, "duplicate": False}
         except Exception:
@@ -463,15 +466,36 @@ class SQLiteMaintenanceCapabilityStore:
         self.conn.commit()
         return {"capability_id": capability_id, "record_id": record_id, "kind": kind, "authority": "none"}
 
+    def sweep_expired(self, capability_id: str, *, at: str) -> bool:
+        """Materialize expiry under the owner write lock; reads never call this."""
+        try:
+            self.conn.execute("BEGIN IMMEDIATE")
+            row = self.conn.execute("SELECT * FROM maintenance_capability WHERE capability_id=?", (capability_id,)).fetchone()
+            if row is None:
+                raise MaintenanceCapabilityError("unknown maintenance capability")
+            current = dict(row)
+            if current["state"] in TERMINAL_STATES or self._decision_time() < _time(current["expires_at"], "expires_at"):
+                self.conn.commit(); return False
+            self.conn.execute("UPDATE maintenance_capability SET state='expired',revision=revision+1,updated_at=? WHERE capability_id=? AND revision=?", (at, capability_id, current["revision"]))
+            from .maintenance_resource import MaintenanceResourceStore
+            if MaintenanceResourceStore.schema_exists(self):
+                MaintenanceResourceStore(self).record_if_registered(capability_id, commit=False)
+            self.conn.commit(); return True
+        except Exception:
+            self.conn.rollback(); raise
+
     def get(self, capability_id: str) -> dict[str, Any] | None:
         row = self.conn.execute("SELECT * FROM maintenance_capability WHERE capability_id = ?", (capability_id,)).fetchone()
         return dict(row) if row else None
 
-    def _write_prepare(self, capability_id: str, request_id: str, frozen: FrozenEnvelope, envelope_json: str, actor: str, at: str, now: datetime, digest: str) -> dict[str, Any]:
+    def _write_prepare(self, capability_id: str, request_id: str, frozen: FrozenEnvelope, envelope_json: str, actor: str, at: str, now: datetime, digest: str, *, resource: bool = False) -> dict[str, Any]:
         try:
             self.conn.execute("BEGIN IMMEDIATE")
             duplicate = self._duplicate(capability_id, request_id, digest)
             if duplicate:
+                if resource:
+                    from .maintenance_resource import MaintenanceResourceStore
+                    MaintenanceResourceStore(self).record_current_in_transaction(capability_id)
                 self.conn.commit()
                 return duplicate
             if now >= frozen.expires_at:
@@ -481,6 +505,9 @@ class SQLiteMaintenanceCapabilityStore:
             self.conn.execute("INSERT INTO maintenance_capability (capability_id, envelope_id, envelope_digest, envelope_json, plan_ref, operator_identity, not_before, expires_at, state, revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'prepared', 1, ?, ?)", (capability_id, frozen.envelope_id, frozen.digest, envelope_json, frozen.plan_ref, frozen.operator, frozen.not_before.isoformat(), frozen.expires_at.isoformat(), at, at))
             result_revision = revision(capability_id, "prepared", 1)
             self._receipt(capability_id, request_id, "prepare", "accepted", None, "prepared", result_revision, None, None, None, None, digest, actor, at)
+            if resource:
+                from .maintenance_resource import MaintenanceResourceStore
+                MaintenanceResourceStore(self).record_current_in_transaction(capability_id)
             self.conn.commit()
             return {"capability_id": capability_id, "request_id": request_id, "action": "prepare", "outcome": "accepted", "state": "prepared", "revision": result_revision, "duplicate": False}
         except Exception:
@@ -551,7 +578,7 @@ class PostgresMaintenanceCapabilityStore:
         self.conn = store.conn
         self.repo_id = store.repo_id
 
-    def prepare(self, *, capability_id: str, request_id: str, envelope: Mapping[str, Any], actor: str, at: str) -> dict[str, Any]:
+    def prepare(self, *, capability_id: str, request_id: str, envelope: Mapping[str, Any], actor: str, at: str, resource: bool = False) -> dict[str, Any]:
         if not CAPABILITY_ID.fullmatch(capability_id):
             raise MaintenanceCapabilityError("capability_id must be mcap:<canonical UUID>")
         request_id = _request_id(request_id)
@@ -560,8 +587,19 @@ class PostgresMaintenanceCapabilityStore:
         digest = hashlib.sha256(_canonical({"capability_id": capability_id, "envelope_digest": frozen.digest, "actor": actor})).hexdigest()
         try:
             with self.conn.cursor() as cur:
+                if resource:
+                    # Serialize first delivery and lost-response retries for the
+                    # same action root before either the receipt or opaque
+                    # resource binding is inspected or allocated.
+                    cur.execute(
+                        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                        (f"{self.repo_id}:{capability_id}",),
+                    )
                 duplicate = self._duplicate(cur, capability_id, request_id, digest)
                 if duplicate:
+                    if resource:
+                        from .maintenance_resource import MaintenanceResourceStore
+                        MaintenanceResourceStore(self).record_current_in_transaction(capability_id)
                     self.conn.commit()
                     return duplicate
                 if now >= frozen.expires_at:
@@ -572,6 +610,9 @@ class PostgresMaintenanceCapabilityStore:
                 cur.execute("INSERT INTO maintenance_capability (repo_id, capability_id, envelope_id, envelope_digest, envelope_json, plan_ref, operator_identity, not_before, expires_at, state, revision, created_at, updated_at) VALUES (%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,'prepared',1,%s,%s)", (self.repo_id, capability_id, frozen.envelope_id, frozen.digest, _canonical(envelope).decode(), frozen.plan_ref, frozen.operator, frozen.not_before, frozen.expires_at, now, now))
                 result_revision = revision(capability_id, "prepared", 1)
                 self._receipt(cur, capability_id, request_id, "prepare", "accepted", None, "prepared", result_revision, None, None, None, None, digest, actor, now)
+                if resource:
+                    from .maintenance_resource import MaintenanceResourceStore
+                    MaintenanceResourceStore(self).record_current_in_transaction(capability_id)
             self.conn.commit()
             return {"capability_id": capability_id, "request_id": request_id, "action": "prepare", "outcome": "accepted", "state": "prepared", "revision": result_revision, "duplicate": False}
         except Exception:
@@ -651,6 +692,9 @@ class PostgresMaintenanceCapabilityStore:
                 cur.execute("UPDATE maintenance_capability SET state=%s, revision=%s, next_sequence=%s, updated_at=%s WHERE repo_id=%s AND capability_id=%s AND revision=%s", (target, next_revision, next_sequence, now, self.repo_id, capability_id, current["revision"]))
                 result_revision = revision(capability_id, target, next_revision)
                 self._receipt(cur, capability_id, request_id, action, outcome, current["state"], target, result_revision, step_id, command_ref, effect_ref, audit_bundle_json, digest, actor, now)
+                from .maintenance_resource import MaintenanceResourceStore
+                if MaintenanceResourceStore.schema_exists(self):
+                    MaintenanceResourceStore(self).record_if_registered(capability_id, commit=False)
             self.conn.commit()
             return {"capability_id": capability_id, "request_id": request_id, "action": action, "outcome": outcome, "state": target, "revision": result_revision, "duplicate": False}
         except Exception:
@@ -673,6 +717,24 @@ class PostgresMaintenanceCapabilityStore:
                 cur.execute("INSERT INTO maintenance_capability_recovery (repo_id,capability_id,record_id,kind,payload_ref,actor,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s)", (self.repo_id, capability_id, record_id, kind, payload_ref, actor, _time(at, "at")))
         self.conn.commit()
         return {"capability_id": capability_id, "record_id": record_id, "kind": kind, "authority": "none"}
+
+    def sweep_expired(self, capability_id: str, *, at: str) -> bool:
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT * FROM maintenance_capability WHERE repo_id=%s AND capability_id=%s FOR UPDATE", (self.repo_id, capability_id))
+                row = cur.fetchone()
+                if row is None:
+                    raise MaintenanceCapabilityError("unknown maintenance capability")
+                current = dict(row); decided_at = self._decision_time(cur)
+                if current["state"] in TERMINAL_STATES or decided_at < current["expires_at"]:
+                    self.conn.commit(); return False
+                cur.execute("UPDATE maintenance_capability SET state='expired',revision=revision+1,updated_at=%s WHERE repo_id=%s AND capability_id=%s AND revision=%s", (_time(at, "at"), self.repo_id, capability_id, current["revision"]))
+                from .maintenance_resource import MaintenanceResourceStore
+                if MaintenanceResourceStore.schema_exists(self):
+                    MaintenanceResourceStore(self).record_if_registered(capability_id, commit=False)
+            self.conn.commit(); return True
+        except Exception:
+            self.conn.rollback(); raise
 
     def get(self, capability_id: str) -> dict[str, Any] | None:
         with self.conn.cursor() as cur:

@@ -21,6 +21,5 @@
   "faults": ["response-loss", "duplicate-delivery", "cursor-expiry", "spurious-wake", "disconnect", "restart", "concurrent-terminal-transition"],
   "oracles": ["published-golden-byte-equality", "sqlite-history-suite", "disposable-postgresql-history-suite", "served-vuoro-composition-suite", "full-sprintctl-suite", "artifact-validator"],
   "implementation_anchors": ["sprintctl/maintenance_resource.py", "sprintctl/application.py", "sprintctl/vuoro_adapter.py", "tests/test_maintenance_resource.py", "tests/test_work_application_pg.py"],
-  "expansions": ["independent-owner-review", "vuoro-adapter-non-disclosure-proof"]
+  "expansions": ["independent-owner-review", "vuoro-final-descriptor-registration", "vuoro-authentication-and-authorization-guard", "vuoro-asgi-byte-identical-four-way-not-found-proof"]
 }
-

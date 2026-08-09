@@ -8,6 +8,7 @@ import json
 import os
 import threading
 import uuid
+from datetime import datetime, timedelta, timezone
 from dataclasses import replace
 
 import pytest
@@ -45,7 +46,7 @@ from sprintctl.pg_testing import (
     write_cleanup_report,
 )
 from tests.test_maintenance_capability import AT, CAPABILITY_ID, envelope
-from tests.test_maintenance_resource import HISTORIES
+from tests.test_maintenance_resource import HISTORIES, exercise_frozen_history
 
 
 class _PostgresResourceOwner:
@@ -53,15 +54,29 @@ class _PostgresResourceOwner:
         self.conn = store.conn
         self.repo_id = store.repo_id
         self.row = {"state": "prepared", "not_before": "2026-08-02T19:00:00Z", "expires_at": "2026-08-02T20:00:00Z", "updated_at": "2026-08-02T19:00:00Z"}
+        with self.conn.cursor() as cur:
+            cur.execute("INSERT INTO maintenance_capability(repo_id,capability_id,envelope_id,envelope_digest,envelope_json,plan_ref,operator_identity,not_before,expires_at,state,revision,next_sequence,created_at,updated_at) VALUES(%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,'prepared',1,1,%s,%s)", (self.repo_id, "mcap:test", self.repo_id, "0" * 64, "{}", "artifact:sha256:" + "0" * 64, "operator", self.row["not_before"], self.row["expires_at"], self.row["updated_at"], self.row["updated_at"]))
+        self.conn.commit()
 
     def get(self, capability_id):
-        return self.row if capability_id == "mcap:postgres-history" else None
+        return self.row if capability_id == "mcap:test" else None
+
+    def set(self, state, position):
+        updated_at = (datetime(2026, 8, 2, 19, tzinfo=timezone.utc) + timedelta(minutes=position)).isoformat().replace("+00:00", "Z")
+        self.row.update(state=state, updated_at=updated_at)
+        with self.conn.cursor() as cur:
+            cur.execute("UPDATE maintenance_capability SET state=%s,revision=revision+1,updated_at=%s WHERE repo_id=%s AND capability_id='mcap:test'", (state, self.row["updated_at"], self.repo_id))
+        self.conn.commit()
 
 
 @pytest.fixture
 def maintenance_resource_pg_factory():
     connection = psycopg.connect(_PG_URL, row_factory=dict_row)
     assert_disposable_connection(connection)
+    with connection.cursor() as cur:
+        pg._apply_schema_version_6(cur)
+        pg._apply_schema_version_7(cur)
+    connection.commit()
     owners = []
     def create(label):
         store = type("ResourceStore", (), {"conn": connection, "repo_id": new_test_repo_id(label)})()
@@ -80,13 +95,7 @@ def maintenance_resource_pg_factory():
 def test_maintenance_resource_frozen_postgres_history(maintenance_resource_pg_factory, history):
     owner = maintenance_resource_pg_factory(f"maintenance-resource-{history}")
     resource = MaintenanceResourceStore(owner)
-    reference = resource.record_current("mcap:postgres-history")
-    snapshot = resource.snapshot(reference)
-    assert snapshot["state"] == {
-        "state": "prepared", "not_before": "2026-08-02T19:00:00Z",
-        "expires_at": "2026-08-02T20:00:00Z", "updated_at": "2026-08-02T19:00:00Z",
-    }
-    assert resource.changes(reference, snapshot["cursor"], 0)["events"] == []
+    exercise_frozen_history(history, owner, resource)
 
 
 @pytest.fixture(scope="module")

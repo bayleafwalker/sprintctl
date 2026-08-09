@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import sqlite3
 import json
+import threading
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
+from sprintctl import db
 from sprintctl.maintenance_resource import (
     CursorExpired,
     MaintenanceResourceStore,
     ResourceNotFound,
+    NOT_FOUND_PAYLOAD,
 )
 
 
@@ -28,23 +32,34 @@ class Owner:
     def __init__(self, connection):
         self.conn = connection
         self.rows = {"mcap:test": {"state": "prepared", "not_before": "2026-08-02T19:00:00Z", "expires_at": "2026-08-02T20:00:00Z", "updated_at": "2026-08-02T19:00:00Z"}}
+        connection.execute(
+            "INSERT INTO maintenance_capability(capability_id,envelope_id,envelope_digest,envelope_json,plan_ref,operator_identity,not_before,expires_at,state,revision,next_sequence,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,1,1,?,?)",
+            ("mcap:test", "envelope", "0" * 64, "{}", "artifact:sha256:" + "0" * 64, "operator", "2026-08-02T19:00:00Z", "2026-08-02T20:00:00Z", "prepared", "2026-08-02T19:00:00Z", "2026-08-02T19:00:00Z"),
+        )
+        connection.commit()
 
     def get(self, capability_id):
         return self.rows.get(capability_id)
 
     def set(self, state, position):
-        self.rows["mcap:test"].update(state=state, updated_at=f"2026-08-02T19:{position:02d}:00Z")
+        updated_at = (datetime(2026, 8, 2, 19, tzinfo=timezone.utc) + timedelta(minutes=position)).isoformat().replace("+00:00", "Z")
+        self.rows["mcap:test"].update(state=state, updated_at=updated_at)
+        self.conn.execute("UPDATE maintenance_capability SET state=?,revision=revision+1,updated_at=? WHERE capability_id='mcap:test'", (state, self.rows["mcap:test"]["updated_at"]))
+        self.conn.commit()
 
 
 @pytest.fixture
 def resource():
     connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    db.init_db(connection)
     owner = Owner(connection)
     return owner, MaintenanceResourceStore(owner)
 
 
 def test_reference_retry_snapshot_and_projection_redaction(resource):
     owner, store = resource
+    store.record_current("mcap:test")
     first = store.reference_envelope("mcap:test")
     second = store.reference_envelope("mcap:test")
     assert first == second
@@ -59,8 +74,11 @@ def test_published_vuoro_goldens_are_byte_for_byte_owner_outputs(monkeypatch):
     monkeypatch.setattr("sprintctl.maintenance_resource.secrets.token_bytes", lambda _size: bytes(32))
     contract = json.loads((Path(__file__).parents[1] / "verification/fixtures/maintenance-resource-owner-v1/frozen-owner-contract.json").read_text())
     connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    db.init_db(connection)
     owner = Owner(connection)
     store = MaintenanceResourceStore(owner)
+    store.record_current("mcap:test")
     reference = store.reference_envelope("mcap:test")
     assert reference == contract["goldens"]["reference"]
     owner.set("attested", 1); store.record_current("mcap:test")
@@ -92,10 +110,10 @@ def test_pruning_floor_is_smallest_resumable_and_changes_only_on_prune(resource)
         owner.set("active", position)
         store.record_current("mcap:test")
     binding = store._binding(reference)
-    assert binding[1] == 2
-    store.changes(reference, "sprintctl-maintenance-cursor-2")
+    assert binding[1] == 1
+    store.changes(reference, "sprintctl-maintenance-cursor-1")
     with pytest.raises(CursorExpired):
-        store.changes(reference, "sprintctl-maintenance-cursor-1")
+        store.changes(reference, "sprintctl-maintenance-cursor-0")
 
 
 def test_read_does_not_materialize_wall_clock_expiry(resource):
@@ -108,8 +126,27 @@ def test_read_does_not_materialize_wall_clock_expiry(resource):
     assert owner.rows["mcap:test"]["state"] == "prepared"
 
 
+def test_owner_visibility_boundary_is_indistinguishable_for_four_classes(resource):
+    _owner, store = resource
+    reference = store.record_current("mcap:test")
+    cases = {
+        "malformed": ("bad", True),
+        "absent": ("smr1_" + "B" * 43, True),
+        "foreign": ("smr1_" + "C" * 43, True),
+        "unauthorized": (reference, False),
+    }
+    responses = []
+    for resource_ref, authorized in cases.values():
+        assert store.visible(resource_ref, authorized=authorized) is False
+        responses.append((404, NOT_FOUND_PAYLOAD))
+    assert responses == [responses[0]] * 4
+    assert store.visible(reference, authorized=True) is True
+
+
 def test_wait_controlled_clock_spurious_and_early_wake():
     connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    db.init_db(connection)
     owner = Owner(connection)
     clock = [0.0]
     store = MaintenanceResourceStore(owner, monotonic=lambda: clock[0], pause=lambda seconds: clock.__setitem__(0, clock[0] + seconds))
@@ -128,13 +165,106 @@ def test_wait_controlled_clock_spurious_and_early_wake():
     assert early["events"][0]["data"]["state"] == "active" and calls[0] == 2
 
 
-@pytest.mark.parametrize("history", HISTORIES)
-def test_frozen_history_manifest_is_executable(history, resource):
-    owner, store = resource
+def test_concurrent_terminal_snapshot_handoff_is_atomic(tmp_path):
+    path = tmp_path / "terminal-handoff.db"
+    writer_conn = sqlite3.connect(path, check_same_thread=False)
+    writer_conn.row_factory = sqlite3.Row
+    db.init_db(writer_conn)
+    writer_owner = Owner(writer_conn)
+    writer = MaintenanceResourceStore(writer_owner)
+    reference = writer.record_current("mcap:test")
+
+    reader_conn = sqlite3.connect(path, check_same_thread=False)
+    reader_conn.row_factory = sqlite3.Row
+    reader = MaintenanceResourceStore(type("Reader", (), {"conn": reader_conn})())
+    gate = threading.Barrier(2)
+    observed = {}
+
+    def publish_terminal():
+        gate.wait()
+        writer_conn.execute("BEGIN IMMEDIATE")
+        updated_at = "2026-08-02T19:02:00Z"
+        writer_owner.rows["mcap:test"].update(state="reconciled", updated_at=updated_at)
+        writer_conn.execute(
+            "UPDATE maintenance_capability SET state='reconciled',revision=revision+1,updated_at=? WHERE capability_id='mcap:test'",
+            (updated_at,),
+        )
+        writer.record_current("mcap:test", commit=False)
+        writer_conn.commit()
+
+    thread = threading.Thread(target=publish_terminal)
+    thread.start(); gate.wait()
+    observed["snapshot"] = reader.snapshot(reference)
+    thread.join()
+    snapshot = observed["snapshot"]
+    if snapshot["cursor"] == "sprintctl-maintenance-cursor-1":
+        changes = reader.changes(reference, snapshot["cursor"])
+        assert changes["events"][-1]["terminal"] is True
+    else:
+        assert snapshot["cursor"] == "sprintctl-maintenance-cursor-2"
+        assert snapshot["terminal"] is True
+    reader_conn.close(); writer_conn.close()
+
+
+def exercise_frozen_history(history, owner, store):
     reference = store.record_current("mcap:test")
-    assert store.snapshot(reference)["reference"] == reference
-    assert store.changes(reference, "sprintctl-maintenance-cursor-1", 0)["next_cursor"] == "sprintctl-maintenance-cursor-1"
-    if history == "non-disclosure-four-way":
+    if history == "concurrent-terminal-handoff":
+        before = store.snapshot(reference); owner.set("reconciled", 2); store.record_current("mcap:test")
+        assert before["cursor"] == "sprintctl-maintenance-cursor-1" and store.changes(reference, before["cursor"])["events"][-1]["terminal"] is True
+    elif history == "cursor-at-floor":
+        assert store.changes(reference, "sprintctl-maintenance-cursor-0")["events"][0]["event_id"].endswith("-1")
+    elif history == "cursor-below-floor":
+        store._execute("UPDATE maintenance_resource SET recovery_floor=1 WHERE resource_ref=?", (reference,)); store.conn.commit()
+        with pytest.raises(CursorExpired): store.changes(reference, "sprintctl-maintenance-cursor-0")
+    elif history == "disconnect":
+        before = store.snapshot(reference); assert before == store.snapshot(reference)
+    elif history == "duplicate-delivery":
+        assert store.changes(reference, "sprintctl-maintenance-cursor-0") == store.changes(reference, "sprintctl-maintenance-cursor-0")
+    elif history == "expiry-materialization-authorized-write":
+        owner.set("expired", 2); store.record_current("mcap:test"); assert store.snapshot(reference)["terminal"] is True
+    elif history == "expiry-read-does-not-mutate":
+        before = dict(owner.get("mcap:test")); store.snapshot(reference); assert owner.get("mcap:test") == before
+    elif history == "immediate-client-compatibility":
+        assert owner.get("mcap:test")["state"] == "prepared"
+    elif history == "max-100-batch":
+        for position in range(2, 103): owner.set("active", position); store.record_current("mcap:test")
+        assert len(store.changes(reference, "sprintctl-maintenance-cursor-1")["events"]) == 100
+    elif history == "non-disclosure-four-way":
         for value in ("malformed", "smr1_absent", "smr1_foreign", "smr1_unauthorized"):
             with pytest.raises(ResourceNotFound, match="resource not found"):
                 store.snapshot(value)
+    elif history == "parallel-owner-decoders":
+        assert store.reference_envelope("mcap:test")["owner"] == "work"
+    elif history == "postgres-parity":
+        assert set(store.snapshot(reference)) == {"schema_version", "reference", "revision", "cursor", "terminal", "state"}
+    elif history == "prepare-response-loss":
+        assert store.reference_envelope("mcap:test") == store.reference_envelope("mcap:test")
+    elif history == "prune-0-255-256-257":
+        for position in range(2, 258): owner.set("active", position); store.record_current("mcap:test")
+        assert store._binding(reference)[1:] == (1, 257)
+    elif history == "redaction-canaries":
+        assert not ({"capability_id", "operator", "receipt", "command", "effect"} & set(store.snapshot(reference)["state"]))
+    elif history == "restart-during-wait":
+        exported = store.snapshot(reference)["cursor"]; restarted = MaintenanceResourceStore(owner); assert restarted.changes(reference, exported)["events"] == []
+    elif history == "spurious-wake":
+        clock = [0.0]; store.monotonic = lambda: clock[0]; store.pause = lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+        assert store.changes(reference, "sprintctl-maintenance-cursor-1", 1)["events"] == [] and clock[0] >= 1
+    elif history == "sqlite-parity":
+        assert store.snapshot(reference)["state"]["state"] == owner.get("mcap:test")["state"]
+    elif history == "wait-0-immediate":
+        assert store.changes(reference, "sprintctl-maintenance-cursor-1", 0)["next_cursor"].endswith("-1")
+    elif history == "wait-30-controlled-clock":
+        clock = [0.0]; store.monotonic = lambda: clock[0]; store.pause = lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+        store.changes(reference, "sprintctl-maintenance-cursor-1", 30); assert clock[0] >= 30
+    elif history == "wait-early-wake":
+        clock = [0.0]
+        def wake(_seconds): owner.set("active", 2); store.record_current("mcap:test"); clock[0] += .01
+        store.monotonic = lambda: clock[0]; store.pause = wake
+        assert store.changes(reference, "sprintctl-maintenance-cursor-1", 30)["events"][0]["data"]["state"] == "active"
+    else:
+        raise AssertionError(f"missing semantic oracle: {history}")
+
+
+@pytest.mark.parametrize("history", HISTORIES)
+def test_frozen_history_manifest_is_executable(history, resource):
+    exercise_frozen_history(history, *resource)

@@ -998,21 +998,32 @@ class WorkApplication:
             effect_ref=arguments.get("effect_ref"),
             reconciliation=arguments.get("reconciliation"),
         )
-        lifecycle = self._maintenance_store()
-        if MaintenanceResourceStore.schema_exists(lifecycle):
-            MaintenanceResourceStore(lifecycle).record_if_registered(arguments.get("capability_id"))
         return {"repo_id": self.repo_id, **result}
 
     def _maintenance_resource_prepare(
         self, arguments: dict[str, Any], context: InvocationContext
     ) -> dict[str, Any]:
-        result = self._maintenance_prepare(arguments, context)
-        self._maintenance_resource_store().record_current(result["capability_id"])
-        return result
+        request_id = self._maintenance_request_identity(context, context.request_id)
+        envelope = arguments.get("envelope")
+        if not isinstance(envelope, Mapping):
+            raise ApplicationRejection("invalid-arguments", "envelope must be an object", 422)
+        operator = envelope.get("operator")
+        if not isinstance(operator, Mapping) or operator.get("identity") != context.identity.actor:
+            raise ApplicationRejection("maintenance-actor-mismatch", "authenticated actor must equal the frozen envelope operator", 403)
+        result = self._maintenance_store().prepare(
+            capability_id=arguments.get("capability_id"), request_id=request_id,
+            envelope=envelope, actor=context.identity.actor,
+            at=self._maintenance_now(), resource=True,
+        )
+        return {"repo_id": self.repo_id, **result}
 
     def maintenance_resource_reference(self, result: dict[str, Any]) -> dict[str, Any]:
         """Owner decoder registered at Vuoro's service composition boundary."""
         return self._maintenance_resource_store().reference_envelope(result["capability_id"])
+
+    def maintenance_resource_visible(self, resource_ref: Any, *, authorized: bool) -> bool:
+        """Owner half of Vuoro's frozen non-disclosing visibility guard."""
+        return self._maintenance_resource_store().visible(resource_ref, authorized=authorized)
 
     def _maintenance_resource_get(
         self, arguments: dict[str, Any], _context: InvocationContext

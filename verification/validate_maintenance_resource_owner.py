@@ -14,9 +14,12 @@ FIXTURE = ROOT / "verification/fixtures/maintenance-resource-owner-v1/frozen-own
 EXPECTED_FREEZE = "263cfab83acb1070b1b97809b0df1e099ec8e232aa5499e545b71df4109e627d"
 EXPECTED_OPERATIONS = {"work.maintenance.resource.prepare", "work.maintenance.resource.get", "work.maintenance.resource.changes"}
 CANDIDATES = (
+    "pyproject.toml", "sprintctl/db.py", "sprintctl/pg.py",
+    "sprintctl/pg_migrations.py", "sprintctl/maintenance_capability.py",
     "sprintctl/maintenance_resource.py", "sprintctl/application.py",
     "sprintctl/vuoro_adapter.py", "sprintctl/pg_testing.py",
-    "tests/test_maintenance_resource.py", "tests/test_work_application.py",
+    "tests/test_maintenance_capability.py", "tests/test_maintenance_resource.py",
+    "tests/test_pg_bootstrap.py", "tests/test_work_application.py",
     "tests/test_work_application_pg.py", "tests/test_vuoro_work_adapter_integration.py",
     "verification/claims/2130-owner-claim.json",
     "verification/contexts/maintenance-resource-owner.json",
@@ -43,6 +46,14 @@ def main() -> None:
     test_tree = ast.parse((ROOT / "tests/test_maintenance_resource.py").read_text())
     histories = next(node.value for node in test_tree.body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "HISTORIES" for target in node.targets))
     assert set(ast.literal_eval(histories)) == set(freeze["required_histories"])
+    exercise = next(node for node in test_tree.body if isinstance(node, ast.FunctionDef) and node.name == "exercise_frozen_history")
+    semantic_branches = {}
+    for node in ast.walk(exercise):
+        if isinstance(node, ast.If) and isinstance(node.test, ast.Compare) and len(node.test.comparators) == 1 and isinstance(node.test.comparators[0], ast.Constant) and isinstance(node.test.comparators[0].value, str):
+            name = node.test.comparators[0].value
+            semantic_branches[name] = any(isinstance(child, (ast.Assert, ast.With)) for statement in node.body for child in ast.walk(statement))
+    assert set(semantic_branches) == set(freeze["required_histories"])
+    assert all(semantic_branches.values())
     source = (ROOT / "sprintctl/vuoro_adapter.py").read_text()
     for operation in EXPECTED_OPERATIONS:
         assert source.count(f'"{operation}"') >= 1

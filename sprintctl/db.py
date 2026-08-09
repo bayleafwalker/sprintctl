@@ -46,7 +46,7 @@ SPRINT_KINDS = ("active_sprint", "backlog", "archive")
 
 # Single source of truth for the local schema version; init_db() must end by
 # migrating to exactly this version, and doctor compares databases against it.
-CURRENT_SCHEMA_VERSION = 16
+CURRENT_SCHEMA_VERSION = 17
 
 _MIGRATIONS: list[str] = [
     # Migration 1: initial schema
@@ -605,6 +605,28 @@ def _migration_16(conn: sqlite3.Connection) -> None:
             )
 
 
+def _migration_17(conn: sqlite3.Connection) -> None:
+    """Install the maintenance observable-resource owner ledger."""
+    _execute_statements(
+        conn,
+        """
+        CREATE TABLE maintenance_resource (
+            resource_ref TEXT PRIMARY KEY,
+            capability_id TEXT NOT NULL UNIQUE REFERENCES maintenance_capability(capability_id) ON DELETE RESTRICT,
+            recovery_floor INTEGER NOT NULL DEFAULT 0 CHECK (recovery_floor >= 0),
+            current_position INTEGER NOT NULL DEFAULT 0 CHECK (current_position >= recovery_floor)
+        );
+        CREATE TABLE maintenance_resource_event (
+            resource_ref TEXT NOT NULL REFERENCES maintenance_resource(resource_ref) ON DELETE RESTRICT,
+            position INTEGER NOT NULL CHECK (position >= 1),
+            state TEXT NOT NULL CHECK (state IN ('prepared','attested','active','observing','reconciled','aborted','revoked','expired')),
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(resource_ref, position)
+        );
+        """,
+    )
+
+
 def _run_migration(
     conn: sqlite3.Connection,
     target_version: int,
@@ -650,7 +672,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     _run_migration(conn, 13, _migration_13)
     _run_migration(conn, 14, _migration_14, foreign_keys_off=True)
     _run_migration(conn, 15, _migration_15, foreign_keys_off=True)
-    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_16)
+    _run_migration(conn, 16, _migration_16)
+    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_17)
 
 
 # --- Sprint ---

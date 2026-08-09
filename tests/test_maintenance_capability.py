@@ -14,6 +14,7 @@ from sprintctl.maintenance_capability import (
     SQLiteMaintenanceCapabilityStore,
     StaleCapabilityRevision,
 )
+from sprintctl.maintenance_resource import MaintenanceResourceStore
 
 
 CAPABILITY_ID = "mcap:12345678-1234-4234-8234-123456789abc"
@@ -201,6 +202,35 @@ def test_transition_response_loss_replay_ignores_later_authority_clock(store):
     first = store.transition(**arguments, at=AT)
     replay = store.transition(**arguments, at="2026-08-02T20:01:00Z")
     assert replay == first | {"duplicate": True}
+
+
+def test_resource_prepare_response_loss_returns_original_binding_atomically(store, conn):
+    request_id = str(uuid4())
+    arguments = dict(
+        capability_id=CAPABILITY_ID, request_id=request_id, envelope=envelope(),
+        actor="operator", at=AT, resource=True,
+    )
+    first = store.prepare(**arguments)
+    reference = MaintenanceResourceStore(store).reference_envelope(CAPABILITY_ID)
+    replay = store.prepare(**(arguments | {"at": "2026-08-02T20:01:00Z"}))
+    assert replay == first | {"duplicate": True}
+    assert MaintenanceResourceStore(store).reference_envelope(CAPABILITY_ID) == reference
+    assert conn.execute("SELECT count(*) FROM maintenance_resource").fetchone()[0] == 1
+    assert conn.execute("SELECT count(*) FROM maintenance_resource_event").fetchone()[0] == 1
+
+
+def test_expiry_sweep_commits_terminal_projection_with_owner_state(store, monkeypatch):
+    store.prepare(
+        capability_id=CAPABILITY_ID, request_id=str(uuid4()), envelope=envelope(),
+        actor="operator", at=AT, resource=True,
+    )
+    binding = MaintenanceResourceStore(store).reference_envelope(CAPABILITY_ID)
+    monkeypatch.setattr(store, "_decision_time", lambda: datetime.now(timezone.utc) + timedelta(days=1))
+    assert store.sweep_expired(CAPABILITY_ID, at=AT) is True
+    snapshot = MaintenanceResourceStore(store).snapshot(binding["reference"])
+    assert snapshot["state"]["state"] == "expired"
+    assert snapshot["terminal"] is True
+    assert snapshot["cursor"] == "sprintctl-maintenance-cursor-2"
 
 
 def test_activation_requires_zero_live_ordinary_claims(store, conn, active_sprint):

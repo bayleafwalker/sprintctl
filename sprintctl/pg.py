@@ -1418,6 +1418,33 @@ def _apply_schema_version_6(cur: Any) -> None:
     )
 
 
+def _apply_schema_version_7(cur: Any) -> None:
+    """Install repository-scoped maintenance resource observation storage."""
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS maintenance_resource (
+            repo_id text NOT NULL,
+            resource_ref text NOT NULL,
+            capability_id text NOT NULL,
+            recovery_floor bigint NOT NULL DEFAULT 0 CHECK (recovery_floor >= 0),
+            current_position bigint NOT NULL DEFAULT 0 CHECK (current_position >= recovery_floor),
+            PRIMARY KEY(repo_id, resource_ref),
+            UNIQUE(repo_id, capability_id),
+            FOREIGN KEY(repo_id, capability_id) REFERENCES maintenance_capability(repo_id, capability_id) ON DELETE RESTRICT
+        );
+        CREATE TABLE IF NOT EXISTS maintenance_resource_event (
+            repo_id text NOT NULL,
+            resource_ref text NOT NULL,
+            position bigint NOT NULL CHECK (position >= 1),
+            state text NOT NULL CHECK (state IN ('prepared','attested','active','observing','reconciled','aborted','revoked','expired')),
+            updated_at timestamptz NOT NULL,
+            PRIMARY KEY(repo_id, resource_ref, position),
+            FOREIGN KEY(repo_id, resource_ref) REFERENCES maintenance_resource(repo_id, resource_ref) ON DELETE RESTRICT
+        );
+        """
+    )
+
+
 def compatibility_handshake(store: PgStore) -> dict[str, Any]:
     """Return the public read-only work API/schema handshake."""
     return _pg_migrations.compatibility_handshake(store)
