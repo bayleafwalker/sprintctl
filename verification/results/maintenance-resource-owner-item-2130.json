@@ -2,7 +2,7 @@
   "schema_version": "verification-result/v1",
   "context_id": "sprintctl.maintenance-resource.owner-v1",
   "contract_ref": {"doc_id": "vuoro-2029-second-owner-proof-freeze", "revision": "git:cf7a097;sha256:263cfab83acb1070b1b97809b0df1e099ec8e232aa5499e545b71df4109e627d"},
-  "implementation_sha": "ac9bc1ab27ca8d28c9327bc9c9522f2a234d195c",
+  "implementation_sha": "2b5ebb8464cbdf335070c6ec21570b76ed38981f",
   "depth": 2,
   "environment": {
     "backend": "sqlite-memory-file-plus-isolated-postgresql-18",
@@ -24,6 +24,8 @@
   "evidence": {
     "candidate_paths": [
       "pyproject.toml",
+      "uv.lock",
+      "sprintctl/__init__.py",
       "sprintctl/db.py",
       "sprintctl/pg.py",
       "sprintctl/pg_migrations.py",
@@ -43,18 +45,19 @@
       "verification/fixtures/maintenance-resource-owner-v1/frozen-owner-contract.json",
       "verification/validate_maintenance_resource_owner.py"
     ],
-    "candidate_digest": "bbd8fe840576c87b5dec01cf240995ff2ae610c9eeb8d794b554a4fa87f3f366",
+    "candidate_digest": "2690c4fa62a9d0355668b01c2752e32743311031c58de4974b43812446a74937",
     "commands": {
       "owner_targeted": "uv run pytest tests/test_release_integrity.py tests/test_maintenance_resource.py tests/test_maintenance_capability.py tests/test_work_application.py tests/test_pg_bootstrap.py -q",
       "postgres": "SPRINTCTL_TEST_PG_URL=<disposable> uv run --extra remote pytest tests/test_work_application_pg.py::test_maintenance_resource_frozen_postgres_history -q",
       "composition": "PYTHONPATH=<sprintctl+local-vuoro> <vuoro-venv>/pytest tests/test_vuoro_work_adapter_integration.py -q"
     },
-    "results": {"owner_targeted": "159 passed", "postgres": "21 passed", "composition": "6 passed", "artifact_validators": "passed"}
+    "results": {"owner_targeted": "159 passed", "postgres": "21 passed", "postgres_integration": "126 passed", "composition": "11 passed", "kctl_contract": "90 passed", "full_non_postgres": "1489 passed, 180 skipped", "artifact_validators": "passed"}
   },
   "notes": [
     "Claim 463 authority is recorded without its bearer token.",
     "The served claim heartbeat was attempted during correction and rejected by the authority stream validator (expected sequence 1, received 4); the claim was deliberately not completed.",
     "CI compatibility correction passed the exact PostgreSQL 16 integration workflow (126 tests), the kctl producer-contract selection (90 tests), and all 32 concurrent SQLite legacy-upgrade histories after schema-v17 inventory alignment.",
+    "Final holistic correction passed the full suite from a clean clone with an uncontaminated basetemp: 1489 passed and 180 PostgreSQL-marked tests skipped; exact PostgreSQL 16 workflows were run separately.",
     "This owner proof does not claim Vuoro's final descriptor registration, authentication/authorization guard, or ASGI byte-identical four-way not-found boundary; those remain explicit downstream dependencies after owner GO.",
     "The repository-wide suite encountered unrelated existing process-cwd flaky scoped-reference tests during long runs; changed and adjacent suites are independently green.",
     "Independent review is required before Sprintctl item completion."
