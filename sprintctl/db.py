@@ -13,11 +13,20 @@ from uuid import uuid4
 
 from . import contracts as _contracts
 from . import depcore as _depcore
+from . import eventcore as _eventcore
 from . import refcore as _refcore
 from . import rows as _rows
 from . import sprintcore as _sprintcore
 from . import trackcore as _trackcore
 from . import workitemcore as _workitemcore
+from .eventcore import (
+    KNOWLEDGE_EVENT_TYPES,
+    TAKEUP_EVENT_TYPES,
+    _decode_event_payload,
+    _takeup_actor_key,
+    _takeup_key,
+    process_takeup_events,
+)
 from .workitemcore import (
     PRIORITY_MAX,
     PRIORITY_MIN,
@@ -1206,6 +1215,33 @@ def set_sprint_status(
 
 
 # --- Event ---
+#
+# Event-table query shapes live in ``sprintctl.eventcore`` and are shared
+# with the PostgreSQL backend; this module supplies only the SQLite
+# execution adapter.  Public signatures are unchanged.  Transactional
+# operations (create_event, create_archive_import_event,
+# close_sprint_with_boundary_event) stay here: they control their own
+# commit/rollback boundary and call other backend-specific functions.
+
+
+class _EventSqlite:
+    """SQLite execution adapter for ``eventcore`` event operations."""
+
+    ph = "?"
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def tenant_params(self) -> tuple:
+        return ()
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def insert_uncommitted(self, sql: str, params: tuple) -> int:
+        cur = self._conn.execute(sql, params)
+        return int(cur.lastrowid)
+
 
 def _insert_event(
     conn: sqlite3.Connection,
@@ -1218,11 +1254,9 @@ def _insert_event(
 ) -> int:
     canonical_payload = _contracts.canonicalize_event_payload(event_type, payload)
     payload_str = json.dumps(canonical_payload)
-    cur = conn.execute(
-        "INSERT INTO event (sprint_id, work_item_id, source_type, actor, event_type, payload) VALUES (?, ?, ?, ?, ?, ?)",
-        (sprint_id, work_item_id, source_type, actor, event_type, payload_str),
+    return _eventcore.insert_event_row(
+        _EventSqlite(conn), sprint_id, actor, event_type, source_type, work_item_id, payload_str
     )
-    return int(cur.lastrowid)
 
 
 def create_event(
@@ -1363,161 +1397,11 @@ def close_sprint_with_boundary_event(
 
 
 def list_events(conn: sqlite3.Connection, sprint_id: int) -> list[dict]:
-    rows = conn.execute(
-        "SELECT * FROM event WHERE sprint_id = ? ORDER BY created_at ASC", (sprint_id,)
-    ).fetchall()
-    return [dict(r) for r in rows]
+    return _eventcore.list_events(_EventSqlite(conn), sprint_id)
 
 
 def list_events_limited(conn: sqlite3.Connection, sprint_id: int, limit: int = 50) -> list[dict]:
-    rows = conn.execute(
-        "SELECT * FROM event WHERE sprint_id = ? ORDER BY created_at DESC LIMIT ?",
-        (sprint_id, limit),
-    ).fetchall()
-    return [dict(r) for r in reversed(rows)]
-
-
-TAKEUP_EVENT_TYPES = ("sprint-taken-up", "sprint-released")
-
-
-def _decode_event_payload(row: sqlite3.Row | dict) -> dict:
-    raw = dict(row)
-    payload = raw.get("payload") or "{}"
-    if isinstance(payload, dict):
-        return payload
-    return json.loads(payload)
-
-
-def _takeup_key(row: dict, payload: dict) -> tuple[int, str, str | None]:
-    return (row["sprint_id"], row["actor"], payload.get("instance_id"))
-
-
-def _takeup_actor_key(row: dict) -> tuple[int, str]:
-    return (row["sprint_id"], row["actor"])
-
-
-def _serialize_takeup_row(row: dict, payload: dict) -> dict:
-    return {
-        "sprint_id": row["sprint_id"],
-        "actor": row["actor"],
-        "actor_kind": payload.get("actor_kind", "agent"),
-        "instance_id": payload.get("instance_id"),
-        "hostname": payload.get("hostname"),
-        "pid": payload.get("pid"),
-        "runtime_session_id": payload.get("runtime_session_id"),
-        "taken_up_at": row["created_at"],
-        "taken_up_event_id": row["id"],
-        "context": payload.get("context"),
-        "forced": bool(payload.get("forced", False)),
-    }
-
-
-def _serialize_released_takeup(
-    takeup_row: dict,
-    takeup_payload: dict,
-    release_row: dict,
-    release_payload: dict,
-) -> dict:
-    result = _serialize_takeup_row(takeup_row, takeup_payload)
-    result.update(
-        {
-            "released_at": release_row["created_at"],
-            "released_event_id": release_row["id"],
-            "reason": release_payload.get("reason"),
-            "matched_takeup_event_id": release_payload.get("matched_takeup_event_id"),
-        }
-    )
-    return result
-
-
-def _takeup_events(
-    conn: sqlite3.Connection,
-    sprint_id: int | None = None,
-) -> list[dict]:
-    params: list = [*TAKEUP_EVENT_TYPES]
-    query = """
-        SELECT * FROM event
-        WHERE event_type IN (?, ?)
-    """
-    if sprint_id is not None:
-        query += " AND sprint_id = ?"
-        params.append(sprint_id)
-    query += " ORDER BY sprint_id ASC, created_at ASC, id ASC"
-    return [dict(row) for row in conn.execute(query, params).fetchall()]
-
-
-def process_takeup_events(events: list[dict]) -> dict[str, list[dict]]:
-    """Derive active/released takeup state from a pre-fetched list of takeup events.
-
-    Accepts events already fetched from either sqlite or pg. The payload field
-    may be a dict (pg jsonb) or a JSON string (sqlite text); _decode_event_payload
-    handles both.
-    """
-    active_by_event_id: dict[int, tuple[dict, dict]] = {}
-    active_by_key: dict[tuple[int, str, str | None], list[int]] = {}
-    active_by_actor: dict[tuple[int, str], list[int]] = {}
-    released: list[dict] = []
-    unmatched_releases: list[dict] = []
-
-    for row in events:
-        payload = _decode_event_payload(row)
-        if row["event_type"] == "sprint-taken-up":
-            active_by_event_id[row["id"]] = (row, payload)
-            active_by_key.setdefault(_takeup_key(row, payload), []).append(row["id"])
-            active_by_actor.setdefault(_takeup_actor_key(row), []).append(row["id"])
-            continue
-
-        matched_id = payload.get("matched_takeup_event_id")
-        takeup_pair: tuple[dict, dict] | None = None
-        if matched_id is not None:
-            takeup_pair = active_by_event_id.pop(matched_id, None)
-        if takeup_pair is None:
-            key = _takeup_key(row, payload)
-            candidates = active_by_key.get(key, [])
-            while candidates and candidates[-1] not in active_by_event_id:
-                candidates.pop()
-            if candidates:
-                takeup_pair = active_by_event_id.pop(candidates.pop(), None)
-        if takeup_pair is None and payload.get("instance_id") is None:
-            candidates = active_by_actor.get(_takeup_actor_key(row), [])
-            while candidates and candidates[-1] not in active_by_event_id:
-                candidates.pop()
-            if candidates:
-                takeup_pair = active_by_event_id.pop(candidates.pop(), None)
-        if takeup_pair is None:
-            unmatched_releases.append(
-                {
-                    "sprint_id": row["sprint_id"],
-                    "actor": row["actor"],
-                    "actor_kind": payload.get("actor_kind", "agent"),
-                    "instance_id": payload.get("instance_id"),
-                    "hostname": payload.get("hostname"),
-                    "pid": payload.get("pid"),
-                    "released_at": row["created_at"],
-                    "released_event_id": row["id"],
-                    "reason": payload.get("reason"),
-                    "matched_takeup_event_id": payload.get("matched_takeup_event_id"),
-                }
-            )
-            continue
-
-        released.append(_serialize_released_takeup(*takeup_pair, row, payload))
-
-    current_by_key: dict[tuple[int, str, str | None], dict] = {}
-    for takeup_row, takeup_payload in active_by_event_id.values():
-        current_by_key[_takeup_key(takeup_row, takeup_payload)] = _serialize_takeup_row(
-            takeup_row,
-            takeup_payload,
-        )
-    active = sorted(
-        current_by_key.values(),
-        key=lambda item: (item["sprint_id"], item["taken_up_at"], item["taken_up_event_id"]),
-    )
-    return {
-        "active_takeups": active,
-        "released_takeups": released,
-        "unmatched_releases": unmatched_releases,
-    }
+    return _eventcore.list_events_limited(_EventSqlite(conn), sprint_id, limit)
 
 
 def list_takeup_history(
@@ -1525,36 +1409,19 @@ def list_takeup_history(
     sprint_id: int | None = None,
 ) -> dict[str, list[dict]]:
     """Return active and released sprint takeup rows derived from events."""
-    return process_takeup_events(_takeup_events(conn, sprint_id))
+    return _eventcore.list_takeup_history(_EventSqlite(conn), sprint_id)
 
 
 def list_active_takeups(
     conn: sqlite3.Connection,
     sprint_id: int | None = None,
 ) -> list[dict]:
-    return list_takeup_history(conn, sprint_id)["active_takeups"]
-
-
-KNOWLEDGE_EVENT_TYPES = ("decision", "pattern-noted", "lesson-learned", "risk-accepted")
+    return _eventcore.list_active_takeups(_EventSqlite(conn), sprint_id)
 
 
 def list_knowledge_candidates(conn: sqlite3.Connection, sprint_id: int) -> list[dict]:
     """Return events of knowledge types for a sprint, with payload deserialized."""
-    placeholders = ",".join("?" for _ in KNOWLEDGE_EVENT_TYPES)
-    rows = conn.execute(
-        f"""
-        SELECT * FROM event
-        WHERE sprint_id = ? AND event_type IN ({placeholders})
-        ORDER BY created_at ASC, id ASC
-        """,
-        (sprint_id, *KNOWLEDGE_EVENT_TYPES),
-    ).fetchall()
-    result = []
-    for r in rows:
-        row = dict(r)
-        row["payload"] = json.loads(row.get("payload") or "{}")
-        result.append(row)
-    return result
+    return _eventcore.list_knowledge_candidates(_EventSqlite(conn), sprint_id)
 
 
 # --- Claim ---
