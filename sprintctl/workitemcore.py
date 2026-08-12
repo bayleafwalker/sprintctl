@@ -58,6 +58,22 @@ def validate_item_edit_revision(revision: str) -> str:
     return revision
 
 
+_ITEM_STATUS_REVISION_RE = re.compile(
+    r"^item:[0-9a-fA-F-]{36}@status:(pending|active|done|blocked)$"
+)
+
+
+def item_status_revision(item: dict) -> str:
+    """Return the CAS token for the status-transition state of one item."""
+    return f"item:{item['aggregate_uuid']}@status:{item['status']}"
+
+
+def validate_item_status_revision(revision: str) -> str:
+    if not isinstance(revision, str) or not _ITEM_STATUS_REVISION_RE.fullmatch(revision):
+        raise ValueError("expected_revision must be a valid item status revision")
+    return revision
+
+
 class EditConflict(ValueError):
     """A work-item edit was based on a stale description revision."""
 
