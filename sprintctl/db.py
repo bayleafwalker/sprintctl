@@ -1,4 +1,3 @@
-import hashlib
 import json
 import os
 import posixpath
@@ -31,7 +30,11 @@ from .eventcore import (
 from .workitemcore import (
     PRIORITY_MAX,
     PRIORITY_MIN,
+    EditConflict,
+    StatusConflict,
+    _description_revision,
     effective_priority,
+    validate_item_edit_revision,
     validate_priority,
     validate_work_item_description,
 )
@@ -42,14 +45,6 @@ _WAL_BUSY_RETRY_DELAYS_SECONDS = (0.01, 0.02, 0.04, 0.08)
 
 class InvalidTransition(ValueError):
     pass
-
-
-class EditConflict(ValueError):
-    """A work-item edit was based on a stale description revision."""
-
-
-class StatusConflict(ValueError):
-    """An item or sprint transition was based on a stale status revision."""
 
 
 VALID_TRANSITIONS: dict[str, set[str]] = {
@@ -873,6 +868,46 @@ class _WorkItemSqlite:
     def join_tenant_clause(self, left_alias: str, right_alias: str) -> str:
         return ""
 
+    def begin_txn(self) -> None:
+        self._conn.execute("BEGIN IMMEDIATE")
+
+    def commit(self) -> None:
+        self._conn.commit()
+
+    def rollback(self) -> None:
+        self._conn.rollback()
+
+    def for_update_of(self, alias: str) -> str:
+        return ""
+
+    def lock_for_update(self, table: str, id_: int, extra_where: str = "") -> dict | None:
+        sql = f"SELECT * FROM {table} WHERE id = ?{extra_where}"
+        row = self._conn.execute(sql, (id_,)).fetchone()
+        return dict(row) if row else None
+
+    def execute(self, sql: str, params: tuple) -> None:
+        self._conn.execute(sql, params)
+
+    def insert_event(
+        self,
+        sprint_id: int,
+        actor: str,
+        event_type: str,
+        *,
+        source_type: str,
+        work_item_id: int,
+        payload: dict,
+    ) -> int:
+        return _insert_event(
+            self._conn,
+            sprint_id,
+            actor,
+            event_type,
+            source_type=source_type,
+            work_item_id=work_item_id,
+            payload=payload,
+        )
+
 
 def create_work_item(
     conn: sqlite3.Connection,
@@ -900,29 +935,12 @@ def get_work_item(conn: sqlite3.Connection, item_id: int) -> dict | None:
     return _workitemcore.get_work_item(_WorkItemSqlite(conn), item_id)
 
 
-def _description_revision(item: dict, version: int) -> str:
-    digest = hashlib.sha256((item.get("description") or "").encode("utf-8")).hexdigest()
-    return (
-        f"item:{item['aggregate_uuid']}@description:v{version}"
-        f"@sha256:{digest}"
-    )
-
-
-_ITEM_EDIT_REVISION_RE = re.compile(
-    r"^item:[0-9a-fA-F-]{36}@description:v[0-9]+@sha256:[0-9a-f]{64}$"
-)
 _ITEM_STATUS_REVISION_RE = re.compile(
     r"^item:[0-9a-fA-F-]{36}@status:(pending|active|done|blocked)$"
 )
 _SPRINT_STATUS_REVISION_RE = re.compile(
     r"^sprint:[0-9a-fA-F-]{36}@status:(planned|active|closed)$"
 )
-
-
-def validate_item_edit_revision(revision: str) -> str:
-    if not isinstance(revision, str) or not _ITEM_EDIT_REVISION_RE.fullmatch(revision):
-        raise ValueError("expected_revision must be a valid item description revision")
-    return revision
 
 
 def item_status_revision(item: dict) -> str:
@@ -951,25 +969,7 @@ def get_work_item_with_edit_revision(
     conn: sqlite3.Connection, item_id: int
 ) -> tuple[dict, str] | None:
     """Read an item and its description revision from one SQLite snapshot."""
-    row = conn.execute(
-        """
-        SELECT wi.*,
-               (
-                   SELECT COUNT(*)
-                   FROM event e
-                   WHERE e.work_item_id = wi.id
-                     AND e.event_type = ?
-               ) AS edit_version
-        FROM work_item wi
-        WHERE wi.id = ?
-        """,
-        (_contracts.ITEM_EDITED_EVENT_TYPE, item_id),
-    ).fetchone()
-    if row is None:
-        return None
-    item = dict(row)
-    version = int(item.pop("edit_version"))
-    return item, _description_revision(item, version)
+    return _workitemcore.get_work_item_with_edit_revision(_WorkItemSqlite(conn), item_id)
 
 
 def update_work_item_description(
@@ -986,71 +986,10 @@ def update_work_item_description(
     backend callers. Catalog and CLI callers always provide the revision read
     from :func:`get_work_item_with_edit_revision`.
     """
-    description = validate_work_item_description(description)
-    if expected_revision is not None:
-        expected_revision = validate_item_edit_revision(expected_revision)
-    if not isinstance(actor, str) or not actor.strip():
-        raise ValueError("actor must be a non-empty string")
-    try:
-        conn.execute("BEGIN IMMEDIATE")
-        current = get_work_item_with_edit_revision(conn, item_id)
-        if current is None:
-            raise ValueError(f"Item #{item_id} not found")
-        item, previous_revision = current
-        if (
-            expected_revision is not None
-            and expected_revision != previous_revision
-        ):
-            raise EditConflict(
-                f"Item #{item_id} description revision mismatch: "
-                f"expected {expected_revision}, current {previous_revision}"
-            )
-        if item.get("description") == description:
-            raise ValueError(
-                f"Item #{item_id} description unchanged: no-op edit rejected"
-            )
-
-        version = int(previous_revision.split("@description:v", 1)[1].split("@", 1)[0])
-        revision = _description_revision(
-            {**item, "description": description}, version + 1
-        )
-
-        conn.execute(
-            """
-            UPDATE work_item
-            SET description = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-            WHERE id = ?
-            """,
-            (description, item_id),
-        )
-        event_id = _insert_event(
-            conn,
-            item["sprint_id"],
-            actor.strip(),
-            _contracts.ITEM_EDITED_EVENT_TYPE,
-            source_type="actor",
-            work_item_id=item_id,
-            payload={
-                "summary": f"Item #{item_id} description edited",
-                "field": "description",
-                "previous_description": item.get("description") or "",
-                "description": description,
-                "previous_revision": previous_revision,
-                "revision": revision,
-            },
-        )
-        updated = get_work_item(conn, item_id)
-        assert updated is not None
-        conn.commit()
-        return {
-            "item": updated,
-            "event_id": event_id,
-            "previous_revision": previous_revision,
-            "revision": revision,
-        }
-    except Exception:
-        conn.rollback()
-        raise
+    return _workitemcore.update_work_item_description(
+        _WorkItemSqlite(conn), item_id, description,
+        expected_revision=expected_revision, actor=actor,
+    )
 
 
 def list_work_items(
