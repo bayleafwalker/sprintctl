@@ -470,6 +470,80 @@ class TestItemCRUD:
         ]
         assert len(edits) == 1
 
+    def test_overlapping_edit_writers_accept_exactly_one_revision(
+        self, conn, db_path, active_sprint
+    ):
+        """Two real concurrent connections race the same CAS edit.
+
+        Mirrors tests/test_pg_integration.py's
+        test_overlapping_edit_writers_accept_exactly_one_revision, proving
+        SQLite's ``BEGIN IMMEDIATE`` (workitemcore.py's ``begin_txn``) still
+        serializes concurrent writers on the same item after the P2.1
+        transaction-scaffold extraction, the same way PostgreSQL's
+        ``SELECT ... FOR UPDATE`` does. Unlike
+        test_two_readers_cannot_apply_the_same_edit_revision above (which
+        calls the two writes sequentially from one thread), this uses a
+        real threading.Barrier so both writers attempt BEGIN IMMEDIATE at
+        the same instant — the PG suite had this coverage already; the
+        SQLite suite did not.
+        """
+        track_id = db.get_or_create_track(conn, active_sprint["id"], "backend")
+        item_id = db.create_work_item(
+            conn, active_sprint["id"], track_id, "Concurrent edit", "Original scope"
+        )
+        current = db.get_work_item_with_edit_revision(conn, item_id)
+        assert current is not None
+        barrier = threading.Barrier(2)
+        outcomes: list[tuple[str, str]] = []
+
+        def edit(label: str) -> None:
+            independent = db.get_connection(db_path)
+            try:
+                barrier.wait(timeout=10)
+                try:
+                    db.update_work_item_description(
+                        independent,
+                        item_id,
+                        f"{label} scope",
+                        expected_revision=current[1],
+                        actor=label,
+                    )
+                except db.EditConflict:
+                    outcomes.append((label, "conflict"))
+                else:
+                    outcomes.append((label, "accepted"))
+            finally:
+                independent.close()
+
+        threads = [
+            threading.Thread(target=edit, args=("writer-a",)),
+            threading.Thread(target=edit, args=("writer-b",)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=15)
+        assert all(not thread.is_alive() for thread in threads)
+        assert sorted(outcome for _label, outcome in outcomes) == [
+            "accepted",
+            "conflict",
+        ]
+
+        item = db.get_work_item(conn, item_id)
+        assert item is not None
+        accepted_actor = next(
+            label for label, outcome in outcomes if outcome == "accepted"
+        )
+        assert item["description"] == f"{accepted_actor} scope"
+        edits = [
+            event
+            for event in db.list_events(conn, active_sprint["id"])
+            if event["work_item_id"] == item_id
+            and event["event_type"] == contracts.ITEM_EDITED_EVENT_TYPE
+        ]
+        assert len(edits) == 1
+        assert edits[0]["actor"] == accepted_actor
+
     def test_item_edit_rolls_back_description_when_audit_insert_fails(
         self, conn, active_sprint, monkeypatch
     ):

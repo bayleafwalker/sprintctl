@@ -46,7 +46,11 @@ from . import sprintcore as _sprintcore
 from . import trackcore as _trackcore
 from . import workitemcore as _workitemcore
 from .workitemcore import (
+    EditConflict,
+    StatusConflict,
+    _description_revision,
     effective_priority,
+    validate_item_edit_revision,
     validate_priority,
     validate_work_item_description,
 )
@@ -65,16 +69,12 @@ from .db import (
     SPRINT_KINDS,
     REF_TYPES,
     InvalidTransition,
-    EditConflict,
-    StatusConflict,
     CLAIM_IDENTITY_STATUS_PROVEN,
     CLAIM_IDENTITY_STATUS_LEGACY,
     MAX_CLAIM_TOKEN_INSERT_RETRIES,
     _validate_sprint_transition,
     _normalize_ref_target,
     _serialize_ref,
-    _description_revision,
-    validate_item_edit_revision,
     item_status_revision,
     sprint_status_revision,
     validate_item_status_revision,
@@ -1795,6 +1795,51 @@ class _WorkItemPg:
     def join_tenant_clause(self, left_alias: str, right_alias: str) -> str:
         return f" AND {left_alias}.repo_id = {right_alias}.repo_id"
 
+    def begin_txn(self) -> None:
+        pass  # already in an explicit (non-autocommit) transaction; see docstring
+
+    def commit(self) -> None:
+        self._store.conn.commit()
+
+    def rollback(self) -> None:
+        self._store.conn.rollback()
+
+    def for_update_of(self, alias: str) -> str:
+        return f" FOR UPDATE OF {alias}"
+
+    def lock_for_update(self, table: str, id_: int, extra_where: str = "") -> dict | None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(
+                f"SELECT * FROM {table} WHERE repo_id = %s AND id = %s{extra_where} FOR UPDATE",
+                (self._store.repo_id, id_),
+            )
+            row = cur.fetchone()
+        return _norm(row) if row else None
+
+    def execute(self, sql: str, params: tuple) -> None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+
+    def insert_event(
+        self,
+        sprint_id: int,
+        actor: str,
+        event_type: str,
+        *,
+        source_type: str,
+        work_item_id: int,
+        payload: dict,
+    ) -> int:
+        return _insert_event(
+            self._store,
+            sprint_id,
+            actor,
+            event_type,
+            source_type=source_type,
+            work_item_id=work_item_id,
+            payload=payload,
+        )
+
 
 def create_work_item(
     store: PgStore,
@@ -1826,28 +1871,7 @@ def get_work_item_with_edit_revision(
     store: PgStore, item_id: int
 ) -> tuple[dict, str] | None:
     """Read an item and its description revision from one PostgreSQL snapshot."""
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT wi.*,
-                   (
-                       SELECT COUNT(*)
-                       FROM event e
-                       WHERE e.repo_id = wi.repo_id
-                         AND e.work_item_id = wi.id
-                         AND e.event_type = %s
-                   ) AS edit_version
-            FROM work_item wi
-            WHERE wi.repo_id = %s AND wi.id = %s
-            """,
-            (_contracts.ITEM_EDITED_EVENT_TYPE, store.repo_id, item_id),
-        )
-        row = cur.fetchone()
-    if row is None:
-        return None
-    item = _norm(row)
-    version = int(item.pop("edit_version"))
-    return item, _description_revision(item, version)
+    return _workitemcore.get_work_item_with_edit_revision(_WorkItemPg(store), item_id)
 
 
 def update_work_item_description(
@@ -1859,91 +1883,10 @@ def update_work_item_description(
     actor: str = "actor",
 ) -> dict:
     """Atomically edit an item and append its immutable audit revision."""
-    description = validate_work_item_description(description)
-    if expected_revision is not None:
-        expected_revision = validate_item_edit_revision(expected_revision)
-    if not isinstance(actor, str) or not actor.strip():
-        raise ValueError("actor must be a non-empty string")
-    try:
-        with store.conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT wi.*,
-                       (
-                           SELECT COUNT(*)
-                           FROM event e
-                           WHERE e.repo_id = wi.repo_id
-                             AND e.work_item_id = wi.id
-                             AND e.event_type = %s
-                       ) AS edit_version
-                FROM work_item wi
-                WHERE wi.repo_id = %s AND wi.id = %s
-                FOR UPDATE OF wi
-                """,
-                (_contracts.ITEM_EDITED_EVENT_TYPE, store.repo_id, item_id),
-            )
-            row = cur.fetchone()
-        if row is None:
-            raise ValueError(f"Item #{item_id} not found")
-
-        item = _norm(row)
-        version = int(item.pop("edit_version"))
-        previous_revision = _description_revision(item, version)
-        if (
-            expected_revision is not None
-            and expected_revision != previous_revision
-        ):
-            raise EditConflict(
-                f"Item #{item_id} description revision mismatch: "
-                f"expected {expected_revision}, current {previous_revision}"
-            )
-        if item.get("description") == description:
-            raise ValueError(
-                f"Item #{item_id} description unchanged: no-op edit rejected"
-            )
-
-        revision = _description_revision(
-            {**item, "description": description}, version + 1
-        )
-        with store.conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE work_item
-                SET description = %s, updated_at = now()
-                WHERE repo_id = %s AND id = %s
-                RETURNING *
-                """,
-                (description, store.repo_id, item_id),
-            )
-            updated_row = cur.fetchone()
-        assert updated_row is not None
-        event_id = _insert_event(
-            store,
-            item["sprint_id"],
-            actor.strip(),
-            _contracts.ITEM_EDITED_EVENT_TYPE,
-            source_type="actor",
-            work_item_id=item_id,
-            payload={
-                "summary": f"Item #{item_id} description edited",
-                "field": "description",
-                "previous_description": item.get("description") or "",
-                "description": description,
-                "previous_revision": previous_revision,
-                "revision": revision,
-            },
-        )
-        updated = _norm(updated_row)
-        store.conn.commit()
-        return {
-            "item": updated,
-            "event_id": event_id,
-            "previous_revision": previous_revision,
-            "revision": revision,
-        }
-    except Exception:
-        store.conn.rollback()
-        raise
+    return _workitemcore.update_work_item_description(
+        _WorkItemPg(store), item_id, description,
+        expected_revision=expected_revision, actor=actor,
+    )
 
 
 def list_work_items(
