@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from . import contracts as _contracts
+from . import depcore as _depcore
+from . import refcore as _refcore
 from . import rows as _rows
 from . import sprintcore as _sprintcore
 from . import trackcore as _trackcore
@@ -2203,6 +2205,39 @@ def _get_active_coordinate_claim_row(
 
 
 # --- Ref ---
+#
+# Ref-table query shapes live in ``sprintctl.refcore`` and are shared with
+# the PostgreSQL backend; this module supplies only the SQLite execution
+# adapter.  Public signatures are unchanged.
+
+
+class _RefSqlite:
+    """SQLite execution adapter for ``refcore`` ref operations."""
+
+    ph = "?"
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def tenant_params(self) -> tuple:
+        return ()
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        row = self._conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def mutate(self, sql: str, params: tuple) -> None:
+        self._conn.execute(sql, params)
+        self._conn.commit()
+
+    def insert_id(self, sql: str, params: tuple) -> int:
+        cur = self._conn.execute(sql, params)
+        self._conn.commit()
+        return cur.lastrowid
+
 
 def add_ref(
     conn: sqlite3.Connection,
@@ -2217,30 +2252,15 @@ def add_ref(
     item = get_work_item(conn, work_item_id)
     if item is None:
         raise ValueError(f"Work item #{work_item_id} not found")
-    cur = conn.execute(
-        "INSERT INTO ref (work_item_id, ref_type, url, label) VALUES (?, ?, ?, ?)",
-        (work_item_id, ref_type, url, label),
-    )
-    conn.commit()
-    return cur.lastrowid
+    return _refcore.add_ref(_RefSqlite(conn), work_item_id, ref_type, url, label)
 
 
 def list_refs(conn: sqlite3.Connection, work_item_id: int) -> list[dict]:
-    rows = conn.execute(
-        "SELECT * FROM ref WHERE work_item_id = ? ORDER BY created_at ASC",
-        (work_item_id,),
-    ).fetchall()
-    return [_serialize_ref(r) for r in rows]
+    return [_serialize_ref(r) for r in _refcore.list_refs(_RefSqlite(conn), work_item_id)]
 
 
 def list_refs_for_items(conn: sqlite3.Connection, work_item_ids: list[int]) -> dict[int, list[dict]]:
-    if not work_item_ids:
-        return {}
-    placeholders = ",".join("?" for _ in work_item_ids)
-    rows = conn.execute(
-        f"SELECT * FROM ref WHERE work_item_id IN ({placeholders}) ORDER BY created_at ASC, id ASC",
-        list(work_item_ids),
-    ).fetchall()
+    rows = _refcore.list_refs_for_items(_RefSqlite(conn), work_item_ids)
     refs_by_item: dict[int, list[dict]] = {}
     for r in rows:
         refs_by_item.setdefault(r["work_item_id"], []).append(_serialize_ref(r))
@@ -2248,16 +2268,52 @@ def list_refs_for_items(conn: sqlite3.Connection, work_item_ids: list[int]) -> d
 
 
 def remove_ref(conn: sqlite3.Connection, ref_id: int, work_item_id: int) -> None:
-    row = conn.execute(
-        "SELECT id FROM ref WHERE id = ? AND work_item_id = ?", (ref_id, work_item_id)
-    ).fetchone()
-    if row is None:
-        raise ValueError(f"Ref #{ref_id} not found on item #{work_item_id}")
-    conn.execute("DELETE FROM ref WHERE id = ?", (ref_id,))
-    conn.commit()
+    _refcore.remove_ref(_RefSqlite(conn), ref_id, work_item_id)
 
 
 # --- Dep ---
+#
+# Dep-table query shapes live in ``sprintctl.depcore`` and are shared with
+# the PostgreSQL backend; this module supplies only the SQLite execution
+# adapter.  Public signatures are unchanged.
+
+
+class _DepSqlite:
+    """SQLite execution adapter for ``depcore`` dep operations."""
+
+    ph = "?"
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def tenant_params(self) -> tuple:
+        return ()
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        row = self._conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def mutate(self, sql: str, params: tuple) -> None:
+        self._conn.execute(sql, params)
+        self._conn.commit()
+
+    def insert_ignore(
+        self, columns: tuple[str, ...], values: tuple, conflict_cols: tuple[str, ...]
+    ) -> None:
+        col_list = ", ".join(columns)
+        placeholders = ", ".join(["?"] * len(values))
+        self._conn.execute(
+            f"INSERT OR IGNORE INTO dep ({col_list}) VALUES ({placeholders})",
+            values,
+        )
+        self._conn.commit()
+
+    def join_tenant_clause(self, left_alias: str, right_alias: str) -> str:
+        return ""
+
 
 def add_dep(
     conn: sqlite3.Connection,
@@ -2275,60 +2331,22 @@ def add_dep(
         raise ValueError(f"Work item #{item_id} not found")
     if get_work_item(conn, blocked_item_id) is None:
         raise ValueError(f"Work item #{blocked_item_id} not found")
-    conn.execute(
-        "INSERT OR IGNORE INTO dep (item_id, blocked_item_id) VALUES (?, ?)",
-        (item_id, blocked_item_id),
-    )
-    row = conn.execute(
-        "SELECT id FROM dep WHERE item_id = ? AND blocked_item_id = ?",
-        (item_id, blocked_item_id),
-    ).fetchone()
-    conn.commit()
-    return row[0]
+    return _depcore.add_dep(_DepSqlite(conn), item_id, blocked_item_id)
 
 
 def list_deps_blocking(conn: sqlite3.Connection, item_id: int) -> list[dict]:
     """Return deps where item_id is blocked — i.e. items that must complete first."""
-    rows = conn.execute(
-        """
-        SELECT d.id, d.item_id, d.blocked_item_id, d.created_at,
-               wi.title AS blocker_title, wi.status AS blocker_status
-        FROM dep d
-        JOIN work_item wi ON d.item_id = wi.id
-        WHERE d.blocked_item_id = ?
-        ORDER BY d.created_at ASC
-        """,
-        (item_id,),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    return _depcore.list_deps_blocking(_DepSqlite(conn), item_id)
 
 
 def list_deps_blocked_by(conn: sqlite3.Connection, item_id: int) -> list[dict]:
     """Return deps where item_id is the blocker — i.e. items waiting on it."""
-    rows = conn.execute(
-        """
-        SELECT d.id, d.item_id, d.blocked_item_id, d.created_at,
-               wi.title AS waiting_title, wi.status AS waiting_status
-        FROM dep d
-        JOIN work_item wi ON d.blocked_item_id = wi.id
-        WHERE d.item_id = ?
-        ORDER BY d.created_at ASC
-        """,
-        (item_id,),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    return _depcore.list_deps_blocked_by(_DepSqlite(conn), item_id)
 
 
 def remove_dep(conn: sqlite3.Connection, dep_id: int, item_id: int) -> None:
     """Remove a dep. item_id must match either item_id or blocked_item_id."""
-    row = conn.execute(
-        "SELECT id FROM dep WHERE id = ? AND (item_id = ? OR blocked_item_id = ?)",
-        (dep_id, item_id, item_id),
-    ).fetchone()
-    if row is None:
-        raise ValueError(f"Dep #{dep_id} not found for item #{item_id}")
-    conn.execute("DELETE FROM dep WHERE id = ?", (dep_id,))
-    conn.commit()
+    _depcore.remove_dep(_DepSqlite(conn), dep_id, item_id)
 
 
 def get_ready_items(
