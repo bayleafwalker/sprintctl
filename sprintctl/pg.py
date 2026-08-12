@@ -43,6 +43,12 @@ from . import refcore as _refcore
 from . import rows as _rows
 from . import sprintcore as _sprintcore
 from . import trackcore as _trackcore
+from . import workitemcore as _workitemcore
+from .workitemcore import (
+    effective_priority,
+    validate_priority,
+    validate_work_item_description,
+)
 from .db import (
     VALID_TRANSITIONS,
     SPRINT_TRANSITIONS,
@@ -71,9 +77,6 @@ from .db import (
     sprint_status_revision,
     validate_item_status_revision,
     validate_sprint_status_revision,
-    validate_work_item_description,
-    validate_priority,
-    effective_priority,
 )
 
 # ---------------------------------------------------------------------------
@@ -1738,7 +1741,58 @@ def get_track(store: PgStore, track_id: int) -> dict | None:
 
 # ---------------------------------------------------------------------------
 # WorkItem
+#
+# Work-item CRUD query shapes live in ``sprintctl.workitemcore`` and are
+# shared with the SQLite backend; this module supplies only the PostgreSQL
+# execution adapter.  Public signatures are unchanged.  CAS/conflict
+# operations (update_work_item_description, set_work_item_status) stay here.
 # ---------------------------------------------------------------------------
+
+
+class _WorkItemPg:
+    """PostgreSQL execution adapter for ``workitemcore`` work-item operations."""
+
+    ph = "%s"
+    updated_at_sql = "now()"
+
+    def __init__(self, store: PgStore) -> None:
+        self._store = store
+
+    def tenant_params(self) -> tuple:
+        return (self._store.repo_id,)
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        return _norm(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [_norm(r) for r in rows]
+
+    def insert_id(self, sql: str, params: tuple) -> int:
+        with self._store.conn.cursor() as cur:
+            cur.execute(f"{sql} RETURNING id", params)
+            row = cur.fetchone()
+        self._store.conn.commit()
+        return row["id"]
+
+    def update_one(self, sql: str, params: tuple) -> bool:
+        with self._store.conn.cursor() as cur:
+            cur.execute(f"{sql} RETURNING id", params)
+            row = cur.fetchone()
+        if row is None:
+            self._store.conn.rollback()
+            return False
+        self._store.conn.commit()
+        return True
+
+    def join_tenant_clause(self, left_alias: str, right_alias: str) -> str:
+        return f" AND {left_alias}.repo_id = {right_alias}.repo_id"
+
 
 def create_work_item(
     store: PgStore,
@@ -1749,19 +1803,9 @@ def create_work_item(
     assignee: str | None = None,
     priority: int | None = None,
 ) -> int:
-    priority = validate_priority(priority)
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO work_item (repo_id, sprint_id, track_id, title, description, assignee, priority, aggregate_uuid)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-            """,
-            (store.repo_id, sprint_id, track_id, title, description, assignee, priority, str(uuid4())),
-        )
-        row = cur.fetchone()
-    store.conn.commit()
-    return row["id"]
+    return _workitemcore.create_work_item(
+        _WorkItemPg(store), sprint_id, track_id, title, description, assignee, priority
+    )
 
 
 def set_work_item_priority(
@@ -1769,32 +1813,11 @@ def set_work_item_priority(
     item_id: int,
     priority: int | None,
 ) -> None:
-    priority = validate_priority(priority)
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE work_item
-            SET priority = %s, updated_at = now()
-            WHERE repo_id = %s AND id = %s
-            RETURNING id
-            """,
-            (priority, store.repo_id, item_id),
-        )
-        row = cur.fetchone()
-    if row is None:
-        store.conn.rollback()
-        raise ValueError(f"Item #{item_id} not found")
-    store.conn.commit()
+    _workitemcore.set_work_item_priority(_WorkItemPg(store), item_id, priority)
 
 
 def get_work_item(store: PgStore, item_id: int) -> dict | None:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM work_item WHERE repo_id = %s AND id = %s",
-            (store.repo_id, item_id),
-        )
-        row = cur.fetchone()
-    return _norm(row) if row else None
+    return _workitemcore.get_work_item(_WorkItemPg(store), item_id)
 
 
 def get_work_item_with_edit_revision(
@@ -1927,27 +1950,7 @@ def list_work_items(
     track_name: str | None = None,
     status: str | None = None,
 ) -> list[dict]:
-    query = """
-        SELECT wi.*, t.name AS track_name
-        FROM work_item wi
-        JOIN track t ON wi.repo_id = t.repo_id AND wi.track_id = t.id
-        WHERE wi.repo_id = %s
-    """
-    params: list = [store.repo_id]
-    if sprint_id is not None:
-        query += " AND wi.sprint_id = %s"
-        params.append(sprint_id)
-    if track_name is not None:
-        query += " AND t.name = %s"
-        params.append(track_name)
-    if status is not None:
-        query += " AND wi.status = %s"
-        params.append(status)
-    query += " ORDER BY wi.created_at ASC"
-    with store.conn.cursor() as cur:
-        cur.execute(query, params)
-        rows = cur.fetchall()
-    return [_norm(r) for r in rows]
+    return _workitemcore.list_work_items(_WorkItemPg(store), sprint_id, track_name, status)
 
 
 def set_work_item_status(

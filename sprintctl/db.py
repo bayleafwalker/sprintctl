@@ -17,6 +17,14 @@ from . import refcore as _refcore
 from . import rows as _rows
 from . import sprintcore as _sprintcore
 from . import trackcore as _trackcore
+from . import workitemcore as _workitemcore
+from .workitemcore import (
+    PRIORITY_MAX,
+    PRIORITY_MIN,
+    effective_priority,
+    validate_priority,
+    validate_work_item_description,
+)
 
 
 _WAL_BUSY_RETRY_DELAYS_SECONDS = (0.01, 0.02, 0.04, 0.08)
@@ -812,41 +820,48 @@ def get_track(conn: sqlite3.Connection, track_id: int) -> dict | None:
 
 
 # --- WorkItem ---
-
-def validate_work_item_description(description: str) -> str:
-    """Validate a description supplied through the item mutation surface."""
-    if not isinstance(description, str) or not description.strip():
-        raise ValueError("work item description must contain non-whitespace text")
-    if "\x00" in description:
-        raise ValueError("work item description must not contain NUL bytes")
-    return description
+#
+# Work-item CRUD query shapes live in ``sprintctl.workitemcore`` and are
+# shared with the PostgreSQL backend; this module supplies only the SQLite
+# execution adapter.  Public signatures are unchanged.  CAS/conflict
+# operations (update_work_item_description, set_work_item_status) stay here:
+# their transactional locking is backend-specific.
 
 
-PRIORITY_MIN = 1
-PRIORITY_MAX = 9
+class _WorkItemSqlite:
+    """SQLite execution adapter for ``workitemcore`` work-item operations."""
 
-_PRIORITY_TITLE_RE = re.compile(r"^\[p([1-9])\]\s")
+    ph = "?"
+    updated_at_sql = "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
 
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
 
-def validate_priority(priority: int | None) -> int | None:
-    """Validate a work item priority: None (unprioritized) or an int in 1..9."""
-    if priority is None:
-        return None
-    if isinstance(priority, bool) or not isinstance(priority, int):
-        raise ValueError("priority must be an integer between 1 and 9")
-    if not (PRIORITY_MIN <= priority <= PRIORITY_MAX):
-        raise ValueError(
-            f"priority must be between {PRIORITY_MIN} and {PRIORITY_MAX} (1 = highest)"
-        )
-    return priority
+    def tenant_params(self) -> tuple:
+        return ()
 
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        row = self._conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
 
-def effective_priority(item: dict) -> int | None:
-    """Native priority column, falling back to the legacy [pN] title prefix."""
-    if item.get("priority") is not None:
-        return item["priority"]
-    match = _PRIORITY_TITLE_RE.match(item.get("title") or "")
-    return int(match.group(1)) if match else None
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def insert_id(self, sql: str, params: tuple) -> int:
+        cur = self._conn.execute(sql, params)
+        self._conn.commit()
+        return cur.lastrowid
+
+    def update_one(self, sql: str, params: tuple) -> bool:
+        cur = self._conn.execute(sql, params)
+        if cur.rowcount == 0:
+            self._conn.rollback()
+            return False
+        self._conn.commit()
+        return True
+
+    def join_tenant_clause(self, left_alias: str, right_alias: str) -> str:
+        return ""
 
 
 def create_work_item(
@@ -858,13 +873,9 @@ def create_work_item(
     assignee: str | None = None,
     priority: int | None = None,
 ) -> int:
-    priority = validate_priority(priority)
-    cur = conn.execute(
-        "INSERT INTO work_item (sprint_id, track_id, title, description, assignee, priority, aggregate_uuid) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (sprint_id, track_id, title, description, assignee, priority, str(uuid4())),
+    return _workitemcore.create_work_item(
+        _WorkItemSqlite(conn), sprint_id, track_id, title, description, assignee, priority
     )
-    conn.commit()
-    return cur.lastrowid
 
 
 def set_work_item_priority(
@@ -872,24 +883,11 @@ def set_work_item_priority(
     item_id: int,
     priority: int | None,
 ) -> None:
-    priority = validate_priority(priority)
-    cur = conn.execute(
-        """
-        UPDATE work_item
-        SET priority = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-        WHERE id = ?
-        """,
-        (priority, item_id),
-    )
-    if cur.rowcount == 0:
-        conn.rollback()
-        raise ValueError(f"Item #{item_id} not found")
-    conn.commit()
+    _workitemcore.set_work_item_priority(_WorkItemSqlite(conn), item_id, priority)
 
 
 def get_work_item(conn: sqlite3.Connection, item_id: int) -> dict | None:
-    row = conn.execute("SELECT * FROM work_item WHERE id = ?", (item_id,)).fetchone()
-    return dict(row) if row else None
+    return _workitemcore.get_work_item(_WorkItemSqlite(conn), item_id)
 
 
 def _description_revision(item: dict, version: int) -> str:
@@ -1051,25 +1049,7 @@ def list_work_items(
     track_name: str | None = None,
     status: str | None = None,
 ) -> list[dict]:
-    query = """
-        SELECT wi.*, t.name AS track_name
-        FROM work_item wi
-        JOIN track t ON wi.track_id = t.id
-        WHERE 1=1
-    """
-    params: list = []
-    if sprint_id is not None:
-        query += " AND wi.sprint_id = ?"
-        params.append(sprint_id)
-    if track_name is not None:
-        query += " AND t.name = ?"
-        params.append(track_name)
-    if status is not None:
-        query += " AND wi.status = ?"
-        params.append(status)
-    query += " ORDER BY wi.created_at ASC"
-    rows = conn.execute(query, params).fetchall()
-    return [dict(r) for r in rows]
+    return _workitemcore.list_work_items(_WorkItemSqlite(conn), sprint_id, track_name, status)
 
 
 def set_work_item_status(
