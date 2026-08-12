@@ -39,6 +39,8 @@ from . import contracts as _contracts
 from . import outbox
 from . import pg_migrations as _pg_migrations
 from . import rows as _rows
+from . import sprintcore as _sprintcore
+from . import trackcore as _trackcore
 from .db import (
     VALID_TRANSITIONS,
     SPRINT_TRANSITIONS,
@@ -1670,7 +1672,50 @@ def activate_sprint(store: PgStore, sprint_id: int, actor: str, context: str = "
 
 # ---------------------------------------------------------------------------
 # Track
+#
+# Track-table query shapes live in ``sprintctl.trackcore`` and are shared
+# with the SQLite backend; this module supplies only the PostgreSQL execution
+# adapter.  Public signatures are unchanged.
 # ---------------------------------------------------------------------------
+
+
+class _TrackPg:
+    """PostgreSQL execution adapter for ``trackcore`` track operations."""
+
+    ph = "%s"
+
+    def __init__(self, store: PgStore) -> None:
+        self._store = store
+
+    def tenant_params(self) -> tuple:
+        return (self._store.repo_id,)
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        return _norm(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [_norm(r) for r in rows]
+
+    def insert_ignore(
+        self, columns: tuple[str, ...], values: tuple, conflict_cols: tuple[str, ...]
+    ) -> None:
+        col_list = ", ".join(columns)
+        placeholders = ", ".join(["%s"] * len(values))
+        conflict_list = ", ".join(conflict_cols)
+        with self._store.conn.cursor() as cur:
+            cur.execute(
+                f"INSERT INTO track ({col_list}) VALUES ({placeholders})"
+                f" ON CONFLICT ({conflict_list}) DO NOTHING",
+                values,
+            )
+        self._store.conn.commit()
+
 
 def get_or_create_track(
     store: PgStore,
@@ -1678,42 +1723,15 @@ def get_or_create_track(
     name: str,
     description: str = "",
 ) -> int:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO track (repo_id, sprint_id, name, description)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (repo_id, sprint_id, name) DO NOTHING
-            """,
-            (store.repo_id, sprint_id, name, description),
-        )
-        cur.execute(
-            "SELECT id FROM track WHERE repo_id = %s AND sprint_id = %s AND name = %s",
-            (store.repo_id, sprint_id, name),
-        )
-        row = cur.fetchone()
-    store.conn.commit()
-    return row["id"]
+    return _trackcore.get_or_create_track(_TrackPg(store), sprint_id, name, description)
 
 
 def list_tracks(store: PgStore, sprint_id: int) -> list[dict]:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM track WHERE repo_id = %s AND sprint_id = %s ORDER BY created_at ASC",
-            (store.repo_id, sprint_id),
-        )
-        rows = cur.fetchall()
-    return [_norm(r) for r in rows]
+    return _trackcore.list_tracks(_TrackPg(store), sprint_id)
 
 
 def get_track(store: PgStore, track_id: int) -> dict | None:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM track WHERE repo_id = %s AND id = %s",
-            (store.repo_id, track_id),
-        )
-        row = cur.fetchone()
-    return _norm(row) if row else None
+    return _trackcore.get_track(_TrackPg(store), track_id)
 
 
 # ---------------------------------------------------------------------------
