@@ -5,24 +5,33 @@ connection adapter implementing :class:`ClaimConn`. The query shapes and
 tenant handling live here once so the two backends cannot drift apart in
 claim-table behaviour. Mirrors the pattern established in ``sprintcore.py``.
 
-This is sub-increment 4a of the Claim extraction (see the architectural
-plan for WorkItem/Event/Claim unification): pure helpers and read-only
-queries only. ``create_claim``, ``heartbeat_claim``, ``release_claim``, and
-``handoff_claim`` stay in each backend's wrapper — they involve
-backend-specific locking (SQLite's ``BEGIN IMMEDIATE`` vs PostgreSQL's
-advisory + row locks) and a collision-retry loop that later sub-increments
-will address individually.
+Sub-increment 4a added pure helpers and read-only queries. Sub-increment 4b
+(this addition) adds the heartbeat/release mutation shapes and their
+rejection-event payload builders — the "single-row update/delete, no
+admission arbitration" operations the architectural plan rated lower risk
+than create_claim/handoff_claim. Those two stay in each backend's wrapper:
+they involve backend-specific locking (SQLite's ``BEGIN IMMEDIATE`` vs
+PostgreSQL's advisory + row locks) and a collision-retry loop.
 
 Backend-neutral claim serialization already lives in ``sprintctl.rows``
 (``serialize_claim``, ``claim_identity_status``, etc.) — this module only
 owns the query shapes that produce the rows ``rows.serialize_claim``
-consumes.
+consumes, plus the rejection-event payloads that were already 100% pure
+Python (no conn dependency) but copy-pasted between db.py and pg.py.
+Extracting them surfaced one real drift: pg.py's release_claim always
+tagged its rejection event ``["claims", "coordination", "release"]``, while
+db.py additionally used ``["claims", "coordination", "ambiguity", "legacy"]``
+for legacy claims with no claim_token. This module converges on db.py's
+more specific behavior (a bug fix, not a stylistic choice) — see
+release_rejection_event.
 """
 
 from __future__ import annotations
 
 import secrets
 from typing import Protocol
+
+from . import rows as _rows
 
 CLAIM_TYPES = ("inspect", "execute", "review", "coordinate")
 
@@ -51,6 +60,8 @@ class ClaimConn(Protocol):
     def query_one(self, sql: str, params: tuple) -> dict | None: ...
 
     def query_all(self, sql: str, params: tuple) -> list[dict]: ...
+
+    def mutate(self, sql: str, params: tuple) -> None: ...
 
     def now_sql(self) -> str:
         """SQL expression for 'current time' in an expires_at comparison.
@@ -195,3 +206,131 @@ def find_claim_by_identity(
         params.extend([hostname, pid])
     sql = f"SELECT * FROM claim{_where(conn, *conditions)} ORDER BY created_at DESC"
     return conn.query_all(sql, conn.tenant_params() + tuple(params))
+
+
+def heartbeat_update(
+    conn: ClaimConn,
+    claim_id: int,
+    ttl_seconds: int,
+    runtime_session_id: str | None,
+    instance_id: str | None,
+    branch: str | None,
+    worktree_path: str | None,
+    commit_sha: str | None,
+    pr_ref: str | None,
+    hostname: str | None,
+    pid: int | None,
+) -> None:
+    """Refresh a claim's expiry and heartbeat timestamp, and any supplied identity fields."""
+    ph = conn.ph
+    sql = (
+        "UPDATE claim SET"
+        f" heartbeat = {conn.now_sql()},"
+        f" expires_at = {conn.expires_at_offset_sql()},"
+        f" runtime_session_id = COALESCE({ph}, runtime_session_id),"
+        f" instance_id = COALESCE({ph}, instance_id),"
+        f" branch = COALESCE({ph}, branch),"
+        f" worktree_path = COALESCE({ph}, worktree_path),"
+        f" commit_sha = COALESCE({ph}, commit_sha),"
+        f" pr_ref = COALESCE({ph}, pr_ref),"
+        f" hostname = COALESCE({ph}, hostname),"
+        f" pid = COALESCE({ph}, pid)"
+        f"{_where(conn, f'id = {ph}')}"
+    )
+    params = (
+        ttl_seconds,
+        runtime_session_id,
+        instance_id,
+        branch,
+        worktree_path,
+        commit_sha,
+        pr_ref,
+        hostname,
+        pid,
+    ) + conn.tenant_params() + (claim_id,)
+    conn.mutate(sql, params)
+
+
+def release_delete(conn: ClaimConn, claim_id: int) -> None:
+    """Delete a claim row. Caller has already verified claim proof."""
+    sql = f"DELETE FROM claim{_where(conn, f'id = {conn.ph}')}"
+    conn.mutate(sql, conn.tenant_params() + (claim_id,))
+
+
+def heartbeat_rejection_event(
+    claim_id: int,
+    row: dict,
+    detail: str,
+    *,
+    actor: str | None,
+    claim_token: str | None,
+    runtime_session_id: str | None = None,
+    instance_id: str | None = None,
+    branch: str | None = None,
+    worktree_path: str | None = None,
+    commit_sha: str | None = None,
+    pr_ref: str | None = None,
+    hostname: str | None = None,
+    pid: int | None = None,
+) -> tuple[str, dict]:
+    """Build the (event_type, payload) for a rejected heartbeat, given the ValueError detail."""
+    is_legacy = not row["claim_token"]
+    event_type = "claim-ambiguity-detected" if is_legacy else "coordination-failure"
+    payload = {
+        "summary": f"Claim heartbeat rejected for claim #{claim_id}",
+        "detail": detail,
+        "tags": ["claims", "coordination", "heartbeat"],
+        "operation": "heartbeat",
+        "reason": "legacy-ambiguous-claim" if is_legacy else "invalid-claim-proof",
+        "claim": _rows.claim_event_identity(row),
+        "attempted_by": _rows.claim_attempt_identity(
+            actor=actor,
+            claim_id=claim_id,
+            claim_token_present=claim_token is not None,
+            runtime_session_id=runtime_session_id,
+            instance_id=instance_id,
+            branch=branch,
+            worktree_path=worktree_path,
+            commit_sha=commit_sha,
+            pr_ref=pr_ref,
+            hostname=hostname,
+            pid=pid,
+        ),
+    }
+    return event_type, payload
+
+
+def release_rejection_event(
+    claim_id: int,
+    row: dict,
+    detail: str,
+    *,
+    actor: str | None,
+    claim_token: str | None,
+) -> tuple[str, dict]:
+    """Build the (event_type, payload) for a rejected release, given the ValueError detail.
+
+    A legacy claim (no claim_token) gets the more specific ambiguity/legacy
+    tags; see the module docstring for the pg.py drift this fixes.
+    """
+    is_legacy = not row["claim_token"]
+    event_type = "claim-ambiguity-detected" if is_legacy else "coordination-failure"
+    tags = (
+        ["claims", "coordination", "ambiguity", "legacy"]
+        if is_legacy
+        else ["claims", "coordination", "release"]
+    )
+    payload = {
+        "summary": f"Claim release rejected for claim #{claim_id}",
+        "detail": detail,
+        "tags": tags,
+        "operation": "release",
+        "reason": "legacy-ambiguous-claim" if is_legacy else "invalid-claim-proof",
+        "claim": _rows.claim_event_identity(row),
+        "attempted_by": _rows.claim_attempt_identity(
+            actor=actor,
+            claim_id=claim_id,
+            claim_token_present=claim_token is not None,
+        ),
+    }
+    return event_type, payload
