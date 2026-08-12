@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from . import contracts as _contracts
 from . import rows as _rows
+from . import sprintcore as _sprintcore
 
 
 _WAL_BUSY_RETRY_DELAYS_SECONDS = (0.01, 0.02, 0.04, 0.08)
@@ -678,6 +679,39 @@ def init_db(conn: sqlite3.Connection) -> None:
 
 
 # --- Sprint ---
+#
+# Sprint-table query shapes live in ``sprintctl.sprintcore`` and are shared
+# with the PostgreSQL backend; this module supplies only the SQLite execution
+# adapter.  Public signatures are unchanged.
+
+
+class _SprintSqlite:
+    """SQLite execution adapter for ``sprintcore`` sprint operations."""
+
+    ph = "?"
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def tenant_params(self) -> tuple:
+        return ()
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        row = self._conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def mutate(self, sql: str, params: tuple) -> None:
+        self._conn.execute(sql, params)
+        self._conn.commit()
+
+    def insert_id(self, sql: str, params: tuple) -> int:
+        cur = self._conn.execute(sql, params)
+        self._conn.commit()
+        return cur.lastrowid
+
 
 def create_sprint(
     conn: sqlite3.Connection,
@@ -688,17 +722,13 @@ def create_sprint(
     status: str = "planned",
     kind: str = "active_sprint",
 ) -> int:
-    cur = conn.execute(
-        "INSERT INTO sprint (name, goal, start_date, end_date, status, kind, aggregate_uuid) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (name, goal, start_date, end_date, status, kind, str(uuid4())),
+    return _sprintcore.create_sprint(
+        _SprintSqlite(conn), name, goal, start_date, end_date, status, kind
     )
-    conn.commit()
-    return cur.lastrowid
 
 
 def get_sprint(conn: sqlite3.Connection, sprint_id: int) -> dict | None:
-    row = conn.execute("SELECT * FROM sprint WHERE id = ?", (sprint_id,)).fetchone()
-    return dict(row) if row else None
+    return _sprintcore.get_sprint(_SprintSqlite(conn), sprint_id)
 
 
 def get_active_sprint(conn: sqlite3.Connection) -> dict | None:
@@ -707,36 +737,21 @@ def get_active_sprint(conn: sqlite3.Connection) -> dict | None:
     Multiple active sprints are allowed. Callers that need to reason about
     ambiguity should use list_active_sprints instead.
     """
-    row = conn.execute(
-        "SELECT * FROM sprint WHERE status = 'active' AND kind = 'active_sprint' ORDER BY created_at DESC LIMIT 1"
-    ).fetchone()
-    return dict(row) if row else None
+    return _sprintcore.get_active_sprint(_SprintSqlite(conn))
 
 
 def list_active_sprints(conn: sqlite3.Connection) -> list[dict]:
-    rows = conn.execute(
-        """
-        SELECT * FROM sprint
-        WHERE status = 'active' AND kind = 'active_sprint'
-        ORDER BY created_at DESC, id DESC
-        """
-    ).fetchall()
-    return [dict(r) for r in rows]
+    return _sprintcore.list_active_sprints(_SprintSqlite(conn))
 
 
 def set_sprint_kind(conn: sqlite3.Connection, sprint_id: int, kind: str) -> None:
-    if kind not in SPRINT_KINDS:
-        raise ValueError(f"Invalid kind '{kind}'. Must be one of: {', '.join(SPRINT_KINDS)}")
-    sprint = get_sprint(conn, sprint_id)
-    if sprint is None:
-        raise ValueError(f"Sprint #{sprint_id} not found")
-    conn.execute("UPDATE sprint SET kind = ? WHERE id = ?", (kind, sprint_id))
-    conn.commit()
+    _sprintcore.set_sprint_kind(
+        _SprintSqlite(conn), sprint_id, kind, valid_kinds=SPRINT_KINDS
+    )
 
 
 def list_sprints(conn: sqlite3.Connection) -> list[dict]:
-    rows = conn.execute("SELECT * FROM sprint ORDER BY created_at DESC").fetchall()
-    return [dict(r) for r in rows]
+    return _sprintcore.list_sprints(_SprintSqlite(conn))
 
 
 # --- Track ---
