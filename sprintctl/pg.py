@@ -1518,7 +1518,48 @@ def recover_repo_snapshot(store: PgStore) -> dict[str, list[dict]]:
 
 # ---------------------------------------------------------------------------
 # Sprint
+#
+# Sprint-table query shapes live in ``sprintctl.sprintcore`` and are shared
+# with the SQLite backend; this module supplies only the PostgreSQL execution
+# adapter.  Public signatures are unchanged.
 # ---------------------------------------------------------------------------
+
+
+class _SprintPg:
+    """PostgreSQL execution adapter for ``sprintcore`` sprint operations."""
+
+    ph = "%s"
+
+    def __init__(self, store: PgStore) -> None:
+        self._store = store
+
+    def tenant_params(self) -> tuple:
+        return (self._store.repo_id,)
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        return _norm(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [_norm(r) for r in rows]
+
+    def mutate(self, sql: str, params: tuple) -> None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+        self._store.conn.commit()
+
+    def insert_id(self, sql: str, params: tuple) -> int:
+        with self._store.conn.cursor() as cur:
+            cur.execute(f"{sql} RETURNING id", params)
+            row = cur.fetchone()
+        self._store.conn.commit()
+        return row["id"]
+
 
 def create_sprint(
     store: PgStore,
@@ -1529,81 +1570,31 @@ def create_sprint(
     status: str = "planned",
     kind: str = "active_sprint",
 ) -> int:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO sprint (repo_id, name, goal, start_date, end_date, status, kind, aggregate_uuid)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-            """,
-            (store.repo_id, name, goal, start_date or None, end_date or None, status, kind, str(uuid4())),
-        )
-        row = cur.fetchone()
-    store.conn.commit()
-    return row["id"]
+    return _sprintcore.create_sprint(
+        _SprintPg(store), name, goal, start_date, end_date, status, kind
+    )
 
 
 def get_sprint(store: PgStore, sprint_id: int) -> dict | None:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM sprint WHERE repo_id = %s AND id = %s",
-            (store.repo_id, sprint_id),
-        )
-        row = cur.fetchone()
-    return _norm(row) if row else None
+    return _sprintcore.get_sprint(_SprintPg(store), sprint_id)
 
 
 def get_active_sprint(store: PgStore) -> dict | None:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT * FROM sprint
-            WHERE repo_id = %s AND status = 'active' AND kind = 'active_sprint'
-            ORDER BY created_at DESC, id DESC
-            LIMIT 1
-            """,
-            (store.repo_id,),
-        )
-        row = cur.fetchone()
-    return _norm(row) if row else None
+    return _sprintcore.get_active_sprint(_SprintPg(store))
 
 
 def list_active_sprints(store: PgStore) -> list[dict]:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT * FROM sprint
-            WHERE repo_id = %s AND status = 'active' AND kind = 'active_sprint'
-            ORDER BY created_at DESC, id DESC
-            """,
-            (store.repo_id,),
-        )
-        rows = cur.fetchall()
-    return [_norm(r) for r in rows]
+    return _sprintcore.list_active_sprints(_SprintPg(store))
 
 
 def set_sprint_kind(store: PgStore, sprint_id: int, kind: str) -> None:
-    if kind not in SPRINT_KINDS:
-        raise ValueError(f"Invalid kind '{kind}'. Must be one of: {', '.join(SPRINT_KINDS)}")
-    sprint = get_sprint(store, sprint_id)
-    if sprint is None:
-        raise ValueError(f"Sprint #{sprint_id} not found")
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "UPDATE sprint SET kind = %s WHERE repo_id = %s AND id = %s",
-            (kind, store.repo_id, sprint_id),
-        )
-    store.conn.commit()
+    _sprintcore.set_sprint_kind(
+        _SprintPg(store), sprint_id, kind, valid_kinds=SPRINT_KINDS
+    )
 
 
 def list_sprints(store: PgStore) -> list[dict]:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM sprint WHERE repo_id = %s ORDER BY created_at DESC",
-            (store.repo_id,),
-        )
-        rows = cur.fetchall()
-    return [_norm(r) for r in rows]
+    return _sprintcore.list_sprints(_SprintPg(store))
 
 
 def set_sprint_status(
