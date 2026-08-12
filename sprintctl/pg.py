@@ -36,8 +36,10 @@ except ImportError:  # pragma: no cover
 _logger = logging.getLogger(__name__)
 
 from . import contracts as _contracts
+from . import depcore as _depcore
 from . import outbox
 from . import pg_migrations as _pg_migrations
+from . import refcore as _refcore
 from . import rows as _rows
 from . import sprintcore as _sprintcore
 from . import trackcore as _trackcore
@@ -2888,7 +2890,48 @@ def find_claim_by_identity(
 
 # ---------------------------------------------------------------------------
 # Ref
+#
+# Ref-table query shapes live in ``sprintctl.refcore`` and are shared with
+# the SQLite backend; this module supplies only the PostgreSQL execution
+# adapter.  Public signatures are unchanged.
 # ---------------------------------------------------------------------------
+
+
+class _RefPg:
+    """PostgreSQL execution adapter for ``refcore`` ref operations."""
+
+    ph = "%s"
+
+    def __init__(self, store: PgStore) -> None:
+        self._store = store
+
+    def tenant_params(self) -> tuple:
+        return (self._store.repo_id,)
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        return _norm(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [_norm(r) for r in rows]
+
+    def mutate(self, sql: str, params: tuple) -> None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+        self._store.conn.commit()
+
+    def insert_id(self, sql: str, params: tuple) -> int:
+        with self._store.conn.cursor() as cur:
+            cur.execute(f"{sql} RETURNING id", params)
+            row = cur.fetchone()
+        self._store.conn.commit()
+        return row["id"]
+
 
 def add_ref(store: PgStore, work_item_id: int, ref_type: str, url: str, label: str = "") -> int:
     if ref_type not in REF_TYPES:
@@ -2897,70 +2940,74 @@ def add_ref(store: PgStore, work_item_id: int, ref_type: str, url: str, label: s
     item = get_work_item(store, work_item_id)
     if item is None:
         raise ValueError(f"Work item #{work_item_id} not found")
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO ref (repo_id, work_item_id, ref_type, url, label)
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING id
-            """,
-            (store.repo_id, work_item_id, ref_type, url, label),
-        )
-        row = cur.fetchone()
-    store.conn.commit()
-    return row["id"]
+    return _refcore.add_ref(_RefPg(store), work_item_id, ref_type, url, label)
 
 
 def list_refs(store: PgStore, work_item_id: int) -> list[dict]:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM ref WHERE repo_id = %s AND work_item_id = %s ORDER BY created_at ASC",
-            (store.repo_id, work_item_id),
-        )
-        rows = cur.fetchall()
-    return [_serialize_ref(_norm(r)) for r in rows]
+    return [_serialize_ref(r) for r in _refcore.list_refs(_RefPg(store), work_item_id)]
 
 
 def list_refs_for_items(store: PgStore, work_item_ids: list[int]) -> dict[int, list[dict]]:
-    if not work_item_ids:
-        return {}
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT * FROM ref
-            WHERE repo_id = %s AND work_item_id = ANY(%s)
-            ORDER BY created_at ASC, id ASC
-            """,
-            (store.repo_id, list(work_item_ids)),
-        )
-        rows = cur.fetchall()
+    rows = _refcore.list_refs_for_items(_RefPg(store), work_item_ids)
     refs_by_item: dict[int, list[dict]] = {}
     for r in rows:
-        normed = _norm(r)
-        refs_by_item.setdefault(normed["work_item_id"], []).append(_serialize_ref(normed))
+        refs_by_item.setdefault(r["work_item_id"], []).append(_serialize_ref(r))
     return refs_by_item
 
 
 def remove_ref(store: PgStore, ref_id: int, work_item_id: int) -> None:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT id FROM ref WHERE repo_id = %s AND id = %s AND work_item_id = %s",
-            (store.repo_id, ref_id, work_item_id),
-        )
-        row = cur.fetchone()
-    if row is None:
-        raise ValueError(f"Ref #{ref_id} not found on item #{work_item_id}")
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "DELETE FROM ref WHERE repo_id = %s AND id = %s",
-            (store.repo_id, ref_id),
-        )
-    store.conn.commit()
+    _refcore.remove_ref(_RefPg(store), ref_id, work_item_id)
 
 
 # ---------------------------------------------------------------------------
 # Dep
 # ---------------------------------------------------------------------------
+
+class _DepPg:
+    """PostgreSQL execution adapter for ``depcore`` dep operations."""
+
+    ph = "%s"
+
+    def __init__(self, store: PgStore) -> None:
+        self._store = store
+
+    def tenant_params(self) -> tuple:
+        return (self._store.repo_id,)
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        return _norm(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [_norm(r) for r in rows]
+
+    def mutate(self, sql: str, params: tuple) -> None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+        self._store.conn.commit()
+
+    def insert_ignore(
+        self, columns: tuple[str, ...], values: tuple, conflict_cols: tuple[str, ...]
+    ) -> None:
+        col_list = ", ".join(columns)
+        placeholders = ", ".join(["%s"] * len(values))
+        conflict_list = ", ".join(conflict_cols)
+        with self._store.conn.cursor() as cur:
+            cur.execute(
+                f"INSERT INTO dep ({col_list}) VALUES ({placeholders})"
+                f" ON CONFLICT ({conflict_list}) DO NOTHING",
+                values,
+            )
+        self._store.conn.commit()
+
+    def join_tenant_clause(self, left_alias: str, right_alias: str) -> str:
+        return f" AND {left_alias}.repo_id = {right_alias}.repo_id"
+
 
 def add_dep(store: PgStore, item_id: int, blocked_item_id: int) -> int:
     if item_id == blocked_item_id:
@@ -2969,70 +3016,19 @@ def add_dep(store: PgStore, item_id: int, blocked_item_id: int) -> int:
         raise ValueError(f"Work item #{item_id} not found")
     if get_work_item(store, blocked_item_id) is None:
         raise ValueError(f"Work item #{blocked_item_id} not found")
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO dep (repo_id, item_id, blocked_item_id)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (repo_id, item_id, blocked_item_id) DO NOTHING
-            """,
-            (store.repo_id, item_id, blocked_item_id),
-        )
-        cur.execute(
-            "SELECT id FROM dep WHERE repo_id = %s AND item_id = %s AND blocked_item_id = %s",
-            (store.repo_id, item_id, blocked_item_id),
-        )
-        row = cur.fetchone()
-    store.conn.commit()
-    return row["id"]
+    return _depcore.add_dep(_DepPg(store), item_id, blocked_item_id)
 
 
 def list_deps_blocking(store: PgStore, item_id: int) -> list[dict]:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT d.id, d.item_id, d.blocked_item_id, d.created_at,
-                   wi.title AS blocker_title, wi.status AS blocker_status
-            FROM dep d
-            JOIN work_item wi ON d.repo_id = wi.repo_id AND d.item_id = wi.id
-            WHERE d.repo_id = %s AND d.blocked_item_id = %s
-            ORDER BY d.created_at ASC
-            """,
-            (store.repo_id, item_id),
-        )
-        rows = cur.fetchall()
-    return [_norm(r) for r in rows]
+    return _depcore.list_deps_blocking(_DepPg(store), item_id)
 
 
 def list_deps_blocked_by(store: PgStore, item_id: int) -> list[dict]:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT d.id, d.item_id, d.blocked_item_id, d.created_at,
-                   wi.title AS waiting_title, wi.status AS waiting_status
-            FROM dep d
-            JOIN work_item wi ON d.repo_id = wi.repo_id AND d.blocked_item_id = wi.id
-            WHERE d.repo_id = %s AND d.item_id = %s
-            ORDER BY d.created_at ASC
-            """,
-            (store.repo_id, item_id),
-        )
-        rows = cur.fetchall()
-    return [_norm(r) for r in rows]
+    return _depcore.list_deps_blocked_by(_DepPg(store), item_id)
 
 
 def remove_dep(store: PgStore, dep_id: int, item_id: int) -> None:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT id FROM dep WHERE repo_id = %s AND id = %s AND (item_id = %s OR blocked_item_id = %s)",
-            (store.repo_id, dep_id, item_id, item_id),
-        )
-        row = cur.fetchone()
-    if row is None:
-        raise ValueError(f"Dep #{dep_id} not found for item #{item_id}")
-    with store.conn.cursor() as cur:
-        cur.execute("DELETE FROM dep WHERE repo_id = %s AND id = %s", (store.repo_id, dep_id))
-    store.conn.commit()
+    _depcore.remove_dep(_DepPg(store), dep_id, item_id)
 
 
 def get_ready_items(store: PgStore, sprint_id: int) -> list[dict]:
