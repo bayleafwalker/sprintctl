@@ -18,7 +18,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import secrets
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -35,6 +34,7 @@ except ImportError:  # pragma: no cover
 
 _logger = logging.getLogger(__name__)
 
+from . import claimcore as _claimcore
 from . import contracts as _contracts
 from . import depcore as _depcore
 from . import eventcore as _eventcore
@@ -58,16 +58,15 @@ from .eventcore import (
     _takeup_key,
     process_takeup_events,
 )
+from .claimcore import CLAIM_TYPES, ClaimConflict, _generate_claim_token
 from .db import (
     VALID_TRANSITIONS,
     SPRINT_TRANSITIONS,
     SPRINT_KINDS,
-    CLAIM_TYPES,
     REF_TYPES,
     InvalidTransition,
     EditConflict,
     StatusConflict,
-    ClaimConflict,
     CLAIM_IDENTITY_STATUS_PROVEN,
     CLAIM_IDENTITY_STATUS_LEGACY,
     MAX_CLAIM_TOKEN_INSERT_RETRIES,
@@ -2287,37 +2286,11 @@ _CLAIM_CLOCK_SQL = "statement_timestamp()"
 
 
 def _get_active_exclusive_claim_row(store: PgStore, work_item_id: int) -> dict | None:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            f"""
-            SELECT * FROM claim
-            WHERE repo_id = %s AND work_item_id = %s AND exclusive = true
-              AND status = 'active'
-              AND expires_at > {_CLAIM_CLOCK_SQL}
-            ORDER BY created_at ASC
-            LIMIT 1
-            """,
-            (store.repo_id, work_item_id),
-        )
-        row = cur.fetchone()
-    return _norm(row) if row else None
+    return _claimcore.get_active_exclusive_claim_row(_ClaimPg(store), work_item_id)
 
 
 def _get_active_coordinate_claim_row(store: PgStore, work_item_id: int) -> dict | None:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            f"""
-            SELECT * FROM claim
-            WHERE repo_id = %s AND work_item_id = %s AND exclusive = true
-              AND status = 'active'
-              AND claim_type = 'coordinate' AND expires_at > {_CLAIM_CLOCK_SQL}
-            ORDER BY created_at ASC
-            LIMIT 1
-            """,
-            (store.repo_id, work_item_id),
-        )
-        row = cur.fetchone()
-    return _norm(row) if row else None
+    return _claimcore.get_active_coordinate_claim_row(_ClaimPg(store), work_item_id)
 
 
 def _emit_claim_event(
@@ -2345,10 +2318,6 @@ def _emit_claim_event(
 def _require_claim_proof(row: dict, claim_token: str | None) -> None:
     from .db import _require_claim_proof as _db_require_claim_proof
     _db_require_claim_proof(row, claim_token)
-
-
-def _generate_claim_token() -> str:
-    return secrets.token_urlsafe(24)
 
 
 def _lock_claim_arbitration_row(cur: Any, store: PgStore, work_item_id: int) -> None:
@@ -2380,18 +2349,53 @@ def _lock_repo_claim_capability_arbitration(cur: Any, repo_id: str) -> None:
 
 # ---------------------------------------------------------------------------
 # Claim
+#
+# Claim read-path query shapes live in ``sprintctl.claimcore`` and are
+# shared with the SQLite backend (sub-increment 4a of the Claim extraction);
+# this module supplies only the PostgreSQL execution adapter for them.
+# create_claim/heartbeat_claim/release_claim/handoff_claim stay here.
 # ---------------------------------------------------------------------------
 
+
+class _ClaimPg:
+    """PostgreSQL execution adapter for ``claimcore`` claim read operations."""
+
+    ph = "%s"
+    true_literal = "true"
+
+    def __init__(self, store: PgStore) -> None:
+        self._store = store
+
+    def tenant_params(self) -> tuple:
+        return (self._store.repo_id,)
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        return _norm(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [_norm(r) for r in rows]
+
+    def now_sql(self) -> str:
+        return _CLAIM_CLOCK_SQL
+
+    def expires_at_offset_sql(self) -> str:
+        return f"{_CLAIM_CLOCK_SQL} + ({self.ph} || ' seconds')::interval"
+
+    def join_tenant_clause(self, left_alias: str, right_alias: str) -> str:
+        return f" AND {left_alias}.repo_id = {right_alias}.repo_id"
+
+
 def get_claim(store: PgStore, claim_id: int, *, include_secret: bool = False) -> dict | None:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM claim WHERE repo_id = %s AND id = %s",
-            (store.repo_id, claim_id),
-        )
-        row = cur.fetchone()
+    row = _claimcore.get_claim_row(_ClaimPg(store), claim_id)
     if row is None:
         return None
-    return _serialize_claim(_norm(row), include_secret=include_secret)
+    return _serialize_claim(row, include_secret=include_secret)
 
 
 def create_claim(
@@ -2768,46 +2772,15 @@ def list_claims_by_sprint(
     active_only: bool = True,
     expiring_within_seconds: int | None = None,
 ) -> list[dict]:
-    query = """
-        SELECT c.*, wi.title AS item_title, wi.status AS item_status
-        FROM claim c
-        JOIN work_item wi ON c.repo_id = wi.repo_id AND c.work_item_id = wi.id
-        WHERE c.repo_id = %s AND wi.sprint_id = %s
-    """
-    params: list = [store.repo_id, sprint_id]
-    if active_only:
-        query += f" AND c.status = 'active' AND c.expires_at > {_CLAIM_CLOCK_SQL}"
-    if expiring_within_seconds is not None:
-        query += f" AND c.expires_at <= {_CLAIM_CLOCK_SQL} + (%s || ' seconds')::interval"
-        params.append(expiring_within_seconds)
-    query += " ORDER BY c.expires_at ASC"
-    with store.conn.cursor() as cur:
-        cur.execute(query, params)
-        rows = cur.fetchall()
-    return [_serialize_claim(_norm(r)) for r in rows]
+    rows = _claimcore.list_claims_by_sprint(
+        _ClaimPg(store), sprint_id, active_only, expiring_within_seconds
+    )
+    return [_serialize_claim(r) for r in rows]
 
 
 def list_claims(store: PgStore, work_item_id: int, active_only: bool = True) -> list[dict]:
-    if active_only:
-        with store.conn.cursor() as cur:
-            cur.execute(
-                f"""
-                SELECT * FROM claim
-                WHERE repo_id = %s AND work_item_id = %s
-                  AND status = 'active' AND expires_at > {_CLAIM_CLOCK_SQL}
-                ORDER BY created_at ASC
-                """,
-                (store.repo_id, work_item_id),
-            )
-            rows = cur.fetchall()
-    else:
-        with store.conn.cursor() as cur:
-            cur.execute(
-                "SELECT * FROM claim WHERE repo_id = %s AND work_item_id = %s ORDER BY created_at ASC",
-                (store.repo_id, work_item_id),
-            )
-            rows = cur.fetchall()
-    return [_serialize_claim(_norm(r)) for r in rows]
+    rows = _claimcore.list_claims(_ClaimPg(store), work_item_id, active_only)
+    return [_serialize_claim(r) for r in rows]
 
 
 def find_claim_by_identity(
@@ -2819,33 +2792,15 @@ def find_claim_by_identity(
     runtime_session_id: str | None = None,
     active_only: bool = True,
 ) -> list[dict]:
-    if not any([instance_id, runtime_session_id, (hostname and pid is not None)]):
-        raise ValueError(
-            "At least one of --instance-id, --runtime-session-id, or "
-            "--hostname + --pid must be provided to resume a claim."
-        )
-    conditions: list[str] = ["repo_id = %s"]
-    params: list = [store.repo_id]
-    if active_only:
-        conditions.append("status = 'active'")
-        conditions.append(f"expires_at > {_CLAIM_CLOCK_SQL}")
-    if instance_id:
-        conditions.append("instance_id = %s")
-        params.append(instance_id)
-    if runtime_session_id:
-        conditions.append("runtime_session_id = %s")
-        params.append(runtime_session_id)
-    if hostname and pid is not None:
-        conditions.append("(hostname = %s AND pid = %s)")
-        params.extend([hostname, pid])
-    where = " AND ".join(conditions)
-    with store.conn.cursor() as cur:
-        cur.execute(
-            f"SELECT * FROM claim WHERE {where} ORDER BY created_at DESC",
-            params,
-        )
-        rows = cur.fetchall()
-    return [_serialize_claim(_norm(r)) for r in rows]
+    rows = _claimcore.find_claim_by_identity(
+        _ClaimPg(store),
+        instance_id=instance_id,
+        hostname=hostname,
+        pid=pid,
+        runtime_session_id=runtime_session_id,
+        active_only=active_only,
+    )
+    return [_serialize_claim(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------

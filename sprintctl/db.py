@@ -3,7 +3,6 @@ import json
 import os
 import posixpath
 import re
-import secrets
 import sqlite3
 import time
 from collections.abc import Callable
@@ -11,6 +10,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 from uuid import uuid4
 
+from . import claimcore as _claimcore
 from . import contracts as _contracts
 from . import depcore as _depcore
 from . import eventcore as _eventcore
@@ -19,6 +19,7 @@ from . import rows as _rows
 from . import sprintcore as _sprintcore
 from . import trackcore as _trackcore
 from . import workitemcore as _workitemcore
+from .claimcore import CLAIM_TYPES, ClaimConflict, _generate_claim_token
 from .eventcore import (
     KNOWLEDGE_EVENT_TYPES,
     TAKEUP_EVENT_TYPES,
@@ -1425,13 +1426,12 @@ def list_knowledge_candidates(conn: sqlite3.Connection, sprint_id: int) -> list[
 
 
 # --- Claim ---
-
-CLAIM_TYPES = ("inspect", "execute", "review", "coordinate")
-
-
-class ClaimConflict(ValueError):
-    pass
-
+#
+# Claim read-path query shapes live in ``sprintctl.claimcore`` and are
+# shared with the PostgreSQL backend (sub-increment 4a of the Claim
+# extraction); this module supplies only the SQLite execution adapter for
+# them.  create_claim/heartbeat_claim/release_claim/handoff_claim stay here:
+# their transactional locking is backend-specific.
 
 CLAIM_IDENTITY_STATUS_PROVEN = _rows.CLAIM_IDENTITY_STATUS_PROVEN
 CLAIM_IDENTITY_STATUS_LEGACY = _rows.CLAIM_IDENTITY_STATUS_LEGACY
@@ -1446,13 +1446,38 @@ _claim_attempt_identity = _rows.claim_attempt_identity
 _serialize_claim = _rows.serialize_claim
 
 
-def _generate_claim_token() -> str:
-    return secrets.token_urlsafe(24)
-
-
 def _is_claim_token_collision(exc: sqlite3.IntegrityError) -> bool:
     msg = str(exc).lower()
     return "claim_token" in msg or "idx_claim_token" in msg
+
+
+class _ClaimSqlite:
+    """SQLite execution adapter for ``claimcore`` claim read operations."""
+
+    ph = "?"
+    true_literal = "1"
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def tenant_params(self) -> tuple:
+        return ()
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        row = self._conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def now_sql(self) -> str:
+        return "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
+
+    def expires_at_offset_sql(self) -> str:
+        return f"strftime('%Y-%m-%dT%H:%M:%SZ', 'now', {self.ph} || ' seconds')"
+
+    def join_tenant_clause(self, left_alias: str, right_alias: str) -> str:
+        return ""
 
 
 def get_claim(
@@ -1461,24 +1486,15 @@ def get_claim(
     *,
     include_secret: bool = False,
 ) -> dict | None:
-    row = conn.execute("SELECT * FROM claim WHERE id = ?", (claim_id,)).fetchone()
+    row = _claimcore.get_claim_row(_ClaimSqlite(conn), claim_id)
     return _serialize_claim(row, include_secret=include_secret) if row else None
 
 
 def _get_active_exclusive_claim_row(
     conn: sqlite3.Connection,
     work_item_id: int,
-) -> sqlite3.Row | None:
-    return conn.execute(
-        """
-        SELECT * FROM claim
-        WHERE work_item_id = ? AND exclusive = 1 AND status = 'active'
-          AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
-        ORDER BY created_at ASC
-        LIMIT 1
-        """,
-        (work_item_id,),
-    ).fetchone()
+) -> dict | None:
+    return _claimcore.get_active_exclusive_claim_row(_ClaimSqlite(conn), work_item_id)
 
 
 def _emit_claim_event(
@@ -1953,40 +1969,15 @@ def list_claims_by_sprint(
     expiring_within_seconds: int | None = None,
 ) -> list[dict]:
     """List all claims for items in a sprint, optionally filtered to active or expiring soon."""
-    base = """
-        SELECT c.*, wi.title AS item_title, wi.status AS item_status
-        FROM claim c
-        JOIN work_item wi ON c.work_item_id = wi.id
-        WHERE wi.sprint_id = ?
-    """
-    params: list = [sprint_id]
-    if active_only:
-        base += " AND c.status = 'active' AND c.expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')"
-    if expiring_within_seconds is not None:
-        base += " AND c.expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds')"
-        params.append(expiring_within_seconds)
-    base += " ORDER BY c.expires_at ASC"
-    rows = conn.execute(base, params).fetchall()
+    rows = _claimcore.list_claims_by_sprint(
+        _ClaimSqlite(conn), sprint_id, active_only, expiring_within_seconds
+    )
     return [_serialize_claim(r) for r in rows]
 
 
 def list_claims(conn: sqlite3.Connection, work_item_id: int, active_only: bool = True) -> list[dict]:
     """List claims for a work item; active_only filters to non-expired claims."""
-    if active_only:
-        rows = conn.execute(
-            """
-            SELECT * FROM claim
-            WHERE work_item_id = ? AND status = 'active'
-              AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
-            ORDER BY created_at ASC
-            """,
-            (work_item_id,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM claim WHERE work_item_id = ? ORDER BY created_at ASC",
-            (work_item_id,),
-        ).fetchall()
+    rows = _claimcore.list_claims(_ClaimSqlite(conn), work_item_id, active_only)
     return [_serialize_claim(r) for r in rows]
 
 
@@ -2006,49 +1997,23 @@ def find_claim_by_identity(
     At least one of instance_id, runtime_session_id, or (hostname+pid) must be provided.
     Returns serialized claims without the secret token.
     """
-    if not any([instance_id, runtime_session_id, (hostname and pid is not None)]):
-        raise ValueError(
-            "At least one of --instance-id, --runtime-session-id, or "
-            "--hostname + --pid must be provided to resume a claim."
-        )
-    conditions = []
-    params: list = []
-    if active_only:
-        conditions.append("status = 'active'")
-        conditions.append("expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')")
-    if instance_id:
-        conditions.append("instance_id = ?")
-        params.append(instance_id)
-    if runtime_session_id:
-        conditions.append("runtime_session_id = ?")
-        params.append(runtime_session_id)
-    if hostname and pid is not None:
-        conditions.append("(hostname = ? AND pid = ?)")
-        params.extend([hostname, pid])
-    where = " AND ".join(conditions)
-    rows = conn.execute(
-        f"SELECT * FROM claim WHERE {where} ORDER BY created_at DESC",
-        params,
-    ).fetchall()
+    rows = _claimcore.find_claim_by_identity(
+        _ClaimSqlite(conn),
+        instance_id=instance_id,
+        hostname=hostname,
+        pid=pid,
+        runtime_session_id=runtime_session_id,
+        active_only=active_only,
+    )
     return [_serialize_claim(r) for r in rows]
 
 
 def _get_active_coordinate_claim_row(
     conn: sqlite3.Connection,
     work_item_id: int,
-) -> sqlite3.Row | None:
+) -> dict | None:
     """Return the first active exclusive coordinate claim on the item, if any."""
-    return conn.execute(
-        """
-        SELECT * FROM claim
-        WHERE work_item_id = ? AND exclusive = 1 AND claim_type = 'coordinate'
-          AND status = 'active'
-          AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
-        ORDER BY created_at ASC
-        LIMIT 1
-        """,
-        (work_item_id,),
-    ).fetchone()
+    return _claimcore.get_active_coordinate_claim_row(_ClaimSqlite(conn), work_item_id)
 
 
 # --- Ref ---
