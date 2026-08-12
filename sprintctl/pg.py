@@ -2381,6 +2381,11 @@ class _ClaimPg:
             rows = cur.fetchall()
         return [_norm(r) for r in rows]
 
+    def mutate(self, sql: str, params: tuple) -> None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+        self._store.conn.commit()
+
     def now_sql(self) -> str:
         return _CLAIM_CLOCK_SQL
 
@@ -2525,98 +2530,58 @@ def heartbeat_claim(
     pid: int | None = None,
 ) -> None:
     from .db import _require_claim_proof as _db_require_claim_proof
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM claim WHERE repo_id = %s AND id = %s",
-            (store.repo_id, claim_id),
-        )
-        row = cur.fetchone()
+    row = _claimcore.get_claim_row(_ClaimPg(store), claim_id)
     if row is None:
         raise ValueError(f"Claim #{claim_id} not found")
-    row = _norm(row)
     try:
         _db_require_claim_proof(row, claim_token)
     except ValueError as exc:
-        event_type = "coordination-failure" if row["claim_token"] else "claim-ambiguity-detected"
-        _emit_claim_event(
-            store, row,
-            event_type=event_type,
-            actor=actor or "system",
-            payload={
-                "summary": f"Claim heartbeat rejected for claim #{claim_id}",
-                "detail": str(exc),
-                "tags": ["claims", "coordination", "heartbeat"],
-                "operation": "heartbeat",
-                "reason": "invalid-claim-proof" if row["claim_token"] else "legacy-ambiguous-claim",
-                "claim": _claim_event_identity(row),
-                "attempted_by": _claim_attempt_identity(
-                    actor=actor, claim_id=claim_id, claim_token_present=claim_token is not None,
-                    runtime_session_id=runtime_session_id, instance_id=instance_id,
-                    branch=branch, worktree_path=worktree_path, commit_sha=commit_sha,
-                    pr_ref=pr_ref, hostname=hostname, pid=pid,
-                ),
-            },
+        event_type, payload = _claimcore.heartbeat_rejection_event(
+            claim_id,
+            row,
+            str(exc),
+            actor=actor,
+            claim_token=claim_token,
+            runtime_session_id=runtime_session_id,
+            instance_id=instance_id,
+            branch=branch,
+            worktree_path=worktree_path,
+            commit_sha=commit_sha,
+            pr_ref=pr_ref,
+            hostname=hostname,
+            pid=pid,
         )
+        _emit_claim_event(store, row, event_type=event_type, actor=actor or "system", payload=payload)
         raise
-    with store.conn.cursor() as cur:
-        cur.execute(
-            f"""
-            UPDATE claim
-            SET heartbeat = {_CLAIM_CLOCK_SQL},
-                expires_at = {_CLAIM_CLOCK_SQL} + (%s || ' seconds')::interval,
-                runtime_session_id = COALESCE(%s, runtime_session_id),
-                instance_id        = COALESCE(%s, instance_id),
-                branch             = COALESCE(%s, branch),
-                worktree_path      = COALESCE(%s, worktree_path),
-                commit_sha         = COALESCE(%s, commit_sha),
-                pr_ref             = COALESCE(%s, pr_ref),
-                hostname           = COALESCE(%s, hostname),
-                pid                = COALESCE(%s, pid)
-            WHERE repo_id = %s AND id = %s
-            """,
-            (ttl_seconds, runtime_session_id, instance_id, branch, worktree_path,
-             commit_sha, pr_ref, hostname, pid, store.repo_id, claim_id),
-        )
-    store.conn.commit()
+    _claimcore.heartbeat_update(
+        _ClaimPg(store),
+        claim_id,
+        ttl_seconds,
+        runtime_session_id,
+        instance_id,
+        branch,
+        worktree_path,
+        commit_sha,
+        pr_ref,
+        hostname,
+        pid,
+    )
 
 
 def release_claim(store: PgStore, claim_id: int, claim_token: str | None, actor: str | None = None) -> None:
     from .db import _require_claim_proof as _db_require_claim_proof
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM claim WHERE repo_id = %s AND id = %s",
-            (store.repo_id, claim_id),
-        )
-        row = cur.fetchone()
+    row = _claimcore.get_claim_row(_ClaimPg(store), claim_id)
     if row is None:
         raise ValueError(f"Claim #{claim_id} not found")
-    row = _norm(row)
     try:
         _db_require_claim_proof(row, claim_token)
     except ValueError as exc:
-        _emit_claim_event(
-            store, row,
-            event_type="claim-ambiguity-detected" if not row["claim_token"] else "coordination-failure",
-            actor=actor or "system",
-            payload={
-                "summary": f"Claim release rejected for claim #{claim_id}",
-                "detail": str(exc),
-                "tags": ["claims", "coordination", "release"],
-                "operation": "release",
-                "reason": "invalid-claim-proof" if row["claim_token"] else "legacy-ambiguous-claim",
-                "claim": _claim_event_identity(row),
-                "attempted_by": _claim_attempt_identity(
-                    actor=actor, claim_id=claim_id, claim_token_present=claim_token is not None,
-                ),
-            },
+        event_type, payload = _claimcore.release_rejection_event(
+            claim_id, row, str(exc), actor=actor, claim_token=claim_token
         )
+        _emit_claim_event(store, row, event_type=event_type, actor=actor or "system", payload=payload)
         raise
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "DELETE FROM claim WHERE repo_id = %s AND id = %s",
-            (store.repo_id, claim_id),
-        )
-    store.conn.commit()
+    _claimcore.release_delete(_ClaimPg(store), claim_id)
 
 
 def handoff_claim(

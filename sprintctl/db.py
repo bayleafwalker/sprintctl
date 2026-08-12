@@ -1452,7 +1452,7 @@ def _is_claim_token_collision(exc: sqlite3.IntegrityError) -> bool:
 
 
 class _ClaimSqlite:
-    """SQLite execution adapter for ``claimcore`` claim read operations."""
+    """SQLite execution adapter for ``claimcore`` claim operations."""
 
     ph = "?"
     true_literal = "1"
@@ -1469,6 +1469,10 @@ class _ClaimSqlite:
 
     def query_all(self, sql: str, params: tuple) -> list[dict]:
         return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def mutate(self, sql: str, params: tuple) -> None:
+        self._conn.execute(sql, params)
+        self._conn.commit()
 
     def now_sql(self) -> str:
         return "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
@@ -1659,79 +1663,42 @@ def heartbeat_claim(
     pid: int | None = None,
 ) -> None:
     """Refresh a claim's expiry and heartbeat timestamp."""
-    row = conn.execute("SELECT * FROM claim WHERE id = ?", (claim_id,)).fetchone()
+    row = _claimcore.get_claim_row(_ClaimSqlite(conn), claim_id)
     if row is None:
         raise ValueError(f"Claim #{claim_id} not found")
     try:
         _require_claim_proof(row, claim_token)
     except ValueError as exc:
-        if row["claim_token"]:
-            event_type = "coordination-failure"
-            summary = f"Claim heartbeat rejected for claim #{claim_id}"
-            detail = str(exc)
-            tags = ["claims", "coordination", "heartbeat"]
-        else:
-            event_type = "claim-ambiguity-detected"
-            summary = f"Legacy claim ambiguity detected for claim #{claim_id}"
-            detail = str(exc)
-            tags = ["claims", "coordination", "ambiguity", "legacy"]
-        _emit_claim_event(
-            conn,
-            row,
-            event_type=event_type,
-            actor=actor or "system",
-            payload={
-                "summary": summary,
-                "detail": detail,
-                "tags": tags,
-                "operation": "heartbeat",
-                "reason": "invalid-claim-proof" if row["claim_token"] else "legacy-ambiguous-claim",
-                "claim": _claim_event_identity(row),
-                "attempted_by": _claim_attempt_identity(
-                    actor=actor,
-                    claim_id=claim_id,
-                    claim_token_present=claim_token is not None,
-                    runtime_session_id=runtime_session_id,
-                    instance_id=instance_id,
-                    branch=branch,
-                    worktree_path=worktree_path,
-                    commit_sha=commit_sha,
-                    pr_ref=pr_ref,
-                    hostname=hostname,
-                    pid=pid,
-                ),
-            },
-        )
-        raise
-    conn.execute(
-        """
-        UPDATE claim
-        SET heartbeat = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
-            expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds'),
-            runtime_session_id = COALESCE(?, runtime_session_id),
-            instance_id = COALESCE(?, instance_id),
-            branch = COALESCE(?, branch),
-            worktree_path = COALESCE(?, worktree_path),
-            commit_sha = COALESCE(?, commit_sha),
-            pr_ref = COALESCE(?, pr_ref),
-            hostname = COALESCE(?, hostname),
-            pid = COALESCE(?, pid)
-        WHERE id = ?
-        """,
-        (
-            ttl_seconds,
-            runtime_session_id,
-            instance_id,
-            branch,
-            worktree_path,
-            commit_sha,
-            pr_ref,
-            hostname,
-            pid,
+        event_type, payload = _claimcore.heartbeat_rejection_event(
             claim_id,
-        ),
+            row,
+            str(exc),
+            actor=actor,
+            claim_token=claim_token,
+            runtime_session_id=runtime_session_id,
+            instance_id=instance_id,
+            branch=branch,
+            worktree_path=worktree_path,
+            commit_sha=commit_sha,
+            pr_ref=pr_ref,
+            hostname=hostname,
+            pid=pid,
+        )
+        _emit_claim_event(conn, row, event_type=event_type, actor=actor or "system", payload=payload)
+        raise
+    _claimcore.heartbeat_update(
+        _ClaimSqlite(conn),
+        claim_id,
+        ttl_seconds,
+        runtime_session_id,
+        instance_id,
+        branch,
+        worktree_path,
+        commit_sha,
+        pr_ref,
+        hostname,
+        pid,
     )
-    conn.commit()
 
 
 def release_claim(
@@ -1741,42 +1708,18 @@ def release_claim(
     actor: str | None = None,
 ) -> None:
     """Release (delete) a claim. Only the owning agent may release it."""
-    row = conn.execute("SELECT * FROM claim WHERE id = ?", (claim_id,)).fetchone()
+    row = _claimcore.get_claim_row(_ClaimSqlite(conn), claim_id)
     if row is None:
         raise ValueError(f"Claim #{claim_id} not found")
     try:
         _require_claim_proof(row, claim_token)
     except ValueError as exc:
-        _emit_claim_event(
-            conn,
-            row,
-            event_type=(
-                "claim-ambiguity-detected"
-                if not row["claim_token"]
-                else "coordination-failure"
-            ),
-            actor=actor or "system",
-            payload={
-                "summary": f"Claim release rejected for claim #{claim_id}",
-                "detail": str(exc),
-                "tags": (
-                    ["claims", "coordination", "ambiguity", "legacy"]
-                    if not row["claim_token"]
-                    else ["claims", "coordination", "release"]
-                ),
-                "operation": "release",
-                "reason": "invalid-claim-proof" if row["claim_token"] else "legacy-ambiguous-claim",
-                "claim": _claim_event_identity(row),
-                "attempted_by": _claim_attempt_identity(
-                    actor=actor,
-                    claim_id=claim_id,
-                    claim_token_present=claim_token is not None,
-                ),
-            },
+        event_type, payload = _claimcore.release_rejection_event(
+            claim_id, row, str(exc), actor=actor, claim_token=claim_token
         )
+        _emit_claim_event(conn, row, event_type=event_type, actor=actor or "system", payload=payload)
         raise
-    conn.execute("DELETE FROM claim WHERE id = ?", (claim_id,))
-    conn.commit()
+    _claimcore.release_delete(_ClaimSqlite(conn), claim_id)
 
 
 def handoff_claim(
