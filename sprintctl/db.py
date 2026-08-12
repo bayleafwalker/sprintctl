@@ -1742,7 +1742,7 @@ def handoff_claim(
     note: str | None = None,
     allow_legacy_adopt: bool = False,
 ) -> dict:
-    row = conn.execute("SELECT * FROM claim WHERE id = ?", (claim_id,)).fetchone()
+    row = _claimcore.get_claim_row(_ClaimSqlite(conn), claim_id)
     if row is None:
         raise ValueError(f"Claim #{claim_id} not found")
     if mode not in {"transfer", "rotate"}:
@@ -1758,37 +1758,28 @@ def handoff_claim(
         and allow_legacy_adopt
         and claim_token is None
     )
+    identity_kwargs = dict(
+        runtime_session_id=runtime_session_id,
+        instance_id=instance_id,
+        branch=branch,
+        worktree_path=worktree_path,
+        commit_sha=commit_sha,
+        pr_ref=pr_ref,
+        hostname=hostname,
+        pid=pid,
+    )
     if legacy_ambiguous:
         if not allow_legacy_adopt:
-            _emit_claim_event(
-                conn,
+            payload = _claimcore.handoff_legacy_ambiguous_event(
+                claim_id,
                 row,
-                event_type="claim-ambiguity-detected",
                 actor=performed_by or actor,
-                payload={
-                    "summary": f"Legacy claim ambiguity detected for claim #{claim_id}",
-                    "detail": (
-                        "An explicit handoff was attempted for a legacy claim without a "
-                        "claim_token. Re-run with legacy adoption enabled to mint a new proof."
-                    ),
-                    "tags": ["claims", "coordination", "ambiguity", "legacy"],
-                    "operation": "handoff",
-                    "reason": "legacy-ambiguous-claim",
-                    "claim": _claim_event_identity(row),
-                    "attempted_by": _claim_attempt_identity(
-                        actor=performed_by or actor,
-                        claim_id=claim_id,
-                        claim_token_present=claim_token is not None,
-                        runtime_session_id=runtime_session_id,
-                        instance_id=instance_id,
-                        branch=branch,
-                        worktree_path=worktree_path,
-                        commit_sha=commit_sha,
-                        pr_ref=pr_ref,
-                        hostname=hostname,
-                        pid=pid,
-                    ),
-                },
+                claim_token=claim_token,
+                **identity_kwargs,
+            )
+            _emit_claim_event(
+                conn, row, event_type="claim-ambiguity-detected",
+                actor=performed_by or actor, payload=payload,
             )
             raise ValueError(
                 f"Claim #{claim_id} is a legacy ambiguous claim with no claim_token. "
@@ -1799,109 +1790,56 @@ def handoff_claim(
         try:
             _require_claim_proof(row, claim_token)
         except ValueError as exc:
-            _emit_claim_event(
-                conn,
+            payload = _claimcore.handoff_rejection_event(
+                claim_id,
                 row,
-                event_type="coordination-failure",
+                str(exc),
                 actor=performed_by or actor,
-                payload={
-                    "summary": f"Claim handoff rejected for claim #{claim_id}",
-                    "detail": str(exc),
-                    "tags": ["claims", "coordination", "handoff"],
-                    "operation": "handoff",
-                    "reason": "invalid-claim-proof",
-                    "claim": _claim_event_identity(row),
-                    "attempted_by": _claim_attempt_identity(
-                        actor=performed_by or actor,
-                        claim_id=claim_id,
-                        claim_token_present=claim_token is not None,
-                        runtime_session_id=runtime_session_id,
-                        instance_id=instance_id,
-                        branch=branch,
-                        worktree_path=worktree_path,
-                        commit_sha=commit_sha,
-                        pr_ref=pr_ref,
-                        hostname=hostname,
-                        pid=pid,
-                    ),
-                },
+                claim_token=claim_token,
+                **identity_kwargs,
+            )
+            _emit_claim_event(
+                conn, row, event_type="coordination-failure",
+                actor=performed_by or actor, payload=payload,
             )
             raise
 
     from_identity = _claim_event_identity(row)
     next_claim_token = row["claim_token"]
+    bump_lease_epoch = mode == "rotate" or not next_claim_token
     if mode == "rotate" or not next_claim_token:
         next_claim_token = _generate_claim_token()
 
-    conn.execute(
-        """
-        UPDATE claim
-        SET agent = ?,
-            claim_token = ?,
-            expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds'),
-            runtime_session_id = ?,
-            instance_id = ?,
-            branch = ?,
-            worktree_path = ?,
-            commit_sha = ?,
-            pr_ref = ?,
-            hostname = ?,
-            pid = ?,
-            heartbeat = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-        WHERE id = ?
-        """,
-        (
-            actor,
-            next_claim_token,
-            ttl_seconds,
-            runtime_session_id,
-            instance_id,
-            branch,
-            worktree_path,
-            commit_sha,
-            pr_ref,
-            hostname,
-            pid,
-            claim_id,
-        ),
+    _claimcore.handoff_update(
+        _ClaimSqlite(conn),
+        claim_id,
+        actor,
+        next_claim_token,
+        ttl_seconds,
+        runtime_session_id,
+        instance_id,
+        branch,
+        worktree_path,
+        commit_sha,
+        pr_ref,
+        hostname,
+        pid,
+        bump_lease_epoch=bump_lease_epoch,
     )
-    conn.commit()
 
     updated = get_claim(conn, claim_id, include_secret=True)
     assert updated is not None
-    event_type = "claim-ownership-corrected" if legacy_ambiguous else "claim-handoff"
-    _emit_claim_event(
-        conn,
-        updated,
-        event_type=event_type,
-        actor=performed_by or actor,
-        payload={
-            "summary": (
-                f"Claim #{claim_id} ownership corrected"
-                if legacy_ambiguous
-                else f"Claim #{claim_id} handed off to {actor}"
-            ),
-            "detail": note
-            or (
-                "A legacy ambiguous claim was explicitly adopted and re-issued with a new token."
-                if legacy_ambiguous
-                else (
-                    "The previous proof was unavailable; explicit recovery adoption "
-                    "minted a replacement token."
-                    if lost_proof_adopted
-                    else f"Claim ownership was transferred with mode={mode}."
-                )
-            ),
-            "tags": ["claims", "handoff", "coordination"],
-            "operation": "handoff",
-            "mode": mode,
-            "legacy_adopted": legacy_ambiguous,
-            "lost_proof_adopted": lost_proof_adopted,
-            "token_rotated": mode == "rotate" or legacy_ambiguous,
-            "from_identity": from_identity,
-            "to_identity": _claim_event_identity(updated),
-        },
+    event_type, payload = _claimcore.handoff_success_event(
+        claim_id,
+        actor,
+        mode,
+        legacy_ambiguous=legacy_ambiguous,
+        lost_proof_adopted=lost_proof_adopted,
+        note=note,
+        from_identity=from_identity,
+        to_identity=_claim_event_identity(updated),
     )
+    _emit_claim_event(conn, updated, event_type=event_type, actor=performed_by or actor, payload=payload)
     return updated
 
 

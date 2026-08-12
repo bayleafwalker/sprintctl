@@ -24,6 +24,27 @@ db.py additionally used ``["claims", "coordination", "ambiguity", "legacy"]``
 for legacy claims with no claim_token. This module converges on db.py's
 more specific behavior (a bug fix, not a stylistic choice) — see
 release_rejection_event.
+
+Sub-increment 4c adds handoff_claim's mutation shape and payload builders.
+It surfaced two more drifts, both fixed here:
+
+- pg.py's handoff UPDATE never bumped ``lease_epoch`` on rotation/legacy
+  adoption; db.py's didn't either, but pg.py's did (``lease_epoch =
+  lease_epoch + CASE WHEN ... THEN 1 ELSE 0 END``). lease_epoch is a real
+  fencing token consumed by terminal_recovery_server.py and authority.py
+  to reject stale in-flight operations after a claim changes hands — not
+  bumping it on SQLite meant a session holding a pre-handoff lease_epoch
+  could still pass an expected_lease_epoch check post-handoff on that
+  backend. handoff_update now bumps it on both backends, matching pg's
+  (correct) prior behavior. No existing test exercised this on the SQLite
+  path; see the added regression test in test_claims.py.
+- pg.py's rejection-event ``attempted_by`` payloads (both the
+  legacy-ambiguity and coordination-failure branches) carried only
+  actor/claim_id/claim_token_present, dropping runtime_session_id,
+  instance_id, branch, worktree_path, commit_sha, pr_ref, hostname, and pid
+  that db.py's included — a real audit-trail completeness gap on the pg
+  path. Converged on db.py's richer identity, since that's what an operator
+  investigating a rejected handoff needs to see.
 """
 
 from __future__ import annotations
@@ -334,3 +355,187 @@ def release_rejection_event(
         ),
     }
     return event_type, payload
+
+
+def handoff_legacy_ambiguous_event(
+    claim_id: int,
+    row: dict,
+    *,
+    actor: str,
+    claim_token: str | None,
+    runtime_session_id: str | None = None,
+    instance_id: str | None = None,
+    branch: str | None = None,
+    worktree_path: str | None = None,
+    commit_sha: str | None = None,
+    pr_ref: str | None = None,
+    hostname: str | None = None,
+    pid: int | None = None,
+) -> dict:
+    """Payload for the 'legacy ambiguous claim, adoption not permitted' rejection."""
+    return {
+        "summary": f"Legacy claim ambiguity detected for claim #{claim_id}",
+        "detail": (
+            "An explicit handoff was attempted for a legacy claim without a "
+            "claim_token. Re-run with legacy adoption enabled to mint a new proof."
+        ),
+        "tags": ["claims", "coordination", "ambiguity", "legacy"],
+        "operation": "handoff",
+        "reason": "legacy-ambiguous-claim",
+        "claim": _rows.claim_event_identity(row),
+        "attempted_by": _rows.claim_attempt_identity(
+            actor=actor,
+            claim_id=claim_id,
+            claim_token_present=claim_token is not None,
+            runtime_session_id=runtime_session_id,
+            instance_id=instance_id,
+            branch=branch,
+            worktree_path=worktree_path,
+            commit_sha=commit_sha,
+            pr_ref=pr_ref,
+            hostname=hostname,
+            pid=pid,
+        ),
+    }
+
+
+def handoff_rejection_event(
+    claim_id: int,
+    row: dict,
+    detail: str,
+    *,
+    actor: str,
+    claim_token: str | None,
+    runtime_session_id: str | None = None,
+    instance_id: str | None = None,
+    branch: str | None = None,
+    worktree_path: str | None = None,
+    commit_sha: str | None = None,
+    pr_ref: str | None = None,
+    hostname: str | None = None,
+    pid: int | None = None,
+) -> dict:
+    """Payload for a handoff rejected by an invalid claim proof."""
+    return {
+        "summary": f"Claim handoff rejected for claim #{claim_id}",
+        "detail": detail,
+        "tags": ["claims", "coordination", "handoff"],
+        "operation": "handoff",
+        "reason": "invalid-claim-proof",
+        "claim": _rows.claim_event_identity(row),
+        "attempted_by": _rows.claim_attempt_identity(
+            actor=actor,
+            claim_id=claim_id,
+            claim_token_present=claim_token is not None,
+            runtime_session_id=runtime_session_id,
+            instance_id=instance_id,
+            branch=branch,
+            worktree_path=worktree_path,
+            commit_sha=commit_sha,
+            pr_ref=pr_ref,
+            hostname=hostname,
+            pid=pid,
+        ),
+    }
+
+
+def handoff_success_event(
+    claim_id: int,
+    actor: str,
+    mode: str,
+    *,
+    legacy_ambiguous: bool,
+    lost_proof_adopted: bool,
+    note: str | None,
+    from_identity: dict,
+    to_identity: dict,
+) -> tuple[str, dict]:
+    """Payload for a completed handoff (rotate/transfer/legacy-adopt)."""
+    event_type = "claim-ownership-corrected" if legacy_ambiguous else "claim-handoff"
+    payload = {
+        "summary": (
+            f"Claim #{claim_id} ownership corrected"
+            if legacy_ambiguous
+            else f"Claim #{claim_id} handed off to {actor}"
+        ),
+        "detail": note
+        or (
+            "A legacy ambiguous claim was explicitly adopted and re-issued with a new token."
+            if legacy_ambiguous
+            else (
+                "The previous proof was unavailable; explicit recovery adoption "
+                "minted a replacement token."
+                if lost_proof_adopted
+                else f"Claim ownership was transferred with mode={mode}."
+            )
+        ),
+        "tags": ["claims", "handoff", "coordination"],
+        "operation": "handoff",
+        "mode": mode,
+        "legacy_adopted": legacy_ambiguous,
+        "lost_proof_adopted": lost_proof_adopted,
+        "token_rotated": mode == "rotate" or legacy_ambiguous,
+        "from_identity": from_identity,
+        "to_identity": to_identity,
+    }
+    return event_type, payload
+
+
+def handoff_update(
+    conn: ClaimConn,
+    claim_id: int,
+    actor: str,
+    next_claim_token: str,
+    ttl_seconds: int,
+    runtime_session_id: str | None,
+    instance_id: str | None,
+    branch: str | None,
+    worktree_path: str | None,
+    commit_sha: str | None,
+    pr_ref: str | None,
+    hostname: str | None,
+    pid: int | None,
+    *,
+    bump_lease_epoch: bool,
+) -> None:
+    """Rotate ownership/proof on a claim row, bumping lease_epoch when rotating.
+
+    bump_lease_epoch must be True whenever the caller mints a new
+    claim_token (mode == "rotate", or any legacy/lost-proof adoption) — a
+    prior lease_epoch value must stop satisfying fencing checks once
+    ownership proof changes hands. See the module docstring for the
+    SQLite-side gap this fixes.
+    """
+    ph = conn.ph
+    sql = (
+        "UPDATE claim SET"
+        f" agent = {ph},"
+        f" claim_token = {ph},"
+        f" lease_epoch = lease_epoch + CASE WHEN {ph} THEN 1 ELSE 0 END,"
+        f" expires_at = {conn.expires_at_offset_sql()},"
+        f" runtime_session_id = {ph},"
+        f" instance_id = {ph},"
+        f" branch = {ph},"
+        f" worktree_path = {ph},"
+        f" commit_sha = {ph},"
+        f" pr_ref = {ph},"
+        f" hostname = {ph},"
+        f" pid = {ph},"
+        f" heartbeat = {conn.now_sql()}"
+        f"{_where(conn, f'id = {ph}')}"
+    )
+    params = (
+        actor,
+        next_claim_token,
+        bump_lease_epoch,
+        ttl_seconds,
+        runtime_session_id,
+        instance_id,
+        branch,
+        worktree_path,
+        commit_sha,
+        pr_ref,
+        hostname,
+        pid,
+    ) + conn.tenant_params() + (claim_id,)
+    conn.mutate(sql, params)
