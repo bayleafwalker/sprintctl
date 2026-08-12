@@ -34,7 +34,9 @@ from .workitemcore import (
     StatusConflict,
     _description_revision,
     effective_priority,
+    item_status_revision,
     validate_item_edit_revision,
+    validate_item_status_revision,
     validate_priority,
     validate_work_item_description,
 )
@@ -935,28 +937,14 @@ def get_work_item(conn: sqlite3.Connection, item_id: int) -> dict | None:
     return _workitemcore.get_work_item(_WorkItemSqlite(conn), item_id)
 
 
-_ITEM_STATUS_REVISION_RE = re.compile(
-    r"^item:[0-9a-fA-F-]{36}@status:(pending|active|done|blocked)$"
-)
 _SPRINT_STATUS_REVISION_RE = re.compile(
     r"^sprint:[0-9a-fA-F-]{36}@status:(planned|active|closed)$"
 )
 
 
-def item_status_revision(item: dict) -> str:
-    """Return the CAS token for the status-transition state of one item."""
-    return f"item:{item['aggregate_uuid']}@status:{item['status']}"
-
-
 def sprint_status_revision(sprint: dict) -> str:
     """Return the CAS token for the status-transition state of one sprint."""
     return f"sprint:{sprint['aggregate_uuid']}@status:{sprint['status']}"
-
-
-def validate_item_status_revision(revision: str) -> str:
-    if not isinstance(revision, str) or not _ITEM_STATUS_REVISION_RE.fullmatch(revision):
-        raise ValueError("expected_revision must be a valid item status revision")
-    return revision
 
 
 def validate_sprint_status_revision(revision: str) -> str:
@@ -1013,12 +1001,13 @@ def set_work_item_status(
 ) -> None:
     if expected_revision is not None:
         expected_revision = validate_item_status_revision(expected_revision)
+    wi = _WorkItemSqlite(conn)
     try:
         # SQLite's write transaction is the transition's linearization point.
         # Re-read the item after acquiring it so a stale basis cannot create a
         # coordination event or update a row.
-        conn.execute("BEGIN IMMEDIATE")
-        item = get_work_item(conn, item_id)
+        wi.begin_txn()
+        item = wi.lock_for_update("work_item", item_id)
         if item is None:
             raise ValueError(f"Item #{item_id} not found")
         current = item["status"]
@@ -1108,13 +1097,13 @@ def set_work_item_status(
                 raise InvalidTransition(
                     f"cannot transition {current} -> active while blockers remain unresolved: {blocker_ids}"
                 )
-        conn.execute(
-            "UPDATE work_item SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+        wi.execute(
+            f"UPDATE work_item SET status = ?, updated_at = {wi.updated_at_sql} WHERE id = ?",
             (new_status, item_id),
         )
-        conn.commit()
+        wi.commit()
     except Exception:
-        conn.rollback()
+        wi.rollback()
         raise
 
 

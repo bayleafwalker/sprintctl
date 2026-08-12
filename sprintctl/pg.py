@@ -50,7 +50,9 @@ from .workitemcore import (
     StatusConflict,
     _description_revision,
     effective_priority,
+    item_status_revision,
     validate_item_edit_revision,
+    validate_item_status_revision,
     validate_priority,
     validate_work_item_description,
 )
@@ -75,9 +77,7 @@ from .db import (
     _validate_sprint_transition,
     _normalize_ref_target,
     _serialize_ref,
-    item_status_revision,
     sprint_status_revision,
-    validate_item_status_revision,
     validate_sprint_status_revision,
 )
 
@@ -1911,18 +1911,14 @@ def set_work_item_status(
     from .db import _require_claim_proof
     if expected_revision is not None:
         expected_revision = validate_item_status_revision(expected_revision)
+    wi = _WorkItemPg(store)
     try:
         # PostgreSQL retains this lock until commit/rollback, so the basis
         # comparison below is the CAS linearization point for this item.
-        with store.conn.cursor() as cur:
-            cur.execute(
-                "SELECT * FROM work_item WHERE repo_id = %s AND id = %s FOR UPDATE",
-                (store.repo_id, item_id),
-            )
-            row = cur.fetchone()
-        if row is None:
+        wi.begin_txn()
+        item = wi.lock_for_update("work_item", item_id)
+        if item is None:
             raise ValueError(f"Item #{item_id} not found")
-        item = _norm(row)
         current = item["status"]
         current_revision = item_status_revision(item)
         if expected_revision is not None and expected_revision != current_revision:
@@ -2002,14 +1998,13 @@ def set_work_item_status(
                     f"cannot transition {current} -> active while blockers remain unresolved: "
                     f"{[b['item_id'] for b in unresolved]}"
                 )
-        with store.conn.cursor() as cur:
-            cur.execute(
-                "UPDATE work_item SET status = %s, updated_at = now() WHERE repo_id = %s AND id = %s",
-                (new_status, store.repo_id, item_id),
-            )
-        store.conn.commit()
+        wi.execute(
+            f"UPDATE work_item SET status = %s, updated_at = {wi.updated_at_sql} WHERE repo_id = %s AND id = %s",
+            (new_status, store.repo_id, item_id),
+        )
+        wi.commit()
     except Exception:
-        store.conn.rollback()
+        wi.rollback()
         raise
 
 
