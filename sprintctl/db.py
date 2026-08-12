@@ -14,6 +14,7 @@ from uuid import uuid4
 from . import contracts as _contracts
 from . import rows as _rows
 from . import sprintcore as _sprintcore
+from . import trackcore as _trackcore
 
 
 _WAL_BUSY_RETRY_DELAYS_SECONDS = (0.01, 0.02, 0.04, 0.08)
@@ -755,6 +756,41 @@ def list_sprints(conn: sqlite3.Connection) -> list[dict]:
 
 
 # --- Track ---
+#
+# Track-table query shapes live in ``sprintctl.trackcore`` and are shared
+# with the PostgreSQL backend; this module supplies only the SQLite execution
+# adapter.  Public signatures are unchanged.
+
+
+class _TrackSqlite:
+    """SQLite execution adapter for ``trackcore`` track operations."""
+
+    ph = "?"
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def tenant_params(self) -> tuple:
+        return ()
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        row = self._conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def insert_ignore(
+        self, columns: tuple[str, ...], values: tuple, conflict_cols: tuple[str, ...]
+    ) -> None:
+        col_list = ", ".join(columns)
+        placeholders = ", ".join(["?"] * len(values))
+        self._conn.execute(
+            f"INSERT OR IGNORE INTO track ({col_list}) VALUES ({placeholders})",
+            values,
+        )
+        self._conn.commit()
+
 
 def get_or_create_track(
     conn: sqlite3.Connection,
@@ -762,27 +798,15 @@ def get_or_create_track(
     name: str,
     description: str = "",
 ) -> int:
-    conn.execute(
-        "INSERT OR IGNORE INTO track (sprint_id, name, description) VALUES (?, ?, ?)",
-        (sprint_id, name, description),
-    )
-    row = conn.execute(
-        "SELECT id FROM track WHERE sprint_id = ? AND name = ?", (sprint_id, name)
-    ).fetchone()
-    conn.commit()
-    return row[0]
+    return _trackcore.get_or_create_track(_TrackSqlite(conn), sprint_id, name, description)
 
 
 def list_tracks(conn: sqlite3.Connection, sprint_id: int) -> list[dict]:
-    rows = conn.execute(
-        "SELECT * FROM track WHERE sprint_id = ? ORDER BY created_at ASC", (sprint_id,)
-    ).fetchall()
-    return [dict(r) for r in rows]
+    return _trackcore.list_tracks(_TrackSqlite(conn), sprint_id)
 
 
 def get_track(conn: sqlite3.Connection, track_id: int) -> dict | None:
-    row = conn.execute("SELECT * FROM track WHERE id = ?", (track_id,)).fetchone()
-    return dict(row) if row else None
+    return _trackcore.get_track(_TrackSqlite(conn), track_id)
 
 
 # --- WorkItem ---
