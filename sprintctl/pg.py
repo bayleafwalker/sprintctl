@@ -37,6 +37,7 @@ _logger = logging.getLogger(__name__)
 
 from . import contracts as _contracts
 from . import depcore as _depcore
+from . import eventcore as _eventcore
 from . import outbox
 from . import pg_migrations as _pg_migrations
 from . import refcore as _refcore
@@ -49,14 +50,20 @@ from .workitemcore import (
     validate_priority,
     validate_work_item_description,
 )
+from .eventcore import (
+    KNOWLEDGE_EVENT_TYPES,
+    TAKEUP_EVENT_TYPES,
+    _decode_event_payload,
+    _takeup_actor_key,
+    _takeup_key,
+    process_takeup_events,
+)
 from .db import (
     VALID_TRANSITIONS,
     SPRINT_TRANSITIONS,
     SPRINT_KINDS,
     CLAIM_TYPES,
     REF_TYPES,
-    KNOWLEDGE_EVENT_TYPES,
-    TAKEUP_EVENT_TYPES,
     InvalidTransition,
     EditConflict,
     StatusConflict,
@@ -67,10 +74,6 @@ from .db import (
     _validate_sprint_transition,
     _normalize_ref_target,
     _serialize_ref,
-    _takeup_key,
-    _takeup_actor_key,
-    _decode_event_payload,
-    process_takeup_events,
     _description_revision,
     validate_item_edit_revision,
     item_status_revision,
@@ -2079,7 +2082,37 @@ def force_item_done_for_carryover(store: PgStore, item_id: int) -> None:
 
 # ---------------------------------------------------------------------------
 # Event
+#
+# Event-table query shapes live in ``sprintctl.eventcore`` and are shared
+# with the SQLite backend; this module supplies only the PostgreSQL
+# execution adapter.  Public signatures are unchanged.  Transactional
+# operations (create_event, close_sprint_with_boundary_event) stay here.
 # ---------------------------------------------------------------------------
+
+
+class _EventPg:
+    """PostgreSQL execution adapter for ``eventcore`` event operations."""
+
+    ph = "%s"
+
+    def __init__(self, store: PgStore) -> None:
+        self._store = store
+
+    def tenant_params(self) -> tuple:
+        return (self._store.repo_id,)
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [_norm(r) for r in rows]
+
+    def insert_uncommitted(self, sql: str, params: tuple) -> int:
+        with self._store.conn.cursor() as cur:
+            cur.execute(f"{sql} RETURNING id", params)
+            row = cur.fetchone()
+        return row["id"]
+
 
 def _insert_event(
     store: PgStore,
@@ -2091,18 +2124,10 @@ def _insert_event(
     payload: dict | None = None,
 ) -> int:
     canonical_payload = _contracts.canonicalize_event_payload(event_type, payload)
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO event (repo_id, sprint_id, work_item_id, source_type, actor, event_type, payload)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-            """,
-            (store.repo_id, sprint_id, work_item_id, source_type, actor, event_type,
-             json.dumps(canonical_payload)),
-        )
-        row = cur.fetchone()
-    return row["id"]
+    payload_str = json.dumps(canonical_payload)
+    return _eventcore.insert_event_row(
+        _EventPg(store), sprint_id, actor, event_type, source_type, work_item_id, payload_str
+    )
 
 
 def create_event(
@@ -2226,96 +2251,28 @@ def close_sprint_with_boundary_event(
         raise
 
 
-def _events_query(store: PgStore, sprint_id: int, *, order: str = "ASC", limit: int | None = None) -> list[dict]:
-    query = """
-        SELECT * FROM event
-        WHERE repo_id = %s AND sprint_id = %s
-        ORDER BY created_at {order}
-    """.format(order=order)
-    params: list = [store.repo_id, sprint_id]
-    if limit is not None:
-        query += " LIMIT %s"
-        params.append(limit)
-    with store.conn.cursor() as cur:
-        cur.execute(query, params)
-        rows = cur.fetchall()
-    return [_norm_event(r) for r in rows]
-
-
-def _norm_event(row: dict) -> dict:
-    out = _norm(row)
-    # pg jsonb → dict already; normalise to match sqlite string convention for
-    # callers that do json.loads(event["payload"])
-    payload = out.get("payload")
-    if isinstance(payload, dict):
-        out["payload"] = json.dumps(payload)
-    return out
-
-
 def list_events(store: PgStore, sprint_id: int) -> list[dict]:
-    return _events_query(store, sprint_id, order="ASC")
+    return _eventcore.list_events(_EventPg(store), sprint_id)
 
 
 def list_events_limited(store: PgStore, sprint_id: int, limit: int = 50) -> list[dict]:
-    rows = _events_query(store, sprint_id, order="DESC", limit=limit)
-    return list(reversed(rows))
+    return _eventcore.list_events_limited(_EventPg(store), sprint_id, limit)
 
 
 def list_knowledge_candidates(store: PgStore, sprint_id: int) -> list[dict]:
-    placeholders = ", ".join(["%s"] * len(KNOWLEDGE_EVENT_TYPES))
-    with store.conn.cursor() as cur:
-        cur.execute(
-            f"""
-            SELECT * FROM event
-            WHERE repo_id = %s AND sprint_id = %s AND event_type IN ({placeholders})
-            ORDER BY created_at ASC, id ASC
-            """,
-            [store.repo_id, sprint_id, *KNOWLEDGE_EVENT_TYPES],
-        )
-        rows = cur.fetchall()
-    result = []
-    for r in rows:
-        row = _norm(r)
-        payload = row.get("payload")
-        row["payload"] = json.loads(payload) if isinstance(payload, str) else (payload or {})
-        result.append(row)
-    return result
+    return _eventcore.list_knowledge_candidates(_EventPg(store), sprint_id)
 
 
 # ---------------------------------------------------------------------------
 # Takeup
 # ---------------------------------------------------------------------------
 
-def _takeup_events_pg(store: PgStore, sprint_id: int | None = None) -> list[dict]:
-    placeholders = ", ".join(["%s"] * len(TAKEUP_EVENT_TYPES))
-    params: list = [store.repo_id, *TAKEUP_EVENT_TYPES]
-    query = f"""
-        SELECT * FROM event
-        WHERE repo_id = %s AND event_type IN ({placeholders})
-    """
-    if sprint_id is not None:
-        query += " AND sprint_id = %s"
-        params.append(sprint_id)
-    query += " ORDER BY sprint_id ASC, created_at ASC, id ASC"
-    with store.conn.cursor() as cur:
-        cur.execute(query, params)
-        rows = cur.fetchall()
-    result = []
-    for r in rows:
-        row = _norm(r)
-        payload = row.get("payload")
-        if isinstance(payload, str):
-            row["payload"] = json.loads(payload)
-        result.append(row)
-    return result
-
-
 def list_takeup_history(store: PgStore, sprint_id: int | None = None) -> dict[str, list[dict]]:
-    return process_takeup_events(_takeup_events_pg(store, sprint_id))
+    return _eventcore.list_takeup_history(_EventPg(store), sprint_id)
 
 
 def list_active_takeups(store: PgStore, sprint_id: int | None = None) -> list[dict]:
-    return list_takeup_history(store, sprint_id)["active_takeups"]
+    return _eventcore.list_active_takeups(_EventPg(store), sprint_id)
 
 
 # ---------------------------------------------------------------------------
