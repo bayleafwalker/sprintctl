@@ -21,9 +21,8 @@ import logging
 import secrets
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any, Callable
-from uuid import UUID, uuid4
+from uuid import uuid4
 from urllib.parse import urlparse
 
 try:
@@ -39,6 +38,7 @@ _logger = logging.getLogger(__name__)
 from . import contracts as _contracts
 from . import outbox
 from . import pg_migrations as _pg_migrations
+from . import rows as _rows
 from .db import (
     VALID_TRANSITIONS,
     SPRINT_TRANSITIONS,
@@ -57,9 +57,6 @@ from .db import (
     _validate_sprint_transition,
     _normalize_ref_target,
     _serialize_ref,
-    _claim_identity_status,
-    _claim_event_identity,
-    _claim_attempt_identity,
     _takeup_key,
     _takeup_actor_key,
     _decode_event_payload,
@@ -1485,37 +1482,17 @@ def _advance_identity_sequences(cur: Any, tables: tuple[str, ...]) -> None:
 
 # ---------------------------------------------------------------------------
 # Row normalisation
+#
+# Canonical implementations live in ``sprintctl.rows`` so the two backends
+# share one serialization contract.  Aliases keep this module's call sites
+# stable.
 # ---------------------------------------------------------------------------
 
-def _iso(value: Any) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        else:
-            value = value.astimezone(timezone.utc)
-        # Preserve fractional seconds.  Producer ledger hashes cover these
-        # timestamps, so truncating them on a read turns an otherwise identical
-        # served record into a different record when a client audits it.
-        return value.isoformat().replace("+00:00", "Z")
-    return str(value)
-
-
-def _norm(row: dict) -> dict:
-    """Normalise a pg row to the SQLite-compatible public value contract."""
-    import datetime as _dt
-    out: dict = {}
-    for k, v in row.items():
-        if isinstance(v, datetime):
-            out[k] = _iso(v)
-        elif isinstance(v, _dt.date):
-            out[k] = v.isoformat()
-        elif isinstance(v, UUID):
-            out[k] = str(v)
-        else:
-            out[k] = v
-    return out
+_iso = _rows.iso_timestamp
+_norm = _rows.normalize_row
+_serialize_claim = _rows.serialize_claim
+_claim_event_identity = _rows.claim_event_identity
+_claim_attempt_identity = _rows.claim_attempt_identity
 
 
 _RECOVERY_TABLES = ("sprint", "track", "work_item", "event", "claim", "ref", "dep")
@@ -2336,46 +2313,6 @@ def list_active_takeups(store: PgStore, sprint_id: int | None = None) -> list[di
 # can pin it for the lifetime of that connection.  Lease admission and expiry
 # must instead be judged at the statement that performs the operation.
 _CLAIM_CLOCK_SQL = "statement_timestamp()"
-
-def _serialize_claim(row: dict, *, include_secret: bool = False) -> dict:
-    claim_token = row.get("claim_token")
-    identity_status = _claim_identity_status(row)
-    raw = dict(row)
-    if not include_secret:
-        raw.pop("claim_token", None)
-    claim = {
-        **raw,
-        "claim_id": raw["id"],
-        "actor": raw["agent"],
-        "claim_token_present": bool(claim_token),
-        "claim_token_redacted": bool(claim_token) and not include_secret,
-        "identity_status": identity_status,
-        "identity": {
-            "claim_id": raw["id"],
-            "actor": raw["agent"],
-            "runtime_session_id": raw.get("runtime_session_id"),
-            "instance_id": raw.get("instance_id"),
-            "advisory": {
-                "branch": raw.get("branch"),
-                "worktree_path": raw.get("worktree_path"),
-                "commit_sha": raw.get("commit_sha"),
-                "pr_ref": raw.get("pr_ref"),
-                "hostname": raw.get("hostname"),
-                "pid": raw.get("pid"),
-            },
-        },
-        "ownership_proof": {
-            "type": "claim_id+claim_token",
-            "claim_id": raw["id"],
-            "claim_token_required": bool(raw["exclusive"]),
-            "claim_token_present": bool(claim_token),
-            "status": "verified-capable" if claim_token else "ambiguous-legacy-claim",
-        },
-    }
-    if include_secret:
-        claim["claim_token"] = claim_token
-        claim["ownership_proof"]["claim_token"] = claim_token
-    return claim
 
 
 def _get_active_exclusive_claim_row(store: PgStore, work_item_id: int) -> dict | None:
