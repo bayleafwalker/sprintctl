@@ -18,12 +18,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import secrets
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any, Callable
-from uuid import UUID, uuid4
+from uuid import uuid4
 from urllib.parse import urlparse
 
 try:
@@ -36,43 +34,50 @@ except ImportError:  # pragma: no cover
 
 _logger = logging.getLogger(__name__)
 
+from . import claimcore as _claimcore
 from . import contracts as _contracts
+from . import depcore as _depcore
+from . import eventcore as _eventcore
 from . import outbox
 from . import pg_migrations as _pg_migrations
+from . import refcore as _refcore
+from . import rows as _rows
+from . import sprintcore as _sprintcore
+from . import trackcore as _trackcore
+from . import workitemcore as _workitemcore
+from .workitemcore import (
+    EditConflict,
+    StatusConflict,
+    _description_revision,
+    effective_priority,
+    item_status_revision,
+    validate_item_edit_revision,
+    validate_item_status_revision,
+    validate_priority,
+    validate_work_item_description,
+)
+from .eventcore import (
+    KNOWLEDGE_EVENT_TYPES,
+    TAKEUP_EVENT_TYPES,
+    _decode_event_payload,
+    _takeup_actor_key,
+    _takeup_key,
+    process_takeup_events,
+)
+from .claimcore import CLAIM_TYPES, ClaimConflict
 from .db import (
     VALID_TRANSITIONS,
     SPRINT_TRANSITIONS,
     SPRINT_KINDS,
-    CLAIM_TYPES,
     REF_TYPES,
-    KNOWLEDGE_EVENT_TYPES,
-    TAKEUP_EVENT_TYPES,
     InvalidTransition,
-    EditConflict,
-    StatusConflict,
-    ClaimConflict,
     CLAIM_IDENTITY_STATUS_PROVEN,
     CLAIM_IDENTITY_STATUS_LEGACY,
-    MAX_CLAIM_TOKEN_INSERT_RETRIES,
     _validate_sprint_transition,
     _normalize_ref_target,
     _serialize_ref,
-    _claim_identity_status,
-    _claim_event_identity,
-    _claim_attempt_identity,
-    _takeup_key,
-    _takeup_actor_key,
-    _decode_event_payload,
-    process_takeup_events,
-    _description_revision,
-    validate_item_edit_revision,
-    item_status_revision,
     sprint_status_revision,
-    validate_item_status_revision,
     validate_sprint_status_revision,
-    validate_work_item_description,
-    validate_priority,
-    effective_priority,
 )
 
 # ---------------------------------------------------------------------------
@@ -1485,37 +1490,17 @@ def _advance_identity_sequences(cur: Any, tables: tuple[str, ...]) -> None:
 
 # ---------------------------------------------------------------------------
 # Row normalisation
+#
+# Canonical implementations live in ``sprintctl.rows`` so the two backends
+# share one serialization contract.  Aliases keep this module's call sites
+# stable.
 # ---------------------------------------------------------------------------
 
-def _iso(value: Any) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        else:
-            value = value.astimezone(timezone.utc)
-        # Preserve fractional seconds.  Producer ledger hashes cover these
-        # timestamps, so truncating them on a read turns an otherwise identical
-        # served record into a different record when a client audits it.
-        return value.isoformat().replace("+00:00", "Z")
-    return str(value)
-
-
-def _norm(row: dict) -> dict:
-    """Normalise a pg row to the SQLite-compatible public value contract."""
-    import datetime as _dt
-    out: dict = {}
-    for k, v in row.items():
-        if isinstance(v, datetime):
-            out[k] = _iso(v)
-        elif isinstance(v, _dt.date):
-            out[k] = v.isoformat()
-        elif isinstance(v, UUID):
-            out[k] = str(v)
-        else:
-            out[k] = v
-    return out
+_iso = _rows.iso_timestamp
+_norm = _rows.normalize_row
+_serialize_claim = _rows.serialize_claim
+_claim_event_identity = _rows.claim_event_identity
+_claim_attempt_identity = _rows.claim_attempt_identity
 
 
 _RECOVERY_TABLES = ("sprint", "track", "work_item", "event", "claim", "ref", "dep")
@@ -1541,7 +1526,48 @@ def recover_repo_snapshot(store: PgStore) -> dict[str, list[dict]]:
 
 # ---------------------------------------------------------------------------
 # Sprint
+#
+# Sprint-table query shapes live in ``sprintctl.sprintcore`` and are shared
+# with the SQLite backend; this module supplies only the PostgreSQL execution
+# adapter.  Public signatures are unchanged.
 # ---------------------------------------------------------------------------
+
+
+class _SprintPg:
+    """PostgreSQL execution adapter for ``sprintcore`` sprint operations."""
+
+    ph = "%s"
+
+    def __init__(self, store: PgStore) -> None:
+        self._store = store
+
+    def tenant_params(self) -> tuple:
+        return (self._store.repo_id,)
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        return _norm(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [_norm(r) for r in rows]
+
+    def mutate(self, sql: str, params: tuple) -> None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+        self._store.conn.commit()
+
+    def insert_id(self, sql: str, params: tuple) -> int:
+        with self._store.conn.cursor() as cur:
+            cur.execute(f"{sql} RETURNING id", params)
+            row = cur.fetchone()
+        self._store.conn.commit()
+        return row["id"]
+
 
 def create_sprint(
     store: PgStore,
@@ -1552,81 +1578,31 @@ def create_sprint(
     status: str = "planned",
     kind: str = "active_sprint",
 ) -> int:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO sprint (repo_id, name, goal, start_date, end_date, status, kind, aggregate_uuid)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-            """,
-            (store.repo_id, name, goal, start_date or None, end_date or None, status, kind, str(uuid4())),
-        )
-        row = cur.fetchone()
-    store.conn.commit()
-    return row["id"]
+    return _sprintcore.create_sprint(
+        _SprintPg(store), name, goal, start_date, end_date, status, kind
+    )
 
 
 def get_sprint(store: PgStore, sprint_id: int) -> dict | None:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM sprint WHERE repo_id = %s AND id = %s",
-            (store.repo_id, sprint_id),
-        )
-        row = cur.fetchone()
-    return _norm(row) if row else None
+    return _sprintcore.get_sprint(_SprintPg(store), sprint_id)
 
 
 def get_active_sprint(store: PgStore) -> dict | None:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT * FROM sprint
-            WHERE repo_id = %s AND status = 'active' AND kind = 'active_sprint'
-            ORDER BY created_at DESC, id DESC
-            LIMIT 1
-            """,
-            (store.repo_id,),
-        )
-        row = cur.fetchone()
-    return _norm(row) if row else None
+    return _sprintcore.get_active_sprint(_SprintPg(store))
 
 
 def list_active_sprints(store: PgStore) -> list[dict]:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT * FROM sprint
-            WHERE repo_id = %s AND status = 'active' AND kind = 'active_sprint'
-            ORDER BY created_at DESC, id DESC
-            """,
-            (store.repo_id,),
-        )
-        rows = cur.fetchall()
-    return [_norm(r) for r in rows]
+    return _sprintcore.list_active_sprints(_SprintPg(store))
 
 
 def set_sprint_kind(store: PgStore, sprint_id: int, kind: str) -> None:
-    if kind not in SPRINT_KINDS:
-        raise ValueError(f"Invalid kind '{kind}'. Must be one of: {', '.join(SPRINT_KINDS)}")
-    sprint = get_sprint(store, sprint_id)
-    if sprint is None:
-        raise ValueError(f"Sprint #{sprint_id} not found")
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "UPDATE sprint SET kind = %s WHERE repo_id = %s AND id = %s",
-            (kind, store.repo_id, sprint_id),
-        )
-    store.conn.commit()
+    _sprintcore.set_sprint_kind(
+        _SprintPg(store), sprint_id, kind, valid_kinds=SPRINT_KINDS
+    )
 
 
 def list_sprints(store: PgStore) -> list[dict]:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM sprint WHERE repo_id = %s ORDER BY created_at DESC",
-            (store.repo_id,),
-        )
-        rows = cur.fetchall()
-    return [_norm(r) for r in rows]
+    return _sprintcore.list_sprints(_SprintPg(store))
 
 
 def set_sprint_status(
@@ -1702,7 +1678,50 @@ def activate_sprint(store: PgStore, sprint_id: int, actor: str, context: str = "
 
 # ---------------------------------------------------------------------------
 # Track
+#
+# Track-table query shapes live in ``sprintctl.trackcore`` and are shared
+# with the SQLite backend; this module supplies only the PostgreSQL execution
+# adapter.  Public signatures are unchanged.
 # ---------------------------------------------------------------------------
+
+
+class _TrackPg:
+    """PostgreSQL execution adapter for ``trackcore`` track operations."""
+
+    ph = "%s"
+
+    def __init__(self, store: PgStore) -> None:
+        self._store = store
+
+    def tenant_params(self) -> tuple:
+        return (self._store.repo_id,)
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        return _norm(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [_norm(r) for r in rows]
+
+    def insert_ignore(
+        self, columns: tuple[str, ...], values: tuple, conflict_cols: tuple[str, ...]
+    ) -> None:
+        col_list = ", ".join(columns)
+        placeholders = ", ".join(["%s"] * len(values))
+        conflict_list = ", ".join(conflict_cols)
+        with self._store.conn.cursor() as cur:
+            cur.execute(
+                f"INSERT INTO track ({col_list}) VALUES ({placeholders})"
+                f" ON CONFLICT ({conflict_list}) DO NOTHING",
+                values,
+            )
+        self._store.conn.commit()
+
 
 def get_or_create_track(
     store: PgStore,
@@ -1710,47 +1729,116 @@ def get_or_create_track(
     name: str,
     description: str = "",
 ) -> int:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO track (repo_id, sprint_id, name, description)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (repo_id, sprint_id, name) DO NOTHING
-            """,
-            (store.repo_id, sprint_id, name, description),
-        )
-        cur.execute(
-            "SELECT id FROM track WHERE repo_id = %s AND sprint_id = %s AND name = %s",
-            (store.repo_id, sprint_id, name),
-        )
-        row = cur.fetchone()
-    store.conn.commit()
-    return row["id"]
+    return _trackcore.get_or_create_track(_TrackPg(store), sprint_id, name, description)
 
 
 def list_tracks(store: PgStore, sprint_id: int) -> list[dict]:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM track WHERE repo_id = %s AND sprint_id = %s ORDER BY created_at ASC",
-            (store.repo_id, sprint_id),
-        )
-        rows = cur.fetchall()
-    return [_norm(r) for r in rows]
+    return _trackcore.list_tracks(_TrackPg(store), sprint_id)
 
 
 def get_track(store: PgStore, track_id: int) -> dict | None:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM track WHERE repo_id = %s AND id = %s",
-            (store.repo_id, track_id),
-        )
-        row = cur.fetchone()
-    return _norm(row) if row else None
+    return _trackcore.get_track(_TrackPg(store), track_id)
 
 
 # ---------------------------------------------------------------------------
 # WorkItem
+#
+# Work-item CRUD query shapes live in ``sprintctl.workitemcore`` and are
+# shared with the SQLite backend; this module supplies only the PostgreSQL
+# execution adapter.  Public signatures are unchanged.  CAS/conflict
+# operations (update_work_item_description, set_work_item_status) stay here.
 # ---------------------------------------------------------------------------
+
+
+class _WorkItemPg:
+    """PostgreSQL execution adapter for ``workitemcore`` work-item operations."""
+
+    ph = "%s"
+    updated_at_sql = "now()"
+
+    def __init__(self, store: PgStore) -> None:
+        self._store = store
+
+    def tenant_params(self) -> tuple:
+        return (self._store.repo_id,)
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        return _norm(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [_norm(r) for r in rows]
+
+    def insert_id(self, sql: str, params: tuple) -> int:
+        with self._store.conn.cursor() as cur:
+            cur.execute(f"{sql} RETURNING id", params)
+            row = cur.fetchone()
+        self._store.conn.commit()
+        return row["id"]
+
+    def update_one(self, sql: str, params: tuple) -> bool:
+        with self._store.conn.cursor() as cur:
+            cur.execute(f"{sql} RETURNING id", params)
+            row = cur.fetchone()
+        if row is None:
+            self._store.conn.rollback()
+            return False
+        self._store.conn.commit()
+        return True
+
+    def join_tenant_clause(self, left_alias: str, right_alias: str) -> str:
+        return f" AND {left_alias}.repo_id = {right_alias}.repo_id"
+
+    def begin_txn(self) -> None:
+        pass  # already in an explicit (non-autocommit) transaction; see docstring
+
+    def commit(self) -> None:
+        self._store.conn.commit()
+
+    def rollback(self) -> None:
+        self._store.conn.rollback()
+
+    def for_update_of(self, alias: str) -> str:
+        return f" FOR UPDATE OF {alias}"
+
+    def lock_for_update(self, table: str, id_: int, extra_where: str = "") -> dict | None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(
+                f"SELECT * FROM {table} WHERE repo_id = %s AND id = %s{extra_where} FOR UPDATE",
+                (self._store.repo_id, id_),
+            )
+            row = cur.fetchone()
+        return _norm(row) if row else None
+
+    def execute(self, sql: str, params: tuple) -> None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+
+    def insert_event(
+        self,
+        sprint_id: int,
+        actor: str,
+        event_type: str,
+        *,
+        source_type: str,
+        work_item_id: int,
+        payload: dict,
+    ) -> int:
+        return _insert_event(
+            self._store,
+            sprint_id,
+            actor,
+            event_type,
+            source_type=source_type,
+            work_item_id=work_item_id,
+            payload=payload,
+        )
+
 
 def create_work_item(
     store: PgStore,
@@ -1761,19 +1849,9 @@ def create_work_item(
     assignee: str | None = None,
     priority: int | None = None,
 ) -> int:
-    priority = validate_priority(priority)
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO work_item (repo_id, sprint_id, track_id, title, description, assignee, priority, aggregate_uuid)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-            """,
-            (store.repo_id, sprint_id, track_id, title, description, assignee, priority, str(uuid4())),
-        )
-        row = cur.fetchone()
-    store.conn.commit()
-    return row["id"]
+    return _workitemcore.create_work_item(
+        _WorkItemPg(store), sprint_id, track_id, title, description, assignee, priority
+    )
 
 
 def set_work_item_priority(
@@ -1781,60 +1859,18 @@ def set_work_item_priority(
     item_id: int,
     priority: int | None,
 ) -> None:
-    priority = validate_priority(priority)
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE work_item
-            SET priority = %s, updated_at = now()
-            WHERE repo_id = %s AND id = %s
-            RETURNING id
-            """,
-            (priority, store.repo_id, item_id),
-        )
-        row = cur.fetchone()
-    if row is None:
-        store.conn.rollback()
-        raise ValueError(f"Item #{item_id} not found")
-    store.conn.commit()
+    _workitemcore.set_work_item_priority(_WorkItemPg(store), item_id, priority)
 
 
 def get_work_item(store: PgStore, item_id: int) -> dict | None:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM work_item WHERE repo_id = %s AND id = %s",
-            (store.repo_id, item_id),
-        )
-        row = cur.fetchone()
-    return _norm(row) if row else None
+    return _workitemcore.get_work_item(_WorkItemPg(store), item_id)
 
 
 def get_work_item_with_edit_revision(
     store: PgStore, item_id: int
 ) -> tuple[dict, str] | None:
     """Read an item and its description revision from one PostgreSQL snapshot."""
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT wi.*,
-                   (
-                       SELECT COUNT(*)
-                       FROM event e
-                       WHERE e.repo_id = wi.repo_id
-                         AND e.work_item_id = wi.id
-                         AND e.event_type = %s
-                   ) AS edit_version
-            FROM work_item wi
-            WHERE wi.repo_id = %s AND wi.id = %s
-            """,
-            (_contracts.ITEM_EDITED_EVENT_TYPE, store.repo_id, item_id),
-        )
-        row = cur.fetchone()
-    if row is None:
-        return None
-    item = _norm(row)
-    version = int(item.pop("edit_version"))
-    return item, _description_revision(item, version)
+    return _workitemcore.get_work_item_with_edit_revision(_WorkItemPg(store), item_id)
 
 
 def update_work_item_description(
@@ -1846,91 +1882,10 @@ def update_work_item_description(
     actor: str = "actor",
 ) -> dict:
     """Atomically edit an item and append its immutable audit revision."""
-    description = validate_work_item_description(description)
-    if expected_revision is not None:
-        expected_revision = validate_item_edit_revision(expected_revision)
-    if not isinstance(actor, str) or not actor.strip():
-        raise ValueError("actor must be a non-empty string")
-    try:
-        with store.conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT wi.*,
-                       (
-                           SELECT COUNT(*)
-                           FROM event e
-                           WHERE e.repo_id = wi.repo_id
-                             AND e.work_item_id = wi.id
-                             AND e.event_type = %s
-                       ) AS edit_version
-                FROM work_item wi
-                WHERE wi.repo_id = %s AND wi.id = %s
-                FOR UPDATE OF wi
-                """,
-                (_contracts.ITEM_EDITED_EVENT_TYPE, store.repo_id, item_id),
-            )
-            row = cur.fetchone()
-        if row is None:
-            raise ValueError(f"Item #{item_id} not found")
-
-        item = _norm(row)
-        version = int(item.pop("edit_version"))
-        previous_revision = _description_revision(item, version)
-        if (
-            expected_revision is not None
-            and expected_revision != previous_revision
-        ):
-            raise EditConflict(
-                f"Item #{item_id} description revision mismatch: "
-                f"expected {expected_revision}, current {previous_revision}"
-            )
-        if item.get("description") == description:
-            raise ValueError(
-                f"Item #{item_id} description unchanged: no-op edit rejected"
-            )
-
-        revision = _description_revision(
-            {**item, "description": description}, version + 1
-        )
-        with store.conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE work_item
-                SET description = %s, updated_at = now()
-                WHERE repo_id = %s AND id = %s
-                RETURNING *
-                """,
-                (description, store.repo_id, item_id),
-            )
-            updated_row = cur.fetchone()
-        assert updated_row is not None
-        event_id = _insert_event(
-            store,
-            item["sprint_id"],
-            actor.strip(),
-            _contracts.ITEM_EDITED_EVENT_TYPE,
-            source_type="actor",
-            work_item_id=item_id,
-            payload={
-                "summary": f"Item #{item_id} description edited",
-                "field": "description",
-                "previous_description": item.get("description") or "",
-                "description": description,
-                "previous_revision": previous_revision,
-                "revision": revision,
-            },
-        )
-        updated = _norm(updated_row)
-        store.conn.commit()
-        return {
-            "item": updated,
-            "event_id": event_id,
-            "previous_revision": previous_revision,
-            "revision": revision,
-        }
-    except Exception:
-        store.conn.rollback()
-        raise
+    return _workitemcore.update_work_item_description(
+        _WorkItemPg(store), item_id, description,
+        expected_revision=expected_revision, actor=actor,
+    )
 
 
 def list_work_items(
@@ -1939,27 +1894,7 @@ def list_work_items(
     track_name: str | None = None,
     status: str | None = None,
 ) -> list[dict]:
-    query = """
-        SELECT wi.*, t.name AS track_name
-        FROM work_item wi
-        JOIN track t ON wi.repo_id = t.repo_id AND wi.track_id = t.id
-        WHERE wi.repo_id = %s
-    """
-    params: list = [store.repo_id]
-    if sprint_id is not None:
-        query += " AND wi.sprint_id = %s"
-        params.append(sprint_id)
-    if track_name is not None:
-        query += " AND t.name = %s"
-        params.append(track_name)
-    if status is not None:
-        query += " AND wi.status = %s"
-        params.append(status)
-    query += " ORDER BY wi.created_at ASC"
-    with store.conn.cursor() as cur:
-        cur.execute(query, params)
-        rows = cur.fetchall()
-    return [_norm(r) for r in rows]
+    return _workitemcore.list_work_items(_WorkItemPg(store), sprint_id, track_name, status)
 
 
 def set_work_item_status(
@@ -1975,18 +1910,14 @@ def set_work_item_status(
     from .db import _require_claim_proof
     if expected_revision is not None:
         expected_revision = validate_item_status_revision(expected_revision)
+    wi = _WorkItemPg(store)
     try:
         # PostgreSQL retains this lock until commit/rollback, so the basis
         # comparison below is the CAS linearization point for this item.
-        with store.conn.cursor() as cur:
-            cur.execute(
-                "SELECT * FROM work_item WHERE repo_id = %s AND id = %s FOR UPDATE",
-                (store.repo_id, item_id),
-            )
-            row = cur.fetchone()
-        if row is None:
+        wi.begin_txn()
+        item = wi.lock_for_update("work_item", item_id)
+        if item is None:
             raise ValueError(f"Item #{item_id} not found")
-        item = _norm(row)
         current = item["status"]
         current_revision = item_status_revision(item)
         if expected_revision is not None and expected_revision != current_revision:
@@ -2066,14 +1997,13 @@ def set_work_item_status(
                     f"cannot transition {current} -> active while blockers remain unresolved: "
                     f"{[b['item_id'] for b in unresolved]}"
                 )
-        with store.conn.cursor() as cur:
-            cur.execute(
-                "UPDATE work_item SET status = %s, updated_at = now() WHERE repo_id = %s AND id = %s",
-                (new_status, store.repo_id, item_id),
-            )
-        store.conn.commit()
+        wi.execute(
+            f"UPDATE work_item SET status = %s, updated_at = {wi.updated_at_sql} WHERE repo_id = %s AND id = %s",
+            (new_status, store.repo_id, item_id),
+        )
+        wi.commit()
     except Exception:
-        store.conn.rollback()
+        wi.rollback()
         raise
 
 
@@ -2088,7 +2018,37 @@ def force_item_done_for_carryover(store: PgStore, item_id: int) -> None:
 
 # ---------------------------------------------------------------------------
 # Event
+#
+# Event-table query shapes live in ``sprintctl.eventcore`` and are shared
+# with the SQLite backend; this module supplies only the PostgreSQL
+# execution adapter.  Public signatures are unchanged.  Transactional
+# operations (create_event, close_sprint_with_boundary_event) stay here.
 # ---------------------------------------------------------------------------
+
+
+class _EventPg:
+    """PostgreSQL execution adapter for ``eventcore`` event operations."""
+
+    ph = "%s"
+
+    def __init__(self, store: PgStore) -> None:
+        self._store = store
+
+    def tenant_params(self) -> tuple:
+        return (self._store.repo_id,)
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [_norm(r) for r in rows]
+
+    def insert_uncommitted(self, sql: str, params: tuple) -> int:
+        with self._store.conn.cursor() as cur:
+            cur.execute(f"{sql} RETURNING id", params)
+            row = cur.fetchone()
+        return row["id"]
+
 
 def _insert_event(
     store: PgStore,
@@ -2100,18 +2060,10 @@ def _insert_event(
     payload: dict | None = None,
 ) -> int:
     canonical_payload = _contracts.canonicalize_event_payload(event_type, payload)
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO event (repo_id, sprint_id, work_item_id, source_type, actor, event_type, payload)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-            """,
-            (store.repo_id, sprint_id, work_item_id, source_type, actor, event_type,
-             json.dumps(canonical_payload)),
-        )
-        row = cur.fetchone()
-    return row["id"]
+    payload_str = json.dumps(canonical_payload)
+    return _eventcore.insert_event_row(
+        _EventPg(store), sprint_id, actor, event_type, source_type, work_item_id, payload_str
+    )
 
 
 def create_event(
@@ -2235,96 +2187,28 @@ def close_sprint_with_boundary_event(
         raise
 
 
-def _events_query(store: PgStore, sprint_id: int, *, order: str = "ASC", limit: int | None = None) -> list[dict]:
-    query = """
-        SELECT * FROM event
-        WHERE repo_id = %s AND sprint_id = %s
-        ORDER BY created_at {order}
-    """.format(order=order)
-    params: list = [store.repo_id, sprint_id]
-    if limit is not None:
-        query += " LIMIT %s"
-        params.append(limit)
-    with store.conn.cursor() as cur:
-        cur.execute(query, params)
-        rows = cur.fetchall()
-    return [_norm_event(r) for r in rows]
-
-
-def _norm_event(row: dict) -> dict:
-    out = _norm(row)
-    # pg jsonb → dict already; normalise to match sqlite string convention for
-    # callers that do json.loads(event["payload"])
-    payload = out.get("payload")
-    if isinstance(payload, dict):
-        out["payload"] = json.dumps(payload)
-    return out
-
-
 def list_events(store: PgStore, sprint_id: int) -> list[dict]:
-    return _events_query(store, sprint_id, order="ASC")
+    return _eventcore.list_events(_EventPg(store), sprint_id)
 
 
 def list_events_limited(store: PgStore, sprint_id: int, limit: int = 50) -> list[dict]:
-    rows = _events_query(store, sprint_id, order="DESC", limit=limit)
-    return list(reversed(rows))
+    return _eventcore.list_events_limited(_EventPg(store), sprint_id, limit)
 
 
 def list_knowledge_candidates(store: PgStore, sprint_id: int) -> list[dict]:
-    placeholders = ", ".join(["%s"] * len(KNOWLEDGE_EVENT_TYPES))
-    with store.conn.cursor() as cur:
-        cur.execute(
-            f"""
-            SELECT * FROM event
-            WHERE repo_id = %s AND sprint_id = %s AND event_type IN ({placeholders})
-            ORDER BY created_at ASC, id ASC
-            """,
-            [store.repo_id, sprint_id, *KNOWLEDGE_EVENT_TYPES],
-        )
-        rows = cur.fetchall()
-    result = []
-    for r in rows:
-        row = _norm(r)
-        payload = row.get("payload")
-        row["payload"] = json.loads(payload) if isinstance(payload, str) else (payload or {})
-        result.append(row)
-    return result
+    return _eventcore.list_knowledge_candidates(_EventPg(store), sprint_id)
 
 
 # ---------------------------------------------------------------------------
 # Takeup
 # ---------------------------------------------------------------------------
 
-def _takeup_events_pg(store: PgStore, sprint_id: int | None = None) -> list[dict]:
-    placeholders = ", ".join(["%s"] * len(TAKEUP_EVENT_TYPES))
-    params: list = [store.repo_id, *TAKEUP_EVENT_TYPES]
-    query = f"""
-        SELECT * FROM event
-        WHERE repo_id = %s AND event_type IN ({placeholders})
-    """
-    if sprint_id is not None:
-        query += " AND sprint_id = %s"
-        params.append(sprint_id)
-    query += " ORDER BY sprint_id ASC, created_at ASC, id ASC"
-    with store.conn.cursor() as cur:
-        cur.execute(query, params)
-        rows = cur.fetchall()
-    result = []
-    for r in rows:
-        row = _norm(r)
-        payload = row.get("payload")
-        if isinstance(payload, str):
-            row["payload"] = json.loads(payload)
-        result.append(row)
-    return result
-
-
 def list_takeup_history(store: PgStore, sprint_id: int | None = None) -> dict[str, list[dict]]:
-    return process_takeup_events(_takeup_events_pg(store, sprint_id))
+    return _eventcore.list_takeup_history(_EventPg(store), sprint_id)
 
 
 def list_active_takeups(store: PgStore, sprint_id: int | None = None) -> list[dict]:
-    return list_takeup_history(store, sprint_id)["active_takeups"]
+    return _eventcore.list_active_takeups(_EventPg(store), sprint_id)
 
 
 # ---------------------------------------------------------------------------
@@ -2337,79 +2221,13 @@ def list_active_takeups(store: PgStore, sprint_id: int | None = None) -> list[di
 # must instead be judged at the statement that performs the operation.
 _CLAIM_CLOCK_SQL = "statement_timestamp()"
 
-def _serialize_claim(row: dict, *, include_secret: bool = False) -> dict:
-    claim_token = row.get("claim_token")
-    identity_status = _claim_identity_status(row)
-    raw = dict(row)
-    if not include_secret:
-        raw.pop("claim_token", None)
-    claim = {
-        **raw,
-        "claim_id": raw["id"],
-        "actor": raw["agent"],
-        "claim_token_present": bool(claim_token),
-        "claim_token_redacted": bool(claim_token) and not include_secret,
-        "identity_status": identity_status,
-        "identity": {
-            "claim_id": raw["id"],
-            "actor": raw["agent"],
-            "runtime_session_id": raw.get("runtime_session_id"),
-            "instance_id": raw.get("instance_id"),
-            "advisory": {
-                "branch": raw.get("branch"),
-                "worktree_path": raw.get("worktree_path"),
-                "commit_sha": raw.get("commit_sha"),
-                "pr_ref": raw.get("pr_ref"),
-                "hostname": raw.get("hostname"),
-                "pid": raw.get("pid"),
-            },
-        },
-        "ownership_proof": {
-            "type": "claim_id+claim_token",
-            "claim_id": raw["id"],
-            "claim_token_required": bool(raw["exclusive"]),
-            "claim_token_present": bool(claim_token),
-            "status": "verified-capable" if claim_token else "ambiguous-legacy-claim",
-        },
-    }
-    if include_secret:
-        claim["claim_token"] = claim_token
-        claim["ownership_proof"]["claim_token"] = claim_token
-    return claim
-
 
 def _get_active_exclusive_claim_row(store: PgStore, work_item_id: int) -> dict | None:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            f"""
-            SELECT * FROM claim
-            WHERE repo_id = %s AND work_item_id = %s AND exclusive = true
-              AND status = 'active'
-              AND expires_at > {_CLAIM_CLOCK_SQL}
-            ORDER BY created_at ASC
-            LIMIT 1
-            """,
-            (store.repo_id, work_item_id),
-        )
-        row = cur.fetchone()
-    return _norm(row) if row else None
+    return _claimcore.get_active_exclusive_claim_row(_ClaimPg(store), work_item_id)
 
 
 def _get_active_coordinate_claim_row(store: PgStore, work_item_id: int) -> dict | None:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            f"""
-            SELECT * FROM claim
-            WHERE repo_id = %s AND work_item_id = %s AND exclusive = true
-              AND status = 'active'
-              AND claim_type = 'coordinate' AND expires_at > {_CLAIM_CLOCK_SQL}
-            ORDER BY created_at ASC
-            LIMIT 1
-            """,
-            (store.repo_id, work_item_id),
-        )
-        row = cur.fetchone()
-    return _norm(row) if row else None
+    return _claimcore.get_active_coordinate_claim_row(_ClaimPg(store), work_item_id)
 
 
 def _emit_claim_event(
@@ -2439,51 +2257,109 @@ def _require_claim_proof(row: dict, claim_token: str | None) -> None:
     _db_require_claim_proof(row, claim_token)
 
 
-def _generate_claim_token() -> str:
-    return secrets.token_urlsafe(24)
-
-
-def _lock_claim_arbitration_row(cur: Any, store: PgStore, work_item_id: int) -> None:
-    """Serialize claim admission for one repository-scoped work item.
-
-    PostgreSQL cannot express "at most one unexpired exclusive claim" as a
-    plain unique constraint because expiry depends on backend time and
-    coordinator delegation intentionally permits multiple exclusive rows.
-    Locking the authoritative work-item row gives every claim admission path a
-    stable transaction-scoped arbitration point before it reads the live claim
-    set.
-    """
-    cur.execute(
-        """
-        SELECT id FROM work_item
-        WHERE repo_id = %s AND id = %s
-        FOR UPDATE
-        """,
-        (store.repo_id, work_item_id),
-    )
-    if cur.fetchone() is None:
-        raise ValueError(f"Work item #{work_item_id} not found")
-
-
-def _lock_repo_claim_capability_arbitration(cur: Any, repo_id: str) -> None:
-    """Serialize repo-wide ordinary-claim admission with maintenance activation."""
-    cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (repo_id,))
-
-
 # ---------------------------------------------------------------------------
 # Claim
+#
+# Claim query shapes -- including create_claim/handoff_claim's transactional
+# bodies as of sub-increments 4d/4e -- live in ``sprintctl.claimcore`` and are
+# shared with the SQLite backend; this module supplies only the PostgreSQL
+# execution adapter for them. heartbeat_claim/release_claim stay here.
 # ---------------------------------------------------------------------------
 
+
+class _ClaimPg:
+    """PostgreSQL execution adapter for ``claimcore`` claim read operations."""
+
+    ph = "%s"
+    true_literal = "true"
+
+    def __init__(self, store: PgStore) -> None:
+        self._store = store
+
+    def tenant_params(self) -> tuple:
+        return (self._store.repo_id,)
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        return _norm(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [_norm(r) for r in rows]
+
+    def mutate(self, sql: str, params: tuple) -> None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+        self._store.conn.commit()
+
+    def now_sql(self) -> str:
+        return _CLAIM_CLOCK_SQL
+
+    def expires_at_offset_sql(self) -> str:
+        return f"{_CLAIM_CLOCK_SQL} + ({self.ph} || ' seconds')::interval"
+
+    def join_tenant_clause(self, left_alias: str, right_alias: str) -> str:
+        return f" AND {left_alias}.repo_id = {right_alias}.repo_id"
+
+    def begin_txn(self) -> None:
+        pass  # already in an explicit (non-autocommit) transaction; see PgStore
+
+    def commit(self) -> None:
+        self._store.conn.commit()
+
+    def rollback(self) -> None:
+        self._store.conn.rollback()
+
+    def execute(self, sql: str, params: tuple) -> None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+
+    def insert_row(self, sql: str, params: tuple) -> int:
+        with self._store.conn.cursor() as cur:
+            cur.execute(f"{sql} RETURNING id", params)
+            row = cur.fetchone()
+        return row["id"]
+
+    def lock_capability_arbitration(self) -> None:
+        """Serialize repo-wide ordinary-claim admission with maintenance activation."""
+        self.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (self._store.repo_id,))
+
+    def lock_work_item_row(self, work_item_id: int) -> dict | None:
+        """Lock the work-item row: the stable transaction-scoped arbitration point.
+
+        PostgreSQL cannot express "at most one unexpired exclusive claim" as a
+        plain unique constraint because expiry depends on backend time and
+        coordinator delegation intentionally permits multiple exclusive rows.
+        """
+        with self._store.conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM work_item WHERE repo_id = %s AND id = %s FOR UPDATE",
+                (self._store.repo_id, work_item_id),
+            )
+            row = cur.fetchone()
+        return _norm(row) if row else None
+
+    def is_claim_token_collision(self, exc: BaseException) -> bool:
+        return _PSYCOPG_AVAILABLE and isinstance(exc, UniqueViolation) and "claim_token" in str(exc)
+
+    def maintenance_capability_active_sql(self) -> str:
+        return f"state IN ('active','observing') AND expires_at > {_CLAIM_CLOCK_SQL}"
+
+    def emit_claim_event(
+        self, claim_row: dict, *, event_type: str, actor: str, payload: dict
+    ) -> None:
+        _emit_claim_event(self._store, claim_row, event_type=event_type, actor=actor, payload=payload)
+
+
 def get_claim(store: PgStore, claim_id: int, *, include_secret: bool = False) -> dict | None:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM claim WHERE repo_id = %s AND id = %s",
-            (store.repo_id, claim_id),
-        )
-        row = cur.fetchone()
+    row = _claimcore.get_claim_row(_ClaimPg(store), claim_id)
     if row is None:
         return None
-    return _serialize_claim(_norm(row), include_secret=include_secret)
+    return _serialize_claim(row, include_secret=include_secret)
 
 
 def create_claim(
@@ -2504,97 +2380,17 @@ def create_claim(
     coordinate_claim_id: int | None = None,
     coordinate_claim_token: str | None = None,
 ) -> int:
-    from .db import _require_claim_proof as _db_require_claim_proof
     if claim_type not in CLAIM_TYPES:
         raise ValueError(f"Invalid claim_type '{claim_type}'. Must be one of: {', '.join(CLAIM_TYPES)}")
     item = get_work_item(store, work_item_id)
     if item is None:
         raise ValueError(f"Work item #{work_item_id} not found")
-
-    for attempt in range(MAX_CLAIM_TOKEN_INSERT_RETRIES):
-        claim_token = _generate_claim_token()
-        try:
-            with store.conn.cursor() as cur:
-                _lock_repo_claim_capability_arbitration(cur, store.repo_id)
-                cur.execute(
-                    f"SELECT capability_id FROM maintenance_capability "
-                    "WHERE repo_id=%s AND state IN ('active','observing') "
-                    f"AND expires_at > {_CLAIM_CLOCK_SQL} LIMIT 1",
-                    (store.repo_id,),
-                )
-                active_capability = cur.fetchone()
-                if active_capability is not None:
-                    raise ClaimConflict(
-                        "ordinary claims are disabled while an exact-plan maintenance capability is active"
-                    )
-                if exclusive:
-                    _lock_claim_arbitration_row(cur, store, work_item_id)
-                cur.execute(
-                    f"""
-                    UPDATE claim SET status = 'expired'
-                    WHERE repo_id = %s AND work_item_id = %s
-                      AND status = 'active' AND expires_at <= {_CLAIM_CLOCK_SQL}
-                    """,
-                    (store.repo_id, work_item_id),
-                )
-                if exclusive:
-                    conflict = _get_active_exclusive_claim_row(store, work_item_id)
-                    if conflict:
-                        if (
-                            conflict["claim_type"] == "coordinate"
-                            and coordinate_claim_id is not None
-                            and coordinate_claim_id == conflict["id"]
-                        ):
-                            cur.execute(
-                                "SELECT * FROM claim WHERE repo_id = %s AND id = %s",
-                                (store.repo_id, coordinate_claim_id),
-                            )
-                            coord_row = cur.fetchone()
-                            if coord_row is None:
-                                raise ValueError(f"Coordinate claim #{coordinate_claim_id} not found")
-                            _db_require_claim_proof(_norm(coord_row), coordinate_claim_token)
-                        else:
-                            raise ClaimConflict(
-                                f"Item #{work_item_id} is exclusively claimed by '{conflict['agent']}' "
-                                f"(claim #{conflict['id']})"
-                            )
-                cur.execute(
-                    f"""
-                    INSERT INTO claim
-                        (repo_id, work_item_id, agent, claim_type, exclusive, expires_at,
-                         branch, worktree_path, commit_sha, pr_ref,
-                         claim_token, runtime_session_id, instance_id, hostname, pid,
-                         lease_epoch)
-                    VALUES (%s, %s, %s, %s, %s,
-                            {_CLAIM_CLOCK_SQL} + (%s || ' seconds')::interval,
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                            COALESCE((SELECT MAX(lease_epoch) FROM claim
-                                      WHERE repo_id = %s AND work_item_id = %s
-                                        AND status = 'expired'), 0) + 1)
-                    RETURNING id
-                    """,
-                    (store.repo_id, work_item_id, agent, claim_type, exclusive, ttl_seconds,
-                     branch, worktree_path, commit_sha, pr_ref,
-                     claim_token, runtime_session_id, instance_id, hostname, pid,
-                     store.repo_id, work_item_id),
-                )
-                row = cur.fetchone()
-            store.conn.commit()
-            return row["id"]
-        except ClaimConflict:
-            # The repository arbitration lock is transaction-scoped.  A normal
-            # rejected admission must close its transaction before control
-            # returns to a caller that may retain and reuse this connection.
-            store.conn.rollback()
-            raise
-        except Exception as exc:
-            store.conn.rollback()
-            if _PSYCOPG_AVAILABLE and isinstance(exc, UniqueViolation) and "claim_token" in str(exc):
-                if attempt == MAX_CLAIM_TOKEN_INSERT_RETRIES - 1:
-                    raise RuntimeError("Failed to create claim: could not generate a unique token.") from exc
-                continue
-            raise
-    raise RuntimeError("Unreachable")
+    return _claimcore.create_claim(
+        _ClaimPg(store), work_item_id, agent, claim_type, exclusive, ttl_seconds,
+        branch, worktree_path, commit_sha, pr_ref,
+        runtime_session_id, instance_id, hostname, pid,
+        coordinate_claim_id, coordinate_claim_token,
+    )
 
 
 def heartbeat_claim(
@@ -2613,98 +2409,58 @@ def heartbeat_claim(
     pid: int | None = None,
 ) -> None:
     from .db import _require_claim_proof as _db_require_claim_proof
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM claim WHERE repo_id = %s AND id = %s",
-            (store.repo_id, claim_id),
-        )
-        row = cur.fetchone()
+    row = _claimcore.get_claim_row(_ClaimPg(store), claim_id)
     if row is None:
         raise ValueError(f"Claim #{claim_id} not found")
-    row = _norm(row)
     try:
         _db_require_claim_proof(row, claim_token)
     except ValueError as exc:
-        event_type = "coordination-failure" if row["claim_token"] else "claim-ambiguity-detected"
-        _emit_claim_event(
-            store, row,
-            event_type=event_type,
-            actor=actor or "system",
-            payload={
-                "summary": f"Claim heartbeat rejected for claim #{claim_id}",
-                "detail": str(exc),
-                "tags": ["claims", "coordination", "heartbeat"],
-                "operation": "heartbeat",
-                "reason": "invalid-claim-proof" if row["claim_token"] else "legacy-ambiguous-claim",
-                "claim": _claim_event_identity(row),
-                "attempted_by": _claim_attempt_identity(
-                    actor=actor, claim_id=claim_id, claim_token_present=claim_token is not None,
-                    runtime_session_id=runtime_session_id, instance_id=instance_id,
-                    branch=branch, worktree_path=worktree_path, commit_sha=commit_sha,
-                    pr_ref=pr_ref, hostname=hostname, pid=pid,
-                ),
-            },
+        event_type, payload = _claimcore.heartbeat_rejection_event(
+            claim_id,
+            row,
+            str(exc),
+            actor=actor,
+            claim_token=claim_token,
+            runtime_session_id=runtime_session_id,
+            instance_id=instance_id,
+            branch=branch,
+            worktree_path=worktree_path,
+            commit_sha=commit_sha,
+            pr_ref=pr_ref,
+            hostname=hostname,
+            pid=pid,
         )
+        _emit_claim_event(store, row, event_type=event_type, actor=actor or "system", payload=payload)
         raise
-    with store.conn.cursor() as cur:
-        cur.execute(
-            f"""
-            UPDATE claim
-            SET heartbeat = {_CLAIM_CLOCK_SQL},
-                expires_at = {_CLAIM_CLOCK_SQL} + (%s || ' seconds')::interval,
-                runtime_session_id = COALESCE(%s, runtime_session_id),
-                instance_id        = COALESCE(%s, instance_id),
-                branch             = COALESCE(%s, branch),
-                worktree_path      = COALESCE(%s, worktree_path),
-                commit_sha         = COALESCE(%s, commit_sha),
-                pr_ref             = COALESCE(%s, pr_ref),
-                hostname           = COALESCE(%s, hostname),
-                pid                = COALESCE(%s, pid)
-            WHERE repo_id = %s AND id = %s
-            """,
-            (ttl_seconds, runtime_session_id, instance_id, branch, worktree_path,
-             commit_sha, pr_ref, hostname, pid, store.repo_id, claim_id),
-        )
-    store.conn.commit()
+    _claimcore.heartbeat_update(
+        _ClaimPg(store),
+        claim_id,
+        ttl_seconds,
+        runtime_session_id,
+        instance_id,
+        branch,
+        worktree_path,
+        commit_sha,
+        pr_ref,
+        hostname,
+        pid,
+    )
 
 
 def release_claim(store: PgStore, claim_id: int, claim_token: str | None, actor: str | None = None) -> None:
     from .db import _require_claim_proof as _db_require_claim_proof
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM claim WHERE repo_id = %s AND id = %s",
-            (store.repo_id, claim_id),
-        )
-        row = cur.fetchone()
+    row = _claimcore.get_claim_row(_ClaimPg(store), claim_id)
     if row is None:
         raise ValueError(f"Claim #{claim_id} not found")
-    row = _norm(row)
     try:
         _db_require_claim_proof(row, claim_token)
     except ValueError as exc:
-        _emit_claim_event(
-            store, row,
-            event_type="claim-ambiguity-detected" if not row["claim_token"] else "coordination-failure",
-            actor=actor or "system",
-            payload={
-                "summary": f"Claim release rejected for claim #{claim_id}",
-                "detail": str(exc),
-                "tags": ["claims", "coordination", "release"],
-                "operation": "release",
-                "reason": "invalid-claim-proof" if row["claim_token"] else "legacy-ambiguous-claim",
-                "claim": _claim_event_identity(row),
-                "attempted_by": _claim_attempt_identity(
-                    actor=actor, claim_id=claim_id, claim_token_present=claim_token is not None,
-                ),
-            },
+        event_type, payload = _claimcore.release_rejection_event(
+            claim_id, row, str(exc), actor=actor, claim_token=claim_token
         )
+        _emit_claim_event(store, row, event_type=event_type, actor=actor or "system", payload=payload)
         raise
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "DELETE FROM claim WHERE repo_id = %s AND id = %s",
-            (store.repo_id, claim_id),
-        )
-    store.conn.commit()
+    _claimcore.release_delete(_ClaimPg(store), claim_id)
 
 
 def handoff_claim(
@@ -2727,131 +2483,14 @@ def handoff_claim(
     note: str | None = None,
     allow_legacy_adopt: bool = False,
 ) -> dict:
-    from .db import _require_claim_proof as _db_require_claim_proof
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM claim WHERE repo_id = %s AND id = %s",
-            (store.repo_id, claim_id),
-        )
-        row = cur.fetchone()
-    if row is None:
-        raise ValueError(f"Claim #{claim_id} not found")
-    if mode not in {"transfer", "rotate"}:
-        raise ValueError("mode must be 'transfer' or 'rotate'")
-    row = _norm(row)
-    legacy_ambiguous = not bool(row["claim_token"])
-    # A remote claim row deliberately cannot reveal a lost token.  Explicit
-    # recovery adoption is therefore limited to calls that omit a token; an
-    # invalid supplied token must remain a rejected proof attempt.
-    lost_proof_adopted = (
-        not legacy_ambiguous
-        and allow_legacy_adopt
-        and claim_token is None
+    return _claimcore.handoff_claim(
+        _ClaimPg(store), claim_id, claim_token,
+        actor=actor, mode=mode, ttl_seconds=ttl_seconds,
+        runtime_session_id=runtime_session_id, instance_id=instance_id,
+        branch=branch, worktree_path=worktree_path, commit_sha=commit_sha, pr_ref=pr_ref,
+        hostname=hostname, pid=pid, performed_by=performed_by, note=note,
+        allow_legacy_adopt=allow_legacy_adopt,
     )
-    if legacy_ambiguous:
-        if not allow_legacy_adopt:
-            _emit_claim_event(
-                store, row,
-                event_type="claim-ambiguity-detected",
-                actor=performed_by or actor,
-                payload={
-                    "summary": f"Legacy claim ambiguity detected for claim #{claim_id}",
-                    "detail": "Handoff attempted for a legacy claim without a claim_token.",
-                    "tags": ["claims", "coordination", "ambiguity", "legacy"],
-                    "operation": "handoff",
-                    "reason": "legacy-ambiguous-claim",
-                    "claim": _claim_event_identity(row),
-                    "attempted_by": _claim_attempt_identity(
-                        actor=performed_by or actor, claim_id=claim_id,
-                        claim_token_present=claim_token is not None,
-                    ),
-                },
-            )
-            raise ValueError(
-                f"Claim #{claim_id} is a legacy ambiguous claim with no claim_token. "
-                "Use allow_legacy_adopt to mint a new ownership proof."
-            )
-        mode = "rotate"
-    elif not lost_proof_adopted:
-        try:
-            _db_require_claim_proof(row, claim_token)
-        except ValueError as exc:
-            _emit_claim_event(
-                store, row,
-                event_type="coordination-failure",
-                actor=performed_by or actor,
-                payload={
-                    "summary": f"Claim handoff rejected for claim #{claim_id}",
-                    "detail": str(exc),
-                    "tags": ["claims", "coordination", "handoff"],
-                    "operation": "handoff",
-                    "reason": "invalid-claim-proof",
-                    "claim": _claim_event_identity(row),
-                    "attempted_by": _claim_attempt_identity(
-                        actor=performed_by or actor, claim_id=claim_id,
-                        claim_token_present=claim_token is not None,
-                    ),
-                },
-            )
-            raise
-
-    from_identity = _claim_event_identity(row)
-    next_claim_token = row["claim_token"]
-    if mode == "rotate" or not next_claim_token:
-        next_claim_token = _generate_claim_token()
-
-    with store.conn.cursor() as cur:
-        cur.execute(
-            f"""
-            UPDATE claim
-            SET agent = %s, claim_token = %s,
-                lease_epoch = lease_epoch + CASE WHEN %s THEN 1 ELSE 0 END,
-                expires_at = {_CLAIM_CLOCK_SQL} + (%s || ' seconds')::interval,
-                runtime_session_id = %s, instance_id = %s, branch = %s,
-                worktree_path = %s, commit_sha = %s, pr_ref = %s,
-                hostname = %s, pid = %s, heartbeat = {_CLAIM_CLOCK_SQL}
-            WHERE repo_id = %s AND id = %s
-            """,
-            (actor, next_claim_token, mode == "rotate" or legacy_ambiguous, ttl_seconds,
-             runtime_session_id, instance_id, branch, worktree_path, commit_sha, pr_ref,
-             hostname, pid, store.repo_id, claim_id),
-        )
-    store.conn.commit()
-
-    updated = get_claim(store, claim_id, include_secret=True)
-    assert updated is not None
-    event_type = "claim-ownership-corrected" if legacy_ambiguous else "claim-handoff"
-    _emit_claim_event(
-        store, updated,
-        event_type=event_type,
-        actor=performed_by or actor,
-        payload={
-            "summary": (
-                f"Claim #{claim_id} ownership corrected"
-                if legacy_ambiguous
-                else f"Claim #{claim_id} handed off to {actor}"
-            ),
-            "detail": note or (
-                "A legacy ambiguous claim was adopted and re-issued."
-                if legacy_ambiguous
-                else (
-                    "The previous proof was unavailable; explicit recovery adoption "
-                    "minted a replacement token."
-                    if lost_proof_adopted
-                    else f"Claim ownership transferred with mode={mode}."
-                )
-            ),
-            "tags": ["claims", "handoff", "coordination"],
-            "operation": "handoff",
-            "mode": mode,
-            "legacy_adopted": legacy_ambiguous,
-            "lost_proof_adopted": lost_proof_adopted,
-            "token_rotated": mode == "rotate" or legacy_ambiguous,
-            "from_identity": from_identity,
-            "to_identity": _claim_event_identity(updated),
-        },
-    )
-    return updated
 
 
 def list_claims_by_sprint(
@@ -2860,46 +2499,15 @@ def list_claims_by_sprint(
     active_only: bool = True,
     expiring_within_seconds: int | None = None,
 ) -> list[dict]:
-    query = """
-        SELECT c.*, wi.title AS item_title, wi.status AS item_status
-        FROM claim c
-        JOIN work_item wi ON c.repo_id = wi.repo_id AND c.work_item_id = wi.id
-        WHERE c.repo_id = %s AND wi.sprint_id = %s
-    """
-    params: list = [store.repo_id, sprint_id]
-    if active_only:
-        query += f" AND c.status = 'active' AND c.expires_at > {_CLAIM_CLOCK_SQL}"
-    if expiring_within_seconds is not None:
-        query += f" AND c.expires_at <= {_CLAIM_CLOCK_SQL} + (%s || ' seconds')::interval"
-        params.append(expiring_within_seconds)
-    query += " ORDER BY c.expires_at ASC"
-    with store.conn.cursor() as cur:
-        cur.execute(query, params)
-        rows = cur.fetchall()
-    return [_serialize_claim(_norm(r)) for r in rows]
+    rows = _claimcore.list_claims_by_sprint(
+        _ClaimPg(store), sprint_id, active_only, expiring_within_seconds
+    )
+    return [_serialize_claim(r) for r in rows]
 
 
 def list_claims(store: PgStore, work_item_id: int, active_only: bool = True) -> list[dict]:
-    if active_only:
-        with store.conn.cursor() as cur:
-            cur.execute(
-                f"""
-                SELECT * FROM claim
-                WHERE repo_id = %s AND work_item_id = %s
-                  AND status = 'active' AND expires_at > {_CLAIM_CLOCK_SQL}
-                ORDER BY created_at ASC
-                """,
-                (store.repo_id, work_item_id),
-            )
-            rows = cur.fetchall()
-    else:
-        with store.conn.cursor() as cur:
-            cur.execute(
-                "SELECT * FROM claim WHERE repo_id = %s AND work_item_id = %s ORDER BY created_at ASC",
-                (store.repo_id, work_item_id),
-            )
-            rows = cur.fetchall()
-    return [_serialize_claim(_norm(r)) for r in rows]
+    rows = _claimcore.list_claims(_ClaimPg(store), work_item_id, active_only)
+    return [_serialize_claim(r) for r in rows]
 
 
 def find_claim_by_identity(
@@ -2911,38 +2519,61 @@ def find_claim_by_identity(
     runtime_session_id: str | None = None,
     active_only: bool = True,
 ) -> list[dict]:
-    if not any([instance_id, runtime_session_id, (hostname and pid is not None)]):
-        raise ValueError(
-            "At least one of --instance-id, --runtime-session-id, or "
-            "--hostname + --pid must be provided to resume a claim."
-        )
-    conditions: list[str] = ["repo_id = %s"]
-    params: list = [store.repo_id]
-    if active_only:
-        conditions.append("status = 'active'")
-        conditions.append(f"expires_at > {_CLAIM_CLOCK_SQL}")
-    if instance_id:
-        conditions.append("instance_id = %s")
-        params.append(instance_id)
-    if runtime_session_id:
-        conditions.append("runtime_session_id = %s")
-        params.append(runtime_session_id)
-    if hostname and pid is not None:
-        conditions.append("(hostname = %s AND pid = %s)")
-        params.extend([hostname, pid])
-    where = " AND ".join(conditions)
-    with store.conn.cursor() as cur:
-        cur.execute(
-            f"SELECT * FROM claim WHERE {where} ORDER BY created_at DESC",
-            params,
-        )
-        rows = cur.fetchall()
-    return [_serialize_claim(_norm(r)) for r in rows]
+    rows = _claimcore.find_claim_by_identity(
+        _ClaimPg(store),
+        instance_id=instance_id,
+        hostname=hostname,
+        pid=pid,
+        runtime_session_id=runtime_session_id,
+        active_only=active_only,
+    )
+    return [_serialize_claim(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------
 # Ref
+#
+# Ref-table query shapes live in ``sprintctl.refcore`` and are shared with
+# the SQLite backend; this module supplies only the PostgreSQL execution
+# adapter.  Public signatures are unchanged.
 # ---------------------------------------------------------------------------
+
+
+class _RefPg:
+    """PostgreSQL execution adapter for ``refcore`` ref operations."""
+
+    ph = "%s"
+
+    def __init__(self, store: PgStore) -> None:
+        self._store = store
+
+    def tenant_params(self) -> tuple:
+        return (self._store.repo_id,)
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        return _norm(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [_norm(r) for r in rows]
+
+    def mutate(self, sql: str, params: tuple) -> None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+        self._store.conn.commit()
+
+    def insert_id(self, sql: str, params: tuple) -> int:
+        with self._store.conn.cursor() as cur:
+            cur.execute(f"{sql} RETURNING id", params)
+            row = cur.fetchone()
+        self._store.conn.commit()
+        return row["id"]
+
 
 def add_ref(store: PgStore, work_item_id: int, ref_type: str, url: str, label: str = "") -> int:
     if ref_type not in REF_TYPES:
@@ -2951,70 +2582,74 @@ def add_ref(store: PgStore, work_item_id: int, ref_type: str, url: str, label: s
     item = get_work_item(store, work_item_id)
     if item is None:
         raise ValueError(f"Work item #{work_item_id} not found")
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO ref (repo_id, work_item_id, ref_type, url, label)
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING id
-            """,
-            (store.repo_id, work_item_id, ref_type, url, label),
-        )
-        row = cur.fetchone()
-    store.conn.commit()
-    return row["id"]
+    return _refcore.add_ref(_RefPg(store), work_item_id, ref_type, url, label)
 
 
 def list_refs(store: PgStore, work_item_id: int) -> list[dict]:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM ref WHERE repo_id = %s AND work_item_id = %s ORDER BY created_at ASC",
-            (store.repo_id, work_item_id),
-        )
-        rows = cur.fetchall()
-    return [_serialize_ref(_norm(r)) for r in rows]
+    return [_serialize_ref(r) for r in _refcore.list_refs(_RefPg(store), work_item_id)]
 
 
 def list_refs_for_items(store: PgStore, work_item_ids: list[int]) -> dict[int, list[dict]]:
-    if not work_item_ids:
-        return {}
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT * FROM ref
-            WHERE repo_id = %s AND work_item_id = ANY(%s)
-            ORDER BY created_at ASC, id ASC
-            """,
-            (store.repo_id, list(work_item_ids)),
-        )
-        rows = cur.fetchall()
+    rows = _refcore.list_refs_for_items(_RefPg(store), work_item_ids)
     refs_by_item: dict[int, list[dict]] = {}
     for r in rows:
-        normed = _norm(r)
-        refs_by_item.setdefault(normed["work_item_id"], []).append(_serialize_ref(normed))
+        refs_by_item.setdefault(r["work_item_id"], []).append(_serialize_ref(r))
     return refs_by_item
 
 
 def remove_ref(store: PgStore, ref_id: int, work_item_id: int) -> None:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT id FROM ref WHERE repo_id = %s AND id = %s AND work_item_id = %s",
-            (store.repo_id, ref_id, work_item_id),
-        )
-        row = cur.fetchone()
-    if row is None:
-        raise ValueError(f"Ref #{ref_id} not found on item #{work_item_id}")
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "DELETE FROM ref WHERE repo_id = %s AND id = %s",
-            (store.repo_id, ref_id),
-        )
-    store.conn.commit()
+    _refcore.remove_ref(_RefPg(store), ref_id, work_item_id)
 
 
 # ---------------------------------------------------------------------------
 # Dep
 # ---------------------------------------------------------------------------
+
+class _DepPg:
+    """PostgreSQL execution adapter for ``depcore`` dep operations."""
+
+    ph = "%s"
+
+    def __init__(self, store: PgStore) -> None:
+        self._store = store
+
+    def tenant_params(self) -> tuple:
+        return (self._store.repo_id,)
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        return _norm(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [_norm(r) for r in rows]
+
+    def mutate(self, sql: str, params: tuple) -> None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+        self._store.conn.commit()
+
+    def insert_ignore(
+        self, columns: tuple[str, ...], values: tuple, conflict_cols: tuple[str, ...]
+    ) -> None:
+        col_list = ", ".join(columns)
+        placeholders = ", ".join(["%s"] * len(values))
+        conflict_list = ", ".join(conflict_cols)
+        with self._store.conn.cursor() as cur:
+            cur.execute(
+                f"INSERT INTO dep ({col_list}) VALUES ({placeholders})"
+                f" ON CONFLICT ({conflict_list}) DO NOTHING",
+                values,
+            )
+        self._store.conn.commit()
+
+    def join_tenant_clause(self, left_alias: str, right_alias: str) -> str:
+        return f" AND {left_alias}.repo_id = {right_alias}.repo_id"
+
 
 def add_dep(store: PgStore, item_id: int, blocked_item_id: int) -> int:
     if item_id == blocked_item_id:
@@ -3023,70 +2658,19 @@ def add_dep(store: PgStore, item_id: int, blocked_item_id: int) -> int:
         raise ValueError(f"Work item #{item_id} not found")
     if get_work_item(store, blocked_item_id) is None:
         raise ValueError(f"Work item #{blocked_item_id} not found")
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO dep (repo_id, item_id, blocked_item_id)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (repo_id, item_id, blocked_item_id) DO NOTHING
-            """,
-            (store.repo_id, item_id, blocked_item_id),
-        )
-        cur.execute(
-            "SELECT id FROM dep WHERE repo_id = %s AND item_id = %s AND blocked_item_id = %s",
-            (store.repo_id, item_id, blocked_item_id),
-        )
-        row = cur.fetchone()
-    store.conn.commit()
-    return row["id"]
+    return _depcore.add_dep(_DepPg(store), item_id, blocked_item_id)
 
 
 def list_deps_blocking(store: PgStore, item_id: int) -> list[dict]:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT d.id, d.item_id, d.blocked_item_id, d.created_at,
-                   wi.title AS blocker_title, wi.status AS blocker_status
-            FROM dep d
-            JOIN work_item wi ON d.repo_id = wi.repo_id AND d.item_id = wi.id
-            WHERE d.repo_id = %s AND d.blocked_item_id = %s
-            ORDER BY d.created_at ASC
-            """,
-            (store.repo_id, item_id),
-        )
-        rows = cur.fetchall()
-    return [_norm(r) for r in rows]
+    return _depcore.list_deps_blocking(_DepPg(store), item_id)
 
 
 def list_deps_blocked_by(store: PgStore, item_id: int) -> list[dict]:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT d.id, d.item_id, d.blocked_item_id, d.created_at,
-                   wi.title AS waiting_title, wi.status AS waiting_status
-            FROM dep d
-            JOIN work_item wi ON d.repo_id = wi.repo_id AND d.blocked_item_id = wi.id
-            WHERE d.repo_id = %s AND d.item_id = %s
-            ORDER BY d.created_at ASC
-            """,
-            (store.repo_id, item_id),
-        )
-        rows = cur.fetchall()
-    return [_norm(r) for r in rows]
+    return _depcore.list_deps_blocked_by(_DepPg(store), item_id)
 
 
 def remove_dep(store: PgStore, dep_id: int, item_id: int) -> None:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT id FROM dep WHERE repo_id = %s AND id = %s AND (item_id = %s OR blocked_item_id = %s)",
-            (store.repo_id, dep_id, item_id, item_id),
-        )
-        row = cur.fetchone()
-    if row is None:
-        raise ValueError(f"Dep #{dep_id} not found for item #{item_id}")
-    with store.conn.cursor() as cur:
-        cur.execute("DELETE FROM dep WHERE repo_id = %s AND id = %s", (store.repo_id, dep_id))
-    store.conn.commit()
+    _depcore.remove_dep(_DepPg(store), dep_id, item_id)
 
 
 def get_ready_items(store: PgStore, sprint_id: int) -> list[dict]:

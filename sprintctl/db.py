@@ -1,9 +1,7 @@
-import hashlib
 import json
 import os
 import posixpath
 import re
-import secrets
 import sqlite3
 import time
 from collections.abc import Callable
@@ -11,7 +9,37 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 from uuid import uuid4
 
+from . import claimcore as _claimcore
 from . import contracts as _contracts
+from . import depcore as _depcore
+from . import eventcore as _eventcore
+from . import refcore as _refcore
+from . import rows as _rows
+from . import sprintcore as _sprintcore
+from . import trackcore as _trackcore
+from . import workitemcore as _workitemcore
+from .claimcore import CLAIM_TYPES, ClaimConflict
+from .eventcore import (
+    KNOWLEDGE_EVENT_TYPES,
+    TAKEUP_EVENT_TYPES,
+    _decode_event_payload,
+    _takeup_actor_key,
+    _takeup_key,
+    process_takeup_events,
+)
+from .workitemcore import (
+    PRIORITY_MAX,
+    PRIORITY_MIN,
+    EditConflict,
+    StatusConflict,
+    _description_revision,
+    effective_priority,
+    item_status_revision,
+    validate_item_edit_revision,
+    validate_item_status_revision,
+    validate_priority,
+    validate_work_item_description,
+)
 
 
 _WAL_BUSY_RETRY_DELAYS_SECONDS = (0.01, 0.02, 0.04, 0.08)
@@ -19,14 +47,6 @@ _WAL_BUSY_RETRY_DELAYS_SECONDS = (0.01, 0.02, 0.04, 0.08)
 
 class InvalidTransition(ValueError):
     pass
-
-
-class EditConflict(ValueError):
-    """A work-item edit was based on a stale description revision."""
-
-
-class StatusConflict(ValueError):
-    """An item or sprint transition was based on a stale status revision."""
 
 
 VALID_TRANSITIONS: dict[str, set[str]] = {
@@ -677,6 +697,39 @@ def init_db(conn: sqlite3.Connection) -> None:
 
 
 # --- Sprint ---
+#
+# Sprint-table query shapes live in ``sprintctl.sprintcore`` and are shared
+# with the PostgreSQL backend; this module supplies only the SQLite execution
+# adapter.  Public signatures are unchanged.
+
+
+class _SprintSqlite:
+    """SQLite execution adapter for ``sprintcore`` sprint operations."""
+
+    ph = "?"
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def tenant_params(self) -> tuple:
+        return ()
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        row = self._conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def mutate(self, sql: str, params: tuple) -> None:
+        self._conn.execute(sql, params)
+        self._conn.commit()
+
+    def insert_id(self, sql: str, params: tuple) -> int:
+        cur = self._conn.execute(sql, params)
+        self._conn.commit()
+        return cur.lastrowid
+
 
 def create_sprint(
     conn: sqlite3.Connection,
@@ -687,17 +740,13 @@ def create_sprint(
     status: str = "planned",
     kind: str = "active_sprint",
 ) -> int:
-    cur = conn.execute(
-        "INSERT INTO sprint (name, goal, start_date, end_date, status, kind, aggregate_uuid) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (name, goal, start_date, end_date, status, kind, str(uuid4())),
+    return _sprintcore.create_sprint(
+        _SprintSqlite(conn), name, goal, start_date, end_date, status, kind
     )
-    conn.commit()
-    return cur.lastrowid
 
 
 def get_sprint(conn: sqlite3.Connection, sprint_id: int) -> dict | None:
-    row = conn.execute("SELECT * FROM sprint WHERE id = ?", (sprint_id,)).fetchone()
-    return dict(row) if row else None
+    return _sprintcore.get_sprint(_SprintSqlite(conn), sprint_id)
 
 
 def get_active_sprint(conn: sqlite3.Connection) -> dict | None:
@@ -706,39 +755,59 @@ def get_active_sprint(conn: sqlite3.Connection) -> dict | None:
     Multiple active sprints are allowed. Callers that need to reason about
     ambiguity should use list_active_sprints instead.
     """
-    row = conn.execute(
-        "SELECT * FROM sprint WHERE status = 'active' AND kind = 'active_sprint' ORDER BY created_at DESC LIMIT 1"
-    ).fetchone()
-    return dict(row) if row else None
+    return _sprintcore.get_active_sprint(_SprintSqlite(conn))
 
 
 def list_active_sprints(conn: sqlite3.Connection) -> list[dict]:
-    rows = conn.execute(
-        """
-        SELECT * FROM sprint
-        WHERE status = 'active' AND kind = 'active_sprint'
-        ORDER BY created_at DESC, id DESC
-        """
-    ).fetchall()
-    return [dict(r) for r in rows]
+    return _sprintcore.list_active_sprints(_SprintSqlite(conn))
 
 
 def set_sprint_kind(conn: sqlite3.Connection, sprint_id: int, kind: str) -> None:
-    if kind not in SPRINT_KINDS:
-        raise ValueError(f"Invalid kind '{kind}'. Must be one of: {', '.join(SPRINT_KINDS)}")
-    sprint = get_sprint(conn, sprint_id)
-    if sprint is None:
-        raise ValueError(f"Sprint #{sprint_id} not found")
-    conn.execute("UPDATE sprint SET kind = ? WHERE id = ?", (kind, sprint_id))
-    conn.commit()
+    _sprintcore.set_sprint_kind(
+        _SprintSqlite(conn), sprint_id, kind, valid_kinds=SPRINT_KINDS
+    )
 
 
 def list_sprints(conn: sqlite3.Connection) -> list[dict]:
-    rows = conn.execute("SELECT * FROM sprint ORDER BY created_at DESC").fetchall()
-    return [dict(r) for r in rows]
+    return _sprintcore.list_sprints(_SprintSqlite(conn))
 
 
 # --- Track ---
+#
+# Track-table query shapes live in ``sprintctl.trackcore`` and are shared
+# with the PostgreSQL backend; this module supplies only the SQLite execution
+# adapter.  Public signatures are unchanged.
+
+
+class _TrackSqlite:
+    """SQLite execution adapter for ``trackcore`` track operations."""
+
+    ph = "?"
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def tenant_params(self) -> tuple:
+        return ()
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        row = self._conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def insert_ignore(
+        self, columns: tuple[str, ...], values: tuple, conflict_cols: tuple[str, ...]
+    ) -> None:
+        col_list = ", ".join(columns)
+        placeholders = ", ".join(["?"] * len(values))
+        self._conn.execute(
+            f"INSERT OR IGNORE INTO track ({col_list}) VALUES ({placeholders})",
+            values,
+        )
+        self._conn.commit()
+
 
 def get_or_create_track(
     conn: sqlite3.Connection,
@@ -746,65 +815,100 @@ def get_or_create_track(
     name: str,
     description: str = "",
 ) -> int:
-    conn.execute(
-        "INSERT OR IGNORE INTO track (sprint_id, name, description) VALUES (?, ?, ?)",
-        (sprint_id, name, description),
-    )
-    row = conn.execute(
-        "SELECT id FROM track WHERE sprint_id = ? AND name = ?", (sprint_id, name)
-    ).fetchone()
-    conn.commit()
-    return row[0]
+    return _trackcore.get_or_create_track(_TrackSqlite(conn), sprint_id, name, description)
 
 
 def list_tracks(conn: sqlite3.Connection, sprint_id: int) -> list[dict]:
-    rows = conn.execute(
-        "SELECT * FROM track WHERE sprint_id = ? ORDER BY created_at ASC", (sprint_id,)
-    ).fetchall()
-    return [dict(r) for r in rows]
+    return _trackcore.list_tracks(_TrackSqlite(conn), sprint_id)
 
 
 def get_track(conn: sqlite3.Connection, track_id: int) -> dict | None:
-    row = conn.execute("SELECT * FROM track WHERE id = ?", (track_id,)).fetchone()
-    return dict(row) if row else None
+    return _trackcore.get_track(_TrackSqlite(conn), track_id)
 
 
 # --- WorkItem ---
-
-def validate_work_item_description(description: str) -> str:
-    """Validate a description supplied through the item mutation surface."""
-    if not isinstance(description, str) or not description.strip():
-        raise ValueError("work item description must contain non-whitespace text")
-    if "\x00" in description:
-        raise ValueError("work item description must not contain NUL bytes")
-    return description
+#
+# Work-item CRUD query shapes live in ``sprintctl.workitemcore`` and are
+# shared with the PostgreSQL backend; this module supplies only the SQLite
+# execution adapter.  Public signatures are unchanged.  CAS/conflict
+# operations (update_work_item_description, set_work_item_status) stay here:
+# their transactional locking is backend-specific.
 
 
-PRIORITY_MIN = 1
-PRIORITY_MAX = 9
+class _WorkItemSqlite:
+    """SQLite execution adapter for ``workitemcore`` work-item operations."""
 
-_PRIORITY_TITLE_RE = re.compile(r"^\[p([1-9])\]\s")
+    ph = "?"
+    updated_at_sql = "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
 
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
 
-def validate_priority(priority: int | None) -> int | None:
-    """Validate a work item priority: None (unprioritized) or an int in 1..9."""
-    if priority is None:
-        return None
-    if isinstance(priority, bool) or not isinstance(priority, int):
-        raise ValueError("priority must be an integer between 1 and 9")
-    if not (PRIORITY_MIN <= priority <= PRIORITY_MAX):
-        raise ValueError(
-            f"priority must be between {PRIORITY_MIN} and {PRIORITY_MAX} (1 = highest)"
+    def tenant_params(self) -> tuple:
+        return ()
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        row = self._conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def insert_id(self, sql: str, params: tuple) -> int:
+        cur = self._conn.execute(sql, params)
+        self._conn.commit()
+        return cur.lastrowid
+
+    def update_one(self, sql: str, params: tuple) -> bool:
+        cur = self._conn.execute(sql, params)
+        if cur.rowcount == 0:
+            self._conn.rollback()
+            return False
+        self._conn.commit()
+        return True
+
+    def join_tenant_clause(self, left_alias: str, right_alias: str) -> str:
+        return ""
+
+    def begin_txn(self) -> None:
+        self._conn.execute("BEGIN IMMEDIATE")
+
+    def commit(self) -> None:
+        self._conn.commit()
+
+    def rollback(self) -> None:
+        self._conn.rollback()
+
+    def for_update_of(self, alias: str) -> str:
+        return ""
+
+    def lock_for_update(self, table: str, id_: int, extra_where: str = "") -> dict | None:
+        sql = f"SELECT * FROM {table} WHERE id = ?{extra_where}"
+        row = self._conn.execute(sql, (id_,)).fetchone()
+        return dict(row) if row else None
+
+    def execute(self, sql: str, params: tuple) -> None:
+        self._conn.execute(sql, params)
+
+    def insert_event(
+        self,
+        sprint_id: int,
+        actor: str,
+        event_type: str,
+        *,
+        source_type: str,
+        work_item_id: int,
+        payload: dict,
+    ) -> int:
+        return _insert_event(
+            self._conn,
+            sprint_id,
+            actor,
+            event_type,
+            source_type=source_type,
+            work_item_id=work_item_id,
+            payload=payload,
         )
-    return priority
-
-
-def effective_priority(item: dict) -> int | None:
-    """Native priority column, falling back to the legacy [pN] title prefix."""
-    if item.get("priority") is not None:
-        return item["priority"]
-    match = _PRIORITY_TITLE_RE.match(item.get("title") or "")
-    return int(match.group(1)) if match else None
 
 
 def create_work_item(
@@ -816,13 +920,9 @@ def create_work_item(
     assignee: str | None = None,
     priority: int | None = None,
 ) -> int:
-    priority = validate_priority(priority)
-    cur = conn.execute(
-        "INSERT INTO work_item (sprint_id, track_id, title, description, assignee, priority, aggregate_uuid) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (sprint_id, track_id, title, description, assignee, priority, str(uuid4())),
+    return _workitemcore.create_work_item(
+        _WorkItemSqlite(conn), sprint_id, track_id, title, description, assignee, priority
     )
-    conn.commit()
-    return cur.lastrowid
 
 
 def set_work_item_priority(
@@ -830,65 +930,21 @@ def set_work_item_priority(
     item_id: int,
     priority: int | None,
 ) -> None:
-    priority = validate_priority(priority)
-    cur = conn.execute(
-        """
-        UPDATE work_item
-        SET priority = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-        WHERE id = ?
-        """,
-        (priority, item_id),
-    )
-    if cur.rowcount == 0:
-        conn.rollback()
-        raise ValueError(f"Item #{item_id} not found")
-    conn.commit()
+    _workitemcore.set_work_item_priority(_WorkItemSqlite(conn), item_id, priority)
 
 
 def get_work_item(conn: sqlite3.Connection, item_id: int) -> dict | None:
-    row = conn.execute("SELECT * FROM work_item WHERE id = ?", (item_id,)).fetchone()
-    return dict(row) if row else None
+    return _workitemcore.get_work_item(_WorkItemSqlite(conn), item_id)
 
 
-def _description_revision(item: dict, version: int) -> str:
-    digest = hashlib.sha256((item.get("description") or "").encode("utf-8")).hexdigest()
-    return (
-        f"item:{item['aggregate_uuid']}@description:v{version}"
-        f"@sha256:{digest}"
-    )
-
-
-_ITEM_EDIT_REVISION_RE = re.compile(
-    r"^item:[0-9a-fA-F-]{36}@description:v[0-9]+@sha256:[0-9a-f]{64}$"
-)
-_ITEM_STATUS_REVISION_RE = re.compile(
-    r"^item:[0-9a-fA-F-]{36}@status:(pending|active|done|blocked)$"
-)
 _SPRINT_STATUS_REVISION_RE = re.compile(
     r"^sprint:[0-9a-fA-F-]{36}@status:(planned|active|closed)$"
 )
 
 
-def validate_item_edit_revision(revision: str) -> str:
-    if not isinstance(revision, str) or not _ITEM_EDIT_REVISION_RE.fullmatch(revision):
-        raise ValueError("expected_revision must be a valid item description revision")
-    return revision
-
-
-def item_status_revision(item: dict) -> str:
-    """Return the CAS token for the status-transition state of one item."""
-    return f"item:{item['aggregate_uuid']}@status:{item['status']}"
-
-
 def sprint_status_revision(sprint: dict) -> str:
     """Return the CAS token for the status-transition state of one sprint."""
     return f"sprint:{sprint['aggregate_uuid']}@status:{sprint['status']}"
-
-
-def validate_item_status_revision(revision: str) -> str:
-    if not isinstance(revision, str) or not _ITEM_STATUS_REVISION_RE.fullmatch(revision):
-        raise ValueError("expected_revision must be a valid item status revision")
-    return revision
 
 
 def validate_sprint_status_revision(revision: str) -> str:
@@ -901,25 +957,7 @@ def get_work_item_with_edit_revision(
     conn: sqlite3.Connection, item_id: int
 ) -> tuple[dict, str] | None:
     """Read an item and its description revision from one SQLite snapshot."""
-    row = conn.execute(
-        """
-        SELECT wi.*,
-               (
-                   SELECT COUNT(*)
-                   FROM event e
-                   WHERE e.work_item_id = wi.id
-                     AND e.event_type = ?
-               ) AS edit_version
-        FROM work_item wi
-        WHERE wi.id = ?
-        """,
-        (_contracts.ITEM_EDITED_EVENT_TYPE, item_id),
-    ).fetchone()
-    if row is None:
-        return None
-    item = dict(row)
-    version = int(item.pop("edit_version"))
-    return item, _description_revision(item, version)
+    return _workitemcore.get_work_item_with_edit_revision(_WorkItemSqlite(conn), item_id)
 
 
 def update_work_item_description(
@@ -936,71 +974,10 @@ def update_work_item_description(
     backend callers. Catalog and CLI callers always provide the revision read
     from :func:`get_work_item_with_edit_revision`.
     """
-    description = validate_work_item_description(description)
-    if expected_revision is not None:
-        expected_revision = validate_item_edit_revision(expected_revision)
-    if not isinstance(actor, str) or not actor.strip():
-        raise ValueError("actor must be a non-empty string")
-    try:
-        conn.execute("BEGIN IMMEDIATE")
-        current = get_work_item_with_edit_revision(conn, item_id)
-        if current is None:
-            raise ValueError(f"Item #{item_id} not found")
-        item, previous_revision = current
-        if (
-            expected_revision is not None
-            and expected_revision != previous_revision
-        ):
-            raise EditConflict(
-                f"Item #{item_id} description revision mismatch: "
-                f"expected {expected_revision}, current {previous_revision}"
-            )
-        if item.get("description") == description:
-            raise ValueError(
-                f"Item #{item_id} description unchanged: no-op edit rejected"
-            )
-
-        version = int(previous_revision.split("@description:v", 1)[1].split("@", 1)[0])
-        revision = _description_revision(
-            {**item, "description": description}, version + 1
-        )
-
-        conn.execute(
-            """
-            UPDATE work_item
-            SET description = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-            WHERE id = ?
-            """,
-            (description, item_id),
-        )
-        event_id = _insert_event(
-            conn,
-            item["sprint_id"],
-            actor.strip(),
-            _contracts.ITEM_EDITED_EVENT_TYPE,
-            source_type="actor",
-            work_item_id=item_id,
-            payload={
-                "summary": f"Item #{item_id} description edited",
-                "field": "description",
-                "previous_description": item.get("description") or "",
-                "description": description,
-                "previous_revision": previous_revision,
-                "revision": revision,
-            },
-        )
-        updated = get_work_item(conn, item_id)
-        assert updated is not None
-        conn.commit()
-        return {
-            "item": updated,
-            "event_id": event_id,
-            "previous_revision": previous_revision,
-            "revision": revision,
-        }
-    except Exception:
-        conn.rollback()
-        raise
+    return _workitemcore.update_work_item_description(
+        _WorkItemSqlite(conn), item_id, description,
+        expected_revision=expected_revision, actor=actor,
+    )
 
 
 def list_work_items(
@@ -1009,25 +986,7 @@ def list_work_items(
     track_name: str | None = None,
     status: str | None = None,
 ) -> list[dict]:
-    query = """
-        SELECT wi.*, t.name AS track_name
-        FROM work_item wi
-        JOIN track t ON wi.track_id = t.id
-        WHERE 1=1
-    """
-    params: list = []
-    if sprint_id is not None:
-        query += " AND wi.sprint_id = ?"
-        params.append(sprint_id)
-    if track_name is not None:
-        query += " AND t.name = ?"
-        params.append(track_name)
-    if status is not None:
-        query += " AND wi.status = ?"
-        params.append(status)
-    query += " ORDER BY wi.created_at ASC"
-    rows = conn.execute(query, params).fetchall()
-    return [dict(r) for r in rows]
+    return _workitemcore.list_work_items(_WorkItemSqlite(conn), sprint_id, track_name, status)
 
 
 def set_work_item_status(
@@ -1042,12 +1001,13 @@ def set_work_item_status(
 ) -> None:
     if expected_revision is not None:
         expected_revision = validate_item_status_revision(expected_revision)
+    wi = _WorkItemSqlite(conn)
     try:
         # SQLite's write transaction is the transition's linearization point.
         # Re-read the item after acquiring it so a stale basis cannot create a
         # coordination event or update a row.
-        conn.execute("BEGIN IMMEDIATE")
-        item = get_work_item(conn, item_id)
+        wi.begin_txn()
+        item = wi.lock_for_update("work_item", item_id)
         if item is None:
             raise ValueError(f"Item #{item_id} not found")
         current = item["status"]
@@ -1137,13 +1097,13 @@ def set_work_item_status(
                 raise InvalidTransition(
                     f"cannot transition {current} -> active while blockers remain unresolved: {blocker_ids}"
                 )
-        conn.execute(
-            "UPDATE work_item SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+        wi.execute(
+            f"UPDATE work_item SET status = ?, updated_at = {wi.updated_at_sql} WHERE id = ?",
             (new_status, item_id),
         )
-        conn.commit()
+        wi.commit()
     except Exception:
-        conn.rollback()
+        wi.rollback()
         raise
 
 
@@ -1184,6 +1144,33 @@ def set_sprint_status(
 
 
 # --- Event ---
+#
+# Event-table query shapes live in ``sprintctl.eventcore`` and are shared
+# with the PostgreSQL backend; this module supplies only the SQLite
+# execution adapter.  Public signatures are unchanged.  Transactional
+# operations (create_event, create_archive_import_event,
+# close_sprint_with_boundary_event) stay here: they control their own
+# commit/rollback boundary and call other backend-specific functions.
+
+
+class _EventSqlite:
+    """SQLite execution adapter for ``eventcore`` event operations."""
+
+    ph = "?"
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def tenant_params(self) -> tuple:
+        return ()
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def insert_uncommitted(self, sql: str, params: tuple) -> int:
+        cur = self._conn.execute(sql, params)
+        return int(cur.lastrowid)
+
 
 def _insert_event(
     conn: sqlite3.Connection,
@@ -1196,11 +1183,9 @@ def _insert_event(
 ) -> int:
     canonical_payload = _contracts.canonicalize_event_payload(event_type, payload)
     payload_str = json.dumps(canonical_payload)
-    cur = conn.execute(
-        "INSERT INTO event (sprint_id, work_item_id, source_type, actor, event_type, payload) VALUES (?, ?, ?, ?, ?, ?)",
-        (sprint_id, work_item_id, source_type, actor, event_type, payload_str),
+    return _eventcore.insert_event_row(
+        _EventSqlite(conn), sprint_id, actor, event_type, source_type, work_item_id, payload_str
     )
-    return int(cur.lastrowid)
 
 
 def create_event(
@@ -1341,161 +1326,11 @@ def close_sprint_with_boundary_event(
 
 
 def list_events(conn: sqlite3.Connection, sprint_id: int) -> list[dict]:
-    rows = conn.execute(
-        "SELECT * FROM event WHERE sprint_id = ? ORDER BY created_at ASC", (sprint_id,)
-    ).fetchall()
-    return [dict(r) for r in rows]
+    return _eventcore.list_events(_EventSqlite(conn), sprint_id)
 
 
 def list_events_limited(conn: sqlite3.Connection, sprint_id: int, limit: int = 50) -> list[dict]:
-    rows = conn.execute(
-        "SELECT * FROM event WHERE sprint_id = ? ORDER BY created_at DESC LIMIT ?",
-        (sprint_id, limit),
-    ).fetchall()
-    return [dict(r) for r in reversed(rows)]
-
-
-TAKEUP_EVENT_TYPES = ("sprint-taken-up", "sprint-released")
-
-
-def _decode_event_payload(row: sqlite3.Row | dict) -> dict:
-    raw = dict(row)
-    payload = raw.get("payload") or "{}"
-    if isinstance(payload, dict):
-        return payload
-    return json.loads(payload)
-
-
-def _takeup_key(row: dict, payload: dict) -> tuple[int, str, str | None]:
-    return (row["sprint_id"], row["actor"], payload.get("instance_id"))
-
-
-def _takeup_actor_key(row: dict) -> tuple[int, str]:
-    return (row["sprint_id"], row["actor"])
-
-
-def _serialize_takeup_row(row: dict, payload: dict) -> dict:
-    return {
-        "sprint_id": row["sprint_id"],
-        "actor": row["actor"],
-        "actor_kind": payload.get("actor_kind", "agent"),
-        "instance_id": payload.get("instance_id"),
-        "hostname": payload.get("hostname"),
-        "pid": payload.get("pid"),
-        "runtime_session_id": payload.get("runtime_session_id"),
-        "taken_up_at": row["created_at"],
-        "taken_up_event_id": row["id"],
-        "context": payload.get("context"),
-        "forced": bool(payload.get("forced", False)),
-    }
-
-
-def _serialize_released_takeup(
-    takeup_row: dict,
-    takeup_payload: dict,
-    release_row: dict,
-    release_payload: dict,
-) -> dict:
-    result = _serialize_takeup_row(takeup_row, takeup_payload)
-    result.update(
-        {
-            "released_at": release_row["created_at"],
-            "released_event_id": release_row["id"],
-            "reason": release_payload.get("reason"),
-            "matched_takeup_event_id": release_payload.get("matched_takeup_event_id"),
-        }
-    )
-    return result
-
-
-def _takeup_events(
-    conn: sqlite3.Connection,
-    sprint_id: int | None = None,
-) -> list[dict]:
-    params: list = [*TAKEUP_EVENT_TYPES]
-    query = """
-        SELECT * FROM event
-        WHERE event_type IN (?, ?)
-    """
-    if sprint_id is not None:
-        query += " AND sprint_id = ?"
-        params.append(sprint_id)
-    query += " ORDER BY sprint_id ASC, created_at ASC, id ASC"
-    return [dict(row) for row in conn.execute(query, params).fetchall()]
-
-
-def process_takeup_events(events: list[dict]) -> dict[str, list[dict]]:
-    """Derive active/released takeup state from a pre-fetched list of takeup events.
-
-    Accepts events already fetched from either sqlite or pg. The payload field
-    may be a dict (pg jsonb) or a JSON string (sqlite text); _decode_event_payload
-    handles both.
-    """
-    active_by_event_id: dict[int, tuple[dict, dict]] = {}
-    active_by_key: dict[tuple[int, str, str | None], list[int]] = {}
-    active_by_actor: dict[tuple[int, str], list[int]] = {}
-    released: list[dict] = []
-    unmatched_releases: list[dict] = []
-
-    for row in events:
-        payload = _decode_event_payload(row)
-        if row["event_type"] == "sprint-taken-up":
-            active_by_event_id[row["id"]] = (row, payload)
-            active_by_key.setdefault(_takeup_key(row, payload), []).append(row["id"])
-            active_by_actor.setdefault(_takeup_actor_key(row), []).append(row["id"])
-            continue
-
-        matched_id = payload.get("matched_takeup_event_id")
-        takeup_pair: tuple[dict, dict] | None = None
-        if matched_id is not None:
-            takeup_pair = active_by_event_id.pop(matched_id, None)
-        if takeup_pair is None:
-            key = _takeup_key(row, payload)
-            candidates = active_by_key.get(key, [])
-            while candidates and candidates[-1] not in active_by_event_id:
-                candidates.pop()
-            if candidates:
-                takeup_pair = active_by_event_id.pop(candidates.pop(), None)
-        if takeup_pair is None and payload.get("instance_id") is None:
-            candidates = active_by_actor.get(_takeup_actor_key(row), [])
-            while candidates and candidates[-1] not in active_by_event_id:
-                candidates.pop()
-            if candidates:
-                takeup_pair = active_by_event_id.pop(candidates.pop(), None)
-        if takeup_pair is None:
-            unmatched_releases.append(
-                {
-                    "sprint_id": row["sprint_id"],
-                    "actor": row["actor"],
-                    "actor_kind": payload.get("actor_kind", "agent"),
-                    "instance_id": payload.get("instance_id"),
-                    "hostname": payload.get("hostname"),
-                    "pid": payload.get("pid"),
-                    "released_at": row["created_at"],
-                    "released_event_id": row["id"],
-                    "reason": payload.get("reason"),
-                    "matched_takeup_event_id": payload.get("matched_takeup_event_id"),
-                }
-            )
-            continue
-
-        released.append(_serialize_released_takeup(*takeup_pair, row, payload))
-
-    current_by_key: dict[tuple[int, str, str | None], dict] = {}
-    for takeup_row, takeup_payload in active_by_event_id.values():
-        current_by_key[_takeup_key(takeup_row, takeup_payload)] = _serialize_takeup_row(
-            takeup_row,
-            takeup_payload,
-        )
-    active = sorted(
-        current_by_key.values(),
-        key=lambda item: (item["sprint_id"], item["taken_up_at"], item["taken_up_event_id"]),
-    )
-    return {
-        "active_takeups": active,
-        "released_takeups": released,
-        "unmatched_releases": unmatched_releases,
-    }
+    return _eventcore.list_events_limited(_EventSqlite(conn), sprint_id, limit)
 
 
 def list_takeup_history(
@@ -1503,160 +1338,112 @@ def list_takeup_history(
     sprint_id: int | None = None,
 ) -> dict[str, list[dict]]:
     """Return active and released sprint takeup rows derived from events."""
-    return process_takeup_events(_takeup_events(conn, sprint_id))
+    return _eventcore.list_takeup_history(_EventSqlite(conn), sprint_id)
 
 
 def list_active_takeups(
     conn: sqlite3.Connection,
     sprint_id: int | None = None,
 ) -> list[dict]:
-    return list_takeup_history(conn, sprint_id)["active_takeups"]
-
-
-KNOWLEDGE_EVENT_TYPES = ("decision", "pattern-noted", "lesson-learned", "risk-accepted")
+    return _eventcore.list_active_takeups(_EventSqlite(conn), sprint_id)
 
 
 def list_knowledge_candidates(conn: sqlite3.Connection, sprint_id: int) -> list[dict]:
     """Return events of knowledge types for a sprint, with payload deserialized."""
-    placeholders = ",".join("?" for _ in KNOWLEDGE_EVENT_TYPES)
-    rows = conn.execute(
-        f"""
-        SELECT * FROM event
-        WHERE sprint_id = ? AND event_type IN ({placeholders})
-        ORDER BY created_at ASC, id ASC
-        """,
-        (sprint_id, *KNOWLEDGE_EVENT_TYPES),
-    ).fetchall()
-    result = []
-    for r in rows:
-        row = dict(r)
-        row["payload"] = json.loads(row.get("payload") or "{}")
-        result.append(row)
-    return result
+    return _eventcore.list_knowledge_candidates(_EventSqlite(conn), sprint_id)
 
 
 # --- Claim ---
+#
+# Claim query shapes -- including create_claim/handoff_claim's transactional
+# bodies as of sub-increments 4d/4e -- live in ``sprintctl.claimcore`` and are
+# shared with the PostgreSQL backend; this module supplies only the SQLite
+# execution adapter for them.  heartbeat_claim/release_claim stay here: their
+# error-path event emission is a thin wrapper around backend-neutral shapes.
 
-CLAIM_TYPES = ("inspect", "execute", "review", "coordinate")
+CLAIM_IDENTITY_STATUS_PROVEN = _rows.CLAIM_IDENTITY_STATUS_PROVEN
+CLAIM_IDENTITY_STATUS_LEGACY = _rows.CLAIM_IDENTITY_STATUS_LEGACY
+# Re-exported from claimcore so both backends and existing callers (cli.py,
+# pg.py) see one definition; see claimcore.py's module docstring.
+MAX_CLAIM_TOKEN_INSERT_RETRIES = _claimcore.MAX_CLAIM_TOKEN_INSERT_RETRIES
 
-
-class ClaimConflict(ValueError):
-    pass
-
-
-CLAIM_IDENTITY_STATUS_PROVEN = "proven"
-CLAIM_IDENTITY_STATUS_LEGACY = "legacy_ambiguous"
-MAX_CLAIM_TOKEN_INSERT_RETRIES = 5
-
-
-def _generate_claim_token() -> str:
-    return secrets.token_urlsafe(24)
-
-
-def _is_claim_token_collision(exc: sqlite3.IntegrityError) -> bool:
-    msg = str(exc).lower()
-    return "claim_token" in msg or "idx_claim_token" in msg
-
-
-def _claim_identity_status(row: sqlite3.Row | dict) -> str:
-    return (
-        CLAIM_IDENTITY_STATUS_PROVEN
-        if row["claim_token"]
-        else CLAIM_IDENTITY_STATUS_LEGACY
-    )
+# Backend-neutral claim serialization lives in ``sprintctl.rows`` so the
+# SQLite and PostgreSQL backends cannot drift apart.  These aliases keep the
+# historical ``db`` import surface stable for existing consumers.
+_claim_identity_status = _rows.claim_identity_status
+_claim_event_identity = _rows.claim_event_identity
+_claim_attempt_identity = _rows.claim_attempt_identity
+_serialize_claim = _rows.serialize_claim
 
 
-def _claim_event_identity(row: sqlite3.Row | dict) -> dict:
-    return {
-        "claim_id": row["id"],
-        "actor": row["agent"],
-        "runtime_session_id": row["runtime_session_id"],
-        "instance_id": row["instance_id"],
-        "branch": row["branch"],
-        "worktree_path": row["worktree_path"],
-        "commit_sha": row["commit_sha"],
-        "pr_ref": row["pr_ref"],
-        "hostname": row["hostname"],
-        "pid": row["pid"],
-        "claim_token_present": bool(row["claim_token"]),
-        "identity_status": _claim_identity_status(row),
-        "status": row["status"],
-        "lease_epoch": row["lease_epoch"],
-    }
+class _ClaimSqlite:
+    """SQLite execution adapter for ``claimcore`` claim operations."""
 
+    ph = "?"
+    true_literal = "1"
 
-def _claim_attempt_identity(
-    *,
-    actor: str | None = None,
-    claim_id: int | None = None,
-    claim_token_present: bool = False,
-    runtime_session_id: str | None = None,
-    instance_id: str | None = None,
-    branch: str | None = None,
-    worktree_path: str | None = None,
-    commit_sha: str | None = None,
-    pr_ref: str | None = None,
-    hostname: str | None = None,
-    pid: int | None = None,
-) -> dict:
-    return {
-        "claim_id": claim_id,
-        "actor": actor,
-        "runtime_session_id": runtime_session_id,
-        "instance_id": instance_id,
-        "branch": branch,
-        "worktree_path": worktree_path,
-        "commit_sha": commit_sha,
-        "pr_ref": pr_ref,
-        "hostname": hostname,
-        "pid": pid,
-        "claim_token_present": claim_token_present,
-    }
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
 
+    def tenant_params(self) -> tuple:
+        return ()
 
-def _serialize_claim(row: sqlite3.Row | dict, *, include_secret: bool = False) -> dict:
-    raw = dict(row)
-    claim_token = raw.get("claim_token")
-    identity_status = _claim_identity_status(row)
-    if not include_secret:
-        raw.pop("claim_token", None)
-    claim = {
-        **raw,
-        "claim_id": raw["id"],
-        "actor": raw["agent"],
-        "claim_token_present": bool(claim_token),
-        "claim_token_redacted": bool(claim_token) and not include_secret,
-        "identity_status": identity_status,
-        "identity": {
-            "claim_id": raw["id"],
-            "actor": raw["agent"],
-            "runtime_session_id": raw.get("runtime_session_id"),
-            "instance_id": raw.get("instance_id"),
-            "advisory": {
-                "branch": raw.get("branch"),
-                "worktree_path": raw.get("worktree_path"),
-                "commit_sha": raw.get("commit_sha"),
-                "pr_ref": raw.get("pr_ref"),
-                "hostname": raw.get("hostname"),
-                "pid": raw.get("pid"),
-            },
-        },
-        "ownership_proof": {
-            "type": "claim_id+claim_token",
-            "claim_id": raw["id"],
-            "claim_token_required": bool(raw["exclusive"]),
-            "claim_token_present": bool(claim_token),
-            "status": (
-                "verified-capable"
-                if claim_token
-                else "ambiguous-legacy-claim"
-            ),
-        },
-    }
-    if include_secret:
-        claim["claim_token"] = claim_token
-        claim["ownership_proof"]["claim_token"] = claim_token
-    return claim
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        row = self._conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def mutate(self, sql: str, params: tuple) -> None:
+        self._conn.execute(sql, params)
+        self._conn.commit()
+
+    def now_sql(self) -> str:
+        return "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
+
+    def expires_at_offset_sql(self) -> str:
+        return f"strftime('%Y-%m-%dT%H:%M:%SZ', 'now', {self.ph} || ' seconds')"
+
+    def join_tenant_clause(self, left_alias: str, right_alias: str) -> str:
+        return ""
+
+    def begin_txn(self) -> None:
+        self._conn.execute("BEGIN IMMEDIATE")
+
+    def commit(self) -> None:
+        self._conn.commit()
+
+    def rollback(self) -> None:
+        self._conn.rollback()
+
+    def execute(self, sql: str, params: tuple) -> None:
+        self._conn.execute(sql, params)
+
+    def insert_row(self, sql: str, params: tuple) -> int:
+        cur = self._conn.execute(sql, params)
+        return cur.lastrowid
+
+    def lock_capability_arbitration(self) -> None:
+        pass  # BEGIN IMMEDIATE's whole-DB write lock already covers this
+
+    def lock_work_item_row(self, work_item_id: int) -> dict | None:
+        row = self._conn.execute("SELECT id FROM work_item WHERE id = ?", (work_item_id,)).fetchone()
+        return dict(row) if row else None
+
+    def is_claim_token_collision(self, exc: BaseException) -> bool:
+        if not isinstance(exc, sqlite3.IntegrityError):
+            return False
+        msg = str(exc).lower()
+        return "claim_token" in msg or "idx_claim_token" in msg
+
+    def maintenance_capability_active_sql(self) -> str:
+        return "state IN ('active','observing') AND julianday(expires_at) > julianday('now')"
+
+    def emit_claim_event(
+        self, claim_row: dict, *, event_type: str, actor: str, payload: dict
+    ) -> None:
+        _emit_claim_event(self._conn, claim_row, event_type=event_type, actor=actor, payload=payload)
 
 
 def get_claim(
@@ -1665,24 +1452,15 @@ def get_claim(
     *,
     include_secret: bool = False,
 ) -> dict | None:
-    row = conn.execute("SELECT * FROM claim WHERE id = ?", (claim_id,)).fetchone()
+    row = _claimcore.get_claim_row(_ClaimSqlite(conn), claim_id)
     return _serialize_claim(row, include_secret=include_secret) if row else None
 
 
 def _get_active_exclusive_claim_row(
     conn: sqlite3.Connection,
     work_item_id: int,
-) -> sqlite3.Row | None:
-    return conn.execute(
-        """
-        SELECT * FROM claim
-        WHERE work_item_id = ? AND exclusive = 1 AND status = 'active'
-          AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
-        ORDER BY created_at ASC
-        LIMIT 1
-        """,
-        (work_item_id,),
-    ).fetchone()
+) -> dict | None:
+    return _claimcore.get_active_exclusive_claim_row(_ClaimSqlite(conn), work_item_id)
 
 
 def _emit_claim_event(
@@ -1707,18 +1485,9 @@ def _emit_claim_event(
     )
 
 
-def _require_claim_proof(row: sqlite3.Row | dict, claim_token: str | None) -> None:
-    if row["status"] != "active":
-        raise ValueError(f"Claim #{row['id']} is {row['status']} and is no longer active")
-    if not row["claim_token"]:
-        raise ValueError(
-            f"Claim #{row['id']} is a legacy ambiguous claim with no claim_token. "
-            "Use explicit handoff to adopt it or wait for expiry."
-        )
-    if not claim_token:
-        raise ValueError(f"Claim #{row['id']} requires --claim-token")
-    if row["claim_token"] != claim_token:
-        raise ValueError(f"Invalid claim_token for claim #{row['id']}")
+# Re-exported from claimcore so both backends and existing callers (cli.py,
+# pg.py's own wrapper) see one definition; see claimcore.py's module docstring.
+_require_claim_proof = _claimcore.require_claim_proof
 
 
 def create_claim(
@@ -1750,85 +1519,12 @@ def create_claim(
     item = get_work_item(conn, work_item_id)
     if item is None:
         raise ValueError(f"Work item #{work_item_id} not found")
-    for attempt in range(MAX_CLAIM_TOKEN_INSERT_RETRIES):
-        claim_token = _generate_claim_token()
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            active_capability = conn.execute(
-                "SELECT capability_id FROM maintenance_capability "
-                "WHERE state IN ('active','observing') "
-                "AND julianday(expires_at) > julianday('now') LIMIT 1"
-            ).fetchone()
-            if active_capability is not None:
-                raise ClaimConflict(
-                    "ordinary claims are disabled while an exact-plan maintenance capability is active"
-                )
-            # Expiry is projected lazily, but reacquisition is an authority
-            # boundary: close every elapsed row before checking conflicts so
-            # retained history and the newly granted lease agree.  Keep this
-            # inside the reserved write transaction to match PostgreSQL's
-            # work-item-row arbitration.
-            conn.execute(
-                """
-                UPDATE claim SET status = 'expired'
-                WHERE work_item_id = ? AND status = 'active'
-                  AND expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                """,
-                (work_item_id,),
-            )
-            if exclusive:
-                conflict = _get_active_exclusive_claim_row(conn, work_item_id)
-                if conflict:
-                    # Allow sub-agent claim if the conflict IS the coordinate claim being delegated under.
-                    if (
-                        conflict["claim_type"] == "coordinate"
-                        and coordinate_claim_id is not None
-                        and coordinate_claim_id == conflict["id"]
-                    ):
-                        coord_row = conn.execute(
-                            "SELECT * FROM claim WHERE id = ?", (coordinate_claim_id,)
-                        ).fetchone()
-                        if coord_row is None:
-                            raise ValueError(f"Coordinate claim #{coordinate_claim_id} not found")
-                        _require_claim_proof(coord_row, coordinate_claim_token)
-                        # Permit the sub-agent claim — fall through to INSERT below.
-                    else:
-                        raise ClaimConflict(
-                            f"Item #{work_item_id} is exclusively claimed by '{conflict['agent']}' (claim #{conflict['id']})"
-                        )
-            cur = conn.execute(
-                """
-                INSERT INTO claim
-                    (work_item_id, agent, claim_type, exclusive, expires_at,
-                     branch, worktree_path, commit_sha, pr_ref,
-                     claim_token, runtime_session_id, instance_id, hostname, pid,
-                     lease_epoch)
-                VALUES (?, ?, ?, ?,
-                        strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds'),
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                        COALESCE((SELECT MAX(lease_epoch) FROM claim
-                                  WHERE work_item_id = ?
-                                    AND status = 'expired'), 0) + 1)
-                """,
-                (work_item_id, agent, claim_type, 1 if exclusive else 0, ttl_seconds,
-                 branch, worktree_path, commit_sha, pr_ref,
-                 claim_token, runtime_session_id, instance_id, hostname, pid,
-                 work_item_id),
-            )
-            conn.commit()
-            return cur.lastrowid
-        except sqlite3.IntegrityError as exc:
-            # Extremely rare, but token generation can theoretically collide.
-            conn.rollback()
-            if not _is_claim_token_collision(exc):
-                raise
-            if attempt == MAX_CLAIM_TOKEN_INSERT_RETRIES - 1:
-                raise RuntimeError(
-                    "Failed to create claim: could not generate a unique claim token."
-                ) from exc
-        except Exception:
-            conn.rollback()
-            raise
+    return _claimcore.create_claim(
+        _ClaimSqlite(conn), work_item_id, agent, claim_type, exclusive, ttl_seconds,
+        branch, worktree_path, commit_sha, pr_ref,
+        runtime_session_id, instance_id, hostname, pid,
+        coordinate_claim_id, coordinate_claim_token,
+    )
 
 
 def heartbeat_claim(
@@ -1847,79 +1543,42 @@ def heartbeat_claim(
     pid: int | None = None,
 ) -> None:
     """Refresh a claim's expiry and heartbeat timestamp."""
-    row = conn.execute("SELECT * FROM claim WHERE id = ?", (claim_id,)).fetchone()
+    row = _claimcore.get_claim_row(_ClaimSqlite(conn), claim_id)
     if row is None:
         raise ValueError(f"Claim #{claim_id} not found")
     try:
         _require_claim_proof(row, claim_token)
     except ValueError as exc:
-        if row["claim_token"]:
-            event_type = "coordination-failure"
-            summary = f"Claim heartbeat rejected for claim #{claim_id}"
-            detail = str(exc)
-            tags = ["claims", "coordination", "heartbeat"]
-        else:
-            event_type = "claim-ambiguity-detected"
-            summary = f"Legacy claim ambiguity detected for claim #{claim_id}"
-            detail = str(exc)
-            tags = ["claims", "coordination", "ambiguity", "legacy"]
-        _emit_claim_event(
-            conn,
-            row,
-            event_type=event_type,
-            actor=actor or "system",
-            payload={
-                "summary": summary,
-                "detail": detail,
-                "tags": tags,
-                "operation": "heartbeat",
-                "reason": "invalid-claim-proof" if row["claim_token"] else "legacy-ambiguous-claim",
-                "claim": _claim_event_identity(row),
-                "attempted_by": _claim_attempt_identity(
-                    actor=actor,
-                    claim_id=claim_id,
-                    claim_token_present=claim_token is not None,
-                    runtime_session_id=runtime_session_id,
-                    instance_id=instance_id,
-                    branch=branch,
-                    worktree_path=worktree_path,
-                    commit_sha=commit_sha,
-                    pr_ref=pr_ref,
-                    hostname=hostname,
-                    pid=pid,
-                ),
-            },
-        )
-        raise
-    conn.execute(
-        """
-        UPDATE claim
-        SET heartbeat = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
-            expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds'),
-            runtime_session_id = COALESCE(?, runtime_session_id),
-            instance_id = COALESCE(?, instance_id),
-            branch = COALESCE(?, branch),
-            worktree_path = COALESCE(?, worktree_path),
-            commit_sha = COALESCE(?, commit_sha),
-            pr_ref = COALESCE(?, pr_ref),
-            hostname = COALESCE(?, hostname),
-            pid = COALESCE(?, pid)
-        WHERE id = ?
-        """,
-        (
-            ttl_seconds,
-            runtime_session_id,
-            instance_id,
-            branch,
-            worktree_path,
-            commit_sha,
-            pr_ref,
-            hostname,
-            pid,
+        event_type, payload = _claimcore.heartbeat_rejection_event(
             claim_id,
-        ),
+            row,
+            str(exc),
+            actor=actor,
+            claim_token=claim_token,
+            runtime_session_id=runtime_session_id,
+            instance_id=instance_id,
+            branch=branch,
+            worktree_path=worktree_path,
+            commit_sha=commit_sha,
+            pr_ref=pr_ref,
+            hostname=hostname,
+            pid=pid,
+        )
+        _emit_claim_event(conn, row, event_type=event_type, actor=actor or "system", payload=payload)
+        raise
+    _claimcore.heartbeat_update(
+        _ClaimSqlite(conn),
+        claim_id,
+        ttl_seconds,
+        runtime_session_id,
+        instance_id,
+        branch,
+        worktree_path,
+        commit_sha,
+        pr_ref,
+        hostname,
+        pid,
     )
-    conn.commit()
 
 
 def release_claim(
@@ -1929,42 +1588,18 @@ def release_claim(
     actor: str | None = None,
 ) -> None:
     """Release (delete) a claim. Only the owning agent may release it."""
-    row = conn.execute("SELECT * FROM claim WHERE id = ?", (claim_id,)).fetchone()
+    row = _claimcore.get_claim_row(_ClaimSqlite(conn), claim_id)
     if row is None:
         raise ValueError(f"Claim #{claim_id} not found")
     try:
         _require_claim_proof(row, claim_token)
     except ValueError as exc:
-        _emit_claim_event(
-            conn,
-            row,
-            event_type=(
-                "claim-ambiguity-detected"
-                if not row["claim_token"]
-                else "coordination-failure"
-            ),
-            actor=actor or "system",
-            payload={
-                "summary": f"Claim release rejected for claim #{claim_id}",
-                "detail": str(exc),
-                "tags": (
-                    ["claims", "coordination", "ambiguity", "legacy"]
-                    if not row["claim_token"]
-                    else ["claims", "coordination", "release"]
-                ),
-                "operation": "release",
-                "reason": "invalid-claim-proof" if row["claim_token"] else "legacy-ambiguous-claim",
-                "claim": _claim_event_identity(row),
-                "attempted_by": _claim_attempt_identity(
-                    actor=actor,
-                    claim_id=claim_id,
-                    claim_token_present=claim_token is not None,
-                ),
-            },
+        event_type, payload = _claimcore.release_rejection_event(
+            claim_id, row, str(exc), actor=actor, claim_token=claim_token
         )
+        _emit_claim_event(conn, row, event_type=event_type, actor=actor or "system", payload=payload)
         raise
-    conn.execute("DELETE FROM claim WHERE id = ?", (claim_id,))
-    conn.commit()
+    _claimcore.release_delete(_ClaimSqlite(conn), claim_id)
 
 
 def handoff_claim(
@@ -1987,167 +1622,14 @@ def handoff_claim(
     note: str | None = None,
     allow_legacy_adopt: bool = False,
 ) -> dict:
-    row = conn.execute("SELECT * FROM claim WHERE id = ?", (claim_id,)).fetchone()
-    if row is None:
-        raise ValueError(f"Claim #{claim_id} not found")
-    if mode not in {"transfer", "rotate"}:
-        raise ValueError("mode must be 'transfer' or 'rotate'")
-
-    legacy_ambiguous = not bool(row["claim_token"])
-    # A token is deliberately unrecoverable from a remote claim row.  When a
-    # session has lost its locally persisted proof, the documented escape hatch
-    # is an explicit, auditable adoption.  Only an omitted token may take this
-    # path: a supplied-but-invalid token remains a rejected proof attempt.
-    lost_proof_adopted = (
-        not legacy_ambiguous
-        and allow_legacy_adopt
-        and claim_token is None
+    return _claimcore.handoff_claim(
+        _ClaimSqlite(conn), claim_id, claim_token,
+        actor=actor, mode=mode, ttl_seconds=ttl_seconds,
+        runtime_session_id=runtime_session_id, instance_id=instance_id,
+        branch=branch, worktree_path=worktree_path, commit_sha=commit_sha, pr_ref=pr_ref,
+        hostname=hostname, pid=pid, performed_by=performed_by, note=note,
+        allow_legacy_adopt=allow_legacy_adopt,
     )
-    if legacy_ambiguous:
-        if not allow_legacy_adopt:
-            _emit_claim_event(
-                conn,
-                row,
-                event_type="claim-ambiguity-detected",
-                actor=performed_by or actor,
-                payload={
-                    "summary": f"Legacy claim ambiguity detected for claim #{claim_id}",
-                    "detail": (
-                        "An explicit handoff was attempted for a legacy claim without a "
-                        "claim_token. Re-run with legacy adoption enabled to mint a new proof."
-                    ),
-                    "tags": ["claims", "coordination", "ambiguity", "legacy"],
-                    "operation": "handoff",
-                    "reason": "legacy-ambiguous-claim",
-                    "claim": _claim_event_identity(row),
-                    "attempted_by": _claim_attempt_identity(
-                        actor=performed_by or actor,
-                        claim_id=claim_id,
-                        claim_token_present=claim_token is not None,
-                        runtime_session_id=runtime_session_id,
-                        instance_id=instance_id,
-                        branch=branch,
-                        worktree_path=worktree_path,
-                        commit_sha=commit_sha,
-                        pr_ref=pr_ref,
-                        hostname=hostname,
-                        pid=pid,
-                    ),
-                },
-            )
-            raise ValueError(
-                f"Claim #{claim_id} is a legacy ambiguous claim with no claim_token. "
-                "Use allow_legacy_adopt to mint a new ownership proof."
-            )
-        mode = "rotate"
-    elif not lost_proof_adopted:
-        try:
-            _require_claim_proof(row, claim_token)
-        except ValueError as exc:
-            _emit_claim_event(
-                conn,
-                row,
-                event_type="coordination-failure",
-                actor=performed_by or actor,
-                payload={
-                    "summary": f"Claim handoff rejected for claim #{claim_id}",
-                    "detail": str(exc),
-                    "tags": ["claims", "coordination", "handoff"],
-                    "operation": "handoff",
-                    "reason": "invalid-claim-proof",
-                    "claim": _claim_event_identity(row),
-                    "attempted_by": _claim_attempt_identity(
-                        actor=performed_by or actor,
-                        claim_id=claim_id,
-                        claim_token_present=claim_token is not None,
-                        runtime_session_id=runtime_session_id,
-                        instance_id=instance_id,
-                        branch=branch,
-                        worktree_path=worktree_path,
-                        commit_sha=commit_sha,
-                        pr_ref=pr_ref,
-                        hostname=hostname,
-                        pid=pid,
-                    ),
-                },
-            )
-            raise
-
-    from_identity = _claim_event_identity(row)
-    next_claim_token = row["claim_token"]
-    if mode == "rotate" or not next_claim_token:
-        next_claim_token = _generate_claim_token()
-
-    conn.execute(
-        """
-        UPDATE claim
-        SET agent = ?,
-            claim_token = ?,
-            expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds'),
-            runtime_session_id = ?,
-            instance_id = ?,
-            branch = ?,
-            worktree_path = ?,
-            commit_sha = ?,
-            pr_ref = ?,
-            hostname = ?,
-            pid = ?,
-            heartbeat = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-        WHERE id = ?
-        """,
-        (
-            actor,
-            next_claim_token,
-            ttl_seconds,
-            runtime_session_id,
-            instance_id,
-            branch,
-            worktree_path,
-            commit_sha,
-            pr_ref,
-            hostname,
-            pid,
-            claim_id,
-        ),
-    )
-    conn.commit()
-
-    updated = get_claim(conn, claim_id, include_secret=True)
-    assert updated is not None
-    event_type = "claim-ownership-corrected" if legacy_ambiguous else "claim-handoff"
-    _emit_claim_event(
-        conn,
-        updated,
-        event_type=event_type,
-        actor=performed_by or actor,
-        payload={
-            "summary": (
-                f"Claim #{claim_id} ownership corrected"
-                if legacy_ambiguous
-                else f"Claim #{claim_id} handed off to {actor}"
-            ),
-            "detail": note
-            or (
-                "A legacy ambiguous claim was explicitly adopted and re-issued with a new token."
-                if legacy_ambiguous
-                else (
-                    "The previous proof was unavailable; explicit recovery adoption "
-                    "minted a replacement token."
-                    if lost_proof_adopted
-                    else f"Claim ownership was transferred with mode={mode}."
-                )
-            ),
-            "tags": ["claims", "handoff", "coordination"],
-            "operation": "handoff",
-            "mode": mode,
-            "legacy_adopted": legacy_ambiguous,
-            "lost_proof_adopted": lost_proof_adopted,
-            "token_rotated": mode == "rotate" or legacy_ambiguous,
-            "from_identity": from_identity,
-            "to_identity": _claim_event_identity(updated),
-        },
-    )
-    return updated
 
 
 def list_claims_by_sprint(
@@ -2157,40 +1639,15 @@ def list_claims_by_sprint(
     expiring_within_seconds: int | None = None,
 ) -> list[dict]:
     """List all claims for items in a sprint, optionally filtered to active or expiring soon."""
-    base = """
-        SELECT c.*, wi.title AS item_title, wi.status AS item_status
-        FROM claim c
-        JOIN work_item wi ON c.work_item_id = wi.id
-        WHERE wi.sprint_id = ?
-    """
-    params: list = [sprint_id]
-    if active_only:
-        base += " AND c.status = 'active' AND c.expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')"
-    if expiring_within_seconds is not None:
-        base += " AND c.expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds')"
-        params.append(expiring_within_seconds)
-    base += " ORDER BY c.expires_at ASC"
-    rows = conn.execute(base, params).fetchall()
+    rows = _claimcore.list_claims_by_sprint(
+        _ClaimSqlite(conn), sprint_id, active_only, expiring_within_seconds
+    )
     return [_serialize_claim(r) for r in rows]
 
 
 def list_claims(conn: sqlite3.Connection, work_item_id: int, active_only: bool = True) -> list[dict]:
     """List claims for a work item; active_only filters to non-expired claims."""
-    if active_only:
-        rows = conn.execute(
-            """
-            SELECT * FROM claim
-            WHERE work_item_id = ? AND status = 'active'
-              AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
-            ORDER BY created_at ASC
-            """,
-            (work_item_id,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM claim WHERE work_item_id = ? ORDER BY created_at ASC",
-            (work_item_id,),
-        ).fetchall()
+    rows = _claimcore.list_claims(_ClaimSqlite(conn), work_item_id, active_only)
     return [_serialize_claim(r) for r in rows]
 
 
@@ -2210,52 +1667,59 @@ def find_claim_by_identity(
     At least one of instance_id, runtime_session_id, or (hostname+pid) must be provided.
     Returns serialized claims without the secret token.
     """
-    if not any([instance_id, runtime_session_id, (hostname and pid is not None)]):
-        raise ValueError(
-            "At least one of --instance-id, --runtime-session-id, or "
-            "--hostname + --pid must be provided to resume a claim."
-        )
-    conditions = []
-    params: list = []
-    if active_only:
-        conditions.append("status = 'active'")
-        conditions.append("expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')")
-    if instance_id:
-        conditions.append("instance_id = ?")
-        params.append(instance_id)
-    if runtime_session_id:
-        conditions.append("runtime_session_id = ?")
-        params.append(runtime_session_id)
-    if hostname and pid is not None:
-        conditions.append("(hostname = ? AND pid = ?)")
-        params.extend([hostname, pid])
-    where = " AND ".join(conditions)
-    rows = conn.execute(
-        f"SELECT * FROM claim WHERE {where} ORDER BY created_at DESC",
-        params,
-    ).fetchall()
+    rows = _claimcore.find_claim_by_identity(
+        _ClaimSqlite(conn),
+        instance_id=instance_id,
+        hostname=hostname,
+        pid=pid,
+        runtime_session_id=runtime_session_id,
+        active_only=active_only,
+    )
     return [_serialize_claim(r) for r in rows]
 
 
 def _get_active_coordinate_claim_row(
     conn: sqlite3.Connection,
     work_item_id: int,
-) -> sqlite3.Row | None:
+) -> dict | None:
     """Return the first active exclusive coordinate claim on the item, if any."""
-    return conn.execute(
-        """
-        SELECT * FROM claim
-        WHERE work_item_id = ? AND exclusive = 1 AND claim_type = 'coordinate'
-          AND status = 'active'
-          AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
-        ORDER BY created_at ASC
-        LIMIT 1
-        """,
-        (work_item_id,),
-    ).fetchone()
+    return _claimcore.get_active_coordinate_claim_row(_ClaimSqlite(conn), work_item_id)
 
 
 # --- Ref ---
+#
+# Ref-table query shapes live in ``sprintctl.refcore`` and are shared with
+# the PostgreSQL backend; this module supplies only the SQLite execution
+# adapter.  Public signatures are unchanged.
+
+
+class _RefSqlite:
+    """SQLite execution adapter for ``refcore`` ref operations."""
+
+    ph = "?"
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def tenant_params(self) -> tuple:
+        return ()
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        row = self._conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def mutate(self, sql: str, params: tuple) -> None:
+        self._conn.execute(sql, params)
+        self._conn.commit()
+
+    def insert_id(self, sql: str, params: tuple) -> int:
+        cur = self._conn.execute(sql, params)
+        self._conn.commit()
+        return cur.lastrowid
+
 
 def add_ref(
     conn: sqlite3.Connection,
@@ -2270,30 +1734,15 @@ def add_ref(
     item = get_work_item(conn, work_item_id)
     if item is None:
         raise ValueError(f"Work item #{work_item_id} not found")
-    cur = conn.execute(
-        "INSERT INTO ref (work_item_id, ref_type, url, label) VALUES (?, ?, ?, ?)",
-        (work_item_id, ref_type, url, label),
-    )
-    conn.commit()
-    return cur.lastrowid
+    return _refcore.add_ref(_RefSqlite(conn), work_item_id, ref_type, url, label)
 
 
 def list_refs(conn: sqlite3.Connection, work_item_id: int) -> list[dict]:
-    rows = conn.execute(
-        "SELECT * FROM ref WHERE work_item_id = ? ORDER BY created_at ASC",
-        (work_item_id,),
-    ).fetchall()
-    return [_serialize_ref(r) for r in rows]
+    return [_serialize_ref(r) for r in _refcore.list_refs(_RefSqlite(conn), work_item_id)]
 
 
 def list_refs_for_items(conn: sqlite3.Connection, work_item_ids: list[int]) -> dict[int, list[dict]]:
-    if not work_item_ids:
-        return {}
-    placeholders = ",".join("?" for _ in work_item_ids)
-    rows = conn.execute(
-        f"SELECT * FROM ref WHERE work_item_id IN ({placeholders}) ORDER BY created_at ASC, id ASC",
-        list(work_item_ids),
-    ).fetchall()
+    rows = _refcore.list_refs_for_items(_RefSqlite(conn), work_item_ids)
     refs_by_item: dict[int, list[dict]] = {}
     for r in rows:
         refs_by_item.setdefault(r["work_item_id"], []).append(_serialize_ref(r))
@@ -2301,16 +1750,52 @@ def list_refs_for_items(conn: sqlite3.Connection, work_item_ids: list[int]) -> d
 
 
 def remove_ref(conn: sqlite3.Connection, ref_id: int, work_item_id: int) -> None:
-    row = conn.execute(
-        "SELECT id FROM ref WHERE id = ? AND work_item_id = ?", (ref_id, work_item_id)
-    ).fetchone()
-    if row is None:
-        raise ValueError(f"Ref #{ref_id} not found on item #{work_item_id}")
-    conn.execute("DELETE FROM ref WHERE id = ?", (ref_id,))
-    conn.commit()
+    _refcore.remove_ref(_RefSqlite(conn), ref_id, work_item_id)
 
 
 # --- Dep ---
+#
+# Dep-table query shapes live in ``sprintctl.depcore`` and are shared with
+# the PostgreSQL backend; this module supplies only the SQLite execution
+# adapter.  Public signatures are unchanged.
+
+
+class _DepSqlite:
+    """SQLite execution adapter for ``depcore`` dep operations."""
+
+    ph = "?"
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def tenant_params(self) -> tuple:
+        return ()
+
+    def query_one(self, sql: str, params: tuple) -> dict | None:
+        row = self._conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
+    def query_all(self, sql: str, params: tuple) -> list[dict]:
+        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def mutate(self, sql: str, params: tuple) -> None:
+        self._conn.execute(sql, params)
+        self._conn.commit()
+
+    def insert_ignore(
+        self, columns: tuple[str, ...], values: tuple, conflict_cols: tuple[str, ...]
+    ) -> None:
+        col_list = ", ".join(columns)
+        placeholders = ", ".join(["?"] * len(values))
+        self._conn.execute(
+            f"INSERT OR IGNORE INTO dep ({col_list}) VALUES ({placeholders})",
+            values,
+        )
+        self._conn.commit()
+
+    def join_tenant_clause(self, left_alias: str, right_alias: str) -> str:
+        return ""
+
 
 def add_dep(
     conn: sqlite3.Connection,
@@ -2328,60 +1813,22 @@ def add_dep(
         raise ValueError(f"Work item #{item_id} not found")
     if get_work_item(conn, blocked_item_id) is None:
         raise ValueError(f"Work item #{blocked_item_id} not found")
-    conn.execute(
-        "INSERT OR IGNORE INTO dep (item_id, blocked_item_id) VALUES (?, ?)",
-        (item_id, blocked_item_id),
-    )
-    row = conn.execute(
-        "SELECT id FROM dep WHERE item_id = ? AND blocked_item_id = ?",
-        (item_id, blocked_item_id),
-    ).fetchone()
-    conn.commit()
-    return row[0]
+    return _depcore.add_dep(_DepSqlite(conn), item_id, blocked_item_id)
 
 
 def list_deps_blocking(conn: sqlite3.Connection, item_id: int) -> list[dict]:
     """Return deps where item_id is blocked — i.e. items that must complete first."""
-    rows = conn.execute(
-        """
-        SELECT d.id, d.item_id, d.blocked_item_id, d.created_at,
-               wi.title AS blocker_title, wi.status AS blocker_status
-        FROM dep d
-        JOIN work_item wi ON d.item_id = wi.id
-        WHERE d.blocked_item_id = ?
-        ORDER BY d.created_at ASC
-        """,
-        (item_id,),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    return _depcore.list_deps_blocking(_DepSqlite(conn), item_id)
 
 
 def list_deps_blocked_by(conn: sqlite3.Connection, item_id: int) -> list[dict]:
     """Return deps where item_id is the blocker — i.e. items waiting on it."""
-    rows = conn.execute(
-        """
-        SELECT d.id, d.item_id, d.blocked_item_id, d.created_at,
-               wi.title AS waiting_title, wi.status AS waiting_status
-        FROM dep d
-        JOIN work_item wi ON d.blocked_item_id = wi.id
-        WHERE d.item_id = ?
-        ORDER BY d.created_at ASC
-        """,
-        (item_id,),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    return _depcore.list_deps_blocked_by(_DepSqlite(conn), item_id)
 
 
 def remove_dep(conn: sqlite3.Connection, dep_id: int, item_id: int) -> None:
     """Remove a dep. item_id must match either item_id or blocked_item_id."""
-    row = conn.execute(
-        "SELECT id FROM dep WHERE id = ? AND (item_id = ? OR blocked_item_id = ?)",
-        (dep_id, item_id, item_id),
-    ).fetchone()
-    if row is None:
-        raise ValueError(f"Dep #{dep_id} not found for item #{item_id}")
-    conn.execute("DELETE FROM dep WHERE id = ?", (dep_id,))
-    conn.commit()
+    _depcore.remove_dep(_DepSqlite(conn), dep_id, item_id)
 
 
 def get_ready_items(

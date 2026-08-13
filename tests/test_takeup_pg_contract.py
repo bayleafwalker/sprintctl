@@ -89,7 +89,7 @@ def test_pg_takeup_history_queries_the_connection_not_pg_store():
     history = pg.list_takeup_history(store, sprint_id=7)
 
     assert [row["taken_up_event_id"] for row in history["active_takeups"]] == [41]
-    assert conn.cursor_instance.params == ["test-repo", "sprint-taken-up", "sprint-released", 7]
+    assert tuple(conn.cursor_instance.params) == ("test-repo", "sprint-taken-up", "sprint-released", 7)
     assert "repo_id = %s" in conn.cursor_instance.query
 
 

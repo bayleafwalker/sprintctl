@@ -156,6 +156,8 @@ class TestClaimOwnership:
             instance_id="proc-1",
         )
 
+        assert claim["lease_epoch"] == 1
+
         handed = db.handoff_claim(
             conn,
             claim["claim_id"],
@@ -172,6 +174,10 @@ class TestClaimOwnership:
         assert handed["runtime_session_id"] == "thread-2"
         assert handed["instance_id"] == "proc-2"
         assert handed["claim_token"] != claim["claim_token"]
+        assert handed["lease_epoch"] == 2, (
+            "rotate must bump lease_epoch: a session holding the pre-handoff "
+            "epoch must fail terminal_recovery's expected_lease_epoch fencing check"
+        )
 
         with pytest.raises(ValueError, match="Invalid claim_token"):
             db.heartbeat_claim(conn, claim["claim_id"], claim["claim_token"], actor="agent-a")
@@ -230,9 +236,32 @@ class TestClaimOwnership:
         assert adopted["actor"] == "agent-b"
         assert adopted["claim_token"]
         assert adopted["identity_status"] == "proven"
+        assert adopted["lease_epoch"] == 2, (
+            "legacy adoption mints a new proof and must bump lease_epoch just "
+            "like an ordinary rotate handoff"
+        )
 
         events = db.list_events(conn, active_sprint["id"])
         assert events[-1]["event_type"] == "claim-ownership-corrected"
+
+    def test_transfer_mode_without_token_rotation_does_not_bump_lease_epoch(self, conn, active_sprint):
+        iid = _item(conn, active_sprint["id"])
+        claim = _claim(conn, iid, agent="agent-a")
+
+        handed = db.handoff_claim(
+            conn,
+            claim["claim_id"],
+            claim["claim_token"],
+            actor="agent-b",
+            mode="transfer",
+        )
+
+        assert handed["actor"] == "agent-b"
+        assert handed["claim_token"] == claim["claim_token"]
+        assert handed["lease_epoch"] == 1, (
+            "transfer without a token change is not a fencing-relevant "
+            "ownership change; lease_epoch must stay put"
+        )
 
     def test_lost_proof_can_be_explicitly_adopted_but_invalid_proof_is_rejected(self, conn, active_sprint):
         iid = _item(conn, active_sprint["id"])
