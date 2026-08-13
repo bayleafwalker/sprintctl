@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sprintctl"
-version = "0.2.22"
+version = "0.2.23"
 requires-python = ">=3.11"
 dependencies = ["click>=8.1"]
 
@@ -16,14 +16,11 @@ dev = ["pytest>=8"]
 remote = [
     "psycopg[binary]>=3.1",
 ]
-# vuoro-client has no release tag yet (only 0.1.0.dev0 in-tree); pinned by
-# commit SHA to the revision verified against the deployed vuoro-shared
-# service (commit 1cce813, the first revision whose AsyncVuoroClient.invoke
-# sends repo_id in the invocation envelope -- #1245) as an interim measure.
-# Replace with a proper `vuoro-client-vX.Y.Z` tag pin once the vuoro repo
-# cuts one.
+# The served transport is distributed as an attested GitHub Release wheel.
+# Pin both its immutable release URL and verified digest; no package index or
+# mutable source checkout participates in installation.
 served = [
-    "vuoro-client @ git+https://github.com/bayleafwalker/vuoro.git@1cce813b9f473c9fd15439fd0e771ec0c0b74db0#subdirectory=packages/vuoro-client ; python_version >= '3.12'",
+    "vuoro-client @ https://github.com/bayleafwalker/vuoro/releases/download/vuoro-client-v0.1.0/vuoro_client-0.1.0-py3-none-any.whl#sha256=d94c35002d94dec2ac86c75a2693934c67d2c72c8d27b2048836ed4e1d1c71db ; python_version >= '3.12'",
 ]
 
 [tool.setuptools]
