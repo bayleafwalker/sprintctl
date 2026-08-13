@@ -1,6 +1,8 @@
 # ruff: noqa: E402 - optional Vuoro imports follow explicit availability gates.
 from __future__ import annotations
 
+import hashlib
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -26,6 +28,54 @@ from tests.test_maintenance_capability import AT, CAPABILITY_ID, envelope
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
+
+
+@pytest.mark.parametrize(
+    ("remote_schema_version", "operation_count", "byte_count", "operations_sha", "revision"),
+    [
+        (
+            6,
+            43,
+            51_800,
+            "b2d241957a02ae648a2e31a25a7e0f4bb616656286618864f02a1c9180138205",
+            "b2d241957a02ae648a2e31a25a7e0f4bb616656286618864f02a1c9180138205",
+        ),
+        (
+            7,
+            46,
+            56_915,
+            "a111136548a051be949b32a9b29b60847287a84aef403de2fc6aa8ce141ca3b7",
+            "25367985cffea28c8de8e2c25140c3f2f8ebc0f64166b70a4b37ba8724e9c4df",
+        ),
+    ],
+)
+def test_adapter_kit_migration_preserves_catalog_bytes_and_registry_revision(
+    remote_schema_version, operation_count, byte_count, operations_sha, revision
+):
+    store = SimpleNamespace(
+        repo_id="sprintctl", remote_schema_version=remote_schema_version
+    )
+    work = WorkApplication(
+        repo_id="sprintctl",
+        store=store,
+        backend=object(),
+        ingest_records=lambda records: [],
+        arbitrate_command=lambda record, credentials: None,
+        list_records=lambda after, limit: [],
+        list_decisions=lambda after, limit: [],
+    )
+    registry = CatalogRegistry()
+    register_work_catalog(registry, work)
+    operations = [
+        operation.model_dump(mode="json")
+        for operation in registry.catalog().operations
+    ]
+    payload = json.dumps(operations, sort_keys=True, separators=(",", ":")).encode()
+
+    assert len(operations) == operation_count
+    assert len(payload) == byte_count
+    assert hashlib.sha256(payload).hexdigest() == operations_sha
+    assert registry.revision == revision
 
 
 @pytest.mark.anyio

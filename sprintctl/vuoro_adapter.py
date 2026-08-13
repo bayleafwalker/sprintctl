@@ -11,6 +11,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from vuoro_adapter_kit import (
+    SCHEMA_DIALECT as _ADAPTER_SCHEMA_DIALECT,
+    SCHEMA_FEATURES as _ADAPTER_SCHEMA_FEATURES,
+    object_schema,
+    operation_spec,
+)
+
 from .application import (
     ApplicationRejection,
     ProjectWorkApplication,
@@ -20,7 +27,8 @@ from .application import (
 
 WORK_API_VERSION = "work-api/v1"
 WORK_SCHEMA_VERSION = "work-schema/v1"
-SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
+SCHEMA_DIALECT = _ADAPTER_SCHEMA_DIALECT
+SCHEMA_FEATURES = _ADAPTER_SCHEMA_FEATURES
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,27 +39,11 @@ class WorkOperationContract:
     required_authority: str | None
     execution_semantics: Literal["read", "write", "enqueue", "admin"]
     idempotency: Literal["not-allowed", "optional", "required"]
-    required_client_schema_features: tuple[str, ...] = ("json-schema-draft-2020-12",)
+    required_client_schema_features: tuple[str, ...] = SCHEMA_FEATURES
     result_contract_resource_kind: str | None = None
 
 
-def _object_schema(
-    properties: dict[str, Any],
-    *,
-    required: tuple[str, ...] = (),
-    definitions: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    schema: dict[str, Any] = {
-        "$schema": SCHEMA_DIALECT,
-        "type": "object",
-        "properties": properties,
-        "additionalProperties": False,
-    }
-    if required:
-        schema["required"] = list(required)
-    if definitions:
-        schema["$defs"] = definitions
-    return schema
+_object_schema = object_schema
 
 
 def _result_schema(
@@ -1084,6 +1076,45 @@ LEGACY_REMOTE_COMMAND_PARITY: tuple[dict[str, str], ...] = (
 )
 
 
+_RESOURCE_OPERATIONS = frozenset(
+    {
+        "work.maintenance.resource.prepare",
+        "work.maintenance.resource.get",
+        "work.maintenance.resource.changes",
+    }
+)
+
+
+def catalog_operation_specs(
+    *, resource_schema_available: bool
+) -> tuple[dict[str, Any], ...]:
+    """Return fresh data-only Vuoro definitions in owner-declared order."""
+
+    return tuple(
+        operation_spec(
+            contract.name,
+            owning_domain="work",
+            input_schema=contract.input_schema,
+            result_schema=contract.result_schema,
+            required_authority=contract.required_authority,
+            execution_semantics=contract.execution_semantics,
+            idempotency=contract.idempotency,
+            repo_scoped=not contract.name.startswith("work.project."),
+            required_client_schema_features=contract.required_client_schema_features,
+            result_contract=(
+                {
+                    "mode": "resource-reference",
+                    "resource_kind": contract.result_contract_resource_kind,
+                }
+                if contract.result_contract_resource_kind
+                else None
+            ),
+        )
+        for contract in WORK_OPERATION_CONTRACTS
+        if resource_schema_available or contract.name not in _RESOURCE_OPERATIONS
+    )
+
+
 def register_work_catalog(
     registry: Any,
     application: WorkApplication,
@@ -1098,20 +1129,18 @@ def register_work_catalog(
         OperationDefinition,
         ResourceKindDefinition,
         ResourceObservationContract,
-        ResourceResultContract,
     )
 
-    resource_kind_registered = False
     resource_schema_available = application.maintenance_resource_schema_available()
-    resource_operations = {
-        "work.maintenance.resource.prepare",
-        "work.maintenance.resource.get",
-        "work.maintenance.resource.changes",
-    }
-    for contract in WORK_OPERATION_CONTRACTS:
-        if contract.name in resource_operations and not resource_schema_available:
-            continue
-        if contract.result_contract_resource_kind and not resource_kind_registered:
+    resource_kind_registered = False
+    contracts = {contract.name: contract for contract in WORK_OPERATION_CONTRACTS}
+    for raw_spec in catalog_operation_specs(
+        resource_schema_available=resource_schema_available
+    ):
+        operation = raw_spec["name"]
+        contract = contracts[operation]
+        result_contract_resource_kind = contract.result_contract_resource_kind
+        if result_contract_resource_kind and not resource_kind_registered:
             registry.register_resource_kind(
                 ResourceKindDefinition(
                     resource_kind="work.maintenance-capability",
@@ -1132,29 +1161,10 @@ def register_work_catalog(
         # ProjectWorkApplication) -- they have no single repo_id to scope
         # to, so they stay outside the envelope-level repo_id/authorization
         # gate that every other work.* operation requires.
-        definition = OperationDefinition(
-            name=contract.name,
-            owning_domain="work",
-            input_schema=contract.input_schema,
-            result_schema=contract.result_schema,
-            required_authority=contract.required_authority,
-            execution_semantics=contract.execution_semantics,
-            idempotency=contract.idempotency,
-            repo_scoped=not contract.name.startswith("work.project."),
-            required_client_schema_features=list(
-                contract.required_client_schema_features
-            ),
-            result_contract=(
-                ResourceResultContract(
-                    resource_kind=contract.result_contract_resource_kind
-                )
-                if contract.result_contract_resource_kind
-                else None
-            ),
-        )
+        definition = OperationDefinition(**raw_spec)
 
         def handler(
-            arguments: Any, context: Any, *, operation: str = contract.name
+            arguments: Any, context: Any, *, operation: str = operation
         ) -> Any:
             try:
                 if operation.startswith("work.project."):
@@ -1180,7 +1190,7 @@ def register_work_catalog(
                         result["repo_id"]
                     ).maintenance_resource_reference(result)
                 )
-                if contract.result_contract_resource_kind else None
+                if result_contract_resource_kind else None
             ),
         )
 
@@ -1188,9 +1198,11 @@ def register_work_catalog(
 __all__ = [
     "LEGACY_REMOTE_COMMAND_PARITY",
     "SCHEMA_DIALECT",
+    "SCHEMA_FEATURES",
     "WORK_API_VERSION",
     "WORK_OPERATION_CONTRACTS",
     "WORK_SCHEMA_VERSION",
     "WorkOperationContract",
+    "catalog_operation_specs",
     "register_work_catalog",
 ]

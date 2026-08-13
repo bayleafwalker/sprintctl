@@ -517,10 +517,11 @@ wheels = [
 
 [[package]]
 name = "sprintctl"
-version = "0.2.23"
+version = "0.2.24"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
+    { name = "vuoro-adapter-kit" },
 ]
 
 [package.optional-dependencies]
@@ -539,6 +540,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.1" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'remote'", specifier = ">=3.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "vuoro-adapter-kit", url = "https://github.com/bayleafwalker/vuoro/releases/download/vuoro-adapter-kit-v0.1.0/vuoro_adapter_kit-0.1.0-py3-none-any.whl" },
     { name = "vuoro-client", marker = "python_full_version >= '3.12' and extra == 'served'", url = "https://github.com/bayleafwalker/vuoro/releases/download/vuoro-client-v0.1.0/vuoro_client-0.1.0-py3-none-any.whl" },
 ]
 provides-extras = ["dev", "remote", "served"]
@@ -572,6 +574,18 @@ sdist = { url = "https://files.pythonhosted.org/packages/ba/19/1b9b0e29f30c6d35c
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ce/e4/dccd7f47c4b64213ac01ef921a1337ee6e30e8c6466046018326977efd95/tzdata-2026.2-py2.py3-none-any.whl", hash = "sha256:bbe9af844f658da81a5f95019480da3a89415801f6cc966806612cc7169bffe7", size = 349321, upload-time = "2026-04-24T15:22:05.876Z" },
 ]
+
+[[package]]
+name = "vuoro-adapter-kit"
+version = "0.1.0"
+source = { url = "https://github.com/bayleafwalker/vuoro/releases/download/vuoro-adapter-kit-v0.1.0/vuoro_adapter_kit-0.1.0-py3-none-any.whl" }
+wheels = [
+    { url = "https://github.com/bayleafwalker/vuoro/releases/download/vuoro-adapter-kit-v0.1.0/vuoro_adapter_kit-0.1.0-py3-none-any.whl", hash = "sha256:0037898a4c9f01720a42302365b0172ecd203732070326ea2abdf549a44bf0c2" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pytest", marker = "extra == 'test'", specifier = ">=8.3,<9" }]
+provides-extras = ["test"]
 
 [[package]]
 name = "vuoro-client"
