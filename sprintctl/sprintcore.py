@@ -93,20 +93,14 @@ def get_active_sprint(conn: SprintConn) -> dict | None:
     Multiple active sprints are allowed. Callers that need to reason about
     ambiguity should use list_active_sprints instead.
     """
-    sql = (
-        f"SELECT * FROM sprint"
-        f"{_where(conn, "status = 'active'", "kind = 'active_sprint'")}"
-        f" ORDER BY created_at DESC, id DESC LIMIT 1"
-    )
+    where = _where(conn, "status = 'active'", "kind = 'active_sprint'")
+    sql = f"SELECT * FROM sprint{where} ORDER BY created_at DESC, id DESC LIMIT 1"
     return conn.query_one(sql, conn.tenant_params())
 
 
 def list_active_sprints(conn: SprintConn) -> list[dict]:
-    sql = (
-        f"SELECT * FROM sprint"
-        f"{_where(conn, "status = 'active'", "kind = 'active_sprint'")}"
-        f" ORDER BY created_at DESC, id DESC"
-    )
+    where = _where(conn, "status = 'active'", "kind = 'active_sprint'")
+    sql = f"SELECT * FROM sprint{where} ORDER BY created_at DESC, id DESC"
     return conn.query_all(sql, conn.tenant_params())
 
 
