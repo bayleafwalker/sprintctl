@@ -1,0 +1,106 @@
+name: Release Sprintctl wheel
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  attestations: write
+  contents: write
+  id-token: write
+
+jobs:
+  tests:
+    name: Release gate (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Checkout Sprintctl at the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+      - name: Synchronize frozen development dependencies
+        run: uv sync --frozen --extra dev
+      - name: Run the full test suite
+        run: uv run pytest -q
+
+  publish:
+    name: Build, attest, and publish the Sprintctl wheel
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Sprintctl at the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Synchronize frozen development dependencies
+        run: uv sync --frozen --extra dev
+      - name: Build exactly one release wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          mkdir -p dist
+          uv build --wheel --out-dir dist
+          shopt -s nullglob
+          wheels=(dist/*.whl)
+          if [[ "${#wheels[@]}" -ne 1 ]]; then
+            echo "expected exactly one release wheel, found ${#wheels[@]}" >&2
+            exit 1
+          fi
+      - name: Validate wheel metadata, tag, and immutable adapter dependency
+        run: uv run python verification/validate_release_contract.py dist/*.whl --tag "$GITHUB_REF_NAME"
+      - name: Record deterministic wheel identity
+        id: wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheel=(dist/*.whl)
+          wheel_name="$(basename "${wheel[0]}")"
+          sha256="$(sha256sum "${wheel[0]}" | awk '{print $1}')"
+          {
+            echo "path=${wheel[0]}"
+            echo "name=$wheel_name"
+            echo "sha256=$sha256"
+          } >> "$GITHUB_OUTPUT"
+      - name: Attest the exact release wheel
+        uses: actions/attest@v4
+        with:
+          subject-path: "${{ steps.wheel.outputs.path }}"
+      - name: Create the draft GitHub release with the wheel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          wheel="${{ steps.wheel.outputs.path }}"
+          wheel_name="${{ steps.wheel.outputs.name }}"
+          sha256="${{ steps.wheel.outputs.sha256 }}"
+          notes=$(printf 'tag: %s\ndistribution: sprintctl\nwheel: %s\nsha256: %s\n' \
+            "$tag" "$wheel_name" "$sha256")
+          gh release create "$tag" \
+            --verify-tag \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --title "$tag — Sprintctl — $wheel_name — sha256:$sha256" \
+            --notes "$notes" \
+            "$wheel"
+      - name: Publish the GitHub release after attestation and draft creation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
