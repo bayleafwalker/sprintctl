@@ -475,7 +475,7 @@ class TestItemCRUD:
     ):
         """Two real concurrent connections race the same CAS edit.
 
-        Mirrors tests/test_pg_integration.py's
+        Mirrors tests/pg/test_work_item.py's
         test_overlapping_edit_writers_accept_exactly_one_revision, proving
         SQLite's ``BEGIN IMMEDIATE`` (workitemcore.py's ``begin_txn``) still
         serializes concurrent writers on the same item after the P2.1
