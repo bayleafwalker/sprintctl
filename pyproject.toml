@@ -24,7 +24,7 @@ served = [
 ]
 
 [tool.setuptools]
-packages = ["sprintctl"]
+packages = ["sprintctl", "sprintctl.commands"]
 
 [tool.sprintctl]
 capabilities = [
