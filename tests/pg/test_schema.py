@@ -40,8 +40,9 @@ class TestMaintenanceCapabilityLifecycle:
         )
         capability_id = f"mcap:{uuid.uuid4()}"
         prepare_id = str(uuid.uuid4())
-        prepared = lifecycle.prepare(capability_id=capability_id, request_id=prepare_id, envelope=envelope(), actor="operator", at=AT)
-        assert lifecycle.prepare(capability_id=capability_id, request_id=prepare_id, envelope=envelope(), actor="operator", at=AT)["duplicate"] is True
+        capability_envelope = envelope()
+        prepared = lifecycle.prepare(capability_id=capability_id, request_id=prepare_id, envelope=capability_envelope, actor="operator", at=AT)
+        assert lifecycle.prepare(capability_id=capability_id, request_id=prepare_id, envelope=capability_envelope, actor="operator", at=AT)["duplicate"] is True
         attested = lifecycle.transition(capability_id=capability_id, request_id=str(uuid.uuid4()), action="attest", expected_revision=prepared["revision"], actor="operator", at=AT, effect_ref="sha256:" + "0" * 64)
         active = lifecycle.transition(capability_id=capability_id, request_id=str(uuid.uuid4()), action="activate", expected_revision=attested["revision"], actor="operator", at=AT, step_id="attest-backup", command_id="verify-backup", command_ref="sha256:" + "c" * 64, effect_ref="sha256:" + "d" * 64)
         assert active["state"] == "active"
