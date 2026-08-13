@@ -18,7 +18,7 @@ from . import rows as _rows
 from . import sprintcore as _sprintcore
 from . import trackcore as _trackcore
 from . import workitemcore as _workitemcore
-from .claimcore import CLAIM_TYPES, ClaimConflict, _generate_claim_token
+from .claimcore import CLAIM_TYPES, ClaimConflict
 from .eventcore import (
     KNOWLEDGE_EVENT_TYPES,
     TAKEUP_EVENT_TYPES,
@@ -1355,15 +1355,17 @@ def list_knowledge_candidates(conn: sqlite3.Connection, sprint_id: int) -> list[
 
 # --- Claim ---
 #
-# Claim read-path query shapes live in ``sprintctl.claimcore`` and are
-# shared with the PostgreSQL backend (sub-increment 4a of the Claim
-# extraction); this module supplies only the SQLite execution adapter for
-# them.  create_claim/heartbeat_claim/release_claim/handoff_claim stay here:
-# their transactional locking is backend-specific.
+# Claim query shapes -- including create_claim/handoff_claim's transactional
+# bodies as of sub-increments 4d/4e -- live in ``sprintctl.claimcore`` and are
+# shared with the PostgreSQL backend; this module supplies only the SQLite
+# execution adapter for them.  heartbeat_claim/release_claim stay here: their
+# error-path event emission is a thin wrapper around backend-neutral shapes.
 
 CLAIM_IDENTITY_STATUS_PROVEN = _rows.CLAIM_IDENTITY_STATUS_PROVEN
 CLAIM_IDENTITY_STATUS_LEGACY = _rows.CLAIM_IDENTITY_STATUS_LEGACY
-MAX_CLAIM_TOKEN_INSERT_RETRIES = 5
+# Re-exported from claimcore so both backends and existing callers (cli.py,
+# pg.py) see one definition; see claimcore.py's module docstring.
+MAX_CLAIM_TOKEN_INSERT_RETRIES = _claimcore.MAX_CLAIM_TOKEN_INSERT_RETRIES
 
 # Backend-neutral claim serialization lives in ``sprintctl.rows`` so the
 # SQLite and PostgreSQL backends cannot drift apart.  These aliases keep the
@@ -1372,11 +1374,6 @@ _claim_identity_status = _rows.claim_identity_status
 _claim_event_identity = _rows.claim_event_identity
 _claim_attempt_identity = _rows.claim_attempt_identity
 _serialize_claim = _rows.serialize_claim
-
-
-def _is_claim_token_collision(exc: sqlite3.IntegrityError) -> bool:
-    msg = str(exc).lower()
-    return "claim_token" in msg or "idx_claim_token" in msg
 
 
 class _ClaimSqlite:
@@ -1410,6 +1407,43 @@ class _ClaimSqlite:
 
     def join_tenant_clause(self, left_alias: str, right_alias: str) -> str:
         return ""
+
+    def begin_txn(self) -> None:
+        self._conn.execute("BEGIN IMMEDIATE")
+
+    def commit(self) -> None:
+        self._conn.commit()
+
+    def rollback(self) -> None:
+        self._conn.rollback()
+
+    def execute(self, sql: str, params: tuple) -> None:
+        self._conn.execute(sql, params)
+
+    def insert_row(self, sql: str, params: tuple) -> int:
+        cur = self._conn.execute(sql, params)
+        return cur.lastrowid
+
+    def lock_capability_arbitration(self) -> None:
+        pass  # BEGIN IMMEDIATE's whole-DB write lock already covers this
+
+    def lock_work_item_row(self, work_item_id: int) -> dict | None:
+        row = self._conn.execute("SELECT id FROM work_item WHERE id = ?", (work_item_id,)).fetchone()
+        return dict(row) if row else None
+
+    def is_claim_token_collision(self, exc: BaseException) -> bool:
+        if not isinstance(exc, sqlite3.IntegrityError):
+            return False
+        msg = str(exc).lower()
+        return "claim_token" in msg or "idx_claim_token" in msg
+
+    def maintenance_capability_active_sql(self) -> str:
+        return "state IN ('active','observing') AND julianday(expires_at) > julianday('now')"
+
+    def emit_claim_event(
+        self, claim_row: dict, *, event_type: str, actor: str, payload: dict
+    ) -> None:
+        _emit_claim_event(self._conn, claim_row, event_type=event_type, actor=actor, payload=payload)
 
 
 def get_claim(
@@ -1451,18 +1485,9 @@ def _emit_claim_event(
     )
 
 
-def _require_claim_proof(row: sqlite3.Row | dict, claim_token: str | None) -> None:
-    if row["status"] != "active":
-        raise ValueError(f"Claim #{row['id']} is {row['status']} and is no longer active")
-    if not row["claim_token"]:
-        raise ValueError(
-            f"Claim #{row['id']} is a legacy ambiguous claim with no claim_token. "
-            "Use explicit handoff to adopt it or wait for expiry."
-        )
-    if not claim_token:
-        raise ValueError(f"Claim #{row['id']} requires --claim-token")
-    if row["claim_token"] != claim_token:
-        raise ValueError(f"Invalid claim_token for claim #{row['id']}")
+# Re-exported from claimcore so both backends and existing callers (cli.py,
+# pg.py's own wrapper) see one definition; see claimcore.py's module docstring.
+_require_claim_proof = _claimcore.require_claim_proof
 
 
 def create_claim(
@@ -1494,85 +1519,12 @@ def create_claim(
     item = get_work_item(conn, work_item_id)
     if item is None:
         raise ValueError(f"Work item #{work_item_id} not found")
-    for attempt in range(MAX_CLAIM_TOKEN_INSERT_RETRIES):
-        claim_token = _generate_claim_token()
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            active_capability = conn.execute(
-                "SELECT capability_id FROM maintenance_capability "
-                "WHERE state IN ('active','observing') "
-                "AND julianday(expires_at) > julianday('now') LIMIT 1"
-            ).fetchone()
-            if active_capability is not None:
-                raise ClaimConflict(
-                    "ordinary claims are disabled while an exact-plan maintenance capability is active"
-                )
-            # Expiry is projected lazily, but reacquisition is an authority
-            # boundary: close every elapsed row before checking conflicts so
-            # retained history and the newly granted lease agree.  Keep this
-            # inside the reserved write transaction to match PostgreSQL's
-            # work-item-row arbitration.
-            conn.execute(
-                """
-                UPDATE claim SET status = 'expired'
-                WHERE work_item_id = ? AND status = 'active'
-                  AND expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                """,
-                (work_item_id,),
-            )
-            if exclusive:
-                conflict = _get_active_exclusive_claim_row(conn, work_item_id)
-                if conflict:
-                    # Allow sub-agent claim if the conflict IS the coordinate claim being delegated under.
-                    if (
-                        conflict["claim_type"] == "coordinate"
-                        and coordinate_claim_id is not None
-                        and coordinate_claim_id == conflict["id"]
-                    ):
-                        coord_row = conn.execute(
-                            "SELECT * FROM claim WHERE id = ?", (coordinate_claim_id,)
-                        ).fetchone()
-                        if coord_row is None:
-                            raise ValueError(f"Coordinate claim #{coordinate_claim_id} not found")
-                        _require_claim_proof(coord_row, coordinate_claim_token)
-                        # Permit the sub-agent claim — fall through to INSERT below.
-                    else:
-                        raise ClaimConflict(
-                            f"Item #{work_item_id} is exclusively claimed by '{conflict['agent']}' (claim #{conflict['id']})"
-                        )
-            cur = conn.execute(
-                """
-                INSERT INTO claim
-                    (work_item_id, agent, claim_type, exclusive, expires_at,
-                     branch, worktree_path, commit_sha, pr_ref,
-                     claim_token, runtime_session_id, instance_id, hostname, pid,
-                     lease_epoch)
-                VALUES (?, ?, ?, ?,
-                        strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ? || ' seconds'),
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                        COALESCE((SELECT MAX(lease_epoch) FROM claim
-                                  WHERE work_item_id = ?
-                                    AND status = 'expired'), 0) + 1)
-                """,
-                (work_item_id, agent, claim_type, 1 if exclusive else 0, ttl_seconds,
-                 branch, worktree_path, commit_sha, pr_ref,
-                 claim_token, runtime_session_id, instance_id, hostname, pid,
-                 work_item_id),
-            )
-            conn.commit()
-            return cur.lastrowid
-        except sqlite3.IntegrityError as exc:
-            # Extremely rare, but token generation can theoretically collide.
-            conn.rollback()
-            if not _is_claim_token_collision(exc):
-                raise
-            if attempt == MAX_CLAIM_TOKEN_INSERT_RETRIES - 1:
-                raise RuntimeError(
-                    "Failed to create claim: could not generate a unique claim token."
-                ) from exc
-        except Exception:
-            conn.rollback()
-            raise
+    return _claimcore.create_claim(
+        _ClaimSqlite(conn), work_item_id, agent, claim_type, exclusive, ttl_seconds,
+        branch, worktree_path, commit_sha, pr_ref,
+        runtime_session_id, instance_id, hostname, pid,
+        coordinate_claim_id, coordinate_claim_token,
+    )
 
 
 def heartbeat_claim(
@@ -1670,105 +1622,14 @@ def handoff_claim(
     note: str | None = None,
     allow_legacy_adopt: bool = False,
 ) -> dict:
-    row = _claimcore.get_claim_row(_ClaimSqlite(conn), claim_id)
-    if row is None:
-        raise ValueError(f"Claim #{claim_id} not found")
-    if mode not in {"transfer", "rotate"}:
-        raise ValueError("mode must be 'transfer' or 'rotate'")
-
-    legacy_ambiguous = not bool(row["claim_token"])
-    # A token is deliberately unrecoverable from a remote claim row.  When a
-    # session has lost its locally persisted proof, the documented escape hatch
-    # is an explicit, auditable adoption.  Only an omitted token may take this
-    # path: a supplied-but-invalid token remains a rejected proof attempt.
-    lost_proof_adopted = (
-        not legacy_ambiguous
-        and allow_legacy_adopt
-        and claim_token is None
+    return _claimcore.handoff_claim(
+        _ClaimSqlite(conn), claim_id, claim_token,
+        actor=actor, mode=mode, ttl_seconds=ttl_seconds,
+        runtime_session_id=runtime_session_id, instance_id=instance_id,
+        branch=branch, worktree_path=worktree_path, commit_sha=commit_sha, pr_ref=pr_ref,
+        hostname=hostname, pid=pid, performed_by=performed_by, note=note,
+        allow_legacy_adopt=allow_legacy_adopt,
     )
-    identity_kwargs = dict(
-        runtime_session_id=runtime_session_id,
-        instance_id=instance_id,
-        branch=branch,
-        worktree_path=worktree_path,
-        commit_sha=commit_sha,
-        pr_ref=pr_ref,
-        hostname=hostname,
-        pid=pid,
-    )
-    if legacy_ambiguous:
-        if not allow_legacy_adopt:
-            payload = _claimcore.handoff_legacy_ambiguous_event(
-                claim_id,
-                row,
-                actor=performed_by or actor,
-                claim_token=claim_token,
-                **identity_kwargs,
-            )
-            _emit_claim_event(
-                conn, row, event_type="claim-ambiguity-detected",
-                actor=performed_by or actor, payload=payload,
-            )
-            raise ValueError(
-                f"Claim #{claim_id} is a legacy ambiguous claim with no claim_token. "
-                "Use allow_legacy_adopt to mint a new ownership proof."
-            )
-        mode = "rotate"
-    elif not lost_proof_adopted:
-        try:
-            _require_claim_proof(row, claim_token)
-        except ValueError as exc:
-            payload = _claimcore.handoff_rejection_event(
-                claim_id,
-                row,
-                str(exc),
-                actor=performed_by or actor,
-                claim_token=claim_token,
-                **identity_kwargs,
-            )
-            _emit_claim_event(
-                conn, row, event_type="coordination-failure",
-                actor=performed_by or actor, payload=payload,
-            )
-            raise
-
-    from_identity = _claim_event_identity(row)
-    next_claim_token = row["claim_token"]
-    bump_lease_epoch = mode == "rotate" or not next_claim_token
-    if mode == "rotate" or not next_claim_token:
-        next_claim_token = _generate_claim_token()
-
-    _claimcore.handoff_update(
-        _ClaimSqlite(conn),
-        claim_id,
-        actor,
-        next_claim_token,
-        ttl_seconds,
-        runtime_session_id,
-        instance_id,
-        branch,
-        worktree_path,
-        commit_sha,
-        pr_ref,
-        hostname,
-        pid,
-        bump_lease_epoch=bump_lease_epoch,
-    )
-
-    updated = get_claim(conn, claim_id, include_secret=True)
-    assert updated is not None
-    event_type, payload = _claimcore.handoff_success_event(
-        claim_id,
-        actor,
-        mode,
-        legacy_ambiguous=legacy_ambiguous,
-        lost_proof_adopted=lost_proof_adopted,
-        note=note,
-        from_identity=from_identity,
-        to_identity=_claim_event_identity(updated),
-    )
-    _emit_claim_event(conn, updated, event_type=event_type, actor=performed_by or actor, payload=payload)
-    return updated
 
 
 def list_claims_by_sprint(

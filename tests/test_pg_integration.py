@@ -1949,19 +1949,19 @@ class TestClaim:
         release_first = threading.Event()
         second_attempted = threading.Event()
         second_locked = threading.Event()
-        original_lock = pg._lock_repo_claim_capability_arbitration
+        original_lock = pg._ClaimPg.lock_capability_arbitration
 
-        def instrumented_lock(cur, repo_id):
+        def instrumented_lock(self):
             if threading.current_thread().name == "claim-worker-b":
                 second_attempted.set()
-            original_lock(cur, repo_id)
+            original_lock(self)
             if threading.current_thread().name == "claim-worker-a":
                 first_locked.set()
                 assert release_first.wait(timeout=5)
             else:
                 second_locked.set()
 
-        monkeypatch.setattr(pg, "_lock_repo_claim_capability_arbitration", instrumented_lock)
+        monkeypatch.setattr(pg._ClaimPg, "lock_capability_arbitration", instrumented_lock)
         outcomes = []
         outcomes_lock = threading.Lock()
 
