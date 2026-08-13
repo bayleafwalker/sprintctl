@@ -8,24 +8,17 @@ guard installation.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 import click
 
-from . import remote_schema
+from . import remote_schema, repo
 
 
-# Keep this ordered tuple explicit.  Adding a command module is a deliberate
-# registration change, rather than an import-time filesystem/package scan.
-_COMMAND_REGISTRARS: tuple[Callable[[click.Group], None], ...] = (
-    remote_schema.register,
-)
-
-
-def register_commands(root: click.Group) -> None:
+def register_commands(root: click.Group, *, get_store: repo.GetStore) -> None:
     """Attach extracted command groups to the supplied root in stable order."""
-    for register in _COMMAND_REGISTRARS:
-        register(root)
+    # ``repo`` historically preceded ``remote-schema`` in the root Click
+    # insertion order. Keep that observable help/inventory ordering stable.
+    repo.register(root, get_store=get_store)
+    remote_schema.register(root)
 
 
 # Compatibility aliases for private seams that historically lived in cli.py.
@@ -36,3 +29,6 @@ remote_schema_migrate_cmd = remote_schema.remote_schema_migrate_cmd
 remote_schema_stage_maintenance_bridge_cmd = (
     remote_schema.remote_schema_stage_maintenance_bridge_cmd
 )
+repo_group = repo.repo
+repo_list = repo.repo_list
+repo_delete = repo.repo_delete
