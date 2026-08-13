@@ -42,7 +42,7 @@
   "risk_surfaces": [
     {
       "id": "claim-ownership",
-      "paths": ["sprintctl/db.py", "sprintctl/pg.py", "tests/test_claims.py", "tests/test_pg_integration.py"],
+      "paths": ["sprintctl/db.py", "sprintctl/pg.py", "tests/test_claims.py", "tests/pg/"],
       "skills": ["verify-state-protocols", "reconcile-project-contracts"],
       "default_depth": 2,
       "required_on_change": true
@@ -62,7 +62,7 @@
         "sprintctl/pg.py",
         "sprintctl/cli.py",
         "tests/test_capability_receipts.py",
-        "tests/test_pg_integration.py",
+        "tests/pg/",
         "docs/reference/capability-receipts.md"
       ],
       "skills": ["verify-state-protocols", "reconcile-project-contracts"],

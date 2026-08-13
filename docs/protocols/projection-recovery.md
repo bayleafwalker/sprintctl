@@ -32,7 +32,7 @@ than a fabricated current projection.
 |---|---|---|
 | Records and watermark commit atomically, then retry converges | `sprintctl/projection.py:apply_ingested_records` and `sprintctl/sync.py:synchronize_outbox` | `tests/test_projection.py:test_failed_record_application_rolls_back_records_and_watermark` and `tests/test_sync.py:test_sync_recovers_after_lost_response_or_projection_apply_failure` |
 | Offline catch-up consumes the contiguous suffix | `sprintctl/projection.py:apply_ingested_records` | `tests/test_projection.py:test_offline_catch_up_and_full_log_rebuild_converge` |
-| Complete-log rebuild converges | `sprintctl/pg.py:list_ingested_records` and projection apply | SQLite history above plus `tests/test_pg_integration.py:test_disposable_remote_history_rebuilds_projection` |
+| Complete-log rebuild converges | `sprintctl/pg.py:list_ingested_records` and projection apply | SQLite history above plus `tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_disposable_remote_history_rebuilds_projection` |
 | Retention cannot jump a cursor | `sprintctl/projection.py:ProjectionGapError` | `tests/test_projection.py:test_retained_suffix_cannot_advance_an_empty_projection` |
 
 The PostgreSQL expansion is guarded by disposable credentials and repository

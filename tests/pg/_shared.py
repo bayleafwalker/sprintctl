@@ -5,7 +5,7 @@ Requires a disposable PostgreSQL database owned by a dedicated, unprivileged
 test role. See docs/guides/postgres-integration-tests.md for the contract.
 Set SPRINTCTL_TEST_PG_URL to run:
 
-    SPRINTCTL_TEST_PG_URL=postgresql://localhost/testdb pytest tests/test_pg_integration.py -v
+    SPRINTCTL_TEST_PG_URL=postgresql://localhost/testdb pytest tests/pg/ -v
 
 All tests are automatically skipped when the variable is unset or psycopg is unavailable.
 """
@@ -30,6 +30,10 @@ try:
     from psycopg.rows import dict_row
     _PSYCOPG_AVAILABLE = True
 except ImportError:
+    # Split modules import these names during collection even without the
+    # optional remote extra. PG_MARKS skips them before runtime use.
+    psycopg = None
+    dict_row = None
     _PSYCOPG_AVAILABLE = False
 
 _SKIP = not _PG_URL or not _PSYCOPG_AVAILABLE
@@ -242,4 +246,3 @@ def work_item_id(store, sprint_id, track_id):
 # ---------------------------------------------------------------------------
 # Schema
 # ---------------------------------------------------------------------------
-
