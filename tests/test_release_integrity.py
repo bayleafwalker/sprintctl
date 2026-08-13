@@ -24,6 +24,14 @@ class TestReleaseIntegrity:
             pyproject = tomllib.load(fh)
         assert pyproject["project"]["scripts"]["sprintctl"] == "sprintctl.cli:cli"
 
+    def test_served_extra_uses_digest_pinned_released_client_wheel(self):
+        with (ROOT / "pyproject.toml").open("rb") as fh:
+            pyproject = tomllib.load(fh)
+        requirement, = pyproject["project"]["optional-dependencies"]["served"]
+        assert "vuoro-client-v0.1.0/vuoro_client-0.1.0-py3-none-any.whl" in requirement
+        assert "sha256=d94c35002d94dec2ac86c75a2693934c67d2c72c8d27b2048836ed4e1d1c71db" in requirement
+        assert "git+" not in requirement
+
     def test_pyproject_doctor_capabilities_match_runtime(self):
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
