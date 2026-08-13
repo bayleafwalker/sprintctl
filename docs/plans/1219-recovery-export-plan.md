@@ -78,7 +78,7 @@ Decisions folded in (do not re-litigate during build):
   the repo).
 - Tests: unit for envelope/insert mapping; pg integration test exercising
   export-then-verify against a seeded disposable Postgres
-  (`tests/test_pg_integration.py` pattern).
+  (`tests/pg/` pattern).
 - Docs: update `docs/guides/remote-mode.md` "Reverting to local mode" to make this
   command the primary recovery path; note pg_dump remains the pg→pg option.
 
@@ -88,7 +88,7 @@ Out of scope: deleting split-mode code (#1164), enabling remote for `export`/
 Verification (per sprintctl dispatch manifest — targeted first):
 
 ```
-uv run pytest tests/test_db_recover.py tests/test_pg_integration.py -x --tb=short
+uv run pytest tests/test_db_recover.py tests/pg/ -x --tb=short
 python /projects/dev/agentops/templates/dispatch/scripts/validate_verification_artifacts.py --root .
 ```
 

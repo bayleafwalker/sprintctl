@@ -1,8 +1,10 @@
 # Disposable PostgreSQL integration tests
 
-`tests/test_pg_integration.py` is destructive by design: it creates and deletes
-repository-scoped sprint data. It must never run against the shared sprintctl
-authority or any other persistent database.
+`tests/pg/` (split by domain from the former `tests/test_pg_integration.py` in
+P4.2 -- `tests/pg/_shared.py` holds the shared fixtures, skip machinery, and
+helpers every file in the package imports) is destructive by design: it
+creates and deletes repository-scoped sprint data. It must never run against
+the shared sprintctl authority or any other persistent database.
 
 ## Safety contract
 
@@ -45,7 +47,7 @@ Then run only against that disposable instance:
 ```bash
 export SPRINTCTL_TEST_PG_URL='postgresql://sprintctl_test_local:<temporary-password>@127.0.0.1/sprintctl_test_local'
 export SPRINTCTL_TEST_PG_CLEANUP_REPORT="$PWD/pg-cleanup-report.json"
-uv run --extra remote pytest -m pg tests/test_pg_integration.py -v
+uv run --extra remote pytest -m pg tests/pg/ -v
 ```
 
 The password is temporary test infrastructure state. Never commit it or reuse

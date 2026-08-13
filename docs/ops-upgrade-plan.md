@@ -49,7 +49,7 @@ Do not trust the existing plan documents without checking them against current c
 Verify and reconcile at least these known findings:
 
 - The capability-receipts implementation has landed in sprintctl `main` in commit `a5aef844a8ea9c9776b31ebd7028c0d161d3d0fa`. Treat it as shipped, not pending.
-- `sprintctl/tests/test_pg_integration.py` accepts an arbitrary `SPRINTCTL_TEST_PG_URL`, creates an `itest-<uuid>` repo scope, and depends on normal fixture teardown for cleanup. This allowed test data to remain in production PostgreSQL.
+- `sprintctl/tests/pg/` accepts an arbitrary `SPRINTCTL_TEST_PG_URL`, creates an `itest-<uuid>` repo scope, and depends on normal fixture teardown for cleanup. This allowed test data to remain in production PostgreSQL.
 - The workspace backup gap described by `agentops/docs/plans/agentops/substrate-resilience-plan.md` is stale. `appservice/clusters/main/kubernetes/apps/vscode/app/workspace-backup.yaml` contains a daily Restic backup and monthly restore drill. Distinguish:
   - implemented in GitOps;
   - deployed/runtime state;

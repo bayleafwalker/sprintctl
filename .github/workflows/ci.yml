@@ -118,7 +118,7 @@ jobs:
           SQL
 
       - name: Run PostgreSQL integration suite
-        run: uv run pytest -q -m pg tests/test_pg_integration.py
+        run: uv run pytest -q -m pg tests/pg/
 
       - name: Upload cleanup evidence
         if: always()
