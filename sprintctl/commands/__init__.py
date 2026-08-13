@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import click
 
-from . import remote_schema, repo
+from . import db, remote_schema, repo
 
 
 def register_commands(root: click.Group, *, get_store: repo.GetStore) -> None:
@@ -19,6 +19,11 @@ def register_commands(root: click.Group, *, get_store: repo.GetStore) -> None:
     # insertion order. Keep that observable help/inventory ordering stable.
     repo.register(root, get_store=get_store)
     remote_schema.register(root)
+
+
+def register_db_commands(root: click.Group, *, get_store: db.GetStore) -> None:
+    """Attach the historically mid-file database maintenance group."""
+    db.register(root, get_store=get_store)
 
 
 # Compatibility aliases for private seams that historically lived in cli.py.
@@ -32,3 +37,7 @@ remote_schema_stage_maintenance_bridge_cmd = (
 repo_group = repo.repo
 repo_list = repo.repo_list
 repo_delete = repo.repo_delete
+db_group = db.db_group
+db_vacuum = db.db_vacuum
+db_integrity = db.db_integrity
+db_recover_from_remote = db.db_recover_from_remote
