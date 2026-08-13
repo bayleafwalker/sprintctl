@@ -1,7 +1,7 @@
 """
 Unit tests for the local half of `sprintctl db recover-from-remote`:
 writing a Postgres-shaped snapshot into a fresh SQLite database with
-original IDs preserved. See tests/test_pg_integration.py for the
+original IDs preserved. See tests/pg/test_remote_recovery.py for the
 Postgres-backed round-trip test.
 """
 

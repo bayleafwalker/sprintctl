@@ -21,7 +21,7 @@ difference this abstraction does not paper over: two concurrent SQLite CAS
 writers on *different* work items already serialize against each other
 (same as before this extraction), while PostgreSQL's row lock lets them
 proceed in parallel. What both backends must guarantee identically — and
-what ``tests/test_core.py``'s and ``tests/test_pg_integration.py``'s
+what ``tests/test_core.py``'s and ``tests/pg/test_work_item.py``'s
 concurrency tests assert — is that two writers racing the *same* item
 produce exactly one accepted write and one ``EditConflict``.
 
