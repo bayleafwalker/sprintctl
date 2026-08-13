@@ -64,7 +64,7 @@ from .eventcore import (
     _takeup_key,
     process_takeup_events,
 )
-from .claimcore import CLAIM_TYPES, ClaimConflict, _generate_claim_token
+from .claimcore import CLAIM_TYPES, ClaimConflict
 from .db import (
     VALID_TRANSITIONS,
     SPRINT_TRANSITIONS,
@@ -73,7 +73,6 @@ from .db import (
     InvalidTransition,
     CLAIM_IDENTITY_STATUS_PROVEN,
     CLAIM_IDENTITY_STATUS_LEGACY,
-    MAX_CLAIM_TOKEN_INSERT_RETRIES,
     _validate_sprint_transition,
     _normalize_ref_target,
     _serialize_ref,
@@ -2258,40 +2257,13 @@ def _require_claim_proof(row: dict, claim_token: str | None) -> None:
     _db_require_claim_proof(row, claim_token)
 
 
-def _lock_claim_arbitration_row(cur: Any, store: PgStore, work_item_id: int) -> None:
-    """Serialize claim admission for one repository-scoped work item.
-
-    PostgreSQL cannot express "at most one unexpired exclusive claim" as a
-    plain unique constraint because expiry depends on backend time and
-    coordinator delegation intentionally permits multiple exclusive rows.
-    Locking the authoritative work-item row gives every claim admission path a
-    stable transaction-scoped arbitration point before it reads the live claim
-    set.
-    """
-    cur.execute(
-        """
-        SELECT id FROM work_item
-        WHERE repo_id = %s AND id = %s
-        FOR UPDATE
-        """,
-        (store.repo_id, work_item_id),
-    )
-    if cur.fetchone() is None:
-        raise ValueError(f"Work item #{work_item_id} not found")
-
-
-def _lock_repo_claim_capability_arbitration(cur: Any, repo_id: str) -> None:
-    """Serialize repo-wide ordinary-claim admission with maintenance activation."""
-    cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (repo_id,))
-
-
 # ---------------------------------------------------------------------------
 # Claim
 #
-# Claim read-path query shapes live in ``sprintctl.claimcore`` and are
-# shared with the SQLite backend (sub-increment 4a of the Claim extraction);
-# this module supplies only the PostgreSQL execution adapter for them.
-# create_claim/heartbeat_claim/release_claim/handoff_claim stay here.
+# Claim query shapes -- including create_claim/handoff_claim's transactional
+# bodies as of sub-increments 4d/4e -- live in ``sprintctl.claimcore`` and are
+# shared with the SQLite backend; this module supplies only the PostgreSQL
+# execution adapter for them. heartbeat_claim/release_claim stay here.
 # ---------------------------------------------------------------------------
 
 
@@ -2333,6 +2305,55 @@ class _ClaimPg:
     def join_tenant_clause(self, left_alias: str, right_alias: str) -> str:
         return f" AND {left_alias}.repo_id = {right_alias}.repo_id"
 
+    def begin_txn(self) -> None:
+        pass  # already in an explicit (non-autocommit) transaction; see PgStore
+
+    def commit(self) -> None:
+        self._store.conn.commit()
+
+    def rollback(self) -> None:
+        self._store.conn.rollback()
+
+    def execute(self, sql: str, params: tuple) -> None:
+        with self._store.conn.cursor() as cur:
+            cur.execute(sql, params)
+
+    def insert_row(self, sql: str, params: tuple) -> int:
+        with self._store.conn.cursor() as cur:
+            cur.execute(f"{sql} RETURNING id", params)
+            row = cur.fetchone()
+        return row["id"]
+
+    def lock_capability_arbitration(self) -> None:
+        """Serialize repo-wide ordinary-claim admission with maintenance activation."""
+        self.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (self._store.repo_id,))
+
+    def lock_work_item_row(self, work_item_id: int) -> dict | None:
+        """Lock the work-item row: the stable transaction-scoped arbitration point.
+
+        PostgreSQL cannot express "at most one unexpired exclusive claim" as a
+        plain unique constraint because expiry depends on backend time and
+        coordinator delegation intentionally permits multiple exclusive rows.
+        """
+        with self._store.conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM work_item WHERE repo_id = %s AND id = %s FOR UPDATE",
+                (self._store.repo_id, work_item_id),
+            )
+            row = cur.fetchone()
+        return _norm(row) if row else None
+
+    def is_claim_token_collision(self, exc: BaseException) -> bool:
+        return _PSYCOPG_AVAILABLE and isinstance(exc, UniqueViolation) and "claim_token" in str(exc)
+
+    def maintenance_capability_active_sql(self) -> str:
+        return f"state IN ('active','observing') AND expires_at > {_CLAIM_CLOCK_SQL}"
+
+    def emit_claim_event(
+        self, claim_row: dict, *, event_type: str, actor: str, payload: dict
+    ) -> None:
+        _emit_claim_event(self._store, claim_row, event_type=event_type, actor=actor, payload=payload)
+
 
 def get_claim(store: PgStore, claim_id: int, *, include_secret: bool = False) -> dict | None:
     row = _claimcore.get_claim_row(_ClaimPg(store), claim_id)
@@ -2359,97 +2380,17 @@ def create_claim(
     coordinate_claim_id: int | None = None,
     coordinate_claim_token: str | None = None,
 ) -> int:
-    from .db import _require_claim_proof as _db_require_claim_proof
     if claim_type not in CLAIM_TYPES:
         raise ValueError(f"Invalid claim_type '{claim_type}'. Must be one of: {', '.join(CLAIM_TYPES)}")
     item = get_work_item(store, work_item_id)
     if item is None:
         raise ValueError(f"Work item #{work_item_id} not found")
-
-    for attempt in range(MAX_CLAIM_TOKEN_INSERT_RETRIES):
-        claim_token = _generate_claim_token()
-        try:
-            with store.conn.cursor() as cur:
-                _lock_repo_claim_capability_arbitration(cur, store.repo_id)
-                cur.execute(
-                    f"SELECT capability_id FROM maintenance_capability "
-                    "WHERE repo_id=%s AND state IN ('active','observing') "
-                    f"AND expires_at > {_CLAIM_CLOCK_SQL} LIMIT 1",
-                    (store.repo_id,),
-                )
-                active_capability = cur.fetchone()
-                if active_capability is not None:
-                    raise ClaimConflict(
-                        "ordinary claims are disabled while an exact-plan maintenance capability is active"
-                    )
-                if exclusive:
-                    _lock_claim_arbitration_row(cur, store, work_item_id)
-                cur.execute(
-                    f"""
-                    UPDATE claim SET status = 'expired'
-                    WHERE repo_id = %s AND work_item_id = %s
-                      AND status = 'active' AND expires_at <= {_CLAIM_CLOCK_SQL}
-                    """,
-                    (store.repo_id, work_item_id),
-                )
-                if exclusive:
-                    conflict = _get_active_exclusive_claim_row(store, work_item_id)
-                    if conflict:
-                        if (
-                            conflict["claim_type"] == "coordinate"
-                            and coordinate_claim_id is not None
-                            and coordinate_claim_id == conflict["id"]
-                        ):
-                            cur.execute(
-                                "SELECT * FROM claim WHERE repo_id = %s AND id = %s",
-                                (store.repo_id, coordinate_claim_id),
-                            )
-                            coord_row = cur.fetchone()
-                            if coord_row is None:
-                                raise ValueError(f"Coordinate claim #{coordinate_claim_id} not found")
-                            _db_require_claim_proof(_norm(coord_row), coordinate_claim_token)
-                        else:
-                            raise ClaimConflict(
-                                f"Item #{work_item_id} is exclusively claimed by '{conflict['agent']}' "
-                                f"(claim #{conflict['id']})"
-                            )
-                cur.execute(
-                    f"""
-                    INSERT INTO claim
-                        (repo_id, work_item_id, agent, claim_type, exclusive, expires_at,
-                         branch, worktree_path, commit_sha, pr_ref,
-                         claim_token, runtime_session_id, instance_id, hostname, pid,
-                         lease_epoch)
-                    VALUES (%s, %s, %s, %s, %s,
-                            {_CLAIM_CLOCK_SQL} + (%s || ' seconds')::interval,
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                            COALESCE((SELECT MAX(lease_epoch) FROM claim
-                                      WHERE repo_id = %s AND work_item_id = %s
-                                        AND status = 'expired'), 0) + 1)
-                    RETURNING id
-                    """,
-                    (store.repo_id, work_item_id, agent, claim_type, exclusive, ttl_seconds,
-                     branch, worktree_path, commit_sha, pr_ref,
-                     claim_token, runtime_session_id, instance_id, hostname, pid,
-                     store.repo_id, work_item_id),
-                )
-                row = cur.fetchone()
-            store.conn.commit()
-            return row["id"]
-        except ClaimConflict:
-            # The repository arbitration lock is transaction-scoped.  A normal
-            # rejected admission must close its transaction before control
-            # returns to a caller that may retain and reuse this connection.
-            store.conn.rollback()
-            raise
-        except Exception as exc:
-            store.conn.rollback()
-            if _PSYCOPG_AVAILABLE and isinstance(exc, UniqueViolation) and "claim_token" in str(exc):
-                if attempt == MAX_CLAIM_TOKEN_INSERT_RETRIES - 1:
-                    raise RuntimeError("Failed to create claim: could not generate a unique token.") from exc
-                continue
-            raise
-    raise RuntimeError("Unreachable")
+    return _claimcore.create_claim(
+        _ClaimPg(store), work_item_id, agent, claim_type, exclusive, ttl_seconds,
+        branch, worktree_path, commit_sha, pr_ref,
+        runtime_session_id, instance_id, hostname, pid,
+        coordinate_claim_id, coordinate_claim_token,
+    )
 
 
 def heartbeat_claim(
@@ -2542,104 +2483,14 @@ def handoff_claim(
     note: str | None = None,
     allow_legacy_adopt: bool = False,
 ) -> dict:
-    from .db import _require_claim_proof as _db_require_claim_proof
-    row = _claimcore.get_claim_row(_ClaimPg(store), claim_id)
-    if row is None:
-        raise ValueError(f"Claim #{claim_id} not found")
-    if mode not in {"transfer", "rotate"}:
-        raise ValueError("mode must be 'transfer' or 'rotate'")
-    legacy_ambiguous = not bool(row["claim_token"])
-    # A remote claim row deliberately cannot reveal a lost token.  Explicit
-    # recovery adoption is therefore limited to calls that omit a token; an
-    # invalid supplied token must remain a rejected proof attempt.
-    lost_proof_adopted = (
-        not legacy_ambiguous
-        and allow_legacy_adopt
-        and claim_token is None
+    return _claimcore.handoff_claim(
+        _ClaimPg(store), claim_id, claim_token,
+        actor=actor, mode=mode, ttl_seconds=ttl_seconds,
+        runtime_session_id=runtime_session_id, instance_id=instance_id,
+        branch=branch, worktree_path=worktree_path, commit_sha=commit_sha, pr_ref=pr_ref,
+        hostname=hostname, pid=pid, performed_by=performed_by, note=note,
+        allow_legacy_adopt=allow_legacy_adopt,
     )
-    identity_kwargs = dict(
-        runtime_session_id=runtime_session_id,
-        instance_id=instance_id,
-        branch=branch,
-        worktree_path=worktree_path,
-        commit_sha=commit_sha,
-        pr_ref=pr_ref,
-        hostname=hostname,
-        pid=pid,
-    )
-    if legacy_ambiguous:
-        if not allow_legacy_adopt:
-            payload = _claimcore.handoff_legacy_ambiguous_event(
-                claim_id,
-                row,
-                actor=performed_by or actor,
-                claim_token=claim_token,
-                **identity_kwargs,
-            )
-            _emit_claim_event(
-                store, row, event_type="claim-ambiguity-detected",
-                actor=performed_by or actor, payload=payload,
-            )
-            raise ValueError(
-                f"Claim #{claim_id} is a legacy ambiguous claim with no claim_token. "
-                "Use allow_legacy_adopt to mint a new ownership proof."
-            )
-        mode = "rotate"
-    elif not lost_proof_adopted:
-        try:
-            _db_require_claim_proof(row, claim_token)
-        except ValueError as exc:
-            payload = _claimcore.handoff_rejection_event(
-                claim_id,
-                row,
-                str(exc),
-                actor=performed_by or actor,
-                claim_token=claim_token,
-                **identity_kwargs,
-            )
-            _emit_claim_event(
-                store, row, event_type="coordination-failure",
-                actor=performed_by or actor, payload=payload,
-            )
-            raise
-
-    from_identity = _claim_event_identity(row)
-    next_claim_token = row["claim_token"]
-    bump_lease_epoch = mode == "rotate" or not next_claim_token
-    if mode == "rotate" or not next_claim_token:
-        next_claim_token = _generate_claim_token()
-
-    _claimcore.handoff_update(
-        _ClaimPg(store),
-        claim_id,
-        actor,
-        next_claim_token,
-        ttl_seconds,
-        runtime_session_id,
-        instance_id,
-        branch,
-        worktree_path,
-        commit_sha,
-        pr_ref,
-        hostname,
-        pid,
-        bump_lease_epoch=bump_lease_epoch,
-    )
-
-    updated = get_claim(store, claim_id, include_secret=True)
-    assert updated is not None
-    event_type, payload = _claimcore.handoff_success_event(
-        claim_id,
-        actor,
-        mode,
-        legacy_ambiguous=legacy_ambiguous,
-        lost_proof_adopted=lost_proof_adopted,
-        note=note,
-        from_identity=from_identity,
-        to_identity=_claim_event_identity(updated),
-    )
-    _emit_claim_event(store, updated, event_type=event_type, actor=performed_by or actor, payload=payload)
-    return updated
 
 
 def list_claims_by_sprint(

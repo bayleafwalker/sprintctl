@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from sprintctl import db, maintain
+from sprintctl import claimcore, db, maintain
 import sprintctl.cli as cli_module
 from sprintctl.cli import cli
 
@@ -197,7 +197,7 @@ class TestClaimTokenEdgeCases:
         iid_a = _item(conn, active_sprint["id"], "A")
         iid_b = _item(conn, active_sprint["id"], "B")
         tokens = iter(["fixed-token", "fixed-token", "unique-token"])
-        monkeypatch.setattr(db, "_generate_claim_token", lambda: next(tokens))
+        monkeypatch.setattr(claimcore, "_generate_claim_token", lambda: next(tokens))
 
         c1 = db.create_claim(conn, iid_a, agent="agent-a")
         c2 = db.create_claim(conn, iid_b, agent="agent-b")
@@ -210,7 +210,7 @@ class TestClaimTokenEdgeCases:
     def test_create_claim_raises_after_repeated_token_collision(self, conn, active_sprint, monkeypatch):
         iid_a = _item(conn, active_sprint["id"], "A")
         iid_b = _item(conn, active_sprint["id"], "B")
-        monkeypatch.setattr(db, "_generate_claim_token", lambda: "always-collide")
+        monkeypatch.setattr(claimcore, "_generate_claim_token", lambda: "always-collide")
 
         db.create_claim(conn, iid_a, agent="agent-a")
         with pytest.raises(RuntimeError, match="unique claim token"):
