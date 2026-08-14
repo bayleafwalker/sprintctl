@@ -66,7 +66,7 @@ SPRINT_KINDS = ("active_sprint", "backlog", "archive")
 
 # Single source of truth for the local schema version; init_db() must end by
 # migrating to exactly this version, and doctor compares databases against it.
-CURRENT_SCHEMA_VERSION = 17
+CURRENT_SCHEMA_VERSION = 18
 
 _MIGRATIONS: list[str] = [
     # Migration 1: initial schema
@@ -647,6 +647,32 @@ def _migration_17(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_18(conn: sqlite3.Connection) -> None:
+    """Add the v0.3 advisory reservation ledger beside legacy claims."""
+    _execute_statements(
+        conn,
+        """
+        CREATE TABLE IF NOT EXISTS reservation (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            work_item_id INTEGER NOT NULL REFERENCES work_item(id) ON DELETE CASCADE,
+            session_id TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('inspect','execute','review','coordinate')),
+            state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active','released','interrupted')),
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+            last_activity_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+            released_at TEXT,
+            interruption_reason TEXT,
+            correlation_ref TEXT
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_reservation_active_execute
+            ON reservation(work_item_id) WHERE state = 'active' AND role = 'execute';
+        CREATE INDEX IF NOT EXISTS idx_reservation_item_state
+            ON reservation(work_item_id, state, last_activity_at DESC);
+        """,
+    )
+
+
 def _run_migration(
     conn: sqlite3.Connection,
     target_version: int,
@@ -693,7 +719,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     _run_migration(conn, 14, _migration_14, foreign_keys_off=True)
     _run_migration(conn, 15, _migration_15, foreign_keys_off=True)
     _run_migration(conn, 16, _migration_16)
-    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_17)
+    _run_migration(conn, 17, _migration_17)
+    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_18)
 
 
 # --- Sprint ---
