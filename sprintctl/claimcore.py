@@ -30,14 +30,8 @@ It surfaced two more drifts, both fixed here:
 
 - pg.py's handoff UPDATE never bumped ``lease_epoch`` on rotation/legacy
   adoption; db.py's didn't either, but pg.py's did (``lease_epoch =
-  lease_epoch + CASE WHEN ... THEN 1 ELSE 0 END``). lease_epoch is a real
-  fencing token consumed by terminal_recovery_server.py and authority.py
-  to reject stale in-flight operations after a claim changes hands — not
-  bumping it on SQLite meant a session holding a pre-handoff lease_epoch
-  could still pass an expected_lease_epoch check post-handoff on that
-  backend. handoff_update now bumps it on both backends, matching pg's
-  (correct) prior behavior. No existing test exercised this on the SQLite
-  path; see the added regression test in test_claims.py.
+  lease_epoch + CASE WHEN ... THEN 1 ELSE 0 END``). The archived legacy
+  claim implementation keeps the epoch behavior aligned across both stores.
 - pg.py's rejection-event ``attempted_by`` payloads (both the
   legacy-ambiguity and coordination-failure branches) carried only
   actor/claim_id/claim_token_present, dropping runtime_session_id,
