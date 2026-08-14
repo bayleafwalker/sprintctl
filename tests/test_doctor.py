@@ -469,7 +469,7 @@ def test_doctor_human_output_reports_served_extra(monkeypatch, runner):
     facts["extras"]["served"] = {"enabled": False, "requirement": "vuoro-client"}
     facts["schema"] = {
         "backend": "served",
-        "expected_version": ["work.claim.start"],
+        "expected_version": ["work.reservation.reserve"],
         "actual_version": None,
         "compatible": None,
         "status": "unavailable",
