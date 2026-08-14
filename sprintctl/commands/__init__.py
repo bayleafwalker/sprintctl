@@ -85,12 +85,6 @@ def register_takeup_maintain_commands(root: click.Group, *, runtime: dict[str, o
     _merge_runtime_exports(lifecycle, runtime)
 
 
-def register_claim_commands(root: click.Group, *, runtime: dict[str, object]) -> None:
-    """Attach the claim group at its historical position."""
-    lifecycle.register_claim(root, runtime=runtime)
-    _merge_runtime_exports(lifecycle, runtime)
-
-
 def register_reservation_commands(root: click.Group) -> None:
     """Attach credential-free reservation commands."""
     reservation.register(root)
@@ -126,7 +120,6 @@ authority_group = operations.authority_commands
 projection_reads_group = operations.projection_reads_group
 takeup_group = lifecycle.takeup
 maintain_group = lifecycle.maintain
-claim_group = lifecycle.claim
 reservation_group = reservation.reservation
 handoff_cmd = session.handoff_cmd
 agent_protocol_cmd = session.agent_protocol_cmd

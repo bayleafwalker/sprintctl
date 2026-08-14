@@ -3528,8 +3528,3 @@ def _register(root: click.Group, runtime: dict[str, object], commands: tuple[cli
 def register_takeup_maintain(root: click.Group, *, runtime: dict[str, object]) -> None:
     """Attach the takeup and maintain groups."""
     _register(root, runtime, (takeup, maintain))
-
-
-def register_claim(root: click.Group, *, runtime: dict[str, object]) -> None:
-    """Attach the claim group at its historical insertion point."""
-    _register(root, runtime, (claim,))
