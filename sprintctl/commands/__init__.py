@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import click
 
-from . import db, operations, remote_schema, repo, transfer, work
+from . import db, lifecycle, operations, remote_schema, repo, transfer, work
 
 
 _RUNTIME_INTERNALS = {"_RUNTIME", "_sync_runtime", "_wrap_runtime_callbacks", "register"}
@@ -57,6 +57,18 @@ def register_operations_commands(root: click.Group, *, runtime: dict[str, object
     _merge_runtime_exports(operations, runtime)
 
 
+def register_takeup_maintain_commands(root: click.Group, *, runtime: dict[str, object]) -> None:
+    """Attach takeup and maintenance groups at their historical position."""
+    lifecycle.register_takeup_maintain(root, runtime=runtime)
+    _merge_runtime_exports(lifecycle, runtime)
+
+
+def register_claim_commands(root: click.Group, *, runtime: dict[str, object]) -> None:
+    """Attach the claim group at its historical position."""
+    lifecycle.register_claim(root, runtime=runtime)
+    _merge_runtime_exports(lifecycle, runtime)
+
+
 # Compatibility aliases for private seams that historically lived in cli.py.
 remote_schema_group = remote_schema.remote_schema
 _remote_schema_store = remote_schema._remote_schema_store
@@ -80,3 +92,6 @@ event_group = operations.event
 authority_group = operations.authority_commands
 pilot_group = operations.pilot
 projection_reads_group = operations.projection_reads_group
+takeup_group = lifecycle.takeup
+maintain_group = lifecycle.maintain
+claim_group = lifecycle.claim

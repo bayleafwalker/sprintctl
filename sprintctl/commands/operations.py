@@ -52,19 +52,6 @@ from ..cli_support import _redacted_postgres_error
 from ..render import render_sprint_doc
 
 
-def _emit_audit_event(
-    event_type: str,
-    *,
-    summary: str,
-    refs: list[str],
-    metadata: dict,
-) -> None:
-    """Emit an auditctl event via subprocess. Non-fatal: warns to stderr on failure.
-
-    Uses subprocess (not AuditctlClient) to keep the decoupling boundary —
-    sprintctl does not depend on auditctl at import time.
-    """
-
 # ---------------------------------------------------------------------------
 # event
 # ---------------------------------------------------------------------------
@@ -2240,5 +2227,4 @@ def register(root: click.Group, *, runtime: dict[str, object]) -> None:
     for command in (event, authority_commands, pilot, projection_reads_group):
         root.add_command(command)
         _wrap_runtime_callbacks(command)
-
 
