@@ -75,20 +75,10 @@ SPRINTCTL_RECORD_TYPE_CLASSES: dict[str, RecordClass] = {
     "item.transition": RecordClass.AUTHORITY_COMMAND,
     "sprint.activate": RecordClass.AUTHORITY_COMMAND,
     "sprint.close": RecordClass.AUTHORITY_COMMAND,
-    "claim.acquire": RecordClass.AUTHORITY_COMMAND,
-    "claim.renew": RecordClass.AUTHORITY_COMMAND,
-    "claim.handoff": RecordClass.AUTHORITY_COMMAND,
-    "claim.release": RecordClass.AUTHORITY_COMMAND,
     "capability-receipt.accept": RecordClass.AUTHORITY_COMMAND,
     "item.transitioned": RecordClass.REMOTE_DECISION,
     "sprint-activated": RecordClass.REMOTE_DECISION,
     "sprint-closed": RecordClass.REMOTE_DECISION,
-    "claim.granted": RecordClass.REMOTE_DECISION,
-    "claim.renewed": RecordClass.REMOTE_DECISION,
-    "claim.handed-off": RecordClass.REMOTE_DECISION,
-    "claim.released": RecordClass.REMOTE_DECISION,
-    "claim.expired": RecordClass.REMOTE_DECISION,
-    "claim.denied": RecordClass.REMOTE_DECISION,
     "capability-receipt.accepted": RecordClass.REMOTE_DECISION,
     "command.rejected": RecordClass.REMOTE_DECISION,
 }
@@ -237,10 +227,6 @@ def _strict_fields(
 
 def _canonical_authority_refs(record_type: str, refs: Mapping[str, Any]) -> dict[str, Any]:
     expected_aggregate = {
-        "claim.acquire": "item",
-        "claim.renew": "claim",
-        "claim.handoff": "claim",
-        "claim.release": "claim",
         "item.transition": "item",
         "item.done": "item",
         "sprint.activate": "sprint",
@@ -253,10 +239,7 @@ def _canonical_authority_refs(record_type: str, refs: Mapping[str, Any]) -> dict
         )
     required = {"repo_id", "aggregate_type"}
     optional = {"aggregate_id"}
-    if expected_aggregate == "claim":
-        required.add("claim_id")
-    else:
-        required.add("aggregate_uuid")
+    required.add("aggregate_uuid")
     source = _strict_fields(refs, field="refs", required=required, optional=optional)
     repo_id = _canonical_uuid(source["repo_id"], "refs.repo_id")
     if repo_id is None:
@@ -269,13 +252,10 @@ def _canonical_authority_refs(record_type: str, refs: Mapping[str, Any]) -> dict
         "repo_id": repo_id,
         "aggregate_type": expected_aggregate,
     }
-    if expected_aggregate == "claim":
-        result["claim_id"] = _positive_int(source["claim_id"], "refs.claim_id")
-    else:
-        aggregate_uuid = _canonical_uuid(source["aggregate_uuid"], "refs.aggregate_uuid")
-        if aggregate_uuid is None:
-            raise ValueError("refs.aggregate_uuid must be a UUID")
-        result["aggregate_uuid"] = aggregate_uuid
+    aggregate_uuid = _canonical_uuid(source["aggregate_uuid"], "refs.aggregate_uuid")
+    if aggregate_uuid is None:
+        raise ValueError("refs.aggregate_uuid must be a UUID")
+    result["aggregate_uuid"] = aggregate_uuid
     if "aggregate_id" in source:
         result["aggregate_id"] = _positive_int(source["aggregate_id"], "refs.aggregate_id")
     return result
@@ -301,116 +281,6 @@ def _canonical_authority_payload(record_type: str, payload: Mapping[str, Any]) -
     if record_type in {"sprint.activate", "sprint.close"}:
         return _strict_fields(payload, field="payload", required=set())
 
-    if record_type == "claim.acquire":
-        source = _strict_fields(
-            payload,
-            field="payload",
-            required={
-                "agent",
-                "claim_type",
-                "exclusive",
-                "ttl_seconds",
-                "credential_ref",
-                "metadata",
-            },
-            optional={"coordinate_claim_id", "coordinate_credential_ref"},
-        )
-        claim_type = _required_string(source["claim_type"], "payload.claim_type")
-        if claim_type not in {"inspect", "execute", "review", "coordinate"}:
-            raise ValueError(
-                "payload.claim_type must be inspect, execute, review, or coordinate"
-            )
-        if not isinstance(source["exclusive"], bool):
-            raise ValueError("payload.exclusive must be a boolean")
-        metadata = _canonical_claim_metadata(source["metadata"])
-        has_coordinate_id = "coordinate_claim_id" in source
-        has_coordinate_credential = "coordinate_credential_ref" in source
-        if has_coordinate_id != has_coordinate_credential:
-            raise ValueError(
-                "payload.coordinate_claim_id and payload.coordinate_credential_ref "
-                "must be supplied together"
-            )
-        result = {
-            "agent": _required_string(source["agent"], "payload.agent"),
-            "claim_type": claim_type,
-            "exclusive": source["exclusive"],
-            "ttl_seconds": _positive_ttl(source["ttl_seconds"]),
-            "credential_ref": _credential_ref(source["credential_ref"]),
-            "metadata": metadata,
-        }
-        if has_coordinate_id:
-            result["coordinate_claim_id"] = _positive_int(
-                source["coordinate_claim_id"], "payload.coordinate_claim_id"
-            )
-            result["coordinate_credential_ref"] = _credential_ref(
-                source["coordinate_credential_ref"]
-            )
-        return result
-
-    if record_type == "claim.renew":
-        source = _strict_fields(
-            payload,
-            field="payload",
-            required={"claim_id", "ttl_seconds", "credential_ref"},
-            optional={"metadata"},
-        )
-        result = {
-            "claim_id": _positive_int(source["claim_id"], "payload.claim_id"),
-            "ttl_seconds": _positive_ttl(source["ttl_seconds"]),
-            "credential_ref": _credential_ref(source["credential_ref"]),
-        }
-        if "metadata" in source:
-            result["metadata"] = _canonical_claim_metadata(source["metadata"])
-        return result
-
-    if record_type == "claim.handoff":
-        source = _strict_fields(
-            payload,
-            field="payload",
-            required={
-                "claim_id",
-                "to_actor",
-                "mode",
-                "ttl_seconds",
-                "credential_ref",
-                "metadata",
-            },
-            optional={"proposed_credential_ref", "note"},
-        )
-        mode = _required_string(source["mode"], "payload.mode")
-        if mode not in {"rotate", "transfer"}:
-            raise ValueError("payload.mode must be rotate or transfer")
-        if mode == "rotate" and "proposed_credential_ref" not in source:
-            raise ValueError("payload.proposed_credential_ref is required for rotate handoff")
-        if mode == "transfer" and "proposed_credential_ref" in source:
-            raise ValueError("payload.proposed_credential_ref is forbidden for transfer handoff")
-        metadata = _canonical_claim_metadata(source["metadata"])
-        result = {
-            "claim_id": _positive_int(source["claim_id"], "payload.claim_id"),
-            "to_actor": _required_string(source["to_actor"], "payload.to_actor"),
-            "mode": mode,
-            "ttl_seconds": _positive_ttl(source["ttl_seconds"]),
-            "credential_ref": _credential_ref(source["credential_ref"]),
-            "metadata": metadata,
-        }
-        if "proposed_credential_ref" in source:
-            result["proposed_credential_ref"] = _credential_ref(
-                source["proposed_credential_ref"]
-            )
-        if "note" in source:
-            result["note"] = _optional_string(source["note"], "payload.note")
-        return result
-
-    if record_type == "claim.release":
-        source = _strict_fields(
-            payload,
-            field="payload",
-            required={"claim_id", "credential_ref"},
-        )
-        return {
-            "claim_id": _positive_int(source["claim_id"], "payload.claim_id"),
-            "credential_ref": _credential_ref(source["credential_ref"]),
-        }
 
     if record_type == "capability-receipt.accept":
         source = _strict_fields(payload, field="payload", required={"pointer"})
@@ -518,9 +388,6 @@ class AuthorityCommand(RecordEnvelope):
             raise ValueError(f"basis_revision is required for authority command {self.record_type}")
         refs = _canonical_authority_refs(self.record_type, self.refs)
         payload = _canonical_authority_payload(self.record_type, self.payload)
-        if self.record_type in {"claim.renew", "claim.handoff", "claim.release"}:
-            if refs["claim_id"] != payload["claim_id"]:
-                raise ValueError("refs.claim_id must equal payload.claim_id")
         object.__setattr__(self, "refs", refs)
         object.__setattr__(self, "payload", payload)
 

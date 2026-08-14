@@ -80,7 +80,7 @@ def test_reused_event_id_for_different_observation_is_rejected(tmp_path):
     ("event_type", "match"),
     [
         ("item.done", "authority-command"),
-        ("claim.granted", "remote-decision"),
+        ("item.transitioned", "remote-decision"),
         ("unclassified.event", "not classified"),
     ],
 )

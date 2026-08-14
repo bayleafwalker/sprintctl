@@ -67,7 +67,7 @@ class TestSemanticRecordContracts:
             contracts.Observation(**_record_kwargs("item.done"))
 
     def test_remote_decision_must_use_a_remote_decision_type(self):
-        decision = contracts.RemoteDecision(**_record_kwargs("claim.granted"))
+        decision = contracts.RemoteDecision(**_record_kwargs("item.transitioned"))
         assert decision.remote_authored is True
 
         payload = decision.to_dict()
