@@ -58,3 +58,33 @@ def runner(db_path):
 def active_sprint(conn):
     sid = db.create_sprint(conn, "S1", "Ship Phase 1", "2026-03-01", "2026-03-31", "active")
     return db.get_sprint(conn, sid)
+
+
+def seed_legacy_claim(
+    conn,
+    work_item_id: int,
+    agent: str = "legacy-agent",
+    *,
+    claim_type: str = "execute",
+    exclusive: int = 1,
+    expires_at: str = "2999-01-01T00:00:00Z",
+    claim_token: str | None = None,
+    status: str = "active",
+) -> int:
+    """Insert a legacy ``claim`` row directly and return its id.
+
+    The credential-bearing claim runtime is retired; the live ``claim``
+    relation survives only until the schema cutover removes it.  Tests that
+    still need archive, export, or migration evidence seed rows through this
+    helper instead of a public API that no longer exists.
+    """
+    cur = conn.execute(
+        """
+        INSERT INTO claim (work_item_id, agent, claim_type, exclusive,
+                           expires_at, claim_token, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (work_item_id, agent, claim_type, exclusive, expires_at, claim_token, status),
+    )
+    conn.commit()
+    return int(cur.lastrowid)

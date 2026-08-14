@@ -39,47 +39,47 @@ def _missing_receipt_payload(project: str = "sprintctl") -> dict[str, str]:
     }
 
 
-def test_sqlite_partition_expiry_reassignment_rejects_stale_heartbeat(db_path):
+def test_sqlite_partition_reassignment_rejects_stale_reservation_touch(db_path):
+    """A partitioned owner cannot keep a reservation alive after takeover.
+
+    The credential-bearing claim lease is retired; advisory reservations now
+    carry live coordination, so the fault protocol is expressed as override
+    takeover plus a rejected touch from the displaced session.
+    """
     owner, replacement, _sprint_id, item_id = _sqlite_authority(db_path)
     history: list[tuple[str, str]] = []
     try:
-        old_claim_id = db.create_claim(owner, item_id, "partitioned-owner")
-        old_claim = db.get_claim(owner, old_claim_id, include_secret=True)
-        history.append(("old-claim", "accepted"))
-
-        replacement.execute(
-            "UPDATE claim SET expires_at = '2000-01-01T00:00:00Z' WHERE id = ?",
-            (old_claim_id,),
+        old = db.reserve(
+            owner, item_id, actor="partitioned-owner", session_id="owner-session"
         )
-        replacement.commit()
-        assert db.list_claims(owner, item_id, active_only=True) == []
-        history.append(("partition-expiry", "observed"))
+        history.append(("old-reservation", "accepted"))
 
-        new_claim_id = db.create_claim(replacement, item_id, "replacement-owner")
-        history.append(("replacement-claim", "accepted"))
+        new_reservation = db.reserve(
+            replacement,
+            item_id,
+            actor="replacement-owner",
+            session_id="replacement-session",
+            override=True,
+        )
+        history.append(("partition-takeover", "accepted"))
 
-        with pytest.raises(ValueError, match="expired"):
-            db.heartbeat_claim(
-                owner,
-                old_claim_id,
-                old_claim["claim_token"],
-                actor="partitioned-owner",
-            )
-        history.append(("stale-heartbeat", "rejected"))
+        with pytest.raises(ValueError, match="interrupted"):
+            db.touch_reservation(owner, old["id"], session_id="owner-session")
+        history.append(("stale-touch", "rejected"))
 
         active_ids = {
-            claim["claim_id"] for claim in db.list_claims(replacement, item_id, active_only=True)
+            row["id"]
+            for row in db.list_reservations(replacement, item_id, active_only=True)
         }
-        assert active_ids == {new_claim_id}
-        assert [
-            (claim["status"], claim["lease_epoch"])
-            for claim in db.list_claims(replacement, item_id, active_only=False)
-        ] == [("expired", 1), ("active", 2)]
+        assert active_ids == {new_reservation["id"]}
+        assert {
+            row["id"]: row["state"]
+            for row in db.list_reservations(replacement, item_id, active_only=False)
+        } == {old["id"]: "interrupted", new_reservation["id"]: "active"}
         assert history == [
-            ("old-claim", "accepted"),
-            ("partition-expiry", "observed"),
-            ("replacement-claim", "accepted"),
-            ("stale-heartbeat", "rejected"),
+            ("old-reservation", "accepted"),
+            ("partition-takeover", "accepted"),
+            ("stale-touch", "rejected"),
         ]
     finally:
         owner.close()

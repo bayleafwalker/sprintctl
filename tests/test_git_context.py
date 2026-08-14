@@ -19,12 +19,6 @@ def _item(conn, sprint_id, title="Task"):
     return db.create_work_item(conn, sprint_id, tid, title)
 
 
-def _claim(conn, sprint_id, work_item_id, actor="agent"):
-    cid = db.create_claim(conn, work_item_id, agent=actor, claim_type="execute")
-    claim = db.get_claim(conn, cid, include_secret=True)
-    return cid, claim["claim_token"]
-
-
 # ---------------------------------------------------------------------------
 # item note with git context
 # ---------------------------------------------------------------------------

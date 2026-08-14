@@ -111,23 +111,32 @@ class TestEventAddCliContract:
 
 
 class TestClaimHandoffPayloadContract:
+    """``claim-handoff`` is archive-only evidence.
+
+    The credential-bearing handoff runtime is retired, but historical events
+    replayed from an archive must still canonicalize to the same field order
+    and defaults, so the contract is exercised through the event writer.
+    """
+
     def test_claim_handoff_payload_is_canonicalized(self, conn, active_sprint):
         iid = _item(conn, active_sprint["id"])
-        cid = db.create_claim(conn, iid, agent="agent-a")
-        claim = db.get_claim(conn, cid, include_secret=True)
-        assert claim is not None
-
-        db.handoff_claim(
+        db.create_event(
             conn,
-            claim["claim_id"],
-            claim["claim_token"],
-            actor="agent-b",
-            mode="rotate",
-            performed_by="agent-a",
-            note="handoff note",
+            active_sprint["id"],
+            "agent-a",
+            "claim-handoff",
+            work_item_id=iid,
+            payload={
+                "operation": "handoff",
+                "mode": "rotate",
+                "from_identity": {"actor": "agent-a"},
+                "to_identity": {"actor": "agent-b"},
+            },
         )
         events = db.list_events(conn, active_sprint["id"])
-        payload = json.loads([e for e in events if e["event_type"] == "claim-handoff"][-1]["payload"])
+        payload = json.loads(
+            [e for e in events if e["event_type"] == "claim-handoff"][-1]["payload"]
+        )
         assert list(payload.keys())[:9] == [
             "summary",
             "detail",
@@ -142,6 +151,8 @@ class TestClaimHandoffPayloadContract:
         assert payload["operation"] == "handoff"
         assert payload["mode"] == "rotate"
         assert payload["legacy_adopted"] is False
+        assert payload["token_rotated"] is False
+        assert payload["tags"] == ["claims", "handoff", "coordination"]
         assert payload["from_identity"]["actor"] == "agent-a"
         assert payload["to_identity"]["actor"] == "agent-b"
 

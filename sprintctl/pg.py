@@ -34,7 +34,6 @@ except ImportError:  # pragma: no cover
 
 _logger = logging.getLogger(__name__)
 
-from . import claimcore as _claimcore
 from . import reservation as _reservation
 from . import contracts as _contracts
 from . import depcore as _depcore
@@ -65,15 +64,12 @@ from .eventcore import (
     _takeup_key,
     process_takeup_events,
 )
-from .claimcore import CLAIM_TYPES, ClaimConflict
 from .db import (
     VALID_TRANSITIONS,
     SPRINT_TRANSITIONS,
     SPRINT_KINDS,
     REF_TYPES,
     InvalidTransition,
-    CLAIM_IDENTITY_STATUS_PROVEN,
-    CLAIM_IDENTITY_STATUS_LEGACY,
     _validate_sprint_transition,
     _normalize_ref_target,
     _serialize_ref,
@@ -1535,9 +1531,6 @@ def _advance_identity_sequences(cur: Any, tables: tuple[str, ...]) -> None:
 
 _iso = _rows.iso_timestamp
 _norm = _rows.normalize_row
-_serialize_claim = _rows.serialize_claim
-_claim_event_identity = _rows.claim_event_identity
-_claim_attempt_identity = _rows.claim_attempt_identity
 
 
 _RECOVERY_TABLES = (
@@ -2190,305 +2183,6 @@ def list_active_takeups(store: PgStore, sprint_id: int | None = None) -> list[di
     return _eventcore.list_active_takeups(_EventPg(store), sprint_id)
 
 
-# ---------------------------------------------------------------------------
-# Claim helpers
-# ---------------------------------------------------------------------------
-
-# A served worker intentionally reuses a non-autocommit PostgreSQL connection.
-# ``now()`` is the *transaction* timestamp in PostgreSQL, so a harmless read
-# can pin it for the lifetime of that connection.  Lease admission and expiry
-# must instead be judged at the statement that performs the operation.
-_CLAIM_CLOCK_SQL = "statement_timestamp()"
-
-
-def _get_active_exclusive_claim_row(store: PgStore, work_item_id: int) -> dict | None:
-    return _claimcore.get_active_exclusive_claim_row(_ClaimPg(store), work_item_id)
-
-
-def _get_active_coordinate_claim_row(store: PgStore, work_item_id: int) -> dict | None:
-    return _claimcore.get_active_coordinate_claim_row(_ClaimPg(store), work_item_id)
-
-
-def _emit_claim_event(
-    store: PgStore,
-    claim_row: dict,
-    *,
-    event_type: str,
-    actor: str,
-    payload: dict,
-) -> None:
-    item = get_work_item(store, claim_row["work_item_id"])
-    if item is None:
-        return
-    create_event(
-        store,
-        sprint_id=item["sprint_id"],
-        actor=actor,
-        event_type=event_type,
-        source_type="system",
-        work_item_id=item["id"],
-        payload=payload,
-    )
-
-
-def _require_claim_proof(row: dict, claim_token: str | None) -> None:
-    from .db import _require_claim_proof as _db_require_claim_proof
-    _db_require_claim_proof(row, claim_token)
-
-
-# ---------------------------------------------------------------------------
-# Claim
-#
-# Claim query shapes -- including create_claim/handoff_claim's transactional
-# bodies as of sub-increments 4d/4e -- live in ``sprintctl.claimcore`` and are
-# shared with the SQLite backend; this module supplies only the PostgreSQL
-# execution adapter for them. heartbeat_claim/release_claim stay here.
-# ---------------------------------------------------------------------------
-
-
-class _ClaimPg:
-    """PostgreSQL execution adapter for ``claimcore`` claim read operations."""
-
-    ph = "%s"
-    true_literal = "true"
-
-    def __init__(self, store: PgStore) -> None:
-        self._store = store
-
-    def tenant_params(self) -> tuple:
-        return (self._store.repo_id,)
-
-    def query_one(self, sql: str, params: tuple) -> dict | None:
-        with self._store.conn.cursor() as cur:
-            cur.execute(sql, params)
-            row = cur.fetchone()
-        return _norm(row) if row else None
-
-    def query_all(self, sql: str, params: tuple) -> list[dict]:
-        with self._store.conn.cursor() as cur:
-            cur.execute(sql, params)
-            rows = cur.fetchall()
-        return [_norm(r) for r in rows]
-
-    def mutate(self, sql: str, params: tuple) -> None:
-        with self._store.conn.cursor() as cur:
-            cur.execute(sql, params)
-        self._store.conn.commit()
-
-    def now_sql(self) -> str:
-        return _CLAIM_CLOCK_SQL
-
-    def expires_at_offset_sql(self) -> str:
-        return f"{_CLAIM_CLOCK_SQL} + ({self.ph} || ' seconds')::interval"
-
-    def join_tenant_clause(self, left_alias: str, right_alias: str) -> str:
-        return f" AND {left_alias}.repo_id = {right_alias}.repo_id"
-
-    def begin_txn(self) -> None:
-        pass  # already in an explicit (non-autocommit) transaction; see PgStore
-
-    def commit(self) -> None:
-        self._store.conn.commit()
-
-    def rollback(self) -> None:
-        self._store.conn.rollback()
-
-    def execute(self, sql: str, params: tuple) -> None:
-        with self._store.conn.cursor() as cur:
-            cur.execute(sql, params)
-
-    def insert_row(self, sql: str, params: tuple) -> int:
-        with self._store.conn.cursor() as cur:
-            cur.execute(f"{sql} RETURNING id", params)
-            row = cur.fetchone()
-        return row["id"]
-
-    def lock_capability_arbitration(self) -> None:
-        """Serialize repo-wide ordinary-claim admission with maintenance activation."""
-        self.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (self._store.repo_id,))
-
-    def lock_work_item_row(self, work_item_id: int) -> dict | None:
-        """Lock the work-item row: the stable transaction-scoped arbitration point.
-
-        PostgreSQL cannot express "at most one unexpired exclusive claim" as a
-        plain unique constraint because expiry depends on backend time and
-        coordinator delegation intentionally permits multiple exclusive rows.
-        """
-        with self._store.conn.cursor() as cur:
-            cur.execute(
-                "SELECT id FROM work_item WHERE repo_id = %s AND id = %s FOR UPDATE",
-                (self._store.repo_id, work_item_id),
-            )
-            row = cur.fetchone()
-        return _norm(row) if row else None
-
-    def is_claim_token_collision(self, exc: BaseException) -> bool:
-        return _PSYCOPG_AVAILABLE and isinstance(exc, UniqueViolation) and "claim_token" in str(exc)
-
-    def maintenance_capability_active_sql(self) -> str:
-        return f"state IN ('active','observing') AND expires_at > {_CLAIM_CLOCK_SQL}"
-
-    def emit_claim_event(
-        self, claim_row: dict, *, event_type: str, actor: str, payload: dict
-    ) -> None:
-        _emit_claim_event(self._store, claim_row, event_type=event_type, actor=actor, payload=payload)
-
-
-def get_claim(store: PgStore, claim_id: int, *, include_secret: bool = False) -> dict | None:
-    row = _claimcore.get_claim_row(_ClaimPg(store), claim_id)
-    if row is None:
-        return None
-    return _serialize_claim(row, include_secret=include_secret)
-
-
-def create_claim(
-    store: PgStore,
-    work_item_id: int,
-    agent: str,
-    claim_type: str = "execute",
-    exclusive: bool = True,
-    ttl_seconds: int = 300,
-    branch: str | None = None,
-    worktree_path: str | None = None,
-    commit_sha: str | None = None,
-    pr_ref: str | None = None,
-    runtime_session_id: str | None = None,
-    instance_id: str | None = None,
-    hostname: str | None = None,
-    pid: int | None = None,
-    coordinate_claim_id: int | None = None,
-    coordinate_claim_token: str | None = None,
-) -> int:
-    if claim_type not in CLAIM_TYPES:
-        raise ValueError(f"Invalid claim_type '{claim_type}'. Must be one of: {', '.join(CLAIM_TYPES)}")
-    item = get_work_item(store, work_item_id)
-    if item is None:
-        raise ValueError(f"Work item #{work_item_id} not found")
-    return _claimcore.create_claim(
-        _ClaimPg(store), work_item_id, agent, claim_type, exclusive, ttl_seconds,
-        branch, worktree_path, commit_sha, pr_ref,
-        runtime_session_id, instance_id, hostname, pid,
-        coordinate_claim_id, coordinate_claim_token,
-    )
-
-
-def heartbeat_claim(
-    store: PgStore,
-    claim_id: int,
-    claim_token: str | None,
-    ttl_seconds: int = 300,
-    actor: str | None = None,
-    runtime_session_id: str | None = None,
-    instance_id: str | None = None,
-    branch: str | None = None,
-    worktree_path: str | None = None,
-    commit_sha: str | None = None,
-    pr_ref: str | None = None,
-    hostname: str | None = None,
-    pid: int | None = None,
-) -> None:
-    from .db import _require_claim_proof as _db_require_claim_proof
-    row = _claimcore.get_claim_row(_ClaimPg(store), claim_id)
-    if row is None:
-        raise ValueError(f"Claim #{claim_id} not found")
-    try:
-        _db_require_claim_proof(row, claim_token)
-    except ValueError as exc:
-        event_type, payload = _claimcore.heartbeat_rejection_event(
-            claim_id,
-            row,
-            str(exc),
-            actor=actor,
-            claim_token=claim_token,
-            runtime_session_id=runtime_session_id,
-            instance_id=instance_id,
-            branch=branch,
-            worktree_path=worktree_path,
-            commit_sha=commit_sha,
-            pr_ref=pr_ref,
-            hostname=hostname,
-            pid=pid,
-        )
-        _emit_claim_event(store, row, event_type=event_type, actor=actor or "system", payload=payload)
-        raise
-    _claimcore.heartbeat_update(
-        _ClaimPg(store),
-        claim_id,
-        ttl_seconds,
-        runtime_session_id,
-        instance_id,
-        branch,
-        worktree_path,
-        commit_sha,
-        pr_ref,
-        hostname,
-        pid,
-    )
-
-
-def release_claim(store: PgStore, claim_id: int, claim_token: str | None, actor: str | None = None) -> None:
-    from .db import _require_claim_proof as _db_require_claim_proof
-    row = _claimcore.get_claim_row(_ClaimPg(store), claim_id)
-    if row is None:
-        raise ValueError(f"Claim #{claim_id} not found")
-    try:
-        _db_require_claim_proof(row, claim_token)
-    except ValueError as exc:
-        event_type, payload = _claimcore.release_rejection_event(
-            claim_id, row, str(exc), actor=actor, claim_token=claim_token
-        )
-        _emit_claim_event(store, row, event_type=event_type, actor=actor or "system", payload=payload)
-        raise
-    _claimcore.release_delete(_ClaimPg(store), claim_id)
-
-
-def handoff_claim(
-    store: PgStore,
-    claim_id: int,
-    claim_token: str | None,
-    *,
-    actor: str,
-    mode: str = "rotate",
-    ttl_seconds: int = 300,
-    runtime_session_id: str | None = None,
-    instance_id: str | None = None,
-    branch: str | None = None,
-    worktree_path: str | None = None,
-    commit_sha: str | None = None,
-    pr_ref: str | None = None,
-    hostname: str | None = None,
-    pid: int | None = None,
-    performed_by: str | None = None,
-    note: str | None = None,
-    allow_legacy_adopt: bool = False,
-) -> dict:
-    return _claimcore.handoff_claim(
-        _ClaimPg(store), claim_id, claim_token,
-        actor=actor, mode=mode, ttl_seconds=ttl_seconds,
-        runtime_session_id=runtime_session_id, instance_id=instance_id,
-        branch=branch, worktree_path=worktree_path, commit_sha=commit_sha, pr_ref=pr_ref,
-        hostname=hostname, pid=pid, performed_by=performed_by, note=note,
-        allow_legacy_adopt=allow_legacy_adopt,
-    )
-
-
-def list_claims_by_sprint(
-    store: PgStore,
-    sprint_id: int,
-    active_only: bool = True,
-    expiring_within_seconds: int | None = None,
-) -> list[dict]:
-    rows = _claimcore.list_claims_by_sprint(
-        _ClaimPg(store), sprint_id, active_only, expiring_within_seconds
-    )
-    return [_serialize_claim(r) for r in rows]
-
-
-def list_claims(store: PgStore, work_item_id: int, active_only: bool = True) -> list[dict]:
-    rows = _claimcore.list_claims(_ClaimPg(store), work_item_id, active_only)
-    return [_serialize_claim(r) for r in rows]
-
-
 # --- Advisory reservations -------------------------------------------------
 
 ReservationConflict = _reservation.ReservationConflict
@@ -2600,26 +2294,6 @@ def sweep_stale_reservations(store: PgStore, *, now: str | None = None) -> list[
         rows = cur.fetchall()
     store.conn.commit()
     return [_reservation.display(row, now=now) for row in rows]
-
-
-def find_claim_by_identity(
-    store: PgStore,
-    *,
-    instance_id: str | None = None,
-    hostname: str | None = None,
-    pid: int | None = None,
-    runtime_session_id: str | None = None,
-    active_only: bool = True,
-) -> list[dict]:
-    rows = _claimcore.find_claim_by_identity(
-        _ClaimPg(store),
-        instance_id=instance_id,
-        hostname=hostname,
-        pid=pid,
-        runtime_session_id=runtime_session_id,
-        active_only=active_only,
-    )
-    return [_serialize_claim(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -2840,29 +2514,6 @@ def backlog_seed_from_candidates(
         )
         seeded.append(get_work_item(store, item_id))
     return seeded
-
-
-# ---------------------------------------------------------------------------
-# Maintain helpers
-# ---------------------------------------------------------------------------
-
-def purge_expired_claims(store: PgStore, sprint_id: int) -> int:
-    """Mark expired claims while retaining their history. Returns count changed."""
-    with store.conn.cursor() as cur:
-        cur.execute(
-            f"""
-            UPDATE claim SET status = 'expired'
-            WHERE repo_id = %s
-              AND work_item_id IN (
-                SELECT id FROM work_item WHERE repo_id = %s AND sprint_id = %s
-              )
-              AND status = 'active' AND expires_at <= {_CLAIM_CLOCK_SQL}
-            """,
-            (store.repo_id, store.repo_id, sprint_id),
-        )
-        count = cur.rowcount
-    store.conn.commit()
-    return count
 
 
 # ---------------------------------------------------------------------------

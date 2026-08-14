@@ -11,6 +11,7 @@ from sprintctl import authority, contracts, db
 import sprintctl.cli as cli_module
 from sprintctl.cli import cli
 from sprintctl.render import render_sprint_doc
+from tests.conftest import seed_legacy_claim
 
 
 def _seed_version_5_schema_with_claim_identity_columns(db_path):
@@ -954,8 +955,8 @@ class TestEdgeCases:
         track_id = db.get_or_create_track(conn, active_sprint["id"], "archive")
         first_item = db.create_work_item(conn, active_sprint["id"], track_id, "First")
         second_item = db.create_work_item(conn, active_sprint["id"], track_id, "Second")
-        first_claim = db.create_claim(conn, first_item, "first")
-        second_claim = db.create_claim(conn, second_item, "second")
+        first_claim = seed_legacy_claim(conn, first_item, "first")
+        second_claim = seed_legacy_claim(conn, second_item, "second")
         conn.execute("INSERT INTO claim_history SELECT * FROM claim WHERE id = ?", (first_claim,))
         conn.commit()
 
@@ -1216,7 +1217,7 @@ class TestBlockedRevival:
 
     def test_active_legacy_claim_does_not_override_status_cas(self, conn, active_sprint):
         iid = self._add_active_item(None, conn, active_sprint["id"])
-        db.create_claim(conn, iid, "legacy-worker")
+        seed_legacy_claim(conn, iid, "legacy-worker")
         basis = db.item_status_revision(db.get_work_item(conn, iid))
         db.set_work_item_status(conn, iid, "done", expected_revision=basis)
         assert db.get_work_item(conn, iid)["status"] == "done"
@@ -1269,7 +1270,7 @@ class TestExportImport:
     def test_export_import_preserves_reservations_and_archived_claims(self, runner, conn, db_path, tmp_path):
         sid, iid = self._build_sprint(runner, conn, db_path)
         db.reserve(conn, iid, actor="alice", session_id="export-session")
-        claim_id = db.create_claim(conn, iid, "legacy-alice")
+        claim_id = seed_legacy_claim(conn, iid, "legacy-alice")
         db._migration_19(conn)
         conn.commit()
         out = str(tmp_path / "export.json")

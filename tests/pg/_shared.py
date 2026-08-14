@@ -53,7 +53,7 @@ from sprintctl import authority, contracts, db, maintain, observations, pg, proj
 from sprintctl import outbox
 from sprintctl import pg_migrations
 from sprintctl.cli import cli
-from sprintctl.db import ClaimConflict, InvalidTransition
+from sprintctl.db import InvalidTransition
 from sprintctl.pg_testing import (
     assert_disposable_connection,
     cleanup_test_repositories,

@@ -12,7 +12,6 @@ from tests.pg._shared import (
     contracts,
     db,
     pg,
-    ClaimConflict,
     InvalidTransition,
     assert_disposable_connection,
     _uid,

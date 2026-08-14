@@ -11,7 +11,6 @@ import pytest
 from tests.pg._shared import (
     pg,
     pg_migrations,
-    ClaimConflict,
     assert_disposable_connection,
     new_test_repo_id,
     MaintenanceCapabilityError,
