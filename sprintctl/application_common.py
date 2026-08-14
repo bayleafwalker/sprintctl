@@ -280,40 +280,35 @@ def _dependency_waiting_items(backend: Any, store: Any, sprint_id: int) -> list[
 
 
 def _derive_next_work_conflicts(
-    active_claims: list[dict], active_unclaimed: list[dict], waiting: list[dict], now: datetime
+    active_reservations: list[dict], active_unreserved: list[dict], waiting: list[dict], now: datetime
 ) -> list[dict]:
     conflicts: list[dict] = []
-    legacy = [claim for claim in active_claims if claim.get("identity_status") != "proven"]
-    if legacy:
-        conflicts.append({"kind": "claim-identity", "severity": "warning", "summary": f"{len(legacy)} active claim(s) have ambiguous ownership proof and require explicit adoption or expiry.", "claim_ids": [claim["claim_id"] for claim in legacy], "item_ids": [claim["work_item_id"] for claim in legacy]})
-    expiring = [claim for claim in active_claims if (expires := _parse_utc_timestamp(claim.get("expires_at"))) is not None and (expires - now).total_seconds() <= 120]
-    if expiring:
-        conflicts.append({"kind": "claim-expiry", "severity": "warning", "summary": f"{len(expiring)} active claim(s) expire within 120 seconds and may need heartbeat or handoff.", "claim_ids": [claim["claim_id"] for claim in expiring], "item_ids": [claim["work_item_id"] for claim in expiring]})
-    if active_unclaimed:
-        conflicts.append({"kind": "unclaimed-active-work", "reason_code": "active-item-without-live-claim", "severity": "warning", "summary": f"{len(active_unclaimed)} active item(s) have no live claim and need resume, handoff, or status triage.", "item_ids": [item["id"] for item in active_unclaimed]})
+    stale = [row for row in active_reservations if row.get("stale")]
+    if stale:
+        conflicts.append({"kind": "stale-reservation", "severity": "warning", "summary": f"{len(stale)} reservation(s) need review after four hours idle.", "reservation_ids": [row["id"] for row in stale], "item_ids": [row["work_item_id"] for row in stale]})
+    if active_unreserved:
+        conflicts.append({"kind": "unreserved-active-work", "severity": "warning", "summary": f"{len(active_unreserved)} active item(s) have no reservation.", "item_ids": [item["id"] for item in active_unreserved]})
     if waiting:
         conflicts.append({"kind": "dependency-blocked", "severity": "warning", "summary": f"{len(waiting)} pending item(s) are waiting on unresolved blockers.", "item_ids": [item["id"] for item in waiting], "blocker_ids": sorted({blocker for item in waiting for blocker in item["unresolved_blocker_ids"]})})
     return conflicts
 
 
-def _next_work_action(active_claims: list[dict], active_unclaimed: list[dict], conflicts: list[dict], ready: list[dict], waiting: list[dict]) -> dict:
+def _next_work_action(active_reservations: list[dict], active_unreserved: list[dict], conflicts: list[dict], ready: list[dict], waiting: list[dict]) -> dict:
     if conflicts:
         first = conflicts[0]
-        if first["kind"] == "claim-identity":
-            return {"kind": "resolve-claim-identity", "summary": "Resolve ambiguous active claim ownership before resuming or starting new work.", "claim_id": first["claim_ids"][0], "item_id": first["item_ids"][0], "reason": first["summary"]}
-        if first["kind"] == "claim-expiry":
-            return {"kind": "refresh-claim", "summary": "Heartbeat or hand off the next expiring claim before it lapses.", "claim_id": first["claim_ids"][0], "item_id": first["item_ids"][0], "reason": first["summary"]}
-        if first["kind"] == "unclaimed-active-work":
-            item = active_unclaimed[0]
-            return {"kind": "resume-unclaimed-active-item", "summary": f"Resume or triage active item #{item['id']} because it has no live claim.", "item_id": item["id"], "reason": first["summary"]}
+        if first["kind"] == "stale-reservation":
+            return {"kind": "review-stale-reservation", "summary": "Review or reassign the stale reservation.", "reservation_id": first["reservation_ids"][0], "item_id": first["item_ids"][0], "reason": first["summary"]}
+        if first["kind"] == "unreserved-active-work":
+            item = active_unreserved[0]
+            return {"kind": "triage-unreserved-active-item", "summary": f"Triage active item #{item['id']} with no reservation.", "item_id": item["id"], "reason": first["summary"]}
         waiting_item = waiting[0]
         return {"kind": "unblock-dependent-work", "summary": f"Resolve blocker #{waiting_item['unresolved_blocker_ids'][0]} to unblock item #{waiting_item['id']}.", "item_id": waiting_item["id"], "blocker_item_id": waiting_item["unresolved_blocker_ids"][0], "reason": first["summary"]}
-    if active_claims:
-        claim = active_claims[0]
-        return {"kind": "inspect-active-claim", "summary": f"Inspect claimed item #{claim['work_item_id']} before starting new work.", "claim_id": claim["claim_id"], "item_id": claim["work_item_id"], "reason": "Active claimed work already exists in this sprint."}
+    if active_reservations:
+        row = active_reservations[0]
+        return {"kind": "inspect-active-reservation", "summary": f"Inspect reserved item #{row['work_item_id']} before starting new work.", "reservation_id": row["id"], "item_id": row["work_item_id"], "reason": "Active reserved work already exists in this sprint."}
     if ready:
         item = ready[0]
-        return {"kind": "start-ready-item", "summary": f"Start ready item #{item['id']} because it is unblocked and no active claims are open.", "item_id": item["id"], "reason": "Ready work is available now."}
+        return {"kind": "start-ready-item", "summary": f"Start ready item #{item['id']} because it is unblocked and no active reservations are open.", "item_id": item["id"], "reason": "Ready work is available now."}
     if waiting:
         item = waiting[0]
         return {"kind": "resolve-blocker", "summary": f"Resolve blocker #{item['unresolved_blocker_ids'][0]} to unblock item #{item['id']}.", "item_id": item["id"], "blocker_item_id": item["unresolved_blocker_ids"][0], "reason": "All pending work is currently waiting on dependencies."}
@@ -353,15 +348,15 @@ def _command_step_kind(command: str) -> str:
 def _next_work_explain_contract(backend: Any, store: Any, sprint: dict, *, repo_id: str | None, now: datetime) -> dict:
     ready = backend.get_ready_items(store, sprint["id"])
     waiting = _dependency_waiting_items(backend, store, sprint["id"])
-    active_claims = backend.list_claims_by_sprint(store, sprint["id"], active_only=True)
+    active_reservations = backend.list_reservations_by_sprint(store, sprint["id"], active_only=True)
     active_items = [{"id": item["id"], "title": item["title"], "track": item["track_name"]} for item in backend.list_work_items(store, sprint_id=sprint["id"], status="active")]
-    claimed_ids = {claim["work_item_id"] for claim in active_claims}
-    active_unclaimed = [item for item in active_items if item["id"] not in claimed_ids]
-    conflicts = _derive_next_work_conflicts(active_claims, active_unclaimed, waiting, now)
-    action = _next_work_action(active_claims, active_unclaimed, conflicts, ready, waiting)
+    reserved_ids = {row["work_item_id"] for row in active_reservations}
+    active_unreserved = [item for item in active_items if item["id"] not in reserved_ids]
+    conflicts = _derive_next_work_conflicts(active_reservations, active_unreserved, waiting, now)
+    action = _next_work_action(active_reservations, active_unreserved, conflicts, ready, waiting)
     commands = _next_work_commands(sprint["id"], action, repo_id)
     refs = backend.list_refs_for_items(store, [item["id"] for item in ready])
-    return {"contract_version": "1", "sprint": {key: sprint[key] for key in ("id", "name", "status")}, "summary": {"pending_total": len(ready) + len(waiting), "ready": len(ready), "waiting_on_dependencies": len(waiting), "active_claims": len(active_claims), "active_unclaimed": len(active_unclaimed)}, "ready_items": [{**item, "reason_code": "ready-unblocked", "reason": "No unresolved blocking dependencies.", "refs": refs.get(item["id"], [])} for item in ready], "dependency_waiting_items": [{**item, "reason_code": "waiting-on-dependencies", "reason": "One or more blocking dependencies are not done."} for item in waiting], "active_claims": [{key: claim.get(key) for key in ("claim_id", "work_item_id", "agent", "claim_type", "expires_at", "identity_status")} for claim in active_claims], "active_unclaimed_items": active_unclaimed, "conflicts": conflicts, "next_action": action, "recommended_commands": commands, "recommended_command_bundle": {"bundle_version": "1", "next_action_kind": action.get("kind"), "steps": [{"step": index, "kind": _command_step_kind(command), "command": command, "placeholders": re.findall(r"<[^>\n]+>", command), "requires_input": bool(re.findall(r"<[^>\n]+>", command)), "is_executable": not bool(re.findall(r"<[^>\n]+>", command))} for index, command in enumerate(commands, 1)]}}
+    return {"contract_version": "2", "sprint": {key: sprint[key] for key in ("id", "name", "status")}, "summary": {"pending_total": len(ready) + len(waiting), "ready": len(ready), "waiting_on_dependencies": len(waiting), "active_reservations": len(active_reservations), "active_unreserved": len(active_unreserved)}, "ready_items": [{**item, "reason_code": "ready-unblocked", "reason": "No unresolved blocking dependencies.", "refs": refs.get(item["id"], [])} for item in ready], "dependency_waiting_items": [{**item, "reason_code": "waiting-on-dependencies", "reason": "One or more blocking dependencies are not done."} for item in waiting], "active_reservations": active_reservations, "active_unreserved_items": active_unreserved, "conflicts": conflicts, "next_action": action, "recommended_commands": commands, "recommended_command_bundle": {"bundle_version": "1", "next_action_kind": action.get("kind"), "steps": [{"step": index, "kind": _command_step_kind(command), "command": command, "placeholders": re.findall(r"<[^>\n]+>", command), "requires_input": bool(re.findall(r"<[^>\n]+>", command)), "is_executable": not bool(re.findall(r"<[^>\n]+>", command))} for index, command in enumerate(commands, 1)]}}
 
 def _positive_int(value: Any, field: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
