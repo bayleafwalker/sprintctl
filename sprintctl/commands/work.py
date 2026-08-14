@@ -1427,8 +1427,6 @@ def _served_item_status(config, item_id, new_status, actor, claim_id, claim_toke
     help="New status",
 )
 @click.option("--actor", default=None, help="Actor name")
-@click.option("--claim-id", type=int, default=None, help="Claim ID to prove ownership of an active exclusive claim")
-@click.option("--claim-token", default=None, help="Claim token proving ownership of an active exclusive claim")
 @click.option(
     "--expected-revision",
     default=None,
@@ -1437,9 +1435,9 @@ def _served_item_status(config, item_id, new_status, actor, claim_id, claim_toke
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output status transition as JSON")
 @click.pass_obj
 def item_status(
-    obj, item_id: str, new_status, actor, claim_id, claim_token, expected_revision, as_json
+    obj, item_id: str, new_status, actor, expected_revision, as_json
 ) -> None:
-    """Update an item's status (enforces transitions, claims, and dependency safety)."""
+    """Update an item's status through an ordinary CAS transition."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
     config = _served_config_or_none(obj)
     if config is not None:
@@ -1450,7 +1448,7 @@ def item_status(
                 err=True,
             )
             sys.exit(1)
-        _served_item_status(config, item_id, new_status, actor, claim_id, claim_token, as_json)
+        _served_item_status(config, item_id, new_status, actor, None, None, as_json)
         return
     if expected_revision is None:
         raise click.UsageError("Missing option '--expected-revision' for direct item status.")
@@ -1466,8 +1464,6 @@ def item_status(
             item_id,
             new_status,
             actor=actor,
-            claim_id=claim_id,
-            claim_token=claim_token,
             expected_revision=expected_revision,
         )
     except (_db.InvalidTransition, _db.ClaimConflict, _db.StatusConflict, ValueError) as e:
