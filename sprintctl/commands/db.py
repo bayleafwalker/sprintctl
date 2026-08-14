@@ -172,7 +172,10 @@ def db_recover_from_remote(output_path: str, run_verify: bool) -> None:
     click.echo("")
     click.echo("Parity report (Postgres source vs recovered SQLite):")
     parity_ok = True
-    for table in ("sprint", "track", "work_item", "claim", "ref", "dep"):
+    for table in (
+        "sprint", "track", "work_item", "claim", "reservation",
+        "claim_history", "ref", "dep",
+    ):
         source_count = len(snapshot.get(table, []))
         destination_count = report["table_counts"].get(table, 0)
         status = "ok" if source_count == destination_count else "MISMATCH"

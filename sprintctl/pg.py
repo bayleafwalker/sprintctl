@@ -1540,7 +1540,10 @@ _claim_event_identity = _rows.claim_event_identity
 _claim_attempt_identity = _rows.claim_attempt_identity
 
 
-_RECOVERY_TABLES = ("sprint", "track", "work_item", "event", "claim", "ref", "dep")
+_RECOVERY_TABLES = (
+    "sprint", "track", "work_item", "event", "claim", "reservation",
+    "claim_history", "ref", "dep",
+)
 
 
 def recover_repo_snapshot(store: PgStore) -> dict[str, list[dict]]:

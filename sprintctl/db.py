@@ -2073,7 +2073,10 @@ def backlog_seed_from_candidates(
 
 # --- Database maintenance ---
 
-_RECOVERY_TABLE_ORDER = ("sprint", "track", "work_item", "event", "claim", "ref", "dep")
+_RECOVERY_TABLE_ORDER = (
+    "sprint", "track", "work_item", "event", "claim", "reservation",
+    "claim_history", "ref", "dep",
+)
 
 
 class RecoverySchemaMismatch(Exception):
@@ -2142,7 +2145,7 @@ def write_recovery_snapshot(
                     value = row[col]
                     if table == "event" and col == "payload" and not isinstance(value, str):
                         value = json.dumps(value)
-                    elif table == "claim" and col == "exclusive":
+                    elif table in {"claim", "claim_history"} and col == "exclusive":
                         value = 1 if value else 0
                     elif table == "claim" and col == "claim_token":
                         value = None
@@ -2204,7 +2207,10 @@ def check_integrity(conn: sqlite3.Connection) -> dict:
         for r in conn.execute("PRAGMA foreign_key_check").fetchall()
     ]
     table_counts = {}
-    for table in ("sprint", "track", "work_item", "event", "claim", "ref", "dep"):
+    for table in (
+        "sprint", "track", "work_item", "event", "claim", "reservation",
+        "claim_history", "ref", "dep",
+    ):
         table_counts[table] = conn.execute(
             f"SELECT COUNT(*) FROM {table}"  # noqa: S608 — fixed identifier set
         ).fetchone()[0]

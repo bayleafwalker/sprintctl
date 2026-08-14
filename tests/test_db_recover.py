@@ -87,6 +87,44 @@ def _snapshot():
                 "lease_epoch": 1,
             }
         ],
+        "reservation": [
+            {
+                "id": 502,
+                "work_item_id": 1219,
+                "session_id": "recovery-session",
+                "actor": "tester",
+                "role": "execute",
+                "state": "active",
+                "created_at": "2026-03-01T00:00:00Z",
+                "last_activity_at": "2026-03-01T00:00:00Z",
+                "released_at": None,
+                "interruption_reason": None,
+                "correlation_ref": "actionq:recovery",
+            }
+        ],
+        "claim_history": [
+            {
+                "id": 503,
+                "work_item_id": 1219,
+                "agent": "archived-tester",
+                "claim_type": "execute",
+                "exclusive": True,
+                "created_at": "2026-02-01T00:00:00Z",
+                "expires_at": "2026-02-01T01:00:00Z",
+                "heartbeat": "2026-02-01T00:00:00Z",
+                "branch": None,
+                "worktree_path": None,
+                "commit_sha": None,
+                "pr_ref": None,
+                "claim_token": None,
+                "runtime_session_id": None,
+                "instance_id": None,
+                "hostname": None,
+                "pid": None,
+                "status": "expired",
+                "lease_epoch": 1,
+            }
+        ],
         "ref": [
             {
                 "id": 77,
@@ -110,6 +148,8 @@ class TestWriteRecoverySnapshot:
             "work_item": 1,
             "event": 1,
             "claim": 1,
+            "reservation": 1,
+            "claim_history": 1,
             "ref": 1,
             "dep": 0,
         }
@@ -121,6 +161,8 @@ class TestWriteRecoverySnapshot:
         report = db.check_integrity(conn)
         assert report["ok"] is True
         assert report["table_counts"]["claim"] == 1
+        assert report["table_counts"]["reservation"] == 1
+        assert report["table_counts"]["claim_history"] == 1
 
     def test_boolean_and_json_coercion(self, conn):
         db.write_recovery_snapshot(conn, _snapshot())
