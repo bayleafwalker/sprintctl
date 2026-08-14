@@ -8,6 +8,18 @@ import pytest
 from sprintctl import authority, contracts, outbox, pg, projection, sync
 
 
+def test_repository_sync_paths_are_fixed_under_the_repository(tmp_path):
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+
+    paths = sync.repository_sync_paths(cwd=tmp_path)
+
+    assert paths.repo_root == tmp_path
+    assert paths.outbox_path == tmp_path / ".sprintctl" / "sync-outbox.db"
+    assert paths.projection_path == tmp_path / ".sprintctl" / "sync-projection.db"
+
+
 class _FakeRemote:
     """In-memory stand-in that retains the ingest ledger's retry behavior."""
 

@@ -13,7 +13,27 @@ from pathlib import Path
 import sqlite3
 from typing import Callable, Mapping
 
-from . import authority, outbox, pg, projection
+from . import authority, backend, outbox, pg, projection
+
+
+@dataclass(frozen=True, slots=True)
+class RepositorySyncPaths:
+    repo_root: Path
+    outbox_path: Path
+    projection_path: Path
+
+
+def repository_sync_paths(*, cwd: Path | None = None) -> RepositorySyncPaths:
+    """Fixed normal-sync storage below the resolved repository root."""
+    root, _repo_id, _marker = backend.resolve_repo_identity(cwd or Path.cwd())
+    if root is None:
+        raise ValueError("cannot resolve a repository for synchronization")
+    state = root / ".sprintctl"
+    return RepositorySyncPaths(
+        repo_root=root,
+        outbox_path=state / "sync-outbox.db",
+        projection_path=state / "sync-projection.db",
+    )
 
 
 @dataclass(frozen=True, slots=True)
