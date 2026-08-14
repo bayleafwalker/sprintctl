@@ -311,7 +311,6 @@ def _decision_type(command_type: str) -> str:
     return {
         "item.transition": "item.transitioned",
         "item.done": "item.transitioned",
-        "item.done-from-claim": "item.done-from-claim.completed",
         "sprint.activate": "sprint-activated",
         "sprint.close": "sprint-closed",
         "claim.acquire": "claim.granted",
@@ -474,48 +473,6 @@ def _handle_item(
             if to_status in {"done", "blocked"} and selected_claim is not None
             else {}
         ),
-    }
-
-
-def _handle_done_from_claim(
-    cur: Any, store: pg.PgStore, envelope: contracts.AuthorityCommand,
-    credentials: Mapping[str, str],
-) -> dict[str, Any]:
-    """Finish and (unless retained) release one execute claim in this transaction.
-
-    This is deliberately one authority command rather than a client-side
-    item.done/claim.release composition.  The command ledger makes a retry of
-    its immutable event id return the original decision after the claim row is
-    gone, so retry never needs to re-present a now-consumed proof.
-    """
-    item = _lock_item(cur, store, str(_required_ref(envelope, "aggregate_uuid")))
-    current_revision = item_revision(item)
-    _check_basis(envelope, current_revision)
-    if "done" not in VALID_TRANSITIONS.get(item["status"], set()):
-        raise _RejectedCommand("invalid-transition", f"cannot transition item {item['status']} -> done", current_revision=current_revision)
-    claim_id = _positive_int(_required_payload(envelope, "claim_id"), "claim_id")
-    claim = _lock_claim(cur, store, claim_id)
-    if int(claim["work_item_id"]) != int(item["id"]):
-        raise _RejectedCommand("claim-item-mismatch", "claim does not belong to the item")
-    if claim["claim_type"] != "execute" or not bool(claim["exclusive"]):
-        raise _RejectedCommand("invalid-claim", "done-from-claim requires an active exclusive execute claim")
-    _require_live_claim(cur, claim)
-    _verify_claim_secret(claim, envelope.payload.get("credential_ref"), credentials)
-    cur.execute(
-        "UPDATE work_item SET status = 'done', updated_at = now() WHERE repo_id = %s AND id = %s RETURNING *",
-        (store.repo_id, item["id"]),
-    )
-    updated = cur.fetchone()
-    keep_claim = bool(_required_payload(envelope, "keep_claim"))
-    if not keep_claim:
-        cur.execute("DELETE FROM claim WHERE repo_id = %s AND id = %s", (store.repo_id, claim_id))
-    return {
-        "aggregate_type": "item", "aggregate_uuid": str(updated["aggregate_uuid"]),
-        "item_id": int(updated["id"]), "previous_status": item["status"],
-        "status": updated["status"], "claim_id": claim_id,
-        "lease_epoch": int(claim["lease_epoch"]),
-        "claim_released": not keep_claim, "claim_still_present": keep_claim,
-        "keep_claim": keep_claim, "revision": item_revision(updated),
     }
 
 
@@ -931,8 +888,6 @@ def _apply_command(
         )
     if envelope.record_type in {"item.transition", "item.done"}:
         return _handle_item(cur, store, envelope, credentials)
-    if envelope.record_type == "item.done-from-claim":
-        return _handle_done_from_claim(cur, store, envelope, credentials)
     if envelope.record_type in {"sprint.activate", "sprint.close"}:
         return _handle_sprint(cur, store, envelope)
     if envelope.record_type == "claim.acquire":
@@ -958,7 +913,6 @@ def _append_terminal_settlement_if_applicable(
         return
     disposition = {
         "claim.release": TerminalDisposition.CLAIM_RELEASE,
-        "item.done-from-claim": TerminalDisposition.ITEM_DONE_FROM_CLAIM,
     }.get(envelope.record_type)
     if envelope.record_type in {"item.transition", "item.done"}:
         disposition = {

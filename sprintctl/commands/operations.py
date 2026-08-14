@@ -569,7 +569,6 @@ _AUTHORITY_COMMAND_TYPES = (
     "claim.release",
     "item.transition",
     "item.done",
-    "item.done-from-claim",
     "sprint.activate",
     "sprint.close",
     "capability-receipt.accept",
@@ -691,41 +690,6 @@ def _find_pending_served_claim_acquire_record(
         producer.close()
 
 
-def _find_pending_served_done_from_claim_record(
-    outbox_path: Path, *, claim_id: int, item_id: int | None, keep_claim: bool,
-) -> _outbox.OutboxRecord | None:
-    """Find the unfinished immutable finish request before reading the claim.
-
-    A successful finish deletes its claim.  Therefore a response-lost retry
-    cannot begin with ``work.claim.context``: that read would report not found
-    and strand the only retryable command behind an origin-sequence gap.  The
-    durable producer record is the retry identity, not the live claim.
-    """
-    producer = _outbox.open_outbox(outbox_path)
-    try:
-        for record in _outbox.list_records(producer):
-            if record.record_class != _outbox.AUTHORITY_COMMAND or record.event_type != "item.done-from-claim":
-                continue
-            try:
-                command = _contracts.record_from_dict(record.payload)
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(command, _contracts.AuthorityCommand):
-                continue
-            paths = _authority_config.authority_command_paths(cwd=Path.cwd())
-            if _authority_config.is_terminal_authority_decision(paths, event_id=record.event_id):
-                continue
-            if (
-                command.payload.get("claim_id") == claim_id
-                and command.payload.get("keep_claim") is keep_claim
-                and (item_id is None or command.refs.get("aggregate_id") == item_id)
-            ):
-                return record
-    finally:
-        producer.close()
-    return None
-
-
 def _authority_rollout_status() -> _authority_config.AuthorityCommandStatus:
     try:
         return _authority_config.authority_command_status(cwd=Path.cwd())
@@ -762,7 +726,7 @@ def _authority_basis_revision(
     aggregate_id: int,
     aggregate: dict,
 ) -> str:
-    if record_type in {"item.transition", "item.done", "item.done-from-claim", "claim.acquire"}:
+    if record_type in {"item.transition", "item.done", "claim.acquire"}:
         return _authority.item_revision(aggregate)
     if record_type in {"sprint.activate", "sprint.close"}:
         return _authority.sprint_revision(aggregate)

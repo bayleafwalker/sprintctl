@@ -1316,12 +1316,9 @@ def item_note(
     click.echo(f"Recorded note #{eid} ({note_type}) on item #{item_id}: {summary}")
 
 
-def _served_item_status(config, item_id, new_status, actor, claim_id, claim_token, as_json) -> None:
-    """Run one immutable served item transition, with proof kept transient."""
+def _served_item_status(config, item_id, new_status, actor, as_json) -> None:
+    """Run one immutable served item transition through its revision basis."""
     context = _resolved_context(config)
-    if (claim_id is None) != (claim_token is None):
-        click.echo("Error: --claim-id and --claim-token must be supplied together.", err=True)
-        sys.exit(1)
 
     rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
     record_type = "item.done" if new_status == "done" else "item.transition"
@@ -1329,22 +1326,9 @@ def _served_item_status(config, item_id, new_status, actor, claim_id, claim_toke
         rollout_paths.outbox_path, record_type=record_type,
         item_id=item_id, to_status=new_status,
     )
-    credentials: dict[str, str] = {}
     if durable is not None:
         command = _contracts.record_from_dict(durable.payload)
         assert isinstance(command, _contracts.AuthorityCommand)
-        expected_id = command.payload.get("claim_id")
-        expected_ref = command.payload.get("credential_ref")
-        supplied_ref = _authority.credential_ref(claim_token) if claim_token is not None else None
-        if expected_id != claim_id or expected_ref != supplied_ref:
-            click.echo(
-                f"Error: durable item status request {durable.event_id} requires "
-                "the original claim proof; do not mint a new request.", err=True,
-            )
-            sys.exit(1)
-        if expected_ref is not None:
-            assert claim_token is not None
-            credentials[expected_ref] = claim_token
         current = command.basis_revision.rsplit("@status:", 1)[-1]
     else:
         read_result = _run_served(
@@ -1367,11 +1351,6 @@ def _served_item_status(config, item_id, new_status, actor, claim_id, claim_toke
 
     if durable is None:
         payload: dict[str, object] = {"to_status": new_status}
-        if claim_id is not None:
-            assert claim_token is not None
-            ref = _authority.credential_ref(claim_token)
-            payload.update({"claim_id": claim_id, "credential_ref": ref})
-            credentials[ref] = claim_token
         try:
             durable = _mint_authority_command_record(
                 record_type=record_type, actor=actor_value,
@@ -1390,7 +1369,6 @@ def _served_item_status(config, item_id, new_status, actor, claim_id, claim_toke
         decision = _served.lifecycle_arbitrate(
             config.served_profile, repo_id=config.repo_id,
             record=_served_record_argument(durable),
-            **({"transient_credentials": credentials} if credentials else {}),
         )
     except Exception as exc:
         click.echo(
@@ -1448,7 +1426,7 @@ def item_status(
                 err=True,
             )
             sys.exit(1)
-        _served_item_status(config, item_id, new_status, actor, None, None, as_json)
+        _served_item_status(config, item_id, new_status, actor, as_json)
         return
     if expected_revision is None:
         raise click.UsageError("Missing option '--expected-revision' for direct item status.")
@@ -1473,256 +1451,6 @@ def item_status(
         click.echo(json.dumps({"item_id": item_id, "previous": current, "status": new_status}, indent=2))
         return
     click.echo(f"Item #{item_id} status: {current} -> {new_status}")
-
-
-def _served_item_done_from_claim(config, item_id, claim_id, claim_token, actor, keep_claim, as_json) -> None:
-    """Finish an execute claim through one durable lifecycle arbitration.
-
-    The preliminary reads only obtain non-secret immutable context; the state
-    change is a single ``work.lifecycle.arbitrate`` call carrying one durable
-    command and its transient proof.  It must never be replaced by status and
-    release catalog calls, which have an observable split-brain failure mode.
-    """
-    resolved_context = _resolved_context(config)
-    rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
-    pending = _find_pending_served_done_from_claim_record(
-        rollout_paths.outbox_path, claim_id=claim_id, item_id=item_id,
-        keep_claim=keep_claim,
-    )
-    if pending is not None:
-        # Replay the original event *before* inspecting the claim.  In the
-        # response-lost success case that claim has already been deleted.
-        command = _contracts.record_from_dict(pending.payload)
-        assert isinstance(command, _contracts.AuthorityCommand)
-        expected_ref = command.payload["credential_ref"]
-        supplied_ref = _authority.credential_ref(claim_token)
-        if supplied_ref != expected_ref:
-            click.echo(
-                f"Error: durable item done-from-claim request {pending.event_id} "
-                "requires the original claim proof; do not mint a new request.",
-                err=True,
-            )
-            sys.exit(1)
-        try:
-            proof = _authority_config.load_pending_authority_credential(
-                rollout_paths, event_id=pending.event_id,
-            )
-            # A crash between append and sidecar persistence is recoverable
-            # while the caller still possesses the exact proof.  Restore the
-            # sidecar under the original event id, never mint a later record.
-            if proof is None:
-                _authority_config.store_pending_authority_credentials(
-                    rollout_paths, event_id=pending.event_id,
-                    credentials={expected_ref: claim_token},
-                )
-                proof = _authority_config.load_pending_authority_credential(
-                    rollout_paths, event_id=pending.event_id,
-                )
-            assert proof is not None
-        except _authority_config.AuthorityCommandConfigError as exc:
-            click.echo(f"Error: {exc}", err=True)
-            sys.exit(1)
-        decision = _run_served(
-            "item done-from-claim", _served.lifecycle_arbitrate, config.served_profile,
-            repo_id=config.repo_id, record=_served_record_argument(pending),
-            transient_credentials=dict(proof.credentials), resolved_context=resolved_context,
-        )
-        _authority_config.mark_terminal_authority_decision(
-            rollout_paths, event_id=pending.event_id, outcome=decision["outcome"]
-        )
-        _authority_config.remove_pending_authority_credential(
-            rollout_paths, event_id=pending.event_id
-        )
-        _render_served_done_from_claim_decision(
-            decision, item_id=item_id or int(command.refs["aggregate_id"]), claim_id=claim_id,
-            keep_claim=keep_claim, as_json=as_json, resolved_context=resolved_context,
-        )
-        return
-
-    claim_context = _run_served(
-        "item done-from-claim", _served.claim_context, config.served_profile,
-        repo_id=config.repo_id, claim_id=claim_id, resolved_context=resolved_context,
-    )
-    claim = claim_context["claim"]
-    inferred_item_id = int(claim["work_item_id"])
-    if item_id is None:
-        item_id = inferred_item_id
-    if item_id != inferred_item_id:
-        click.echo(f"Error: claim #{claim_id} belongs to item #{inferred_item_id}, not item #{item_id}.", err=True)
-        sys.exit(1)
-    item_result = _run_served(
-        "item done-from-claim", _served.read_item, config.served_profile,
-        repo_id=config.repo_id, item_id=item_id, resolved_context=resolved_context,
-    )
-    item_value = item_result["item"]
-    authenticated_actor = claim_context["actor"]
-    if actor is not None and actor != authenticated_actor:
-        click.echo(f"Note: served mode claims as the authenticated identity ({authenticated_actor}); --actor {actor!r} was not sent and is ignored.", err=True)
-    ref = _authority.credential_ref(claim_token)
-    credentials = {ref: claim_token}
-    try:
-        durable = _mint_authority_command_record(
-            record_type="item.done-from-claim", actor=authenticated_actor,
-            refs={
-                "repo_id": _served_claim_authority_repo_uuid(claim_context, rollout_paths.repo_root),
-                "aggregate_type": "item", "aggregate_uuid": item_value["aggregate_uuid"],
-                "aggregate_id": item_id,
-            },
-            payload={"claim_id": claim_id, "credential_ref": ref, "keep_claim": keep_claim},
-            basis_revision=_authority.item_revision(item_value), outbox_path=rollout_paths.outbox_path,
-        )
-        _authority_config.store_pending_authority_credentials(
-            rollout_paths, event_id=durable.event_id, credentials=credentials,
-        )
-    except (TypeError, ValueError, _authority_config.AuthorityCommandConfigError) as exc:
-        click.echo(f"Error: {exc}", err=True)
-        sys.exit(1)
-    decision = _run_served(
-        "item done-from-claim", _served.lifecycle_arbitrate, config.served_profile,
-        repo_id=config.repo_id, record=_served_record_argument(durable),
-        transient_credentials=credentials, resolved_context=resolved_context,
-    )
-    _authority_config.mark_terminal_authority_decision(
-        rollout_paths, event_id=durable.event_id, outcome=decision["outcome"]
-    )
-    _authority_config.remove_pending_authority_credential(rollout_paths, event_id=durable.event_id)
-    _render_served_done_from_claim_decision(
-        decision, item_id=item_id, claim_id=claim_id, keep_claim=keep_claim,
-        as_json=as_json, resolved_context=resolved_context,
-    )
-
-
-def _render_served_done_from_claim_decision(
-    decision, *, item_id, claim_id, keep_claim, as_json, resolved_context,
-) -> None:
-    if decision["outcome"] != "accepted":
-        click.echo(f"Error: {decision.get('reason_code')}: {decision.get('reason_detail')}\n{_render_resolved_context(resolved_context)}", err=True)
-        sys.exit(1)
-    effect = decision["effect"]
-    payload = {
-        "operation": "item_done_from_claim", "item_id": effect["item_id"],
-        "item_status_before": effect["previous_status"], "item_status_after": effect["status"],
-        "claim_id": claim_id, "claim_released": effect["claim_released"],
-        "claim_still_present": effect["claim_still_present"], "keep_claim": effect["keep_claim"],
-    }
-    if as_json:
-        click.echo(json.dumps(payload, indent=2))
-        return
-    click.echo(f"Item #{item_id} status: {payload['item_status_before']} -> {payload['item_status_after']}")
-    click.echo(_render_resolved_context(resolved_context))
-
-
-@item.command("done-from-claim")
-@click.option("--id", "item_id", type=str, default=None, help="Item ID or repo#id (defaults to the claim's item)")
-@click.option("--claim-id", type=int, required=True, help="Claim ID proving ownership")
-@click.option("--claim-token", required=True, help="Claim token proving ownership")
-@click.option("--actor", default=None, help="Actor name")
-@click.option(
-    "--keep-claim",
-    is_flag=True,
-    default=False,
-    help="Do not release the claim after marking the item done",
-)
-@click.option("--json", "as_json", is_flag=True, default=False, help="Output operation result as JSON")
-@click.pass_obj
-def item_done_from_claim(obj, item_id, claim_id, claim_token, actor, keep_claim, as_json) -> None:
-    """Mark an active item done using claim proof, then optionally release the claim."""
-    if item_id is not None:
-        item_id = _apply_scoped_id(obj, item_id, field="item")
-    config = _served_config_or_none(obj)
-    if config is not None:
-        _served_item_done_from_claim(
-            config, item_id, claim_id, claim_token, actor, keep_claim, as_json
-        )
-        return
-    store, m = _get_store(obj)
-    claim = m.get_claim(store, claim_id)
-    if claim is None:
-        click.echo(f"Claim #{claim_id} not found.", err=True)
-        sys.exit(1)
-    if item_id is None:
-        item_id = claim["work_item_id"]
-    if claim["work_item_id"] != item_id:
-        click.echo(
-            f"Error: claim #{claim_id} belongs to item #{claim['work_item_id']}, not item #{item_id}.",
-            err=True,
-        )
-        sys.exit(1)
-    it = m.get_work_item(store, item_id)
-    if it is None:
-        click.echo(f"Item #{item_id} not found.", err=True)
-        sys.exit(1)
-    if claim["claim_type"] != "execute" or not bool(claim["exclusive"]):
-        click.echo(
-            "Error: done-from-claim requires an active exclusive execute claim.",
-            err=True,
-        )
-        sys.exit(1)
-    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    if claim["expires_at"] <= now_utc:
-        click.echo(
-            f"Error: claim #{claim_id} is expired ({claim['expires_at']}). Refresh or re-claim first.",
-            err=True,
-        )
-        sys.exit(1)
-
-    previous_status = it["status"]
-    try:
-        m.set_work_item_status(
-            store,
-            item_id,
-            "done",
-            actor=actor,
-            claim_id=claim_id,
-            claim_token=claim_token,
-        )
-    except (_db.InvalidTransition, _db.ClaimConflict, ValueError) as e:
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
-
-    claim_released = False
-    release_error = None
-    if not keep_claim:
-        try:
-            m.release_claim(store, claim_id, claim_token, actor=actor)
-            _remove_claim_recovery_record(claim_id)
-            claim_released = True
-        except ValueError as e:
-            release_error = str(e)
-
-    updated_item = m.get_work_item(store, item_id)
-    assert updated_item is not None
-    claim_still_present = m.get_claim(store, claim_id) is not None
-
-    if as_json:
-        payload = {
-            "operation": "item_done_from_claim",
-            "item_id": item_id,
-            "item_status_before": previous_status,
-            "item_status_after": updated_item["status"],
-            "claim_id": claim_id,
-            "claim_released": claim_released,
-            "claim_still_present": claim_still_present,
-            "keep_claim": keep_claim,
-        }
-        if release_error is not None:
-            payload["release_error"] = release_error
-        click.echo(json.dumps(payload, indent=2))
-        if release_error is not None:
-            sys.exit(1)
-        return
-
-    click.echo(f"Item #{item_id} status: {previous_status} -> {updated_item['status']}")
-    if claim_released:
-        click.echo(f"Claim #{claim_id} released.")
-    elif keep_claim:
-        click.echo(f"Claim #{claim_id} retained (--keep-claim).")
-    if release_error is not None:
-        click.echo(
-            f"Error: item moved to done but claim release failed: {release_error}",
-            err=True,
-        )
-        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------

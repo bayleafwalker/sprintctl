@@ -116,7 +116,7 @@ def test_verified_capability_must_exactly_bind_every_recovery_scope_field_before
     with pytest.raises(ValueError, match="claim_id"):
         require_verified_capability_scope(request, _verified(claim_id=18))
     with pytest.raises(ValueError, match="terminal_disposition"):
-        require_verified_capability_scope(request, _verified(terminal_disposition="item.done-from-claim"))
+        require_verified_capability_scope(request, _verified(terminal_disposition="item.transition.blocked"))
 
 
 def test_authenticated_coordinator_principal_must_equal_verified_capability_subject():

@@ -66,7 +66,6 @@ def _capability_ref(value: str, field: str) -> str:
 
 class TerminalDisposition(StrEnum):
     CLAIM_RELEASE = "claim.release"
-    ITEM_DONE_FROM_CLAIM = "item.done-from-claim"
     ITEM_TRANSITION_DONE = "item.transition.done"
     ITEM_TRANSITION_BLOCKED = "item.transition.blocked"
 

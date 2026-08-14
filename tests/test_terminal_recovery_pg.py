@@ -171,7 +171,6 @@ def test_authority_terminal_release_writes_ledger_and_rolls_back_atomically(tmp_
     ("record_type", "payload_extra", "expected_disposition"),
     [
         ("claim.release", {}, "claim.release"),
-        ("item.done-from-claim", {"keep_claim": False}, "item.done-from-claim"),
         ("item.done", {}, "item.transition.done"),
         ("item.transition", {"to_status": "blocked"}, "item.transition.blocked"),
     ],
