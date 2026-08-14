@@ -2,7 +2,12 @@ import sys
 
 import pytest
 
-from sprintctl.served_routes import SERVED_COMMAND_ROUTES, routes_for
+from sprintctl.served_routes import (
+    OPERATION_SPECS,
+    SERVED_COMMAND_ROUTES,
+    doctor_probe_operations,
+    routes_for,
+)
 from sprintctl.vuoro_adapter import WORK_OPERATION_CONTRACTS
 import sprintctl.cli as cli_module
 from sprintctl.cli import cli
@@ -26,6 +31,17 @@ def test_project_context_result_schema_covers_every_aggregate_field():
 def test_every_route_targets_a_published_operation():
     for route in SERVED_COMMAND_ROUTES:
         assert route.operation in _KNOWN_OPERATIONS, route
+
+
+def test_operation_specs_are_an_immutable_complete_route_and_probe_view():
+    assert tuple((spec.command_path, spec.operation, spec.precondition) for spec in OPERATION_SPECS) == tuple(
+        (route.command_path, route.operation, route.precondition)
+        for route in SERVED_COMMAND_ROUTES
+    )
+    assert doctor_probe_operations() == {
+        spec.operation for spec in OPERATION_SPECS if spec.probe
+    }
+    assert all(spec.disposition in {"catalog", "unavailable"} for spec in OPERATION_SPECS)
 
 
 def test_next_work_has_preconditioned_routes_and_a_distinct_explain_aggregate():

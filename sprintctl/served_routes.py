@@ -48,6 +48,19 @@ class ServedRoute:
     notes: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class OperationSpec:
+    """Immutable client binding for a catalog operation."""
+
+    command_path: str
+    cli_path: str
+    operation: str
+    disposition: "ServedDisposition"
+    precondition: str = ""
+    probe: bool = False
+    notes: str = ""
+
+
 SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
     ServedRoute(
         "identity.current",
@@ -301,9 +314,7 @@ _DOCTOR_PROBE_COMMAND_PATHS = (
 def doctor_probe_operations() -> frozenset[str]:
     """Catalog operations that `sprintctl doctor` must discover."""
     return frozenset(
-        route.operation
-        for route in SERVED_COMMAND_ROUTES
-        if route.command_path in _DOCTOR_PROBE_COMMAND_PATHS
+        spec.operation for spec in OPERATION_SPECS if spec.probe
     )
 
 
@@ -312,9 +323,31 @@ def doctor_probe_command_paths() -> tuple[str, ...]:
     return _DOCTOR_PROBE_COMMAND_PATHS
 
 
+def _cli_path(route_path: str) -> str:
+    return route_path.replace(".", " ")
+
+
+OPERATION_SPECS: tuple[OperationSpec, ...] = tuple(
+    OperationSpec(
+        command_path=route.command_path,
+        cli_path=_cli_path(route.command_path),
+        operation=route.operation,
+        disposition=SERVED_COMMAND_DISPOSITIONS.get(
+            _cli_path(route.command_path), "catalog"
+        ),
+        precondition=route.precondition,
+        probe=route.command_path in _DOCTOR_PROBE_COMMAND_PATHS,
+        notes=route.notes,
+    )
+    for route in SERVED_COMMAND_ROUTES
+)
+
+
 __all__ = [
     "ServedDisposition",
     "ServedRoute",
+    "OperationSpec",
+    "OPERATION_SPECS",
     "SERVED_COMMAND_DISPOSITIONS",
     "SERVED_COMMAND_ROUTES",
     "doctor_probe_operations",
