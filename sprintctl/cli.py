@@ -175,9 +175,9 @@ def _install_served_command_guards(command: click.Command, prefix: tuple[str, ..
 
 
 _CLICK_LEAF_PATHS = _click_leaf_paths(cli)
-assert _CLICK_LEAF_PATHS == set(_served_routes.SERVED_COMMAND_DISPOSITIONS), (
+assert _CLICK_LEAF_PATHS == _served_routes.classified_click_paths(), (
     "SERVED_COMMAND_DISPOSITIONS must classify every Click leaf exactly; "
-    f"unclassified={sorted(_CLICK_LEAF_PATHS - set(_served_routes.SERVED_COMMAND_DISPOSITIONS))}, "
-    f"stale={sorted(set(_served_routes.SERVED_COMMAND_DISPOSITIONS) - _CLICK_LEAF_PATHS)}"
+    f"unclassified={sorted(_CLICK_LEAF_PATHS - _served_routes.classified_click_paths())}, "
+    f"stale={sorted(_served_routes.classified_click_paths() - _CLICK_LEAF_PATHS)}"
 )
 _install_served_command_guards(cli)

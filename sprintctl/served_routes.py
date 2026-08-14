@@ -323,6 +323,16 @@ def doctor_probe_command_paths() -> tuple[str, ...]:
     return _DOCTOR_PROBE_COMMAND_PATHS
 
 
+def disposition_for(cli_path: str) -> ServedDisposition:
+    """The served disposition for one executable Click path."""
+    return SERVED_COMMAND_DISPOSITIONS[cli_path]
+
+
+def classified_click_paths() -> frozenset[str]:
+    """All executable paths classified by the registry."""
+    return frozenset(SERVED_COMMAND_DISPOSITIONS)
+
+
 def _cli_path(route_path: str) -> str:
     return route_path.replace(".", " ")
 
@@ -352,5 +362,7 @@ __all__ = [
     "SERVED_COMMAND_ROUTES",
     "doctor_probe_operations",
     "doctor_probe_command_paths",
+    "disposition_for",
+    "classified_click_paths",
     "routes_for",
 ]

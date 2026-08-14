@@ -356,7 +356,7 @@ def _served_disposition(command_path: str, params: dict[str, object]) -> _served
     """
     if command_path == "usage" and params.get("as_context"):
         return "catalog"
-    return _served_routes.SERVED_COMMAND_DISPOSITIONS[command_path]
+    return _served_routes.disposition_for(command_path)
 
 
 def _guard_served_command(command_path: str, params: dict[str, object]) -> None:
