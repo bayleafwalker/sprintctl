@@ -1393,11 +1393,12 @@ class TestSprintShowWatch:
 
 
 class TestHelpCommands:
-    def test_claim_help_does_not_create_db(self, runner, tmp_path, monkeypatch):
+    def test_retired_claim_help_does_not_create_db(self, runner, tmp_path, monkeypatch):
         db_path = tmp_path / "help" / "test.db"
         monkeypatch.setenv("SPRINTCTL_DB", str(db_path))
         result = runner.invoke(cli, ["claim", "--help"])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code != 0
+        assert "No such command 'claim'" in result.output
         assert not db_path.exists()
 
     def test_agent_protocol_help_does_not_create_db(self, runner, tmp_path, monkeypatch):

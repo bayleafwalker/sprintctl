@@ -70,7 +70,7 @@ def _enrich_large_sprint_for_resume_surfaces(conn, sprint: dict) -> list[dict]:
 
     for item in items[:RICH_ACTIVE_ITEMS]:
         db.set_work_item_status(conn, item["id"], "active")
-        db.create_claim(conn, item["id"], agent=f"agent-{item['id']}")
+        db.reserve(conn, item["id"], actor=f"agent-{item['id']}", session_id=f"session-{item['id']}")
 
     for item in items[RICH_ACTIVE_ITEMS:RICH_ACTIVE_ITEMS + RICH_BLOCKED_ITEMS]:
         db.set_work_item_status(conn, item["id"], "active")
@@ -145,7 +145,7 @@ class TestDbSizeGrowth:
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             ).fetchall()
         }
-        expected = {"sprint", "track", "work_item", "event", "claim", "ref", "dep", "schema_version", "maintenance_capability", "maintenance_capability_receipt", "maintenance_capability_recovery", "maintenance_resource", "maintenance_resource_event"}
+        expected = {"sprint", "track", "work_item", "event", "claim", "claim_history", "reservation", "ref", "dep", "schema_version", "maintenance_capability", "maintenance_capability_receipt", "maintenance_capability_recovery", "maintenance_resource", "maintenance_resource_event"}
         assert tables == expected, f"Unexpected tables: {tables ^ expected}"
 
 
@@ -277,21 +277,21 @@ class TestSweepAtScale:
         assert len(result["blocked_items"]) == LARGE_SPRINT_ITEMS
         assert elapsed < 2500, f"sweep took {elapsed:.1f} ms"
 
-    def test_purge_expired_claims_at_scale_under_100ms(self, conn):
-        """Purging 100 expired claims must complete in under 100 ms."""
+    def test_sweep_stale_reservations_at_scale_under_100ms(self, conn):
+        """Sweeping 100 stale reservations must complete in under 100 ms."""
         sprint = _build_large_sprint(conn)
         items = db.list_work_items(conn, sprint_id=sprint["id"])
         for item in items[:100]:
-            db.create_claim(conn, item["id"], agent="agent-x")
+            db.reserve(conn, item["id"], actor="agent-x", session_id=f"session-{item['id']}")
         conn.execute(
-            "UPDATE claim SET expires_at = '2000-01-01T00:00:00Z'"
+            "UPDATE reservation SET last_activity_at = '2000-01-01T00:00:00Z'"
         )
         conn.commit()
         start = time.monotonic()
-        purged = maintain.purge_expired_claims(conn, sprint["id"])
+        swept = db.sweep_stale_reservations(conn, now="2030-01-01T00:00:00Z")
         elapsed = _ms(start)
-        assert purged == 100
-        assert elapsed < 100, f"purge_expired_claims took {elapsed:.1f} ms"
+        assert len(swept) == 100
+        assert elapsed < 100, f"sweep_stale_reservations took {elapsed:.1f} ms"
 
 
 # ---------------------------------------------------------------------------
@@ -306,10 +306,10 @@ class TestUsageContextAtScale:
         db.init_db(conn)
         sprint = _build_large_sprint(conn)
         items = db.list_work_items(conn, sprint_id=sprint["id"])
-        # Make half active with claims, other half pending
+        # Make half active with reservations, other half pending.
         for item in items[:100]:
             db.set_work_item_status(conn, item["id"], "active")
-            db.create_claim(conn, item["id"], agent="agent-a")
+            db.reserve(conn, item["id"], actor="agent-a", session_id=f"session-{item['id']}")
         conn.close()
         runner = CliRunner()
         start = time.monotonic()
@@ -319,7 +319,7 @@ class TestUsageContextAtScale:
         assert elapsed < 200, f"usage --context took {elapsed:.1f} ms"
 
     def test_usage_context_json_rich_large_sprint_under_300ms(self, db_path):
-        """usage --context --json should stay bounded with claims, deps, refs, and stale work."""
+        """usage --context --json stays bounded with reservations, deps, refs, and stale work."""
         from click.testing import CliRunner
         conn = db.get_connection(db_path)
         db.init_db(conn)
@@ -332,7 +332,7 @@ class TestUsageContextAtScale:
         elapsed = _ms(start)
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)
-        assert payload["summary"]["active_claims"] == RICH_ACTIVE_ITEMS
+        assert payload["summary"]["active_reservations"] == RICH_ACTIVE_ITEMS
         assert payload["summary"]["waiting_on_dependencies"] == RICH_DEPENDENCY_PAIRS
         assert payload["summary"]["stale"] == RICH_STALE_ITEMS
         assert elapsed < 300, f"usage --context --json took {elapsed:.1f} ms"
