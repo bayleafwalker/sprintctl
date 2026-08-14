@@ -20,7 +20,6 @@ class WorkApplication:
     arbitrate_command: CommandArbiter
     list_records: RecordReader
     list_decisions: DecisionReader
-    credential_resolver: CredentialResolver | None = None
     repo_root: Path | None = None
     _connection_recovery_lock: RLock = field(default_factory=RLock, repr=False)
     _postgres_runtime_available: bool = field(default=True, repr=False)
@@ -30,7 +29,6 @@ class WorkApplication:
         cls,
         store: Any,
         *,
-        credential_resolver: CredentialResolver | None = None,
         repo_root: Path | None = None,
     ) -> WorkApplication:
         """Compose the served application from sprintctl's PostgreSQL authority.
@@ -48,7 +46,6 @@ class WorkApplication:
             store=store,
             backend=pg,
             **cls._store_bound_callables(store),
-            credential_resolver=credential_resolver,
             repo_root=repo_root,
         )
 
@@ -58,10 +55,9 @@ class WorkApplication:
 
         return {
             "ingest_records": lambda records: pg.ingest_records(store, records),
-            "arbitrate_command": lambda record, credentials, authenticated_actor=None: authority.arbitrate_command(
+            "arbitrate_command": lambda record, authenticated_actor=None: authority.arbitrate_command(
                 store,
                 record,
-                credentials=credentials,
                 authenticated_actor=authenticated_actor,
             ),
             "list_records": lambda after, limit: pg.list_ingested_records(
@@ -1088,9 +1084,8 @@ class WorkApplication:
                 "idempotency key must equal the immutable command event_id",
                 422,
             )
-        credentials = self._credentials(context, record)
         return _json_value(
-            self.arbitrate_command(record, credentials, context.identity.actor)
+            self.arbitrate_command(record, context.identity.actor)
         )
 
     def _evidence_ingest(
@@ -1212,11 +1207,7 @@ class WorkApplication:
                 observations.append(record)
                 continue
             flush_observations()
-            decision = self.arbitrate_command(
-                record,
-                self._credentials(context, record),
-                context.identity.actor,
-            )
+            decision = self.arbitrate_command(record, context.identity.actor)
             results.append(
                 {
                     "kind": "decision",
@@ -1362,10 +1353,3 @@ class WorkApplication:
                 422,
             )
 
-    def _credentials(
-        self, context: InvocationContext, record: outbox.OutboxRecord
-    ) -> Mapping[str, str]:
-        if self.credential_resolver is None:
-            return {}
-        resolved = self.credential_resolver(context, record)
-        return dict(resolved or {})

@@ -84,18 +84,6 @@ class InvocationIdentity(Protocol):
     authorities: frozenset[str]
 
 
-class TransientCredentialCarrier(Protocol):
-    """Duck-typed shape of Vuoro's ``invocation/v2`` transient-proof carrier.
-
-    Matches ``vuoro_service.identity.TransientCredentials``: bindings are
-    keyed by non-secret ``sha256:<64-lowercase-hex>`` references and are only
-    ever readable through ``reveal`` -- never iterated, logged, or cached as
-    a plain mapping.
-    """
-
-    def reveal(self, key: str) -> str | None: ...
-
-
 class InvocationContext(Protocol):
     identity: InvocationIdentity
     request_id: str
@@ -108,10 +96,6 @@ class InvocationContext(Protocol):
     # see vuoro_service.app._dispatch). None on every existing
     # protocol-v1-only test double that predates the envelope field.
     repo_id: str | None
-    # Present on a v2 invocation; absent (or empty) on v1 and on every
-    # existing protocol-v1-only test double.  Composition wiring is what
-    # supplies a real carrier -- see ``make_transient_credential_resolver``.
-    transient_credentials: TransientCredentialCarrier | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,11 +110,8 @@ class ApplicationRejection(Exception):
         return self.message
 
 
-CredentialResolver = Callable[
-    [InvocationContext, outbox.OutboxRecord], Mapping[str, str] | None
-]
 RecordIngestor = Callable[[list[outbox.OutboxRecord]], Sequence[Any]]
-CommandArbiter = Callable[[outbox.OutboxRecord, Mapping[str, str], str | None], Any]
+CommandArbiter = Callable[[outbox.OutboxRecord, str | None], Any]
 RecordReader = Callable[[int, int | None], Sequence[Any]]
 DecisionReader = Callable[[int, int | None], Sequence[Any]]
 
@@ -408,67 +389,6 @@ def _required_mapping(value: Any, field: str) -> Mapping[str, Any]:
             "invalid-arguments", f"{field} must be an object", 422
         )
     return value
-
-
-_CLAIM_CREDENTIAL_REF_FIELDS: tuple[str, ...] = (
-    "credential_ref",
-    "proposed_credential_ref",
-    "coordinate_credential_ref",
-)
-
-
-def make_transient_credential_resolver() -> CredentialResolver:
-    """Compose Sprintctl's credential resolver over a v2 transient-proof carrier.
-
-    Per the Vuoro claim-proof transport clarification's approved transport
-    contract: "service composition supplies Sprintctl's credential resolver,
-    which returns only bindings referenced by the validated immutable
-    command." The returned callable reads ``context.transient_credentials``
-    (a duck-typed :class:`TransientCredentialCarrier` -- satisfied today by
-    ``vuoro_service.identity.TransientCredentials`` on a real ``invocation/v2``
-    request) and reveals only the ``sha256:<64-lowercase-hex>`` refs the
-    record's own payload actually names, through ``credential_ref`` /
-    ``proposed_credential_ref`` / ``coordinate_credential_ref``.
-
-    The rehash-and-compare that turns a revealed proof into an accepted or
-    rejected effect is left exactly where it already lives --
-    ``authority._resolve_credential`` / ``authority._verify_claim_secret``,
-    invoked downstream by ``arbitrate_command``.  This resolver only ever
-    hands back what the payload already asked for; it does not verify,
-    cache, log, or otherwise widen access to a revealed proof.
-
-    This module has no import-time or call-time dependency on anything
-    Vuoro-owned: it only assumes the ``reveal(key) -> str | None`` duck type
-    documented on :class:`TransientCredentialCarrier`.  A context without a
-    transient carrier -- a v1 invocation, or any existing test double built
-    before v2 -- resolves to no credentials, i.e. today's no-resolver
-    behaviour.
-    """
-
-    def resolve(
-        context: InvocationContext, record: outbox.OutboxRecord
-    ) -> Mapping[str, str] | None:
-        carrier = getattr(context, "transient_credentials", None)
-        if carrier is None:
-            return None
-        payload: Any = record.payload
-        if record.record_class == contracts.RecordClass.AUTHORITY_COMMAND.value:
-            inner = payload.get("payload") if isinstance(payload, Mapping) else None
-            if isinstance(inner, Mapping):
-                payload = inner
-        if not isinstance(payload, Mapping):
-            return None
-        resolved: dict[str, str] = {}
-        for field in _CLAIM_CREDENTIAL_REF_FIELDS:
-            ref = payload.get(field)
-            if not isinstance(ref, str):
-                continue
-            proof = carrier.reveal(ref)
-            if proof is not None:
-                resolved[ref] = proof
-        return resolved
-
-    return resolve
 
 
 # Export shared names (including private compatibility helpers) to the

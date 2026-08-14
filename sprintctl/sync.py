@@ -165,9 +165,12 @@ def synchronize_outbox(
 
     Re-submitting every durable producer record is intentional: remote admission
     deduplicates on the producer stream tuple and returns original offsets after
-    a lost response. Commands without transient credential material remain
-    pending and never mutate authority. If projection application fails, a
-    later call repeats safe admission and resumes from unchanged watermarks.
+    a lost response. ``credential_resolver`` is now purely an upload-readiness
+    gate: a record it declines (``None``) leaves that command and every later
+    command pending, and never mutates authority. The mapping it returns is no
+    longer consumed -- the claim-proof transport it fed has been retired. If
+    projection application fails, a later call repeats safe admission and
+    resumes from unchanged watermarks.
     """
     batch_size = _validate_batch_size(batch_size)
     records = outbox.list_records(outbox_conn)
@@ -198,9 +201,7 @@ def synchronize_outbox(
                 if blocked.record_class == outbox.AUTHORITY_COMMAND
             )
             break
-        decisions.append(
-            authority.arbitrate_command(remote_store, record, credentials=credentials)
-        )
+        decisions.append(authority.arbitrate_command(remote_store, record))
     flush_observations()
 
     watermark = projection.get_watermark(projection_conn)

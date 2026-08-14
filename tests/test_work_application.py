@@ -149,21 +149,6 @@ def _claim_record(
     )
 
 
-class _FakeTransientCredentialCarrier:
-    """Minimal ``TransientCredentialCarrier`` double for resolver unit tests.
-
-    Matches the ``reveal(key) -> str | None`` duck type documented on
-    :class:`application.TransientCredentialCarrier` without depending on
-    ``vuoro_service`` at all.
-    """
-
-    def __init__(self, bindings: dict[str, str]):
-        self._bindings = dict(bindings)
-
-    def reveal(self, key: str) -> str | None:
-        return self._bindings.get(key)
-
-
 class _AdminShutdown(RuntimeError):
     sqlstate = "57P01"
 
@@ -300,30 +285,6 @@ def test_admin_shutdown_retry_requires_an_explicit_idempotency_key_for_writes():
     )
 
 
-def _fake_authority_command_record(inner_payload: dict) -> outbox.OutboxRecord:
-    """An ``authority-command``-classed record shaped only well enough for
-    :func:`application.make_transient_credential_resolver` -- it never
-    round-trips through ``record_from_dict``/canonical validation."""
-
-    return outbox.OutboxRecord(
-        origin_stream_id="00000000-0000-4000-8000-000000000001",
-        origin_seq=1,
-        event_id="00000000-0000-4000-8000-000000000099",
-        schema_version=1,
-        record_class=contracts.RecordClass.AUTHORITY_COMMAND.value,
-        event_type="claim.handoff",
-        actor="resolver-test",
-        runtime_session_id=None,
-        occurred_at="2026-07-23T00:00:00Z",
-        basis_revision="claim:1@sha256:" + "0" * 64,
-        correlation_id=None,
-        causation_id=None,
-        payload={"payload": inner_payload},
-        payload_sha256="0" * 64,
-        created_at="2026-07-23T00:00:00Z",
-    )
-
-
 @dataclass
 class _IngestResult:
     record: outbox.OutboxRecord
@@ -375,10 +336,8 @@ def _application(
             results.append(_IngestResult(record, offset, duplicate))
         return results
 
-    def arbitrate(record, credentials, authenticated_actor=None):
-        calls.append(
-            (repo_id, "arbitrate", record.event_id, dict(credentials), authenticated_actor)
-        )
+    def arbitrate(record, authenticated_actor=None):
+        calls.append((repo_id, "arbitrate", record.event_id, authenticated_actor))
         duplicate = record.event_id in decided
         decided.add(record.event_id)
         return _Decision(record, duplicate)
@@ -1354,7 +1313,7 @@ def test_batch_is_content_bound_idempotent_and_preserves_producer_order():
 
     expected_calls = [
         ("test-repo", "ingest", [records[0].event_id]),
-        ("test-repo", "arbitrate", records[1].event_id, {}, "served-test"),
+        ("test-repo", "arbitrate", records[1].event_id, "served-test"),
         ("test-repo", "ingest", [records[2].event_id]),
     ]
     assert calls[:3] == expected_calls
@@ -1618,76 +1577,3 @@ def test_reservation_read_missing_row_rejects_without_backend_mutation(conn):
 
     assert rejected.value.code == "reservation-not-found"
     assert rejected.value.http_status == 404
-
-
-def test_transient_credential_resolver_reveals_only_referenced_refs():
-    resolver = application.make_transient_credential_resolver()
-    referenced_ref = "sha256:" + "1" * 64
-    proposed_ref = "sha256:" + "2" * 64
-    unrelated_ref = "sha256:" + "3" * 64
-    carrier = _FakeTransientCredentialCarrier(
-        {
-            referenced_ref: "secret-one",
-            proposed_ref: "secret-two",
-            unrelated_ref: "secret-three",
-        }
-    )
-    context = SimpleNamespace(transient_credentials=carrier)
-    record = _fake_authority_command_record(
-        {
-            "credential_ref": referenced_ref,
-            "proposed_credential_ref": proposed_ref,
-        }
-    )
-
-    resolved = resolver(context, record)
-
-    assert resolved == {referenced_ref: "secret-one", proposed_ref: "secret-two"}
-
-
-def test_transient_credential_resolver_returns_none_without_a_carrier():
-    resolver = application.make_transient_credential_resolver()
-    record = _fake_authority_command_record({"credential_ref": "sha256:" + "1" * 64})
-
-    assert resolver(SimpleNamespace(transient_credentials=None), record) is None
-    # A context built before v2 existed (no attribute at all) behaves the same.
-    assert resolver(SimpleNamespace(), record) is None
-
-
-def test_transient_credential_resolver_skips_unresolvable_bindings():
-    resolver = application.make_transient_credential_resolver()
-    ref = "sha256:" + "4" * 64
-    context = SimpleNamespace(transient_credentials=_FakeTransientCredentialCarrier({}))
-    record = _fake_authority_command_record({"credential_ref": ref})
-
-    assert resolver(context, record) == {}
-
-
-def test_transient_credential_resolver_reads_the_flat_payload_for_observations():
-    """Only ``authority-command``-classed records nest their domain payload
-    one level down (``record.payload["payload"]``); an observation's own
-    payload already sits at the top level."""
-
-    resolver = application.make_transient_credential_resolver()
-    ref = "sha256:" + "5" * 64
-    carrier = _FakeTransientCredentialCarrier({ref: "secret"})
-    context = SimpleNamespace(transient_credentials=carrier)
-    observation = outbox.OutboxRecord(
-        origin_stream_id="00000000-0000-4000-8000-000000000001",
-        origin_seq=1,
-        event_id="00000000-0000-4000-8000-000000000098",
-        schema_version=1,
-        record_class=contracts.RecordClass.OBSERVATION.value,
-        event_type="event.observed",
-        actor="resolver-test",
-        runtime_session_id=None,
-        occurred_at="2026-07-23T00:00:00Z",
-        basis_revision=None,
-        correlation_id=None,
-        causation_id=None,
-        payload={"credential_ref": ref},
-        payload_sha256="0" * 64,
-        created_at="2026-07-23T00:00:00Z",
-    )
-
-    assert resolver(context, observation) == {ref: "secret"}

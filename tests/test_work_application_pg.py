@@ -332,11 +332,11 @@ def _command_record(path, command):
         producer.close()
 
 
-def _application(store, credentials):
-    return WorkApplication.postgres(
-        store,
-        credential_resolver=lambda _context, _record: credentials,
-    )
+def _application(store, credentials=None):
+    # ``credentials`` is retained only so the remaining claim-era call sites
+    # keep their shape until those tests are retired; the credential resolver
+    # seam is gone.
+    return WorkApplication.postgres(store)
 
 
 def _claim_command(store, item, actor, token, event_id, *, claim_agent=None):

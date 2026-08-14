@@ -276,7 +276,6 @@ def _handle_item(
     cur: Any,
     store: pg.PgStore,
     envelope: contracts.AuthorityCommand,
-    credentials: Mapping[str, str],
 ) -> dict[str, Any]:
     item = _lock_item(cur, store, str(_required_ref(envelope, "aggregate_uuid")))
     current_revision = item_revision(item)
@@ -447,7 +446,6 @@ def _apply_command(
     cur: Any,
     store: pg.PgStore,
     envelope: contracts.AuthorityCommand,
-    credentials: Mapping[str, str],
 ) -> dict[str, Any]:
     # authority_repo_uuid is populated only by the legacy direct-PostgreSQL
     # "authority submit" CLI path, which reads a committed UUID from the
@@ -472,7 +470,7 @@ def _apply_command(
             "command repository UUID does not match the remote authority tenant",
         )
     if envelope.record_type in {"item.transition", "item.done"}:
-        return _handle_item(cur, store, envelope, credentials)
+        return _handle_item(cur, store, envelope)
     if envelope.record_type in {"sprint.activate", "sprint.close"}:
         return _handle_sprint(cur, store, envelope)
     if envelope.record_type == "capability-receipt.accept":
@@ -569,7 +567,6 @@ def arbitrate_command(
     store: pg.PgStore,
     record: outbox.OutboxRecord,
     *,
-    credentials: Mapping[str, str] | None = None,
     authenticated_actor: str | None = None,
 ) -> AuthorityDecision:
     """Admit, arbitrate, and decide one command in one PostgreSQL transaction.
@@ -578,7 +575,6 @@ def arbitrate_command(
     decision while rolling back the attempted effect.  Infrastructure errors
     roll back the request as well.  Identical retries return the first decision.
     """
-    credentials = dict(credentials or {})
     prepared = pg._prepare_ingest_record(
         record,
         allowed_classes=frozenset({AUTHORITY_COMMAND}),
@@ -628,7 +624,7 @@ def arbitrate_command(
                 else:
                     cur.execute("SAVEPOINT authority_effect")
                     try:
-                        effect = _apply_command(cur, store, envelope, credentials)
+                        effect = _apply_command(cur, store, envelope)
                         outcome = "accepted"
                         reason_code = None
                         reason_detail = None
