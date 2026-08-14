@@ -459,29 +459,28 @@ class TestMaintainCLI:
 
 
 # ---------------------------------------------------------------------------
-# Group 6: migration 2 (claim table)
+# Group 6: schema archive and reservation boundary
 # ---------------------------------------------------------------------------
 
-class TestMigration2:
-    def test_claim_table_exists_after_init(self, conn):
+class TestArchiveAndReservationSchema:
+    def test_reservation_and_claim_history_tables_exist_after_init(self, conn):
         tables = {
             row[0]
             for row in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             ).fetchall()
         }
-        assert "claim" in tables
+        assert {"reservation", "claim_history"} <= tables
 
     def test_schema_version_is_19(self, conn):
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
         assert version == 19
 
-    def test_claim_retention_columns_have_parity_defaults(self, conn):
+    def test_claim_history_retains_legacy_claim_shape(self, conn):
         columns = {
-            row[1]: row for row in conn.execute("PRAGMA table_info(claim)").fetchall()
+            row[1]: row for row in conn.execute("PRAGMA table_info(claim_history)").fetchall()
         }
-        assert columns["status"][4] == "'active'"
-        assert columns["lease_epoch"][4] == "1"
+        assert {"status", "lease_epoch", "claim_token", "work_item_id"} <= set(columns)
 
     def test_ref_table_exists_after_init(self, conn):
         tables = {
