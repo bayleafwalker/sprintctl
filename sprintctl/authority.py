@@ -17,8 +17,6 @@ from typing import Any, Mapping
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from . import contracts, outbox, pg
-from .terminal_recovery_contract import TerminalDisposition
-from .terminal_recovery_server import append_terminal_settlement_from_authority
 from .db import (
     CLAIM_TYPES,
     SPRINT_TRANSITIONS,
@@ -119,54 +117,6 @@ def sprint_revision(sprint: Mapping[str, Any]) -> str:
     return sprint_status_revision(dict(sprint))
 
 
-def claim_revision(claim: Mapping[str, Any]) -> str:
-    canonical = json.dumps(
-        {
-            "id": int(claim["id"]),
-            "agent": claim["agent"],
-            "heartbeat": _iso(claim["heartbeat"]),
-            "expires_at": _iso(claim["expires_at"]),
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return f"claim:{claim['id']}@sha256:{hashlib.sha256(canonical.encode()).hexdigest()}"
-
-
-def get_item_revision(store: pg.PgStore, aggregate_uuid: str) -> str:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM work_item WHERE repo_id = %s AND aggregate_uuid = %s",
-            (store.repo_id, aggregate_uuid),
-        )
-        row = cur.fetchone()
-    if row is None:
-        raise ValueError("work item aggregate not found")
-    return item_revision(row)
-
-
-def get_sprint_revision(store: pg.PgStore, aggregate_uuid: str) -> str:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM sprint WHERE repo_id = %s AND aggregate_uuid = %s",
-            (store.repo_id, aggregate_uuid),
-        )
-        row = cur.fetchone()
-    if row is None:
-        raise ValueError("sprint aggregate not found")
-    return sprint_revision(row)
-
-
-def get_claim_revision(store: pg.PgStore, claim_id: int) -> str:
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM claim WHERE repo_id = %s AND id = %s",
-            (store.repo_id, claim_id),
-        )
-        row = cur.fetchone()
-    if row is None:
-        raise ValueError(f"Claim #{claim_id} not found")
-    return claim_revision(row)
 
 
 def _required_ref(envelope: contracts.AuthorityCommand, name: str) -> Any:
@@ -610,45 +560,6 @@ def _apply_command(
         return _handle_receipt(cur, store, envelope)
     raise _RejectedCommand("unsupported-command", f"unsupported authority command {envelope.record_type}")
 
-
-def _append_terminal_settlement_if_applicable(
-    cur: Any,
-    store: pg.PgStore,
-    envelope: contracts.AuthorityCommand | None,
-    effect: Mapping[str, Any],
-    *,
-    request_digest: str,
-    decision_id: str,
-) -> None:
-    """Persist accepted claim-terminal decisions beside their authority receipt."""
-    if envelope is None:
-        return
-    disposition = None
-    if envelope.record_type in {"item.transition", "item.done"}:
-        disposition = {
-            "done": TerminalDisposition.ITEM_TRANSITION_DONE,
-            "blocked": TerminalDisposition.ITEM_TRANSITION_BLOCKED,
-        }.get(str(effect.get("status")))
-    if disposition is None or "claim_id" not in effect or "lease_epoch" not in effect:
-        return
-    # The authority command has a canonical repository UUID reference.  The
-    # tenant string is intentionally not substituted: recovery scope must be
-    # portable and canonical across the served authority boundary.
-    repo_id = str(envelope.refs.get("repo_id", ""))
-    append_terminal_settlement_from_authority(
-        cur,
-        repo_id=repo_id,
-        claim_id=int(effect["claim_id"]),
-        lease_epoch=int(effect["lease_epoch"]),
-        terminal_request_id=envelope.event_id,
-        terminal_disposition=disposition,
-        terminal_request_digest=request_digest,
-        decision_id=decision_id,
-        terminal_event_id=decision_id,
-        resulting_item_state=str(effect.get("status", "active")),
-    )
-
-
 def _decision_record(
     cur: Any,
     store: pg.PgStore,
@@ -829,15 +740,6 @@ def arbitrate_command(
                 effect=effect,
                 ingest_offset=cursor_start + 2,
             )
-            if outcome == "accepted":
-                _append_terminal_settlement_if_applicable(
-                    cur,
-                    store,
-                    envelope,
-                    effect,
-                    request_digest=prepared.record_sha256,
-                    decision_id=decision.event_id,
-                )
             pg._advance_ingest_repo_cursor(cur, store, cursor_start + 2)
             cur.execute(
                 """
