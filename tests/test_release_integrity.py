@@ -44,7 +44,7 @@ class TestReleaseIntegrity:
     def test_help_lists_current_resume_surface(self, runner, db_path):
         result = runner.invoke(cli, ["--help"])
         assert result.exit_code == 0, result.output
-        for command in ("doctor", "usage", "handoff", "next-work", "session", "git-context", "claim", "maintain"):
+        for command in ("doctor", "usage", "handoff", "next-work", "session", "git-context", "reservation", "maintain"):
             assert command in result.output
 
     def test_module_entrypoint_exposes_cli_help(self, db_path):
@@ -60,7 +60,7 @@ class TestReleaseIntegrity:
         )
         assert result.returncode == 0, result.stderr
         assert "Usage: python -m sprintctl" in result.stdout
-        for command in ("doctor", "usage", "handoff", "next-work", "session", "git-context", "claim", "maintain"):
+        for command in ("doctor", "usage", "handoff", "next-work", "session", "git-context", "reservation", "maintain"):
             assert command in result.stdout
 
     def test_module_entrypoint_reports_package_version(self, db_path):
