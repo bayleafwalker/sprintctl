@@ -35,7 +35,7 @@ class TestBuildContextCandidates:
         assert payload["explicit_target"] is None
         assert payload["contract_version"] == "1"
 
-    def test_explicit_target_ranks_first_and_is_claim_eligible(self):
+    def test_explicit_target_ranks_first_and_is_reservation_admissible(self):
         items = [
             {"id": 1, "title": "A", "status": "pending", "track_name": "eng"},
             {"id": 2, "title": "B", "status": "pending", "track_name": "eng"},
@@ -49,7 +49,7 @@ class TestBuildContextCandidates:
         assert payload["candidates"][0]["item_id"] == 2
         assert payload["candidates"][0]["rank"] == cc.RANK_EXPLICIT_TARGET
         assert payload["candidates"][0]["rank_reason"] == "explicit-target"
-        assert payload["candidates"][0]["claim_eligible"] is True
+        assert payload["candidates"][0]["reservation_admissible"] is True
         # Explicit target is not duplicated when it also appears in the pool.
         ids = [c["item_id"] for c in payload["candidates"]]
         assert ids.count(2) == 1
@@ -88,13 +88,13 @@ class TestBuildContextCandidates:
         assert payload["explicit_target"] == {"item_id": 999999, "found": False}
         assert payload["truncated"] is False
 
-    def test_only_rank_one_is_ever_claim_eligible(self):
+    def test_only_rank_one_is_ever_reservation_admissible(self):
         items = [{"id": 1, "title": "A", "status": "pending", "track_name": "eng"}]
         payload = cc.build_context_candidates(ready_items=items, refs_by_item={})
         assert payload["candidates"][0]["rank"] == cc.RANK_REPO_LEVEL
-        assert payload["candidates"][0]["claim_eligible"] is False
+        assert payload["candidates"][0]["reservation_admissible"] is False
 
-    def test_explicit_target_not_pending_is_not_claim_eligible(self):
+    def test_explicit_target_not_pending_is_not_reservation_admissible(self):
         item = {"id": 1, "title": "A", "status": "active", "track_name": "eng"}
         payload = cc.build_context_candidates(
             ready_items=[],
@@ -102,7 +102,7 @@ class TestBuildContextCandidates:
             explicit_item_id=1,
             explicit_item=item,
         )
-        assert payload["candidates"][0]["claim_eligible"] is False
+        assert payload["candidates"][0]["reservation_admissible"] is False
 
     def test_path_overlap_outranks_lexical_and_repo_level(self):
         items = [
@@ -119,7 +119,7 @@ class TestBuildContextCandidates:
         )
         assert payload["candidates"][0]["item_id"] == 2
         assert payload["candidates"][0]["rank"] == cc.RANK_PATH_OVERLAP
-        assert payload["candidates"][0]["claim_eligible"] is False
+        assert payload["candidates"][0]["reservation_admissible"] is False
         assert payload["candidates"][1]["item_id"] == 1
         assert payload["candidates"][1]["rank"] == cc.RANK_REPO_LEVEL
 
@@ -255,9 +255,9 @@ class TestContextCandidatesCLI:
         assert len(data["candidates"]) == 1
         assert data["candidates"][0]["item_id"] == iid
         assert data["candidates"][0]["rank_reason"] == "repo-level"
-        assert data["candidates"][0]["claim_eligible"] is False
+        assert data["candidates"][0]["reservation_admissible"] is False
 
-    def test_explicit_item_id_is_claim_eligible(self, runner, conn, active_sprint):
+    def test_explicit_item_id_is_reservation_admissible(self, runner, conn, active_sprint):
         iid = _item(conn, active_sprint["id"], "Target Item")
         result = runner.invoke(
             cli, ["context-candidates", "--item-id", str(iid), "--json"]
@@ -266,7 +266,7 @@ class TestContextCandidatesCLI:
         assert data["explicit_target"] == {"item_id": iid, "found": True}
         explicit = next(c for c in data["candidates"] if c["item_id"] == iid)
         assert explicit["rank"] == 1
-        assert explicit["claim_eligible"] is True
+        assert explicit["reservation_admissible"] is True
 
     def test_explicit_item_id_not_found(self, runner, active_sprint):
         result = runner.invoke(

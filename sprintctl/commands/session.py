@@ -493,7 +493,7 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
     "explicit_item_id",
     type=str,
     default=None,
-    help="Explicit item ID or repo#id (rank 1). Only this rank is ever claim_eligible.",
+    help="Explicit item ID or repo#id (rank 1). Only this rank is reservation-admissible.",
 )
 @click.option(
     "--path",
@@ -525,7 +525,7 @@ def context_candidates_cmd(obj, sprint_id, explicit_item_id, target_paths, query
     scope overlap (--path, repeatable), items carrying other linked
     documentation, deterministic lexical overlap (--query), then remaining
     repo-level candidates -- see docs/ops-upgrade-plan.md Tier 1. Only the
-    explicit target (rank 1) is ever marked claim_eligible; inferred candidates
+    explicit target (rank 1) is ever marked reservation_admissible; inferred candidates
     (ranks 2-5) are advisory context only. This command never claims anything
     itself. Includes the cached projection watermark and its age so a
     consumer knows how stale its view is.
@@ -618,7 +618,7 @@ def context_candidates_cmd(obj, sprint_id, explicit_item_id, target_paths, query
                 f"#{candidate['item_id']}",
                 str(candidate["rank"]),
                 candidate["rank_reason"],
-                "yes" if candidate["claim_eligible"] else "no",
+                "yes" if candidate["reservation_admissible"] else "no",
                 candidate["title"] or "",
             ]
         )

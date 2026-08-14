@@ -1,16 +1,15 @@
 """The exact served-mode CLI command allowlist for sprintctl #1195.
 
 ``LEGACY_REMOTE_COMMAND_PARITY`` in ``vuoro_adapter.py`` describes parity at
-the level of prose command groups ("claim heartbeat|handoff|release",
+the level of prose command groups ("reservation touch|reassign|release",
 "item status / sprint status"). That is not precise enough to gate a CLI
 command before it opens SQLite, reads recovery state, or performs any other
 side effect: each entry here is one exact Click command path.
 
 Resolution notes from planning:
 
-- ``claim heartbeat|handoff|release`` is three separate Click commands, all
-  mapped to ``work.claim.arbitrate`` (an immutable authority-command record;
-  the operation itself, not the CLI verb, determines the transition).
+- Reservation lifecycle commands are separate Click commands mapped to their
+  corresponding ``work.reservation.*`` operations.
 - ``item status`` and ``sprint status`` are two separate Click commands,
   both mapped to ``work.lifecycle.arbitrate`` for the same reason.
 - ``next-work`` is a single Click command whose behavior branches on

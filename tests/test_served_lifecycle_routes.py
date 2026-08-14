@@ -402,7 +402,7 @@ def test_served_context_candidates_uses_catalog_without_opening_store(
         "bound": 5,
         "truncated": False,
         "watermark": None,
-        "candidates": [{"item_id": 3, "rank": 1, "claim_eligible": True, "title": "Target"}],
+        "candidates": [{"item_id": 3, "rank": 1, "reservation_admissible": True, "title": "Target"}],
         "sprint": {"id": 7, "name": "served"},
         "projection": {"enabled": False, "source": "backend", "fallback_reason": "served-authority", "watermark_offset": None, "watermark_age_seconds": None, "schema_version": None},
     }

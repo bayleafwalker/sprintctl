@@ -1214,7 +1214,7 @@ def _served_item_note(
     idempotency-key concept to send. The recording actor is always the
     authenticated identity the server resolves from the credential; a
     caller-supplied ``--actor`` is accepted for parity with local mode but
-    silently ignored server-side, exactly like ``claim start``'s actor.
+    silently ignored server-side, exactly like other served mutation actors.
     """
 
     tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
@@ -1375,7 +1375,7 @@ def _served_item_status(config, item_id, new_status, actor, as_json) -> None:
             "Error: served item status failed after preserving durable authority request "
             f"{durable.event_id} (origin stream {durable.origin_stream_id}, "
             f"sequence {durable.origin_seq}): {exc}. Retry this exact command with "
-            "the original claim proof; do not mint a new request.", err=True,
+            "the original durable request; do not mint a new request.", err=True,
         )
         sys.exit(1)
     _authority_config.mark_terminal_authority_decision(
