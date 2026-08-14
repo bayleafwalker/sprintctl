@@ -2866,7 +2866,10 @@ def purge_expired_claims(store: PgStore, sprint_id: int) -> int:
 # NDJSON export / import (for migrate-to-remote)
 # ---------------------------------------------------------------------------
 
-_EXPORT_TABLES = ("sprint", "track", "work_item", "event", "claim", "ref", "dep")
+_EXPORT_TABLES = (
+    "sprint", "track", "work_item", "event", "claim", "reservation",
+    "claim_history", "ref", "dep",
+)
 
 
 def export_ndjson(sqlite_conn: Any, repo_id: str, out: Any) -> dict[str, int]:
@@ -2903,6 +2906,8 @@ def export_ndjson(sqlite_conn: Any, repo_id: str, out: Any) -> dict[str, int]:
         "track": "SELECT * FROM track ORDER BY id ASC",
         "work_item": "SELECT * FROM work_item ORDER BY id ASC",
         "claim": "SELECT * FROM claim ORDER BY id ASC",
+        "reservation": "SELECT * FROM reservation ORDER BY id ASC",
+        "claim_history": "SELECT * FROM claim_history ORDER BY id ASC",
         "ref": "SELECT * FROM ref ORDER BY id ASC",
         "dep": "SELECT * FROM dep ORDER BY id ASC",
     }
@@ -2962,7 +2967,9 @@ _IMPORT_FK_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "track":     [("sprint_id", "sprint")],
     "work_item": [("sprint_id", "sprint"), ("track_id", "track")],
     "event":     [("sprint_id", "sprint"), ("work_item_id", "work_item")],
-    "claim":     [("work_item_id", "work_item")],
+    "claim":         [("work_item_id", "work_item")],
+    "reservation":   [("work_item_id", "work_item")],
+    "claim_history": [("work_item_id", "work_item")],
     "ref":       [("work_item_id", "work_item")],
     "dep":       [("item_id", "work_item"), ("blocked_item_id", "work_item")],
 }
@@ -3110,7 +3117,10 @@ def _import_row(
         row["aggregate_uuid"] = str(uuid4())
 
     # SQLite stores booleans as integers; coerce to Python bool for psycopg.
-    _BOOL_COLUMNS: dict[str, set[str]] = {"claim": {"exclusive"}}
+    _BOOL_COLUMNS: dict[str, set[str]] = {
+        "claim": {"exclusive"},
+        "claim_history": {"exclusive"},
+    }
     for col in _BOOL_COLUMNS.get(table, set()):
         if col in row and not isinstance(row[col], bool):
             row[col] = bool(row[col])

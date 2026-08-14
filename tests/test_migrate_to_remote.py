@@ -62,7 +62,7 @@ class TestExportNdjson:
         conn, _ = sqlite_db
         buf = io.StringIO()
         counts = export_ndjson(conn, "myrepo", buf)
-        for table in ("sprint", "track", "work_item", "event", "claim", "ref", "dep"):
+        for table in ("sprint", "track", "work_item", "event", "claim", "reservation", "claim_history", "ref", "dep"):
             assert counts[table] == 0
 
     def test_populated_db_exports_expected_counts(self, populated_sqlite):
@@ -75,7 +75,23 @@ class TestExportNdjson:
         assert counts["event"] == 1
         assert counts["ref"] == 1
         assert counts["claim"] == 0
+        assert counts["reservation"] == 0
+        assert counts["claim_history"] == 0
         assert counts["dep"] == 0
+
+    def test_ndjson_exports_reservations_and_claim_history(self, populated_sqlite):
+        conn, _, _, iid = populated_sqlite
+        reservation = db.reserve(conn, iid, actor="agent", session_id="session")
+        conn.execute("INSERT INTO claim_history (work_item_id, agent, claim_type, exclusive, expires_at) VALUES (?, ?, ?, ?, ?)", (iid, "legacy-agent", "execute", 1, "2000-01-01T00:00:00Z"))
+        conn.commit()
+
+        buf = io.StringIO()
+        counts = export_ndjson(conn, "myrepo", buf)
+        records = [json.loads(line) for line in buf.getvalue().splitlines() if line]
+
+        assert counts["reservation"] == 1
+        assert counts["claim_history"] == 1
+        assert next(row["data"] for row in records if row["table"] == "reservation")["id"] == reservation["id"]
 
     def test_ndjson_lines_have_required_keys(self, populated_sqlite):
         conn, _, sid, iid = populated_sqlite

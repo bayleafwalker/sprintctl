@@ -114,7 +114,7 @@ def build_context_contract(store: Any, sprint: dict[str, Any], now: datetime, *,
     waiting = _waiting(store, sprint["id"], backend)
     recent_decisions = [_summarize_event(event) for event in reversed(backend.list_knowledge_candidates(store, sprint["id"])[-5:])]
     conflicts = _conflicts(active_reservations=active_reservations, active_unreserved_items=active_unreserved, blocked_items=blocked_items, stale_items=stale_items, waiting=waiting, now=now)
-    conflicts.extend(row for row in report["findings"] if row["reason_code"] != "active-item-without-live-claim")
+    conflicts.extend(row for row in report["findings"] if row["reason_code"] != "active-item-without-reservation")
     return contracts.ContextContract(
         sprint={key: sprint.get(key) for key in ("id", "name", "goal", "status", "start_date", "end_date")},
         summary={"total": len(all_items), "done": sum(item["status"] == "done" for item in all_items), "active": len(active_items), "pending": sum(item["status"] == "pending" for item in all_items), "blocked": len(blocked_items), "stale": len(stale_items), "ready": len(ready_items), "waiting_on_dependencies": len(waiting), "active_reservations": len(active_reservations), "active_unreserved": len(active_unreserved)},

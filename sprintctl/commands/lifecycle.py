@@ -1469,41 +1469,6 @@ def _previous_handoff_generated(conn, sprint_id: int, *, m=None) -> dict | None:
     return None
 
 
-def _build_delta_since_last_handoff(
-    *,
-    previous_handoff: dict | None,
-    items: list[dict],
-    all_events: list[dict],
-    active_claims: list[dict],
-) -> dict:
-    previous_handoff_at = previous_handoff["created_at"] if previous_handoff else None
-    if previous_handoff_at is None:
-        return {
-            "previous_handoff_at": None,
-            "item_ids_touched": [],
-            "event_count": len(all_events),
-            "claim_ids_touched": [],
-        }
-
-    item_ids_touched = [item["id"] for item in items if item["updated_at"] > previous_handoff_at]
-    claim_ids_touched = [
-        claim["claim_id"]
-        for claim in active_claims
-        if (
-            (claim.get("created_at") and claim["created_at"] > previous_handoff_at)
-            or (claim.get("heartbeat") and claim["heartbeat"] > previous_handoff_at)
-        )
-    ]
-    previous_handoff_id = previous_handoff["id"]
-    event_count = sum(1 for event in all_events if event["id"] > previous_handoff_id)
-    return {
-        "previous_handoff_at": previous_handoff_at,
-        "item_ids_touched": item_ids_touched,
-        "event_count": event_count,
-        "claim_ids_touched": claim_ids_touched,
-    }
-
-
 def _build_handoff_bundle(conn, sprint: dict, events_limit: int, *, m=None) -> dict:
     from .. import handoff
     return handoff.build_handoff_bundle(conn, sprint, events_limit, backend=m or _db, version=__version__, git_context=_detect_git_context())
