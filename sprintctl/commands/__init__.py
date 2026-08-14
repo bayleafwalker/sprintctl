@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import click
 
-from . import db, doctor, lifecycle, operations, remote_schema, repo, session, transfer, work
+from . import db, doctor, lifecycle, operations, remote_schema, repo, reservation, session, transfer, work
 
 
 _RUNTIME_INTERNALS = {"_RUNTIME", "_sync_runtime", "_wrap_runtime_callbacks", "register"}
@@ -91,6 +91,11 @@ def register_claim_commands(root: click.Group, *, runtime: dict[str, object]) ->
     _merge_runtime_exports(lifecycle, runtime)
 
 
+def register_reservation_commands(root: click.Group) -> None:
+    """Attach credential-free reservation commands."""
+    reservation.register(root)
+
+
 def register_session_commands(root: click.Group, *, runtime: dict[str, object]) -> None:
     """Attach handoff, session, context, and migration commands."""
     session.register(root, runtime=runtime)
@@ -122,6 +127,7 @@ projection_reads_group = operations.projection_reads_group
 takeup_group = lifecycle.takeup
 maintain_group = lifecycle.maintain
 claim_group = lifecycle.claim
+reservation_group = reservation.reservation
 handoff_cmd = session.handoff_cmd
 agent_protocol_cmd = session.agent_protocol_cmd
 next_work_cmd = session.next_work_cmd

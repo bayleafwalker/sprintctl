@@ -226,6 +226,14 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     "claim show": "catalog",
     "claim resume": "catalog",
     "claim recover": "catalog",
+    # The local ledger is available immediately; the catalog cutover is a
+    # separately versioned adapter release, so served callers fail closed.
+    "reservation reserve": "unavailable",
+    "reservation touch": "unavailable",
+    "reservation reassign": "unavailable",
+    "reservation release": "unavailable",
+    "reservation list": "unavailable",
+    "reservation show": "unavailable",
     "handoff": "catalog",
     "agent-protocol": "local",
     "next-work": "catalog",

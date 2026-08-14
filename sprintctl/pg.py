@@ -35,6 +35,7 @@ except ImportError:  # pragma: no cover
 _logger = logging.getLogger(__name__)
 
 from . import claimcore as _claimcore
+from . import reservation as _reservation
 from . import contracts as _contracts
 from . import depcore as _depcore
 from . import eventcore as _eventcore
@@ -2534,6 +2535,108 @@ def list_claims_by_sprint(
 def list_claims(store: PgStore, work_item_id: int, active_only: bool = True) -> list[dict]:
     rows = _claimcore.list_claims(_ClaimPg(store), work_item_id, active_only)
     return [_serialize_claim(r) for r in rows]
+
+
+# --- Advisory reservations -------------------------------------------------
+
+ReservationConflict = _reservation.ReservationConflict
+RESERVATION_ROLES = _reservation.ROLES
+
+
+def _reservation_row(store: PgStore, reservation_id: int) -> dict | None:
+    with store.conn.cursor() as cur:
+        cur.execute("SELECT * FROM reservation WHERE repo_id = %s AND id = %s", (store.repo_id, reservation_id))
+        return cur.fetchone()
+
+
+def get_reservation(store: PgStore, reservation_id: int) -> dict | None:
+    row = _reservation_row(store, reservation_id)
+    return _reservation.display(row) if row else None
+
+
+def list_reservations(store: PgStore, work_item_id: int | None = None, *, active_only: bool = True) -> list[dict]:
+    clauses, params = ["repo_id = %s"], [store.repo_id]
+    if work_item_id is not None:
+        clauses.append("work_item_id = %s")
+        params.append(work_item_id)
+    if active_only:
+        clauses.append("state = 'active'")
+    with store.conn.cursor() as cur:
+        cur.execute("SELECT * FROM reservation WHERE " + " AND ".join(clauses) + " ORDER BY last_activity_at DESC, id DESC", tuple(params))
+        return [_reservation.display(row) for row in cur.fetchall()]
+
+
+def reserve(store: PgStore, work_item_id: int, *, actor: str, session_id: str, role: str = "execute",
+            correlation_ref: str | None = None, override: bool = False) -> dict:
+    if role not in RESERVATION_ROLES:
+        raise ValueError(f"invalid reservation role {role!r}")
+    if get_work_item(store, work_item_id) is None:
+        raise ValueError(f"Work item #{work_item_id} not found")
+    now = _reservation.now_text()
+    try:
+        with store.conn.cursor() as cur:
+            if role == "execute":
+                cur.execute("SELECT * FROM reservation WHERE repo_id = %s AND work_item_id = %s AND state = 'active' AND role = 'execute' FOR UPDATE", (store.repo_id, work_item_id))
+                conflicts = cur.fetchall()
+            else:
+                conflicts = []
+            if conflicts and not override:
+                raise ReservationConflict(f"item #{work_item_id} is reserved by {conflicts[0]['actor']} in session {conflicts[0]['session_id']}; use --override to interrupt it")
+            if conflicts:
+                cur.execute("UPDATE reservation SET state = 'interrupted', released_at = %s, interruption_reason = %s WHERE repo_id = %s AND work_item_id = %s AND state = 'active' AND role = 'execute'", (now, f"overridden by {actor} ({session_id})", store.repo_id, work_item_id))
+            cur.execute("INSERT INTO reservation(repo_id, work_item_id, session_id, actor, role, state, created_at, last_activity_at, correlation_ref) VALUES (%s, %s, %s, %s, %s, 'active', %s, %s, %s) RETURNING id", (store.repo_id, work_item_id, session_id, actor, role, now, now, correlation_ref))
+            reservation_id = cur.fetchone()["id"]
+        store.conn.commit()
+    except Exception:
+        store.conn.rollback()
+        raise
+    row = _reservation_row(store, reservation_id)
+    assert row is not None
+    return _reservation.display(row)
+
+
+def touch_reservation(store: PgStore, reservation_id: int, *, session_id: str, correlation_ref: str | None = None) -> dict:
+    row = _reservation_row(store, reservation_id)
+    if row is None or row["state"] != "active":
+        raise ValueError(f"Reservation #{reservation_id} is not active")
+    if row["session_id"] != session_id:
+        raise ValueError(f"Reservation #{reservation_id} belongs to another session")
+    with store.conn.cursor() as cur:
+        cur.execute("UPDATE reservation SET last_activity_at = %s, correlation_ref = COALESCE(%s, correlation_ref) WHERE repo_id = %s AND id = %s", (_reservation.now_text(), correlation_ref, store.repo_id, reservation_id))
+    store.conn.commit()
+    return get_reservation(store, reservation_id)  # type: ignore[return-value]
+
+
+def reassign_reservation(store: PgStore, reservation_id: int, *, actor: str, session_id: str, correlation_ref: str | None = None) -> dict:
+    row = _reservation_row(store, reservation_id)
+    if row is None or row["state"] != "active":
+        raise ValueError(f"Reservation #{reservation_id} is not active")
+    with store.conn.cursor() as cur:
+        cur.execute("UPDATE reservation SET actor = %s, session_id = %s, last_activity_at = %s, correlation_ref = COALESCE(%s, correlation_ref) WHERE repo_id = %s AND id = %s", (actor, session_id, _reservation.now_text(), correlation_ref, store.repo_id, reservation_id))
+    store.conn.commit()
+    return get_reservation(store, reservation_id)  # type: ignore[return-value]
+
+
+def release_reservation(store: PgStore, reservation_id: int, *, actor: str | None = None) -> dict:
+    row = _reservation_row(store, reservation_id)
+    if row is None:
+        raise ValueError(f"Reservation #{reservation_id} not found")
+    if row["state"] == "active":
+        now = _reservation.now_text()
+        with store.conn.cursor() as cur:
+            cur.execute("UPDATE reservation SET state = 'released', released_at = %s, last_activity_at = %s WHERE repo_id = %s AND id = %s", (now, now, store.repo_id, reservation_id))
+        store.conn.commit()
+    return get_reservation(store, reservation_id)  # type: ignore[return-value]
+
+
+def sweep_stale_reservations(store: PgStore, *, now: str | None = None) -> list[dict]:
+    now = now or _reservation.now_text()
+    cutoff = (_reservation.parse_time(now) - _reservation.INTERRUPT_AFTER).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with store.conn.cursor() as cur:
+        cur.execute("UPDATE reservation SET state = 'interrupted', released_at = %s, interruption_reason = 'seven-day inactivity sweep' WHERE repo_id = %s AND state = 'active' AND last_activity_at <= %s RETURNING *", (now, store.repo_id, cutoff))
+        rows = cur.fetchall()
+    store.conn.commit()
+    return [_reservation.display(row, now=now) for row in rows]
 
 
 def find_claim_by_identity(

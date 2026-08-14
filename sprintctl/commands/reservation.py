@@ -1,0 +1,131 @@
+"""The v0.3 credential-free reservation CLI."""
+
+from __future__ import annotations
+
+import json
+import os
+from typing import Any
+
+import click
+
+from .. import db as _db
+
+
+def _session(value: str | None) -> str:
+    return value or os.environ.get("SPRINTCTL_RUNTIME_SESSION_ID") or "interactive"
+
+
+@click.group("reservation")
+def reservation() -> None:
+    """Coordinate work with advisory reservations."""
+
+
+@reservation.command("reserve")
+@click.option("--item-id", type=int, required=True)
+@click.option("--actor", required=True)
+@click.option("--session-id", default=None)
+@click.option("--role", type=click.Choice(_db.RESERVATION_ROLES), default="execute")
+@click.option("--correlation-ref", default=None, help="ActionQ execution or receipt reference")
+@click.option("--override", "override", is_flag=True, default=False)
+@click.option("--json", "as_json", is_flag=True, default=False)
+@click.pass_obj
+def reserve(obj: dict[str, Any], item_id: int, actor: str, session_id: str | None, role: str,
+            correlation_ref: str | None, override: bool, as_json: bool) -> None:
+    conn, _ = _db_store(obj)
+    try:
+        row = _db.reserve(conn, item_id, actor=actor, session_id=_session(session_id), role=role,
+                          correlation_ref=correlation_ref, override=override)
+    except _db.ReservationConflict as exc:
+        raise click.ClickException(str(exc)) from exc
+    _echo(row, as_json)
+
+
+@reservation.command("touch")
+@click.option("--id", "reservation_id", type=int, required=True)
+@click.option("--session-id", default=None)
+@click.option("--correlation-ref", default=None)
+@click.option("--json", "as_json", is_flag=True, default=False)
+@click.pass_obj
+def touch(obj, reservation_id, session_id, correlation_ref, as_json) -> None:
+    conn, _ = _db_store(obj)
+    try:
+        row = _db.touch_reservation(conn, reservation_id, session_id=_session(session_id), correlation_ref=correlation_ref)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    _echo(row, as_json)
+
+
+@reservation.command("reassign")
+@click.option("--id", "reservation_id", type=int, required=True)
+@click.option("--actor", required=True)
+@click.option("--session-id", required=True)
+@click.option("--correlation-ref", default=None)
+@click.option("--json", "as_json", is_flag=True, default=False)
+@click.pass_obj
+def reassign(obj, reservation_id, actor, session_id, correlation_ref, as_json) -> None:
+    conn, _ = _db_store(obj)
+    try:
+        row = _db.reassign_reservation(conn, reservation_id, actor=actor, session_id=session_id, correlation_ref=correlation_ref)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    _echo(row, as_json)
+
+
+@reservation.command("release")
+@click.option("--id", "reservation_id", type=int, required=True)
+@click.option("--actor", default=None)
+@click.option("--json", "as_json", is_flag=True, default=False)
+@click.pass_obj
+def release(obj, reservation_id, actor, as_json) -> None:
+    conn, _ = _db_store(obj)
+    try:
+        row = _db.release_reservation(conn, reservation_id, actor=actor)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    _echo(row, as_json)
+
+
+@reservation.command("list")
+@click.option("--item-id", type=int, default=None)
+@click.option("--active-only/--all", default=True)
+@click.option("--json", "as_json", is_flag=True, default=False)
+@click.pass_obj
+def list_(obj, item_id, active_only, as_json) -> None:
+    conn, _ = _db_store(obj)
+    rows = _db.list_reservations(conn, work_item_id=item_id, active_only=active_only)
+    _echo(rows, as_json)
+
+
+@reservation.command("show")
+@click.option("--id", "reservation_id", type=int, required=True)
+@click.option("--json", "as_json", is_flag=True, default=False)
+@click.pass_obj
+def show(obj, reservation_id, as_json) -> None:
+    conn, _ = _db_store(obj)
+    row = _db.get_reservation(conn, reservation_id)
+    if row is None:
+        raise click.ClickException(f"Reservation #{reservation_id} not found")
+    _echo(row, as_json)
+
+
+def _db_store(obj):
+    conn = obj.get("conn")
+    if conn is None:
+        conn = _db.get_connection()
+        _db.init_db(conn)
+        obj["conn"] = conn
+    return conn, _db
+
+
+def _echo(value, as_json: bool) -> None:
+    if as_json:
+        click.echo(json.dumps(value, indent=2, sort_keys=True))
+    elif isinstance(value, list):
+        for row in value:
+            click.echo(f"#{row['id']} item #{row['work_item_id']} {row['actor']} {row['state']}")
+    else:
+        click.echo(f"Reservation #{value['id']} on item #{value['work_item_id']}: {value['state']}")
+
+
+def register(root: click.Group) -> None:
+    root.add_command(reservation)

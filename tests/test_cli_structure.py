@@ -64,7 +64,7 @@ def test_cli_is_a_small_composition_root_with_runtime_support_outside_it():
 
 
 def test_extracted_doctor_and_session_commands_preserve_order_and_guards():
-    assert list(cli.commands)[:19] == [
+    assert list(cli.commands)[:20] == [
         "doctor",
         "sprint",
         "item",
@@ -78,6 +78,7 @@ def test_extracted_doctor_and_session_commands_preserve_order_and_guards():
         "export",
         "import",
         "claim",
+        "reservation",
         "handoff",
         "agent-protocol",
         "next-work",
@@ -85,7 +86,7 @@ def test_extracted_doctor_and_session_commands_preserve_order_and_guards():
         "session",
         "usage",
     ]
-    assert list(cli.commands)[19:23] == [
+    assert list(cli.commands)[20:24] == [
         "git-context",
         "render",
         "migrate-to-remote",

@@ -19,6 +19,7 @@ from . import sprintcore as _sprintcore
 from . import trackcore as _trackcore
 from . import workitemcore as _workitemcore
 from .claimcore import CLAIM_TYPES, ClaimConflict
+from . import reservation as _reservation
 from .eventcore import (
     KNOWLEDGE_EVENT_TYPES,
     TAKEUP_EVENT_TYPES,
@@ -67,6 +68,8 @@ SPRINT_KINDS = ("active_sprint", "backlog", "archive")
 # Single source of truth for the local schema version; init_db() must end by
 # migrating to exactly this version, and doctor compares databases against it.
 CURRENT_SCHEMA_VERSION = 18
+RESERVATION_ROLES = _reservation.ROLES
+ReservationConflict = _reservation.ReservationConflict
 
 _MIGRATIONS: list[str] = [
     # Migration 1: initial schema
@@ -1676,6 +1679,147 @@ def list_claims(conn: sqlite3.Connection, work_item_id: int, active_only: bool =
     """List claims for a work item; active_only filters to non-expired claims."""
     rows = _claimcore.list_claims(_ClaimSqlite(conn), work_item_id, active_only)
     return [_serialize_claim(r) for r in rows]
+
+
+# --- Advisory reservations -------------------------------------------------
+#
+# Unlike legacy claims these rows are never credentials.  Keep these operations
+# here beside the existing repository facade so local callers do not need to
+# know which backend owns the SQL transaction.
+
+def _reservation_event(conn: sqlite3.Connection, row: dict, event_type: str, actor: str, payload: dict) -> None:
+    item = get_work_item(conn, int(row["work_item_id"]))
+    if item is not None:
+        create_event(conn, sprint_id=item["sprint_id"], work_item_id=item["id"], actor=actor,
+                     event_type=event_type, source_type="system", payload=payload)
+
+
+def _reservation_row(conn: sqlite3.Connection, reservation_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM reservation WHERE id = ?", (reservation_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_reservation(conn: sqlite3.Connection, reservation_id: int) -> dict | None:
+    row = _reservation_row(conn, reservation_id)
+    return _reservation.display(row) if row else None
+
+
+def list_reservations(conn: sqlite3.Connection, work_item_id: int | None = None, *, active_only: bool = True) -> list[dict]:
+    where, params = [], []
+    if work_item_id is not None:
+        where.append("work_item_id = ?")
+        params.append(work_item_id)
+    if active_only:
+        where.append("state = 'active'")
+    clause = " WHERE " + " AND ".join(where) if where else ""
+    rows = conn.execute(f"SELECT * FROM reservation{clause} ORDER BY last_activity_at DESC, id DESC", tuple(params)).fetchall()
+    return [_reservation.display(dict(row)) for row in rows]
+
+
+def reserve(conn: sqlite3.Connection, work_item_id: int, *, actor: str, session_id: str,
+            role: str = "execute", correlation_ref: str | None = None, override: bool = False) -> dict:
+    if role not in RESERVATION_ROLES:
+        raise ValueError(f"invalid reservation role {role!r}")
+    if get_work_item(conn, work_item_id) is None:
+        raise ValueError(f"Work item #{work_item_id} not found")
+    now = _reservation.now_text()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conflicts = conn.execute(
+            "SELECT * FROM reservation WHERE work_item_id = ? AND state = 'active' AND role = 'execute'",
+            (work_item_id,),
+        ).fetchall() if role == "execute" else []
+        if conflicts and not override:
+            conflict = dict(conflicts[0])
+            conn.rollback()
+            raise ReservationConflict(
+                f"item #{work_item_id} is reserved by {conflict['actor']} in session {conflict['session_id']}; use --override to interrupt it"
+            )
+        if conflicts:
+            conn.execute("UPDATE reservation SET state = 'interrupted', released_at = ?, interruption_reason = ? WHERE work_item_id = ? AND state = 'active' AND role = 'execute'",
+                         (now, f"overridden by {actor} ({session_id})", work_item_id))
+        cur = conn.execute(
+            "INSERT INTO reservation(work_item_id, session_id, actor, role, state, created_at, last_activity_at, correlation_ref) VALUES (?, ?, ?, ?, 'active', ?, ?, ?)",
+            (work_item_id, session_id, actor, role, now, now, correlation_ref),
+        )
+        reservation_id = cur.lastrowid
+        conn.commit()
+    except Exception:
+        if conn.in_transaction:
+            conn.rollback()
+        raise
+    row = _reservation_row(conn, reservation_id)
+    assert row is not None
+    if conflicts:
+        for old in conflicts:
+            _reservation_event(conn, dict(old), "reservation.interrupted", actor,
+                               {"reservation_id": old["id"], "reason": "override", "replacement_id": reservation_id})
+    _reservation_event(conn, row, "reservation.reserved", actor,
+                       {"reservation_id": reservation_id, "session_id": session_id, "role": role, "correlation_ref": correlation_ref, "override": override})
+    return _reservation.display(row)
+
+
+def touch_reservation(conn: sqlite3.Connection, reservation_id: int, *, session_id: str,
+                      correlation_ref: str | None = None) -> dict:
+    row = _reservation_row(conn, reservation_id)
+    if row is None:
+        raise ValueError(f"Reservation #{reservation_id} not found")
+    if row["state"] != "active":
+        raise ValueError(f"Reservation #{reservation_id} is {row['state']}")
+    if row["session_id"] != session_id:
+        raise ValueError(f"Reservation #{reservation_id} belongs to another session")
+    now = _reservation.now_text()
+    conn.execute("UPDATE reservation SET last_activity_at = ?, correlation_ref = COALESCE(?, correlation_ref) WHERE id = ?", (now, correlation_ref, reservation_id))
+    conn.commit()
+    updated = _reservation_row(conn, reservation_id)
+    assert updated is not None
+    return _reservation.display(updated)
+
+
+def reassign_reservation(conn: sqlite3.Connection, reservation_id: int, *, actor: str, session_id: str,
+                         correlation_ref: str | None = None) -> dict:
+    row = _reservation_row(conn, reservation_id)
+    if row is None or row["state"] != "active":
+        raise ValueError(f"Reservation #{reservation_id} is not active")
+    now = _reservation.now_text()
+    conn.execute("UPDATE reservation SET actor = ?, session_id = ?, last_activity_at = ?, correlation_ref = COALESCE(?, correlation_ref) WHERE id = ?",
+                 (actor, session_id, now, correlation_ref, reservation_id))
+    conn.commit()
+    updated = _reservation_row(conn, reservation_id)
+    assert updated is not None
+    _reservation_event(conn, updated, "reservation.reassigned", actor,
+                       {"reservation_id": reservation_id, "previous_actor": row["actor"], "previous_session_id": row["session_id"]})
+    return _reservation.display(updated)
+
+
+def release_reservation(conn: sqlite3.Connection, reservation_id: int, *, actor: str | None = None) -> dict:
+    row = _reservation_row(conn, reservation_id)
+    if row is None:
+        raise ValueError(f"Reservation #{reservation_id} not found")
+    if row["state"] != "active":
+        return _reservation.display(row)
+    now = _reservation.now_text()
+    conn.execute("UPDATE reservation SET state = 'released', released_at = ?, last_activity_at = ? WHERE id = ?", (now, now, reservation_id))
+    conn.commit()
+    updated = _reservation_row(conn, reservation_id)
+    assert updated is not None
+    _reservation_event(conn, updated, "reservation.released", actor or row["actor"], {"reservation_id": reservation_id})
+    return _reservation.display(updated)
+
+
+def sweep_stale_reservations(conn: sqlite3.Connection, *, now: str | None = None) -> list[dict]:
+    now = now or _reservation.now_text()
+    cutoff = ( _reservation.parse_time(now) - _reservation.INTERRUPT_AFTER ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows = conn.execute("SELECT * FROM reservation WHERE state = 'active' AND last_activity_at <= ?", (cutoff,)).fetchall()
+    conn.execute("UPDATE reservation SET state = 'interrupted', released_at = ?, interruption_reason = 'seven-day inactivity sweep' WHERE state = 'active' AND last_activity_at <= ?", (now, cutoff))
+    conn.commit()
+    result = []
+    for row in rows:
+        updated = _reservation_row(conn, row["id"])
+        assert updated is not None
+        _reservation_event(conn, updated, "reservation.interrupted", "maintenance", {"reservation_id": row["id"], "reason": "seven-day inactivity sweep"})
+        result.append(_reservation.display(updated, now=now))
+    return result
 
 
 def find_claim_by_identity(
