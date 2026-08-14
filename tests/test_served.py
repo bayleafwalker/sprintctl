@@ -271,57 +271,20 @@ def test_read_sprint_detail_sends_only_optional_sprint_id(fake_vuoro_client):
     assert kwargs == {"repo_id": "repo-x"}
 
 
-def test_claim_start_sends_full_shape_and_never_an_actor_field(fake_vuoro_client):
+def test_reservation_operation_sends_credential_free_shape(fake_vuoro_client):
     profile = _profile()
-    result = served.claim_start(
+    result = served.reservation_operation(
         profile,
+        "work.reservation.reserve",
+        {"item_id": 5, "actor": "worker", "session_id": "session-1", "role": "execute", "correlation_ref": None, "override": False},
         repo_id="repo-x",
-        item_id=5,
-        ttl_seconds=120,
-        branch="feat/x",
-        worktree_path=None,
-        commit_sha=None,
-        pr_ref=None,
-        runtime_session_id="rs-1",
-        instance_id="inst-1",
-        hostname="host-1",
-        pid=999,
     )
-    assert result["operation"] == "work.claim.start"
+    assert result["operation"] == "work.reservation.reserve"
     args = result["arguments"]
-    assert set(args) == {
-        "item_id",
-        "ttl_seconds",
-        "branch",
-        "worktree_path",
-        "commit_sha",
-        "pr_ref",
-        "runtime_session_id",
-        "instance_id",
-        "hostname",
-        "pid",
-    }
-    assert "actor" not in args
-    assert "agent" not in args
+    assert set(args) == {"item_id", "actor", "session_id", "role", "correlation_ref", "override"}
     assert args["item_id"] == 5
-    assert args["ttl_seconds"] == 120
-    assert args["branch"] == "feat/x"
-
-
-def test_claim_start_defaults_ttl_and_omits_no_keys(fake_vuoro_client):
-    profile = _profile()
-    served.claim_start(profile, repo_id="repo-x", item_id=1)
-    client = fake_vuoro_client.instances[-1]
-    _operation, arguments, _kwargs = client.invocations[0]
-    assert arguments["ttl_seconds"] == 300
-    assert arguments["branch"] is None
-
-
-def test_claim_start_never_sends_an_idempotency_key_or_retries(fake_vuoro_client):
-    profile = _profile()
-    served.claim_start(profile, repo_id="repo-x", item_id=1)
-    client = fake_vuoro_client.instances[-1]
-    assert len(client.invocations) == 1, "claim start must invoke exactly once, no retry"
+    assert args["actor"] == "worker"
+    assert "claim_token" not in args
 
 
 def test_item_note_sends_full_shape_and_never_an_actor_field(fake_vuoro_client):
@@ -407,64 +370,14 @@ def test_lifecycle_arbitrate_sends_the_record_and_matching_idempotency_and_basis
     assert kwargs["basis_revision"] == record["basis_revision"]
 
 
-def test_claim_context_sends_only_claim_id_with_no_credentials(fake_vuoro_client):
+def test_read_reservation_sends_only_reservation_id(fake_vuoro_client):
     profile = _profile()
-    result = served.claim_context(profile, repo_id="repo-x", claim_id=9)
-    assert result["operation"] == "work.claim.context"
-    assert result["arguments"] == {"claim_id": 9}
+    result = served.reservation_operation(profile, "work.read.reservation", {"reservation_id": 9}, repo_id="repo-x")
+    assert result["operation"] == "work.read.reservation"
+    assert result["arguments"] == {"reservation_id": 9}
     client = fake_vuoro_client.instances[-1]
     _operation, _arguments, kwargs = client.invocations[0]
     assert kwargs == {"repo_id": "repo-x"}
-
-
-def _sample_claim_record(**overrides) -> dict:
-    record = {
-        "origin_stream_id": "11111111-1111-1111-1111-111111111111",
-        "origin_seq": 1,
-        "event_id": "44444444-4444-4444-4444-444444444444",
-        "schema_version": 1,
-        "record_class": "authority-command",
-        "event_type": "claim.renew",
-        "actor": "worker",
-        "runtime_session_id": None,
-        "occurred_at": "2026-07-23T00:00:00Z",
-        "basis_revision": "claim:9@sha256:" + "b" * 64,
-        "correlation_id": "44444444-4444-4444-4444-444444444444",
-        "causation_id": None,
-        "payload": {"claim_id": 9, "ttl_seconds": 300},
-        "payload_sha256": "a" * 64,
-        "created_at": "2026-07-23T00:00:00Z",
-    }
-    record.update(overrides)
-    return record
-
-
-def test_claim_arbitrate_sends_the_record_and_transient_credentials(fake_vuoro_client):
-    profile = _profile()
-    record = _sample_claim_record()
-    credentials = {"sha256:" + "c" * 64: "secret-proof"}
-    result = served.claim_arbitrate(profile, repo_id="repo-x", record=record, transient_credentials=credentials)
-    assert result["operation"] == "work.claim.arbitrate"
-    assert result["arguments"] == {"record": record}
-    client = fake_vuoro_client.instances[-1]
-    _operation, _arguments, kwargs = client.invocations[0]
-    assert kwargs["idempotency_key"] == record["event_id"]
-    assert kwargs["basis_revision"] == record["basis_revision"]
-    assert kwargs["transient_credentials"] == credentials
-
-
-def test_claim_arbitrate_uses_a_fresh_client_per_call(fake_vuoro_client):
-    profile = _profile()
-    served.claim_arbitrate(
-        profile, repo_id="repo-x", record=_sample_claim_record(), transient_credentials={}
-    )
-    served.claim_arbitrate(
-        profile, repo_id="repo-x", record=_sample_claim_record(), transient_credentials={}
-    )
-    assert len(fake_vuoro_client.instances) == 2
-    first, second = fake_vuoro_client.instances
-    assert first is not second
-    assert first.closed and second.closed
 
 
 def test_lifecycle_arbitrate_uses_a_fresh_client_per_call(fake_vuoro_client):
@@ -494,7 +407,7 @@ def test_credential_resolver_passed_to_client_is_resolve_file_credential(fake_vu
         lambda profile: served.project_next_work(profile),
         lambda profile: served.project_context(profile),
         lambda profile: served.project_sprints(profile),
-        lambda profile: served.claim_start(profile, repo_id="repo-x", item_id=1),
+        lambda profile: served.reservation_operation(profile, "work.read.reservations", {"item_id": 1, "active_only": True}, repo_id="repo-x"),
         lambda profile: served.read_events(profile, repo_id="repo-x", sprint_id=1),
         lambda profile: served.read_sprint(profile, repo_id="repo-x"),
         lambda profile: served.event_add(profile, repo_id="repo-x", sprint_id=1, event_type="update"),
@@ -539,7 +452,7 @@ def test_expected_operations_matches_all_served_cli_command_paths():
         for route in routes_for(path)
     }
     assert served.EXPECTED_OPERATIONS == expected
-    assert len(served.EXPECTED_OPERATIONS) == 32
+    assert len(served.EXPECTED_OPERATIONS) == 34
     assert served.EXPECTED_OPERATIONS == {
         "work.identity.current",
         "work.read.sprints",
@@ -549,17 +462,19 @@ def test_expected_operations_matches_all_served_cli_command_paths():
         "work.read.handoff",
         "work.read.item",
         "work.read.items",
-        "work.read.claims",
-        "work.read.claim",
+        "work.read.reservations",
+        "work.read.reservation",
         "work.read.next-work",
         "work.read.next-work-explain",
             "work.project.next-work",
             "work.project.items",
             "work.project.context",
         "work.project.sprints",
-        "work.claim.start",
         "work.lifecycle.arbitrate",
-        "work.claim.arbitrate",
+        "work.reservation.reserve",
+        "work.reservation.touch",
+        "work.reservation.reassign",
+        "work.reservation.release",
         "work.item.note",
         "work.item.ref.add",
         "work.item.ref.remove",
