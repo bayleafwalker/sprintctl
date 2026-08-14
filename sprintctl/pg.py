@@ -1477,6 +1477,12 @@ def _apply_schema_version_8(cur: Any) -> None:
     )
 
 
+def _apply_schema_version_9(cur: Any) -> None:
+    """Archive retired credential-bearing claim rows for audit/export only."""
+    cur.execute("CREATE TABLE IF NOT EXISTS claim_history (LIKE claim INCLUDING ALL)")
+    cur.execute("INSERT INTO claim_history SELECT c.* FROM claim c WHERE NOT EXISTS (SELECT 1 FROM claim_history)")
+
+
 def compatibility_handshake(store: PgStore) -> dict[str, Any]:
     """Return the public read-only work API/schema handshake."""
     return _pg_migrations.compatibility_handshake(store)
