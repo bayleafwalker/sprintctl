@@ -1804,6 +1804,37 @@ def pilot_sync(obj, batch_size: int, as_json: bool) -> None:
         click.echo(f"Synchronized {payload['uploaded']} observation records; watermark {result.watermark.ingest_offset}.")
 
 
+@click.command("sync")
+@click.option("--batch-size", default=100, type=int, show_default=True)
+@click.option("--json", "as_json", is_flag=True, default=False)
+@click.pass_obj
+def sync_cmd(obj, batch_size: int, as_json: bool) -> None:
+    """Synchronize durable local observations and pull projections."""
+    store, _m = _get_store(obj)
+    if obj["backend_config"].mode != "remote":
+        raise click.ClickException("normal synchronization requires a remote sprintctl backend")
+    try:
+        paths = _sync.repository_sync_paths(cwd=Path.cwd())
+        result = _sync.synchronize_repository(
+            store,
+            outbox_path=paths.outbox_path,
+            projection_path=paths.projection_path,
+            batch_size=batch_size,
+        )
+    except (TypeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    payload = {
+        "uploaded": len(result.uploaded),
+        "duplicates": sum(outcome.duplicate for outcome in result.uploaded),
+        "applied_count": result.applied_count,
+        "watermark": result.watermark.ingest_offset,
+        "decision_applied_count": result.decision_applied_count,
+    }
+    click.echo(json.dumps(payload, indent=2) if as_json else (
+        f"Synchronized {payload['uploaded']} records; watermark {payload['watermark']}."
+    ))
+
+
 def _emit_cutover_evidence_text(payload: dict) -> None:
     """Shared text rendering for ``pilot cutover-evidence``'s local and served
     paths -- both call the exact same ``cutover.build_cutover_evidence``
@@ -2217,6 +2248,6 @@ def register(root: click.Group, *, runtime: dict[str, object]) -> None:
     _RUNTIME.clear()
     _RUNTIME.update({name: value for name, value in runtime.items() if not name.startswith("__")})
     _sync_runtime()
-    for command in (event, authority_commands, pilot, projection_reads_group):
+    for command in (event, authority_commands, pilot, projection_reads_group, sync_cmd):
         root.add_command(command)
         _wrap_runtime_callbacks(command)

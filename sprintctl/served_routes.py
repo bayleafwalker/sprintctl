@@ -209,6 +209,7 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     "projection-reads status": "unavailable",
     "projection-reads enable": "unavailable",
     "projection-reads disable": "unavailable",
+    "sync": "unavailable",
     "takeup sweep": "unavailable",
     "takeup take": "unavailable",
     "takeup release": "unavailable",

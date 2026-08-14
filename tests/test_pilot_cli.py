@@ -84,4 +84,11 @@ def test_pilot_sync_is_guarded_in_local_backend(runner, tmp_path):
 
     result = runner.invoke(cli, ["pilot", "sync"])
     assert result.exit_code != 0
+
+
+def test_normal_sync_does_not_require_pilot_enablement(runner, tmp_path):
+    result = runner.invoke(cli, ["sync"])
+
+    assert result.exit_code != 0
+    assert "normal synchronization requires a remote" in result.output
     assert "requires a remote sprintctl backend" in result.output
