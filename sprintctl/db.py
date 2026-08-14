@@ -67,7 +67,7 @@ SPRINT_KINDS = ("active_sprint", "backlog", "archive")
 
 # Single source of truth for the local schema version; init_db() must end by
 # migrating to exactly this version, and doctor compares databases against it.
-CURRENT_SCHEMA_VERSION = 18
+CURRENT_SCHEMA_VERSION = 19
 RESERVATION_ROLES = _reservation.ROLES
 ReservationConflict = _reservation.ReservationConflict
 
@@ -676,6 +676,20 @@ def _migration_18(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_19(conn: sqlite3.Connection) -> None:
+    """Archive legacy credential-bearing claims before their clean-break removal.
+
+    The live reservation ledger is authoritative from v0.3 onward.  This
+    archive is intentionally read-only historical evidence: no runtime path
+    may use it for ownership, proof, recovery, or scheduling.
+    """
+    _execute_statements(conn, """
+        CREATE TABLE IF NOT EXISTS claim_history AS SELECT * FROM claim WHERE 0;
+        INSERT INTO claim_history SELECT * FROM claim
+        WHERE NOT EXISTS (SELECT 1 FROM claim_history);
+    """)
+
+
 def _run_migration(
     conn: sqlite3.Connection,
     target_version: int,
@@ -723,7 +737,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     _run_migration(conn, 15, _migration_15, foreign_keys_off=True)
     _run_migration(conn, 16, _migration_16)
     _run_migration(conn, 17, _migration_17)
-    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_18)
+    _run_migration(conn, 18, _migration_18)
+    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_19)
 
 
 # --- Sprint ---
