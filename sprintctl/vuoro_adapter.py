@@ -1115,6 +1115,24 @@ def catalog_operation_specs(
     )
 
 
+def validate_served_operation_registry() -> None:
+    """Prove every client-exposed operation has a domain catalog contract.
+
+    The generic handler registered below dispatches by operation name, so a
+    missing contract would otherwise surface only after a served client had
+    selected a route.  Validate the binding while the catalog is composed.
+    """
+    from .served_routes import OPERATION_SPECS
+
+    contracts = {contract.name for contract in WORK_OPERATION_CONTRACTS}
+    missing = sorted({spec.operation for spec in OPERATION_SPECS} - contracts)
+    if missing:
+        raise RuntimeError(
+            "served operation registry references unpublished work contracts: "
+            + ", ".join(missing)
+        )
+
+
 def register_work_catalog(
     registry: Any,
     application: WorkApplication,
@@ -1122,6 +1140,8 @@ def register_work_catalog(
     project_application: ProjectWorkApplication | None = None,
 ) -> None:
     """Register the complete work operation catalog in a Vuoro registry."""
+
+    validate_served_operation_registry()
 
     from vuoro_service.catalog import OperationRejectedError
     from vuoro_service.contracts import (
@@ -1205,4 +1225,5 @@ __all__ = [
     "WorkOperationContract",
     "catalog_operation_specs",
     "register_work_catalog",
+    "validate_served_operation_registry",
 ]

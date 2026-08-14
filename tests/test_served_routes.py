@@ -9,6 +9,7 @@ from sprintctl.served_routes import (
     routes_for,
 )
 from sprintctl.vuoro_adapter import WORK_OPERATION_CONTRACTS
+from sprintctl.vuoro_adapter import validate_served_operation_registry
 import sprintctl.cli as cli_module
 from sprintctl.cli import cli
 
@@ -42,6 +43,10 @@ def test_operation_specs_are_an_immutable_complete_route_and_probe_view():
         spec.operation for spec in OPERATION_SPECS if spec.probe
     }
     assert all(spec.disposition in {"catalog", "unavailable"} for spec in OPERATION_SPECS)
+
+
+def test_served_operation_specs_are_all_backed_by_catalog_contracts():
+    validate_served_operation_registry()
 
 
 def test_next_work_has_preconditioned_routes_and_a_distinct_explain_aggregate():
