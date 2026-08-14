@@ -32,6 +32,9 @@
       "sprintctl/maintenance_capability.py",
       "sprintctl/maintenance_resource.py",
       "sprintctl/application.py",
+      "sprintctl/application_common.py",
+      "sprintctl/work_application.py",
+      "sprintctl/project_application.py",
       "sprintctl/vuoro_adapter.py",
       "sprintctl/pg_testing.py",
       "tests/test_maintenance_capability.py",
@@ -45,7 +48,7 @@
       "verification/fixtures/maintenance-resource-owner-v1/frozen-owner-contract.json",
       "verification/validate_maintenance_resource_owner.py"
     ],
-    "candidate_digest": "04bf6bee3db13282788616968be5f41eefa796859ced1db0cd53569a13133aa5",
+    "candidate_digest": "03c358350ef0cac0ee2799974697af95f21c49a405536bdb880027f6ccc86c85",
     "commands": {
       "owner_targeted": "uv run pytest tests/test_release_integrity.py tests/test_maintenance_resource.py tests/test_maintenance_capability.py tests/test_work_application.py tests/test_pg_bootstrap.py -q",
       "postgres": "SPRINTCTL_TEST_PG_URL=<disposable> uv run --extra remote pytest tests/test_work_application_pg.py::test_maintenance_resource_frozen_postgres_history -q",
