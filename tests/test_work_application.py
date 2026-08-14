@@ -562,7 +562,7 @@ def test_served_maintain_check_uses_the_owning_readonly_diagnostic(conn, active_
     assert result["sprint"]["id"] == active_sprint["id"]
     assert result["threshold_hours"] > 0
     assert result["pending_threshold_hours"] is None
-    assert "active-item-without-live-claim" in {
+    assert "active-item-without-reservation" in {
         finding["reason_code"] for finding in result["findings"]
     }
 

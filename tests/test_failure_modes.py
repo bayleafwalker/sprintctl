@@ -84,15 +84,19 @@ class TestExpiredClaims:
         ).fetchone()
         assert row["expires_at"] > "2000-01-01"
 
-    def test_sweep_purges_expired_claim_once(self, conn, active_sprint):
+    def test_sweep_interrupts_stale_reservation_once(self, conn, active_sprint):
         iid = _item(conn, active_sprint["id"])
-        claim = _claim(conn, iid, agent="agent-a")
-        _expire(conn, claim["claim_id"])
-        now = _now()
+        reservation = db.reserve(conn, iid, actor="agent-a", session_id="session-a")
+        conn.execute(
+            "UPDATE reservation SET last_activity_at = '2000-01-01T00:00:00Z' WHERE id = ?",
+            (reservation["id"],),
+        )
+        conn.commit()
+        now = datetime.now(timezone.utc)
         result1 = maintain.sweep(conn, active_sprint["id"], now)
-        assert result1["expired_claims_purged"] >= 1
+        assert [entry["id"] for entry in result1["stale_reservations_interrupted"]] == [reservation["id"]]
         result2 = maintain.sweep(conn, active_sprint["id"], now)
-        assert result2["expired_claims_purged"] == 0
+        assert result2["stale_reservations_interrupted"] == []
 
     def test_release_expired_claim_with_valid_token_succeeds(self, conn, active_sprint):
         """An agent can release their own claim even after it expires, as long as token is valid."""
@@ -494,25 +498,25 @@ class TestMaintainSweepEdgeCases:
         """sweep on an unknown sprint_id silently returns empty results (no items to sweep)."""
         result = maintain.sweep(conn, 9999, _now())
         assert result["blocked_items"] == []
-        assert result["expired_claims_purged"] == 0
+        assert result["stale_reservations_interrupted"] == []
 
     def test_check_unknown_sprint_raises(self, conn):
         with pytest.raises((ValueError, Exception), match="not found"):
             maintain.check(conn, 9999, _now())
 
-    def test_sweep_does_not_affect_other_sprint_claims(self, conn):
-        """Expired claims in sprint A must not be purged when sweeping sprint B."""
+    def test_sweep_interrupts_stale_reservations_across_sprints(self, conn):
+        """The seven-day reservation maintenance sweep is repository-wide."""
         sid_a = db.create_sprint(conn, "A", "", "2026-01-01", "2026-01-31", "active")
         sid_b = db.create_sprint(conn, "B", "", "2026-02-01", "2026-02-28", "active")
-        iid_a = db.create_work_item(conn, db.get_or_create_track(conn, sid_a, "eng"), sid_a, "Task A")
-        cid_a = db.create_claim(conn, iid_a, agent="agent-a")
-        _expire(conn, cid_a)
+        iid_a = _item(conn, sid_a, "Task A")
+        iid_b = _item(conn, sid_b, "Task B")
+        reservation_a = db.reserve(conn, iid_a, actor="agent-a", session_id="session-a")
+        reservation_b = db.reserve(conn, iid_b, actor="agent-b", session_id="session-b")
+        conn.execute("UPDATE reservation SET last_activity_at = '2000-01-01T00:00:00Z'")
+        conn.commit()
 
-        result = maintain.sweep(conn, sid_b, _now())
-        assert result["expired_claims_purged"] == 0
-
-        row = conn.execute("SELECT id FROM claim WHERE id = ?", (cid_a,)).fetchone()
-        assert row is not None
+        result = maintain.sweep(conn, sid_b, datetime.now(timezone.utc))
+        assert {entry["id"] for entry in result["stale_reservations_interrupted"]} == {reservation_a["id"], reservation_b["id"]}
 
     def test_sweep_stale_threshold_env(self, conn, active_sprint, monkeypatch):
         """SPRINTCTL_STALE_THRESHOLD=0 makes all active items immediately stale."""
