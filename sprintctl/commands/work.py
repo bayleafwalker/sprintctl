@@ -1793,9 +1793,6 @@ def register(root: click.Group, *, runtime: dict[str, object]) -> None:
     _RUNTIME.clear()
     _RUNTIME.update({name: value for name, value in runtime.items() if not name.startswith("__")})
     _sync_runtime()
-    # The retired proof-based completion route must not be reachable through
-    # a newly composed CLI. Item completion is ordinary CAS status mutation.
-    item.commands.pop("done-from-claim", None)
     for command in (sprint, item):
         root.add_command(command)
         _wrap_runtime_callbacks(command)
