@@ -359,10 +359,12 @@ def migrate_schema(store: Any) -> dict[str, Any]:
             if state.version < 7:
                 _pg._apply_schema_version_7(cur)
                 cur.execute("UPDATE schema_version SET version = %s", (7,))
+                applied.append(7)
+                state = SchemaState(version=7, row_count=1)
             if state.version < 8:
                 _pg._apply_schema_version_8(cur)
                 cur.execute("UPDATE schema_version SET version = %s", (8,))
-                applied.append(7)
+                applied.append(8)
                 state = SchemaState(version=8, row_count=1)
             if state.version < 9:
                 _pg._apply_schema_version_9(cur)
