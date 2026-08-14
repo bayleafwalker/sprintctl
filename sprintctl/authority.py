@@ -12,16 +12,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
-import secrets
 from typing import Any, Mapping
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from . import contracts, outbox, pg
 from .db import (
-    CLAIM_TYPES,
     SPRINT_TRANSITIONS,
     VALID_TRANSITIONS,
-    _claim_event_identity,
     item_status_revision,
     sprint_status_revision,
 )
@@ -88,13 +85,6 @@ class AuthorityDecision:
         }
 
 
-def credential_ref(secret: str) -> str:
-    """Return a non-secret binding for transient claim proof material."""
-    if not isinstance(secret, str) or not secret:
-        raise ValueError("credential secret must be a non-empty string")
-    return "sha256:" + hashlib.sha256(secret.encode("utf-8")).hexdigest()
-
-
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -143,15 +133,6 @@ def _positive_int(value: Any, field: str) -> int:
     if result < 1:
         raise _RejectedCommand("invalid-command", f"{field} must be a positive integer")
     return result
-
-
-def _resolve_credential(ref: Any, credentials: Mapping[str, str]) -> str:
-    if not isinstance(ref, str) or not ref.startswith("sha256:"):
-        raise _RejectedCommand("missing-credential", "a sha256 credential_ref is required")
-    secret = credentials.get(ref)
-    if secret is None or not secrets.compare_digest(credential_ref(secret), ref):
-        raise _RejectedCommand("missing-credential", "credential_ref cannot be resolved")
-    return secret
 
 
 def _check_basis(envelope: contracts.AuthorityCommand, current: str) -> None:
@@ -399,68 +380,6 @@ def _handle_sprint(
     return effect
 
 
-
-
-def _emit_claim_handoff_event(
-    cur: Any,
-    store: pg.PgStore,
-    *,
-    claim_id: int,
-    work_item_id: int,
-    performed_by: str,
-    before: Mapping[str, Any],
-    after: Mapping[str, Any],
-    mode: str,
-    note: str | None,
-) -> None:
-    """Atomically emit the non-secret ``claim-handoff`` coordination event.
-
-    Runs on the caller's transaction-scoped cursor so the ownership UPDATE and
-    this evidence INSERT commit or roll back together -- see the claim-proof
-    transport clarification's "atomically emits non-secret claim-handoff
-    coordination evidence" requirement.  Neither the current nor the proposed
-    claim proof is ever placed in this payload; ``_claim_event_identity``
-    only reports ``claim_token_present``/``identity_status``, matching the
-    legacy ``pg.handoff_claim``/``db.handoff_claim`` non-secret shape.
-    """
-
-    cur.execute(
-        "SELECT sprint_id FROM work_item WHERE repo_id = %s AND id = %s",
-        (store.repo_id, work_item_id),
-    )
-    item = cur.fetchone()
-    if item is None:
-        # Mirrors the legacy ``_emit_claim_event`` helpers: a vanished parent
-        # work item silently forgoes coordination evidence rather than
-        # failing an otherwise-accepted claim mutation.
-        return
-    payload = contracts.canonicalize_claim_handoff_payload(
-        {
-            "summary": f"Claim #{claim_id} handed off to {after['agent']}",
-            "detail": note or f"Claim ownership transferred with mode={mode}.",
-            "tags": ["claims", "handoff", "coordination"],
-            "operation": "handoff",
-            "mode": mode,
-            "legacy_adopted": False,
-            "token_rotated": mode == "rotate",
-            "from_identity": _claim_event_identity(before),
-            "to_identity": _claim_event_identity(after),
-        }
-    )
-    cur.execute(
-        """
-        INSERT INTO event (
-            repo_id, sprint_id, work_item_id, source_type, actor, event_type, payload
-        ) VALUES (%s, %s, %s, 'system', %s, 'claim-handoff', %s)
-        """,
-        (
-            store.repo_id,
-            item["sprint_id"],
-            work_item_id,
-            performed_by,
-            json.dumps(payload),
-        ),
-    )
 
 
 def _handle_receipt(
