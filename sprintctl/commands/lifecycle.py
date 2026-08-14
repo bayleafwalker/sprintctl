@@ -669,9 +669,9 @@ def _dependency_waiting_items(conn, sprint_id: int, *, m=None) -> list[dict]:
     return waiting
 
 
-def _active_items_without_claims(active_items: list[dict], active_claims: list[dict]) -> list[dict]:
-    claimed_item_ids = {claim["work_item_id"] for claim in active_claims}
-    return [item for item in active_items if item["id"] not in claimed_item_ids]
+def _active_items_without_reservations(active_items: list[dict], active_reservations: list[dict]) -> list[dict]:
+    reserved_item_ids = {reservation["work_item_id"] for reservation in active_reservations}
+    return [item for item in active_items if item["id"] not in reserved_item_ids]
 
 
 def _format_ref_line(ref: dict) -> str:
@@ -707,23 +707,23 @@ def _collect_next_work_explained_payload(
 ) -> dict:
     m = m or _db
     dependency_waiting_items = _dependency_waiting_items(conn, sprint["id"], m=m)
-    active_claims = m.list_claims_by_sprint(conn, sprint["id"], active_only=True)
+    active_reservations = m.list_reservations_by_sprint(conn, sprint["id"], active_only=True)
     active_items = [
         {"id": item["id"], "title": item["title"], "track": item["track_name"]}
         for item in m.list_work_items(conn, sprint_id=sprint["id"], status="active")
     ]
-    active_unclaimed_items = _active_items_without_claims(active_items, active_claims)
+    active_unreserved_items = _active_items_without_reservations(active_items, active_reservations)
     conflicts = _derive_conflicts(
-        active_claims=active_claims,
-        active_unclaimed_items=active_unclaimed_items,
+        active_reservations=active_reservations,
+        active_unreserved_items=active_unreserved_items,
         blocked_items=[],
         stale_items=[],
         dependency_waiting_items=dependency_waiting_items,
         now=now,
     )
     next_action = _derive_next_action(
-        active_claims=active_claims,
-        active_unclaimed_items=active_unclaimed_items,
+        active_reservations=active_reservations,
+        active_unreserved_items=active_unreserved_items,
         conflicts=conflicts,
         ready_items=ready_items,
         blocked_items=[],
@@ -757,16 +757,16 @@ def _collect_next_work_explained_payload(
         }
         for item in dependency_waiting_items
     ]
-    visible_claims = [
+    visible_reservations = [
         {
-            "claim_id": claim["claim_id"],
-            "work_item_id": claim["work_item_id"],
-            "agent": claim["agent"],
-            "claim_type": claim["claim_type"],
-            "expires_at": claim["expires_at"],
-            "identity_status": claim.get("identity_status"),
+            "id": reservation["id"],
+            "work_item_id": reservation["work_item_id"],
+            "actor": reservation["actor"],
+            "role": reservation["role"],
+            "session_id": reservation["session_id"],
+            "stale": reservation.get("stale", False),
         }
-        for claim in active_claims
+        for reservation in active_reservations
     ]
     return {
         "contract_version": "1",
@@ -779,13 +779,13 @@ def _collect_next_work_explained_payload(
             "pending_total": len(ready_items) + len(dependency_waiting_items),
             "ready": len(ready_items),
             "waiting_on_dependencies": len(dependency_waiting_items),
-            "active_claims": len(visible_claims),
-            "active_unclaimed": len(active_unclaimed_items),
+            "active_reservations": len(visible_reservations),
+            "active_unreserved": len(active_unreserved_items),
         },
         "ready_items": ready_with_reason,
         "dependency_waiting_items": dependency_waiting_with_reason,
-        "active_claims": visible_claims,
-        "active_unclaimed_items": active_unclaimed_items,
+        "active_reservations": visible_reservations,
+        "active_unreserved_items": active_unreserved_items,
         "conflicts": conflicts,
         "next_action": next_action,
         "recommended_commands": recommended_commands,
@@ -803,8 +803,8 @@ def _render_next_work_explained_text(payload: dict) -> str:
             f"{summary['pending_total']} pending total, "
             f"{summary['ready']} ready, "
             f"{summary['waiting_on_dependencies']} waiting on dependencies, "
-            f"{summary['active_claims']} active claims, "
-            f"{summary['active_unclaimed']} active unclaimed"
+            f"{summary['active_reservations']} active reservations, "
+            f"{summary['active_unreserved']} active unreserved"
         ),
         "",
     ]
@@ -861,31 +861,31 @@ def _render_next_work_explained_text(payload: dict) -> str:
         lines.append("  (none)")
     lines.append("")
 
-    active_claims = payload["active_claims"]
-    lines.append(f"Active claims ({len(active_claims)}):")
-    if active_claims:
+    active_reservations = payload["active_reservations"]
+    lines.append(f"Active reservations ({len(active_reservations)}):")
+    if active_reservations:
         rows = []
-        for claim in active_claims:
+        for reservation in active_reservations:
             rows.append(
                 [
-                    f"#{claim['claim_id']}",
-                    f"#{claim['work_item_id']}",
-                    claim["agent"],
-                    claim["claim_type"],
-                    claim["expires_at"],
+                    f"#{reservation['id']}",
+                    f"#{reservation['work_item_id']}",
+                    reservation["actor"],
+                    reservation["role"],
+                    reservation["session_id"],
                 ]
             )
-        for line in _render_table(["CLAIM", "ITEM", "AGENT", "TYPE", "EXPIRES_AT"], rows):
+        for line in _render_table(["RESERVATION", "ITEM", "ACTOR", "ROLE", "SESSION"], rows):
             lines.append(f"  {line}")
     else:
         lines.append("  (none)")
     lines.append("")
 
-    active_unclaimed_items = payload["active_unclaimed_items"]
-    lines.append(f"Active items without claims ({len(active_unclaimed_items)}):")
-    if active_unclaimed_items:
+    active_unreserved_items = payload["active_unreserved_items"]
+    lines.append(f"Active items without reservations ({len(active_unreserved_items)}):")
+    if active_unreserved_items:
         rows = []
-        for item in active_unclaimed_items:
+        for item in active_unreserved_items:
             rows.append(
                 [
                     f"#{item['id']}",
@@ -1049,21 +1049,10 @@ def _render_session_resume_text(payload: dict) -> str:
     return "\n".join(lines)
 
 
-def _claims_expiring_within(active_claims: list[dict], now: datetime, seconds: int) -> list[dict]:
-    expiring: list[dict] = []
-    for claim in active_claims:
-        expires_at = _parse_utc_timestamp(claim.get("expires_at"))
-        if expires_at is None:
-            continue
-        if (expires_at - now).total_seconds() <= seconds:
-            expiring.append(claim)
-    return expiring
-
-
 def _derive_conflicts(
     *,
-    active_claims: list[dict],
-    active_unclaimed_items: list[dict],
+    active_reservations: list[dict],
+    active_unreserved_items: list[dict],
     blocked_items: list[dict],
     stale_items: list[dict],
     dependency_waiting_items: list[dict],
@@ -1071,47 +1060,29 @@ def _derive_conflicts(
 ) -> list[dict]:
     conflicts: list[dict] = []
 
-    legacy_claims = [claim for claim in active_claims if claim.get("identity_status") != "proven"]
-    if legacy_claims:
+    stale_reservations = [reservation for reservation in active_reservations if reservation.get("stale")]
+    if stale_reservations:
         conflicts.append(
             {
-                "kind": "claim-identity",
+                "kind": "stale-reservation",
                 "severity": "warning",
-                "summary": (
-                    f"{len(legacy_claims)} active claim(s) have ambiguous ownership proof "
-                    "and require explicit adoption or expiry."
-                ),
-                "claim_ids": [claim["claim_id"] for claim in legacy_claims],
-                "item_ids": [claim["work_item_id"] for claim in legacy_claims],
+                "summary": f"{len(stale_reservations)} active reservation(s) have been idle for four hours.",
+                "reservation_ids": [reservation["id"] for reservation in stale_reservations],
+                "item_ids": [reservation["work_item_id"] for reservation in stale_reservations],
             }
         )
 
-    expiring_claims = _claims_expiring_within(active_claims, now, seconds=120)
-    if expiring_claims:
+    if active_unreserved_items:
         conflicts.append(
             {
-                "kind": "claim-expiry",
+                "kind": "unreserved-active-work",
+                "reason_code": "active-item-without-reservation",
                 "severity": "warning",
                 "summary": (
-                    f"{len(expiring_claims)} active claim(s) expire within 120 seconds "
-                    "and may need heartbeat or handoff."
+                    f"{len(active_unreserved_items)} active item(s) have no reservation "
+                    "and need resume, reassignment, or status triage."
                 ),
-                "claim_ids": [claim["claim_id"] for claim in expiring_claims],
-                "item_ids": [claim["work_item_id"] for claim in expiring_claims],
-            }
-        )
-
-    if active_unclaimed_items:
-        conflicts.append(
-            {
-                "kind": "unclaimed-active-work",
-                "reason_code": "active-item-without-live-claim",
-                "severity": "warning",
-                "summary": (
-                    f"{len(active_unclaimed_items)} active item(s) have no live claim "
-                    "and need resume, handoff, or status triage."
-                ),
-                "item_ids": [item["id"] for item in active_unclaimed_items],
+                "item_ids": [item["id"] for item in active_unreserved_items],
             }
         )
 
@@ -1160,8 +1131,8 @@ def _derive_conflicts(
 
 def _derive_next_action(
     *,
-    active_claims: list[dict],
-    active_unclaimed_items: list[dict],
+    active_reservations: list[dict],
+    active_unreserved_items: list[dict],
     conflicts: list[dict],
     ready_items: list[dict],
     blocked_items: list[dict],
@@ -1170,27 +1141,19 @@ def _derive_next_action(
 ) -> dict:
     if conflicts:
         first = conflicts[0]
-        if first["kind"] == "claim-identity":
+        if first["kind"] == "stale-reservation":
             return {
-                "kind": "resolve-claim-identity",
-                "summary": "Resolve ambiguous active claim ownership before resuming or starting new work.",
-                "claim_id": first["claim_ids"][0],
+                "kind": "review-stale-reservation",
+                "summary": "Review or reassign the stale reservation.",
+                "reservation_id": first["reservation_ids"][0],
                 "item_id": first["item_ids"][0],
                 "reason": first["summary"],
             }
-        if first["kind"] == "claim-expiry":
+        if first["kind"] == "unreserved-active-work":
+            item = active_unreserved_items[0]
             return {
-                "kind": "refresh-claim",
-                "summary": "Heartbeat or hand off the next expiring claim before it lapses.",
-                "claim_id": first["claim_ids"][0],
-                "item_id": first["item_ids"][0],
-                "reason": first["summary"],
-            }
-        if first["kind"] == "unclaimed-active-work":
-            item = active_unclaimed_items[0]
-            return {
-                "kind": "resume-unclaimed-active-item",
-                "summary": f"Resume or triage active item #{item['id']} because it has no live claim.",
+                "kind": "resume-unreserved-active-item",
+                "summary": f"Resume or triage active item #{item['id']} because it has no reservation.",
                 "item_id": item["id"],
                 "reason": first["summary"],
             }
@@ -1223,21 +1186,21 @@ def _derive_next_action(
                 "reason": first["summary"],
             }
 
-    if active_claims:
-        claim = active_claims[0]
+    if active_reservations:
+        reservation = active_reservations[0]
         return {
-            "kind": "inspect-active-claim",
-            "summary": f"Inspect claimed item #{claim['work_item_id']} before starting new work.",
-            "claim_id": claim["claim_id"],
-            "item_id": claim["work_item_id"],
-            "reason": "Active claimed work already exists in this sprint.",
+            "kind": "inspect-active-reservation",
+            "summary": f"Inspect reserved item #{reservation['work_item_id']} before starting new work.",
+            "reservation_id": reservation["id"],
+            "item_id": reservation["work_item_id"],
+            "reason": "Active reserved work already exists in this sprint.",
         }
 
     if ready_items:
         item = ready_items[0]
         return {
             "kind": "start-ready-item",
-            "summary": f"Start ready item #{item['id']} because it is unblocked and no active claims are open.",
+            "summary": f"Start ready item #{item['id']} because it is unblocked and no active reservations are open.",
             "item_id": item["id"],
             "reason": "Ready work is available now.",
         }

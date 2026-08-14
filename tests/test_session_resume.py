@@ -98,8 +98,8 @@ class TestSessionResumeCommand:
         assert data["context"]["active_unclaimed_items"] == [
             {"id": iid, "title": "Interrupted task", "track": "eng"}
         ]
-        assert data["next_work"]["summary"]["active_unclaimed"] == 1
-        assert data["next_work"]["active_unclaimed_items"][0]["id"] == iid
+        assert data["next_work"]["summary"]["active_unreserved"] == 1
+        assert data["next_work"]["active_unreserved_items"][0]["id"] == iid
         assert data["next_action"]["kind"] == "resume-unreserved-active-item"
         assert data["next_work"]["recommended_commands"] == [
             f"sprintctl reservation reserve --item-id {iid} --actor <name> --session-id <session-id> --json",
