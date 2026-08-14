@@ -95,7 +95,7 @@ class TestSessionResumeCommand:
 
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
-        assert data["context"]["active_unclaimed_items"] == [
+        assert data["context"]["active_unreserved_items"] == [
             {"id": iid, "title": "Interrupted task", "track": "eng"}
         ]
         assert data["next_work"]["summary"]["active_unreserved"] == 1

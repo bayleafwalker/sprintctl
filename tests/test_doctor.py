@@ -364,7 +364,7 @@ def test_probe_served_backend_reports_mismatch_for_missing_operations(tmp_path, 
 
     assert result["compatible"] is False
     assert result["status"] == "mismatch"
-    assert "work.claim.start" in result["error"]
+    assert "work.reservation.reserve" in result["error"]
 
 
 def test_probe_served_backend_reports_catalog_transport_failure(tmp_path, monkeypatch):

@@ -56,13 +56,13 @@ def _waiting(store: Any, sprint_id: int, backend: Any) -> list[dict[str, Any]]:
     return waiting
 
 
-def _conflicts(*, active_reservations, active_unclaimed_items, blocked_items, stale_items, waiting, now):
+def _conflicts(*, active_reservations, active_unreserved_items, blocked_items, stale_items, waiting, now):
     conflicts = []
     stale = [row for row in active_reservations if row.get("stale")]
     if stale:
         conflicts.append({"kind": "stale-reservation", "severity": "warning", "summary": f"{len(stale)} active reservation(s) have been idle for four hours.", "reservation_ids": [row["id"] for row in stale], "item_ids": [row["work_item_id"] for row in stale]})
-    if active_unclaimed_items:
-        conflicts.append({"kind": "unreserved-active-work", "reason_code": "active-item-without-reservation", "severity": "warning", "summary": f"{len(active_unclaimed_items)} active item(s) have no reservation and need resume, reassignment, or status triage.", "item_ids": [row["id"] for row in active_unclaimed_items]})
+    if active_unreserved_items:
+        conflicts.append({"kind": "unreserved-active-work", "reason_code": "active-item-without-reservation", "severity": "warning", "summary": f"{len(active_unreserved_items)} active item(s) have no reservation and need resume, reassignment, or status triage.", "item_ids": [row["id"] for row in active_unreserved_items]})
     if waiting:
         conflicts.append({"kind": "dependency-blocked", "severity": "warning", "summary": f"{len(waiting)} pending item(s) are waiting on unresolved blockers.", "item_ids": [row["id"] for row in waiting], "blocker_ids": sorted({bid for row in waiting for bid in row["unresolved_blocker_ids"]})})
     if blocked_items:
@@ -72,13 +72,13 @@ def _conflicts(*, active_reservations, active_unclaimed_items, blocked_items, st
     return conflicts
 
 
-def _next_action(*, active_reservations, active_unclaimed_items, conflicts, ready_items, blocked_items, stale_items, waiting):
+def _next_action(*, active_reservations, active_unreserved_items, conflicts, ready_items, blocked_items, stale_items, waiting):
     if conflicts:
         first = conflicts[0]
         if first["kind"] == "stale-reservation":
             return {"kind": "review-stale-reservation", "summary": "Review or reassign the stale reservation.", "reservation_id": first["reservation_ids"][0], "item_id": first["item_ids"][0], "reason": first["summary"]}
         if first["kind"] == "unreserved-active-work":
-            item = active_unclaimed_items[0]
+            item = active_unreserved_items[0]
             return {"kind": "resume-unreserved-active-item", "summary": f"Resume or triage active item #{item['id']} because it has no reservation.", "item_id": item["id"], "reason": first["summary"]}
         if first["kind"] == "dependency-blocked":
             item = waiting[0]
@@ -109,17 +109,17 @@ def build_context_contract(store: Any, sprint: dict[str, Any], now: datetime, *,
     all_items = backend.list_work_items(store, sprint_id=sprint["id"])
     blocked_items = [{"id": item["id"], "title": item["title"], "track": item["track_name"]} for item in all_items if item["status"] == "blocked"]
     active_items = [{"id": item["id"], "title": item["title"], "track": item["track_name"]} for item in all_items if item["status"] == "active"]
-    active_unclaimed = [item for item in active_items if item["id"] not in {row["work_item_id"] for row in active_reservations}]
+    active_unreserved = [item for item in active_items if item["id"] not in {row["work_item_id"] for row in active_reservations}]
     ready_items = [{"id": item["id"], "title": item["title"], "track": item["track_name"]} for item in backend.get_ready_items(store, sprint["id"])]
     waiting = _waiting(store, sprint["id"], backend)
     recent_decisions = [_summarize_event(event) for event in reversed(backend.list_knowledge_candidates(store, sprint["id"])[-5:])]
-    conflicts = _conflicts(active_reservations=active_reservations, active_unclaimed_items=active_unclaimed, blocked_items=blocked_items, stale_items=stale_items, waiting=waiting, now=now)
+    conflicts = _conflicts(active_reservations=active_reservations, active_unreserved_items=active_unreserved, blocked_items=blocked_items, stale_items=stale_items, waiting=waiting, now=now)
     conflicts.extend(row for row in report["findings"] if row["reason_code"] != "active-item-without-live-claim")
     return contracts.ContextContract(
         sprint={key: sprint.get(key) for key in ("id", "name", "goal", "status", "start_date", "end_date")},
-        summary={"total": len(all_items), "done": sum(item["status"] == "done" for item in all_items), "active": len(active_items), "pending": sum(item["status"] == "pending" for item in all_items), "blocked": len(blocked_items), "stale": len(stale_items), "ready": len(ready_items), "waiting_on_dependencies": len(waiting), "active_reservations": len(active_reservations), "active_unreserved": len(active_unclaimed)},
-        active_reservations=active_reservations, active_unclaimed_items=active_unclaimed, conflicts=conflicts,
+        summary={"total": len(all_items), "done": sum(item["status"] == "done" for item in all_items), "active": len(active_items), "pending": sum(item["status"] == "pending" for item in all_items), "blocked": len(blocked_items), "stale": len(stale_items), "ready": len(ready_items), "waiting_on_dependencies": len(waiting), "active_reservations": len(active_reservations), "active_unreserved": len(active_unreserved)},
+        active_reservations=active_reservations, active_unreserved_items=active_unreserved, conflicts=conflicts,
         ready_items=ready_items, blocked_items=blocked_items, stale_items=stale_items,
         recent_decisions=recent_decisions,
-        next_action=_next_action(active_reservations=active_reservations, active_unclaimed_items=active_unclaimed, conflicts=conflicts, ready_items=ready_items, blocked_items=blocked_items, stale_items=stale_items, waiting=waiting),
+        next_action=_next_action(active_reservations=active_reservations, active_unreserved_items=active_unreserved, conflicts=conflicts, ready_items=ready_items, blocked_items=blocked_items, stale_items=stale_items, waiting=waiting),
     ).to_dict()

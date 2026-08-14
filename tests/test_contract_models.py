@@ -98,7 +98,7 @@ class TestContextContractModel:
             sprint={"id": 4, "name": "S4"},
             summary={"total": 1},
             active_reservations=[],
-            active_unclaimed_items=[],
+            active_unreserved_items=[],
             conflicts=[],
             ready_items=[],
             blocked_items=[],
@@ -111,7 +111,7 @@ class TestContextContractModel:
             "sprint",
             "summary",
             "active_reservations",
-            "active_unclaimed_items",
+            "active_unreserved_items",
             "conflicts",
             "ready_items",
             "blocked_items",
@@ -126,7 +126,7 @@ class TestContextContractModel:
             sprint={"id": 4, "name": "S4"},
             summary={"total": 1},
             active_reservations=[{"id": 7, "actor": "agent"}],
-            active_unclaimed_items=[{"id": 9, "title": "Task"}],
+            active_unreserved_items=[{"id": 9, "title": "Task"}],
             conflicts=[],
             ready_items=[],
             blocked_items=[],
@@ -143,7 +143,7 @@ class TestContextContractModel:
         second_json = json.dumps(second)
         assert mutated_json != second_json
         assert second["active_reservations"][0]["actor"] == "agent"
-        assert second["active_unclaimed_items"][0]["title"] == "Task"
+        assert second["active_unreserved_items"][0]["title"] == "Task"
 
 
 class TestHandoffBundleModel:

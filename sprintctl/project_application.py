@@ -21,7 +21,7 @@ def _tag_project_context(payload: Mapping[str, Any], origin_repo: str) -> dict[s
     tagged["sprint"] = {**payload["sprint"], "origin_repo": origin_repo}
     for key in (
         "active_reservations",
-        "active_unclaimed_items",
+        "active_unreserved_items",
         "conflicts",
         "ready_items",
         "blocked_items",
@@ -238,15 +238,15 @@ class ProjectWorkApplication:
             )
         summary_keys = (
             "total", "done", "active", "pending", "blocked", "stale", "ready",
-            "waiting_on_dependencies", "active_claims", "active_unclaimed",
+            "waiting_on_dependencies", "active_reservations", "active_unreserved",
         )
         return {
             "contract_version": "project-1",
             "project": dict(binding),
             "summary": {key: sum(snapshot["summary"][key] for snapshot in snapshots) for key in summary_keys},
             "sprints": [snapshot["sprint"] for snapshot in snapshots],
-            "active_claims": [value for snapshot in snapshots for value in snapshot["active_claims"]],
-            "active_unclaimed_items": [value for snapshot in snapshots for value in snapshot["active_unclaimed_items"]],
+            "active_reservations": [value for snapshot in snapshots for value in snapshot["active_reservations"]],
+            "active_unreserved_items": [value for snapshot in snapshots for value in snapshot["active_unreserved_items"]],
             "conflicts": [value for snapshot in snapshots for value in snapshot["conflicts"]],
             "ready_items": [value for snapshot in snapshots for value in snapshot["ready_items"]],
             "blocked_items": [value for snapshot in snapshots for value in snapshot["blocked_items"]],

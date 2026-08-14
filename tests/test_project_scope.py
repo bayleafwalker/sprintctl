@@ -250,8 +250,8 @@ def test_served_project_views_do_not_read_client_binding_and_keep_sprint_json_sh
     project_context = {
         "contract_version": "project-1",
         "project": {"project_id": PROJECT_ID},
-        "summary": {}, "sprints": [], "active_claims": [],
-        "active_unclaimed_items": [], "conflicts": [], "ready_items": [],
+        "summary": {}, "sprints": [], "active_reservations": [],
+        "active_unreserved_items": [], "conflicts": [], "ready_items": [],
         "blocked_items": [], "stale_items": [], "recent_decisions": [],
         "next_actions": [], "repositories": [],
     }

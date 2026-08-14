@@ -363,7 +363,7 @@ class WorkApplication:
                 for event in self.backend.list_events(self.store, item["sprint_id"])
                 if event.get("work_item_id") == item_id
             ],
-            "active_claims": self.backend.list_claims(
+            "active_reservations": self.backend.list_reservations(
                 self.store, item_id, active_only=True
             ),
             "refs": self.backend.list_refs(self.store, item_id),
@@ -382,55 +382,6 @@ class WorkApplication:
         return {"repo_id": self.repo_id, "items": self.backend.list_work_items(
             self.store, sprint_id=sprint_id, track_name=track_name, status=status
         )}
-
-    def _read_claims(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
-        item_id = _optional_positive_int(arguments.get("item_id"), "item_id")
-        sprint_id = _optional_positive_int(arguments.get("sprint_id"), "sprint_id")
-        if item_id is not None and sprint_id is not None:
-            raise ApplicationRejection("invalid-arguments", "provide at most one of item_id or sprint_id", 422)
-        instance_id = _optional_text(arguments.get("instance_id"), "instance_id")
-        runtime_session_id = _optional_text(arguments.get("runtime_session_id"), "runtime_session_id")
-        hostname = _optional_text(arguments.get("hostname"), "hostname")
-        pid = _optional_positive_int(arguments.get("pid"), "pid")
-        if hostname is None and pid is not None:
-            raise ApplicationRejection("invalid-arguments", "pid requires hostname", 422)
-        active_only = bool(arguments.get("active_only", True))
-        identity_query = instance_id or runtime_session_id or hostname
-        if identity_query:
-            # Domain backend owns canonical (AND-composed) identity matching
-            # and intentionally searches the entire repository for resume.
-            claims = self.backend.find_claim_by_identity(
-                self.store, instance_id=instance_id, runtime_session_id=runtime_session_id,
-                hostname=hostname, pid=pid, active_only=active_only,
-            )
-            if item_id is not None:
-                claims = [claim for claim in claims if claim["work_item_id"] == item_id]
-            if sprint_id is not None:
-                if self.backend.get_sprint(self.store, sprint_id) is None:
-                    raise ApplicationRejection("sprint-not-found", f"Sprint #{sprint_id} not found", 404)
-                item_ids = {item["id"] for item in self.backend.list_work_items(self.store, sprint_id=sprint_id)}
-                claims = [claim for claim in claims if claim["work_item_id"] in item_ids]
-        elif item_id is not None:
-            claims = self.backend.list_claims(self.store, item_id, active_only=active_only)
-        elif sprint_id is not None:
-            if self.backend.get_sprint(self.store, sprint_id) is None:
-                raise ApplicationRejection("sprint-not-found", f"Sprint #{sprint_id} not found", 404)
-            claims = self.backend.list_claims_by_sprint(self.store, sprint_id, active_only=active_only)
-        else:
-            sprint = self._resolve_sprint(None)
-            claims = self.backend.list_claims_by_sprint(self.store, sprint["id"], active_only=active_only)
-        return {"repo_id": self.repo_id, "claims": claims}
-
-    def _read_claim(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
-        """Return one claim's inspectable state, never its bearer proof."""
-        claim_id = _positive_int(arguments.get("claim_id"), "claim_id")
-        claim = self.backend.get_claim(self.store, claim_id, include_secret=False)
-        if claim is None:
-            raise ApplicationRejection("claim-not-found", f"Claim #{claim_id} not found", 404)
-        # Backends must honour include_secret=False; keep this defensive
-        # boundary so a serialization regression cannot publish a token.
-        claim.pop("claim_token", None)
-        return {"repo_id": self.repo_id, "claim": claim}
 
     def _read_context(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
         """Return ContextContract v1 from one repeatable-read server snapshot.
@@ -1007,9 +958,13 @@ class WorkApplication:
             raise ApplicationRejection("reservation-not-found", "reservation not found", 404)
         return {"repo_id": self.repo_id, "reservation": value}
 
-    def _reservation_reserve(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+    def _reservation_reserve(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        actor = _required_text(arguments.get("actor"), "actor")
+        authenticated_actor = getattr(context.identity, "actor", None)
+        if authenticated_actor is not None and actor != authenticated_actor:
+            raise ApplicationRejection("actor-mismatch", "reservation actor must match the authenticated identity", 403)
         row = self.backend.reserve(self.store, _positive_int(arguments.get("item_id"), "item_id"),
-            actor=_required_text(arguments.get("actor"), "actor"), session_id=_required_text(arguments.get("session_id"), "session_id"),
+            actor=actor, session_id=_required_text(arguments.get("session_id"), "session_id"),
             role=arguments.get("role", "execute"), correlation_ref=arguments.get("correlation_ref"), override=bool(arguments.get("override", False)))
         return {"repo_id": self.repo_id, "reservation": row}
 
@@ -1018,9 +973,13 @@ class WorkApplication:
             session_id=_required_text(arguments.get("session_id"), "session_id"), correlation_ref=arguments.get("correlation_ref"))
         return {"repo_id": self.repo_id, "reservation": row}
 
-    def _reservation_reassign(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+    def _reservation_reassign(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        actor = _required_text(arguments.get("actor"), "actor")
+        authenticated_actor = getattr(context.identity, "actor", None)
+        if authenticated_actor is not None and actor != authenticated_actor:
+            raise ApplicationRejection("actor-mismatch", "reservation actor must match the authenticated identity", 403)
         row = self.backend.reassign_reservation(self.store, _positive_int(arguments.get("reservation_id"), "reservation_id"),
-            actor=_required_text(arguments.get("actor"), "actor"), session_id=_required_text(arguments.get("session_id"), "session_id"), correlation_ref=arguments.get("correlation_ref"))
+            actor=actor, session_id=_required_text(arguments.get("session_id"), "session_id"), correlation_ref=arguments.get("correlation_ref"))
         return {"repo_id": self.repo_id, "reservation": row}
 
     def _reservation_release(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:

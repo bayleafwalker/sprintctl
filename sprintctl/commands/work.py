@@ -937,7 +937,7 @@ def _projection_item_events(projection_path: Path, item_id: int) -> list[dict]:
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 @click.pass_obj
 def item_show(obj, item_id: str, as_json) -> None:
-    """Show a single work item with its recent events and active claims."""
+    """Show a single work item with its recent events and active reservations."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
     config = _served_config_or_none(obj)
     context = _resolved_context(obj["backend_config"])
@@ -953,7 +953,7 @@ def item_show(obj, item_id: str, as_json) -> None:
         )
         it = result["item"]
         item_events = result["events"]
-        claims = result["active_claims"]
+        reservations = result["active_reservations"]
         refs = result["refs"]
         blocking = result["deps"]["blocked_by"]
         blocked_by_me = result["deps"]["blocks"]
@@ -987,7 +987,7 @@ def item_show(obj, item_id: str, as_json) -> None:
             events = m.list_events(store, it["sprint_id"])
             item_events = [e for e in events if e.get("work_item_id") == item_id]
 
-        claims = m.list_claims(store, item_id, active_only=True)
+        reservations = m.list_reservations(store, item_id, active_only=True)
         refs = m.list_refs(store, item_id)
         blocking = m.list_deps_blocking(store, item_id)
         blocked_by_me = m.list_deps_blocked_by(store, item_id)
@@ -996,7 +996,7 @@ def item_show(obj, item_id: str, as_json) -> None:
         payload = {
             "item": dict(it),
             "events": item_events,
-            "active_claims": claims,
+            "active_reservations": reservations,
             "refs": refs,
             "deps": {"blocked_by": blocking, "blocks": blocked_by_me},
             "resolved_context": context,
@@ -1042,30 +1042,15 @@ def item_show(obj, item_id: str, as_json) -> None:
         for d in blocked_by_me:
             click.echo(f"  #{d['blocked_item_id']}  [{d['waiting_status']}]  {d['waiting_title']}")
 
-    if claims:
-        click.echo("\nActive claims:")
-        for c in claims:
-            excl = "exclusive" if c["exclusive"] else "shared"
+    if reservations:
+        click.echo("\nActive reservations:")
+        for reservation in reservations:
             parts = [
-                f"  #{c['claim_id']}  {c['actor']}  [{c['claim_type']}]  {excl}  "
-                f"proof={c['identity_status']}  expires={c['expires_at']}"
+                f"  #{reservation['id']}  {reservation['actor']}  "
+                f"[{reservation['role']}]  session={reservation['session_id']}"
             ]
-            if c.get("runtime_session_id"):
-                parts.append(f"  runtime={c['runtime_session_id']}")
-            if c.get("instance_id"):
-                parts.append(f"  instance={c['instance_id']}")
-            if c.get("branch"):
-                parts.append(f"  branch={c['branch']}")
-            if c.get("commit_sha"):
-                parts.append(f"  commit={c['commit_sha']}")
-            if c.get("pr_ref"):
-                parts.append(f"  pr={c['pr_ref']}")
-            if c.get("worktree_path"):
-                parts.append(f"  worktree={c['worktree_path']}")
-            if c.get("hostname"):
-                parts.append(f"  host={c['hostname']}")
-            if c.get("pid") is not None:
-                parts.append(f"  pid={c['pid']}")
+            if reservation.get("correlation_ref"):
+                parts.append(f"  correlation={reservation['correlation_ref']}")
             click.echo("".join(parts))
 
     if item_events:

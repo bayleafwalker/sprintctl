@@ -452,14 +452,14 @@ class TestNextWork:
         assert ready["id"] == iid_ready
         assert ready["reason_code"] == "ready-unblocked"
         assert data["recommended_commands"] == [
-            f"sprintctl claim start --item-id {iid_ready} --actor <name> --ttl 600 --json",
+            f"sprintctl reservation reserve --item-id {iid_ready} --actor <name> --session-id <session-id> --json",
             f"sprintctl item show --id {iid_ready}",
         ]
         bundle = data["recommended_command_bundle"]
         assert bundle["bundle_version"] == "1"
         assert bundle["next_action_kind"] == "start-ready-item"
-        assert [step["kind"] for step in bundle["steps"]] == ["claim-start", "item-show"]
-        assert bundle["steps"][0]["placeholders"] == ["<name>"]
+        assert [step["kind"] for step in bundle["steps"]] == ["reservation-reserve", "item-show"]
+        assert bundle["steps"][0]["placeholders"] == ["<name>", "<session-id>"]
         assert bundle["steps"][0]["requires_input"] is True
         assert bundle["steps"][0]["is_executable"] is False
         assert bundle["steps"][1]["placeholders"] == []
@@ -497,14 +497,10 @@ class TestNextWork:
         assert [step["kind"] for step in bundle["steps"]] == ["item-show", "item-show", "next-work"]
         assert all(step["is_executable"] for step in bundle["steps"])
 
-    def test_next_work_json_explain_prioritizes_active_claim(self, runner, conn, active_sprint, db_path):
-        claimed = _item(conn, active_sprint["id"], "Claimed task")
-        claim_id = db.create_claim(
-            conn,
-            claimed,
-            "codex-agent",
-            runtime_session_id="session-next-work",
-            instance_id="instance-next-work",
+    def test_next_work_json_explain_prioritizes_active_reservation(self, runner, conn, active_sprint, db_path):
+        claimed = _item(conn, active_sprint["id"], "Reserved task")
+        reservation = db.reserve(
+            conn, claimed, actor="codex-agent", session_id="session-next-work"
         )
         result = runner.invoke(
             cli,
@@ -512,23 +508,20 @@ class TestNextWork:
         )
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
-        assert data["summary"]["active_claims"] == 1
-        assert data["next_action"]["kind"] == "inspect-active-claim"
-        assert data["next_action"]["claim_id"] == claim_id
+        assert data["summary"]["active_reservations"] == 1
+        assert data["next_action"]["kind"] == "inspect-active-reservation"
+        assert data["next_action"]["reservation_id"] == reservation["id"]
         assert data["recommended_commands"] == [
             f"sprintctl item show --id {claimed}",
-            f"sprintctl claim heartbeat --id {claim_id} --claim-token <token> --ttl 600 --actor <name>",
-            f"sprintctl claim handoff --id {claim_id} --claim-token <token> --actor <next-agent> --mode rotate --json",
+            f"sprintctl reservation show --id {reservation['id']} --json",
         ]
         bundle = data["recommended_command_bundle"]
-        assert bundle["next_action_kind"] == "inspect-active-claim"
+        assert bundle["next_action_kind"] == "inspect-active-reservation"
         assert [step["kind"] for step in bundle["steps"]] == [
             "item-show",
-            "claim-heartbeat",
-            "claim-handoff",
+            "reservation-show",
         ]
-        assert bundle["steps"][1]["placeholders"] == ["<token>", "<name>"]
-        assert bundle["steps"][2]["placeholders"] == ["<token>", "<next-agent>"]
+        assert bundle["steps"][1]["placeholders"] == []
 
     def test_next_work_explain_text_output(self, runner, conn, active_sprint):
         _item(conn, active_sprint["id"], "Ready task")
@@ -538,7 +531,7 @@ class TestNextWork:
         assert "Summary:" in result.output
         assert "Ready items (1):" in result.output
         assert "Dependency waiting items (0):" in result.output
-        assert "Active claims (0):" in result.output
+        assert "Active reservations (0):" in result.output
         assert "Conflicts (0):" in result.output
         assert "Next action:" in result.output
         assert "Recommended commands:" in result.output

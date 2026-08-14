@@ -746,8 +746,8 @@ def usage_cmd(obj, as_context, sprint_id, project_path, as_json) -> None:
                 "stale",
                 "ready",
                 "waiting_on_dependencies",
-                "active_claims",
-                "active_unclaimed",
+                "active_reservations",
+                "active_unreserved",
             )
             union_payload = {
                 "contract_version": "project-1",
@@ -757,13 +757,13 @@ def usage_cmd(obj, as_context, sprint_id, project_path, as_json) -> None:
                     for key in summary_keys
                 },
                 "sprints": [snapshot["sprint"] for snapshot in snapshots],
-                "active_claims": [
-                    value for snapshot in snapshots for value in snapshot["active_claims"]
+                "active_reservations": [
+                    value for snapshot in snapshots for value in snapshot["active_reservations"]
                 ],
-                "active_unclaimed_items": [
+                "active_unreserved_items": [
                     value
                     for snapshot in snapshots
-                    for value in snapshot["active_unclaimed_items"]
+                    for value in snapshot["active_unreserved_items"]
                 ],
                 "conflicts": [
                     value for snapshot in snapshots for value in snapshot["conflicts"]

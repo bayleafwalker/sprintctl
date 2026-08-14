@@ -1491,7 +1491,7 @@ class TestItemShow:
         data = json.loads(result.output)
         assert data["item"]["title"] == "Build API"
         assert "events" in data
-        assert "active_claims" in data
+        assert "active_reservations" in data
         assert data["resolved_context"] == {
             "repo_id": tmp_path.name,
             "repo_source": "cwd",

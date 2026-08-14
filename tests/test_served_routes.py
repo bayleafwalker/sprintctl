@@ -23,7 +23,7 @@ def test_project_context_result_schema_covers_every_aggregate_field():
     )
     assert set(contract.result_schema["properties"]) == {
         "contract_version", "project", "summary", "sprints",
-        "active_claims", "active_unclaimed_items", "conflicts", "ready_items",
+        "active_reservations", "active_unreserved_items", "conflicts", "ready_items",
         "blocked_items", "stale_items", "recent_decisions", "next_actions",
         "repositories",
     }

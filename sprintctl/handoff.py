@@ -57,7 +57,7 @@ def build_handoff_bundle(store: Any, sprint: dict, events_limit: int, *, backend
         sprintctl_version=version, generated_at=generated_at,
         generated_from={"command": "sprintctl handoff", "events_limit": events_limit},
         sprint=dict(sprint), summary=context["summary"], active_reservations=context["active_reservations"], conflicts=context["conflicts"],
-        work={"active_items": active_items, "active_unclaimed_items": context["active_unclaimed_items"], "ready_items": context["ready_items"], "blocked_items": context["blocked_items"], "stale_items": context["stale_items"]},
+        work={"active_items": active_items, "active_unreserved_items": context["active_unreserved_items"], "ready_items": context["ready_items"], "blocked_items": context["blocked_items"], "stale_items": context["stale_items"]},
         recent_decisions=context["recent_decisions"], recent_events=[context_contract._summarize_event(event) for event in recent_events], next_action=context["next_action"],
         delta_since_last_handoff=_delta_since_last_handoff(previous_handoff=previous_handoff, items=items_with_refs, all_events=all_events, active_reservations=context["active_reservations"]),
         freshness={"generated_at": generated_at, "previous_handoff_at": previous_handoff["created_at"] if previous_handoff else None, "stale_item_count": len(context["stale_items"]), "active_reservation_count": len(context["active_reservations"]), "dirty_file_count": len(git_context["dirty_files"]) if git_context else 0},

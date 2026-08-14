@@ -1345,10 +1345,10 @@ def _render_context_text(snapshot: dict) -> str:
         lines.append("  (none)")
     lines.append("")
 
-    active_unclaimed_items = snapshot["active_unclaimed_items"]
-    lines.append(f"Active items without reservations ({len(active_unclaimed_items)}):")
-    if active_unclaimed_items:
-        for item in active_unclaimed_items:
+    active_unreserved_items = snapshot["active_unreserved_items"]
+    lines.append(f"Active items without reservations ({len(active_unreserved_items)}):")
+    if active_unreserved_items:
+        for item in active_unreserved_items:
             lines.append(f"  #{item['id']}  {item['title']}  (track: {item['track']})")
     else:
         lines.append("  (none)")

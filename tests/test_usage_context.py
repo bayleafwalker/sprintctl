@@ -39,7 +39,7 @@ class TestUsageContext:
             "sprint",
             "summary",
             "active_reservations",
-            "active_unclaimed_items",
+            "active_unreserved_items",
             "conflicts",
             "ready_items",
             "blocked_items",
@@ -108,7 +108,7 @@ class TestUsageContext:
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         assert data["summary"]["active_unreserved"] == 1
-        assert data["active_unclaimed_items"] == [
+        assert data["active_unreserved_items"] == [
             {"id": iid, "title": "Interrupted task", "track": "eng"}
         ]
         assert data["conflicts"][0]["kind"] == "unreserved-active-work"

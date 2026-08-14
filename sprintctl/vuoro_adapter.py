@@ -269,12 +269,12 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
             {"item_id": {"type": "integer", "minimum": 1}}, required=("item_id",)
         ),
         _result_schema(
-            ("repo_id", "item", "events", "active_claims", "refs", "deps"),
+            ("repo_id", "item", "events", "active_reservations", "refs", "deps"),
             {
                 "repo_id": {"type": "string"},
                 "item": {"type": "object"},
                 "events": {"type": "array", "items": {"type": "object"}},
-                "active_claims": {"type": "array", "items": {"type": "object"}},
+                "active_reservations": {"type": "array", "items": {"type": "object"}},
                 "refs": {"type": "array", "items": {"type": "object"}},
                 "deps": {"type": "object"},
             },
@@ -318,30 +318,18 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "not-allowed",
     ),
     WorkOperationContract(
-        "work.read.claims",
-        _object_schema({"item_id": {"type": ["integer", "null"], "minimum": 1}, "sprint_id": {"type": ["integer", "null"], "minimum": 1}, "active_only": {"type": "boolean", "default": True}, "instance_id": {"type": ["string", "null"]}, "runtime_session_id": {"type": ["string", "null"]}, "hostname": {"type": ["string", "null"]}, "pid": {"type": ["integer", "null"], "minimum": 1}}),
-        _result_schema(("repo_id", "claims"), {"repo_id": {"type": "string"}, "claims": {"type": "array", "items": {"type": "object"}}}),
-        "work:read", "read", "not-allowed",
-    ),
-    WorkOperationContract(
-        "work.read.claim",
-        _object_schema({"claim_id": {"type": "integer", "minimum": 1}}, required=("claim_id",)),
-        _result_schema(("repo_id", "claim"), {"repo_id": {"type": "string"}, "claim": {"type": "object"}}),
-        "work:read", "read", "not-allowed",
-    ),
-    WorkOperationContract(
         "work.read.context",
         _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
         _result_schema(
             (
-                "contract_version", "sprint", "summary", "active_claims",
-                "active_unclaimed_items", "conflicts", "ready_items",
+                "contract_version", "sprint", "summary", "active_reservations",
+                "active_unreserved_items", "conflicts", "ready_items",
                 "blocked_items", "stale_items", "recent_decisions", "next_action",
             ),
             {
                 "contract_version": {"const": "1"}, "sprint": {"type": "object"},
-                "summary": {"type": "object"}, "active_claims": {"type": "array", "items": {"type": "object"}},
-                "active_unclaimed_items": {"type": "array", "items": {"type": "object"}},
+                "summary": {"type": "object"}, "active_reservations": {"type": "array", "items": {"type": "object"}},
+                "active_unreserved_items": {"type": "array", "items": {"type": "object"}},
                 "conflicts": {"type": "array", "items": {"type": "object"}},
                 "ready_items": {"type": "array", "items": {"type": "object"}},
                 "blocked_items": {"type": "array", "items": {"type": "object"}},
@@ -392,8 +380,8 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work.read.handoff",
         _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}, "events_limit": {"type": "integer", "minimum": 1, "maximum": 500}, "git_context": {"type": ["object", "null"]}}, required=("events_limit",)),
         _result_schema(
-            ("bundle_type", "bundle_version", "sprintctl_version", "generated_at", "generated_from", "sprint", "summary", "active_claims", "conflicts", "work", "recent_decisions", "recent_events", "next_action", "delta_since_last_handoff", "freshness", "evidence", "git_context", "claim_identity_model", "resume_instructions", "agent_shutdown_protocol", "items", "events"),
-            {"bundle_type": {"const": "handoff"}, "bundle_version": {"const": "1"}, "sprintctl_version": {"type": "string"}, "generated_at": {"type": "string"}, "generated_from": {"type": "object"}, "sprint": {"type": "object"}, "summary": {"type": "object"}, "active_claims": {"type": "array", "items": {"type": "object"}}, "conflicts": {"type": "array", "items": {"type": "object"}}, "work": {"type": "object"}, "recent_decisions": {"type": "array", "items": {"type": "object"}}, "recent_events": {"type": "array", "items": {"type": "object"}}, "next_action": {"type": "object"}, "delta_since_last_handoff": {"type": "object"}, "freshness": {"type": "object"}, "evidence": {"type": "object"}, "git_context": {"type": ["object", "null"]}, "claim_identity_model": {"type": "object"}, "resume_instructions": {"type": "array", "items": {"type": "string"}}, "agent_shutdown_protocol": {"type": "object"}, "items": {"type": "array", "items": {"type": "object"}}, "events": {"type": "array", "items": {"type": "object"}}},
+            ("bundle_type", "bundle_version", "sprintctl_version", "generated_at", "generated_from", "sprint", "summary", "active_reservations", "conflicts", "work", "recent_decisions", "recent_events", "next_action", "delta_since_last_handoff", "freshness", "evidence", "git_context", "reservation_model", "resume_instructions", "agent_shutdown_protocol", "items", "events"),
+            {"bundle_type": {"const": "handoff"}, "bundle_version": {"const": "1"}, "sprintctl_version": {"type": "string"}, "generated_at": {"type": "string"}, "generated_from": {"type": "object"}, "sprint": {"type": "object"}, "summary": {"type": "object"}, "active_reservations": {"type": "array", "items": {"type": "object"}}, "conflicts": {"type": "array", "items": {"type": "object"}}, "work": {"type": "object"}, "recent_decisions": {"type": "array", "items": {"type": "object"}}, "recent_events": {"type": "array", "items": {"type": "object"}}, "next_action": {"type": "object"}, "delta_since_last_handoff": {"type": "object"}, "freshness": {"type": "object"}, "evidence": {"type": "object"}, "git_context": {"type": ["object", "null"]}, "reservation_model": {"type": "object"}, "resume_instructions": {"type": "array", "items": {"type": "string"}}, "agent_shutdown_protocol": {"type": "object"}, "items": {"type": "array", "items": {"type": "object"}}, "events": {"type": "array", "items": {"type": "object"}}},
         ),
         "work:read", "read", "not-allowed",
     ),
@@ -407,13 +395,13 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work.read.next-work-explain",
         _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
         _result_schema(
-            ("contract_version", "sprint", "summary", "ready_items", "dependency_waiting_items", "active_claims", "active_unclaimed_items", "conflicts", "next_action", "recommended_commands", "recommended_command_bundle"),
+            ("contract_version", "sprint", "summary", "ready_items", "dependency_waiting_items", "active_reservations", "active_unreserved_items", "conflicts", "next_action", "recommended_commands", "recommended_command_bundle"),
             {
                 "contract_version": {"const": "1"}, "sprint": {"type": "object"},
                 "summary": {"type": "object"}, "ready_items": {"type": "array", "items": {"type": "object"}},
                 "dependency_waiting_items": {"type": "array", "items": {"type": "object"}},
-                "active_claims": {"type": "array", "items": {"type": "object"}},
-                "active_unclaimed_items": {"type": "array", "items": {"type": "object"}},
+                "active_reservations": {"type": "array", "items": {"type": "object"}},
+                "active_unreserved_items": {"type": "array", "items": {"type": "object"}},
                 "conflicts": {"type": "array", "items": {"type": "object"}}, "next_action": {"type": "object"},
                 "recommended_commands": {"type": "array", "items": {"type": "string"}},
                 "recommended_command_bundle": {"type": "object"},
@@ -613,85 +601,6 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         )
     ),
     WorkOperationContract(
-        "work.claim.start",
-        _object_schema(
-            {
-                "item_id": {"type": "integer", "minimum": 1},
-                "ttl_seconds": {"type": "integer", "minimum": 1, "default": 300},
-                "branch": {"type": ["string", "null"], "minLength": 1},
-                "worktree_path": {"type": ["string", "null"], "minLength": 1},
-                "commit_sha": {"type": ["string", "null"], "minLength": 1},
-                "pr_ref": {"type": ["string", "null"], "minLength": 1},
-                "runtime_session_id": {"type": ["string", "null"], "minLength": 1},
-                "instance_id": {"type": ["string", "null"], "minLength": 1},
-                "hostname": {"type": ["string", "null"], "minLength": 1},
-                "pid": {"type": ["integer", "null"], "minimum": 1},
-            },
-            required=("item_id",),
-        ),
-        _result_schema(
-            (
-                "operation",
-                "claim_id",
-                "claim_token",
-                "claim",
-                "item_id",
-                "item_status_before",
-                "item_status_after",
-                "status_transition_applied",
-                "refs",
-            ),
-            {
-                "operation": {"const": "claim_start"},
-                "claim_id": {"type": "integer", "minimum": 1},
-                "claim_token": {"type": "string", "minLength": 1},
-                "claim": {"type": "object"},
-                "item_id": {"type": "integer", "minimum": 1},
-                "item_status_before": {"type": "string"},
-                "item_status_after": {"type": "string"},
-                "status_transition_applied": {"type": "boolean"},
-                "refs": {"type": "array", "items": {"type": "object"}},
-            },
-        ),
-        "work:claim",
-        "write",
-        "not-allowed",
-    ),
-    WorkOperationContract(
-        "work.claim.context",
-        _object_schema(
-            {"claim_id": {"type": "integer", "minimum": 1}}, required=("claim_id",)
-        ),
-        _result_schema(
-            (
-                "repo_id",
-                "authority_repo_uuid",
-                "actor",
-                "claim",
-                "claim_revision",
-            ),
-            {
-                "repo_id": {"type": "string"},
-                "authority_repo_uuid": {"type": ["string", "null"]},
-                "actor": {"type": "string"},
-                "claim": {"type": "object"},
-                "claim_revision": {"type": "string"},
-            },
-        ),
-        "work:claim",
-        "read",
-        "not-allowed",
-    ),
-    WorkOperationContract(
-        "work.claim.arbitrate",
-        _RECORD_INPUT,
-        _DECISION_RESULT,
-        "work:claim",
-        "write",
-        "required",
-        ("json-schema-draft-2020-12", "local-defs-ref"),
-    ),
-    WorkOperationContract(
         "work.lifecycle.arbitrate",
         _RECORD_INPUT,
         _DECISION_RESULT,
@@ -761,8 +670,8 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
                 "project": {"type": "object"},
                 "summary": {"type": "object"},
                 "sprints": {"type": "array", "items": {"type": "object"}},
-                "active_claims": {"type": "array", "items": {"type": "object"}},
-                "active_unclaimed_items": {"type": "array", "items": {"type": "object"}},
+                "active_reservations": {"type": "array", "items": {"type": "object"}},
+                "active_unreserved_items": {"type": "array", "items": {"type": "object"}},
                 "conflicts": {"type": "array", "items": {"type": "object"}},
                 "ready_items": {"type": "array", "items": {"type": "object"}},
                 "blocked_items": {"type": "array", "items": {"type": "object"}},
@@ -1061,18 +970,9 @@ LEGACY_REMOTE_COMMAND_PARITY: tuple[dict[str, str], ...] = (
         "operation": "work.read.next-work-explain",
     },
     {
-        "legacy": "sprintctl claim start",
-        "operation": "work.claim.start",
-    },
-    {
-        "legacy": "sprintctl claim heartbeat|handoff|release",
-        "operation": "work.claim.arbitrate",
-    },
-    {
         "legacy": "sprintctl item status / sprint status",
         "operation": "work.lifecycle.arbitrate",
     },
-    {"legacy": "sprintctl item done-from-claim", "operation": "work.lifecycle.arbitrate"},
     {"legacy": "sprintctl authority sync", "operation": "work.batch.apply"},
     {"legacy": "sprintctl event observation add", "operation": "work.evidence.ingest"},
     {"legacy": "sprintctl item note", "operation": "work.item.note"},
@@ -1080,19 +980,6 @@ LEGACY_REMOTE_COMMAND_PARITY: tuple[dict[str, str], ...] = (
     {"legacy": "sprintctl next-work --project", "operation": "work.project.next-work"},
     {"legacy": "project dispatch batching", "operation": "work.project.batch"},
 )
-
-# v0.3 is a clean break: legacy claim operations may remain in historical
-# migration readers, but they are not published into a newly composed catalog
-# and cannot be selected by a current client.
-WORK_OPERATION_CONTRACTS = tuple(
-    contract for contract in WORK_OPERATION_CONTRACTS
-    if not contract.name.startswith("work.claim.")
-)
-LEGACY_REMOTE_COMMAND_PARITY = tuple(
-    row for row in LEGACY_REMOTE_COMMAND_PARITY
-    if "claim" not in row["legacy"] and "done-from-claim" not in row["legacy"]
-)
-
 
 _RESOURCE_OPERATIONS = frozenset(
     {
