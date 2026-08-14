@@ -114,6 +114,23 @@ def test_project_binding_accepts_current_member_governance_fields(tmp_path):
     assert binding.members[0].access == "write"
 
 
+def test_project_binding_accepts_repository_provenance_fields(tmp_path):
+    project_path = _write_project(
+        tmp_path / "project.toml", [("agentops", True)], home_repo="agentops"
+    )
+    project_path.write_text(
+        project_path.read_text(encoding="utf-8")
+        + 'repository = "https://github.com/bayleafwalker/agentops.git"\n'
+        + 'default_ref = "refs/heads/main"\n',
+        encoding="utf-8",
+    )
+
+    member = project.load_project(project_path).members[0]
+
+    assert member.repository == "https://github.com/bayleafwalker/agentops.git"
+    assert member.default_ref == "refs/heads/main"
+
+
 def test_remote_project_stores_use_each_repo_discriminator(tmp_path, monkeypatch):
     project_path = _write_project(
         tmp_path / "project.toml",

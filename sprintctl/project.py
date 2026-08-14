@@ -26,6 +26,8 @@ class ProjectMember:
     render: str
     relationship: str | None
     access: str | None
+    repository: str | None
+    default_ref: str | None
     path_notes: tuple[str, ...]
 
 
@@ -75,7 +77,17 @@ def _member(raw: object, index: int) -> ProjectMember:
     if not isinstance(raw, dict):
         raise ProjectConfigError(f"project.toml {field} must be a table")
     unknown = sorted(
-        set(raw) - {"repo_id", "backlog", "render", "relationship", "access", "path_notes"}
+        set(raw)
+        - {
+            "repo_id",
+            "backlog",
+            "render",
+            "relationship",
+            "access",
+            "repository",
+            "default_ref",
+            "path_notes",
+        }
     )
     if unknown:
         raise ProjectConfigError(
@@ -105,12 +117,33 @@ def _member(raw: object, index: int) -> ProjectMember:
         raise ProjectConfigError(
             f"project.toml {field}.access must be one of: reference, write"
         )
+    repository_raw = raw.get("repository")
+    repository = (
+        _required_text(repository_raw, f"{field}.repository")
+        if repository_raw is not None
+        else None
+    )
+    default_ref_raw = raw.get("default_ref")
+    default_ref = (
+        _required_text(default_ref_raw, f"{field}.default_ref")
+        if default_ref_raw is not None
+        else None
+    )
     notes = raw.get("path_notes", [])
     if not isinstance(notes, list) or not all(isinstance(note, str) for note in notes):
         raise ProjectConfigError(
             f"project.toml {field}.path_notes must be an array of strings"
         )
-    return ProjectMember(repo_id, backlog, render, relationship, access_raw, tuple(notes))
+    return ProjectMember(
+        repo_id,
+        backlog,
+        render,
+        relationship,
+        access_raw,
+        repository,
+        default_ref,
+        tuple(notes),
+    )
 
 
 def load_project(path: Path) -> ProjectBinding:
