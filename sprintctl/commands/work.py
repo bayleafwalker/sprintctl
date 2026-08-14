@@ -2057,10 +2057,12 @@ def _pilot_status_payload() -> dict:
 
 
 _RUNTIME = {}
+__runtime_source: dict[str, object] | None = None
 
 
 def _sync_runtime() -> None:
-    globals().update({key: value for key, value in _RUNTIME.items() if not key.startswith("__")})
+    source = __runtime_source if __runtime_source is not None else _RUNTIME
+    globals().update({key: value for key, value in source.items() if not key.startswith("__")})
 
 
 def _wrap_runtime_callbacks(command: click.Command) -> None:
@@ -2081,10 +2083,11 @@ def _wrap_runtime_callbacks(command: click.Command) -> None:
 
 def register(root: click.Group, *, runtime: dict[str, object]) -> None:
     """Attach work-related command groups and keep runtime seams live."""
+    global __runtime_source
+    __runtime_source = runtime
     _RUNTIME.clear()
-    _RUNTIME.update(runtime)
+    _RUNTIME.update({name: value for name, value in runtime.items() if not name.startswith("__")})
     _sync_runtime()
     for command in (sprint, item):
         root.add_command(command)
         _wrap_runtime_callbacks(command)
-

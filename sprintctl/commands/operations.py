@@ -819,13 +819,18 @@ def _mint_authority_command_record(
     )
     producer = _outbox.open_outbox(outbox_path)
     try:
+        runtime_detect = (
+            __runtime_source.get("_detect_runtime_session_id", _detect_runtime_session_id)
+            if __runtime_source is not None
+            else _detect_runtime_session_id
+        )
         return _outbox.append_authority_command(
             producer,
             request,
             runtime_session_id=(
                 runtime_session_id
                 if runtime_session_id is not None
-                else _detect_runtime_session_id(None)
+                else runtime_detect(None)
             ),
         )
     finally:
@@ -2197,10 +2202,12 @@ def event_list(obj, sprint_id, work_item_id, event_type, knowledge_only, limit, 
 
 
 _RUNTIME = {}
+__runtime_source: dict[str, object] | None = None
 
 
 def _sync_runtime() -> None:
-    globals().update({key: value for key, value in _RUNTIME.items() if not key.startswith("__")})
+    source = __runtime_source if __runtime_source is not None else _RUNTIME
+    globals().update({key: value for key, value in source.items() if not key.startswith("__")})
 
 
 def _wrap_runtime_callbacks(command: click.Command) -> None:
@@ -2221,10 +2228,11 @@ def _wrap_runtime_callbacks(command: click.Command) -> None:
 
 def register(root: click.Group, *, runtime: dict[str, object]) -> None:
     """Attach event and rollout command groups with live runtime seams."""
+    global __runtime_source
+    __runtime_source = runtime
     _RUNTIME.clear()
-    _RUNTIME.update(runtime)
+    _RUNTIME.update({name: value for name, value in runtime.items() if not name.startswith("__")})
     _sync_runtime()
     for command in (event, authority_commands, pilot, projection_reads_group):
         root.add_command(command)
         _wrap_runtime_callbacks(command)
-

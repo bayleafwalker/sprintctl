@@ -10,10 +10,26 @@ from __future__ import annotations
 
 import click
 
-from . import db, lifecycle, operations, remote_schema, repo, transfer, work
+from . import db, doctor, lifecycle, operations, remote_schema, repo, session, transfer, work
 
 
 _RUNTIME_INTERNALS = {"_RUNTIME", "_sync_runtime", "_wrap_runtime_callbacks", "register"}
+_RUNTIME_MODULES = (work, operations, lifecycle, session)
+
+
+def _refresh_runtime_modules(runtime: dict[str, object]) -> None:
+    """Broadcast the assembled CLI namespace to every callback module.
+
+    Extracted command groups still call helpers defined by sibling groups.  A
+    module registered early therefore needs the later group's helpers before a
+    callback is invoked; the original monolithic ``cli.py`` provided that
+    shared namespace implicitly.
+    """
+    values = {name: value for name, value in runtime.items() if not name.startswith("__")}
+    for module in _RUNTIME_MODULES:
+        runtime_table = getattr(module, "_RUNTIME", None)
+        if isinstance(runtime_table, dict):
+            runtime_table.update(values)
 
 
 def _merge_runtime_exports(module, runtime: dict[str, object]) -> None:
@@ -25,6 +41,7 @@ def _merge_runtime_exports(module, runtime: dict[str, object]) -> None:
             if not name.startswith("__") and name not in _RUNTIME_INTERNALS
         }
     )
+    _refresh_runtime_modules(runtime)
 
 
 def register_commands(root: click.Group, *, get_store: repo.GetStore) -> None:
@@ -33,6 +50,11 @@ def register_commands(root: click.Group, *, get_store: repo.GetStore) -> None:
     # insertion order. Keep that observable help/inventory ordering stable.
     repo.register(root, get_store=get_store)
     remote_schema.register(root)
+
+
+def register_doctor_command(root: click.Group) -> None:
+    """Attach the diagnostic command at the root's historical first position."""
+    doctor.register(root)
 
 
 def register_db_commands(root: click.Group, *, get_store: db.GetStore) -> None:
@@ -69,6 +91,12 @@ def register_claim_commands(root: click.Group, *, runtime: dict[str, object]) ->
     _merge_runtime_exports(lifecycle, runtime)
 
 
+def register_session_commands(root: click.Group, *, runtime: dict[str, object]) -> None:
+    """Attach handoff, session, context, and migration commands."""
+    session.register(root, runtime=runtime)
+    _merge_runtime_exports(session, runtime)
+
+
 # Compatibility aliases for private seams that historically lived in cli.py.
 remote_schema_group = remote_schema.remote_schema
 _remote_schema_store = remote_schema._remote_schema_store
@@ -95,3 +123,14 @@ projection_reads_group = operations.projection_reads_group
 takeup_group = lifecycle.takeup
 maintain_group = lifecycle.maintain
 claim_group = lifecycle.claim
+handoff_cmd = session.handoff_cmd
+agent_protocol_cmd = session.agent_protocol_cmd
+next_work_cmd = session.next_work_cmd
+context_candidates_cmd = session.context_candidates_cmd
+session_group = session.session
+usage_cmd = session.usage_cmd
+git_context_cmd = session.git_context_cmd
+render_cmd = session.render_cmd
+migrate_to_remote_cmd = session.migrate_to_remote_cmd
+remote_backfill_cmd = session.remote_backfill_cmd
+doctor_cmd = doctor.doctor_cmd

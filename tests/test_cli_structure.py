@@ -30,11 +30,82 @@ def _module_imports(module_name: str) -> tuple[set[str | None], set[str]]:
 
 
 def test_extracted_command_modules_have_no_back_edge_to_cli():
-    for module_name in ("db", "remote_schema", "repo", "transfer"):
+    for module_name in (
+        "db",
+        "doctor",
+        "lifecycle",
+        "operations",
+        "remote_schema",
+        "repo",
+        "session",
+        "transfer",
+        "work",
+    ):
         imported_modules, imported_names = _module_imports(module_name)
 
         assert "sprintctl.cli" not in imported_modules
         assert "cli" not in imported_names
+
+
+def test_root_cli_has_no_inline_command_decorators():
+    source = Path(cli_module.__file__).read_text(encoding="utf-8")
+
+    assert "@cli.command" not in source
+    assert "@cli.group" not in source
+
+
+def test_extracted_doctor_and_session_commands_preserve_order_and_guards():
+    assert list(cli.commands)[:19] == [
+        "doctor",
+        "sprint",
+        "item",
+        "event",
+        "authority",
+        "pilot",
+        "projection-reads",
+        "takeup",
+        "maintain",
+        "db",
+        "export",
+        "import",
+        "claim",
+        "handoff",
+        "agent-protocol",
+        "next-work",
+        "context-candidates",
+        "session",
+        "usage",
+    ]
+    assert list(cli.commands)[19:23] == [
+        "git-context",
+        "render",
+        "migrate-to-remote",
+        "remote-backfill",
+    ]
+    assert cli_module.doctor_cmd is cli.commands["doctor"]
+    assert cli_module.handoff_cmd is cli.commands["handoff"]
+    assert cli_module.session is cli.commands["session"]
+    assert cli_module.usage_cmd is cli.commands["usage"]
+
+    leaves = {
+        name: cli.commands[name]
+        for name in (
+            "doctor",
+            "handoff",
+            "agent-protocol",
+            "next-work",
+            "context-candidates",
+            "usage",
+            "git-context",
+            "render",
+            "migrate-to-remote",
+            "remote-backfill",
+        )
+    }
+    assert {
+        getattr(command.callback, "__served_guard_path__", None)
+        for command in leaves.values()
+    } == set(leaves)
 
 
 def test_extracted_remote_schema_leaves_receive_served_guard_markers():
