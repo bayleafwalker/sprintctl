@@ -3,14 +3,14 @@
 This module owns the opt-in toggle only: it does not build read models,
 judge projection freshness, or change any backend write path.  When enabled,
 CLI read commands (see ``sprintctl/cli.py``) consult the cached projection
-already populated by the shadow-pilot sync path (``sprintctl/pilot.py`` /
-``sprintctl/sync.py``) and fall back to the current backend explicitly
+already populated by the normal sync path (``sprintctl/sync.py``) and fall
+back to the current backend explicitly
 whenever that cache is missing, stale, on an incompatible schema, or has
 never been synchronized -- see ``sprintctl/projection.py:assess_freshness``.
 
 The persisted per-repository file mirrors the existing opt-in conventions in
-``sprintctl/pilot.py`` (shadow-pilot config) and ``sprintctl/authority_config.py``
-(authority-command rollout config): a small versioned JSON document fixed
+``sprintctl/authority_config.py`` (authority-command configuration): a small
+versioned JSON document fixed
 below ``.sprintctl``, defaulting to disabled, written atomically.  A
 ``SPRINTCTL_PROJECTION_READS`` environment variable can override the
 persisted file for one invocation (handy for CI/tests and quick opt-in

@@ -20,6 +20,35 @@ def test_repository_sync_paths_are_fixed_under_the_repository(tmp_path):
     assert paths.projection_path == tmp_path / ".sprintctl" / "sync-projection.db"
 
 
+def test_normal_sync_migrates_legacy_pilot_databases_without_removing_them(tmp_path):
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    legacy_dir = tmp_path / ".sprintctl"
+    legacy_dir.mkdir()
+    legacy_outbox = legacy_dir / "shadow-pilot-outbox.db"
+    legacy_projection = legacy_dir / "shadow-pilot-projection.db"
+    producer = outbox.open_outbox(legacy_outbox)
+    try:
+        _append(producer, "legacy-observation", 1)
+    finally:
+        producer.close()
+    projection.open_cached_projection(legacy_projection).close()
+
+    paths = sync.repository_sync_paths(cwd=tmp_path)
+    copied = sync.migrate_legacy_sync_state(paths)
+
+    assert copied == (paths.outbox_path, paths.projection_path)
+    assert legacy_outbox.exists()
+    assert legacy_projection.exists()
+    migrated = outbox.open_outbox(paths.outbox_path)
+    try:
+        assert [record.event_id for record in outbox.list_records(migrated)] == ["legacy-observation"]
+    finally:
+        migrated.close()
+    assert sync.migrate_legacy_sync_state(paths) == ()
+
+
 class _FakeRemote:
     """In-memory stand-in that retains the ingest ledger's retry behavior."""
 

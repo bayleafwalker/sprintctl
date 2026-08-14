@@ -28,7 +28,7 @@ import json
 
 import pytest
 
-from sprintctl import db, outbox, pilot, projection, projection_reads
+from sprintctl import db, outbox, pilot, projection, projection_reads, sync
 from sprintctl.cli import cli
 
 
@@ -261,7 +261,6 @@ def test_item_show_serves_events_from_healthy_projection_with_backend_parity(
     tid = db.get_or_create_track(conn, active_sprint["id"], "backend")
     iid = db.create_work_item(conn, active_sprint["id"], tid, "Auth task")
 
-    assert runner.invoke(cli, ["pilot", "enable"]).exit_code == 0
     added = runner.invoke(
         cli,
         [
@@ -271,7 +270,7 @@ def test_item_show_serves_events_from_healthy_projection_with_backend_parity(
         ],
     )
     assert added.exit_code == 0, added.output
-    assert json.loads(added.output)["shadow_pilot"]["status"] == "mirrored"
+    assert json.loads(added.output)["synchronization"]["status"] == "mirrored"
 
     # Capture the ground-truth backend view before enabling projection reads.
     baseline = runner.invoke(cli, ["item", "show", "--id", str(iid), "--json"])
@@ -279,9 +278,9 @@ def test_item_show_serves_events_from_healthy_projection_with_backend_parity(
     backend_events = json.loads(baseline.output)["events"]
     assert len(backend_events) == 1
 
-    pilot_paths = pilot.shadow_pilot_paths(repo_root=tmp_path)
-    producer = outbox.open_outbox(pilot_paths.outbox_path)
-    cache = projection.open_cached_projection(pilot_paths.projection_path)
+    sync_paths = sync.repository_sync_paths(cwd=tmp_path)
+    producer = outbox.open_outbox(sync_paths.outbox_path)
+    cache = projection.open_cached_projection(sync_paths.projection_path)
     try:
         current = datetime.now(timezone.utc).replace(microsecond=0)
         _cache_outbox_records(
@@ -324,10 +323,9 @@ def test_item_show_falls_back_when_never_synchronized(runner, conn, active_sprin
     _configure_repo_marker(tmp_path)
     tid = db.get_or_create_track(conn, active_sprint["id"], "backend")
     iid = db.create_work_item(conn, active_sprint["id"], tid, "Auth task")
-    assert runner.invoke(cli, ["pilot", "enable"]).exit_code == 0
     # Touch the projection file into existence without ever applying records.
-    pilot_paths = pilot.shadow_pilot_paths(repo_root=tmp_path)
-    projection.open_cached_projection(pilot_paths.projection_path).close()
+    sync_paths = sync.repository_sync_paths(cwd=tmp_path)
+    projection.open_cached_projection(sync_paths.projection_path).close()
     assert runner.invoke(cli, ["projection-reads", "enable"]).exit_code == 0
 
     result = runner.invoke(cli, ["item", "show", "--id", str(iid), "--json"])
@@ -340,9 +338,8 @@ def test_item_show_falls_back_when_stale(runner, conn, active_sprint, tmp_path, 
     _configure_repo_marker(tmp_path)
     tid = db.get_or_create_track(conn, active_sprint["id"], "backend")
     iid = db.create_work_item(conn, active_sprint["id"], tid, "Auth task")
-    assert runner.invoke(cli, ["pilot", "enable"]).exit_code == 0
-    pilot_paths = pilot.shadow_pilot_paths(repo_root=tmp_path)
-    cache = projection.open_cached_projection(pilot_paths.projection_path)
+    sync_paths = sync.repository_sync_paths(cwd=tmp_path)
+    cache = projection.open_cached_projection(sync_paths.projection_path)
     try:
         projection.apply_ingested_records(
             cache,
@@ -365,9 +362,8 @@ def test_item_show_falls_back_when_schema_upgrade_required(
     _configure_repo_marker(tmp_path)
     tid = db.get_or_create_track(conn, active_sprint["id"], "backend")
     iid = db.create_work_item(conn, active_sprint["id"], tid, "Auth task")
-    assert runner.invoke(cli, ["pilot", "enable"]).exit_code == 0
-    pilot_paths = pilot.shadow_pilot_paths(repo_root=tmp_path)
-    cache = projection.open_cached_projection(pilot_paths.projection_path)
+    sync_paths = sync.repository_sync_paths(cwd=tmp_path)
+    cache = projection.open_cached_projection(sync_paths.projection_path)
     try:
         projection.apply_ingested_records(
             cache,

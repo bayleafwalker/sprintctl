@@ -30,7 +30,7 @@ def test_pilot_is_disabled_by_default_and_enable_is_explicit(runner, tmp_path):
     assert json.loads(disabled.output)["state"] == "disabled"
 
 
-def test_pilot_mirrors_supported_event_and_reports_parity(runner, conn, active_sprint, tmp_path):
+def test_normal_sync_appends_supported_event_without_pilot_state(runner, conn, active_sprint, tmp_path):
     _configure_repo_marker(tmp_path)
     enabled = runner.invoke(cli, ["pilot", "enable"])
     assert enabled.exit_code == 0, enabled.output
@@ -44,19 +44,11 @@ def test_pilot_mirrors_supported_event_and_reports_parity(runner, conn, active_s
         ],
     )
     assert added.exit_code == 0, added.output
-    assert json.loads(added.output)["shadow_pilot"]["status"] == "mirrored"
+    assert json.loads(added.output)["synchronization"]["status"] == "mirrored"
 
     status = runner.invoke(cli, ["pilot", "status", "--json"])
     assert status.exit_code == 0, status.output
-    assert json.loads(status.output)["outbox_records"] == 1
-
-    verified = runner.invoke(
-        cli, ["pilot", "verify", "--sprint-id", str(active_sprint["id"]), "--json"]
-    )
-    assert verified.exit_code == 0, verified.output
-    report = json.loads(verified.output)
-    assert report["is_equal"] is True
-    assert report["counts"] == {"equal": 1, "mismatched": 0, "missing": 0, "unexpected": 0}
+    assert json.loads(status.output)["outbox_records"] is None
 
 
 def test_pilot_never_mirrors_unclassified_generic_events(runner, conn, active_sprint, tmp_path):
@@ -71,7 +63,7 @@ def test_pilot_never_mirrors_unclassified_generic_events(runner, conn, active_sp
         ],
     )
     assert added.exit_code == 0, added.output
-    assert json.loads(added.output)["shadow_pilot"]["status"] == "unsupported"
+    assert json.loads(added.output)["synchronization"]["status"] == "unsupported"
 
     status = runner.invoke(cli, ["pilot", "status", "--json"])
     assert status.exit_code == 0, status.output

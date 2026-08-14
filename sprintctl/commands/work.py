@@ -780,7 +780,7 @@ def item_priority(obj, item_id: str, priority, clear, as_json) -> None:
 #
 # Feature-flagged read path: when enabled per repository, some CLI read
 # surfaces are served from the cached projection populated by the shadow
-# pilot sync path (sprintctl/pilot.py, sprintctl/sync.py) instead of hitting
+# normal sync path (sprintctl/sync.py) instead of hitting
 # backend (SQLite/PostgreSQL) directly.  A surface only actually reads from
 # the projection when (a) the flag is enabled, (b) the cache is healthy
 # (matching schema version, synchronized at least once, not stale), and
@@ -835,11 +835,11 @@ def _projection_health(*, cwd: Path | None = None) -> dict:
         return base
     base["enabled"] = True
     try:
-        pilot_status = _pilot.shadow_pilot_status(cwd=cwd)
-    except _pilot.ShadowPilotConfigError:
+        paths = _sync.repository_sync_paths(cwd=cwd)
+    except ValueError:
         base["health"] = "missing"
         return base
-    path = pilot_status.paths.projection_path
+    path = paths.projection_path
     base["projection_path"] = str(path)
     if not path.exists():
         base["health"] = "missing"

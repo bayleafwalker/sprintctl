@@ -105,23 +105,22 @@ def _shadow_source(envelope: _contracts.RecordEnvelope) -> dict:
     }
 
 
-def _mirror_shadow_event(event: dict, *, repo_id: str) -> dict:
-    """Best-effort, post-commit observation mirror for the opt-in pilot.
+def _append_sync_observation(event: dict, *, repo_id: str) -> dict:
+    """Durably append a post-commit observation to normal sync state.
 
     A mirror failure never rolls back or hides the already committed authority
     event.  The structured outcome is instead returned to the operator so a
     pilot defect is observable and retryable without changing normal writes.
     """
     try:
-        status = _pilot.shadow_pilot_status(cwd=Path.cwd())
-    except _pilot.ShadowPilotConfigError as exc:
+        paths = _sync.repository_sync_paths(cwd=Path.cwd())
+    except ValueError as exc:
         return {"status": "unavailable", "detail": str(exc)}
-    if not status.enabled:
-        return {"status": "disabled"}
+    _sync.migrate_legacy_sync_state(paths)
     envelope = _shadow_observation_envelope(event, repo_id)
     if envelope is None:
         return {"status": "unsupported", "event_type": event["event_type"]}
-    producer = _outbox.open_outbox(status.paths.outbox_path)
+    producer = _outbox.open_outbox(paths.outbox_path)
     try:
         result = _dualwrite.mirror_event(
             producer,
@@ -182,16 +181,19 @@ def _parse_evidence_ref_option(value: str, option_name: str) -> dict:
     return parsed
 
 
-def _item_evidence_pilot_status(*, require_enabled: bool) -> _pilot.ShadowPilotStatus:
+def _item_evidence_sync_paths() -> _sync.RepositorySyncPaths:
+    """Return the normal durable observation/projection locations.
+
+    Evidence is part of normal work memory, not an opt-in migration lane.
+    Resolving the fixed repository paths here also makes offline appends
+    possible before a remote backend is available.
+    """
     try:
-        status = _pilot.shadow_pilot_status(cwd=Path.cwd())
-    except _pilot.ShadowPilotConfigError as exc:
+        paths = _sync.repository_sync_paths(cwd=Path.cwd())
+    except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
-    if require_enabled and not status.enabled:
-        raise click.ClickException(
-            "shadow pilot is disabled; run 'sprintctl pilot enable' before appending observations"
-        )
-    return status
+    _sync.migrate_legacy_sync_state(paths)
+    return paths
 
 
 @event_observation.command("add")
@@ -246,7 +248,7 @@ def event_observation_add(
     as_json,
 ) -> None:
     """Append evidence without reading or mutating authoritative item state."""
-    status = _item_evidence_pilot_status(require_enabled=True)
+    paths = _item_evidence_sync_paths()
     runtime_session_id = _detect_runtime_session_id(runtime_session_id)
     if runtime_session_id is None:
         raise click.ClickException(
@@ -269,7 +271,7 @@ def event_observation_add(
         if capsule_ref is not None
         else None
     )
-    producer = _outbox.open_outbox(status.paths.outbox_path)
+    producer = _outbox.open_outbox(paths.outbox_path)
     try:
         existing = _outbox.get_record(producer, event_id) if event_id is not None else None
         duplicate = existing is not None
@@ -307,7 +309,7 @@ def event_observation_add(
         "operation": "event_observation_add",
         "disposition": "duplicate" if duplicate else "appended",
         "observation": projected.to_dict(),
-        "outbox_path": str(status.paths.outbox_path),
+        "outbox_path": str(paths.outbox_path),
     }
     if as_json:
         click.echo(json.dumps(payload, indent=2))
@@ -334,11 +336,11 @@ def event_observation_add(
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output JSON")
 def event_observation_list(work_item_id, event_type, current_basis_revision, as_json) -> None:
     """List local and ingested evidence with explicit stale-basis visibility."""
-    status = _item_evidence_pilot_status(require_enabled=False)
+    paths = _item_evidence_sync_paths()
     records_by_id: dict[str, dict] = {}
 
-    if status.paths.outbox_path.exists():
-        producer = _outbox.open_outbox(status.paths.outbox_path)
+    if paths.outbox_path.exists():
+        producer = _outbox.open_outbox(paths.outbox_path)
         try:
             for record in _outbox.list_records(producer):
                 records_by_id[record.event_id] = {
@@ -351,8 +353,8 @@ def event_observation_list(work_item_id, event_type, current_basis_revision, as_
             producer.close()
 
     watermark = None
-    if status.paths.projection_path.exists():
-        cache = _projection.open_cached_projection(status.paths.projection_path)
+    if paths.projection_path.exists():
+        cache = _projection.open_cached_projection(paths.projection_path)
         try:
             projected_watermark = _projection.get_watermark(cache)
             watermark = {
@@ -482,8 +484,8 @@ def _event_add_impl(
     backend_config = obj.get("backend_config")
     repo_id = backend_config.repo_id if backend_config is not None else Path.cwd().name
     persisted = next((event for event in m.list_events(store, sprint_id) if event["id"] == eid), None)
-    shadow_result = (
-        _mirror_shadow_event(persisted, repo_id=repo_id)
+    sync_result = (
+        _append_sync_observation(persisted, repo_id=repo_id)
         if persisted is not None
         else {"status": "unavailable", "detail": "created event could not be read back"}
     )
@@ -496,12 +498,12 @@ def _event_add_impl(
             "type": event_type,
             "actor": actor,
             "source": source_type,
-            "shadow_pilot": shadow_result,
+            "synchronization": sync_result,
         }, indent=2))
         return
     click.echo(f"Recorded event #{eid}: {event_type}  (actor: {actor})")
-    if shadow_result["status"] not in {"disabled", "unsupported"}:
-        click.echo(f"Shadow pilot: {shadow_result['status']}")
+    if sync_result["status"] not in {"unsupported"}:
+        click.echo(f"Synchronization: {sync_result['status']}")
 
 
 @event.command("add")
@@ -1993,32 +1995,32 @@ def pilot_cutover_evidence(
     parity_payload = None
     if not skip_parity:
         try:
-            status = _pilot.shadow_pilot_status(cwd=Path.cwd())
-        except _pilot.ShadowPilotConfigError as exc:
+            paths = _sync.repository_sync_paths(cwd=Path.cwd())
+        except ValueError as exc:
             click.echo(f"Error: {exc}", err=True)
             sys.exit(1)
-        if status.enabled:
-            store, m = _get_store(obj)
-            config = obj["backend_config"]
-            if sprint_id is not None:
-                s = m.get_sprint(store, sprint_id)
-                if s is None:
-                    click.echo(f"Sprint #{sprint_id} not found.", err=True)
-                    sys.exit(1)
-            else:
-                s = _resolve_implicit_sprint(store, m=m)
-            if s is not None:
-                authoritative = [
-                    _shadow_source(envelope)
-                    for event in m.list_events(store, s["id"])
-                    if (envelope := _shadow_observation_envelope(event, config.repo_id)) is not None
-                ]
-                producer = _outbox.open_outbox(status.paths.outbox_path)
-                try:
-                    report = _shadow.compare_parity(authoritative, _outbox.list_records(producer))
-                finally:
-                    producer.close()
-                parity_payload = report.to_dict()
+        _sync.migrate_legacy_sync_state(paths)
+        store, m = _get_store(obj)
+        config = obj["backend_config"]
+        if sprint_id is not None:
+            s = m.get_sprint(store, sprint_id)
+            if s is None:
+                click.echo(f"Sprint #{sprint_id} not found.", err=True)
+                sys.exit(1)
+        else:
+            s = _resolve_implicit_sprint(store, m=m)
+        if s is not None:
+            authoritative = [
+                _shadow_source(envelope)
+                for event in m.list_events(store, s["id"])
+                if (envelope := _shadow_observation_envelope(event, config.repo_id)) is not None
+            ]
+            producer = _outbox.open_outbox(paths.outbox_path)
+            try:
+                report = _shadow.compare_parity(authoritative, _outbox.list_records(producer))
+            finally:
+                producer.close()
+            parity_payload = report.to_dict()
 
     try:
         payload = _cutover.build_cutover_evidence(

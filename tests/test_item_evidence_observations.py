@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from sprintctl import contracts, db, observations, outbox, pilot, projection
+from sprintctl import contracts, db, observations, outbox, projection, sync
 from sprintctl.cli import cli
 
 
@@ -152,7 +152,6 @@ def test_cli_append_and_list_never_transition_authoritative_item(
     events_before = db.list_events(conn, active_sprint["id"])
     event_id = str(uuid4())
 
-    assert runner.invoke(cli, ["pilot", "enable"]).exit_code == 0
     args = [
         "event",
         "observation",
@@ -211,8 +210,8 @@ def test_cli_append_and_list_never_transition_authoritative_item(
     assert db.get_work_item(conn, item_id)["status"] == "active"
     assert db.list_events(conn, active_sprint["id"]) == events_before
 
-    status = pilot.shadow_pilot_status(cwd=tmp_path)
-    producer = outbox.open_outbox(status.paths.outbox_path)
+    paths = sync.repository_sync_paths(cwd=tmp_path)
+    producer = outbox.open_outbox(paths.outbox_path)
     try:
         record = outbox.get_record(producer, event_id)
         assert record is not None
@@ -235,7 +234,7 @@ def test_cli_append_and_list_never_transition_authoritative_item(
         "payload_sha256": record.payload_sha256,
         "created_at": record.created_at,
     }
-    cache = projection.open_cached_projection(status.paths.projection_path)
+    cache = projection.open_cached_projection(paths.projection_path)
     try:
         projection.apply_ingested_records(
             cache,
@@ -260,7 +259,7 @@ def test_cli_append_and_list_never_transition_authoritative_item(
     assert unioned_payload["watermark"]["ingest_offset"] == 1
 
 
-def test_cli_requires_explicit_pilot_opt_in(runner, tmp_path):
+def test_cli_appends_evidence_without_rollout_opt_in(runner, tmp_path):
     _configure_repo_marker(tmp_path)
     result = runner.invoke(
         cli,
@@ -284,8 +283,7 @@ def test_cli_requires_explicit_pilot_opt_in(runner, tmp_path):
             json.dumps(_COMMIT_REF),
         ],
     )
-    assert result.exit_code != 0
-    assert "pilot is disabled" in result.output
+    assert result.exit_code == 0, result.output
 
 
 def test_generic_event_surface_cannot_bypass_capsule_pointer_contract(
