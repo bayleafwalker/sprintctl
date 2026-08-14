@@ -841,7 +841,6 @@ def usage_cmd(obj, as_context, sprint_id, project_path, as_json) -> None:
         "                 [--actor NAME]",
         "  item status    --id ID --status pending|active|done|blocked [--actor NAME] [--json]",
         "                 [--claim-id N --claim-token TOKEN]",
-        "  item done-from-claim [--id ID] --claim-id N --claim-token TOKEN [--actor NAME]",
         "                 [--keep-claim] [--json]",
         "  item ref add   --id ID --type pr|issue|doc|other --url URL [--label TEXT]",
         "  item ref list  --id ID [--json]",
