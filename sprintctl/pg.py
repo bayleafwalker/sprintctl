@@ -2566,6 +2566,17 @@ def list_reservations(store: PgStore, work_item_id: int | None = None, *, active
         return [_reservation.display(row) for row in cur.fetchall()]
 
 
+def list_reservations_by_sprint(store: PgStore, sprint_id: int, *, active_only: bool = True) -> list[dict]:
+    state = "AND r.state = 'active'" if active_only else ""
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT r.* FROM reservation r JOIN work_item w ON w.repo_id = r.repo_id AND w.id = r.work_item_id "
+            "WHERE r.repo_id = %s AND w.sprint_id = %s " + state + " ORDER BY r.last_activity_at DESC, r.id DESC",
+            (store.repo_id, sprint_id),
+        )
+        return [_reservation.display(row) for row in cur.fetchall()]
+
+
 def reserve(store: PgStore, work_item_id: int, *, actor: str, session_id: str, role: str = "execute",
             correlation_ref: str | None = None, override: bool = False) -> dict:
     if role not in RESERVATION_ROLES:

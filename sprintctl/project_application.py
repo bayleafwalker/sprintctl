@@ -20,7 +20,7 @@ def _tag_project_context(payload: Mapping[str, Any], origin_repo: str) -> dict[s
     tagged = dict(payload)
     tagged["sprint"] = {**payload["sprint"], "origin_repo": origin_repo}
     for key in (
-        "active_claims",
+        "active_reservations",
         "active_unclaimed_items",
         "conflicts",
         "ready_items",

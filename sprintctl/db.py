@@ -1716,6 +1716,16 @@ def list_reservations(conn: sqlite3.Connection, work_item_id: int | None = None,
     return [_reservation.display(dict(row)) for row in rows]
 
 
+def list_reservations_by_sprint(conn: sqlite3.Connection, sprint_id: int, *, active_only: bool = True) -> list[dict]:
+    clause = "AND r.state = 'active'" if active_only else ""
+    rows = conn.execute(
+        "SELECT r.* FROM reservation r JOIN work_item w ON w.id = r.work_item_id "
+        "WHERE w.sprint_id = ? " + clause + " ORDER BY r.last_activity_at DESC, r.id DESC",
+        (sprint_id,),
+    ).fetchall()
+    return [_reservation.display(dict(row)) for row in rows]
+
+
 def reserve(conn: sqlite3.Connection, work_item_id: int, *, actor: str, session_id: str,
             role: str = "execute", correlation_ref: str | None = None, override: bool = False) -> dict:
     if role not in RESERVATION_ROLES:

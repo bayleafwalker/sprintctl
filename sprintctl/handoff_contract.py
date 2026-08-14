@@ -21,7 +21,7 @@ from .contracts import (
 class ContextContract:
     sprint: Mapping[str, Any]
     summary: Mapping[str, Any]
-    active_claims: Sequence[Mapping[str, Any]]
+    active_reservations: Sequence[Mapping[str, Any]]
     active_unclaimed_items: Sequence[Mapping[str, Any]]
     conflicts: Sequence[Mapping[str, Any]]
     ready_items: Sequence[Mapping[str, Any]]
@@ -36,7 +36,7 @@ class ContextContract:
             "contract_version": self.contract_version,
             "sprint": _copy_mapping(self.sprint),
             "summary": _copy_mapping(self.summary),
-            "active_claims": _copy_mapping_list(self.active_claims),
+            "active_reservations": _copy_mapping_list(self.active_reservations),
             "active_unclaimed_items": _copy_mapping_list(self.active_unclaimed_items),
             "conflicts": _copy_mapping_list(self.conflicts),
             "ready_items": _copy_mapping_list(self.ready_items),
@@ -54,7 +54,7 @@ class HandoffBundle:
     generated_from: Mapping[str, Any]
     sprint: Mapping[str, Any]
     summary: Mapping[str, Any]
-    active_claims: Sequence[Mapping[str, Any]]
+    active_reservations: Sequence[Mapping[str, Any]]
     conflicts: Sequence[Mapping[str, Any]]
     work: Mapping[str, Any]
     recent_decisions: Sequence[Mapping[str, Any]]
@@ -64,7 +64,7 @@ class HandoffBundle:
     freshness: Mapping[str, Any]
     evidence: Mapping[str, Any]
     git_context: Mapping[str, Any] | None
-    claim_identity_model: Mapping[str, Any]
+    reservation_model: Mapping[str, Any]
     resume_instructions: Sequence[str]
     agent_shutdown_protocol: Mapping[str, Any]
     items: Sequence[Mapping[str, Any]]
@@ -81,7 +81,7 @@ class HandoffBundle:
             "generated_from": _copy_mapping(self.generated_from),
             "sprint": _copy_mapping(self.sprint),
             "summary": _copy_mapping(self.summary),
-            "active_claims": _copy_mapping_list(self.active_claims),
+            "active_reservations": _copy_mapping_list(self.active_reservations),
             "conflicts": _copy_mapping_list(self.conflicts),
             "work": _copy_mapping(self.work),
             "recent_decisions": _copy_mapping_list(self.recent_decisions),
@@ -91,7 +91,7 @@ class HandoffBundle:
             "freshness": _copy_mapping(self.freshness),
             "evidence": _copy_mapping(self.evidence),
             "git_context": _copy_mapping(self.git_context) if self.git_context is not None else None,
-            "claim_identity_model": _copy_mapping(self.claim_identity_model),
+            "reservation_model": _copy_mapping(self.reservation_model),
             "resume_instructions": list(self.resume_instructions),
             "agent_shutdown_protocol": _copy_mapping(self.agent_shutdown_protocol),
             "items": _copy_mapping_list(self.items),
