@@ -6,6 +6,7 @@ import ast
 from pathlib import Path
 
 import sprintctl.application as application
+from sprintctl import contracts
 
 
 def test_application_compatibility_module_reexports_service_classes():
@@ -41,3 +42,14 @@ def test_application_compatibility_module_contains_no_service_implementations():
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
     assert not any(isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) for node in tree.body)
+
+
+def test_context_and_handoff_models_are_outside_portable_record_protocol():
+    root = Path(application.__file__).parent
+    contracts_path = root / "contracts.py"
+    handoff_path = root / "handoff_contract.py"
+
+    assert len(contracts_path.read_text(encoding="utf-8").splitlines()) < 1000
+    assert handoff_path.is_file()
+    assert contracts.ContextContract.__module__ == "sprintctl.handoff_contract"
+    assert contracts.HandoffBundle.__module__ == "sprintctl.handoff_contract"
