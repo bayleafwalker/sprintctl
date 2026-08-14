@@ -212,21 +212,21 @@ class TestMaintainCheck:
         assert db.get_sprint(conn, sid)["status"] == "active"
         assert db.list_events(conn, sid) == events_before
 
-    def test_check_flags_only_active_items_without_live_claims(self, conn):
-        sid = db.create_sprint(conn, "Claims", "", None, None, "active")
-        unclaimed = _add_item(conn, sid, "backend", "Interrupted")
-        claimed = _add_item(conn, sid, "backend", "Owned")
-        db.set_work_item_status(conn, unclaimed, "active")
-        db.set_work_item_status(conn, claimed, "active")
-        db.create_claim(conn, claimed, agent="agent-a", ttl_seconds=600)
+    def test_check_flags_only_active_items_without_reservations(self, conn):
+        sid = db.create_sprint(conn, "Reservations", "", None, None, "active")
+        unreserved = _add_item(conn, sid, "backend", "Interrupted")
+        reserved = _add_item(conn, sid, "backend", "Owned")
+        db.set_work_item_status(conn, unreserved, "active")
+        db.set_work_item_status(conn, reserved, "active")
+        db.reserve(conn, reserved, actor="agent-a", session_id="session-a")
 
         report = maint.check(conn, sid, datetime.now(timezone.utc))
 
         finding = next(
             finding for finding in report["findings"]
-            if finding["reason_code"] == "active-item-without-live-claim"
+            if finding["reason_code"] == "active-item-without-reservation"
         )
-        assert finding["item_ids"] == [unclaimed]
+        assert finding["item_ids"] == [unreserved]
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +272,21 @@ class TestMaintainSweep:
         # Already blocked — sweep should not touch it (only sweeps active items)
         result = maint.sweep(conn, active_sprint["id"], now, threshold=timedelta(hours=4))
         assert result["blocked_items"] == []
+
+    def test_sweep_interrupts_reservation_after_seven_days(self, conn, active_sprint):
+        iid = _add_item(conn, active_sprint["id"], "backend", "Reserved task")
+        reservation = db.reserve(conn, iid, actor="agent-a", session_id="session-a")
+        now = datetime(2026, 8, 14, tzinfo=timezone.utc)
+        conn.execute(
+            "UPDATE reservation SET last_activity_at = ? WHERE id = ?",
+            ("2026-08-07T00:00:00Z", reservation["id"]),
+        )
+        conn.commit()
+
+        result = maint.sweep(conn, active_sprint["id"], now, threshold=timedelta(hours=99))
+
+        assert [entry["id"] for entry in result["stale_reservations_interrupted"]] == [reservation["id"]]
+        assert db.list_reservations_by_sprint(conn, active_sprint["id"]) == []
 
     def test_sweep_auto_close_overdue_no_active(self, conn):
         sid = db.create_sprint(conn, "Past", "", "2025-01-01", "2025-01-31", "active")
@@ -488,63 +503,53 @@ class TestMigration2:
 
 
 # ---------------------------------------------------------------------------
-# Group 7: claim expiry purge in sweep
+# Group 7: reservation interruption in sweep
 # ---------------------------------------------------------------------------
 
-class TestSweepPurgesExpiredClaims:
-    def test_sweep_purges_expired_claim(self, conn, active_sprint):
-        iid = _add_item(conn, active_sprint["id"], "eng", "Claimed task")
-        # Insert a claim with an already-expired TTL (1 second, then back-date it)
-        cid = db.create_claim(conn, iid, agent="agent-a", ttl_seconds=1)
+class TestSweepReservations:
+    def test_maintain_sweep_cli_reports_interrupted_reservations(self, runner, conn, active_sprint, db_path):
+        iid = _add_item(conn, active_sprint["id"], "eng", "Reserved task")
+        reservation = db.reserve(conn, iid, actor="agent-a", session_id="session-a")
         conn.execute(
-            "UPDATE claim SET expires_at = datetime('now', '-10 seconds') WHERE id = ?", (cid,)
+            "UPDATE reservation SET last_activity_at = '2000-01-01T00:00:00Z' WHERE id = ?", (reservation["id"],)
         )
         conn.commit()
-        # Confirm claim exists before sweep
-        row = conn.execute("SELECT id FROM claim WHERE id = ?", (cid,)).fetchone()
-        assert row is not None
+        result = runner.invoke(cli, ["maintain", "sweep", "--sprint-id", str(active_sprint["id"])])
+        assert result.exit_code == 0, result.output
+        assert "Interrupted 1 stale reservation" in result.output
 
-        now = datetime.now(timezone.utc)
-        result = maint.sweep(conn, active_sprint["id"], now, threshold=timedelta(hours=99))
-        assert result["expired_claims_purged"] == 1
+    def test_sweep_leaves_recent_reservation_active(self, conn, active_sprint):
+        iid = _add_item(conn, active_sprint["id"], "eng", "Reserved task")
+        reservation = db.reserve(conn, iid, actor="agent-a", session_id="session-a")
+        result = maint.sweep(conn, active_sprint["id"], datetime.now(timezone.utc), threshold=timedelta(hours=99))
+        assert result["stale_reservations_interrupted"] == []
+        assert db.list_reservations_by_sprint(conn, active_sprint["id"])[0]["id"] == reservation["id"]
 
-        row = conn.execute("SELECT id FROM claim WHERE id = ?", (cid,)).fetchone()
-        assert row is None
-
-    def test_sweep_does_not_purge_active_claim(self, conn, active_sprint):
-        iid = _add_item(conn, active_sprint["id"], "eng", "Active task")
-        cid = db.create_claim(conn, iid, agent="agent-a", ttl_seconds=3600)
-        now = datetime.now(timezone.utc)
-        result = maint.sweep(conn, active_sprint["id"], now, threshold=timedelta(hours=99))
-        assert result["expired_claims_purged"] == 0
-        row = conn.execute("SELECT id FROM claim WHERE id = ?", (cid,)).fetchone()
-        assert row is not None
-
-    def test_sweep_only_purges_claims_in_sprint(self, conn):
+    def test_sweep_interrupts_stale_reservations_across_sprints(self, conn):
         s1 = db.create_sprint(conn, "S1", "", "2026-04-01", "2026-04-30", "active")
         s2 = db.create_sprint(conn, "S2", "", "2026-04-01", "2026-04-30", "active")
         tid1 = db.get_or_create_track(conn, s1, "eng")
         tid2 = db.get_or_create_track(conn, s2, "eng")
         iid1 = db.create_work_item(conn, s1, tid1, "S1 task")
         iid2 = db.create_work_item(conn, s2, tid2, "S2 task")
-        cid1 = db.create_claim(conn, iid1, agent="a", ttl_seconds=1)
-        cid2 = db.create_claim(conn, iid2, agent="a", ttl_seconds=1)
-        conn.execute("UPDATE claim SET expires_at = datetime('now', '-5 seconds')")
+        reservation1 = db.reserve(conn, iid1, actor="a", session_id="session-1")
+        reservation2 = db.reserve(conn, iid2, actor="a", session_id="session-2")
+        conn.execute("UPDATE reservation SET last_activity_at = '2000-01-01T00:00:00Z'")
         conn.commit()
         now = datetime.now(timezone.utc)
         result = maint.sweep(conn, s1, now, threshold=timedelta(hours=99))
-        # Only s1's claim purged
-        assert result["expired_claims_purged"] == 1
-        assert conn.execute("SELECT id FROM claim WHERE id = ?", (cid1,)).fetchone() is None
-        assert conn.execute("SELECT id FROM claim WHERE id = ?", (cid2,)).fetchone() is not None
+        assert {entry["id"] for entry in result["stale_reservations_interrupted"]} == {reservation1["id"], reservation2["id"]}
+        assert db.list_reservations_by_sprint(conn, s1) == []
+        assert db.list_reservations_by_sprint(conn, s2) == []
 
-    def test_maintain_sweep_cli_reports_purged_claims(self, runner, conn, active_sprint, db_path):
-        iid = _add_item(conn, active_sprint["id"], "eng", "Claimed task")
-        cid = db.create_claim(conn, iid, agent="agent-a", ttl_seconds=1)
+    def test_maintain_sweep_cli_json_reports_interrupted_reservations(self, runner, conn, active_sprint, db_path):
+        iid = _add_item(conn, active_sprint["id"], "eng", "Reserved task")
+        reservation = db.reserve(conn, iid, actor="agent-a", session_id="session-a")
         conn.execute(
-            "UPDATE claim SET expires_at = datetime('now', '-10 seconds') WHERE id = ?", (cid,)
+            "UPDATE reservation SET last_activity_at = '2000-01-01T00:00:00Z' WHERE id = ?", (reservation["id"],)
         )
         conn.commit()
-        result = runner.invoke(cli, ["maintain", "sweep", "--sprint-id", str(active_sprint["id"])])
+        result = runner.invoke(cli, ["maintain", "sweep", "--sprint-id", str(active_sprint["id"]), "--json"])
         assert result.exit_code == 0, result.output
-        assert "Purged 1 expired claim" in result.output
+        payload = json.loads(result.output)
+        assert [entry["id"] for entry in payload["stale_reservations_interrupted"]] == [reservation["id"]]

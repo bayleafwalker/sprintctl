@@ -1617,7 +1617,7 @@ def maintain_sweep(obj, sprint_id, threshold, auto_close, as_json) -> None:
         click.echo(json.dumps({
             "sprint_id": s["id"],
             "blocked_items": [{"id": it["id"], "title": it["title"]} for it in result["blocked_items"]],
-            "expired_claims_purged": result["expired_claims_purged"],
+            "stale_reservations_interrupted": result["stale_reservations_interrupted"],
             "auto_closed": result["auto_closed"],
         }, indent=2))
         return
@@ -1630,9 +1630,9 @@ def maintain_sweep(obj, sprint_id, threshold, auto_close, as_json) -> None:
     else:
         click.echo("No stale items to block.")
 
-    purged = result["expired_claims_purged"]
-    if purged:
-        click.echo(f"Purged {purged} expired claim(s).")
+    interrupted = result["stale_reservations_interrupted"]
+    if interrupted:
+        click.echo(f"Interrupted {len(interrupted)} stale reservation(s).")
 
     if result["auto_closed"]:
         click.echo(f"Sprint #{s['id']} auto-closed (overdue, no active items).")
