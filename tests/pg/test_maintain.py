@@ -85,7 +85,7 @@ class TestMaintain:
         )
 
         findings = {finding["reason_code"]: finding for finding in report["findings"]}
-        assert findings["active-item-without-live-claim"]["item_ids"] == [item_id]
+        assert findings["active-item-without-reservation"]["item_ids"] == [item_id]
         assert findings["code-evidence-without-item-link"]["event_ids"] == [event_id]
 
 
