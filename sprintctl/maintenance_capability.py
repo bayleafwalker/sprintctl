@@ -309,9 +309,9 @@ def freeze_envelope(envelope: Any) -> FrozenEnvelope:
         bindings[name] = binding
 
     gate = envelope["start_gate"]
-    if not isinstance(gate, dict) or set(gate) != {"plan", "dependent_implementation_sessions", "active_normal_claims"} or gate.get("plan") != "plan-1":
+    if not isinstance(gate, dict) or set(gate) != {"plan", "dependent_implementation_sessions", "active_reservations"} or gate.get("plan") != "plan-1":
         raise MaintenanceCapabilityError("activation requires plan-1")
-    for name in ("dependent_implementation_sessions", "active_normal_claims"):
+    for name in ("dependent_implementation_sessions", "active_reservations"):
         predicate = gate.get(name)
         if not isinstance(predicate, dict) or set(predicate) != {"expected_count", "observed_at", "evidence_ref", "receipt_ref"} or predicate.get("expected_count") != 0:
             raise MaintenanceCapabilityError("plan-1 start predicates must require zero")
@@ -406,7 +406,7 @@ class SQLiteMaintenanceCapabilityStore:
             # Admissibility is decided by the database clock, never by the
             # caller-supplied `at`. A delayed, retried, or replayed request
             # carrying a stale pre-expiry `at` must not drive this capability
-            # into a state that claim admission -- which filters on database
+            # into a state that reservation maintenance -- which filters on database
             # time -- no longer honors. `at` remains the recorded event time.
             decided_at = self._decision_time()
             if action in {"activate", "observe", "reconcile"} and decided_at < not_before:
@@ -436,7 +436,7 @@ class SQLiteMaintenanceCapabilityStore:
                         raise MaintenanceCapabilityError("reconciliation requires every reviewed step receipt in order")
                     audit_bundle_json = _validate_reconciliation_bundle(reconciliation)
                 if action == "activate":
-                    self._require_zero_ordinary_claims(decided_at)
+                    self._require_zero_active_reservations(decided_at)
                     self._require_fresh_start_gate(envelope, decided_at)
             next_revision = current["revision"] + 1
             self.conn.execute("UPDATE maintenance_capability SET state = ?, revision = ?, next_sequence = ?, updated_at = ? WHERE capability_id = ? AND revision = ?", (target, next_revision, next_sequence, at, capability_id, current["revision"]))
@@ -528,11 +528,11 @@ class SQLiteMaintenanceCapabilityStore:
     def _receipt(self, capability_id: str, request_id: str, action: str, outcome: str, from_state: str | None, to_state: str, result_revision: str, step_id: str | None, command_ref: str | None, effect_ref: str | None, audit_bundle_json: str | None, digest: str, actor: str, at: str) -> None:
         self.conn.execute("INSERT INTO maintenance_capability_receipt (capability_id, request_id, action, outcome, from_state, to_state, result_revision, step_id, command_ref, effect_ref, audit_bundle_json, request_digest, actor, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (capability_id, request_id, action, outcome, from_state, to_state, result_revision, step_id, command_ref, effect_ref, audit_bundle_json, digest, actor, at))
 
-    def _require_zero_ordinary_claims(self, now: datetime) -> None:
-        row = self.conn.execute("SELECT COUNT(*) AS count FROM claim WHERE status = 'active' AND julianday(expires_at) > julianday(?)", (now.isoformat(),)).fetchone()
+    def _require_zero_active_reservations(self, now: datetime) -> None:
+        row = self.conn.execute("SELECT COUNT(*) AS count FROM reservation WHERE state = 'active'", ()).fetchone()
         count = row["count"] if hasattr(row, "keys") else row[0]
         if count:
-            raise MaintenanceCapabilityError("activation requires zero live ordinary claims")
+            raise MaintenanceCapabilityError("activation requires zero active reservations")
 
     def _authorize_step(self, envelope: Mapping[str, Any], current: Mapping[str, Any], action: str, step_id: str | None, command_id: str | None, command_ref: str | None, effect_ref: str | None, now: datetime) -> int:
         if not step_id or not command_id or not command_ref or not effect_ref:
@@ -566,7 +566,7 @@ class SQLiteMaintenanceCapabilityStore:
         return _time(value, "decided_at")
 
     def _require_fresh_start_gate(self, envelope: Mapping[str, Any], now: datetime) -> None:
-        for name in ("dependent_implementation_sessions", "active_normal_claims"):
+        for name in ("dependent_implementation_sessions", "active_reservations"):
             observed = _time(envelope["start_gate"][name]["observed_at"], f"start_gate.{name}.observed_at")
             if observed > now or now - observed > timedelta(minutes=5):
                 raise MaintenanceCapabilityError("activation requires fresh start-gate evidence within five minutes")
@@ -653,7 +653,7 @@ class PostgresMaintenanceCapabilityStore:
                 # Admissibility is decided by the database clock, never by the
                 # caller-supplied `at`. A delayed, retried, or replayed request
                 # carrying a stale pre-expiry `at` must not drive this
-                # capability into a state that claim admission -- which filters
+                # capability into a state that reservation maintenance -- which filters
                 # on database time -- no longer honors. `at` remains the
                 # recorded event time. Read after the FOR UPDATE lock above so
                 # a waiting request is judged by when it acquired the row.
@@ -686,9 +686,9 @@ class PostgresMaintenanceCapabilityStore:
                             raise MaintenanceCapabilityError("reconciliation requires every reviewed step receipt in order")
                         audit_bundle_json = _validate_reconciliation_bundle(reconciliation)
                     if action == "activate":
-                        cur.execute("SELECT COUNT(*) AS count FROM claim WHERE repo_id = %s AND status = 'active' AND expires_at > %s", (self.repo_id, decided_at))
+                        cur.execute("SELECT COUNT(*) AS count FROM reservation WHERE repo_id = %s AND state = 'active'", (self.repo_id,))
                         if int(cur.fetchone()["count"]):
-                            raise MaintenanceCapabilityError("activation requires zero live ordinary claims")
+                            raise MaintenanceCapabilityError("activation requires zero active reservations")
                         SQLiteMaintenanceCapabilityStore._require_fresh_start_gate(self, envelope, decided_at)
                 next_revision = current["revision"] + 1
                 cur.execute("UPDATE maintenance_capability SET state=%s, revision=%s, next_sequence=%s, updated_at=%s WHERE repo_id=%s AND capability_id=%s AND revision=%s", (target, next_revision, next_sequence, now, self.repo_id, capability_id, current["revision"]))
