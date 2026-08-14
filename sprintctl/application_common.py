@@ -26,7 +26,7 @@ from threading import RLock
 from typing import Any, Protocol
 from uuid import uuid4
 
-from . import context_candidates, context_contract, contracts, cutover, db, handoff, maintain, outbox, sprint_detail
+from . import context_candidates, context_contract, contracts, db, handoff, maintain, outbox, sprint_detail
 from .maintenance_capability import (
     MaintenanceCapabilityError,
     PostgresMaintenanceCapabilityStore,
@@ -72,7 +72,6 @@ _ADMIN_SHUTDOWN_READ_OPERATIONS = frozenset(
         "work.identity.current",
         "work.claim.context",
         "work.maintain.check",
-        "work.pilot.cutover-evidence",
         "work.maintenance.resource.get",
         "work.maintenance.resource.changes",
     }

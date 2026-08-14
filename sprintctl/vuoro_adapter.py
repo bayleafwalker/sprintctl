@@ -999,45 +999,6 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "write",
         "required",
     ),
-    WorkOperationContract(
-        "work.pilot.cutover-evidence",
-        _object_schema(
-            {
-                "parity": {"type": ["object", "null"]},
-                "max_watermark_age_seconds": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "default": 300,
-                },
-                "rehearse": {"type": "boolean", "default": True},
-            }
-        ),
-        _result_schema(
-            (
-                "contract_version",
-                "config",
-                "parity",
-                "watermark",
-                "stale_tools",
-                "rollback_rehearsal",
-                "promotable",
-                "blockers",
-            ),
-            {
-                "contract_version": {"type": "string"},
-                "config": {"type": "object"},
-                "parity": {"type": ["object", "null"]},
-                "watermark": {"type": "object"},
-                "stale_tools": {"type": "object"},
-                "rollback_rehearsal": {"type": ["object", "null"]},
-                "promotable": {"type": "boolean"},
-                "blockers": {"type": "array", "items": {"type": "string"}},
-            },
-        ),
-        "work:pilot-read",
-        "read",
-        "not-allowed",
-    ),
 )
 
 
@@ -1069,10 +1030,6 @@ LEGACY_REMOTE_COMMAND_PARITY: tuple[dict[str, str], ...] = (
     {"legacy": "sprintctl item edit", "operation": "work.item.edit"},
     {"legacy": "sprintctl next-work --project", "operation": "work.project.next-work"},
     {"legacy": "project dispatch batching", "operation": "work.project.batch"},
-    {
-        "legacy": "sprintctl pilot cutover-evidence",
-        "operation": "work.pilot.cutover-evidence",
-    },
 )
 
 

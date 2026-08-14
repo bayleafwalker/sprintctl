@@ -426,7 +426,6 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         "work.maintenance.transition",
         "work.maintenance.recovery-record",
         "work.maintenance.resource.prepare",
-        "work.pilot.cutover-evidence",
     } <= set(names)
     assert {row["operation"] for row in LEGACY_REMOTE_COMMAND_PARITY} <= set(names)
     for contract in WORK_OPERATION_CONTRACTS:
@@ -1689,43 +1688,6 @@ def test_project_batch_validates_all_actor_bindings_before_any_member_mutation()
     assert rejected.value.code == "actor-mismatch"
     assert calls == []
 
-
-def test_cutover_evidence_handler_is_the_same_domain_core(monkeypatch, tmp_path):
-    expected = {
-        "contract_version": "1",
-        "config": {},
-        "parity": None,
-        "watermark": {},
-        "stale_tools": {},
-        "rollback_rehearsal": None,
-        "promotable": False,
-        "blockers": ["parity-not-evaluated"],
-    }
-    observed = {}
-
-    def build(**kwargs):
-        observed.update(kwargs)
-        return expected
-
-    monkeypatch.setattr(application.cutover, "build_cutover_evidence", build)
-    app = _application()
-    app.repo_root = tmp_path
-
-    assert (
-        app.invoke(
-            "work.pilot.cutover-evidence",
-            {"rehearse": False, "max_watermark_age_seconds": 90},
-            _context(),
-        )
-        == expected
-    )
-    assert observed == {
-        "cwd": tmp_path,
-        "repo_root": tmp_path,
-        "parity": None,
-        "max_watermark_age_seconds": 90,
-        "rehearse": False,
-    }
 
 
 def test_claim_context_catalog_contract_is_an_unauthenticated_read_op_shape():

@@ -278,7 +278,6 @@ class WorkApplication:
             "work.evidence.ingest": target._evidence_ingest,
             "work.item.note": target._item_note,
             "work.batch.apply": target._batch_apply,
-            "work.pilot.cutover-evidence": target._cutover_evidence,
         }
         try:
             handler = handlers[operation]
@@ -1533,23 +1532,3 @@ class WorkApplication:
             return {}
         resolved = self.credential_resolver(context, record)
         return dict(resolved or {})
-
-    def _cutover_evidence(
-        self, arguments: dict[str, Any], _context: InvocationContext
-    ) -> dict[str, Any]:
-        max_age = arguments.get(
-            "max_watermark_age_seconds", cutover.DEFAULT_MAX_WATERMARK_AGE_SECONDS
-        )
-        max_age = _positive_int(max_age, "max_watermark_age_seconds")
-        parity = arguments.get("parity")
-        if parity is not None and not isinstance(parity, dict):
-            raise ApplicationRejection(
-                "invalid-parity", "parity must be an object or null", 422
-            )
-        return cutover.build_cutover_evidence(
-            cwd=self.repo_root,
-            repo_root=self.repo_root,
-            parity=parity,
-            max_watermark_age_seconds=max_age,
-            rehearse=bool(arguments.get("rehearse", True)),
-        )

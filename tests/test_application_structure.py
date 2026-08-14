@@ -14,7 +14,6 @@ def test_application_compatibility_module_reexports_service_classes():
     assert application.ProjectWorkApplication.__module__ == "sprintctl.project_application"
     assert application.ProjectMemberApplication.__module__ == "sprintctl.project_application"
     assert application.batch_idempotency_key is not None
-    assert application.cutover.__name__ == "sprintctl.cutover"
 
 
 def test_application_service_modules_do_not_import_cli():

@@ -294,7 +294,6 @@ _DOCTOR_PROBE_COMMAND_PATHS = (
     "claim.handoff",
     "claim.release",
     "item.note",
-    "pilot.cutover-evidence",
     "authority.sync",
     "event.list",
     "event.add",
