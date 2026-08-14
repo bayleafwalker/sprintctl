@@ -30,8 +30,8 @@ def _refs(aggregate_type: str) -> dict[str, object]:
 
 def _payload(record_type: str) -> dict[str, object]:
     return {
-        "item.transition": {"to_status": "blocked", "claim_id": 17, "credential_ref": CREDENTIAL_REF},
-        "item.done": {"to_status": "done", "claim_id": 17, "credential_ref": CREDENTIAL_REF},
+        "item.transition": {"to_status": "blocked"},
+        "item.done": {"to_status": "done"},
         "sprint.activate": {},
         "sprint.close": {},
         "claim.acquire": {

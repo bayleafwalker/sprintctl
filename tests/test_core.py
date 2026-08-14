@@ -1214,6 +1214,13 @@ class TestBlockedRevival:
         with pytest.raises(db.InvalidTransition):
             db.set_work_item_status(conn, iid, "done")
 
+    def test_active_legacy_claim_does_not_override_status_cas(self, conn, active_sprint):
+        iid = self._add_active_item(None, conn, active_sprint["id"])
+        db.create_claim(conn, iid, "legacy-worker")
+        basis = db.item_status_revision(db.get_work_item(conn, iid))
+        db.set_work_item_status(conn, iid, "done", expected_revision=basis)
+        assert db.get_work_item(conn, iid)["status"] == "done"
+
     def test_sweep_blocked_item_can_be_revived(self, conn, active_sprint):
         from datetime import datetime, timedelta, timezone
         from sprintctl import maintain as maint

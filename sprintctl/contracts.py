@@ -287,7 +287,7 @@ def _canonical_authority_payload(record_type: str, payload: Mapping[str, Any]) -
             payload,
             field="payload",
             required={"to_status"},
-            optional={"claim_id", "credential_ref"},
+            optional=set(),
         )
         allowed_statuses = {"pending", "active", "done", "blocked"}
         to_status = _required_string(source["to_status"], "payload.to_status")
@@ -296,10 +296,6 @@ def _canonical_authority_payload(record_type: str, payload: Mapping[str, Any]) -
         if record_type == "item.done" and to_status != "done":
             raise ValueError("item.done payload.to_status must be 'done'")
         result: dict[str, Any] = {"to_status": to_status}
-        if "claim_id" in source:
-            result["claim_id"] = _positive_int(source["claim_id"], "payload.claim_id")
-        if "credential_ref" in source:
-            result["credential_ref"] = _credential_ref(source["credential_ref"])
         return result
 
     if record_type in {"sprint.activate", "sprint.close"}:

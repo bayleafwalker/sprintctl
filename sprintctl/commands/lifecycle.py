@@ -2130,8 +2130,6 @@ def claim_start(
                 item_id,
                 "active",
                 actor=actor,
-                claim_id=cid,
-                claim_token=claim["claim_token"],
             )
             transitioned = True
         except Exception as e:

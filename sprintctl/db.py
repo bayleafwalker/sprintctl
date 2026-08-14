@@ -1043,8 +1043,6 @@ def set_work_item_status(
     item_id: int,
     new_status: str,
     actor: str | None = None,
-    claim_id: int | None = None,
-    claim_token: str | None = None,
     *,
     expected_revision: str | None = None,
 ) -> None:
@@ -1071,71 +1069,6 @@ def set_work_item_status(
             raise InvalidTransition(
                 f"cannot transition {current} -> {new_status}. Allowed: {allowed}"
             )
-        active_claim = _get_active_exclusive_claim_row(conn, item_id)
-        if active_claim is not None:
-            if claim_id is None or claim_token is None:
-                _emit_claim_event(
-                    conn,
-                    active_claim,
-                    event_type="coordination-failure",
-                    actor=actor or "system",
-                    payload={
-                        "summary": f"Item transition rejected for item #{item_id}",
-                        "detail": (
-                            "An exclusive claim blocked the transition because no "
-                            "valid claim proof was supplied."
-                        ),
-                        "tags": ["claims", "coordination", "ownership-proof"],
-                        "operation": "item-status",
-                        "reason": "missing-claim-proof",
-                        "required_claim": _claim_event_identity(active_claim),
-                        "attempted_by": _claim_attempt_identity(actor=actor),
-                    },
-                )
-                raise ClaimConflict(
-                    f"Item #{item_id} is exclusively claimed by '{active_claim['agent']}' "
-                    f"(claim #{active_claim['id']}). Provide --claim-id and --claim-token."
-                )
-            selected_claim = conn.execute(
-                "SELECT * FROM claim WHERE id = ?", (claim_id,)
-            ).fetchone()
-            if (
-                selected_claim is None
-                or selected_claim["work_item_id"] != item_id
-                or not selected_claim["exclusive"]
-                or selected_claim["claim_type"] != "execute"
-                or selected_claim["status"] != "active"
-                or selected_claim["expires_at"] <= conn.execute(
-                    "SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now')"
-                ).fetchone()[0]
-            ):
-                _emit_claim_event(
-                    conn,
-                    active_claim,
-                    event_type="coordination-failure",
-                    actor=actor or "system",
-                    payload={
-                        "summary": f"Item transition rejected for item #{item_id}",
-                        "detail": (
-                            "A transition supplied a claim proof for the wrong claim id "
-                            "while another exclusive claim was active."
-                        ),
-                        "tags": ["claims", "coordination", "ownership-proof"],
-                        "operation": "item-status",
-                        "reason": "wrong-claim-id",
-                        "required_claim": _claim_event_identity(active_claim),
-                        "attempted_by": _claim_attempt_identity(
-                            actor=actor,
-                            claim_id=claim_id,
-                            claim_token_present=claim_token is not None,
-                        ),
-                    },
-                )
-                raise ClaimConflict(
-                    f"Item #{item_id} is exclusively claimed by '{active_claim['agent']}' "
-                    f"(claim #{active_claim['id']})."
-                )
-            _require_claim_proof(selected_claim, claim_token)
         if new_status == "active":
             unresolved = [
                 blocker for blocker in list_deps_blocking(conn, item_id)

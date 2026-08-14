@@ -1939,12 +1939,9 @@ def set_work_item_status(
     item_id: int,
     new_status: str,
     actor: str | None = None,
-    claim_id: int | None = None,
-    claim_token: str | None = None,
     *,
     expected_revision: str | None = None,
 ) -> None:
-    from .db import _require_claim_proof
     if expected_revision is not None:
         expected_revision = validate_item_status_revision(expected_revision)
     wi = _WorkItemPg(store)
@@ -1967,64 +1964,6 @@ def set_work_item_status(
             raise InvalidTransition(
                 f"cannot transition {current} -> {new_status}. Allowed: {allowed}"
             )
-        active_claim = _get_active_exclusive_claim_row(store, item_id)
-        if active_claim is not None:
-            if claim_id is None or claim_token is None:
-                _emit_claim_event(
-                    store, active_claim,
-                    event_type="coordination-failure",
-                    actor=actor or "system",
-                    payload={
-                        "summary": f"Item transition rejected for item #{item_id}",
-                        "detail": "An exclusive claim blocked the transition because no valid claim proof was supplied.",
-                        "tags": ["claims", "coordination", "ownership-proof"],
-                        "operation": "item-status",
-                        "reason": "missing-claim-proof",
-                        "required_claim": _claim_event_identity(active_claim),
-                        "attempted_by": _claim_attempt_identity(actor=actor),
-                    },
-                )
-                raise ClaimConflict(
-                    f"Item #{item_id} is exclusively claimed by '{active_claim['agent']}' "
-                    f"(claim #{active_claim['id']}). Provide --claim-id and --claim-token."
-                )
-            with store.conn.cursor() as cur:
-                cur.execute(
-                    f"SELECT *, expires_at > {_CLAIM_CLOCK_SQL} AS live FROM claim "
-                    "WHERE repo_id = %s AND id = %s FOR UPDATE",
-                    (store.repo_id, claim_id),
-                )
-                selected_row = cur.fetchone()
-            selected_claim = _norm(selected_row) if selected_row else None
-            if (
-                selected_claim is None
-                or selected_claim["work_item_id"] != item_id
-                or not selected_claim["exclusive"]
-                or selected_claim["claim_type"] != "execute"
-                or selected_claim["status"] != "active"
-                or not selected_claim["live"]
-            ):
-                _emit_claim_event(
-                    store, active_claim,
-                    event_type="coordination-failure",
-                    actor=actor or "system",
-                    payload={
-                        "summary": f"Item transition rejected for item #{item_id}",
-                        "detail": "A transition supplied a claim proof for the wrong claim id.",
-                        "tags": ["claims", "coordination", "ownership-proof"],
-                        "operation": "item-status",
-                        "reason": "wrong-claim-id",
-                        "required_claim": _claim_event_identity(active_claim),
-                        "attempted_by": _claim_attempt_identity(
-                            actor=actor, claim_id=claim_id, claim_token_present=claim_token is not None,
-                        ),
-                    },
-                )
-                raise ClaimConflict(
-                    f"Item #{item_id} is exclusively claimed by '{active_claim['agent']}' "
-                    f"(claim #{active_claim['id']})."
-                )
-            _require_claim_proof(selected_claim, claim_token)
         if new_status == "active":
             unresolved = [
                 b for b in list_deps_blocking(store, item_id) if b["blocker_status"] != "done"
