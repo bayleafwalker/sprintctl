@@ -981,7 +981,7 @@ def test_next_work_explain_is_one_application_aggregate(conn, active_sprint):
         "work.read.next-work-explain", {"sprint_id": active_sprint["id"]}, _context()
     )
 
-    assert payload["contract_version"] == "1"
+    assert payload["contract_version"] == "2"
     assert [item["id"] for item in payload["ready_items"]] == [ready_id, blocker_id]
     assert payload["dependency_waiting_items"][0]["id"] == waiting_id
     assert payload["next_action"]["kind"] == "unblock-dependent-work"
