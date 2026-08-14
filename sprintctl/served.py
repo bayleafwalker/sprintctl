@@ -141,20 +141,6 @@ def read_items(served_profile: ServedProfile, *, repo_id: str, sprint_id: int | 
     }, repo_id=repo_id))
 
 
-def read_claims(served_profile: ServedProfile, *, repo_id: str, item_id: int | None = None,
-                sprint_id: int | None = None, active_only: bool = True, instance_id: str | None = None,
-                runtime_session_id: str | None = None, hostname: str | None = None, pid: int | None = None) -> dict[str, Any]:
-    return asyncio.run(_invoke_operation(served_profile, "work.read.claims", {
-        "item_id": item_id, "sprint_id": sprint_id, "active_only": active_only, "instance_id": instance_id,
-        "runtime_session_id": runtime_session_id, "hostname": hostname, "pid": pid,
-    }, repo_id=repo_id))
-
-
-def read_claim(served_profile: ServedProfile, *, repo_id: str, claim_id: int) -> dict[str, Any]:
-    """Inspect a claim without ever returning its bearer token."""
-    return asyncio.run(_invoke_operation(served_profile, "work.read.claim", {"claim_id": claim_id}, repo_id=repo_id))
-
-
 def read_context(
     served_profile: ServedProfile, *, repo_id: str, sprint_id: int | None = None
 ) -> dict[str, Any]:
@@ -579,8 +565,7 @@ def lifecycle_arbitrate(
 # gap) wire through this facade (next-work contributes three:
 # work.read.next-work, work.read.next-work-explain, and work.project.next-work; item.status and
 # sprint.status share one operation, work.lifecycle.arbitrate;
-# claim.heartbeat, claim.handoff, and claim.release share one operation,
-# work.claim.arbitrate). Excludes event.observation.add: it is a registered
+# Excludes event.observation.add: it is a registered
 # route in served_routes.py, but no served CLI path invokes work.evidence.ingest
 # directly -- `event observation add` always appends to the local outbox and
 # is only ever flushed through authority.sync's work.batch.apply (see
@@ -588,8 +573,8 @@ def lifecycle_arbitrate(
 #
 # Every operation added to the served catalog must be added here in the same
 # change -- the #1195 postmortem found this list had already silently drifted
-# out of sync with newly-wired routes once (missing claim.handoff, then
-# pilot.cutover-evidence), meaning `doctor` was not actually verifying the
+# out of sync with newly-wired routes once (missing pilot.cutover-evidence),
+# meaning `doctor` was not actually verifying the
 # catalog before commands ran. See docs/plans/served-mode-gaps-plan.md.
 EXPECTED_OPERATIONS = doctor_probe_operations()
 # Compatibility for consumers that diagnosed the precise route keys. The
@@ -621,10 +606,7 @@ __all__ = [
     "batch_apply",
     "catalog_operation_names",
     "context_candidates",
-    "claim_arbitrate",
-    "claim_context",
     "handoff_record",
-    "claim_start",
     "cutover_evidence",
     "event_add",
     "item_create",
@@ -641,8 +623,6 @@ __all__ = [
     "read_item",
     "read_items",
     "identity_current",
-    "read_claims",
-    "read_claim",
     "read_context",
     "read_handoff",
     "read_next_work",
