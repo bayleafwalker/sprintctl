@@ -313,10 +313,6 @@ def _decision_type(command_type: str) -> str:
         "item.done": "item.transitioned",
         "sprint.activate": "sprint-activated",
         "sprint.close": "sprint-closed",
-        "claim.acquire": "claim.granted",
-        "claim.renew": "claim.renewed",
-        "claim.handoff": "claim.handed-off",
-        "claim.release": "claim.released",
         "capability-receipt.accept": "capability-receipt.accepted",
     }[command_type]
 
@@ -343,45 +339,6 @@ def _lock_sprint(cur: Any, store: pg.PgStore, aggregate_uuid: str) -> Mapping[st
     return row
 
 
-def _lock_claim(cur: Any, store: pg.PgStore, claim_id: int) -> Mapping[str, Any]:
-    cur.execute(
-        "SELECT * FROM claim WHERE repo_id = %s AND id = %s FOR UPDATE",
-        (store.repo_id, claim_id),
-    )
-    row = cur.fetchone()
-    if row is None:
-        raise _RejectedCommand("not-found", f"Claim #{claim_id} not found")
-    return row
-
-
-def _claim_effect(row: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        "claim_id": int(row["id"]),
-        "work_item_id": int(row["work_item_id"]),
-        "actor": row["agent"],
-        "claim_type": row["claim_type"],
-        "exclusive": bool(row["exclusive"]),
-        "heartbeat": _iso(row["heartbeat"]),
-        "expires_at": _iso(row["expires_at"]),
-        "status": row["status"],
-        "lease_epoch": int(row["lease_epoch"]),
-        "runtime_session_id": row.get("runtime_session_id"),
-        "instance_id": row.get("instance_id"),
-    }
-
-
-def _verify_claim_secret(row: Mapping[str, Any], ref: Any, credentials: Mapping[str, str]) -> None:
-    supplied = _resolve_credential(ref, credentials)
-    stored = row.get("claim_token")
-    if not stored or not secrets.compare_digest(str(stored), supplied):
-        raise _RejectedCommand("invalid-claim-proof", "claim proof is invalid")
-
-
-def _require_live_claim(cur: Any, row: Mapping[str, Any]) -> None:
-    cur.execute(f"SELECT {_CLAIM_CLOCK_SQL} AS now")
-    now = cur.fetchone()["now"]
-    if row["status"] != "active" or row["expires_at"] <= now:
-        raise _RejectedCommand("expired-grant", "claim grant has expired")
 
 
 def _handle_item(
@@ -492,211 +449,6 @@ def _handle_sprint(
     return effect
 
 
-def _handle_claim_acquire(
-    cur: Any,
-    store: pg.PgStore,
-    envelope: contracts.AuthorityCommand,
-    credentials: Mapping[str, str],
-) -> dict[str, Any]:
-    item = _lock_item(cur, store, str(_required_ref(envelope, "aggregate_uuid")))
-    _check_basis(envelope, item_revision(item))
-    payload = envelope.payload
-    claim_type = str(_required_payload(envelope, "claim_type"))
-    if claim_type not in CLAIM_TYPES:
-        raise _RejectedCommand("invalid-command", f"invalid claim_type {claim_type!r}")
-    exclusive = bool(payload.get("exclusive", True))
-    ttl = _positive_int(payload.get("ttl_seconds", 300), "ttl_seconds")
-    proposed_token = _resolve_credential(payload.get("credential_ref"), credentials)
-    cur.execute(
-        "UPDATE claim SET status = 'expired' WHERE repo_id = %s "
-        f"AND work_item_id = %s AND status = 'active' AND expires_at <= {_CLAIM_CLOCK_SQL}",
-        (store.repo_id, item["id"]),
-    )
-    if exclusive:
-        cur.execute(
-            "SELECT * FROM claim WHERE repo_id = %s AND work_item_id = %s "
-            f"AND exclusive = true AND status = 'active' AND expires_at > {_CLAIM_CLOCK_SQL} "
-            "ORDER BY id LIMIT 1 FOR UPDATE",
-            (store.repo_id, item["id"]),
-        )
-        conflict = cur.fetchone()
-        if conflict is not None:
-            coordinate_claim_id = payload.get("coordinate_claim_id")
-            if conflict["claim_type"] != "coordinate" or coordinate_claim_id != conflict["id"]:
-                raise _RejectedCommand("claim-conflict", "item already has an exclusive claim")
-            _verify_claim_secret(
-                conflict,
-                payload.get("coordinate_credential_ref"),
-                credentials,
-            )
-    proposed_ref = str(_required_payload(envelope, "credential_ref"))
-    cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (proposed_ref,))
-    cur.execute(
-        "SELECT 1 FROM claim WHERE repo_id = %s AND claim_token = %s",
-        (store.repo_id, proposed_token),
-    )
-    if cur.fetchone() is not None:
-        raise _RejectedCommand("credential-conflict", "proposed claim proof is already in use")
-    metadata = dict(payload.get("metadata") or {})
-    cur.execute(
-        f"""
-        INSERT INTO claim (
-            repo_id, work_item_id, agent, claim_type, exclusive, expires_at,
-            branch, worktree_path, commit_sha, pr_ref, claim_token,
-            runtime_session_id, instance_id, hostname, pid, lease_epoch
-        ) VALUES (
-            %s, %s, %s, %s, %s, {_CLAIM_CLOCK_SQL} + (%s || ' seconds')::interval,
-            %s, %s, %s, %s, %s, %s, %s, %s, %s,
-            COALESCE((SELECT MAX(lease_epoch) FROM claim
-                      WHERE repo_id = %s AND work_item_id = %s
-                        AND status = 'expired'), 0) + 1
-        ) RETURNING *
-        """,
-        (
-            store.repo_id,
-            item["id"],
-            str(_required_payload(envelope, "agent")),
-            claim_type,
-            exclusive,
-            ttl,
-            metadata.get("branch"),
-            metadata.get("worktree_path"),
-            metadata.get("commit_sha"),
-            metadata.get("pr_ref"),
-            proposed_token,
-            metadata.get("runtime_session_id"),
-            metadata.get("instance_id"),
-            metadata.get("hostname"),
-            metadata.get("pid"),
-            store.repo_id,
-            item["id"],
-        ),
-    )
-    return _claim_effect(cur.fetchone())
-
-
-def _handle_claim_mutation(
-    cur: Any,
-    store: pg.PgStore,
-    envelope: contracts.AuthorityCommand,
-    credentials: Mapping[str, str],
-) -> dict[str, Any]:
-    claim_id = _positive_int(_required_payload(envelope, "claim_id"), "claim_id")
-    claim = _lock_claim(cur, store, claim_id)
-    current_revision = claim_revision(claim)
-    _check_basis(envelope, current_revision)
-    command = envelope.record_type
-    if command == "claim.release":
-        # Release is proof-bound cleanup, not lease use. The legacy SQLite and
-        # PostgreSQL backends allow an owner to remove its claim after expiry;
-        # requiring a live lease here strands a row that renew and handoff
-        # correctly refuse to revive.
-        _verify_claim_secret(
-            claim, envelope.payload.get("credential_ref"), credentials
-        )
-        effect = _claim_effect(claim)
-        cur.execute(
-            "DELETE FROM claim WHERE repo_id = %s AND id = %s",
-            (store.repo_id, claim_id),
-        )
-        effect["released"] = True
-        return effect
-
-    _require_live_claim(cur, claim)
-    _verify_claim_secret(claim, envelope.payload.get("credential_ref"), credentials)
-    ttl = _positive_int(envelope.payload.get("ttl_seconds", 300), "ttl_seconds")
-    if command == "claim.renew":
-        # Same "only apply non-null values" semantics as legacy
-        # ``pg.heartbeat_claim``/``db.heartbeat_claim``: an omitted metadata
-        # field leaves the existing column untouched via COALESCE.
-        metadata = dict(envelope.payload.get("metadata") or {})
-        cur.execute(
-            f"""
-            UPDATE claim SET heartbeat = {_CLAIM_CLOCK_SQL},
-                expires_at = {_CLAIM_CLOCK_SQL} + (%s || ' seconds')::interval,
-                runtime_session_id = COALESCE(%s, runtime_session_id),
-                instance_id        = COALESCE(%s, instance_id),
-                branch             = COALESCE(%s, branch),
-                worktree_path      = COALESCE(%s, worktree_path),
-                commit_sha         = COALESCE(%s, commit_sha),
-                pr_ref             = COALESCE(%s, pr_ref),
-                hostname           = COALESCE(%s, hostname),
-                pid                = COALESCE(%s, pid)
-            WHERE repo_id = %s AND id = %s RETURNING *
-            """,
-            (
-                ttl,
-                metadata.get("runtime_session_id"),
-                metadata.get("instance_id"),
-                metadata.get("branch"),
-                metadata.get("worktree_path"),
-                metadata.get("commit_sha"),
-                metadata.get("pr_ref"),
-                metadata.get("hostname"),
-                metadata.get("pid"),
-                store.repo_id,
-                claim_id,
-            ),
-        )
-        return _claim_effect(cur.fetchone())
-
-    if command != "claim.handoff":
-        raise _RejectedCommand("unsupported-command", f"unsupported claim command {command}")
-    mode = str(envelope.payload.get("mode", "rotate"))
-    if mode not in {"rotate", "transfer"}:
-        raise _RejectedCommand("invalid-command", "claim handoff mode must be rotate or transfer")
-    token = claim["claim_token"]
-    if mode == "rotate":
-        proposed_ref = str(envelope.payload.get("proposed_credential_ref"))
-        token = _resolve_credential(proposed_ref, credentials)
-        cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (proposed_ref,))
-        cur.execute(
-            "SELECT 1 FROM claim WHERE repo_id = %s AND claim_token = %s AND id <> %s",
-            (store.repo_id, token, claim_id),
-        )
-        if cur.fetchone() is not None:
-            raise _RejectedCommand("credential-conflict", "proposed claim proof is already in use")
-    metadata = dict(envelope.payload.get("metadata") or {})
-    cur.execute(
-        f"""
-        UPDATE claim SET agent = %s, claim_token = %s,
-            lease_epoch = lease_epoch + CASE WHEN %s THEN 1 ELSE 0 END,
-            heartbeat = {_CLAIM_CLOCK_SQL}, expires_at = {_CLAIM_CLOCK_SQL} + (%s || ' seconds')::interval,
-            runtime_session_id = %s, instance_id = %s, branch = %s,
-            worktree_path = %s, commit_sha = %s, pr_ref = %s,
-            hostname = %s, pid = %s
-        WHERE repo_id = %s AND id = %s RETURNING *
-        """,
-        (
-            str(_required_payload(envelope, "to_actor")),
-            token,
-            mode == "rotate",
-            ttl,
-            metadata.get("runtime_session_id"),
-            metadata.get("instance_id"),
-            metadata.get("branch"),
-            metadata.get("worktree_path"),
-            metadata.get("commit_sha"),
-            metadata.get("pr_ref"),
-            metadata.get("hostname"),
-            metadata.get("pid"),
-            store.repo_id,
-            claim_id,
-        ),
-    )
-    updated = cur.fetchone()
-    _emit_claim_handoff_event(
-        cur,
-        store,
-        claim_id=claim_id,
-        work_item_id=int(updated["work_item_id"]),
-        performed_by=envelope.actor,
-        before=claim,
-        after=updated,
-        mode=mode,
-        note=envelope.payload.get("note"),
-    )
-    return _claim_effect(updated)
 
 
 def _emit_claim_handoff_event(
@@ -854,10 +606,6 @@ def _apply_command(
         return _handle_item(cur, store, envelope, credentials)
     if envelope.record_type in {"sprint.activate", "sprint.close"}:
         return _handle_sprint(cur, store, envelope)
-    if envelope.record_type == "claim.acquire":
-        return _handle_claim_acquire(cur, store, envelope, credentials)
-    if envelope.record_type in {"claim.renew", "claim.handoff", "claim.release"}:
-        return _handle_claim_mutation(cur, store, envelope, credentials)
     if envelope.record_type == "capability-receipt.accept":
         return _handle_receipt(cur, store, envelope)
     raise _RejectedCommand("unsupported-command", f"unsupported authority command {envelope.record_type}")
@@ -875,9 +623,7 @@ def _append_terminal_settlement_if_applicable(
     """Persist accepted claim-terminal decisions beside their authority receipt."""
     if envelope is None:
         return
-    disposition = {
-        "claim.release": TerminalDisposition.CLAIM_RELEASE,
-    }.get(envelope.record_type)
+    disposition = None
     if envelope.record_type in {"item.transition", "item.done"}:
         disposition = {
             "done": TerminalDisposition.ITEM_TRANSITION_DONE,
@@ -1044,10 +790,6 @@ def arbitrate_command(
                 if authenticated_actor is not None and (
                     request.record.actor != authenticated_actor
                     or envelope.actor != authenticated_actor
-                    or (
-                        envelope.record_type == "claim.acquire"
-                        and envelope.payload["agent"] != authenticated_actor
-                    )
                 ):
                     outcome = "rejected"
                     reason_code = "actor-mismatch"
