@@ -26,7 +26,7 @@ import asyncio
 from typing import Any
 
 from .backend import ServedProfile
-from .served_routes import SERVED_COMMAND_ROUTES
+from .served_routes import doctor_probe_command_paths, doctor_probe_operations
 from .vuoro_credentials import resolve_file_credential
 
 
@@ -687,52 +687,10 @@ def lifecycle_arbitrate(
 # out of sync with newly-wired routes once (missing claim.handoff, then
 # pilot.cutover-evidence), meaning `doctor` was not actually verifying the
 # catalog before commands ran. See docs/plans/served-mode-gaps-plan.md.
-_DOCTOR_PROBE_COMMAND_PATHS = (
-    "identity.current",
-    "usage.context",
-    "context-candidates",
-    "handoff",
-    "handoff.record",
-    "sprint.list",
-    "sprint.create",
-    "item.show",
-    "item.list",
-    "claim.list",
-    "claim.list-sprint",
-    "claim.resume",
-    "claim.show",
-    "item.ref.add",
-    "item.ref.list",
-    "item.ref.remove",
-    "item.dep.add",
-    "item.dep.list",
-    "item.dep.remove",
-    "next-work",
-    "next-work.explain",
-    "claim.start",
-    "claim.create",
-    "item.status",
-    "item.done-from-claim",
-    "sprint.status",
-    "claim.heartbeat",
-    "claim.handoff",
-    "claim.release",
-    "item.note",
-    "pilot.cutover-evidence",
-    "authority.sync",
-    "event.list",
-    "event.add",
-    "item.add",
-    "item.edit",
-    "sprint.show",
-    "sprint.show.detail",
-)
-
-EXPECTED_OPERATIONS: frozenset[str] = frozenset(
-    route.operation
-    for route in SERVED_COMMAND_ROUTES
-    if route.command_path in _DOCTOR_PROBE_COMMAND_PATHS
-)
+EXPECTED_OPERATIONS = doctor_probe_operations()
+# Compatibility for consumers that diagnosed the precise route keys. The
+# tuple itself remains owned by the route registry.
+_DOCTOR_PROBE_COMMAND_PATHS = doctor_probe_command_paths()
 
 
 async def _catalog_operation_names(served_profile: ServedProfile) -> frozenset[str]:

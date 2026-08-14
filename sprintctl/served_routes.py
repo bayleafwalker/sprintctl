@@ -253,10 +253,71 @@ def routes_for(command_path: str) -> tuple[ServedRoute, ...]:
     return _ROUTES_BY_COMMAND.get(command_path, ())
 
 
+# The doctor probes the catalog operations reached by normal served command
+# paths.  Keep this routing metadata beside the route registry so the served
+# client cannot maintain a second, drifting inventory.
+_DOCTOR_PROBE_COMMAND_PATHS = (
+    "identity.current",
+    "usage.context",
+    "context-candidates",
+    "handoff",
+    "handoff.record",
+    "sprint.list",
+    "sprint.create",
+    "item.show",
+    "item.list",
+    "claim.list",
+    "claim.list-sprint",
+    "claim.resume",
+    "claim.show",
+    "item.ref.add",
+    "item.ref.list",
+    "item.ref.remove",
+    "item.dep.add",
+    "item.dep.list",
+    "item.dep.remove",
+    "next-work",
+    "next-work.explain",
+    "claim.start",
+    "claim.create",
+    "item.status",
+    "item.done-from-claim",
+    "sprint.status",
+    "claim.heartbeat",
+    "claim.handoff",
+    "claim.release",
+    "item.note",
+    "pilot.cutover-evidence",
+    "authority.sync",
+    "event.list",
+    "event.add",
+    "item.add",
+    "item.edit",
+    "sprint.show",
+    "sprint.show.detail",
+)
+
+
+def doctor_probe_operations() -> frozenset[str]:
+    """Catalog operations that `sprintctl doctor` must discover."""
+    return frozenset(
+        route.operation
+        for route in SERVED_COMMAND_ROUTES
+        if route.command_path in _DOCTOR_PROBE_COMMAND_PATHS
+    )
+
+
+def doctor_probe_command_paths() -> tuple[str, ...]:
+    """Exact route keys that contribute to the served doctor probe."""
+    return _DOCTOR_PROBE_COMMAND_PATHS
+
+
 __all__ = [
     "ServedDisposition",
     "ServedRoute",
     "SERVED_COMMAND_DISPOSITIONS",
     "SERVED_COMMAND_ROUTES",
+    "doctor_probe_operations",
+    "doctor_probe_command_paths",
     "routes_for",
 ]
