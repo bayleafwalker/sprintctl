@@ -775,8 +775,8 @@ def item_priority(obj, item_id: str, priority, clear, as_json) -> None:
 # guarded projection-backed reads
 #
 # Feature-flagged read path: when enabled per repository, some CLI read
-# surfaces are served from the cached projection populated by the shadow
-# normal sync path (sprintctl/sync.py) instead of hitting
+# surfaces are served from the cached projection populated by the normal sync
+# path (sprintctl/sync.py) instead of hitting
 # backend (SQLite/PostgreSQL) directly.  A surface only actually reads from
 # the projection when (a) the flag is enabled, (b) the cache is healthy
 # (matching schema version, synchronized at least once, not stale), and
@@ -897,8 +897,8 @@ def _projection_status_line(status: dict) -> str | None:
 def _projection_item_events(projection_path: Path, item_id: int) -> list[dict]:
     """Reconstruct one item's observation-event history from the cache.
 
-    Only observation-classified events mirrored via the shadow pilot (see
-    ``_shadow_observation_envelope``) are present here; authority-changing
+    Only observation-classified events appended to normal synchronization
+    are present here; authority-changing
     fields on the item itself (status, title, assignee, ...) are never
     mirrored and are never reconstructed by this function.  Ordering and
     field shape match ``db.list_events`` / ``pg.list_events`` filtered to one

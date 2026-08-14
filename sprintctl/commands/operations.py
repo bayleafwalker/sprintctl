@@ -2081,7 +2081,7 @@ def projection_reads_group() -> None:
 
     When enabled, some CLI read surfaces (currently `item show`'s event
     history) are served from the cached projection populated by
-    `sprintctl pilot sync` instead of backend, with explicit freshness
+    `sprintctl sync` instead of backend, with explicit freshness
     disclosure and automatic fallback to backend whenever the cache is
     missing, stale, on an old schema, or never synchronized. Disabling this
     (or leaving it disabled, the default) returns all reads to the current
