@@ -320,19 +320,15 @@ def _scoped_ref(repo_id: str | None, identifier: int) -> str:
 
 
 def _next_work_commands(sprint_id: int, action: dict, repo_id: str | None) -> list[str]:
-    kind, item_id, claim_id, blocker_id = (action.get(key) for key in ("kind", "item_id", "claim_id", "blocker_item_id"))
+    kind, item_id, reservation_id, blocker_id = (action.get(key) for key in ("kind", "item_id", "reservation_id", "blocker_item_id"))
     item_ref = lambda value: _scoped_ref(repo_id, value)
-    if kind == "resolve-claim-identity":
-        return ["sprintctl claim resume --json", *([f"sprintctl claim handoff --id {claim_id} --actor <name> --mode rotate --allow-legacy-adopt --json"] if claim_id is not None else [])]
-    if kind == "refresh-claim":
-        return [] if claim_id is None else [f"sprintctl claim heartbeat --id {claim_id} --claim-token <token> --ttl 600 --actor <name>", f"sprintctl claim handoff --id {claim_id} --claim-token <token> --actor <next-agent> --mode rotate --json"]
     if kind in {"unblock-dependent-work", "resolve-blocker"}:
         commands = ([f"sprintctl item show --id {item_ref(blocker_id)}"] if blocker_id is not None else []) + ([f"sprintctl item show --id {item_ref(item_id)}"] if item_id is not None else [])
         return [*commands, f"sprintctl next-work --sprint-id {_scoped_ref(repo_id, sprint_id)} --json --explain"]
-    if kind == "inspect-active-claim":
-        return ([f"sprintctl item show --id {item_ref(item_id)}"] if item_id is not None else []) + ([] if claim_id is None else [f"sprintctl claim heartbeat --id {claim_id} --claim-token <token> --ttl 600 --actor <name>", f"sprintctl claim handoff --id {claim_id} --claim-token <token> --actor <next-agent> --mode rotate --json"])
-    if kind in {"resume-unclaimed-active-item", "start-ready-item"}:
-        return [] if item_id is None else [f"sprintctl claim start --item-id {item_ref(item_id)} --actor <name> --ttl 600 --json", f"sprintctl item show --id {item_ref(item_id)}"]
+    if kind == "inspect-active-reservation":
+        return ([f"sprintctl item show --id {item_ref(item_id)}"] if item_id is not None else []) + ([] if reservation_id is None else [f"sprintctl reservation show --id {reservation_id} --json"])
+    if kind in {"triage-unreserved-active-item", "start-ready-item"}:
+        return [] if item_id is None else [f"sprintctl reservation reserve --item-id {item_ref(item_id)} --actor <name> --session-id <session-id> --json", f"sprintctl item show --id {item_ref(item_id)}"]
     if kind == "no-action":
         sprint_ref = _scoped_ref(repo_id, sprint_id)
         return [f"sprintctl usage --context --sprint-id {sprint_ref} --json", f"sprintctl next-work --sprint-id {sprint_ref} --json --explain"]
@@ -340,7 +336,7 @@ def _next_work_commands(sprint_id: int, action: dict, repo_id: str | None) -> li
 
 
 def _command_step_kind(command: str) -> str:
-    for prefix, kind in (("sprintctl claim start", "claim-start"), ("sprintctl claim resume", "claim-resume"), ("sprintctl claim heartbeat", "claim-heartbeat"), ("sprintctl claim handoff", "claim-handoff"), ("sprintctl item show", "item-show"), ("sprintctl usage --context", "usage-context"), ("sprintctl next-work", "next-work")):
+    for prefix, kind in (("sprintctl reservation reserve", "reservation-reserve"), ("sprintctl reservation show", "reservation-show"), ("sprintctl item show", "item-show"), ("sprintctl usage --context", "usage-context"), ("sprintctl next-work", "next-work")):
         if command.startswith(prefix): return kind
     return "other"
 
