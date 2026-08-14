@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import click
 
-from . import db, remote_schema, repo, transfer
+from . import db, remote_schema, repo, transfer, work
 
 
 def register_commands(root: click.Group, *, get_store: repo.GetStore) -> None:
@@ -31,6 +31,11 @@ def register_transfer_commands(root: click.Group, *, get_conn: transfer.GetConn)
     transfer.register(root, get_conn=get_conn)
 
 
+def register_work_commands(root: click.Group, *, runtime: dict[str, object]) -> None:
+    """Attach sprint and work-item command groups."""
+    work.register(root, runtime=runtime)
+
+
 # Compatibility aliases for private seams that historically lived in cli.py.
 remote_schema_group = remote_schema.remote_schema
 _remote_schema_store = remote_schema._remote_schema_store
@@ -48,3 +53,5 @@ db_integrity = db.db_integrity
 db_recover_from_remote = db.db_recover_from_remote
 export_cmd = transfer.export_cmd
 import_cmd = transfer.import_cmd
+sprint_group = work.sprint
+item_group = work.item
