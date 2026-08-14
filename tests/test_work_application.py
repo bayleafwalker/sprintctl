@@ -290,10 +290,10 @@ def test_admin_shutdown_factory_failure_is_not_ready_until_a_later_read_recovers
 
 def test_admin_shutdown_retry_requires_an_explicit_idempotency_key_for_writes():
     assert WorkApplication._can_retry_after_admin_shutdown(
-        "work.claim.arbitrate", _context(idempotency_key="event-1")
+        "work.lifecycle.arbitrate", _context(idempotency_key="event-1")
     )
     assert not WorkApplication._can_retry_after_admin_shutdown(
-        "work.claim.arbitrate", _context()
+        "work.lifecycle.arbitrate", _context()
     )
     assert not WorkApplication._can_retry_after_admin_shutdown(
         "work.item.edit", _context(idempotency_key="revision-1")
@@ -412,8 +412,10 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         "work.handoff.record",
         "work.item.create",
         "work.item.edit",
-        "work.claim.start",
-        "work.claim.arbitrate",
+        "work.reservation.reserve",
+        "work.reservation.touch",
+        "work.reservation.reassign",
+        "work.reservation.release",
         "work.lifecycle.arbitrate",
         "work.evidence.ingest",
         "work.batch.apply",
@@ -439,7 +441,6 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         if contract.idempotency == "required"
     }
     assert required_idempotency == {
-        "work.claim.arbitrate",
         "work.lifecycle.arbitrate",
         "work.evidence.ingest",
         "work.batch.apply",
@@ -503,12 +504,12 @@ def test_served_handoff_uses_shared_bundle_and_authenticated_append_only_record(
     assert first["event_id"] != second["event_id"]
     events = [event for event in db.list_events(conn, active_sprint["id"]) if event["event_type"] == "handoff-generated"]
     assert [event["actor"] for event in events] == ["authenticated-agent", "authenticated-agent"]
-    claim_start = next(
+    reservation_reserve = next(
         contract
         for contract in WORK_OPERATION_CONTRACTS
-        if contract.name == "work.claim.start"
+        if contract.name == "work.reservation.reserve"
     )
-    assert claim_start.idempotency == "not-allowed"
+    assert reservation_reserve.idempotency == "required"
 
 
 def test_work_read_context_returns_the_exact_frozen_v1_contract(conn, active_sprint):
@@ -517,7 +518,7 @@ def test_work_read_context_returns_the_exact_frozen_v1_contract(conn, active_spr
     app = _application(store=conn, backend=db)
     result = app.invoke("work.read.context", {"sprint_id": active_sprint["id"]}, _context())
     assert list(result) == [
-        "contract_version", "sprint", "summary", "active_claims",
+        "contract_version", "sprint", "summary", "active_reservations",
         "active_unclaimed_items", "conflicts", "ready_items", "blocked_items",
         "stale_items", "recent_decisions", "next_action",
     ]
