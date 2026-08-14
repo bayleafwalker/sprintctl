@@ -192,8 +192,6 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     "authority reconcile": "local",
     "authority quarantine": "local",
     "authority rollover": "local",
-    "authority recover-proof": "unavailable",
-    "authority clear-proof": "unavailable",
     "projection-reads status": "unavailable",
     "projection-reads enable": "unavailable",
     "projection-reads disable": "unavailable",

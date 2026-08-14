@@ -585,19 +585,6 @@ def _authority_repo_uuid(repo_root: Path) -> str:
         ) from exc
 
 
-def _served_claim_authority_repo_uuid(context: dict[str, object], repo_root: Path) -> object:
-    """Use the server's authority UUID when supplied, otherwise the local manifest.
-
-    Served composition intentionally has no authority-repo UUID registry, so
-    ``work.claim.context`` can return ``null`` for this compatibility field.
-    The local dispatch manifest is the canonical source already used by other
-    served authority-command callers.
-    """
-
-    authority_repo_uuid = context.get("authority_repo_uuid")
-    if authority_repo_uuid is not None:
-        return authority_repo_uuid
-    return _authority_repo_uuid(repo_root)
 
 
 def _find_pending_served_item_status_record(
@@ -646,43 +633,6 @@ def _find_pending_served_item_status_record(
     return None
 
 
-def _find_pending_served_claim_acquire_record(
-    outbox_path: Path, *, item_id: int, aggregate_uuid: str
-) -> _outbox.OutboxRecord | None:
-    """Return the one unresolved immutable served claim-acquire request.
-
-    Claim creation is not safe to re-mint after an unknown outcome.  The
-    durable request plus its private credential sidecar is the retry identity.
-    Refuse ambiguity rather than selecting among multiple pending requests.
-    """
-    producer = _outbox.open_outbox(outbox_path)
-    try:
-        matches: list[_outbox.OutboxRecord] = []
-        for record in _outbox.list_records(producer):
-            if record.record_class != _outbox.AUTHORITY_COMMAND or record.event_type != "claim.acquire":
-                continue
-            try:
-                command = _contracts.record_from_dict(record.payload)
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(command, _contracts.AuthorityCommand):
-                continue
-            paths = _authority_config.authority_command_paths(cwd=Path.cwd())
-            if _authority_config.is_terminal_authority_decision(paths, event_id=record.event_id):
-                continue
-            if (
-                command.refs.get("aggregate_id") == item_id
-                and command.refs.get("aggregate_uuid") == aggregate_uuid
-            ):
-                matches.append(record)
-        if len(matches) > 1:
-            raise click.ClickException(
-                f"multiple pending claim.acquire requests exist for item #{item_id}; "
-                "reconcile them before retrying claim create"
-            )
-        return matches[0] if matches else None
-    finally:
-        producer.close()
 
 
 def _authority_rollout_status() -> _authority_config.AuthorityCommandStatus:
@@ -693,21 +643,11 @@ def _authority_rollout_status() -> _authority_config.AuthorityCommandStatus:
 
 
 def _authority_command_target(store, m, record_type: str, aggregate_id: int):
-    if record_type == "claim.acquire":
-        item = m.get_work_item(store, aggregate_id)
-        if item is None:
-            raise click.ClickException(f"Item #{aggregate_id} not found")
-        return "item", item, item["aggregate_uuid"]
     if record_type in {"item.transition", "item.done"}:
         item = m.get_work_item(store, aggregate_id)
         if item is None:
             raise click.ClickException(f"Item #{aggregate_id} not found")
         return "item", item, item["aggregate_uuid"]
-    if record_type in {"claim.renew", "claim.handoff", "claim.release"}:
-        claim = m.get_claim(store, aggregate_id, include_secret=False)
-        if claim is None:
-            raise click.ClickException(f"Claim #{aggregate_id} not found")
-        return "claim", claim, None
     sprint = m.get_sprint(store, aggregate_id)
     if sprint is None:
         raise click.ClickException(f"Sprint #{aggregate_id} not found")
@@ -721,12 +661,10 @@ def _authority_basis_revision(
     aggregate_id: int,
     aggregate: dict,
 ) -> str:
-    if record_type in {"item.transition", "item.done", "claim.acquire"}:
+    if record_type in {"item.transition", "item.done"}:
         return _authority.item_revision(aggregate)
     if record_type in {"sprint.activate", "sprint.close"}:
         return _authority.sprint_revision(aggregate)
-    if record_type in {"claim.renew", "claim.handoff", "claim.release"}:
-        return _authority.claim_revision(aggregate)
     events = [
         event
         for event in m.list_events(store, aggregate_id)
@@ -1481,20 +1419,9 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
             event_id=record.event_id,
             outcome=decision.get("outcome"),
         )
-        keep_for_recovery = (
-            decision.get("outcome") == "accepted"
-            and (
-                record.event_type == "claim.acquire"
-                or (
-                    record.event_type == "claim.handoff"
-                    and record.payload.get("payload", {}).get("mode") == "rotate"
-                )
-            )
+        _authority_config.remove_pending_authority_credential(
+            rollout_paths, event_id=event_id
         )
-        if not keep_for_recovery:
-            _authority_config.remove_pending_authority_credential(
-                rollout_paths, event_id=event_id
-            )
 
     payload = {
         "uploaded_observation_count": uploaded_observation_count,
@@ -1538,47 +1465,6 @@ def authority_sync(obj, batch_size: int, as_json: bool) -> None:
     )
 
 
-@authority_commands.command("recover-proof")
-@click.option("--event-id", required=True, help="Authority request UUID")
-def authority_recover_proof(event_id: str) -> None:
-    """Recover a private pre-minted proof after an accepted/lost response."""
-    rollout = _authority_rollout_status()
-    try:
-        pending = _authority_config.load_pending_authority_credential(
-            rollout.paths,
-            event_id=event_id,
-        )
-    except _authority_config.AuthorityCommandConfigError as exc:
-        raise click.ClickException(str(exc)) from exc
-    if pending is None:
-        raise click.ClickException(f"no pending authority proof for event {event_id}")
-    try:
-        secret = pending.secret
-    except _authority_config.AuthorityCommandConfigError as exc:
-        raise click.ClickException(str(exc)) from exc
-    click.echo(secret)
-
-
-@authority_commands.command("clear-proof")
-@click.option("--event-id", required=True, help="Authority request UUID")
-def authority_clear_proof(event_id: str) -> None:
-    """Remove a private proof sidecar after the proof is stored elsewhere."""
-    rollout = _authority_rollout_status()
-    try:
-        removed = _authority_config.remove_pending_authority_credential(
-            rollout.paths,
-            event_id=event_id,
-        )
-    except _authority_config.AuthorityCommandConfigError as exc:
-        raise click.ClickException(str(exc)) from exc
-    if not removed:
-        raise click.ClickException(f"no pending authority proof for event {event_id}")
-    click.echo(f"Removed pending authority proof for event {event_id}.")
-
-
-# ---------------------------------------------------------------------------
-# observation-only shadow pilot
-# ---------------------------------------------------------------------------
 
 @click.group()
 def pilot() -> None:
