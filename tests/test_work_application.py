@@ -447,8 +447,12 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         "work.maintenance.prepare",
         "work.maintenance.transition",
         "work.maintenance.recovery-record",
-        "work.maintenance.resource.prepare",
-    }
+            "work.maintenance.resource.prepare",
+            "work.reservation.reserve",
+            "work.reservation.touch",
+            "work.reservation.reassign",
+            "work.reservation.release",
+        }
 
 
 def test_preexisting_maintenance_descriptors_remain_byte_identical():
@@ -956,6 +960,18 @@ def test_click_next_work_and_application_handler_share_backend_semantics(
     assert [item["title"] for item in project_payload["ready_items"]] == [
         "Not direct next-work"
     ]
+    assert project_payload["graph_ready"] is True
+    assert project_payload["dispatch_admissible"] == "admissible"
+    assert project_payload["dispatch_reason"] == "ready-items-available"
+
+    explained = project.invoke(
+        "work.project.next-work-explain", {}, _context(repo_ids=frozenset({"test-repo"}))
+    )
+    assert explained["explanation"] == {
+        "canonical_member_order": ["test-repo"],
+        "authorization_checked_before_member_reads": True,
+        "unavailable_members": [],
+    }
 
     project_items = project.invoke(
         "work.project.items",

@@ -49,6 +49,24 @@ class ProjectWorkApplication:
         self, operation: str, arguments: Mapping[str, Any], context: InvocationContext
     ) -> dict[str, Any]:
         if operation == "work.project.next-work":
+            return self._next_work(arguments, context, explain=False)
+        if operation == "work.project.next-work-explain":
+            return self._next_work(arguments, context, explain=True)
+        if operation == "work.project.items":
+            return self._items(arguments, context)
+        if operation == "work.project.context":
+            return self._context(arguments, context)
+        if operation == "work.project.sprints":
+            return self._sprints(arguments, context)
+        if operation == "work.project.batch":
+            return self._batch(arguments, context)
+        raise ApplicationRejection(
+            "unknown-work-operation", f"unknown work operation: {operation}", 404
+        )
+
+    def _next_work(
+        self, arguments: Mapping[str, Any], context: InvocationContext, *, explain: bool
+    ) -> dict[str, Any]:
             binding = self._binding()
             self._require_member_authorization(context)
             repositories = []
@@ -74,30 +92,44 @@ class ProjectWorkApplication:
                 repositories.append(
                     {
                         "origin_repo": member.origin_repo,
+                        "status": "ok",
                         "sprint": {
                             **payload["sprint"],
                             "origin_repo": member.origin_repo,
                         },
                         "ready_items": tagged,
+                        "graph_ready": payload["graph_ready"],
+                        "dispatch_admissible": payload["dispatch_admissible"],
+                        "dispatch_reason": payload["dispatch_reason"],
                     }
                 )
-            return {
+            result = {
                 "contract_version": "project-1",
                 "project_id": self.project_id,
+                "project": dict(binding),
                 "ready_items": ready_items,
                 "repositories": repositories,
             }
-        if operation == "work.project.items":
-            return self._items(arguments, context)
-        if operation == "work.project.context":
-            return self._context(arguments, context)
-        if operation == "work.project.sprints":
-            return self._sprints(arguments, context)
-        if operation == "work.project.batch":
-            return self._batch(arguments, context)
-        raise ApplicationRejection(
-            "unknown-work-operation", f"unknown work operation: {operation}", 404
-        )
+            unavailable = [row for row in repositories if row["status"] == "unavailable"]
+            if unavailable:
+                result["graph_ready"] = False
+                result["dispatch_admissible"] = "unknown"
+                result["dispatch_reason"] = "member-unavailable"
+            elif ready_items:
+                result["graph_ready"] = True
+                result["dispatch_admissible"] = "admissible"
+                result["dispatch_reason"] = "ready-items-available"
+            else:
+                result["graph_ready"] = False
+                result["dispatch_admissible"] = "inadmissible"
+                result["dispatch_reason"] = "no-ready-items"
+            if explain:
+                result["explanation"] = {
+                    "canonical_member_order": [member.origin_repo for member in self.members],
+                    "authorization_checked_before_member_reads": True,
+                    "unavailable_members": [row["origin_repo"] for row in unavailable],
+                }
+            return result
 
     def _binding(self) -> Mapping[str, Any]:
         binding = self.canonical_binding

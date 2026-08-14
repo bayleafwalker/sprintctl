@@ -397,6 +397,15 @@ def _optional_text(value: Any, field: str) -> str | None:
     return value
 
 
+def _required_text(value: Any, field: str) -> str:
+    result = _optional_text(value, field)
+    if result is None:
+        raise ApplicationRejection(
+            "invalid-arguments", f"{field} must be a non-empty string", 422
+        )
+    return result
+
+
 def _optional_positive_int(value: Any, field: str) -> int | None:
     if value is None:
         return None

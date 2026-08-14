@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from sprintctl import db
+from sprintctl.work_application import WorkApplication
+from types import SimpleNamespace
 
 
 def _item(conn, active_sprint):
@@ -47,3 +49,17 @@ def test_four_hour_stale_display_and_seven_day_sweep(conn, active_sprint):
     swept = db.sweep_stale_reservations(conn, now=(datetime.now(timezone.utc) + timedelta(days=8)).strftime("%Y-%m-%dT%H:%M:%SZ"))
     assert [value["id"] for value in swept] == [row["id"]]
     assert db.get_reservation(conn, row["id"])["state"] == "interrupted"
+
+
+def test_catalog_handlers_use_credential_free_reservation_operations(conn, active_sprint):
+    item = _item(conn, active_sprint)
+    app = WorkApplication(repo_id="test", store=conn, backend=db,
+                          ingest_records=lambda _records: [], arbitrate_command=lambda *_args: None,
+                          list_records=lambda *_args: [], list_decisions=lambda *_args: [])
+    context = SimpleNamespace(identity=object(), request_id="test", repo_id=None)
+    reserved = app.invoke("work.reservation.reserve", {"item_id": item, "actor": "one", "session_id": "s1"}, context)
+    assert reserved["reservation"]["state"] == "active"
+    read = app.invoke("work.read.reservations", {"item_id": item}, context)
+    assert read["reservations"][0]["id"] == reserved["reservation"]["id"]
+    released = app.invoke("work.reservation.release", {"reservation_id": reserved["reservation"]["id"]}, context)
+    assert released["reservation"]["state"] == "released"

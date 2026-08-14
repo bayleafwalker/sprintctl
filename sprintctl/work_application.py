@@ -244,6 +244,8 @@ class WorkApplication:
             "work.read.items": target._read_items,
             "work.read.claims": target._read_claims,
             "work.read.claim": target._read_claim,
+            "work.read.reservations": target._read_reservations,
+            "work.read.reservation": target._read_reservation,
             "work.read.context": target._read_context,
             "work.read.context-candidates": target._read_context_candidates,
             "work.read.handoff": target._read_handoff,
@@ -274,6 +276,10 @@ class WorkApplication:
             "work.claim.start": target._claim_start,
             "work.claim.context": target._claim_context,
             "work.claim.arbitrate": target._claim_arbitrate,
+            "work.reservation.reserve": target._reservation_reserve,
+            "work.reservation.touch": target._reservation_touch,
+            "work.reservation.reassign": target._reservation_reassign,
+            "work.reservation.release": target._reservation_release,
             "work.lifecycle.arbitrate": target._lifecycle_arbitrate,
             "work.evidence.ingest": target._evidence_ingest,
             "work.item.note": target._item_note,
@@ -995,6 +1001,37 @@ class WorkApplication:
     ) -> dict[str, Any]:
         return self.next_work(arguments.get("sprint_id"))
 
+    def _read_reservations(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        return {"repo_id": self.repo_id, "reservations": self.backend.list_reservations(
+            self.store, arguments.get("item_id"), active_only=arguments.get("active_only", True))}
+
+    def _read_reservation(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        reservation_id = _positive_int(arguments.get("reservation_id"), "reservation_id")
+        value = self.backend.get_reservation(self.store, reservation_id)
+        if value is None:
+            raise ApplicationRejection("reservation-not-found", "reservation not found", 404)
+        return {"repo_id": self.repo_id, "reservation": value}
+
+    def _reservation_reserve(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        row = self.backend.reserve(self.store, _positive_int(arguments.get("item_id"), "item_id"),
+            actor=_required_text(arguments.get("actor"), "actor"), session_id=_required_text(arguments.get("session_id"), "session_id"),
+            role=arguments.get("role", "execute"), correlation_ref=arguments.get("correlation_ref"), override=bool(arguments.get("override", False)))
+        return {"repo_id": self.repo_id, "reservation": row}
+
+    def _reservation_touch(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        row = self.backend.touch_reservation(self.store, _positive_int(arguments.get("reservation_id"), "reservation_id"),
+            session_id=_required_text(arguments.get("session_id"), "session_id"), correlation_ref=arguments.get("correlation_ref"))
+        return {"repo_id": self.repo_id, "reservation": row}
+
+    def _reservation_reassign(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        row = self.backend.reassign_reservation(self.store, _positive_int(arguments.get("reservation_id"), "reservation_id"),
+            actor=_required_text(arguments.get("actor"), "actor"), session_id=_required_text(arguments.get("session_id"), "session_id"), correlation_ref=arguments.get("correlation_ref"))
+        return {"repo_id": self.repo_id, "reservation": row}
+
+    def _reservation_release(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        row = self.backend.release_reservation(self.store, _positive_int(arguments.get("reservation_id"), "reservation_id"), actor=arguments.get("actor"))
+        return {"repo_id": self.repo_id, "reservation": row}
+
     def _read_next_work_explain(
         self, arguments: dict[str, Any], _context: InvocationContext
     ) -> dict[str, Any]:
@@ -1015,10 +1052,17 @@ class WorkApplication:
     ) -> dict[str, Any]:
         sprint = self._resolve_sprint(sprint_id, prefer_backlog=prefer_backlog)
         ready = self.backend.get_ready_items(self.store, sprint["id"])
+        graph_ready = bool(ready)
         return {
             "repo_id": self.repo_id,
             "sprint": sprint,
             "ready_items": ready,
+            # These fields are deliberately advisory dispatch facts, not
+            # authority.  Consumers can distinguish a known empty graph from
+            # an unavailable member without reinterpreting an empty list.
+            "graph_ready": graph_ready,
+            "dispatch_admissible": "admissible" if graph_ready else "inadmissible",
+            "dispatch_reason": "ready-items-available" if graph_ready else "no-ready-items",
         }
 
     def _read_records(
