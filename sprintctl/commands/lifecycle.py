@@ -950,26 +950,23 @@ def _collect_session_resume_payload(*, conn, sprint: dict, now: datetime, m=None
     recommended_sequence = [
         f"sprintctl usage --context --sprint-id {sprint['id']} --json",
         f"sprintctl next-work --sprint-id {sprint['id']} --json --explain",
-        "sprintctl claim resume --json",
+        "sprintctl reservation list --all --json",
     ]
-    claimed_item_refs = m.list_refs_for_items(
-        conn, [claim["work_item_id"] for claim in context["active_claims"]]
+    reserved_item_refs = m.list_refs_for_items(
+        conn, [reservation["work_item_id"] for reservation in context["active_reservations"]]
     )
-    claim_recovery = {
+    reservation_status = {
         "current_identity": {
             "runtime_session_id": current_runtime_session_id,
             "instance_id": current_instance_id,
         },
-        "active_claims": [
+        "active_reservations": [
             {
-                **_claim_recovery_status(
-                    claim,
-                    current_runtime_session_id=current_runtime_session_id,
-                    current_instance_id=current_instance_id,
-                ),
-                "refs": claimed_item_refs.get(claim["work_item_id"], []),
+                **reservation,
+                "session_matches": reservation["session_id"] == current_runtime_session_id,
+                "refs": reserved_item_refs.get(reservation["work_item_id"], []),
             }
-            for claim in context["active_claims"]
+            for reservation in context["active_reservations"]
         ],
     }
     return {
@@ -983,7 +980,7 @@ def _collect_session_resume_payload(*, conn, sprint: dict, now: datetime, m=None
         "context": context,
         "next_work": next_work,
         "git_context": _detect_git_context(),
-        "claim_recovery": claim_recovery,
+        "reservation_status": reservation_status,
         "next_action": next_action,
         "recommended_sequence": recommended_sequence,
         "recommended_sequence_bundle": _recommended_command_bundle(
@@ -996,7 +993,7 @@ def _collect_session_resume_payload(*, conn, sprint: dict, now: datetime, m=None
 def _render_session_resume_text(payload: dict) -> str:
     sprint = payload["sprint"]
     next_action = payload["next_action"]
-    claim_recovery = payload.get("claim_recovery", {})
+    reservation_status = payload.get("reservation_status", {})
     lines = [
         f"Session resume for sprint #{sprint['id']}: {sprint['name']}",
         f"Generated: {payload['generated_at']}",
@@ -1023,19 +1020,17 @@ def _render_session_resume_text(payload: dict) -> str:
         lines.append(f"  Dirty files: {len(dirty_files)}")
 
     lines.append("")
-    lines.append("Claim recovery:")
-    recovery_claims = claim_recovery.get("active_claims", [])
-    if not recovery_claims:
-        lines.append("  (no active claims)")
+    lines.append("Reservation status:")
+    active_reservations = reservation_status.get("active_reservations", [])
+    if not active_reservations:
+        lines.append("  (no active reservations)")
     else:
-        for claim in recovery_claims:
+        for reservation in active_reservations:
             lines.append(
-                f"  Claim #{claim['claim_id']} item #{claim['work_item_id']}: "
-                f"local_token={'yes' if claim['recovery_token_exists'] else 'no'} "
-                f"identity_match={'yes' if claim['plausible_identity_match'] else 'no'}"
+                f"  Reservation #{reservation['id']} item #{reservation['work_item_id']}: "
+                f"session_match={'yes' if reservation['session_matches'] else 'no'}"
             )
-            lines.append(f"    path: {claim['recovery_token_path']}")
-            refs = claim.get("refs", [])
+            refs = reservation.get("refs", [])
             if refs:
                 for ref in refs:
                     lines.append(f"    ref: {_format_ref_line(ref)}")
@@ -1272,31 +1267,10 @@ def _recommended_commands_for_next_action(
 ) -> list[str]:
     kind = next_action.get("kind")
     item_id = next_action.get("item_id")
-    claim_id = next_action.get("claim_id")
+    reservation_id = next_action.get("reservation_id")
     blocker_id = next_action.get("blocker_item_id")
     sprint_ref = _render_repo_reference(repo_id, sprint_id)
     item_ref = lambda identifier: _render_repo_reference(repo_id, identifier)
-
-    if kind == "resolve-claim-identity":
-        commands = [
-            "sprintctl claim resume --json",
-        ]
-        if claim_id is not None:
-            commands.append(
-                f"sprintctl claim handoff --id {claim_id} --actor <name> --mode rotate --allow-legacy-adopt --json"
-            )
-        return commands
-
-    if kind == "refresh-claim":
-        commands = []
-        if claim_id is not None:
-            commands.append(
-                f"sprintctl claim heartbeat --id {claim_id} --claim-token <token> --ttl 600 --actor <name>"
-            )
-            commands.append(
-                f"sprintctl claim handoff --id {claim_id} --claim-token <token> --actor <next-agent> --mode rotate --json"
-            )
-        return commands
 
     if kind in {"unblock-dependent-work", "resolve-blocker"}:
         commands = []
@@ -1307,36 +1281,20 @@ def _recommended_commands_for_next_action(
         commands.append(f"sprintctl next-work --sprint-id {sprint_ref} --json --explain")
         return commands
 
-    if kind == "inspect-active-claim":
+    if kind == "inspect-active-reservation":
         commands = []
         if item_id is not None:
             commands.append(f"sprintctl item show --id {item_ref(item_id)}")
-        if claim_id is not None:
-            commands.append(
-                f"sprintctl claim heartbeat --id {claim_id} --claim-token <token> --ttl 600 --actor <name>"
-            )
-            commands.append(
-                f"sprintctl claim handoff --id {claim_id} --claim-token <token> --actor <next-agent> --mode rotate --json"
-            )
+        if reservation_id is not None:
+            commands.append(f"sprintctl reservation show --id {reservation_id} --json")
         return commands
 
-    if kind == "resume-unclaimed-active-item":
+    if kind in {"resume-unreserved-active-item", "start-ready-item"}:
         commands = []
         if item_id is not None:
             commands.extend(
                 [
-                    f"sprintctl claim start --item-id {item_ref(item_id)} --actor <name> --ttl 600 --json",
-                    f"sprintctl item show --id {item_ref(item_id)}",
-                ]
-            )
-        return commands
-
-    if kind == "start-ready-item":
-        commands = []
-        if item_id is not None:
-            commands.extend(
-                [
-                    f"sprintctl claim start --item-id {item_ref(item_id)} --actor <name> --ttl 600 --json",
+                    f"sprintctl reservation reserve --item-id {item_ref(item_id)} --actor <name> --session-id <session-id> --json",
                     f"sprintctl item show --id {item_ref(item_id)}",
                 ]
             )
@@ -1378,14 +1336,12 @@ def _recommended_command_bundle(*, commands: list[str], next_action: dict) -> di
 
 
 def _command_step_kind(command: str) -> str:
-    if command.startswith("sprintctl claim start"):
-        return "claim-start"
-    if command.startswith("sprintctl claim resume"):
-        return "claim-resume"
-    if command.startswith("sprintctl claim heartbeat"):
-        return "claim-heartbeat"
-    if command.startswith("sprintctl claim handoff"):
-        return "claim-handoff"
+    if command.startswith("sprintctl reservation reserve"):
+        return "reservation-reserve"
+    if command.startswith("sprintctl reservation list"):
+        return "reservation-list"
+    if command.startswith("sprintctl reservation show"):
+        return "reservation-show"
     if command.startswith("sprintctl item show"):
         return "item-show"
     if command.startswith("sprintctl usage --context"):
@@ -1413,21 +1369,21 @@ def _render_context_text(snapshot: dict) -> str:
     )
     lines.append("")
 
-    active_claims = snapshot["active_claims"]
-    lines.append(f"Active claims ({len(active_claims)}):")
-    if active_claims:
-        for claim in active_claims:
-            item_title = claim.get("item_title") or f"item #{claim['work_item_id']}"
+    active_reservations = snapshot["active_reservations"]
+    lines.append(f"Active reservations ({len(active_reservations)}):")
+    if active_reservations:
+        for reservation in active_reservations:
+            item_title = reservation.get("item_title") or f"item #{reservation['work_item_id']}"
             lines.append(
-                f"  claim #{claim['claim_id']}  [{claim['actor']}]  {item_title}  "
-                f"expires: {claim['expires_at']}"
+                f"  reservation #{reservation['id']}  [{reservation['actor']}]  {item_title}  "
+                f"session: {reservation['session_id']}"
             )
     else:
         lines.append("  (none)")
     lines.append("")
 
     active_unclaimed_items = snapshot["active_unclaimed_items"]
-    lines.append(f"Active items without claims ({len(active_unclaimed_items)}):")
+    lines.append(f"Active items without reservations ({len(active_unclaimed_items)}):")
     if active_unclaimed_items:
         for item in active_unclaimed_items:
             lines.append(f"  #{item['id']}  {item['title']}  (track: {item['track']})")
@@ -3457,7 +3413,7 @@ def claim_recover(obj, claim_id, item_id, as_json) -> None:
 def _render_handoff_text(bundle: dict) -> str:
     """Render a handoff bundle as a human-readable text summary."""
     s = bundle["sprint"]
-    claims = bundle["active_claims"]
+    reservations = bundle["active_reservations"]
     work = bundle["work"]
     recent_decisions = bundle["recent_decisions"]
     recent_events = bundle["recent_events"]
@@ -3515,16 +3471,16 @@ def _render_handoff_text(bundle: dict) -> str:
         lines.append("  (none)")
     lines.append("")
 
-    if claims:
-        lines.append(f"ACTIVE CLAIMS ({len(claims)}):")
-        for c in claims:
-            excl = "exclusive" if c["exclusive"] else "shared"
+    if reservations:
+        lines.append(f"ACTIVE RESERVATIONS ({len(reservations)}):")
+        for reservation in reservations:
             lines.append(
-                f"  #{c['claim_id']}  item #{c['work_item_id']} ({c.get('item_title', '')})  "
-                f"{c['actor']}  [{c['claim_type']}]  {excl}  expires={c['expires_at']}"
+                f"  #{reservation['id']}  item #{reservation['work_item_id']} "
+                f"({reservation.get('item_title', '')})  {reservation['actor']}  "
+                f"[{reservation['role']}]  session={reservation['session_id']}"
             )
         lines.append("")
-        lines.append("NOTE: Incoming agent must claim handoff or release each active claim.")
+        lines.append("NOTE: Incoming agent should reassign or release each active reservation.")
         lines.append("")
 
     conflicts = bundle["conflicts"]

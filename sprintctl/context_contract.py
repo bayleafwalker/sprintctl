@@ -62,7 +62,7 @@ def _conflicts(*, active_reservations, active_unclaimed_items, blocked_items, st
     if stale:
         conflicts.append({"kind": "stale-reservation", "severity": "warning", "summary": f"{len(stale)} active reservation(s) have been idle for four hours.", "reservation_ids": [row["id"] for row in stale], "item_ids": [row["work_item_id"] for row in stale]})
     if active_unclaimed_items:
-        conflicts.append({"kind": "unclaimed-active-work", "reason_code": "active-item-without-live-claim", "severity": "warning", "summary": f"{len(active_unclaimed_items)} active item(s) have no live claim and need resume, handoff, or status triage.", "item_ids": [row["id"] for row in active_unclaimed_items]})
+        conflicts.append({"kind": "unreserved-active-work", "reason_code": "active-item-without-reservation", "severity": "warning", "summary": f"{len(active_unclaimed_items)} active item(s) have no reservation and need resume, reassignment, or status triage.", "item_ids": [row["id"] for row in active_unclaimed_items]})
     if waiting:
         conflicts.append({"kind": "dependency-blocked", "severity": "warning", "summary": f"{len(waiting)} pending item(s) are waiting on unresolved blockers.", "item_ids": [row["id"] for row in waiting], "blocker_ids": sorted({bid for row in waiting for bid in row["unresolved_blocker_ids"]})})
     if blocked_items:
@@ -77,9 +77,9 @@ def _next_action(*, active_reservations, active_unclaimed_items, conflicts, read
         first = conflicts[0]
         if first["kind"] == "stale-reservation":
             return {"kind": "review-stale-reservation", "summary": "Review or reassign the stale reservation.", "reservation_id": first["reservation_ids"][0], "item_id": first["item_ids"][0], "reason": first["summary"]}
-        if first["kind"] == "unclaimed-active-work":
+        if first["kind"] == "unreserved-active-work":
             item = active_unclaimed_items[0]
-            return {"kind": "resume-unclaimed-active-item", "summary": f"Resume or triage active item #{item['id']} because it has no live claim.", "item_id": item["id"], "reason": first["summary"]}
+            return {"kind": "resume-unreserved-active-item", "summary": f"Resume or triage active item #{item['id']} because it has no reservation.", "item_id": item["id"], "reason": first["summary"]}
         if first["kind"] == "dependency-blocked":
             item = waiting[0]
             return {"kind": "unblock-dependent-work", "summary": f"Resolve blocker #{item['unresolved_blocker_ids'][0]} to unblock item #{item['id']}.", "item_id": item["id"], "blocker_item_id": item["unresolved_blocker_ids"][0], "reason": first["summary"]}

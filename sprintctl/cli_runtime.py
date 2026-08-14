@@ -463,7 +463,7 @@ def _tag_next_work_payload(payload: dict, repo_id: str) -> dict:
     for key in (
         "ready_items",
         "dependency_waiting_items",
-        "active_claims",
+        "active_reservations",
         "active_unclaimed_items",
         "conflicts",
     ):
@@ -476,7 +476,7 @@ def _tag_context_payload(payload: dict, repo_id: str) -> dict:
     tagged = dict(payload)
     tagged["sprint"] = _with_origin(payload["sprint"], repo_id)
     for key in (
-        "active_claims",
+        "active_reservations",
         "active_unclaimed_items",
         "conflicts",
         "ready_items",

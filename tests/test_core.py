@@ -1682,14 +1682,14 @@ class TestHandoffTextMode:
         assert "sprint" in data
         assert data["sprint"]["name"] == "S1"
 
-    def test_handoff_text_shows_active_claims(self, runner, conn, active_sprint, db_path):
+    def test_handoff_text_shows_active_reservations(self, runner, conn, active_sprint, db_path):
         sid = active_sprint["id"]
         tid = db.get_or_create_track(conn, sid, "eng")
-        iid = db.create_work_item(conn, sid, tid, "Claimed task")
-        db.create_claim(conn, iid, agent="agent-x", ttl_seconds=300)
+        iid = db.create_work_item(conn, sid, tid, "Reserved task")
+        db.reserve(conn, iid, actor="agent-x", session_id="session-x")
         result = runner.invoke(cli, [
             "handoff", "--sprint-id", str(sid), "--output", "-", "--format", "text",
         ])
         assert result.exit_code == 0, result.output
-        assert "ACTIVE CLAIMS" in result.output
+        assert "ACTIVE RESERVATIONS" in result.output
         assert "agent-x" in result.output

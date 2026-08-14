@@ -22,7 +22,7 @@ class TestSessionResumeCommand:
         assert "Session resume for sprint" in result.output
         assert "Recommended sequence:" in result.output
         assert "Next action:" in result.output
-        assert "Claim recovery:" in result.output
+        assert "Reservation status:" in result.output
         assert "usage --context snapshot:" in result.output
         assert "next-work --explain snapshot:" in result.output
 
@@ -37,7 +37,7 @@ class TestSessionResumeCommand:
             "context",
             "next_work",
             "git_context",
-            "claim_recovery",
+            "reservation_status",
             "next_action",
             "recommended_sequence",
             "recommended_sequence_bundle",
@@ -54,16 +54,16 @@ class TestSessionResumeCommand:
         assert data["next_work"]["contract_version"] == "1"
         assert data["next_action"] == data["context"]["next_action"]
         assert data["next_action"] == data["next_work"]["next_action"]
-        assert list(data["claim_recovery"].keys()) == ["current_identity", "active_claims"]
+        assert list(data["reservation_status"].keys()) == ["current_identity", "active_reservations"]
         assert data["next_work"]["ready_items"][0]["id"] == ready_id
         assert data["next_work"]["recommended_commands"] == [
-            f"sprintctl claim start --item-id {ready_id} --actor <name> --ttl 600 --json",
+            f"sprintctl reservation reserve --item-id {ready_id} --actor <name> --session-id <session-id> --json",
             f"sprintctl item show --id {ready_id}",
         ]
         next_work_bundle = data["next_work"]["recommended_command_bundle"]
         assert next_work_bundle["bundle_version"] == "1"
         assert next_work_bundle["next_action_kind"] == "start-ready-item"
-        assert [step["kind"] for step in next_work_bundle["steps"]] == ["claim-start", "item-show"]
+        assert [step["kind"] for step in next_work_bundle["steps"]] == ["reservation-reserve", "item-show"]
 
     def test_resume_json_uses_single_next_action_even_when_context_conflicts_exist(
         self, runner, conn, active_sprint
@@ -100,9 +100,9 @@ class TestSessionResumeCommand:
         ]
         assert data["next_work"]["summary"]["active_unclaimed"] == 1
         assert data["next_work"]["active_unclaimed_items"][0]["id"] == iid
-        assert data["next_action"]["kind"] == "resume-unclaimed-active-item"
+        assert data["next_action"]["kind"] == "resume-unreserved-active-item"
         assert data["next_work"]["recommended_commands"] == [
-            f"sprintctl claim start --item-id {iid} --actor <name> --ttl 600 --json",
+            f"sprintctl reservation reserve --item-id {iid} --actor <name> --session-id <session-id> --json",
             f"sprintctl item show --id {iid}",
         ]
 
@@ -122,7 +122,7 @@ class TestSessionResumeCommand:
         commands = data["recommended_sequence"]
         assert commands[0].startswith("sprintctl usage --context --sprint-id ")
         assert commands[1].startswith("sprintctl next-work --sprint-id ")
-        assert commands[2] == "sprintctl claim resume --json"
+        assert commands[2] == "sprintctl reservation list --all --json"
         sequence_bundle = data["recommended_sequence_bundle"]
         assert sequence_bundle["bundle_version"] == "1"
         assert sequence_bundle["next_action_kind"] == data["next_action"]["kind"]
@@ -130,47 +130,29 @@ class TestSessionResumeCommand:
         assert [step["kind"] for step in sequence_bundle["steps"]] == [
             "usage-context",
             "next-work",
-            "claim-resume",
+            "reservation-list",
         ]
-        assert all(step["is_executable"] for step in sequence_bundle["steps"])
+        assert sequence_bundle["steps"][0]["is_executable"] is True
+        assert sequence_bundle["steps"][1]["is_executable"] is True
+        assert sequence_bundle["steps"][2]["is_executable"] is True
 
-    def test_resume_json_claim_recovery_surfaces_local_token_status(self, runner, conn, active_sprint, monkeypatch):
-        iid = _item(conn, active_sprint["id"], "Claimed task")
+    def test_resume_json_surfaces_session_bound_reservation_status(self, runner, conn, active_sprint, monkeypatch):
+        iid = _item(conn, active_sprint["id"], "Reserved task")
         monkeypatch.setenv("SPRINTCTL_INSTANCE_ID", "proc-session-resume")
         monkeypatch.setenv("SPRINTCTL_RUNTIME_SESSION_ID", "thread-session-resume")
 
-        created = runner.invoke(
-            cli,
-            [
-                "claim",
-                "start",
-                "--item-id",
-                str(iid),
-                "--agent",
-                "bot-1",
-                "--instance-id",
-                "proc-session-resume",
-                "--runtime-session-id",
-                "thread-session-resume",
-                "--json",
-            ],
-        )
-        assert created.exit_code == 0, created.output
-        claim = json.loads(created.output)
+        reservation = db.reserve(conn, iid, actor="bot-1", session_id="thread-session-resume")
 
         result = runner.invoke(cli, ["session", "resume", "--json"])
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
-        recovery = data["claim_recovery"]
-        assert recovery["current_identity"] == {
+        status = data["reservation_status"]
+        assert status["current_identity"] == {
             "runtime_session_id": "thread-session-resume",
             "instance_id": "proc-session-resume",
         }
-        assert len(recovery["active_claims"]) == 1
-        claim_recovery = recovery["active_claims"][0]
-        assert claim_recovery["claim_id"] == claim["claim_id"]
-        assert claim_recovery["recovery_token_exists"] is True
-        assert claim_recovery["runtime_session_id_matches"] is True
-        assert claim_recovery["instance_id_matches"] is True
-        assert claim_recovery["plausible_identity_match"] is True
-        assert claim_recovery["recovery_token_path"].endswith(f"claim-{claim['claim_id']}.json")
+        assert len(status["active_reservations"]) == 1
+        entry = status["active_reservations"][0]
+        assert entry["id"] == reservation["id"]
+        assert entry["session_matches"] is True
+        assert entry["refs"] == []

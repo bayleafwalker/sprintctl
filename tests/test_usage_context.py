@@ -22,7 +22,7 @@ class TestUsageContext:
         _add_item(conn, active_sprint["id"], "Ready Item")
         result = runner.invoke(cli, ["usage", "--context"])
         assert result.exit_code == 0, result.output
-        assert "Active claims" in result.output
+        assert "Active reservations" in result.output
         assert "Conflicts" in result.output
         assert "Ready to start" in result.output
         assert "Blocked items" in result.output
@@ -38,7 +38,7 @@ class TestUsageContext:
             "contract_version",
             "sprint",
             "summary",
-            "active_claims",
+            "active_reservations",
             "active_unclaimed_items",
             "conflicts",
             "ready_items",
@@ -59,7 +59,7 @@ class TestUsageContext:
         assert data["summary"]["done"] == 0
         assert data["summary"]["ready"] == 2
         assert data["summary"]["waiting_on_dependencies"] == 0
-        assert data["summary"]["active_unclaimed"] == 0
+        assert data["summary"]["active_unreserved"] == 0
 
     def test_context_json_has_ready_items(self, runner, conn, active_sprint):
         _add_item(conn, active_sprint["id"], "Ready Item")
@@ -93,13 +93,13 @@ class TestUsageContext:
         assert data["next_action"]["item_id"] == blocked
         assert data["next_action"]["blocker_item_id"] == blocker
 
-    def test_context_json_includes_active_claims_key(self, runner, active_sprint):
+    def test_context_json_includes_active_reservations_key(self, runner, active_sprint):
         result = runner.invoke(cli, ["usage", "--context", "--json"])
         data = json.loads(result.output)
-        assert "active_claims" in data
-        assert isinstance(data["active_claims"], list)
+        assert "active_reservations" in data
+        assert isinstance(data["active_reservations"], list)
 
-    def test_context_json_flags_active_items_without_live_claims(self, runner, conn, active_sprint):
+    def test_context_json_flags_active_items_without_reservations(self, runner, conn, active_sprint):
         iid = _add_item(conn, active_sprint["id"], "Interrupted task")
         db.set_work_item_status(conn, iid, "active")
 
@@ -107,13 +107,13 @@ class TestUsageContext:
 
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
-        assert data["summary"]["active_unclaimed"] == 1
+        assert data["summary"]["active_unreserved"] == 1
         assert data["active_unclaimed_items"] == [
             {"id": iid, "title": "Interrupted task", "track": "eng"}
         ]
-        assert data["conflicts"][0]["kind"] == "unclaimed-active-work"
-        assert data["conflicts"][0]["reason_code"] == "active-item-without-live-claim"
-        assert data["next_action"]["kind"] == "resume-unclaimed-active-item"
+        assert data["conflicts"][0]["kind"] == "unreserved-active-work"
+        assert data["conflicts"][0]["reason_code"] == "active-item-without-reservation"
+        assert data["next_action"]["kind"] == "resume-unreserved-active-item"
         assert data["next_action"]["item_id"] == iid
 
     def test_context_json_surfaces_reason_coded_unlinked_code_evidence(self, runner, conn, active_sprint):
