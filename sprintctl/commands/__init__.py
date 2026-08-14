@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import click
 
-from . import db, remote_schema, repo
+from . import db, remote_schema, repo, transfer
 
 
 def register_commands(root: click.Group, *, get_store: repo.GetStore) -> None:
@@ -24,6 +24,11 @@ def register_commands(root: click.Group, *, get_store: repo.GetStore) -> None:
 def register_db_commands(root: click.Group, *, get_store: db.GetStore) -> None:
     """Attach the historically mid-file database maintenance group."""
     db.register(root, get_store=get_store)
+
+
+def register_transfer_commands(root: click.Group, *, get_conn: transfer.GetConn) -> None:
+    """Attach the top-level sprint export/import commands."""
+    transfer.register(root, get_conn=get_conn)
 
 
 # Compatibility aliases for private seams that historically lived in cli.py.
@@ -41,3 +46,5 @@ db_group = db.db_group
 db_vacuum = db.db_vacuum
 db_integrity = db.db_integrity
 db_recover_from_remote = db.db_recover_from_remote
+export_cmd = transfer.export_cmd
+import_cmd = transfer.import_cmd

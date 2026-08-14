@@ -30,7 +30,7 @@ def _module_imports(module_name: str) -> tuple[set[str | None], set[str]]:
 
 
 def test_extracted_command_modules_have_no_back_edge_to_cli():
-    for module_name in ("db", "remote_schema", "repo"):
+    for module_name in ("db", "remote_schema", "repo", "transfer"):
         imported_modules, imported_names = _module_imports(module_name)
 
         assert "sprintctl.cli" not in imported_modules
@@ -120,3 +120,15 @@ def test_extracted_db_maintenance_keeps_cli_get_store_monkeypatch_seam(runner, m
 
     assert result.exit_code == 0, result.output
     assert '"ok": true' in result.output
+
+
+def test_extracted_transfer_preserves_order_aliases_and_served_guard_markers():
+    assert list(cli.commands)[10:12] == ["export", "import"]
+    assert cli_module.export_cmd is cli.commands["export"]
+    assert cli_module.import_cmd is cli.commands["import"]
+
+    leaves = {"export": cli.commands["export"], "import": cli.commands["import"]}
+    assert {
+        getattr(command.callback, "__served_guard_path__", None)
+        for command in leaves.values()
+    } == set(leaves)
