@@ -685,8 +685,12 @@ def _migration_19(conn: sqlite3.Connection) -> None:
     """
     _execute_statements(conn, """
         CREATE TABLE IF NOT EXISTS claim_history AS SELECT * FROM claim WHERE 0;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_claim_history_claim_id
+            ON claim_history(id);
         INSERT INTO claim_history SELECT * FROM claim
-        WHERE NOT EXISTS (SELECT 1 FROM claim_history);
+        WHERE NOT EXISTS (
+            SELECT 1 FROM claim_history h WHERE h.id = claim.id
+        );
     """)
 
 

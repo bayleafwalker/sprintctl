@@ -939,6 +939,7 @@ class TestEdgeCases:
             "work_item",
         }
         assert indexes == {
+            "idx_claim_history_claim_id",
             "idx_claim_token",
             "idx_event_sprint_type_ts",
             "idx_reservation_active_execute",
@@ -948,6 +949,24 @@ class TestEdgeCases:
         }
         assert foreign_keys == 1
         assert journal_mode == "wal"
+
+    def test_claim_archive_retries_only_missing_historic_rows(self, conn, active_sprint):
+        track_id = db.get_or_create_track(conn, active_sprint["id"], "archive")
+        first_item = db.create_work_item(conn, active_sprint["id"], track_id, "First")
+        second_item = db.create_work_item(conn, active_sprint["id"], track_id, "Second")
+        first_claim = db.create_claim(conn, first_item, "first")
+        second_claim = db.create_claim(conn, second_item, "second")
+        conn.execute("INSERT INTO claim_history SELECT * FROM claim WHERE id = ?", (first_claim,))
+        conn.commit()
+
+        db._migration_19(conn)
+        db._migration_19(conn)
+
+        archived = conn.execute(
+            "SELECT id FROM claim_history WHERE id IN (?, ?) ORDER BY id",
+            (first_claim, second_claim),
+        ).fetchall()
+        assert [row["id"] for row in archived] == [first_claim, second_claim]
 
     class _StubConnection:
         def __init__(
