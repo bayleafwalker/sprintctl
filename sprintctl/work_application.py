@@ -1062,11 +1062,6 @@ class WorkApplication:
             ],
         }
 
-    def _claim_arbitrate(
-        self, arguments: dict[str, Any], context: InvocationContext
-    ) -> dict[str, Any]:
-        return self._arbitrate_one(arguments, context, CLAIM_COMMAND_TYPES)
-
     def _claim_start(
         self, arguments: dict[str, Any], context: InvocationContext
     ) -> dict[str, Any]:
@@ -1476,16 +1471,6 @@ class WorkApplication:
                 raise ApplicationRejection(
                     "actor-mismatch",
                     "outer record, command actor, and authenticated identity must match",
-                    403,
-                )
-            if (
-                envelope.record_type == "claim.acquire"
-                and envelope.payload["agent"] != context.identity.actor
-                and not permit_actor_mismatch
-            ):
-                raise ApplicationRejection(
-                    "claim-agent-mismatch",
-                    "claim agent must match the authenticated identity",
                     403,
                 )
             if (
