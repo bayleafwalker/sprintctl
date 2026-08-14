@@ -32,21 +32,17 @@ from .. import commands as _commands
 from .. import context_candidates as _context_candidates
 from .. import context_contract as _context_contract
 from .. import contracts as _contracts
-from .. import cutover as _cutover
 from .. import db as _db
 from .. import doctor as _doctor
-from .. import dualwrite as _dualwrite
 from .. import maintain as _maintain
 from .. import observations as _observations
 from .. import outbox as _outbox
 from .. import pg as _pg
-from .. import pilot as _pilot
 from .. import project as _project
 from .. import projection as _projection
 from .. import projection_reads as _projection_reads
 from .. import served as _served
 from .. import served_routes as _served_routes
-from .. import shadow as _shadow
 from .. import sync as _sync
 from ..cli_support import _redacted_postgres_error
 from ..render import render_sprint_doc
@@ -122,18 +118,26 @@ def _append_sync_observation(event: dict, *, repo_id: str) -> dict:
         return {"status": "unsupported", "event_type": event["event_type"]}
     producer = _outbox.open_outbox(paths.outbox_path)
     try:
-        result = _dualwrite.mirror_event(
+        record = _outbox.append_observation(
             producer,
-            envelope,
+            event_type=envelope.record_type,
+            actor=envelope.actor,
+            payload=envelope.to_dict(),
+            runtime_session_id=None,
+            basis_revision=envelope.basis_revision,
+            correlation_id=envelope.correlation_id,
+            causation_id=envelope.causation_id,
+            occurred_at=envelope.authored_at,
+            event_id=envelope.event_id,
         )
     except Exception as exc:  # Authority write already committed; surface, do not undo it.
         return {"status": "error", "detail": str(exc)}
     finally:
         producer.close()
     return {
-        "status": result.disposition.value,
-        "event_id": result.event_id,
-        "event_type": result.record_type,
+        "status": "mirrored",
+        "event_id": record.event_id,
+        "event_type": record.event_type,
     }
 
 
@@ -1961,7 +1965,7 @@ def _served_cutover_evidence(
 @click.option(
     "--max-watermark-age-seconds",
     type=int,
-    default=_cutover.DEFAULT_MAX_WATERMARK_AGE_SECONDS,
+    default=300,
     show_default=True,
     help="Reconciliation-lag bound the promotion gate checks the cached watermark against.",
 )
