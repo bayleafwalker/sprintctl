@@ -7,7 +7,6 @@ runtime mapping, without importing cli.py.
 import json
 import os
 import re
-import secrets
 import sqlite3
 import socket
 import stat
@@ -563,10 +562,6 @@ def event_log(obj, sprint_id: str, event_type, actor, work_item_id: str | None, 
 # ---------------------------------------------------------------------------
 
 _AUTHORITY_COMMAND_TYPES = (
-    "claim.acquire",
-    "claim.renew",
-    "claim.handoff",
-    "claim.release",
     "item.transition",
     "item.done",
     "sprint.activate",
@@ -1219,29 +1214,11 @@ def authority_mode(mode: str, as_json: bool) -> None:
 
 @authority_commands.command("submit")
 @click.option("--type", "record_type", type=click.Choice(_AUTHORITY_COMMAND_TYPES), required=True)
-@click.option("--aggregate-id", type=int, required=True, help="Item, sprint, or claim integer ID")
+@click.option("--aggregate-id", type=int, required=True, help="Item or sprint integer ID")
 @click.option("--payload", default="{}", help="Command payload JSON object")
 @click.option("--basis-revision", default=None, help="Expected authority revision (auto-detected by default)")
 @click.option("--event-id", default=None, help="Caller-supplied stable request UUID")
 @click.option("--actor", required=True)
-@click.option(
-    "--claim-token",
-    default=None,
-    envvar="SPRINTCTL_AUTHORITY_CLAIM_TOKEN",
-    help="Transient existing claim proof (prefer the environment variable)",
-)
-@click.option(
-    "--coordinate-claim-token",
-    default=None,
-    envvar="SPRINTCTL_AUTHORITY_COORDINATE_CLAIM_TOKEN",
-    help="Transient coordinator proof (prefer the environment variable)",
-)
-@click.option(
-    "--proposed-claim-token",
-    default=None,
-    envvar="SPRINTCTL_AUTHORITY_PROPOSED_CLAIM_TOKEN",
-    help="Transient pre-minted new proof (auto-generated when omitted)",
-)
 @click.option("--json", "as_json", is_flag=True, default=False)
 @click.pass_obj
 def authority_submit(
@@ -1252,17 +1229,14 @@ def authority_submit(
     basis_revision,
     event_id,
     actor,
-    claim_token,
-    coordinate_claim_token,
-    proposed_claim_token,
     as_json,
 ) -> None:
     """Append one local shadow authority command.
 
     The former ``enforce`` implementation arbitrated through Sprintctl's
     retired normal direct-PostgreSQL backend.  It is deliberately unavailable
-    here: ordinary served lifecycle and claim commands mint and submit their
-    own catalog-authorized records, while ``authority sync`` is the retry
+    here: ordinary served lifecycle commands mint and submit their own
+    catalog-authorized records, while ``authority sync`` is the retry
     surface for records already retained locally.
     """
     rollout = _authority_rollout_status()
@@ -1284,7 +1258,6 @@ def authority_submit(
     if not isinstance(command_payload, dict):
         raise click.ClickException("--payload must be a JSON object")
 
-    generated_secret: str | None = None
     producer = _outbox.open_outbox(rollout.paths.outbox_path)
     try:
         durable = _outbox.get_record(producer, event_id) if event_id else None
@@ -1337,29 +1310,6 @@ def authority_submit(
         basis_revision = basis_revision or _authority_basis_revision(
             store, m, record_type, aggregate_id, aggregate
         )
-        credentials: dict[str, str] = {}
-        generated_ref: str | None = None
-
-        if claim_token is not None:
-            ref = _authority.credential_ref(claim_token)
-            command_payload.setdefault("credential_ref", ref)
-            credentials[ref] = claim_token
-        if coordinate_claim_token is not None:
-            ref = _authority.credential_ref(coordinate_claim_token)
-            command_payload.setdefault("coordinate_credential_ref", ref)
-            credentials[ref] = coordinate_claim_token
-        if record_type == "claim.acquire" or (
-            record_type == "claim.handoff" and command_payload.get("mode", "rotate") == "rotate"
-        ):
-            generated_secret = proposed_claim_token or secrets.token_urlsafe(24)
-            ref = _authority.credential_ref(generated_secret)
-            generated_ref = ref
-            target_field = "credential_ref" if record_type == "claim.acquire" else "proposed_credential_ref"
-            command_payload.setdefault(target_field, ref)
-            credentials[ref] = generated_secret
-        if record_type in {"claim.renew", "claim.handoff", "claim.release"}:
-            command_payload.setdefault("claim_id", aggregate_id)
-
         refs: dict[str, object] = {
             "repo_id": _authority_repo_uuid(rollout.paths.repo_root),
             "aggregate_type": aggregate_type,
@@ -1367,8 +1317,6 @@ def authority_submit(
         }
         if aggregate_uuid is not None:
             refs["aggregate_uuid"] = aggregate_uuid
-        if aggregate_type == "claim":
-            refs["claim_id"] = aggregate_id
         try:
             durable = _mint_authority_command_record(
                 record_type=record_type,
@@ -1383,13 +1331,6 @@ def authority_submit(
             raise click.ClickException(str(exc)) from exc
         request = _contracts.record_from_dict(durable.payload)
 
-        if credentials:
-            _authority_config.store_pending_authority_credentials(
-                rollout.paths,
-                event_id=request.event_id,
-                credentials=credentials,
-                recovery_credential_ref=generated_ref,
-            )
 
     result: dict[str, object] = {
         "request_event_id": durable.event_id,
@@ -1405,11 +1346,6 @@ def authority_submit(
             f"Authority request {result['request_event_id']}: {result['status']} "
             f"(origin sequence {result['origin_seq']})"
         )
-        if generated_secret is not None:
-            click.echo(
-                "New proof retained in the private sidecar for recovery event "
-                f"{request.event_id}."
-            )
         if result.get("reason_code"):
             click.echo(f"Reason: {result['reason_code']}: {result.get('reason_detail')}", err=True)
 
