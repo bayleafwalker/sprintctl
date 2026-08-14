@@ -59,13 +59,12 @@ sprint = _commands.sprint_group
 item = _commands.item_group
 
 # ---------------------------------------------------------------------------
-# event / authority / pilot / projection reads
+# event / authority / projection reads / synchronization
 # ---------------------------------------------------------------------------
 
 _commands.register_operations_commands(cli, runtime=globals())
 event = _commands.event_group
 authority_commands = _commands.authority_group
-pilot = _commands.pilot_group
 projection_reads_group = _commands.projection_reads_group
 # takeup / maintain
 # ---------------------------------------------------------------------------

@@ -28,7 +28,7 @@ import json
 
 import pytest
 
-from sprintctl import db, outbox, pilot, projection, projection_reads, sync
+from sprintctl import db, outbox, projection, projection_reads, sync
 from sprintctl.cli import cli
 
 

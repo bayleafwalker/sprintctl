@@ -64,13 +64,12 @@ def test_cli_is_a_small_composition_root_with_runtime_support_outside_it():
 
 
 def test_extracted_doctor_and_session_commands_preserve_order_and_guards():
-    assert list(cli.commands)[:20] == [
+    assert list(cli.commands)[:19] == [
         "doctor",
         "sprint",
         "item",
         "event",
         "authority",
-        "pilot",
         "projection-reads",
         "sync",
         "takeup",
@@ -86,7 +85,7 @@ def test_extracted_doctor_and_session_commands_preserve_order_and_guards():
         "session",
         "usage",
     ]
-    assert list(cli.commands)[20:24] == [
+    assert list(cli.commands)[19:23] == [
         "git-context",
         "render",
         "migrate-to-remote",
@@ -162,7 +161,7 @@ def test_extracted_repo_keeps_cli_get_store_monkeypatch_seam(runner, monkeypatch
 
 
 def test_extracted_db_preserves_order_aliases_and_served_guard_markers():
-    assert list(cli.commands)[8:12] == ["takeup", "maintain", "db", "export"]
+    assert list(cli.commands)[7:11] == ["takeup", "maintain", "db", "export"]
     assert list(cli.commands["db"].commands) == [
         "vacuum",
         "integrity",
@@ -204,7 +203,7 @@ def test_extracted_db_maintenance_keeps_cli_get_store_monkeypatch_seam(runner, m
 
 
 def test_extracted_transfer_preserves_order_aliases_and_served_guard_markers():
-    assert list(cli.commands)[11:13] == ["export", "import"]
+    assert list(cli.commands)[10:12] == ["export", "import"]
     assert cli_module.export_cmd is cli.commands["export"]
     assert cli_module.import_cmd is cli.commands["import"]
 

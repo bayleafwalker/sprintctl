@@ -2250,6 +2250,6 @@ def register(root: click.Group, *, runtime: dict[str, object]) -> None:
     _RUNTIME.clear()
     _RUNTIME.update({name: value for name, value in runtime.items() if not name.startswith("__")})
     _sync_runtime()
-    for command in (event, authority_commands, pilot, projection_reads_group, sync_cmd):
+    for command in (event, authority_commands, projection_reads_group, sync_cmd):
         root.add_command(command)
         _wrap_runtime_callbacks(command)

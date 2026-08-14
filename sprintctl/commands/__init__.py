@@ -118,7 +118,6 @@ sprint_group = work.sprint
 item_group = work.item
 event_group = operations.event
 authority_group = operations.authority_commands
-pilot_group = operations.pilot
 projection_reads_group = operations.projection_reads_group
 takeup_group = lifecycle.takeup
 maintain_group = lifecycle.maintain

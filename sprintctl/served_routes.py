@@ -141,7 +141,6 @@ SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
     ServedRoute("sprint.show.detail", "work.read.sprint-detail"),
     ServedRoute("item.note", "work.item.note"),
     ServedRoute("authority.sync", "work.batch.apply"),
-    ServedRoute("pilot.cutover-evidence", "work.pilot.cutover-evidence"),
 )
 
 
@@ -200,12 +199,6 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     "authority rollover": "local",
     "authority recover-proof": "unavailable",
     "authority clear-proof": "unavailable",
-    "pilot status": "unavailable",
-    "pilot enable": "unavailable",
-    "pilot disable": "unavailable",
-    "pilot verify": "unavailable",
-    "pilot sync": "unavailable",
-    "pilot cutover-evidence": "catalog",
     "projection-reads status": "unavailable",
     "projection-reads enable": "unavailable",
     "projection-reads disable": "unavailable",
