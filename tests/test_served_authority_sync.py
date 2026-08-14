@@ -96,15 +96,6 @@ def _mint_command(tmp_path, *, record_type, refs, payload, basis_revision="rev-1
     )
 
 
-def _claim_refs(claim_id):
-    return {
-        "repo_id": str(uuid4()),
-        "aggregate_type": "claim",
-        "aggregate_id": claim_id,
-        "claim_id": claim_id,
-    }
-
-
 def _item_refs(item_id):
     return {
         "repo_id": str(uuid4()),
@@ -121,19 +112,6 @@ def _sprint_refs(sprint_id):
         "aggregate_uuid": str(uuid4()),
         "aggregate_id": sprint_id,
     }
-
-
-def _store_sidecar(tmp_path, *, event_id, credentials, recovery_credential_ref=None):
-    cli_module._authority_config.store_pending_authority_credentials(
-        _rollout_paths(tmp_path),
-        event_id=event_id,
-        credentials=credentials,
-        recovery_credential_ref=recovery_credential_ref,
-    )
-
-
-def _credential_dir(tmp_path):
-    return tmp_path / ".sprintctl" / "authority-credentials"
 
 
 def _ingest_result(record) -> dict:
