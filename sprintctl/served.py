@@ -502,51 +502,6 @@ def batch_apply(
     )
 
 
-def claim_start(
-    served_profile: ServedProfile,
-    *,
-    repo_id: str,
-    item_id: int,
-    ttl_seconds: int = 300,
-    branch: str | None = None,
-    worktree_path: str | None = None,
-    commit_sha: str | None = None,
-    pr_ref: str | None = None,
-    runtime_session_id: str | None = None,
-    instance_id: str | None = None,
-    hostname: str | None = None,
-    pid: int | None = None,
-) -> dict[str, Any]:
-    """Invoke ``work.claim.start`` (``sprintctl claim start ...``).
-
-    Per the "Authority and retry semantics" section of
-    ``docs/reference/vuoro-work-adapter.md``, ``work.claim.start``'s catalog
-    contract forbids an idempotency key and callers must not retry an
-    unknown outcome -- so this performs exactly one invocation with no
-    idempotency key and no retry wrapper around it. The claim's owning actor
-    is the authenticated identity the server resolves from the credential,
-    not a caller-supplied argument, so no ``actor``/``agent`` field is sent.
-    """
-
-    arguments = {
-        "item_id": item_id,
-        "ttl_seconds": ttl_seconds,
-        "branch": branch,
-        "worktree_path": worktree_path,
-        "commit_sha": commit_sha,
-        "pr_ref": pr_ref,
-        "runtime_session_id": runtime_session_id,
-        "instance_id": instance_id,
-        "hostname": hostname,
-        "pid": pid,
-    }
-    return asyncio.run(
-        _invoke_operation(
-            served_profile, "work.claim.start", arguments, repo_id=repo_id
-        )
-    )
-
-
 def item_note(
     served_profile: ServedProfile,
     *,
@@ -583,64 +538,6 @@ def item_note(
     }
     return asyncio.run(
         _invoke_operation(served_profile, "work.item.note", arguments, repo_id=repo_id)
-    )
-
-
-def claim_context(
-    served_profile: ServedProfile, *, repo_id: str, claim_id: int
-) -> dict[str, Any]:
-    """Invoke ``work.claim.context`` (authenticated-actor/authority-uuid/claim-
-    snapshot/claim-revision read backing served ``claim heartbeat``/``claim
-    release``/``claim handoff``).
-
-    A plain v1 read: no ``transient_credentials``, no idempotency key, no
-    basis revision -- this never mutates anything, so there is nothing to
-    retry-guard. See the "Approved authority-context contract" section of
-    ``docs/plans/agentops/vuoro-claim-proof-transport-clarification-2026-07-23.md``
-    for the exact non-secret result shape this returns.
-    """
-
-    return asyncio.run(
-        _invoke_operation(
-            served_profile,
-            "work.claim.context",
-            {"claim_id": claim_id},
-            repo_id=repo_id,
-        )
-    )
-
-
-def claim_arbitrate(
-    served_profile: ServedProfile,
-    *,
-    repo_id: str,
-    record: dict[str, Any],
-    transient_credentials: dict[str, str],
-) -> dict[str, Any]:
-    """Invoke ``work.claim.arbitrate`` (served ``claim heartbeat``/``claim
-    release``/``claim handoff``) with the claim proof carried over the
-    ``invocation/v2`` transient-credential channel, not as a catalog
-    argument.
-
-    Per the approved transport contract, ``transient_credentials`` is a
-    transport-level facility outside the operation's ``arguments`` --
-    forwarded here to ``_invoke_operation``'s ``**kwargs``, which passes it
-    straight through to ``client.invoke(...)``. As with
-    :func:`lifecycle_arbitrate`, the idempotency key and basis revision must
-    equal the record's own ``event_id``/``basis_revision``.
-    """
-
-    arguments = {"record": record}
-    return asyncio.run(
-        _invoke_operation(
-            served_profile,
-            "work.claim.arbitrate",
-            arguments,
-            idempotency_key=record["event_id"],
-            basis_revision=record["basis_revision"],
-            repo_id=repo_id,
-            transient_credentials=transient_credentials,
-        )
     )
 
 
