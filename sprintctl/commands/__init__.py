@@ -10,7 +10,21 @@ from __future__ import annotations
 
 import click
 
-from . import db, remote_schema, repo, transfer, work
+from . import db, operations, remote_schema, repo, transfer, work
+
+
+_RUNTIME_INTERNALS = {"_RUNTIME", "_sync_runtime", "_wrap_runtime_callbacks", "register"}
+
+
+def _merge_runtime_exports(module, runtime: dict[str, object]) -> None:
+    """Expose extracted helper seams to later command modules and compatibility callers."""
+    runtime.update(
+        {
+            name: value
+            for name, value in vars(module).items()
+            if not name.startswith("__") and name not in _RUNTIME_INTERNALS
+        }
+    )
 
 
 def register_commands(root: click.Group, *, get_store: repo.GetStore) -> None:
@@ -34,6 +48,13 @@ def register_transfer_commands(root: click.Group, *, get_conn: transfer.GetConn)
 def register_work_commands(root: click.Group, *, runtime: dict[str, object]) -> None:
     """Attach sprint and work-item command groups."""
     work.register(root, runtime=runtime)
+    _merge_runtime_exports(work, runtime)
+
+
+def register_operations_commands(root: click.Group, *, runtime: dict[str, object]) -> None:
+    """Attach event, authority, pilot, and projection-read groups."""
+    operations.register(root, runtime=runtime)
+    _merge_runtime_exports(operations, runtime)
 
 
 # Compatibility aliases for private seams that historically lived in cli.py.
@@ -55,3 +76,7 @@ export_cmd = transfer.export_cmd
 import_cmd = transfer.import_cmd
 sprint_group = work.sprint
 item_group = work.item
+event_group = operations.event
+authority_group = operations.authority_commands
+pilot_group = operations.pilot
+projection_reads_group = operations.projection_reads_group
