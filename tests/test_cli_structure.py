@@ -54,6 +54,15 @@ def test_root_cli_has_no_inline_command_decorators():
     assert "@cli.group" not in source
 
 
+def test_cli_is_a_small_composition_root_with_runtime_support_outside_it():
+    root_path = Path(cli_module.__file__)
+    runtime_path = root_path.with_name("cli_runtime.py")
+
+    assert len(root_path.read_text(encoding="utf-8").splitlines()) <= 300
+    assert runtime_path.is_file()
+    assert len(runtime_path.read_text(encoding="utf-8").splitlines()) <= 1000
+
+
 def test_extracted_doctor_and_session_commands_preserve_order_and_guards():
     assert list(cli.commands)[:19] == [
         "doctor",
