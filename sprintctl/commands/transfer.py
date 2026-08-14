@@ -47,6 +47,18 @@ def export_cmd(obj: dict[str, Any], sprint_id: int, output_path: str | None) -> 
     tracks = _db.list_tracks(conn, sprint_id)
     items = _db.list_work_items(conn, sprint_id=sprint_id)
     events = _db.list_events(conn, sprint_id)
+    item_ids = [item["id"] for item in items]
+    reservations = [
+        reservation
+        for item_id in item_ids
+        for reservation in _db.list_reservations(conn, item_id, active_only=False)
+    ]
+    claim_history = []
+    if item_ids:
+        placeholders = ", ".join("?" for _ in item_ids)
+        claim_history = [dict(row) for row in conn.execute(
+            f"SELECT * FROM claim_history WHERE work_item_id IN ({placeholders})", item_ids
+        )]
     refs_by_item: dict[int, list[dict]] = {}
     for item in items:
         item_refs = _db.list_refs(conn, item["id"])
@@ -60,6 +72,10 @@ def export_cmd(obj: dict[str, Any], sprint_id: int, output_path: str | None) -> 
         "items": [dict(item) for item in items],
         "events": [dict(event) for event in events],
         "refs": refs_by_item,
+        # Historical claims are archive evidence only; reservations retain
+        # their advisory lifecycle state across a local backup/restore.
+        "claim_history": claim_history,
+        "reservations": reservations,
     }
     dest = output_path or f"sprint-{sprint_id}.json"
     with open(dest, "w") as file:
@@ -213,6 +229,31 @@ def import_cmd(obj: dict[str, Any], input_path: str) -> None:
                 ref["url"],
                 ref.get("label", ""),
             )
+
+    for reservation in envelope.get("reservations", []):
+        new_item_id = item_id_map.get(reservation.get("work_item_id"))
+        if new_item_id is None:
+            continue
+        conn.execute(
+            "INSERT INTO reservation(work_item_id, session_id, actor, role, state, created_at, last_activity_at, released_at, interruption_reason, correlation_ref) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (new_item_id, reservation["session_id"], reservation["actor"], reservation["role"],
+             reservation["state"], reservation["created_at"], reservation["last_activity_at"],
+             reservation.get("released_at"), reservation.get("interruption_reason"), reservation.get("correlation_ref")),
+        )
+
+    history_columns = [row["name"] for row in conn.execute("PRAGMA table_info(claim_history)")]
+    for historical_claim in envelope.get("claim_history", []):
+        values = dict(historical_claim)
+        new_item_id = item_id_map.get(values.get("work_item_id"))
+        if new_item_id is None:
+            continue
+        values["work_item_id"] = new_item_id
+        columns = [column for column in history_columns if column != "id" and column in values]
+        conn.execute(
+            f"INSERT INTO claim_history ({', '.join(columns)}) VALUES ({', '.join('?' for _ in columns)})",
+            [values[column] for column in columns],
+        )
 
     conn.commit()
     click.echo(

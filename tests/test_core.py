@@ -1259,6 +1259,27 @@ class TestExportImport:
         assert len(data["items"]) == 1
         assert len(data["events"]) == 1
 
+    def test_export_import_preserves_reservations_and_archived_claims(self, runner, conn, db_path, tmp_path):
+        sid, iid = self._build_sprint(runner, conn, db_path)
+        db.reserve(conn, iid, actor="alice", session_id="export-session")
+        claim_id = db.create_claim(conn, iid, "legacy-alice")
+        db._migration_19(conn)
+        conn.commit()
+        out = str(tmp_path / "export.json")
+        exported = runner.invoke(cli, ["export", "--sprint-id", str(sid), "--output", out])
+        assert exported.exit_code == 0, exported.output
+        with open(out) as file:
+            envelope = json.load(file)
+        assert envelope["reservations"][0]["session_id"] == "export-session"
+        assert envelope["claim_history"][0]["id"] == claim_id
+
+        imported = runner.invoke(cli, ["import", "--file", out])
+        assert imported.exit_code == 0, imported.output
+        new_sid = int(imported.output.split(" as #")[1].split(" ")[0])
+        new_item = db.list_work_items(conn, sprint_id=new_sid)[0]
+        assert db.list_reservations(conn, new_item["id"])[0]["session_id"] == "export-session"
+        assert conn.execute("SELECT count(*) FROM claim_history WHERE work_item_id = ?", (new_item["id"],)).fetchone()[0] == 1
+
     def test_import_creates_sprint_with_new_id(self, runner, conn, db_path, tmp_path):
         sid, _ = self._build_sprint(runner, conn, db_path)
         out = str(tmp_path / "export.json")
