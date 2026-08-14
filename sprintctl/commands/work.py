@@ -1444,7 +1444,7 @@ def item_status(
             actor=actor,
             expected_revision=expected_revision,
         )
-    except (_db.InvalidTransition, _db.ClaimConflict, _db.StatusConflict, ValueError) as e:
+    except (_db.InvalidTransition, _db.StatusConflict, ValueError) as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
     if as_json:

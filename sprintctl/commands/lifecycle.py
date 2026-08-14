@@ -1,4 +1,4 @@
-"""Takeup, maintenance, and claim command groups.
+"""Takeup, maintenance, and handoff command groups.
 
 The callbacks retain the existing CLI runtime seams through an injected
 runtime mapping, without importing cli.py.
@@ -7,9 +7,6 @@ runtime mapping, without importing cli.py.
 import json
 import os
 import re
-import secrets
-import sqlite3
-import socket
 import stat
 import subprocess
 import sys
@@ -1635,14 +1632,6 @@ def maintain_carryover(obj, from_sprint_id, to_sprint_id, as_json) -> None:
             click.echo(f"  #{it['id']}  {it['title']}")
     else:
         click.echo("No incomplete items to carry over.")
-
-
-# ---------------------------------------------------------------------------
-
-# claim
-# ---------------------------------------------------------------------------
-
-
 
 
 
