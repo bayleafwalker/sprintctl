@@ -9,6 +9,8 @@ from typing import Any
 import click
 
 from .. import db as _db
+from .. import backend as _backend
+from .. import served as _served
 
 
 def _session(value: str | None) -> str:
@@ -31,6 +33,10 @@ def reservation() -> None:
 @click.pass_obj
 def reserve(obj: dict[str, Any], item_id: int, actor: str, session_id: str | None, role: str,
             correlation_ref: str | None, override: bool, as_json: bool) -> None:
+    served = _served_result(obj, "work.reservation.reserve", {"item_id": item_id, "actor": actor, "session_id": _session(session_id), "role": role, "correlation_ref": correlation_ref, "override": override})
+    if served is not None:
+        _echo(served["reservation"], as_json)
+        return
     conn, _ = _db_store(obj)
     try:
         row = _db.reserve(conn, item_id, actor=actor, session_id=_session(session_id), role=role,
@@ -47,6 +53,10 @@ def reserve(obj: dict[str, Any], item_id: int, actor: str, session_id: str | Non
 @click.option("--json", "as_json", is_flag=True, default=False)
 @click.pass_obj
 def touch(obj, reservation_id, session_id, correlation_ref, as_json) -> None:
+    served = _served_result(obj, "work.reservation.touch", {"reservation_id": reservation_id, "session_id": _session(session_id), "correlation_ref": correlation_ref})
+    if served is not None:
+        _echo(served["reservation"], as_json)
+        return
     conn, _ = _db_store(obj)
     try:
         row = _db.touch_reservation(conn, reservation_id, session_id=_session(session_id), correlation_ref=correlation_ref)
@@ -63,6 +73,10 @@ def touch(obj, reservation_id, session_id, correlation_ref, as_json) -> None:
 @click.option("--json", "as_json", is_flag=True, default=False)
 @click.pass_obj
 def reassign(obj, reservation_id, actor, session_id, correlation_ref, as_json) -> None:
+    served = _served_result(obj, "work.reservation.reassign", {"reservation_id": reservation_id, "actor": actor, "session_id": session_id, "correlation_ref": correlation_ref})
+    if served is not None:
+        _echo(served["reservation"], as_json)
+        return
     conn, _ = _db_store(obj)
     try:
         row = _db.reassign_reservation(conn, reservation_id, actor=actor, session_id=session_id, correlation_ref=correlation_ref)
@@ -77,6 +91,10 @@ def reassign(obj, reservation_id, actor, session_id, correlation_ref, as_json) -
 @click.option("--json", "as_json", is_flag=True, default=False)
 @click.pass_obj
 def release(obj, reservation_id, actor, as_json) -> None:
+    served = _served_result(obj, "work.reservation.release", {"reservation_id": reservation_id, "actor": actor})
+    if served is not None:
+        _echo(served["reservation"], as_json)
+        return
     conn, _ = _db_store(obj)
     try:
         row = _db.release_reservation(conn, reservation_id, actor=actor)
@@ -91,6 +109,10 @@ def release(obj, reservation_id, actor, as_json) -> None:
 @click.option("--json", "as_json", is_flag=True, default=False)
 @click.pass_obj
 def list_(obj, item_id, active_only, as_json) -> None:
+    served = _served_result(obj, "work.read.reservations", {"item_id": item_id, "active_only": active_only})
+    if served is not None:
+        _echo(served["reservations"], as_json)
+        return
     conn, _ = _db_store(obj)
     rows = _db.list_reservations(conn, work_item_id=item_id, active_only=active_only)
     _echo(rows, as_json)
@@ -101,6 +123,10 @@ def list_(obj, item_id, active_only, as_json) -> None:
 @click.option("--json", "as_json", is_flag=True, default=False)
 @click.pass_obj
 def show(obj, reservation_id, as_json) -> None:
+    served = _served_result(obj, "work.read.reservation", {"reservation_id": reservation_id})
+    if served is not None:
+        _echo(served["reservation"], as_json)
+        return
     conn, _ = _db_store(obj)
     row = _db.get_reservation(conn, reservation_id)
     if row is None:
@@ -115,6 +141,18 @@ def _db_store(obj):
         _db.init_db(conn)
         obj["conn"] = conn
     return conn, _db
+
+
+def _served_result(obj: dict[str, Any], operation: str, arguments: dict[str, Any]) -> dict | None:
+    """Keep served reservation commands out of SQLite and direct PostgreSQL."""
+    config = _backend.load_backend_config(
+        explicit_repo_id=obj.get("explicit_repo_id"),
+        allow_markerless_nonlocal=obj.get("allow_markerless_nonlocal", False),
+    )
+    if config.mode != "served":
+        return None
+    assert config.served_profile is not None and config.repo_id is not None
+    return _served.reservation_operation(config.served_profile, operation, arguments, repo_id=config.repo_id)
 
 
 def _echo(value, as_json: bool) -> None:

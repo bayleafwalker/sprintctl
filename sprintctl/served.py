@@ -232,6 +232,13 @@ def read_next_work(
     )
 
 
+def reservation_operation(
+    served_profile: ServedProfile, operation: str, arguments: dict[str, Any], *, repo_id: str
+) -> dict[str, Any]:
+    """Invoke one v0.3 reservation operation through the served authority."""
+    return asyncio.run(_invoke_operation(served_profile, operation, arguments, repo_id=repo_id))
+
+
 def read_records(
     served_profile: ServedProfile, *, repo_id: str, after_offset: int = 0,
     limit: int | None = None,

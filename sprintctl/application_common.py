@@ -36,11 +36,8 @@ from .maintenance_capability import (
 from .maintenance_resource import CursorExpired, MaintenanceResourceStore, ResourceNotFound
 
 
-CLAIM_COMMAND_TYPES = frozenset(
-    {"claim.acquire", "claim.renew", "claim.handoff", "claim.release"}
-)
 LIFECYCLE_COMMAND_TYPES = frozenset(
-    {"item.transition", "item.done", "item.done-from-claim", "sprint.activate", "sprint.close"}
+    {"item.transition", "item.done", "sprint.activate", "sprint.close"}
 )
 OBSERVATION_TYPES = frozenset(
     record_type
@@ -48,7 +45,7 @@ OBSERVATION_TYPES = frozenset(
     if record_class is contracts.RecordClass.OBSERVATION
 )
 SUPPORTED_BATCH_TYPES = (
-    CLAIM_COMMAND_TYPES | LIFECYCLE_COMMAND_TYPES | OBSERVATION_TYPES
+    LIFECYCLE_COMMAND_TYPES | OBSERVATION_TYPES
 )
 
 # A connection termination can arrive after PostgreSQL has accepted a command
@@ -57,8 +54,11 @@ SUPPORTED_BATCH_TYPES = (
 # such as item edits, notes, and claim start must never be replayed here.
 _ADMIN_SHUTDOWN_IDEMPOTENT_OPERATIONS = frozenset(
     {
-        "work.claim.arbitrate",
         "work.lifecycle.arbitrate",
+        "work.reservation.reserve",
+        "work.reservation.touch",
+        "work.reservation.reassign",
+        "work.reservation.release",
         "work.evidence.ingest",
         "work.batch.apply",
         "work.maintenance.prepare",
@@ -70,7 +70,6 @@ _ADMIN_SHUTDOWN_IDEMPOTENT_OPERATIONS = frozenset(
 _ADMIN_SHUTDOWN_READ_OPERATIONS = frozenset(
     {
         "work.identity.current",
-        "work.claim.context",
         "work.maintain.check",
         "work.maintenance.resource.get",
         "work.maintenance.resource.changes",

@@ -96,13 +96,9 @@ import_cmd = _commands.import_cmd
 
 
 # ---------------------------------------------------------------------------
-# claim
+# reservation
 # ---------------------------------------------------------------------------
 
-_commands.register_claim_commands(cli, runtime=globals())
-claim = _commands.claim_group
-# Reservation is the credential-free successor.  Keep claim registered for
-# one release while migrated databases and clients are cut over.
 _commands.register_reservation_commands(cli)
 reservation = _commands.reservation_group
 # handoff / session / migration

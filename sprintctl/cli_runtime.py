@@ -279,11 +279,8 @@ _SERVED_EVENT_ADD_ROUTE = _served_routes.routes_for("event.add")[0]
 _SERVED_ITEM_ADD_ROUTE = _served_routes.routes_for("item.add")[0]
 _SERVED_ITEM_EDIT_ROUTE = _served_routes.routes_for("item.edit")[0]
 _SERVED_SPRINT_SHOW_ROUTE = _served_routes.routes_for("sprint.show")[0]
-_SERVED_CLAIM_START_ROUTE = _served_routes.routes_for("claim.start")[0]
 _SERVED_ITEM_STATUS_ROUTE = _served_routes.routes_for("item.status")[0]
 _SERVED_SPRINT_STATUS_ROUTE = _served_routes.routes_for("sprint.status")[0]
-_SERVED_CLAIM_HEARTBEAT_ROUTE = _served_routes.routes_for("claim.heartbeat")[0]
-_SERVED_CLAIM_RELEASE_ROUTE = _served_routes.routes_for("claim.release")[0]
 _SERVED_NEXT_WORK_ROUTES = {
     route.operation: route for route in _served_routes.routes_for("next-work")
 }
@@ -295,11 +292,8 @@ assert _SERVED_EVENT_ADD_ROUTE.operation == "work.event.add"
 assert _SERVED_ITEM_ADD_ROUTE.operation == "work.item.create"
 assert _SERVED_ITEM_EDIT_ROUTE.operation == "work.item.edit"
 assert _SERVED_SPRINT_SHOW_ROUTE.operation == "work.read.sprint"
-assert _SERVED_CLAIM_START_ROUTE.operation == "work.claim.start"
 assert _SERVED_ITEM_STATUS_ROUTE.operation == "work.lifecycle.arbitrate"
 assert _SERVED_SPRINT_STATUS_ROUTE.operation == "work.lifecycle.arbitrate"
-assert _SERVED_CLAIM_HEARTBEAT_ROUTE.operation == "work.claim.arbitrate"
-assert _SERVED_CLAIM_RELEASE_ROUTE.operation == "work.claim.arbitrate"
 assert set(_SERVED_NEXT_WORK_ROUTES) == {"work.read.next-work", "work.project.next-work"}
 
 

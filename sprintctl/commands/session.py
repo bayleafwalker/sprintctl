@@ -118,27 +118,12 @@ def handoff_cmd(obj, sprint_id, output_path, events_limit, fmt) -> None:
 @click.command("agent-protocol")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 def agent_protocol_cmd(as_json) -> None:
-    """Print the claim lifecycle protocol for agent consumption.
-
-    Outputs a structured summary of how agents should interact with sprintctl
-    claims: startup, heartbeat, handoff, and shutdown steps. Suitable for
-    injecting into an agent system prompt or reading programmatically.
-    """
+    """Print the credential-free reservation protocol for agent consumption."""
     protocol = {
-        "sprintctl_agent_protocol_version": "1",
-        "claim_model": {
-            "ownership_proof": (
-                "claim_id + claim_token (both required for claim operations; sprintctl can also "
-                "persist a local recovery copy of the token for context-loss recovery)"
-            ),
-            "ttl_seconds_default": 300,
-            "claim_types": {
-                "execute": "Exclusive. Agent is implementing work on the item.",
-                "inspect": "Exclusive. Agent is reading item state.",
-                "review": "Exclusive. Agent is reviewing completed work.",
-                "coordinate": "Exclusive. Orchestrator managing sub-agents. Sub-agents may claim execute under it.",
-            },
-        },
+        "sprintctl_agent_protocol_version": "3",
+        "reservation_model": {"ownership_proof": None, "stale_after_hours": 4,
+            "maintenance_interrupt_after_days": 7,
+            "roles": ["inspect", "execute", "review", "coordinate"]},
         "takeup_model": {
             "description": (
                 "Sprint-level takeup is an append-only visibility signal, not ownership proof. "
@@ -156,76 +141,52 @@ def agent_protocol_cmd(as_json) -> None:
                 ),
                 "inspect": "sprintctl takeup list [--sprint-id <id>] [--all-history] [--json]",
             },
-            "proof_note": "Takeup has no TTL, heartbeat, or claim token. Claims remain the exclusive ownership mechanism.",
+            "proof_note": "Takeup and reservations are advisory coordination signals; neither authorizes mutation.",
         },
         "lifecycle": {
             "1_startup": {
-                "description": "Claim the item before beginning work.",
+                "description": "Reserve the item before beginning work.",
                 "command": (
-                    "sprintctl claim start --item-id <id> --actor <name> "
-                    "[--ttl <seconds>] [--runtime-session-id <env-session-id>] "
-                    "[--instance-id <stable-per-process-uuid>] [--branch <branch>] --json"
+                    "sprintctl reservation reserve --item-id <id> --actor <name> "
+                    "[--session-id <env-session-id>] [--correlation-ref <actionq-ref>] --json"
                 ),
-                "store": (
-                    "Save claim_id for the session. sprintctl also writes a local recovery token file "
-                    "next to the active database so 'claim recover' can restore the secret after context loss. "
-                    "Treat claim_token as a secret."
-                ),
-                "coordinator_note": (
-                    "If acting as an orchestrator, use "
-                    "'sprintctl claim create --item-id <id> --actor <name> --type coordinate --json' first, "
-                    "then spawn sub-agents "
-                    "that call 'claim create' with --coordinate-claim-id and --coordinate-claim-token."
-                ),
+                "store": "Save reservation_id only; no token or recovery secret exists.",
             },
-            "2_heartbeat": {
-                "description": "Refresh the claim TTL periodically (every ~half the TTL).",
-                "command": (
-                    "sprintctl claim heartbeat --id <claim_id> --claim-token <token> "
-                    "[--ttl <seconds>] [--actor <name>]"
-                ),
-                "frequency": "Every 120s if TTL=300s. Increase --ttl for long-running tasks.",
+            "2_activity": {
+                "description": "Touch activity when useful; there is no lease or heartbeat requirement.",
+                "command": "sprintctl reservation touch --id <reservation_id> [--session-id <id>]",
             },
             "3_status_transition": {
-                "description": "Transition item status. Claim proof is required.",
+                "description": "Transition item status using the current revision CAS basis.",
                 "command": (
                     "sprintctl item status --id <item_id> --status active|done|blocked "
-                    "--actor <name> --claim-id <claim_id> --claim-token <token>"
+                    "--actor <name> --expected-revision <revision>"
                 ),
             },
             "4_handoff": {
-                "description": "Pass claim ownership to an incoming agent session (required on shutdown if work continues).",
+                "description": "Reassign the advisory reservation to an incoming session when work continues.",
                 "command": (
-                    "sprintctl claim handoff --id <claim_id> --claim-token <token> "
-                    "--actor <next-agent-name> --mode rotate "
-                    "[--runtime-session-id <next-session-id>] [--instance-id <next-instance-id>] --json"
+                    "sprintctl reservation reassign --id <reservation_id> --actor <next-agent-name> "
+                    "--session-id <next-session-id> --json"
                 ),
-                "note": "The returned claim_token is the new agent's secret. The old token is invalidated.",
             },
             "5_release": {
-                "description": "Release the claim when work is complete and no handoff is needed.",
-                "command": "sprintctl claim release --id <claim_id> --claim-token <token> --actor <name>",
+                "description": "Release the reservation when work is complete and no reassignment is needed.",
+                "command": "sprintctl reservation release --id <reservation_id> --actor <name>",
             },
         },
         "session_resumption": {
-            "description": "If context is lost, locate your claims by identity before re-claiming.",
-            "command": (
-                "sprintctl claim resume --instance-id <your-instance-id> "
-                "[--runtime-session-id <id>] [--hostname <host> --pid <pid>] --json"
-            ),
-            "recovery": (
-                "Use 'claim recover --id <id>' or '--item-id <id>' to restore a token from sprintctl's local "
-                "recovery file. If no local recovery file exists and the claim is legacy/ambiguous, use "
-                "'claim handoff --allow-legacy-adopt' to mint a fresh proof."
-            ),
+            "description": "If context is lost, list reservations and reassign or reserve as appropriate.",
+            "command": "sprintctl reservation list --all --json",
+            "recovery": "Reservations contain no recoverable credential.",
         },
         "shutdown_checklist": [
-            "For each owned claim: handoff to next agent OR release.",
+            "For each active reservation: reassign to the next session OR release.",
             "Run 'sprintctl handoff' to write a bundle for the incoming session.",
         ],
         "environment_hints": {
             "SPRINTCTL_RUNTIME_SESSION_ID": "Set to your runtime session ID (auto-detected from CODEX_THREAD_ID).",
-            "SPRINTCTL_INSTANCE_ID": "Set to a stable per-process UUID; persisted across heartbeats.",
+            "SPRINTCTL_INSTANCE_ID": "Optional session metadata only; never a credential.",
             "SPRINTCTL_DB": "Override the database path (default: ~/.sprintctl/sprintctl.db).",
         },
     }
@@ -233,8 +194,8 @@ def agent_protocol_cmd(as_json) -> None:
         click.echo(json.dumps(protocol, indent=2))
         return
 
-    click.echo("=== sprintctl Agent Claim Protocol ===\n")
-    click.echo(f"Ownership proof: {protocol['claim_model']['ownership_proof']}\n")
+    click.echo("=== sprintctl Agent Reservation Protocol ===\n")
+    click.echo("Ownership proof: none (reservations are advisory)\n")
     click.echo("Sprint takeup:")
     click.echo(f"  {protocol['takeup_model']['description']}")
     click.echo(f"  $ {protocol['takeup_model']['commands']['take']}")

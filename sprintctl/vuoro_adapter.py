@@ -1081,6 +1081,18 @@ LEGACY_REMOTE_COMMAND_PARITY: tuple[dict[str, str], ...] = (
     {"legacy": "project dispatch batching", "operation": "work.project.batch"},
 )
 
+# v0.3 is a clean break: legacy claim operations may remain in historical
+# migration readers, but they are not published into a newly composed catalog
+# and cannot be selected by a current client.
+WORK_OPERATION_CONTRACTS = tuple(
+    contract for contract in WORK_OPERATION_CONTRACTS
+    if not contract.name.startswith("work.claim.")
+)
+LEGACY_REMOTE_COMMAND_PARITY = tuple(
+    row for row in LEGACY_REMOTE_COMMAND_PARITY
+    if "claim" not in row["legacy"] and "done-from-claim" not in row["legacy"]
+)
+
 
 _RESOURCE_OPERATIONS = frozenset(
     {

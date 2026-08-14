@@ -12,7 +12,6 @@ from .work_application import WorkApplication
 
 __all__ = [
     "ApplicationRejection",
-    "CLAIM_COMMAND_TYPES",
     "LIFECYCLE_COMMAND_TYPES",
     "OBSERVATION_TYPES",
     "ProjectMemberApplication",
