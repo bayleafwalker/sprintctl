@@ -1779,32 +1779,16 @@ def pilot_sync(obj, batch_size: int, as_json: bool) -> None:
     if obj["backend_config"].mode != "remote":
         click.echo("Error: pilot synchronization requires a remote sprintctl backend.", err=True)
         sys.exit(1)
-    producer = _outbox.open_outbox(status.paths.outbox_path)
-    if status.paths.projection_path.exists():
-        existing = _projection.open_cached_projection(status.paths.projection_path)
-        try:
-            needs_rebuild = (
-                _projection.get_schema_version(existing)
-                != _projection.PROJECTION_SCHEMA_VERSION
-            )
-        finally:
-            existing.close()
-        if needs_rebuild:
-            _sync.rebuild_ingest_projection(
-                store, status.paths.projection_path, batch_size=batch_size
-            )
-    cache = _projection.open_cached_projection(
-        status.paths.projection_path,
-        repo_id=store.repo_id,
-    )
     try:
-        result = _sync.synchronize_outbox(producer, store, cache, batch_size=batch_size)
+        result = _sync.synchronize_repository(
+            store,
+            outbox_path=status.paths.outbox_path,
+            projection_path=status.paths.projection_path,
+            batch_size=batch_size,
+        )
     except (TypeError, ValueError) as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
-    finally:
-        producer.close()
-        cache.close()
     payload = {
         "uploaded": len(result.uploaded),
         "duplicates": sum(outcome.duplicate for outcome in result.uploaded),

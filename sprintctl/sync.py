@@ -181,3 +181,50 @@ def synchronize_outbox(
         decision_applied_count=decision_applied_count,
         decision_watermark=decision_watermark,
     )
+
+
+def synchronize_repository(
+    remote_store: pg.PgStore,
+    *,
+    outbox_path: Path,
+    projection_path: Path,
+    batch_size: int = 100,
+    credential_resolver: Callable[[outbox.OutboxRecord], Mapping[str, str] | None]
+    | None = None,
+) -> SyncResult:
+    """Run the durable local upload and projection catch-up for one repository.
+
+    This is the normal synchronization orchestration.  Callers supply only
+    fixed repository-owned paths; no rollout or pilot state participates.
+    """
+    batch_size = _validate_batch_size(batch_size)
+    producer = outbox.open_outbox(outbox_path)
+    try:
+        if projection_path.exists():
+            existing = projection.open_cached_projection(projection_path)
+            try:
+                needs_rebuild = (
+                    projection.get_schema_version(existing)
+                    != projection.PROJECTION_SCHEMA_VERSION
+                )
+            finally:
+                existing.close()
+            if needs_rebuild:
+                rebuild_ingest_projection(
+                    remote_store, projection_path, batch_size=batch_size
+                )
+        cache = projection.open_cached_projection(
+            projection_path, repo_id=remote_store.repo_id
+        )
+        try:
+            return synchronize_outbox(
+                producer,
+                remote_store,
+                cache,
+                batch_size=batch_size,
+                credential_resolver=credential_resolver,
+            )
+        finally:
+            cache.close()
+    finally:
+        producer.close()
