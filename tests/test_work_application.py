@@ -760,30 +760,13 @@ def test_served_item_links_and_claim_reads_use_backend_contracts(conn, active_sp
     app.invoke("work.item.dep.remove", {"item_id": blocker, "dep_id": dep["dep_id"]}, _context())
 
 
-def test_served_claim_resume_filters_identity_on_server(conn, active_sprint):
-    track = db.get_or_create_track(conn, active_sprint["id"], "served")
-    item_id = db.create_work_item(conn, active_sprint["id"], track, "Resume")
-    db.create_claim(conn, item_id, "agent", instance_id="instance-a", runtime_session_id="run-a", hostname="host", pid=7)
-    other_sprint = db.create_sprint(conn, "other", status="planned")
-    other_track = db.get_or_create_track(conn, other_sprint, "served")
-    other_item = db.create_work_item(conn, other_sprint, other_track, "Other")
-    mismatch_item = db.create_work_item(conn, other_sprint, other_track, "Mismatch")
-    db.create_claim(conn, other_item, "agent", instance_id="instance-a", runtime_session_id="run-a", hostname="host", pid=7)
-    db.create_claim(conn, mismatch_item, "agent", instance_id="instance-a", runtime_session_id="different", hostname="host", pid=7)
-    app = _application(store=conn, backend=db)
-    result = app.invoke("work.read.claims", {"item_id": None, "sprint_id": None, "active_only": True, "instance_id": "instance-a", "runtime_session_id": "run-a", "hostname": "host", "pid": 7}, _context())
-    assert {claim["work_item_id"] for claim in result["claims"]} == {item_id, other_item}
-    assert all(claim["runtime_session_id"] == "run-a" for claim in result["claims"])
-    assert app.invoke("work.read.claims", {"item_id": item_id, "active_only": True, "instance_id": "other", "runtime_session_id": None, "hostname": None, "pid": None}, _context())["claims"] == []
-
-
-def test_served_claim_show_never_returns_bearer_token(conn, active_sprint):
+def test_served_reservation_show_is_credential_free(conn, active_sprint):
     track = db.get_or_create_track(conn, active_sprint["id"], "served")
     item_id = db.create_work_item(conn, active_sprint["id"], track, "Inspect")
-    claim_id = db.create_claim(conn, item_id, "agent")
-    result = _application(store=conn, backend=db).invoke("work.read.claim", {"claim_id": claim_id}, _context())
-    assert result["claim"]["claim_id"] == claim_id
-    assert "claim_token" not in result["claim"]
+    reservation = db.reserve(conn, item_id, actor="agent", session_id="session-a")
+    result = _application(store=conn, backend=db).invoke("work.read.reservation", {"reservation_id": reservation["id"]}, _context())
+    assert result["reservation"]["id"] == reservation["id"]
+    assert "claim_token" not in result["reservation"]
 
 
 def test_read_events_returns_sprint_events_in_order(conn, active_sprint):
@@ -1707,50 +1690,45 @@ def test_project_batch_validates_all_actor_bindings_before_any_member_mutation()
 
 
 
-def test_claim_context_catalog_contract_is_an_unauthenticated_read_op_shape():
+def test_reservation_read_catalog_contract_is_a_credential_free_read():
     contract = next(
         contract
         for contract in WORK_OPERATION_CONTRACTS
-        if contract.name == "work.claim.context"
+        if contract.name == "work.read.reservation"
     )
-    assert contract.required_authority == "work:claim"
+    assert contract.required_authority == "work:read"
     assert contract.execution_semantics == "read"
     assert contract.idempotency == "not-allowed"
-    assert contract.input_schema["required"] == ["claim_id"]
+    assert contract.input_schema["required"] == ["reservation_id"]
 
 
-def test_claim_context_returns_non_secret_snapshot_and_current_revision(
+def test_reservation_read_returns_credential_free_snapshot(
     conn, active_sprint
 ):
     track = db.get_or_create_track(conn, active_sprint["id"], "served")
-    item_id = db.create_work_item(conn, active_sprint["id"], track, "Context item")
-    claim_id = db.create_claim(conn, item_id, "claim-owner")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Reserved item")
+    reservation = db.reserve(conn, item_id, actor="reservation-owner", session_id="session-a")
 
     app = _application(store=conn, backend=db)
     result = app.invoke(
-        "work.claim.context",
-        {"claim_id": claim_id},
+        "work.read.reservation",
+        {"reservation_id": reservation["id"]},
         _context(actor="context-reader"),
     )
 
     assert result["repo_id"] == "test-repo"
-    assert result["authority_repo_uuid"] is None
-    assert result["actor"] == "context-reader"
-    assert result["claim"]["work_item_id"] == item_id
-    assert "claim_token" not in result["claim"]
-
-    secret_claim = db.get_claim(conn, claim_id, include_secret=True)
-    assert result["claim_revision"] == authority.claim_revision(secret_claim)
-    assert secret_claim["claim_token"] not in json.dumps(result)
+    assert result["reservation"]["work_item_id"] == item_id
+    assert result["reservation"]["actor"] == "reservation-owner"
+    assert "claim_token" not in json.dumps(result)
 
 
-def test_claim_context_missing_claim_rejects_without_backend_mutation(conn):
+def test_reservation_read_missing_row_rejects_without_backend_mutation(conn):
     app = _application(store=conn, backend=db)
 
     with pytest.raises(ApplicationRejection) as rejected:
-        app.invoke("work.claim.context", {"claim_id": 999}, _context())
+        app.invoke("work.read.reservation", {"reservation_id": 999}, _context())
 
-    assert rejected.value.code == "claim-not-found"
+    assert rejected.value.code == "reservation-not-found"
     assert rejected.value.http_status == 404
 
 
