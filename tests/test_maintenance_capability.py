@@ -245,6 +245,26 @@ def test_activation_requires_zero_active_reservations(store, conn, active_sprint
         transition(store, attested, "activate", step_id="attest-backup", command_id="verify-backup", command_ref="sha256:" + "c" * 64, effect_ref="sha256:" + "d" * 64)
 
 
+def test_reservations_are_disabled_while_a_capability_is_active(store, conn, active_sprint):
+    """The activation gate is mutually exclusive, not one-directional.
+
+    Activation requires zero active reservations, so admitting a reservation
+    under a live capability would silently break the window it protects.
+    """
+    track = db.get_or_create_track(conn, active_sprint["id"], "work")
+    item = db.create_work_item(conn, active_sprint["id"], track, "ordinary")
+    prepared = prepare(store)
+    attested = transition(store, prepared, "attest")
+    transition(
+        store, attested, "activate", step_id="attest-backup",
+        command_id="verify-backup", command_ref="sha256:" + "c" * 64,
+        effect_ref="sha256:" + "d" * 64,
+    )
+    with pytest.raises(db.ReservationConflict, match="maintenance capability is active"):
+        db.reserve(conn, item, actor="worker", session_id="blocked-session")
+    assert db.list_reservations(conn, item, active_only=True) == []
+
+
 def test_capability_is_nonrenewable_and_expiry_terminalizes(store):
     prepare(store)
     with pytest.raises(MaintenanceCapabilityError, match="cannot be renewed"):

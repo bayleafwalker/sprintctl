@@ -11,6 +11,7 @@ import pytest
 from tests.pg._shared import (
     pg,
     pg_migrations,
+    ReservationConflict,
     assert_disposable_connection,
     new_test_repo_id,
     MaintenanceCapabilityError,
@@ -49,7 +50,7 @@ class TestMaintenanceCapabilityLifecycle:
         assert recovery["authority"] == "none"
         assert lifecycle.get(capability_id)["state"] == "active"
 
-    def test_claim_activation_race_has_exactly_one_authority_winner(
+    def test_reservation_activation_race_has_exactly_one_authority_winner(
         self, store, pg_test_scope
     ):
         repo_id = pg_test_scope("maintenance-race")
@@ -104,25 +105,30 @@ class TestMaintenanceCapabilityLifecycle:
             finally:
                 conn.close()
 
-        def claim() -> None:
+        def reserve() -> None:
             conn = psycopg.connect(_PG_URL, row_factory=dict_row)
             try:
                 actor_store = pg.PgStore(conn=conn, repo_id=repo_id)
                 barrier.wait()
-                pg.create_claim(actor_store, item_id, "ordinary-agent")
-                outcomes["claim"] = "accepted"
-            except ClaimConflict as exc:
-                outcomes["claim"] = f"rejected:{exc}"
+                pg.reserve(
+                    actor_store,
+                    item_id,
+                    actor="ordinary-agent",
+                    session_id="race-session",
+                )
+                outcomes["reservation"] = "accepted"
+            except ReservationConflict as exc:
+                outcomes["reservation"] = f"rejected:{exc}"
             finally:
                 conn.close()
 
-        workers = [threading.Thread(target=activate), threading.Thread(target=claim)]
+        workers = [threading.Thread(target=activate), threading.Thread(target=reserve)]
         for worker in workers:
             worker.start()
         barrier.wait()
         for worker in workers:
             worker.join(timeout=10)
-            assert not worker.is_alive(), "shared claim/capability arbitration deadlocked"
+            assert not worker.is_alive(), "shared reservation/capability arbitration deadlocked"
 
         assert sorted(value.split(":", 1)[0] for value in outcomes.values()) == [
             "accepted",
@@ -135,13 +141,13 @@ class TestMaintenanceCapabilityLifecycle:
             )
             capability_active = cur.fetchone()["state"] == "active"
             cur.execute(
-                "SELECT count(*) AS count FROM claim WHERE repo_id=%s AND status='active' AND expires_at > now()",
+                "SELECT count(*) AS count FROM reservation WHERE repo_id=%s AND state='active'",
                 (repo_id,),
             )
-            live_claims = int(cur.fetchone()["count"])
-        assert not (capability_active and live_claims), outcomes
+            live_reservations = int(cur.fetchone()["count"])
+        assert not (capability_active and live_reservations), outcomes
 
-    def test_rejected_claim_rolls_back_repo_arbitration_on_retained_connection(
+    def test_rejected_reservation_rolls_back_repo_arbitration_on_retained_connection(
         self, store, pg_test_scope
     ):
         repo_id = pg_test_scope("maintenance-conflict-rollback")
@@ -151,15 +157,20 @@ class TestMaintenanceCapabilityLifecycle:
             retained_store = pg.PgStore(conn=retained, repo_id=repo_id)
             sprint_id = pg.create_sprint(retained_store, f"Conflict rollback-{_uid()}", status="active")
             track_id = pg.get_or_create_track(retained_store, sprint_id, "authority")
-            item_id = pg.create_work_item(retained_store, sprint_id, track_id, "Rejected claim")
+            item_id = pg.create_work_item(retained_store, sprint_id, track_id, "Rejected reservation")
             lifecycle = PostgresMaintenanceCapabilityStore(retained_store)
             prepared = lifecycle.prepare(capability_id=f"mcap:{uuid.uuid4()}", request_id=str(uuid.uuid4()), envelope=envelope(), actor="operator", at=AT)
             _anchor_capability_window_to_db_clock(retained, repo_id, prepared["capability_id"])
             attested = lifecycle.transition(capability_id=prepared["capability_id"], request_id=str(uuid.uuid4()), action="attest", expected_revision=prepared["revision"], actor="operator", at=AT, effect_ref="sha256:" + "0" * 64)
             lifecycle.transition(capability_id=prepared["capability_id"], request_id=str(uuid.uuid4()), action="activate", expected_revision=attested["revision"], actor="operator", at=AT, step_id="attest-backup", command_id="verify-backup", command_ref="sha256:" + "1" * 64, effect_ref="sha256:" + "2" * 64)
 
-            with pytest.raises(ClaimConflict):
-                pg.create_claim(retained_store, item_id, "ordinary-agent")
+            with pytest.raises(ReservationConflict):
+                pg.reserve(
+                    retained_store,
+                    item_id,
+                    actor="ordinary-agent",
+                    session_id="rollback-session",
+                )
             assert retained.info.transaction_status == psycopg.pq.TransactionStatus.IDLE
             with contender.cursor() as cur:
                 cur.execute(

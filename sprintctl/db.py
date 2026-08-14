@@ -1387,6 +1387,19 @@ def reserve(conn: sqlite3.Connection, work_item_id: int, *, actor: str, session_
     now = _reservation.now_text()
     try:
         conn.execute("BEGIN IMMEDIATE")
+        # Reservation admission and maintenance activation are mutually
+        # exclusive: activation gates on "zero active reservations", so a
+        # reservation granted under a live capability would silently break the
+        # window it protects.  BEGIN IMMEDIATE's whole-database lock supplies
+        # the serialization that PostgreSQL takes an advisory lock for.
+        if conn.execute(
+            "SELECT 1 FROM maintenance_capability WHERE state IN ('active','observing') "
+            "AND julianday(expires_at) > julianday('now') LIMIT 1"
+        ).fetchone() is not None:
+            conn.rollback()
+            raise ReservationConflict(
+                "reservations are disabled while an exact-plan maintenance capability is active"
+            )
         conflicts = conn.execute(
             "SELECT * FROM reservation WHERE work_item_id = ? AND state = 'active' AND role = 'execute'",
             (work_item_id,),

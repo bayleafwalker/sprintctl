@@ -2232,6 +2232,24 @@ def reserve(store: PgStore, work_item_id: int, *, actor: str, session_id: str, r
     now = _reservation.now_text()
     try:
         with store.conn.cursor() as cur:
+            # Serialize repo-wide reservation admission with maintenance
+            # activation.  Activation gates on "zero active reservations"
+            # (maintenance_capability), which is a COUNT, not a constraint the
+            # database can enforce: without a shared repo-scoped lock an
+            # activation that counts zero and a concurrent reserve() can both
+            # commit, leaving a live reservation under an active capability.
+            # The retired claim path held this same lock for the same reason.
+            cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (store.repo_id,))
+            cur.execute(
+                "SELECT 1 FROM maintenance_capability WHERE repo_id = %s "
+                "AND state IN ('active','observing') "
+                "AND expires_at > statement_timestamp() LIMIT 1",
+                (store.repo_id,),
+            )
+            if cur.fetchone() is not None:
+                raise ReservationConflict(
+                    "reservations are disabled while an exact-plan maintenance capability is active"
+                )
             if role == "execute":
                 cur.execute("SELECT * FROM reservation WHERE repo_id = %s AND work_item_id = %s AND state = 'active' AND role = 'execute' FOR UPDATE", (store.repo_id, work_item_id))
                 conflicts = cur.fetchall()
