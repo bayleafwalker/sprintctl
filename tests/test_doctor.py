@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from sprintctl import doctor
+from sprintctl import db, doctor
 from sprintctl.cli import cli
 
 
@@ -75,6 +75,9 @@ def test_local_schema_probe_is_read_only_and_reports_mismatch(tmp_path):
         "compatible": False,
         "status": "mismatch",
         "error": None,
+        # A database predating migration 21 has no recovery_record table; the
+        # probe reports absent provenance rather than failing.
+        "recovered_from": None,
     }
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 9
@@ -483,3 +486,34 @@ def test_doctor_human_output_reports_served_extra(monkeypatch, runner):
     assert "extras: remote=" in result.output
     assert "served=missing" in result.output
     assert "served-extra-missing" in result.output
+
+
+def test_local_schema_probe_reports_recovery_provenance(tmp_path):
+    """A recovered database is a new authority instance.
+
+    An operator diagnosing one needs to know that before trusting anything
+    else it reports, so the probe surfaces the most recent recovery.
+    """
+    path = tmp_path / "recovered.db"
+    conn = db.get_connection(path)
+    try:
+        db.init_db(conn)
+        db.write_recovery_snapshot(
+            conn,
+            {},
+            provenance={
+                "recovered_at": "2026-08-15T00:00:00Z",
+                "source_repo_id": "sprintctl-remote",
+            },
+        )
+    finally:
+        conn.close()
+
+    result = doctor._probe_local_schema({"SPRINTCTL_DB": str(path)})
+
+    assert result["status"] == "current"
+    assert result["recovered_from"] == {
+        "recovered_at": "2026-08-15T00:00:00Z",
+        "source_repo_id": "sprintctl-remote",
+        "reservations_interrupted": 0,
+    }

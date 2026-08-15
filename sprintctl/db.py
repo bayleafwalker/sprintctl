@@ -65,7 +65,7 @@ SPRINT_KINDS = ("active_sprint", "backlog", "archive")
 
 # Single source of truth for the local schema version; init_db() must end by
 # migrating to exactly this version, and doctor compares databases against it.
-CURRENT_SCHEMA_VERSION = 20
+CURRENT_SCHEMA_VERSION = 21
 RESERVATION_ROLES = _reservation.ROLES
 ReservationConflict = _reservation.ReservationConflict
 
@@ -742,6 +742,35 @@ def _migration_20(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_21(conn: sqlite3.Connection) -> None:
+    """Add the repo-level recovery record.
+
+    One row per ``db recover-from-remote``, written in the same transaction
+    as the recovered data, replacing the one synthetic ``recovery.completed``
+    event that used to be appended per sprint. A recovery is a property of
+    the database, not of each sprint inside it, and the per-sprint form both
+    scaled with sprint count and put an operational fact into the append-only
+    business event log.
+
+    Existing ``recovery.completed`` events are left alone: the event history
+    is append-only, so past recoveries stay legible where they were recorded.
+    """
+    _execute_statements(conn, """
+        CREATE TABLE IF NOT EXISTS recovery_record (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recovered_at TEXT NOT NULL,
+            source_repo_id TEXT NOT NULL,
+            schema_version INTEGER NOT NULL,
+            source_row_counts TEXT NOT NULL DEFAULT '{}',
+            reservations_interrupted INTEGER NOT NULL DEFAULT 0,
+            claims_closed INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_recovery_record_recovered_at
+            ON recovery_record(recovered_at DESC);
+    """)
+
+
 def _run_migration(
     conn: sqlite3.Connection,
     target_version: int,
@@ -791,7 +820,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     _run_migration(conn, 17, _migration_17)
     _run_migration(conn, 18, _migration_18)
     _run_migration(conn, 19, _migration_19)
-    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_20)
+    _run_migration(conn, 20, _migration_20)
+    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_21)
 
 
 # --- Sprint ---
@@ -1802,6 +1832,10 @@ def backlog_seed_from_candidates(
 
 # --- Database maintenance ---
 
+# recovery_record is deliberately absent: it is this database's own
+# operational provenance ("was I recovered, when, from where"), not portable
+# business data. Carrying the source's records across would conflate the
+# source's history with this database's.
 _RECOVERY_TABLE_ORDER = (
     "sprint", "track", "work_item", "event", "reservation",
     "claim_history", "ref", "dep",
@@ -1846,12 +1880,14 @@ def write_recovery_snapshot(
     (modulo the Postgres-only repo_id); any drift raises
     RecoverySchemaMismatch instead of silently writing partial rows.
 
-    When provenance is given, one synthetic recovery.completed event is
-    written per recovered sprint inside the same transaction, so provenance
-    is all-or-nothing with the data. Returned counts cover source rows only.
+    When provenance is given, one row is written to ``recovery_record``
+    inside the same transaction, so provenance is all-or-nothing with the
+    data. That replaced one synthetic ``recovery.completed`` event per
+    recovered sprint: a recovery is a property of the database, not of each
+    sprint in it, and the old form both scaled with sprint count and put an
+    operational fact into the append-only business event log. Returned counts
+    cover source rows only.
     """
-    if provenance is not None:
-        _contracts.require_generic_event_write_allowed("recovery.completed")
     counts: dict[str, int] = {}
     claims_closed = 0
     reservations_interrupted = 0
@@ -1905,19 +1941,19 @@ def write_recovery_snapshot(
                 n += 1
             counts[table] = n
         if provenance is not None:
-            payload = dict(provenance)
-            payload["source_row_counts"] = counts
-            payload["claims_closed"] = claims_closed
-            payload["reservations_interrupted"] = reservations_interrupted
-            for sprint_row in snapshot.get("sprint", []):
-                _insert_event(
-                    conn,
-                    sprint_row["id"],
-                    "sprintctl",
-                    "recovery.completed",
-                    source_type="system",
-                    payload=payload,
-                )
+            conn.execute(
+                "INSERT INTO recovery_record (recovered_at, source_repo_id, "
+                "schema_version, source_row_counts, reservations_interrupted, "
+                "claims_closed) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    provenance["recovered_at"],
+                    provenance["source_repo_id"],
+                    CURRENT_SCHEMA_VERSION,
+                    json.dumps(counts, sort_keys=True),
+                    reservations_interrupted,
+                    claims_closed,
+                ),
+            )
         conn.execute("PRAGMA foreign_keys = ON")
         conn.commit()
     except Exception:
@@ -1954,7 +1990,7 @@ def check_integrity(conn: sqlite3.Connection) -> dict:
     table_counts = {}
     for table in (
         "sprint", "track", "work_item", "event", "reservation",
-        "claim_history", "ref", "dep",
+        "claim_history", "ref", "dep", "recovery_record",
     ):
         table_counts[table] = conn.execute(
             f"SELECT COUNT(*) FROM {table}"  # noqa: S608 — fixed identifier set

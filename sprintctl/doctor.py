@@ -182,20 +182,40 @@ def _probe_local_schema(environ: Mapping[str, str]) -> dict[str, Any]:
         "compatible": None,
         "status": "absent",
         "error": None,
+        "recovered_from": None,
     }
     if not path.is_file():
         return result
     conn: sqlite3.Connection | None = None
+    recovery: dict[str, Any] | None = None
     try:
         conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
         row = conn.execute("SELECT version FROM schema_version ORDER BY rowid LIMIT 1").fetchone()
         version = int(row[0]) if row is not None else 0
+        # Recovery provenance: a recovered database is a new authority
+        # instance, so an operator diagnosing one needs to know that before
+        # trusting anything else it reports. Missing on a pre-migration-21
+        # database, which is not an error.
+        try:
+            provenance = conn.execute(
+                "SELECT recovered_at, source_repo_id, reservations_interrupted "
+                "FROM recovery_record ORDER BY recovered_at DESC, id DESC LIMIT 1"
+            ).fetchone()
+        except sqlite3.Error:
+            provenance = None
+        if provenance is not None:
+            recovery = {
+                "recovered_at": provenance[0],
+                "source_repo_id": provenance[1],
+                "reservations_interrupted": provenance[2],
+            }
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
         result.update({"status": "unavailable", "error": str(exc)})
         return result
     finally:
         if conn is not None:
             conn.close()
+    result["recovered_from"] = recovery
     result.update(
         {
             "actual_version": version,

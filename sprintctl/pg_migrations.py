@@ -14,7 +14,7 @@ from typing import Any, Mapping
 
 
 WORK_API_VERSION = "sprintctl-work/v1"
-CURRENT_SCHEMA_VERSION = 10
+CURRENT_SCHEMA_VERSION = 11
 MINIMUM_SCHEMA_VERSION = 5
 MAXIMUM_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION
 STARTUP_MODE_ENV = "SPRINTCTL_REMOTE_SCHEMA_MODE"
@@ -375,6 +375,11 @@ def migrate_schema(store: Any) -> dict[str, Any]:
                 _pg._apply_schema_version_10(cur)
                 cur.execute("UPDATE schema_version SET version = %s", (10,))
                 applied.append(10)
+                state = SchemaState(version=10, row_count=1)
+            if state.version < 11:
+                _pg._apply_schema_version_11(cur)
+                cur.execute("UPDATE schema_version SET version = %s", (11,))
+                applied.append(11)
         store.conn.commit()
     except Exception:
         store.conn.rollback()

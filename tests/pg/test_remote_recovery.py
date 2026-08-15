@@ -92,10 +92,17 @@ class TestRecoverFromRemote:
             assert claim_row["status"] == "expired"
             assert claim_row["claim_token"] is None
 
+            # Provenance is one repo-level record, not one event per sprint.
+            assert conn.execute(
+                "SELECT COUNT(*) AS n FROM event WHERE event_type = 'recovery.completed'"
+            ).fetchone()["n"] == 0
             provenance_rows = conn.execute(
-                "SELECT sprint_id FROM event WHERE event_type = 'recovery.completed'"
+                "SELECT recovered_at, source_repo_id, reservations_interrupted"
+                " FROM recovery_record"
             ).fetchall()
-            assert len(provenance_rows) == len(snapshot["sprint"])
+            assert len(provenance_rows) == 1
+            assert provenance_rows[0]["source_repo_id"] == store.repo_id
+            assert provenance_rows[0]["reservations_interrupted"] == 1
 
             event_row = conn.execute(
                 "SELECT payload FROM event WHERE work_item_id = ? AND event_type = 'note'",

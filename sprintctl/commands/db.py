@@ -185,17 +185,19 @@ def db_recover_from_remote(output_path: str, run_verify: bool) -> None:
         if status != "ok":
             parity_ok = False
         click.echo(f"  {table}: source={source_count} recovered={destination_count} [{status}]")
-    # event count in the recovered DB includes one synthetic recovery.completed
-    # event per recovered sprint, on top of the recovered source events.
+    # Events now recover one-for-one: provenance is a single recovery_record
+    # row rather than one synthetic event per sprint appended to the log.
     source_events = len(snapshot.get("event", []))
-    expected_events = source_events + len(snapshot.get("sprint", []))
     destination_events = report["table_counts"].get("event", 0)
-    status = "ok" if expected_events == destination_events else "MISMATCH"
+    status = "ok" if source_events == destination_events else "MISMATCH"
     if status != "ok":
         parity_ok = False
     click.echo(
-        f"  event: source={source_events} (+{len(snapshot.get('sprint', []))} recovery.completed) "
-        f"recovered={destination_events} [{status}]"
+        f"  event: source={source_events} recovered={destination_events} [{status}]"
+    )
+    click.echo(
+        f"  recovery_record: +1 (this recovery; "
+        f"{report['table_counts'].get('recovery_record', 0)} total)"
     )
 
     click.echo("")

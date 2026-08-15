@@ -31,6 +31,7 @@ REPO_TABLES = (
     "ingest_record",
     "ingest_stream",
     "ingest_repo_cursor",
+    "recovery_record",
     "dep",
     "ref",
     # reservation cascades from work_item, but claim_history does not:

@@ -244,30 +244,68 @@ class TestSchemaMismatch:
 
 
 class TestProvenance:
-    def test_recovery_event_written_per_sprint_in_same_transaction(self, conn):
+    def test_one_repo_level_record_is_written_in_the_same_transaction(self, conn):
         counts = db.write_recovery_snapshot(
             conn,
             _snapshot(),
             provenance={"recovered_at": "2026-07-24T00:00:00Z", "source_repo_id": "sprintctl"},
         )
-        # counts cover source rows only, not the synthetic provenance events
+        # Events now recover one-for-one: provenance is no longer appended to
+        # the business event log.
         assert counts["event"] == 1
-        rows = conn.execute(
-            "SELECT sprint_id, payload FROM event WHERE event_type = 'recovery.completed'"
-        ).fetchall()
-        assert len(rows) == 1
-        assert rows[0]["sprint_id"] == 407
-        payload = json.loads(rows[0]["payload"])
-        assert payload["source_repo_id"] == "sprintctl"
-        assert payload["source_row_counts"]["claim_history"] == 2
-        assert payload["claims_closed"] == 1
-
-    def test_no_provenance_means_no_synthetic_events(self, conn):
-        db.write_recovery_snapshot(conn, _snapshot())
-        n = conn.execute(
+        assert conn.execute(
             "SELECT COUNT(*) AS n FROM event WHERE event_type = 'recovery.completed'"
-        ).fetchone()["n"]
-        assert n == 0
+        ).fetchone()["n"] == 0
+
+        rows = conn.execute("SELECT * FROM recovery_record").fetchall()
+        assert len(rows) == 1
+        record = rows[0]
+        assert record["recovered_at"] == "2026-07-24T00:00:00Z"
+        assert record["source_repo_id"] == "sprintctl"
+        assert record["schema_version"] == db.CURRENT_SCHEMA_VERSION
+        assert record["claims_closed"] == 1
+        assert record["reservations_interrupted"] == 1
+        assert json.loads(record["source_row_counts"])["claim_history"] == 2
+
+    def test_one_record_regardless_of_sprint_count(self, conn):
+        """The old form wrote one event per sprint; this one does not scale."""
+        snapshot = _snapshot()
+        extra = dict(snapshot["sprint"][0])
+        extra["id"] = 408
+        extra["name"] = "Second sprint"
+        extra["aggregate_uuid"] = "6f1d3d18-1c1f-4a4e-9a0e-8a9a1f2b3c4d"
+        snapshot["sprint"] = snapshot["sprint"] + [extra]
+
+        db.write_recovery_snapshot(
+            conn,
+            snapshot,
+            provenance={"recovered_at": "2026-07-24T00:00:00Z", "source_repo_id": "sprintctl"},
+        )
+
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM recovery_record"
+        ).fetchone()["n"] == 1
+
+    def test_no_provenance_means_no_record(self, conn):
+        db.write_recovery_snapshot(conn, _snapshot())
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM recovery_record"
+        ).fetchone()["n"] == 0
+
+    def test_a_failed_recovery_leaves_no_provenance(self, conn):
+        """Provenance is all-or-nothing with the data."""
+        snapshot = _snapshot()
+        del snapshot["claim_history"][0]["lease_epoch"]
+        with pytest.raises(db.RecoverySchemaMismatch):
+            db.write_recovery_snapshot(
+                conn,
+                snapshot,
+                provenance={"recovered_at": "2026-07-24T00:00:00Z", "source_repo_id": "x"},
+            )
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM recovery_record"
+        ).fetchone()["n"] == 0
+        assert conn.execute("SELECT COUNT(*) AS n FROM sprint").fetchone()["n"] == 0
 
 
 class TestRecoverFromRemoteCLIGuards:

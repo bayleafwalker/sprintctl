@@ -145,7 +145,7 @@ class TestDbSizeGrowth:
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             ).fetchall()
         }
-        expected = {"sprint", "track", "work_item", "event", "claim_history", "reservation", "ref", "dep", "schema_version", "maintenance_capability", "maintenance_capability_receipt", "maintenance_capability_recovery", "maintenance_resource", "maintenance_resource_event"}
+        expected = {"sprint", "track", "work_item", "event", "claim_history", "recovery_record", "reservation", "ref", "dep", "schema_version", "maintenance_capability", "maintenance_capability_receipt", "maintenance_capability_recovery", "maintenance_resource", "maintenance_resource_event"}
         assert tables == expected, f"Unexpected tables: {tables ^ expected}"
 
 
