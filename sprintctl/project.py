@@ -13,6 +13,10 @@ from uuid import UUID
 _REPO_ID = re.compile(r"^[A-Za-z0-9._-]+$")
 _RENDER_LEVELS = {"full", "baseline", "none"}
 _MEMBER_ACCESS = {"write", "reference"}
+_ROLE_PRESETS = {"planner", "worker", "reviewer"}
+_ROLE_MODELS = {"Sol", "Luna"}
+_ROLE_BEHAVIORS = {"high", "xhigh"}
+_ROLE_TOOL_MODES = {"read-only", "write"}
 
 
 class ProjectConfigError(ValueError):
@@ -146,6 +150,43 @@ def _member(raw: object, index: int) -> ProjectMember:
     )
 
 
+def _validate_role_presets(raw: object) -> None:
+    """Accept only descriptive project role metadata.
+
+    Sprintctl does not route models or grant execution authority.  It still
+    validates this Agentops-owned binding field so project-scoped read commands
+    remain compatible without silently accepting authority-shaped extensions.
+    """
+    if not isinstance(raw, dict):
+        raise ProjectConfigError("project.toml role_presets must be a table")
+    unknown_roles = sorted(set(raw) - _ROLE_PRESETS)
+    if unknown_roles:
+        raise ProjectConfigError(
+            "project.toml role_presets has unsupported roles: "
+            + ", ".join(unknown_roles)
+        )
+    for role, preset in raw.items():
+        field = f"project.toml role_presets.{role}"
+        if not isinstance(preset, dict):
+            raise ProjectConfigError(f"{field} must be a table")
+        expected = {"model", "behavior", "tool_mode"}
+        if set(preset) != expected:
+            unsupported = sorted(set(preset) - expected)
+            missing = sorted(expected - set(preset))
+            details = []
+            if unsupported:
+                details.append(f"unsupported fields: {', '.join(unsupported)}")
+            if missing:
+                details.append(f"missing fields: {', '.join(missing)}")
+            raise ProjectConfigError(f"{field} has " + "; ".join(details))
+        if preset["model"] not in _ROLE_MODELS:
+            raise ProjectConfigError(f"{field}.model must be Sol or Luna")
+        if preset["behavior"] not in _ROLE_BEHAVIORS:
+            raise ProjectConfigError(f"{field}.behavior must be high or xhigh")
+        if preset["tool_mode"] not in _ROLE_TOOL_MODES:
+            raise ProjectConfigError(f"{field}.tool_mode must be read-only or write")
+
+
 def load_project(path: Path) -> ProjectBinding:
     project_path = path.expanduser().resolve()
     if project_path.name != "project.toml":
@@ -164,7 +205,14 @@ def load_project(path: Path) -> ProjectBinding:
         raise ProjectConfigError("project.toml must contain a table")
     unknown = sorted(
         set(raw)
-        - {"schema_version", "project_id", "display_name", "home_repo", "members"}
+        - {
+            "schema_version",
+            "project_id",
+            "display_name",
+            "home_repo",
+            "members",
+            "role_presets",
+        }
     )
     if unknown:
         raise ProjectConfigError(
@@ -172,6 +220,8 @@ def load_project(path: Path) -> ProjectBinding:
         )
     if raw.get("schema_version") != 1:
         raise ProjectConfigError("project.toml schema_version must be 1")
+    if "role_presets" in raw:
+        _validate_role_presets(raw["role_presets"])
     display_name = _required_text(raw.get("display_name"), "display_name")
     home_repo = _required_text(raw.get("home_repo"), "home_repo")
     if not _REPO_ID.fullmatch(home_repo):
