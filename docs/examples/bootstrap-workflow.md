@@ -42,9 +42,9 @@ sprintctl item note --id 1 --type decision \
   --summary "Create src/models.py. User: id, email, created_at. Session: id, user_id, token, expires_at." \
   --actor setup
 
-sprintctl item add --sprint-id 1 --track docs --title "Create AGENTS.md with track taxonomy and claim policy"
+sprintctl item add --sprint-id 1 --track docs --title "Create AGENTS.md with track taxonomy and reservation policy"
 sprintctl item note --id 2 --type decision \
-  --summary "Done when AGENTS.md covers: tracks, claim policy, review policy, artifact paths, source-of-truth order." \
+  --summary "Done when AGENTS.md covers: tracks, reservation policy, review policy, artifact paths, source-of-truth order." \
   --actor setup
 ```
 
@@ -66,33 +66,31 @@ sprintctl maintain check --sprint-id 1
 
 ---
 
-## The basic work loop (claim → work → done)
+## The basic work loop (reserve → work → done)
 
 ```bash
-# Claim an item before starting (also moves item to active)
-CLAIM=$(sprintctl claim start \
+# Reserve an item before starting
+RESERVATION=$(sprintctl reservation reserve \
   --item-id 1 \
   --actor claude-session-1 \
-  --runtime-session-id "${CODEX_THREAD_ID:-session-1}" \
-  --branch feat/models \
+  --role execute \
+  --session-id "${CODEX_THREAD_ID:-session-1}" \
   --json)
 
-CLAIM_ID=$(echo "$CLAIM" | jq -r '.claim_id')
-CLAIM_TOKEN=$(echo "$CLAIM" | jq -r '.claim_token')
+RESERVATION_ID=$(echo "$RESERVATION" | jq -r '.id')
 
 # Record decisions during work
 sprintctl item note --id 1 --type decision \
   --summary "Using SQLAlchemy declarative base with type annotations for all models." \
   --actor claude-session-1
 
-# Done: note + done-from-claim
+# Done: note + status transition + release
 sprintctl item note --id 1 --type decision \
   --summary "Done. src/models.py created with User, Session, Event. First Alembic migration generated." \
   --actor claude-session-1
-sprintctl item done-from-claim \
-  --id 1 \
-  --claim-id "$CLAIM_ID" --claim-token "$CLAIM_TOKEN" \
-  --actor claude-session-1
+REV=$(sprintctl item show --id 1 --json | jq -r '.item.status_revision')
+sprintctl item status --id 1 --status done --actor claude-session-1 --expected-revision "$REV"
+sprintctl reservation release --id "$RESERVATION_ID" --actor claude-session-1
 ```
 
 ## Handoff to the next session
@@ -100,20 +98,22 @@ sprintctl item done-from-claim \
 ```bash
 # Leave a handoff note
 sprintctl item note --id 2 --type claim-handoff \
-  --summary "Partial progress: AGENTS.md written through claim policy. Review policy not yet written." \
+  --summary "Partial progress: AGENTS.md written through reservation policy. Review policy not yet written." \
   --detail "Next: Write review policy section (schema changes, AGENTS.md changes require review). File: AGENTS.md at line ~80." \
   --actor claude-session-1
 
-# Transfer claim ownership (mints new token for next session)
-sprintctl claim handoff \
-  --id 2 --claim-token tok_def \
-  --actor claude-session-2 --mode rotate
+# Reassign the reservation to the next session
+sprintctl reservation reassign \
+  --id <reservation-id> \
+  --actor claude-session-2 \
+  --session-id next-session \
+  --json
 ```
 
 ## Sprint wrap-up
 
 ```bash
-# Run maintenance check and sweep stale claims
+# Run maintenance check and sweep stale reservations
 sprintctl maintain check --sprint-id 1
 sprintctl maintain sweep --sprint-id 1
 
@@ -123,7 +123,8 @@ sprintctl maintain carryover --from-sprint 1 --to-sprint 2
 
 # Archive current sprint
 sprintctl render > docs/sprint/archive/2026-S01-forge-schema-overture.md
-sprintctl sprint status --id 1 --status closed
+REV=$(sprintctl sprint show --id 1 --json | jq -r '.status_revision')
+sprintctl sprint status --id 1 --status closed --expected-revision "$REV"
 
 # Update current.md for new sprint
 sprintctl render > docs/sprint/current.md
@@ -136,9 +137,9 @@ sprintctl render > docs/sprint/current.md
 For the `YYYY-SNN-<anchor>-<focus>-<phase>` format, a minimal starting vocabulary:
 
 **Anchor** (project mood/place): hearth, forge, harbor, atlas, lantern, signal, anvil, grove
-**Focus** (sprint concern): schema, workflow, claim, memory, review, render, contract, handoff
+**Focus** (sprint concern): schema, workflow, reservation, memory, review, render, contract, handoff
 **Phase** (sprint posture): overture, weave, survey, ascent, harvest, repair, cadence, shaping
 
-Example names: `2026-S01-forge-schema-overture`, `2026-S02-harbor-claim-weave`, `2026-S03-signal-review-harvest`
+Example names: `2026-S01-forge-schema-overture`, `2026-S02-harbor-reservation-weave`, `2026-S03-signal-review-harvest`
 
 See the [sprintctl-bootstrap-template](https://github.com/bayleafwalker/sprintctl-bootstrap-template) repo for the full vocabulary, naming rules, and worked examples.

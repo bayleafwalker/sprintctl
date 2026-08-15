@@ -8,7 +8,7 @@ has its own build/test conventions.
 Provide one consistent shape for:
 
 - startup context collection
-- claim-safe execution
+- reservation-aware execution
 - checkpoint rendering
 - session shutdown and handoff
 
@@ -35,15 +35,15 @@ Provide one consistent shape for:
 Before meaningful edits:
 1. sprintctl usage --context --json
 2. sprintctl next-work --json --explain
-3. if taking ownership, sprintctl claim start and keep claim proof for session
+3. if taking ownership, sprintctl reservation reserve and keep reservation_id for session
 
 During work:
-- heartbeat active claims at half-TTL
+- touch active reservations when useful
 - record decision/blocker notes on the active item
 
 Before session end:
-- set item status with claim proof when appropriate
-- handoff or release every owned claim
+- set item status with expected-revision when appropriate
+- reassign or release every active reservation
 - refresh handoff bundle
 ```
 
