@@ -93,7 +93,7 @@ def test_phase4_docs_files_exist():
     expected_files = [
         "docs/customization.md",
         "docs/advanced/coordinator-mode.md",
-        "docs/advanced/claim-discipline.md",
+        "docs/advanced/reservation-discipline.md",
         "docs/advanced/takeup.md",
         "docs/examples/repo-template.md",
     ]
@@ -120,7 +120,7 @@ def test_readme_links_phase4_docs():
         "README.md", "Coordinator Mode", "docs/advanced/coordinator-mode.md"
     )
     _assert_markdown_link_declared_and_resolves(
-        "README.md", "Claim Discipline", "docs/advanced/claim-discipline.md"
+        "README.md", "Reservation Discipline", "docs/advanced/reservation-discipline.md"
     )
     _assert_markdown_link_declared_and_resolves(
         "README.md", "repo-template.md", "docs/examples/repo-template.md"
@@ -182,9 +182,14 @@ def test_capability_receipt_reference_pins_private_draft_and_human_ratification(
     ):
         assert fragment in normalized_reference
 
+    # The close step is pinned by its flags, not its full command string:
+    # --expected-revision is required for a direct sprint transition, so the
+    # example must carry it, and a future flag must not silently break the
+    # ordering check below into a ValueError.
     close_position = normalized_reference.index(
-        "sprintctl sprint status --id <id> --status closed --actor <actor> --json"
+        "sprintctl sprint status --id <id> --status closed --actor <actor>"
     )
+    assert "--expected-revision" in normalized_reference
     draft_position = normalized_reference.index(
         "For a supported delta, run the `capability-receipt` dispatch skill"
     )
@@ -199,7 +204,7 @@ def test_start_here_links_phase4_docs():
         "docs/guides/start-here.md", "Coordinator Mode", "../advanced/coordinator-mode.md"
     )
     _assert_markdown_link_declared_and_resolves(
-        "docs/guides/start-here.md", "Claim Discipline", "../advanced/claim-discipline.md"
+        "docs/guides/start-here.md", "Reservation Discipline", "../advanced/reservation-discipline.md"
     )
 
 
@@ -246,8 +251,8 @@ def test_advanced_coordination_links_phase4_docs():
     )
     _assert_markdown_link_declared_and_resolves(
         "docs/guides/advanced-coordination.md",
-        "Claim Discipline",
-        "../advanced/claim-discipline.md",
+        "Reservation Discipline",
+        "../advanced/reservation-discipline.md",
     )
 
 
@@ -255,7 +260,7 @@ def test_phase4_docs_local_markdown_links_resolve():
     phase4_docs = [
         "docs/customization.md",
         "docs/advanced/coordinator-mode.md",
-        "docs/advanced/claim-discipline.md",
+        "docs/advanced/reservation-discipline.md",
         "docs/advanced/takeup.md",
         "docs/examples/repo-template.md",
     ]
@@ -293,12 +298,12 @@ def test_agent_protocol_mentions_takeup(runner, db_path):
 def test_phase3_examples_publish_core_sections():
     alias_pack = _read("docs/examples/alias-pack.md")
     assert "## Bash/Zsh functions" in alias_pack
-    assert "## Claim helpers (explicit proof retained)" in alias_pack
+    assert "## Reservation helpers (explicit handle retained)" in alias_pack
     assert "## Minimal alias-only mode" in alias_pack
 
     snippets = _read("docs/examples/agent-prompt-snippets.md")
     assert "## 1. Session startup snippet" in snippets
-    assert "## 2. Claim-and-execute snippet" in snippets
+    assert "## 2. Reserve-and-execute snippet" in snippets
     assert "## 3. Coordinator + sub-agent snippet" in snippets
     assert "## 4. End-of-session snippet" in snippets
 

@@ -29,10 +29,16 @@ def test_claim_context_records_backend_parity_race_and_stale_proof():
     assert "old-token-cannot-mutate-after-rotated-handoff" in packet["invariants"]
 
 
-def test_claim_protocol_reports_bounded_postgres_exclusivity_evidence():
-    protocol = (ROOT / "docs/protocols/claim-ownership.md").read_text(encoding="utf-8")
+def test_reservation_protocol_reports_bounded_exclusivity_evidence():
+    # Whitespace-normalized: these are prose claims, so a reflow of the
+    # paragraph must not read as the claim having been removed.
+    protocol = " ".join(
+        (ROOT / "docs/protocols/reservation-model.md").read_text(encoding="utf-8").split()
+    )
 
-    assert "work-item row lock is the arbitration point" in protocol
+    assert "`idx_reservation_active_execute` partial unique index is the arbitration point" in protocol
+    assert "BEGIN IMMEDIATE" in protocol
+    assert "pg_advisory_xact_lock" in protocol
     assert "classified as `concurrency-tested`" in protocol
     assert "general cross-operation linearizability proof" in protocol
 

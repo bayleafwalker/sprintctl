@@ -72,8 +72,15 @@ prevents split-brain continuity when the source authority is still reachable.
 ## Backend parity evidence
 
 Backend parity means equivalent accepted/rejected histories and public contract
-shapes for the bounded scenarios, not identical SQL. SQLite uses a reserved
-writer transaction and PostgreSQL uses the work-item row lock for related
-writes; both durably record reservation creation, touch, reassignment, and
-release. The visibility result is classified as `concurrency-tested`, not as a
-general cross-operation linearizability proof.
+shapes for the bounded scenarios, not identical SQL. On both backends the
+`idx_reservation_active_execute` partial unique index is the arbitration point:
+at most one `active` `execute` reservation can exist per work item, and the
+database enforces it rather than application code. The surrounding
+serialization differs. SQLite opens `BEGIN IMMEDIATE`, taking a
+whole-database write lock. PostgreSQL takes a repo-scoped
+`pg_advisory_xact_lock` and then `SELECT ... FOR UPDATE` on the item's active
+execute rows — the advisory lock exists because maintenance activation gates
+on a *count* of active reservations, which no index can enforce. Both durably
+record reservation creation, touch, reassignment, and release. The visibility
+result is classified as `concurrency-tested`, not as a general cross-operation
+linearizability proof.
