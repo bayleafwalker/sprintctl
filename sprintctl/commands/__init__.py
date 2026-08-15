@@ -41,9 +41,6 @@ def _merge_runtime_exports(module, runtime: dict[str, object]) -> None:
             if (
                 not name.startswith("__")
                 and name not in _RUNTIME_INTERNALS
-                and name != "claim"
-                and not name.startswith("claim_")
-                and not name.startswith("_claim_")
             )
         }
     )

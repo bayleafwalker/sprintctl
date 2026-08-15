@@ -506,8 +506,7 @@ def item_note(
     """Invoke ``work.item.note`` (``sprintctl item note``).
 
     The recording actor is always the authenticated identity the server
-    resolves from the credential, not a caller-supplied argument -- same
-    rule as :func:`claim_start`.
+    resolves from the credential, not a caller-supplied argument.
     """
 
     arguments = {
@@ -532,8 +531,7 @@ def lifecycle_arbitrate(
 ) -> dict[str, Any]:
     """Invoke ``work.lifecycle.arbitrate`` (``sprintctl item status`` /
     ``sprintctl sprint status``, for the ``item.transition``, ``item.done``,
-    ``sprint.activate`` and ``sprint.close`` record types only -- claim
-    arbitration is a separate, not-yet-wired operation).
+    ``sprint.activate`` and ``sprint.close`` record types only).
 
     Per the "Authority and retry semantics" section of
     ``docs/reference/vuoro-work-adapter.md``, a single-command invocation's
