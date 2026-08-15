@@ -152,10 +152,9 @@ def test_served_authority_sync_flushes_observation_only_batch(runner, tmp_path, 
 
     captured = {}
 
-    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key, transient_credentials=None):
+    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key):
         captured["records"] = records
         captured["idempotency_key"] = idempotency_key
-        captured["transient_credentials"] = transient_credentials
         return {"repo_id": "repo-x", "results": [_ingest_result(record)]}
 
     monkeypatch.setattr(cli_module._served, "batch_apply", fake_batch_apply)
@@ -170,7 +169,6 @@ def test_served_authority_sync_flushes_observation_only_batch(runner, tmp_path, 
 
     assert len(captured["records"]) == 1
     assert captured["records"][0]["event_id"] == record.event_id
-    assert captured["transient_credentials"] == {}
     expected_key = cli_module._application.batch_idempotency_key([record])
     assert captured["idempotency_key"] == expected_key
 
@@ -369,7 +367,7 @@ def test_served_authority_sync_routes_capability_receipt_accept_to_unsupported(
 
     captured = {}
 
-    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key, transient_credentials=None):
+    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key):
         captured["records"] = records
         return {
             "repo_id": "repo-x",
@@ -448,7 +446,7 @@ def test_served_authority_sync_skips_a_terminal_rejection_and_replays_followup(
     )
     captured = {}
 
-    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key, transient_credentials=None):
+    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key):
         captured["event_ids"] = [record["event_id"] for record in records]
         return {"repo_id": "repo-x", "results": [_decision_result(followup)]}
 
@@ -478,7 +476,7 @@ def test_served_authority_sync_splits_batches_by_batch_size_with_separate_keys(
 
     calls = []
 
-    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key, transient_credentials=None):
+    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key):
         calls.append((list(records), idempotency_key))
         return {
             "repo_id": "repo-x",

@@ -789,7 +789,6 @@ def authority_status(as_json: bool) -> None:
     status = _authority_rollout_status()
     payload = status.to_dict()
     payload["outbox_records"] = 0
-    payload["pending_credentials"] = 0
     payload["pending_records"] = []
     if status.paths.outbox_path.exists():
         producer = _outbox.open_outbox(status.paths.outbox_path)
@@ -814,10 +813,6 @@ def authority_status(as_json: bool) -> None:
             ]
         finally:
             producer.close()
-    if status.paths.credential_dir.exists():
-        payload["pending_credentials"] = len(
-            [path for path in status.paths.credential_dir.iterdir() if path.is_file()]
-        )
     if as_json:
         click.echo(json.dumps(payload, indent=2))
     else:
@@ -830,7 +825,6 @@ def authority_status(as_json: bool) -> None:
                 f"{record['origin_stream_id']}#{record['origin_seq']} "
                 f"{record['event_type']} ({record['event_id']})"
             )
-        click.echo(f"Pending proof sidecars: {payload['pending_credentials']}")
 
 
 def _served_authority_pages(
@@ -981,13 +975,11 @@ def authority_reconcile(obj, apply_changes: bool, as_json: bool) -> None:
                 paths, event_id=record.event_id, outcome=str(decision["outcome"]),
                 served_decision=decision,
             )
-            _authority_config.remove_pending_authority_credential(paths, event_id=record.event_id)
             applied_confirmed += 1
         for record in absent:
             _authority_config.mark_terminal_authority_decision(
                 paths, event_id=record.event_id, outcome="absent-from-served-ledger",
             )
-            _authority_config.remove_pending_authority_credential(paths, event_id=record.event_id)
             applied_absent += 1
     payload = {
         "served_authoritative": True,
@@ -1052,7 +1044,6 @@ def authority_quarantine(stream_id: str, reason: str, apply_changes: bool, as_js
                 paths, event_id=record.event_id, outcome="quarantined-divergent-stream",
                 quarantine_reason=reason,
             )
-            _authority_config.remove_pending_authority_credential(paths, event_id=record.event_id)
     payload = {
         "local_only": True,
         "stream_id": canonical_stream_id,
@@ -1233,14 +1224,6 @@ def authority_submit(
             raise click.ClickException(
                 f"event_id {durable.event_id!r} already identifies a command with a different payload"
             )
-        try:
-            pending = _authority_config.load_pending_authority_credential(
-                rollout.paths,
-                event_id=durable.event_id,
-            )
-        except _authority_config.AuthorityCommandConfigError as exc:
-            raise click.ClickException(str(exc)) from exc
-        credentials = dict(pending.credentials) if pending is not None else {}
     else:
         aggregate_type, aggregate, aggregate_uuid = _authority_command_target(
             store, m, record_type, aggregate_id
@@ -1296,30 +1279,27 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
     served sync mechanism: it already self-routes a mixed batch of
     OBSERVATION and AUTHORITY_COMMAND records by ``record_class`` -- runs of
     observations are ingested together and each authority command is
-    arbitrated individually against one running ``transient_credentials``
-    map -- so unlike the local/remote path (``_sync.synchronize_outbox``,
+    arbitrated individually -- so unlike the local/remote path
+    (``_sync.synchronize_outbox``,
     which also rebuilds a local SQLite projection cache), there is nothing
     else to route here: served mode keeps no local projection at all, every
     served read already goes live to the server.
 
-    Two things are deliberately excluded from every outgoing chunk, and
-    reported rather than silently dropped:
+    One record type is deliberately excluded from every outgoing chunk, and
+    reported rather than silently dropped: a ``capability-receipt.accept``
+    record. The server's ``SUPPORTED_BATCH_TYPES`` (application.py:29-42)
+    excludes it, so sending one would abort its *entire chunk* with a
+    confusing ``record-type-not-allowed`` rejection rather than just that
+    one record. It is skipped without stopping anything after it -- no
+    future retry ever makes it sendable over this operation -- and reported
+    under ``unsupported_command_event_ids``.
 
-    - A command whose payload references a ``...credential_ref`` with no
-      matching pending proof sidecar blocks that record *and every record
-      after it* for this pass -- this mirrors ``synchronize_outbox``'s own
-      stop-at-first-gap semantics exactly (a later record may have been
-      minted assuming an earlier one already landed, so nothing after a gap
-      is speculatively sent ahead of it). Reported under
-      ``pending_command_event_ids``.
-    - A ``capability-receipt.accept`` record: the server's
-      ``SUPPORTED_BATCH_TYPES`` (application.py:29-42) excludes it, so
-      sending one would abort its *entire chunk* with a confusing
-      ``record-type-not-allowed`` rejection rather than just that one
-      record. It is skipped -- without stopping anything after it, since
-      unlike a credential gap, no future retry ever makes it sendable over
-      this operation -- and reported under
-      ``unsupported_command_event_ids``.
+    Nothing else stalls a pass. This path once stopped at the first command
+    whose payload named a ``...credential_ref`` with no matching local proof
+    sidecar, mirroring ``synchronize_outbox``'s stop-at-first-gap rule. No
+    authority command payload contract admits proof material any more
+    (``_canonical_authority_payload`` in contracts.py), so that gap is now
+    unreachable and ``pending_command_event_ids`` is always empty here.
 
     Note on actor identity: the server rejects any record -- observation or
     command -- whose ``actor`` does not match the authenticated served
@@ -1339,11 +1319,9 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
         producer.close()
 
     included: list[_outbox.OutboxRecord] = []
-    pending_event_ids: list[str] = []
     unsupported_event_ids: list[str] = []
-    transient_credentials: dict[str, str] = {}
 
-    for index, record in enumerate(records):
+    for record in records:
         if record.record_class == _outbox.OBSERVATION:
             included.append(record)
             continue
@@ -1354,28 +1332,6 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
             rollout_paths, event_id=record.event_id
         ):
             continue
-        envelope = _contracts.record_from_dict(record.payload)
-        required_refs = {
-            value
-            for key, value in envelope.payload.items()
-            if key.endswith("credential_ref") and isinstance(value, str)
-        }
-        pending = _authority_config.load_pending_authority_credential(
-            rollout_paths,
-            event_id=record.event_id,
-        )
-        available = (not required_refs) if pending is None else (
-            required_refs <= set(pending.credentials)
-        )
-        if not available:
-            pending_event_ids.extend(
-                blocked.event_id
-                for blocked in records[index:]
-                if blocked.record_class == _outbox.AUTHORITY_COMMAND
-            )
-            break
-        if pending is not None:
-            transient_credentials.update(pending.credentials)
         included.append(record)
 
     commands_by_event_id = {
@@ -1398,7 +1354,6 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
             repo_id=config.repo_id,
             records=[_served_record_argument(r) for r in chunk],
             idempotency_key=key,
-            transient_credentials=transient_credentials,
             resolved_context=resolved_context,
         )
         for item in result.get("results", []):
@@ -1419,14 +1374,15 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
             event_id=record.event_id,
             outcome=decision.get("outcome"),
         )
-        _authority_config.remove_pending_authority_credential(
-            rollout_paths, event_id=event_id
-        )
 
     payload = {
         "uploaded_observation_count": uploaded_observation_count,
         "decisions": decisions,
-        "pending_command_event_ids": pending_event_ids,
+        # Kept for shape parity with ``_sync.synchronize_outbox``'s report.
+        # No served record can stall a pass any more: the only gap this path
+        # ever had was a missing proof sidecar, and no authority command
+        # payload contract admits proof material.
+        "pending_command_event_ids": [],
         "unsupported_command_event_ids": unsupported_event_ids,
     }
     if as_json:
@@ -1434,7 +1390,7 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
     else:
         click.echo(
             f"Authority sync: {uploaded_observation_count} observations uploaded, "
-            f"{len(decisions)} decisions, {len(pending_event_ids)} pending, "
+            f"{len(decisions)} decisions, {len(payload['pending_command_event_ids'])} pending, "
             f"{len(unsupported_event_ids)} unsupported."
         )
         if unsupported_event_ids:

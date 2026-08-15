@@ -1,11 +1,11 @@
 # Remote authority commands
 
 The authority-command journal is the opt-in migration path from direct backend
-mutations to the outbox model in `adr-outbox-sync-model`. It covers claim
-acquire, renew, handoff, and release; item transition and completion; sprint
-activation and close; and capability-receipt acceptance.
+mutations to the outbox model in `adr-outbox-sync-model`. It covers item
+transition and completion; sprint activation and close; and capability-receipt
+acceptance.
 
-The path defaults to `off`. Existing claim, item, sprint, and receipt commands
+The path defaults to `off`. Existing item, sprint, and receipt commands
 continue to use their current backend implementation. Enabling this path does
 not silently intercept those commands; operators invoke the explicit
 `sprintctl authority` surface while rollout evidence is gathered.
@@ -26,16 +26,17 @@ sprintctl authority mode --set enforce
 
 `authority submit` while the rollout mode is `enforce` no longer opens a direct
 PostgreSQL arbitration path. It fails before opening a normal backend store. Use the
-corresponding served lifecycle, claim, or work command; `authority sync` in a
+corresponding served lifecycle or work command; `authority sync` in a
 served environment retries an already-recorded request. `shadow` remains useful
-for inspecting command shapes and proof handling, but a shadow request is
-pending evidence, not a successful transition.
+for inspecting command shapes, but a shadow request is pending evidence, not a
+successful transition.
 
 ## Shadow submit commands
 
 Every **shadow** submission records a strict command envelope in
-`.sprintctl/authority-command-outbox.db`. Raw claim proofs are forbidden in the
-envelope; only their SHA-256 bindings are durable.
+`.sprintctl/authority-command-outbox.db`. Secret material is forbidden in the
+envelope: `contracts.py` rejects it by field name, and no command payload
+contract accepts a proof or a proof reference.
 
 ```sh
 # Item 42: pending -> active
@@ -52,65 +53,40 @@ sprintctl authority submit \
   --aggregate-id 7 \
   --actor operator \
   --json
-
-# Acquire a claim. A new proof is generated and privately retained when no
-# proposed proof is supplied.
-sprintctl authority submit \
-  --type claim.acquire \
-  --aggregate-id 42 \
-  --payload '{"agent":"worker-a","claim_type":"execute","exclusive":true,"ttl_seconds":600,"metadata":{}}' \
-  --actor worker-a \
-  --json
 ```
 
 The CLI reads the current local aggregate revision unless `--basis-revision`
 is given. Shadow submissions do not mutate shared authority. The served
-authority validates the command basis, claims, expiry, proof, close boundaries,
-and receipt artifacts when a corresponding served command is invoked or an
-already-recorded request is retried through served `authority sync`.
+authority validates the command basis, close boundaries, and receipt artifacts
+when a corresponding served command is invoked or an already-recorded request
+is retried through served `authority sync`.
 
-Use environment variables for existing proofs so they do not enter shell
-history:
+## Lost responses and retry
 
-```sh
-export SPRINTCTL_AUTHORITY_CLAIM_TOKEN='<existing proof>'
-sprintctl authority submit \
-  --type claim.renew \
-  --aggregate-id 150 \
-  --payload '{"ttl_seconds":600}' \
-  --actor worker-a \
-  --json
-unset SPRINTCTL_AUTHORITY_CLAIM_TOKEN
-```
-
-Coordinator and explicitly pre-minted proofs can similarly use
-`SPRINTCTL_AUTHORITY_COORDINATE_CLAIM_TOKEN` and
-`SPRINTCTL_AUTHORITY_PROPOSED_CLAIM_TOKEN`.
-
-## Lost responses and proof recovery
-
-Proof-bearing requests retain every transient proof needed for retry in one
-event-keyed sidecar under `.sprintctl/authority-credentials/`. The directory is
-mode `0700`, each file is mode `0600`, and content is digest-checked before
-use. Requests and decisions contain no raw proof. Handoff sidecars retain both
-the old proof required for arbitration and the proposed proof, while recovery
-returns only the proposed proof.
+The producer log is immutable, so a lost response is always safe to retry with
+the *same* durable request: re-running `authority submit` with the original
+`--event-id` reuses the recorded envelope instead of minting a new one, and the
+served side keys idempotency off that `event_id`.
 
 ```sh
 sprintctl authority sync --json
-sprintctl authority recover-proof --event-id <request-uuid>
-sprintctl authority clear-proof --event-id <request-uuid>
 ```
 
-In a served environment, `sync` retries pending commands only when all required
-proof bindings can be resolved. Commands without locally available proof remain
-pending and cannot change authority. Local direct-PostgreSQL `sync` is retired.
-Accepted acquire and rotating-handoff sidecars remain until the caller stores
-the new proof and runs `clear-proof`; sidecars for other completed or rejected
-commands are removed.
+`sync` sends every outbox record that has no terminal decision receipt, in
+order. A conclusively accepted or rejected command gets a local receipt under
+`.sprintctl/authority-terminal-decisions/` (mode `0700`, each file `0600`,
+validated before use) so later passes skip it; an unknown transport outcome
+writes no receipt and stays replayable. Local direct-PostgreSQL `sync` is
+retired.
 
-Treat `recover-proof` output as a secret. Do not paste it into notes, logs,
-JSON artifacts, or command payloads.
+`capability-receipt.accept` records are the one exception: the served batch
+operation does not support them, so `sync` reports them under
+`unsupported_command_event_ids` rather than failing the chunk that contains
+them.
+
+Transient proof sidecars under `.sprintctl/authority-credentials/` are retired
+along with claim arbitration. No command payload contract accepts proof
+material, so no record can stall a sync pass waiting for one.
 
 ## Served-authoritative recovery
 
@@ -153,10 +129,10 @@ sprintctl authority mode --set off
 ```
 
 Rollback stops new authority-journal submissions immediately and leaves the
-retained backend commands unchanged. Keep the outbox, projection, and proof
-sidecars until every accepted new proof has been recovered and every pending
-request has an operator disposition. Turning the mode off does not erase
-history or revoke an already accepted claim.
+retained backend commands unchanged. Keep the outbox, the projection, and the
+terminal-decision receipts until every pending request has an operator
+disposition. Turning the mode off does not erase history or revoke an already
+accepted decision.
 
 This tract deliberately does not switch normal reads to the cached projection
 or remove the retained direct backend. Those cutovers require their own parity

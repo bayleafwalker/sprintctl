@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -25,7 +24,6 @@ AUTHORITY_COMMAND_CONFIG_VERSION = 1
 _STATE_DIRECTORY_NAME = ".sprintctl"
 _CONFIG_FILENAME = "authority-command.json"
 _OUTBOX_FILENAME = "authority-command-outbox.db"
-_CREDENTIAL_DIRECTORY_NAME = "authority-credentials"
 _TERMINAL_DIRECTORY_NAME = "authority-terminal-decisions"
 
 
@@ -47,7 +45,6 @@ class AuthorityCommandPaths:
     state_dir: Path
     config_path: Path
     outbox_path: Path
-    credential_dir: Path
     terminal_dir: Path
 
 
@@ -94,29 +91,6 @@ class AuthorityCommandStatus:
         }
 
 
-@dataclass(frozen=True, slots=True)
-class PendingAuthorityCredential:
-    """Transient proofs retained locally for retry and new-proof recovery."""
-
-    event_id: str
-    credentials: Mapping[str, str]
-    recovery_credential_ref: str | None = None
-
-    @property
-    def credential_ref(self) -> str:
-        if self.recovery_credential_ref is not None:
-            return self.recovery_credential_ref
-        if len(self.credentials) == 1:
-            return next(iter(self.credentials))
-        raise AuthorityCommandConfigError(
-            "authority command has multiple proofs and no recovery proof"
-        )
-
-    @property
-    def secret(self) -> str:
-        return self.credentials[self.credential_ref]
-
-
 def _is_within(path: Path, parent: Path) -> bool:
     try:
         path.relative_to(parent)
@@ -147,10 +121,9 @@ def _validated_paths(repo_root: Path) -> AuthorityCommandPaths:
         state_dir=state_dir,
         config_path=state_dir / _CONFIG_FILENAME,
         outbox_path=state_dir / _OUTBOX_FILENAME,
-        credential_dir=state_dir / _CREDENTIAL_DIRECTORY_NAME,
         terminal_dir=state_dir / _TERMINAL_DIRECTORY_NAME,
     )
-    for path in (paths.config_path, paths.outbox_path, paths.credential_dir, paths.terminal_dir):
+    for path in (paths.config_path, paths.outbox_path, paths.terminal_dir):
         if not _is_within(path.resolve(), resolved_state):
             raise AuthorityCommandConfigError(
                 f"authority command path must remain under {state_dir}: {path}"
@@ -267,36 +240,13 @@ def _canonical_event_id(event_id: str | UUID) -> str:
         canonical = str(UUID(str(event_id)))
     except (TypeError, ValueError, AttributeError) as exc:
         raise AuthorityCommandConfigError(
-            "authority credential event_id must be a UUID"
+            "authority event_id must be a UUID"
         ) from exc
     if str(event_id) != canonical:
         raise AuthorityCommandConfigError(
-            "authority credential event_id must be a canonical UUID"
+            "authority event_id must be a canonical UUID"
         )
     return canonical
-
-
-def _credential_ref(secret: str) -> str:
-    if not isinstance(secret, str) or not secret:
-        raise AuthorityCommandConfigError(
-            "authority credential secret must be a non-empty string"
-        )
-    return "sha256:" + hashlib.sha256(secret.encode("utf-8")).hexdigest()
-
-
-def _credential_path(paths: AuthorityCommandPaths, event_id: str | UUID) -> Path:
-    expected = _validated_paths(paths.repo_root)
-    if paths != expected:
-        raise AuthorityCommandConfigError(
-            "authority command paths must be derived from the repo root"
-        )
-    canonical_event_id = _canonical_event_id(event_id)
-    path = paths.credential_dir / f"{canonical_event_id}.json"
-    if not _is_within(path.resolve(), paths.credential_dir.resolve()):
-        raise AuthorityCommandConfigError(
-            "authority credential path must remain under its fixed directory"
-        )
-    return path
 
 
 def _terminal_path(paths: AuthorityCommandPaths, event_id: str | UUID) -> Path:
@@ -315,191 +265,21 @@ def _require_private(path: Path, *, directory: bool) -> None:
         metadata = path.stat(follow_symlinks=False)
     except OSError as exc:
         raise AuthorityCommandConfigError(
-            f"cannot inspect authority credential path {path}: {exc}"
+            f"cannot inspect authority state path {path}: {exc}"
         ) from exc
     expected_kind = stat.S_ISDIR if directory else stat.S_ISREG
     if not expected_kind(metadata.st_mode):
         kind = "directory" if directory else "file"
         raise AuthorityCommandConfigError(
-            f"authority credential path is not a regular {kind}: {path}"
+            f"authority state path is not a regular {kind}: {path}"
         )
     expected_mode = 0o700 if directory else 0o600
     actual_mode = stat.S_IMODE(metadata.st_mode)
     if actual_mode != expected_mode:
         raise AuthorityCommandConfigError(
-            f"authority credential path has unsafe permissions {actual_mode:04o}; "
+            f"authority state path has unsafe permissions {actual_mode:04o}; "
             f"expected {expected_mode:04o}: {path}"
         )
-
-
-def _prepare_credential_directory(paths: AuthorityCommandPaths) -> None:
-    paths.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    paths.credential_dir.mkdir(mode=0o700, exist_ok=True)
-    _require_private(paths.credential_dir, directory=True)
-
-
-def store_pending_authority_credential(
-    paths: AuthorityCommandPaths,
-    *,
-    event_id: str | UUID,
-    credential_ref: str,
-    secret: str,
-) -> PendingAuthorityCredential:
-    """Atomically persist one proof before sending its authority command."""
-    return store_pending_authority_credentials(
-        paths,
-        event_id=event_id,
-        credentials={credential_ref: secret},
-        recovery_credential_ref=credential_ref,
-    )
-
-
-def store_pending_authority_credentials(
-    paths: AuthorityCommandPaths,
-    *,
-    event_id: str | UUID,
-    credentials: Mapping[str, str],
-    recovery_credential_ref: str | None = None,
-) -> PendingAuthorityCredential:
-    """Atomically persist all transient proofs required to retry one command."""
-    path = _credential_path(paths, event_id)
-    canonical_event_id = _canonical_event_id(event_id)
-    canonical_credentials: dict[str, str] = {}
-    for credential_ref, secret in sorted(credentials.items()):
-        if credential_ref != _credential_ref(secret):
-            raise AuthorityCommandConfigError(
-                "authority credential_ref does not match the local secret digest"
-            )
-        canonical_credentials[credential_ref] = secret
-    if not canonical_credentials:
-        raise AuthorityCommandConfigError("authority command credentials must not be empty")
-    if recovery_credential_ref is not None and recovery_credential_ref not in canonical_credentials:
-        raise AuthorityCommandConfigError(
-            "authority recovery credential_ref must identify a stored proof"
-        )
-    _prepare_credential_directory(paths)
-    existing = load_pending_authority_credential(paths, event_id=canonical_event_id)
-    requested = PendingAuthorityCredential(
-        canonical_event_id,
-        canonical_credentials,
-        recovery_credential_ref,
-    )
-    if existing is not None:
-        if existing != requested:
-            raise AuthorityCommandConfigError(
-                "authority credential event_id already has different proof material"
-            )
-        return existing
-    payload = json.dumps(
-        {
-            "event_id": canonical_event_id,
-            "credentials": canonical_credentials,
-            "recovery_credential_ref": recovery_credential_ref,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    ) + "\n"
-    fd, temporary_name = tempfile.mkstemp(
-        prefix=f".{canonical_event_id}.",
-        dir=paths.credential_dir,
-        text=True,
-    )
-    temporary_path = Path(temporary_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(temporary_path, 0o600)
-        os.replace(temporary_path, path)
-        directory_fd = os.open(paths.credential_dir, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-    finally:
-        if temporary_path.exists():
-            temporary_path.unlink()
-    return requested
-
-
-def load_pending_authority_credential(
-    paths: AuthorityCommandPaths,
-    *,
-    event_id: str | UUID,
-) -> PendingAuthorityCredential | None:
-    """Recover and locally verify proof material after process restart."""
-    path = _credential_path(paths, event_id)
-    canonical_event_id = _canonical_event_id(event_id)
-    if not path.exists():
-        return None
-    _require_private(paths.credential_dir, directory=True)
-    _require_private(path, directory=False)
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise AuthorityCommandConfigError(
-            f"invalid authority credential sidecar {path}: {exc}"
-        ) from exc
-    if not isinstance(raw, dict):
-        raise AuthorityCommandConfigError(
-            f"invalid authority credential sidecar shape: {path}"
-        )
-    if set(raw) == {"event_id", "credential_ref", "secret"}:
-        raw = {
-            "event_id": raw["event_id"],
-            "credentials": {raw["credential_ref"]: raw["secret"]},
-            "recovery_credential_ref": raw["credential_ref"],
-        }
-    if set(raw) != {"event_id", "credentials", "recovery_credential_ref"}:
-        raise AuthorityCommandConfigError(
-            f"invalid authority credential sidecar shape: {path}"
-        )
-    if raw["event_id"] != canonical_event_id:
-        raise AuthorityCommandConfigError(
-            f"authority credential sidecar event_id does not match its filename: {path}"
-        )
-    if not isinstance(raw["credentials"], dict) or not raw["credentials"]:
-        raise AuthorityCommandConfigError(
-            f"invalid authority credential sidecar credentials: {path}"
-        )
-    canonical_credentials: dict[str, str] = {}
-    for credential_ref, secret in sorted(raw["credentials"].items()):
-        if credential_ref != _credential_ref(secret):
-            raise AuthorityCommandConfigError(
-                f"authority credential sidecar digest mismatch: {path}"
-            )
-        canonical_credentials[credential_ref] = secret
-    recovery_ref = raw["recovery_credential_ref"]
-    if recovery_ref is not None and recovery_ref not in canonical_credentials:
-        raise AuthorityCommandConfigError(
-            f"authority credential sidecar recovery ref is missing: {path}"
-        )
-    return PendingAuthorityCredential(
-        event_id=canonical_event_id,
-        credentials=canonical_credentials,
-        recovery_credential_ref=recovery_ref,
-    )
-
-
-def remove_pending_authority_credential(
-    paths: AuthorityCommandPaths,
-    *,
-    event_id: str | UUID,
-) -> bool:
-    """Remove locally persisted proof after the command is promoted."""
-    path = _credential_path(paths, event_id)
-    if not path.exists():
-        return False
-    _require_private(paths.credential_dir, directory=True)
-    _require_private(path, directory=False)
-    path.unlink()
-    directory_fd = os.open(paths.credential_dir, os.O_RDONLY)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
-    return True
 
 
 def mark_terminal_authority_decision(
@@ -635,16 +415,11 @@ __all__ = [
     "AuthorityCommandMode",
     "AuthorityCommandPaths",
     "AuthorityCommandStatus",
-    "PendingAuthorityCredential",
     "authority_command_paths",
     "authority_command_status",
     "archive_terminal_authority_outbox",
     "load_authority_command_config",
-    "load_pending_authority_credential",
     "is_terminal_authority_decision",
     "mark_terminal_authority_decision",
-    "remove_pending_authority_credential",
     "set_authority_command_mode",
-    "store_pending_authority_credential",
-    "store_pending_authority_credentials",
 ]

@@ -459,7 +459,6 @@ def batch_apply(
     repo_id: str,
     records: list[dict[str, Any]],
     idempotency_key: str,
-    transient_credentials: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Invoke ``work.batch.apply`` (``sprintctl authority sync``).
 
@@ -468,23 +467,24 @@ def batch_apply(
     ``record_class`` (``WorkApplication.apply_records``,
     application.py:612-644) -- consecutive observations are ingested
     together and each authority command is arbitrated individually, all
-    against one shared ``transient_credentials`` map for the whole batch
-    (omitted entirely when empty, since an observation-only batch needs no
-    credential material at all). ``idempotency_key`` must equal
+    individually. ``idempotency_key`` must equal
     ``application.batch_idempotency_key(records)`` computed over the exact
     same records in the exact same order the server will see. See
-    ``sprintctl.cli._served_authority_sync`` for the chunking,
-    credential-resolution, and sidecar-cleanup this wraps -- and for why
+    ``sprintctl.cli._served_authority_sync`` for the chunking this
+    wraps -- and for why
     ``capability-receipt.accept`` records are never included here (excluded
     from the server's ``SUPPORTED_BATCH_TYPES``, application.py:29-42).
     """
 
     arguments = {"records": records}
-    kwargs: dict[str, Any] = {"idempotency_key": idempotency_key, "repo_id": repo_id}
-    if transient_credentials:
-        kwargs["transient_credentials"] = transient_credentials
     return asyncio.run(
-        _invoke_operation(served_profile, "work.batch.apply", arguments, **kwargs)
+        _invoke_operation(
+            served_profile,
+            "work.batch.apply",
+            arguments,
+            idempotency_key=idempotency_key,
+            repo_id=repo_id,
+        )
     )
 
 
@@ -529,7 +529,6 @@ def item_note(
 
 def lifecycle_arbitrate(
     served_profile: ServedProfile, *, repo_id: str, record: dict[str, Any],
-    transient_credentials: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Invoke ``work.lifecycle.arbitrate`` (``sprintctl item status`` /
     ``sprintctl sprint status``, for the ``item.transition``, ``item.done``,
@@ -555,7 +554,6 @@ def lifecycle_arbitrate(
             idempotency_key=record["event_id"],
             basis_revision=record["basis_revision"],
             repo_id=repo_id,
-            **({"transient_credentials": transient_credentials} if transient_credentials is not None else {}),
         )
     )
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -71,169 +70,41 @@ def test_load_rejects_forged_paths(tmp_path):
         state_dir=paths.state_dir,
         config_path=tmp_path / "escaped.json",
         outbox_path=paths.outbox_path,
-        credential_dir=paths.credential_dir,
         terminal_dir=paths.terminal_dir,
     )
     with pytest.raises(authority_config.AuthorityCommandConfigError, match="must be derived"):
         authority_config.load_authority_command_config(forged)
 
 
-def test_pending_credential_survives_restart_and_is_removed_after_promotion(tmp_path):
+def test_terminal_receipt_is_private_and_rejects_unsafe_event_ids(tmp_path):
     paths = authority_config.authority_command_paths(repo_root=tmp_path)
     event_id = str(uuid4())
-    secret = "claim-proof-only-known-locally"
-    credential_ref = "sha256:" + hashlib.sha256(secret.encode()).hexdigest()
-
-    stored = authority_config.store_pending_authority_credential(
-        paths,
-        event_id=event_id,
-        credential_ref=credential_ref,
-        secret=secret,
+    authority_config.mark_terminal_authority_decision(
+        paths, event_id=event_id, outcome="accepted"
     )
-    restarted_paths = authority_config.authority_command_paths(repo_root=tmp_path)
-    recovered = authority_config.load_pending_authority_credential(
-        restarted_paths,
-        event_id=event_id,
-    )
+    receipt = paths.terminal_dir / f"{event_id}.json"
+    assert stat_mode(paths.terminal_dir) == 0o700
+    assert stat_mode(receipt) == 0o600
+    assert authority_config.is_terminal_authority_decision(paths, event_id=event_id) is True
 
-    assert recovered == stored
-    assert stat_mode(paths.credential_dir) == 0o700
-    sidecar = paths.credential_dir / f"{event_id}.json"
-    assert stat_mode(sidecar) == 0o600
-    assert set(json.loads(sidecar.read_text())) == {
-        "event_id",
-        "credentials",
-        "recovery_credential_ref",
-    }
-    assert "secret" not in authority_config.authority_command_status(
-        repo_root=tmp_path
-    ).to_dict()
-    assert authority_config.remove_pending_authority_credential(
-        restarted_paths,
-        event_id=event_id,
-    ) is True
-    assert not sidecar.exists()
-    assert authority_config.load_pending_authority_credential(
-        restarted_paths,
-        event_id=event_id,
-    ) is None
-
-
-def test_pending_credential_event_id_is_idempotent_but_cannot_be_rebound(tmp_path):
-    paths = authority_config.authority_command_paths(repo_root=tmp_path)
-    event_id = str(uuid4())
-    first_secret = "first-proof"
-    first_ref = "sha256:" + hashlib.sha256(first_secret.encode()).hexdigest()
-    first = authority_config.store_pending_authority_credential(
-        paths,
-        event_id=event_id,
-        credential_ref=first_ref,
-        secret=first_secret,
-    )
-    assert authority_config.store_pending_authority_credential(
-        paths,
-        event_id=event_id,
-        credential_ref=first_ref,
-        secret=first_secret,
-    ) == first
-
-    second_secret = "second-proof"
-    second_ref = "sha256:" + hashlib.sha256(second_secret.encode()).hexdigest()
-    with pytest.raises(
-        authority_config.AuthorityCommandConfigError,
-        match="already has different proof material",
-    ):
-        authority_config.store_pending_authority_credential(
-            paths,
-            event_id=event_id,
-            credential_ref=second_ref,
-            secret=second_secret,
-        )
-
-
-def test_pending_command_can_retain_old_and_rotated_proofs_for_retry(tmp_path):
-    paths = authority_config.authority_command_paths(repo_root=tmp_path)
-    event_id = str(uuid4())
-    old_secret = "old-proof"
-    new_secret = "new-proof"
-    old_ref = "sha256:" + hashlib.sha256(old_secret.encode()).hexdigest()
-    new_ref = "sha256:" + hashlib.sha256(new_secret.encode()).hexdigest()
-
-    stored = authority_config.store_pending_authority_credentials(
-        paths,
-        event_id=event_id,
-        credentials={old_ref: old_secret, new_ref: new_secret},
-        recovery_credential_ref=new_ref,
-    )
-    recovered = authority_config.load_pending_authority_credential(
-        authority_config.authority_command_paths(repo_root=tmp_path),
-        event_id=event_id,
-    )
-
-    assert recovered == stored
-    assert recovered.credentials == {old_ref: old_secret, new_ref: new_secret}
-    assert recovered.credential_ref == new_ref
-    assert recovered.secret == new_secret
-
-
-def test_pending_credential_rejects_digest_mismatch_and_unsafe_permissions(tmp_path):
-    paths = authority_config.authority_command_paths(repo_root=tmp_path)
-    event_id = str(uuid4())
-    with pytest.raises(
-        authority_config.AuthorityCommandConfigError,
-        match="does not match the local secret digest",
-    ):
-        authority_config.store_pending_authority_credential(
-            paths,
-            event_id=event_id,
-            credential_ref="sha256:" + "0" * 64,
-            secret="actual-proof",
-        )
-
-    secret = "actual-proof"
-    credential_ref = "sha256:" + hashlib.sha256(secret.encode()).hexdigest()
-    authority_config.store_pending_authority_credential(
-        paths,
-        event_id=event_id,
-        credential_ref=credential_ref,
-        secret=secret,
-    )
-    sidecar = paths.credential_dir / f"{event_id}.json"
-    sidecar.chmod(0o644)
+    receipt.chmod(0o644)
     with pytest.raises(authority_config.AuthorityCommandConfigError, match="unsafe permissions"):
-        authority_config.load_pending_authority_credential(paths, event_id=event_id)
+        authority_config.is_terminal_authority_decision(paths, event_id=event_id)
 
-    sidecar.chmod(0o600)
-    paths.credential_dir.chmod(0o755)
+    receipt.chmod(0o600)
+    paths.terminal_dir.chmod(0o755)
     with pytest.raises(authority_config.AuthorityCommandConfigError, match="unsafe permissions"):
-        authority_config.load_pending_authority_credential(paths, event_id=event_id)
+        authority_config.is_terminal_authority_decision(paths, event_id=event_id)
+    paths.terminal_dir.chmod(0o700)
 
-
-def test_pending_credential_rejects_tampering_and_path_traversal(tmp_path):
-    paths = authority_config.authority_command_paths(repo_root=tmp_path)
-    event_id = str(uuid4())
-    secret = "actual-proof"
-    credential_ref = "sha256:" + hashlib.sha256(secret.encode()).hexdigest()
-    authority_config.store_pending_authority_credential(
-        paths,
-        event_id=event_id,
-        credential_ref=credential_ref,
-        secret=secret,
-    )
-    sidecar = paths.credential_dir / f"{event_id}.json"
-    raw = json.loads(sidecar.read_text())
-    raw["credentials"][credential_ref] = "tampered-proof"
-    sidecar.write_text(json.dumps(raw))
-    sidecar.chmod(0o600)
-    with pytest.raises(authority_config.AuthorityCommandConfigError, match="digest mismatch"):
-        authority_config.load_pending_authority_credential(paths, event_id=event_id)
+    receipt.write_text(json.dumps({"event_id": event_id, "outcome": "tampered"}))
+    receipt.chmod(0o600)
+    with pytest.raises(authority_config.AuthorityCommandConfigError, match="invalid authority terminal receipt"):
+        authority_config.is_terminal_authority_decision(paths, event_id=event_id)
 
     for unsafe_event_id in ("../escape", f"{event_id}/../../escape", "not-a-uuid"):
         with pytest.raises(authority_config.AuthorityCommandConfigError, match="event_id"):
-            authority_config.load_pending_authority_credential(
-                paths,
-                event_id=unsafe_event_id,
-            )
+            authority_config.is_terminal_authority_decision(paths, event_id=unsafe_event_id)
 
 
 def stat_mode(path: Path) -> int:
