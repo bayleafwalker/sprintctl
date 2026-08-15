@@ -43,8 +43,10 @@ def test_sqlite_partition_reassignment_rejects_stale_reservation_touch(db_path):
     """A partitioned owner cannot keep a reservation alive after takeover.
 
     The credential-bearing claim lease is retired; advisory reservations now
-    carry live coordination, so the fault protocol is expressed as override
-    takeover plus a rejected touch from the displaced session.
+    carry live coordination, so the fault protocol is expressed as an explicit
+    takeover plus a rejected touch from the displaced session.  Note that the
+    takeover is deliberate: coexisting with the partitioned owner would have
+    been allowed and would have left both reservations active.
     """
     owner, replacement, _sprint_id, item_id = _sqlite_authority(db_path)
     history: list[tuple[str, str]] = []
@@ -59,7 +61,7 @@ def test_sqlite_partition_reassignment_rejects_stale_reservation_touch(db_path):
             item_id,
             actor="replacement-owner",
             session_id="replacement-session",
-            override=True,
+            interrupt_existing=True,
         )
         history.append(("partition-takeover", "accepted"))
 

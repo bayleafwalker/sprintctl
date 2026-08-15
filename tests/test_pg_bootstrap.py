@@ -158,14 +158,18 @@ def test_snapshot_uses_store_connection_factory_instead_of_redacted_dsn(monkeypa
 
 
 def test_runtime_compatibility_probe_is_read_only_and_publishes_work_api():
-    store, conn = _store(6)
+    store, conn = _store(CURRENT)
 
     handshake = pg.require_compatible_schema(store)
 
     assert handshake == {
         "schema_version": "sprintctl-work-compatibility/v1",
         "work_api_version": "sprintctl-work/v1",
-        "remote_schema": {"actual": 6, "minimum": 5, "maximum": pg_migrations.CURRENT_SCHEMA_VERSION},
+        "remote_schema": {
+            "actual": CURRENT,
+            "minimum": pg_migrations.MINIMUM_SCHEMA_VERSION,
+            "maximum": pg_migrations.CURRENT_SCHEMA_VERSION,
+        },
         "compatible": True,
         "reason": None,
         "capabilities": {
@@ -198,23 +202,31 @@ def test_runtime_compatibility_probe_is_read_only_and_publishes_work_api():
     assert not any("information_schema" in query for query in queries)
 
 
-def test_schema5_with_complete_staged_maintenance_storage_is_compatible():
-    store, _conn = _store(5, maintenance_relations=4)
-    handshake = pg.require_compatible_schema(store)
-    assert handshake["compatible"] is True
-    assert handshake["remote_schema"]["actual"] == 5
-    assert handshake["capabilities"]["maintenance_storage"]["available"] is True
+@pytest.mark.parametrize("version", range(5, pg_migrations.CURRENT_SCHEMA_VERSION))
+def test_every_pre_cutover_schema_is_refused_however_complete_it_looks(version):
+    """v0.3 is a coordinated cutover: only the schema it was built against runs.
+
+    A 5..11 database can look healthy -- complete maintenance storage, a
+    well-formed ledger -- and still be unable to serve this runtime:
+    reservations only exist from 8, the live ``claim`` relation only
+    disappears at 10, and the overlap/role correction is 12.  Admitting one
+    would move the failure from startup to the first reservation call, which
+    is strictly worse than refusing to start.
+    """
+    store, _conn = _store(version, maintenance_relations=4)
+    with pytest.raises(pg_migrations.RemoteSchemaCompatibilityError, match="schema-too-old"):
+        pg.require_compatible_schema(store)
 
 
-def test_schema5_without_bridge_and_every_partial_bridge_fail_closed():
+def test_missing_and_every_partial_maintenance_bridge_fail_closed():
     for relations, reason in ((0, "maintenance-storage-missing"), (1, "maintenance-storage-partial"), (2, "maintenance-storage-partial"), (3, "maintenance-storage-partial")):
-        store, _conn = _store(5, maintenance_relations=relations)
+        store, _conn = _store(CURRENT, maintenance_relations=relations)
         with pytest.raises(pg_migrations.RemoteSchemaCompatibilityError, match=reason):
             pg.require_compatible_schema(store)
 
 
-def test_schema5_bridge_with_missing_immutability_trigger_fails_closed():
-    store, _conn = _store(5, maintenance_relations=4, maintenance_triggers=1)
+def test_maintenance_bridge_with_missing_immutability_trigger_fails_closed():
+    store, _conn = _store(CURRENT, maintenance_relations=4, maintenance_triggers=1)
     with pytest.raises(pg_migrations.RemoteSchemaCompatibilityError, match="maintenance-storage-partial"):
         pg.require_compatible_schema(store)
 
@@ -223,8 +235,8 @@ def test_schema5_bridge_with_missing_immutability_trigger_fails_closed():
     "kwargs",
     ({"function_schema": "decoy"}, {"function_valid": False}),
 )
-def test_schema5_bridge_rejects_wrong_or_mutated_trigger_function(kwargs):
-    store, _conn = _store(5, maintenance_relations=4, **kwargs)
+def test_maintenance_bridge_rejects_wrong_or_mutated_trigger_function(kwargs):
+    store, _conn = _store(CURRENT, maintenance_relations=4, **kwargs)
     with pytest.raises(pg_migrations.RemoteSchemaCompatibilityError, match="maintenance-storage-partial"):
         pg.require_compatible_schema(store)
 
@@ -330,7 +342,11 @@ def test_stage_schema5_bridge_is_additive_and_does_not_advance_ledger():
     assert conn.version == 5
     assert conn.commits == 1
     assert result["installed"] is True
-    assert result["compatibility"]["compatible"] is True
+    # Staging repairs the maintenance bridge; it does not make a pre-cutover
+    # database runnable.  Since the v0.3 floor, a staged schema 5 still has to
+    # be migrated forward, and the handshake says so rather than admitting it.
+    assert result["compatibility"]["compatible"] is False
+    assert result["compatibility"]["reason"] == "schema-too-old"
 
 
 def test_stage_schema5_bridge_rejects_partial_without_repair():
@@ -381,7 +397,7 @@ def test_version_2_migration_rolls_back_without_advancing_cursor_schema():
 
 
 def test_normal_startup_mode_never_enters_migration(monkeypatch):
-    store, conn = _store(6)
+    store, conn = _store(CURRENT)
     monkeypatch.setattr(
         pg_migrations,
         "migrate_schema",
@@ -395,7 +411,7 @@ def test_normal_startup_mode_never_enters_migration(monkeypatch):
 
 
 def test_operator_compatibility_mode_is_explicit(monkeypatch):
-    store, conn = _store(6)
+    store, conn = _store(CURRENT)
     calls = []
     monkeypatch.setattr(pg_migrations, "migrate_schema", lambda value: calls.append(value))
 

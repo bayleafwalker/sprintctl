@@ -48,6 +48,28 @@ from ..cli_support import _redacted_postgres_error
 from ..render import render_sprint_doc
 
 
+def _note_reservation_activity(store, m, item_id: int) -> None:
+    """Advance the caller's own reservation clocks after a successful mutation.
+
+    Activity is derived from work, not from ceremony: a session that edits,
+    annotates, or re-links an item it reserved has demonstrably not gone away.
+    Only the reserving session matches (never a bare actor name), reads never
+    call this, and a failure here must never fail the mutation that already
+    committed -- the clock is advisory.
+    """
+    session_id = (
+        os.environ.get("SPRINTCTL_RUNTIME_SESSION_ID")
+        or os.environ.get("CODEX_THREAD_ID")
+    )
+    note = getattr(m, "note_session_activity", None)
+    if not session_id or note is None:
+        return
+    try:
+        note(store, int(item_id), session_id=session_id)
+    except Exception:  # pragma: no cover - advisory bookkeeping only
+        pass
+
+
 @click.group()
 def sprint() -> None:
     """Manage sprints."""
@@ -715,6 +737,7 @@ def item_edit(obj, item_id: str, description, actor, expected_revision, as_json)
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
 
+    _note_reservation_activity(store, m, item_id)
     updated = {**result["item"], "edit_revision": result["revision"]}
     if as_json:
         click.echo(json.dumps(updated, indent=2))
@@ -1313,6 +1336,7 @@ def item_note(
                 "note_type": note_type,
             },
         )
+    _note_reservation_activity(store, m, item_id)
     click.echo(f"Recorded note #{eid} ({note_type}) on item #{item_id}: {summary}")
 
 
@@ -1447,6 +1471,7 @@ def item_status(
     except (_db.InvalidTransition, _db.StatusConflict, ValueError) as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+    _note_reservation_activity(store, m, item_id)
     if as_json:
         click.echo(json.dumps({"item_id": item_id, "previous": current, "status": new_status}, indent=2))
         return
@@ -1495,6 +1520,7 @@ def item_ref_add(obj, item_id: str, ref_type, url, label) -> None:
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+    _note_reservation_activity(store, m, item_id)
     click.echo(f"Ref #{ref_id} added to item #{item_id}: [{ref_type}] {url}")
 
 
@@ -1550,6 +1576,7 @@ def item_ref_remove(obj, item_id: str, ref_id) -> None:
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+    _note_reservation_activity(store, m, item_id)
     click.echo(f"Ref #{ref_id} removed from item #{item_id}.")
 
 

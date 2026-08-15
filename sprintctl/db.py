@@ -5,6 +5,7 @@ import re
 import sqlite3
 import time
 from collections.abc import Callable
+from datetime import timedelta
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -18,6 +19,7 @@ from . import sprintcore as _sprintcore
 from . import trackcore as _trackcore
 from . import workitemcore as _workitemcore
 from . import reservation as _reservation
+from . import reservation_policy as _policy
 from .eventcore import (
     KNOWLEDGE_EVENT_TYPES,
     TAKEUP_EVENT_TYPES,
@@ -65,8 +67,9 @@ SPRINT_KINDS = ("active_sprint", "backlog", "archive")
 
 # Single source of truth for the local schema version; init_db() must end by
 # migrating to exactly this version, and doctor compares databases against it.
-CURRENT_SCHEMA_VERSION = 21
+CURRENT_SCHEMA_VERSION = 22
 RESERVATION_ROLES = _reservation.ROLES
+DEFAULT_RESERVATION_ROLE = _reservation.DEFAULT_ROLE
 ReservationConflict = _reservation.ReservationConflict
 
 _MIGRATIONS: list[str] = [
@@ -771,6 +774,63 @@ def _migration_21(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _migration_22(conn: sqlite3.Connection) -> None:
+    """Make reservations overlappable and adopt the work-relationship roles.
+
+    Two corrections land together because they are the same correction. The
+    partial unique index made "at most one active execute reservation" a
+    database law, which contradicts the advisory model the ledger is for: a
+    second actor who cannot register is not prevented from working, only from
+    being seen. Overlap is now recorded and reported at reserve time instead.
+
+    Roles collapse to the work relationship -- ``execution``, ``verification``,
+    ``observation`` -- because that is what makes an overlap classifiable.
+    ``coordinate`` was never a relationship to the item (orchestration is
+    session and project context), so coordinator rows become observations, as
+    do ``inspect`` rows.
+
+    SQLite cannot alter a CHECK constraint in place, so the table is rebuilt.
+    ``reservation`` is referenced by no foreign key, and the rebuild preserves
+    ids so audit payloads that recorded a reservation id stay resolvable.
+    """
+    _execute_statements(conn, """
+        DROP INDEX IF EXISTS idx_reservation_active_execute;
+        CREATE TABLE reservation_v22 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            work_item_id INTEGER NOT NULL REFERENCES work_item(id) ON DELETE CASCADE,
+            session_id TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('execution','verification','observation')),
+            state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active','released','interrupted')),
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+            last_activity_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+            released_at TEXT,
+            interruption_reason TEXT,
+            correlation_ref TEXT
+        );
+        INSERT INTO reservation_v22 (id, work_item_id, session_id, actor, role, state,
+                                     created_at, last_activity_at, released_at,
+                                     interruption_reason, correlation_ref)
+        SELECT id, work_item_id, session_id, actor,
+               CASE role
+                   WHEN 'execute' THEN 'execution'
+                   WHEN 'review' THEN 'verification'
+                   WHEN 'inspect' THEN 'observation'
+                   WHEN 'coordinate' THEN 'observation'
+                   ELSE role
+               END,
+               state, created_at, last_activity_at, released_at,
+               interruption_reason, correlation_ref
+        FROM reservation;
+        DROP TABLE reservation;
+        ALTER TABLE reservation_v22 RENAME TO reservation;
+        CREATE INDEX IF NOT EXISTS idx_reservation_item_state
+            ON reservation(work_item_id, state, last_activity_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_reservation_session_active
+            ON reservation(session_id, state);
+    """)
+
+
 def _run_migration(
     conn: sqlite3.Connection,
     target_version: int,
@@ -821,7 +881,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     _run_migration(conn, 18, _migration_18)
     _run_migration(conn, 19, _migration_19)
     _run_migration(conn, 20, _migration_20)
-    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_21)
+    _run_migration(conn, 21, _migration_21)
+    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_22, foreign_keys_off=True)
 
 
 # --- Sprint ---
@@ -1460,19 +1521,30 @@ def list_reservations_by_sprint(conn: sqlite3.Connection, sprint_id: int, *, act
 
 
 def reserve(conn: sqlite3.Connection, work_item_id: int, *, actor: str, session_id: str,
-            role: str = "execute", correlation_ref: str | None = None, override: bool = False) -> dict:
-    if role not in RESERVATION_ROLES:
-        raise ValueError(f"invalid reservation role {role!r}")
+            role: str = _reservation.DEFAULT_ROLE, correlation_ref: str | None = None,
+            interrupt_existing: bool = False) -> dict:
+    """Register a reservation, reporting -- never refusing -- overlap.
+
+    Overlapping reservations are the expected case for collaborating sessions,
+    so this always commits and returns the conflict set alongside the new row.
+    ``interrupt_existing`` is a deliberate takeover: it interrupts the active
+    execution reservations it displaced and records why, which is a different
+    act from merely coexisting with them.
+    """
+    role = _reservation.normalize_role(role)
     if get_work_item(conn, work_item_id) is None:
         raise ValueError(f"Work item #{work_item_id} not found")
     now = _reservation.now_text()
+    interrupted: list[dict] = []
     try:
         conn.execute("BEGIN IMMEDIATE")
         # Reservation admission and maintenance activation are mutually
         # exclusive: activation gates on "zero active reservations", so a
         # reservation granted under a live capability would silently break the
         # window it protects.  BEGIN IMMEDIATE's whole-database lock supplies
-        # the serialization that PostgreSQL takes an advisory lock for.
+        # the serialization that PostgreSQL takes an advisory lock for.  This
+        # is the only remaining refusal -- it is a property of the repository,
+        # not of who else is working on the item.
         if conn.execute(
             "SELECT 1 FROM maintenance_capability WHERE state IN ('active','observing') "
             "AND julianday(expires_at) > julianday('now') LIMIT 1"
@@ -1481,19 +1553,18 @@ def reserve(conn: sqlite3.Connection, work_item_id: int, *, actor: str, session_
             raise ReservationConflict(
                 "reservations are disabled while an exact-plan maintenance capability is active"
             )
-        conflicts = conn.execute(
-            "SELECT * FROM reservation WHERE work_item_id = ? AND state = 'active' AND role = 'execute'",
+        existing = [dict(row) for row in conn.execute(
+            "SELECT * FROM reservation WHERE work_item_id = ? AND state = 'active' ORDER BY id",
             (work_item_id,),
-        ).fetchall() if role == "execute" else []
-        if conflicts and not override:
-            conflict = dict(conflicts[0])
-            conn.rollback()
-            raise ReservationConflict(
-                f"item #{work_item_id} is reserved by {conflict['actor']} in session {conflict['session_id']}; use --override to interrupt it"
-            )
-        if conflicts:
-            conn.execute("UPDATE reservation SET state = 'interrupted', released_at = ?, interruption_reason = ? WHERE work_item_id = ? AND state = 'active' AND role = 'execute'",
-                         (now, f"overridden by {actor} ({session_id})", work_item_id))
+        ).fetchall()]
+        if interrupt_existing:
+            interrupted = [row for row in existing if row["role"] == "execution"]
+            if interrupted:
+                conn.execute(
+                    "UPDATE reservation SET state = 'interrupted', released_at = ?, interruption_reason = ? "
+                    "WHERE work_item_id = ? AND state = 'active' AND role = 'execution'",
+                    (now, f"interrupted by {actor} ({session_id})", work_item_id),
+                )
         cur = conn.execute(
             "INSERT INTO reservation(work_item_id, session_id, actor, role, state, created_at, last_activity_at, correlation_ref) VALUES (?, ?, ?, ?, 'active', ?, ?, ?)",
             (work_item_id, session_id, actor, role, now, now, correlation_ref),
@@ -1506,13 +1577,42 @@ def reserve(conn: sqlite3.Connection, work_item_id: int, *, actor: str, session_
         raise
     row = _reservation_row(conn, reservation_id)
     assert row is not None
-    if conflicts:
-        for old in conflicts:
-            _reservation_event(conn, dict(old), "reservation.interrupted", actor,
-                               {"reservation_id": old["id"], "reason": "override", "replacement_id": reservation_id})
+    interrupted_ids = {old["id"] for old in interrupted}
+    remaining = [old for old in existing if old["id"] not in interrupted_ids]
+    for old in interrupted:
+        _reservation_event(conn, dict(old), "reservation.interrupted", actor,
+                           {"reservation_id": old["id"], "reason": "explicit-takeover", "replacement_id": reservation_id})
     _reservation_event(conn, row, "reservation.reserved", actor,
-                       {"reservation_id": reservation_id, "session_id": session_id, "role": role, "correlation_ref": correlation_ref, "override": override})
-    return _reservation.display(row)
+                       {"reservation_id": reservation_id, "session_id": session_id, "role": role,
+                        "correlation_ref": correlation_ref, "interrupt_existing": interrupt_existing,
+                        "conflicting_reservation_ids": [old["id"] for old in remaining]})
+    return _reservation.annotate_conflicts(_reservation.display(row), remaining)
+
+
+def note_session_activity(conn: sqlite3.Connection, work_item_id: int, *, session_id: str | None) -> list[dict]:
+    """Bump the activity clock for reservations the caller's session holds.
+
+    Activity is an operational heuristic, not a heartbeat and not proof of
+    ownership: a successful item-scoped mutation attributable to the
+    reservation's *session* is evidence that session is still working. Reads
+    never qualify, and a matching actor name is not enough -- only the session
+    that registered the reservation (or was reassigned it) can move its clock.
+    """
+    if not session_id:
+        return []
+    rows = conn.execute(
+        "SELECT * FROM reservation WHERE work_item_id = ? AND session_id = ? AND state = 'active'",
+        (work_item_id, session_id),
+    ).fetchall()
+    if not rows:
+        return []
+    now = _reservation.now_text()
+    conn.execute(
+        "UPDATE reservation SET last_activity_at = ? WHERE work_item_id = ? AND session_id = ? AND state = 'active'",
+        (now, work_item_id, session_id),
+    )
+    conn.commit()
+    return [_reservation.display(dict(_reservation_row(conn, row["id"]))) for row in rows]
 
 
 def touch_reservation(conn: sqlite3.Connection, reservation_id: int, *, session_id: str,
@@ -1563,17 +1663,26 @@ def release_reservation(conn: sqlite3.Connection, reservation_id: int, *, actor:
     return _reservation.display(updated)
 
 
-def sweep_stale_reservations(conn: sqlite3.Connection, *, now: str | None = None) -> list[dict]:
+def sweep_stale_reservations(conn: sqlite3.Connection, *, now: str | None = None,
+                             interrupt_after: timedelta | None = None) -> list[dict]:
+    """Interrupt long-idle reservations.  Only an explicit sweep calls this.
+
+    Nothing expires in the background: the threshold is operator policy
+    (:mod:`sprintctl.reservation_policy`), and it takes effect when an
+    operator runs the sweep, not when the clock passes it.
+    """
+    window = _policy.interrupt_after() if interrupt_after is None else interrupt_after
+    reason = _policy.sweep_reason(window)
     now = now or _reservation.now_text()
-    cutoff = ( _reservation.parse_time(now) - _reservation.INTERRUPT_AFTER ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cutoff = (_reservation.parse_time(now) - window).strftime("%Y-%m-%dT%H:%M:%SZ")
     rows = conn.execute("SELECT * FROM reservation WHERE state = 'active' AND last_activity_at <= ?", (cutoff,)).fetchall()
-    conn.execute("UPDATE reservation SET state = 'interrupted', released_at = ?, interruption_reason = 'seven-day inactivity sweep' WHERE state = 'active' AND last_activity_at <= ?", (now, cutoff))
+    conn.execute("UPDATE reservation SET state = 'interrupted', released_at = ?, interruption_reason = ? WHERE state = 'active' AND last_activity_at <= ?", (now, reason, cutoff))
     conn.commit()
     result = []
     for row in rows:
         updated = _reservation_row(conn, row["id"])
         assert updated is not None
-        _reservation_event(conn, updated, "reservation.interrupted", "maintenance", {"reservation_id": row["id"], "reason": "seven-day inactivity sweep"})
+        _reservation_event(conn, updated, "reservation.interrupted", "maintenance", {"reservation_id": row["id"], "reason": reason})
         result.append(_reservation.display(updated, now=now))
     return result
 

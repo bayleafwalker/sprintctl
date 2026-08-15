@@ -43,7 +43,7 @@ class TestMaintain:
         after = pg.get_reservation(store, row["id"])
         assert after is not None
         assert after["state"] == "interrupted"
-        assert after["interruption_reason"] == "seven-day inactivity sweep"
+        assert after["interruption_reason"] == "7-day inactivity sweep"
 
     def test_sweep_leaves_recently_active_reservations_alone(
         self, store, sprint_id, track_id
@@ -54,7 +54,7 @@ class TestMaintain:
         assert pg.sweep_stale_reservations(store) == []
         assert pg.get_reservation(store, row["id"])["state"] == "active"
 
-    def test_reassign_then_override_retains_the_full_ownership_history(
+    def test_reassign_then_takeover_retains_the_full_ownership_history(
         self, store, sprint_id, track_id
     ):
         """Ownership changes accumulate rows; nothing is rewritten in place.
@@ -62,7 +62,7 @@ class TestMaintain:
         The retired claim path proved this with a rotating token and a
         lease_epoch counter, both dropped in v3. Reservations carry the same
         auditability without a secret: reassign renames the live row, and an
-        override interrupts it and opens a new one beside it.
+        explicit takeover interrupts it and opens a new one beside it.
         """
         iid = pg.create_work_item(store, sprint_id, track_id, f"Hist-{_uid()}")
         first = pg.reserve(store, iid, actor="old-owner", session_id="session-old")
@@ -75,7 +75,7 @@ class TestMaintain:
         assert reassigned["state"] == "active"
 
         second = pg.reserve(
-            store, iid, actor="new-owner", session_id="session-new", override=True
+            store, iid, actor="new-owner", session_id="session-new", interrupt_existing=True
         )
 
         history = pg.list_reservations(store, iid, active_only=False)

@@ -42,12 +42,15 @@ class TestAuthorityFaultHistories:
         return pg.PgStore(conn=conn, repo_id=store.repo_id)
 
     def test_partition_reassignment_then_stale_touch_is_rejected(self, store):
-        """A displaced session cannot keep its reservation alive after an override.
+        """A displaced session cannot keep its reservation alive after a takeover.
 
         The retired claim path proved this with lease expiry and a rejected
-        heartbeat. v3 drops the TTL ceremony: an override interrupts the old
-        row outright, and the partitioned session learns it lost ownership on
-        its next touch rather than by silently renewing a dead lease.
+        heartbeat. v3 drops the TTL ceremony: an explicit takeover interrupts
+        the old row outright, and the partitioned session learns it lost the
+        reservation on its next touch rather than by silently renewing a dead
+        lease.  The takeover has to be asked for -- the replacement session
+        would otherwise have been allowed to reserve alongside the partitioned
+        one, and both rows would have stayed active.
         """
         sprint_id = pg.create_sprint(store, f"Partition-{_uid()}", status="active")
         track_id = pg.get_or_create_track(store, sprint_id, "protocol")
@@ -62,7 +65,7 @@ class TestAuthorityFaultHistories:
                 item_id,
                 actor="replacement-owner",
                 session_id="session-replacement",
-                override=True,
+                interrupt_existing=True,
             )
 
             with pytest.raises(ValueError, match="is interrupted"):

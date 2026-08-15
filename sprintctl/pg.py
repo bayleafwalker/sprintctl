@@ -20,6 +20,7 @@ import json
 import logging
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Callable
 from uuid import uuid4
 from urllib.parse import urlparse
@@ -35,6 +36,7 @@ except ImportError:  # pragma: no cover
 _logger = logging.getLogger(__name__)
 
 from . import reservation as _reservation
+from . import reservation_policy as _policy
 from . import contracts as _contracts
 from . import depcore as _depcore
 from . import eventcore as _eventcore
@@ -1555,6 +1557,68 @@ def _apply_schema_version_11(cur: Any) -> None:
     )
 
 
+def _apply_schema_version_12(cur: Any) -> None:
+    """Make reservations overlappable and adopt the work-relationship roles.
+
+    The partial unique index made "at most one active execution reservation"
+    a database law, which contradicts the advisory model the ledger exists
+    for: a second actor who cannot register is not prevented from working,
+    only from being seen.  Overlap is recorded and reported at reserve time
+    instead, so the ledger keeps its detection value.
+
+    Roles collapse to the work relationship -- ``execution``,
+    ``verification``, ``observation`` -- because that is what makes an
+    overlap classifiable.  ``coordinate`` was never a relationship to the
+    item (orchestration is session and project context), so coordinator rows
+    become observations, as do ``inspect`` rows.  Rewriting the data before
+    swapping the CHECK keeps the constraint valid at every point.
+    """
+    cur.execute("DROP INDEX IF EXISTS idx_reservation_active_execute")
+    # The pre-12 CHECK was declared inline, so its generated name is not
+    # guaranteed across the databases this has to upgrade; drop it by what it
+    # constrains.  The named drop additionally makes a re-run a no-op.
+    cur.execute(
+        """
+        DO $$
+        DECLARE constraint_name text;
+        BEGIN
+            FOR constraint_name IN
+                SELECT conname FROM pg_constraint
+                WHERE conrelid = 'reservation'::regclass AND contype = 'c'
+                  AND pg_get_constraintdef(oid) LIKE '%inspect%'
+            LOOP
+                EXECUTE format('ALTER TABLE reservation DROP CONSTRAINT %I', constraint_name);
+            END LOOP;
+        END $$;
+        """
+    )
+    cur.execute("ALTER TABLE reservation DROP CONSTRAINT IF EXISTS reservation_role_check")
+    cur.execute(
+        """
+        UPDATE reservation SET role = CASE role
+            WHEN 'execute' THEN 'execution'
+            WHEN 'review' THEN 'verification'
+            WHEN 'inspect' THEN 'observation'
+            WHEN 'coordinate' THEN 'observation'
+            ELSE role
+        END
+        WHERE role IN ('execute', 'review', 'inspect', 'coordinate')
+        """
+    )
+    cur.execute(
+        "ALTER TABLE reservation ADD CONSTRAINT reservation_role_check "
+        "CHECK (role IN ('execution','verification','observation'))"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reservation_item_state "
+        "ON reservation(repo_id, work_item_id, state, last_activity_at DESC)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reservation_session_active "
+        "ON reservation(repo_id, session_id, state)"
+    )
+
+
 def compatibility_handshake(store: PgStore) -> dict[str, Any]:
     """Return the public read-only work API/schema handshake."""
     return _pg_migrations.compatibility_handshake(store)
@@ -2259,6 +2323,7 @@ def list_active_takeups(store: PgStore, sprint_id: int | None = None) -> list[di
 
 ReservationConflict = _reservation.ReservationConflict
 RESERVATION_ROLES = _reservation.ROLES
+DEFAULT_RESERVATION_ROLE = _reservation.DEFAULT_ROLE
 
 
 def _reservation_row(store: PgStore, reservation_id: int) -> dict | None:
@@ -2295,13 +2360,20 @@ def list_reservations_by_sprint(store: PgStore, sprint_id: int, *, active_only: 
         return [_reservation.display(row) for row in cur.fetchall()]
 
 
-def reserve(store: PgStore, work_item_id: int, *, actor: str, session_id: str, role: str = "execute",
-            correlation_ref: str | None = None, override: bool = False) -> dict:
-    if role not in RESERVATION_ROLES:
-        raise ValueError(f"invalid reservation role {role!r}")
+def reserve(store: PgStore, work_item_id: int, *, actor: str, session_id: str,
+            role: str = _reservation.DEFAULT_ROLE, correlation_ref: str | None = None,
+            interrupt_existing: bool = False) -> dict:
+    """Register a reservation, reporting -- never refusing -- overlap.
+
+    Mirrors :func:`sprintctl.db.reserve`: overlapping reservations all commit
+    and are returned as the new row's conflict set, and ``interrupt_existing``
+    is the separate, deliberate takeover.
+    """
+    role = _reservation.normalize_role(role)
     if get_work_item(store, work_item_id) is None:
         raise ValueError(f"Work item #{work_item_id} not found")
     now = _reservation.now_text()
+    interrupted: list[dict] = []
     try:
         with store.conn.cursor() as cur:
             # Serialize repo-wide reservation admission with maintenance
@@ -2310,7 +2382,8 @@ def reserve(store: PgStore, work_item_id: int, *, actor: str, session_id: str, r
             # database can enforce: without a shared repo-scoped lock an
             # activation that counts zero and a concurrent reserve() can both
             # commit, leaving a live reservation under an active capability.
-            # The retired claim path held this same lock for the same reason.
+            # This lock is now the *only* thing reserve() serializes -- item
+            # exclusivity is deliberately not enforced.
             cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (store.repo_id,))
             cur.execute(
                 "SELECT 1 FROM maintenance_capability WHERE repo_id = %s "
@@ -2322,15 +2395,20 @@ def reserve(store: PgStore, work_item_id: int, *, actor: str, session_id: str, r
                 raise ReservationConflict(
                     "reservations are disabled while an exact-plan maintenance capability is active"
                 )
-            if role == "execute":
-                cur.execute("SELECT * FROM reservation WHERE repo_id = %s AND work_item_id = %s AND state = 'active' AND role = 'execute' FOR UPDATE", (store.repo_id, work_item_id))
-                conflicts = cur.fetchall()
-            else:
-                conflicts = []
-            if conflicts and not override:
-                raise ReservationConflict(f"item #{work_item_id} is reserved by {conflicts[0]['actor']} in session {conflicts[0]['session_id']}; use --override to interrupt it")
-            if conflicts:
-                cur.execute("UPDATE reservation SET state = 'interrupted', released_at = %s, interruption_reason = %s WHERE repo_id = %s AND work_item_id = %s AND state = 'active' AND role = 'execute'", (now, f"overridden by {actor} ({session_id})", store.repo_id, work_item_id))
+            cur.execute(
+                "SELECT * FROM reservation WHERE repo_id = %s AND work_item_id = %s "
+                "AND state = 'active' ORDER BY id FOR UPDATE",
+                (store.repo_id, work_item_id),
+            )
+            existing = [dict(row) for row in cur.fetchall()]
+            if interrupt_existing:
+                interrupted = [row for row in existing if row["role"] == "execution"]
+                if interrupted:
+                    cur.execute(
+                        "UPDATE reservation SET state = 'interrupted', released_at = %s, interruption_reason = %s "
+                        "WHERE repo_id = %s AND work_item_id = %s AND state = 'active' AND role = 'execution'",
+                        (now, f"interrupted by {actor} ({session_id})", store.repo_id, work_item_id),
+                    )
             cur.execute("INSERT INTO reservation(repo_id, work_item_id, session_id, actor, role, state, created_at, last_activity_at, correlation_ref) VALUES (%s, %s, %s, %s, %s, 'active', %s, %s, %s) RETURNING id", (store.repo_id, work_item_id, session_id, actor, role, now, now, correlation_ref))
             reservation_id = cur.fetchone()["id"]
         store.conn.commit()
@@ -2339,7 +2417,31 @@ def reserve(store: PgStore, work_item_id: int, *, actor: str, session_id: str, r
         raise
     row = _reservation_row(store, reservation_id)
     assert row is not None
-    return _reservation.display(row)
+    interrupted_ids = {old["id"] for old in interrupted}
+    remaining = [old for old in existing if old["id"] not in interrupted_ids]
+    return _reservation.annotate_conflicts(_reservation.display(row), remaining)
+
+
+def note_session_activity(store: PgStore, work_item_id: int, *, session_id: str | None) -> list[dict]:
+    """Bump the activity clock for reservations the caller's session holds.
+
+    Activity is an operational heuristic, not a heartbeat and not proof of
+    ownership.  Only the session that registered the reservation (or was
+    reassigned it) can move its clock, and only a successful item-scoped
+    mutation counts -- reads never do.
+    """
+    if not session_id:
+        return []
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE reservation SET last_activity_at = %s "
+            "WHERE repo_id = %s AND work_item_id = %s AND session_id = %s AND state = 'active' "
+            "RETURNING *",
+            (_reservation.now_text(), store.repo_id, work_item_id, session_id),
+        )
+        rows = cur.fetchall()
+    store.conn.commit()
+    return [_reservation.display(row) for row in rows]
 
 
 def touch_reservation(store: PgStore, reservation_id: int, *, session_id: str, correlation_ref: str | None = None) -> dict:
@@ -2378,11 +2480,19 @@ def release_reservation(store: PgStore, reservation_id: int, *, actor: str | Non
     return get_reservation(store, reservation_id)  # type: ignore[return-value]
 
 
-def sweep_stale_reservations(store: PgStore, *, now: str | None = None) -> list[dict]:
+def sweep_stale_reservations(store: PgStore, *, now: str | None = None,
+                             interrupt_after: timedelta | None = None) -> list[dict]:
+    """Interrupt long-idle reservations.  Only an explicit sweep calls this.
+
+    Nothing expires in the background: the threshold is operator policy
+    (:mod:`sprintctl.reservation_policy`) applied when a sweep runs.
+    """
+    window = _policy.interrupt_after() if interrupt_after is None else interrupt_after
+    reason = _policy.sweep_reason(window)
     now = now or _reservation.now_text()
-    cutoff = (_reservation.parse_time(now) - _reservation.INTERRUPT_AFTER).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cutoff = (_reservation.parse_time(now) - window).strftime("%Y-%m-%dT%H:%M:%SZ")
     with store.conn.cursor() as cur:
-        cur.execute("UPDATE reservation SET state = 'interrupted', released_at = %s, interruption_reason = 'seven-day inactivity sweep' WHERE repo_id = %s AND state = 'active' AND last_activity_at <= %s RETURNING *", (now, store.repo_id, cutoff))
+        cur.execute("UPDATE reservation SET state = 'interrupted', released_at = %s, interruption_reason = %s WHERE repo_id = %s AND state = 'active' AND last_activity_at <= %s RETURNING *", (now, reason, store.repo_id, cutoff))
         rows = cur.fetchall()
     store.conn.commit()
     return [_reservation.display(row, now=now) for row in rows]

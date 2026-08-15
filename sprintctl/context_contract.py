@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from . import contracts, maintain
+from . import reservation_policy as _reservation_policy
 
 
 def _event_payload(event: dict[str, Any]) -> dict[str, Any]:
@@ -56,11 +57,17 @@ def _waiting(store: Any, sprint_id: int, backend: Any) -> list[dict[str, Any]]:
     return waiting
 
 
+def _stale_after_hours() -> str:
+    """Render the operator-configured staleness horizon for conflict prose."""
+    hours = _reservation_policy.stale_after().total_seconds() / 3600
+    return f"{hours:g}"
+
+
 def _conflicts(*, active_reservations, active_unreserved_items, blocked_items, stale_items, waiting, now):
     conflicts = []
     stale = [row for row in active_reservations if row.get("stale")]
     if stale:
-        conflicts.append({"kind": "stale-reservation", "severity": "warning", "summary": f"{len(stale)} active reservation(s) have been idle for four hours.", "reservation_ids": [row["id"] for row in stale], "item_ids": [row["work_item_id"] for row in stale]})
+        conflicts.append({"kind": "stale-reservation", "severity": "warning", "summary": f"{len(stale)} active reservation(s) have been idle for {_stale_after_hours()} hours.", "reservation_ids": [row["id"] for row in stale], "item_ids": [row["work_item_id"] for row in stale]})
     if active_unreserved_items:
         conflicts.append({"kind": "unreserved-active-work", "reason_code": "active-item-without-reservation", "severity": "warning", "summary": f"{len(active_unreserved_items)} active item(s) have no reservation and need resume, reassignment, or status triage.", "item_ids": [row["id"] for row in active_unreserved_items]})
     if waiting:

@@ -731,16 +731,15 @@ def test_authenticated_actor_binding_rejects_before_pg_mutation(store_factory, t
     store.conn.close()
 
 
-def test_concurrent_served_reserves_admit_exactly_one_holder(store_factory, tmp_path):
-    """Two served sessions racing for the same item: one holds it, one is told.
+def test_concurrent_served_reserves_both_commit_and_report_the_overlap(store_factory, tmp_path):
+    """Two served sessions racing for the same item: both are recorded.
 
     The retired claim path proved this through authority arbitration, where
     the loser received a durable ``claim-conflict`` decision and the winner's
-    command could be replayed idempotently. Reservations are direct
-    operations with no durable decision ledger and no idempotency contract,
-    so the surviving property is narrower and stated as such: exactly one
-    active execute reservation exists afterwards, and the loser is rejected
-    rather than silently queued.
+    command could be replayed idempotently.  Reservations arbitrate nothing:
+    refusing the second session would not have stopped it working, only kept
+    it out of the ledger, so both reservations commit and at least one of them
+    carries the conflict report that makes the overlap visible.
     """
     primary = store_factory("served-reserve")
     sprint_id = pg.create_sprint(primary, "Served reservations", status="active")
@@ -792,10 +791,14 @@ def test_concurrent_served_reserves_admit_exactly_one_holder(store_factory, tmp_
 
     assert not any(thread.is_alive() for thread in threads)
     assert not failures
-    assert len(outcomes) == 1
-    assert len(rejections) == 1
+    assert not rejections
+    assert len(outcomes) == 2
+    reserved_ids = {outcome["reservation"]["id"] for outcome in outcomes}
     active = pg.list_reservations(primary, item_id, active_only=True)
-    assert [row["id"] for row in active] == [outcomes[0]["reservation"]["id"]]
+    assert {row["id"] for row in active} == reserved_ids
+    # Whichever commit landed second observed the first one; the conflict is
+    # reported, and both sessions remain visible to an operator.
+    assert any(outcome["reservation"]["conflict"] for outcome in outcomes)
     primary.conn.close()
 
 

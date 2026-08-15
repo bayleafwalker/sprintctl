@@ -114,7 +114,7 @@ def _snapshot():
                 "work_item_id": 1219,
                 "session_id": "recovery-session",
                 "actor": "tester",
-                "role": "execute",
+                "role": "execution",
                 "state": "active",
                 "created_at": "2026-03-01T00:00:00Z",
                 "last_activity_at": "2026-03-01T00:00:00Z",

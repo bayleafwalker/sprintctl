@@ -517,6 +517,9 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
                 "sprint_id": {"type": "integer", "minimum": 1},
                 "event_type": {"type": "string", "minLength": 1},
                 "work_item_id": {"type": ["integer", "null"], "minimum": 1},
+                # Optional, never authorizing: it only lets the reservation
+                # ledger attribute this mutation to the caller's session.
+                "session_id": {"type": ["string", "null"], "minLength": 1},
                 "source_type": {"enum": ["actor", "daemon", "system"]},
                 "payload": {"type": ["object", "null"]},
             }, required=("sprint_id", "event_type"),
@@ -557,6 +560,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
             {
                 "item_id": {"type": "integer", "minimum": 1},
                 "description": {"type": "string", "minLength": 1},
+                "session_id": {"type": ["string", "null"], "minLength": 1},
                 "expected_revision": {
                     "type": "string",
                     "pattern": (
@@ -594,10 +598,10 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
     *(
         WorkOperationContract(name, _object_schema(properties, required=required), _result_schema(("repo_id", "item_id", result_id), {"repo_id": {"type": "string"}, "item_id": {"type": "integer", "minimum": 1}, result_id: {"type": "integer", "minimum": 1}}), "work:lifecycle", "write", "not-allowed")
         for name, properties, required, result_id in (
-            ("work.item.ref.add", {"item_id": {"type": "integer", "minimum": 1}, "ref_type": {"type": "string", "minLength": 1}, "url": {"type": "string", "minLength": 1}, "label": {"type": "string", "default": ""}}, ("item_id", "ref_type", "url"), "ref_id"),
-            ("work.item.ref.remove", {"item_id": {"type": "integer", "minimum": 1}, "ref_id": {"type": "integer", "minimum": 1}}, ("item_id", "ref_id"), "ref_id"),
-            ("work.item.dep.add", {"item_id": {"type": "integer", "minimum": 1}, "blocked_item_id": {"type": "integer", "minimum": 1}}, ("item_id", "blocked_item_id"), "dep_id"),
-            ("work.item.dep.remove", {"item_id": {"type": "integer", "minimum": 1}, "dep_id": {"type": "integer", "minimum": 1}}, ("item_id", "dep_id"), "dep_id"),
+            ("work.item.ref.add", {"item_id": {"type": "integer", "minimum": 1}, "ref_type": {"type": "string", "minLength": 1}, "url": {"type": "string", "minLength": 1}, "label": {"type": "string", "default": ""}, "session_id": {"type": ["string", "null"], "minLength": 1},}, ("item_id", "ref_type", "url"), "ref_id"),
+            ("work.item.ref.remove", {"item_id": {"type": "integer", "minimum": 1}, "ref_id": {"type": "integer", "minimum": 1}, "session_id": {"type": ["string", "null"], "minLength": 1},}, ("item_id", "ref_id"), "ref_id"),
+            ("work.item.dep.add", {"item_id": {"type": "integer", "minimum": 1}, "blocked_item_id": {"type": "integer", "minimum": 1}, "session_id": {"type": ["string", "null"], "minLength": 1},}, ("item_id", "blocked_item_id"), "dep_id"),
+            ("work.item.dep.remove", {"item_id": {"type": "integer", "minimum": 1}, "dep_id": {"type": "integer", "minimum": 1}, "session_id": {"type": ["string", "null"], "minLength": 1},}, ("item_id", "dep_id"), "dep_id"),
         )
     ),
     WorkOperationContract(
@@ -623,6 +627,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         _object_schema(
             {
                 "item_id": {"type": "integer", "minimum": 1},
+                "session_id": {"type": ["string", "null"], "minLength": 1},
                 "note_type": {"type": "string", "minLength": 1},
                 "summary": {"type": "string", "minLength": 1},
                 "detail": {"type": ["string", "null"]},
@@ -775,7 +780,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
     ),
     WorkOperationContract(
         "work.reservation.reserve",
-        _object_schema({"item_id": {"type": "integer", "minimum": 1}, "actor": {"type": "string", "minLength": 1}, "session_id": {"type": "string", "minLength": 1}, "role": {"enum": ["inspect", "execute", "review", "coordinate"]}, "correlation_ref": {"type": ["string", "null"]}, "override": {"type": "boolean", "default": False}}, required=("item_id", "actor", "session_id")),
+        _object_schema({"item_id": {"type": "integer", "minimum": 1}, "actor": {"type": "string", "minLength": 1}, "session_id": {"type": "string", "minLength": 1}, "role": {"enum": ["execution", "verification", "observation"]}, "correlation_ref": {"type": ["string", "null"]}, "interrupt_existing": {"type": "boolean", "default": False}}, required=("item_id", "actor", "session_id")),
         _result_schema(("repo_id", "reservation"), {"repo_id": {"type": "string"}, "reservation": {"type": "object"}}),
         "work:write", "write", "required",
     ),
@@ -977,6 +982,11 @@ LEGACY_REMOTE_COMMAND_PARITY: tuple[dict[str, str], ...] = (
     {"legacy": "sprintctl event observation add", "operation": "work.evidence.ingest"},
     {"legacy": "sprintctl item note", "operation": "work.item.note"},
     {"legacy": "sprintctl item edit", "operation": "work.item.edit"},
+    {"legacy": "sprintctl reservation reserve", "operation": "work.reservation.reserve"},
+    {
+        "legacy": "sprintctl reservation touch / reassign / release",
+        "operation": "work.reservation.reassign",
+    },
     {"legacy": "sprintctl next-work --project", "operation": "work.project.next-work"},
     {"legacy": "project dispatch batching", "operation": "work.project.batch"},
 )

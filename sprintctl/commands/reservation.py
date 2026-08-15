@@ -26,21 +26,28 @@ def reservation() -> None:
 @click.option("--item-id", type=int, required=True)
 @click.option("--actor", required=True)
 @click.option("--session-id", default=None)
-@click.option("--role", type=click.Choice(_db.RESERVATION_ROLES), default="execute")
+@click.option("--role", type=click.Choice(_db.RESERVATION_ROLES), default=_db.DEFAULT_RESERVATION_ROLE,
+              help="Work relationship: execution, verification, or observation")
 @click.option("--correlation-ref", default=None, help="ActionQ execution or receipt reference")
-@click.option("--override", "override", is_flag=True, default=False)
+@click.option("--interrupt-existing", "interrupt_existing", is_flag=True, default=False,
+              help="Deliberately interrupt the item's active execution reservations first")
 @click.option("--json", "as_json", is_flag=True, default=False)
 @click.pass_obj
 def reserve(obj: dict[str, Any], item_id: int, actor: str, session_id: str | None, role: str,
-            correlation_ref: str | None, override: bool, as_json: bool) -> None:
-    served = _served_result(obj, "work.reservation.reserve", {"item_id": item_id, "actor": actor, "session_id": _session(session_id), "role": role, "correlation_ref": correlation_ref, "override": override})
+            correlation_ref: str | None, interrupt_existing: bool, as_json: bool) -> None:
+    """Register a reservation on a work item.
+
+    Overlapping reservations are allowed and reported, not refused: a
+    reservation is a coordination signal, not a lease.
+    """
+    served = _served_result(obj, "work.reservation.reserve", {"item_id": item_id, "actor": actor, "session_id": _session(session_id), "role": role, "correlation_ref": correlation_ref, "interrupt_existing": interrupt_existing})
     if served is not None:
         _echo(served["reservation"], as_json)
         return
     conn, _ = _db_store(obj)
     try:
         row = _db.reserve(conn, item_id, actor=actor, session_id=_session(session_id), role=role,
-                          correlation_ref=correlation_ref, override=override)
+                          correlation_ref=correlation_ref, interrupt_existing=interrupt_existing)
     except _db.ReservationConflict as exc:
         raise click.ClickException(str(exc)) from exc
     _echo(row, as_json)
@@ -163,6 +170,13 @@ def _echo(value, as_json: bool) -> None:
             click.echo(f"#{row['id']} item #{row['work_item_id']} {row['actor']} {row['state']}")
     else:
         click.echo(f"Reservation #{value['id']} on item #{value['work_item_id']}: {value['state']}")
+        for other in value.get("conflicting_reservations") or []:
+            click.echo(
+                f"  conflict: reservation #{other['id']} {other['role']} held by "
+                f"{other['actor']} (session {other['session_id']}) is also active"
+            )
+        if value.get("conflict_severity") == "warning":
+            click.echo("  warning: two sessions are executing this item; coordinate before editing.")
 
 
 def register(root: click.Group) -> None:

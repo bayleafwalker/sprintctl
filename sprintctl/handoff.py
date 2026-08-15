@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from . import context_contract, contracts
+from . import reservation_policy as _policy
 
 
 def _previous_handoff_generated(store: Any, sprint_id: int, backend: Any) -> dict | None:
@@ -63,7 +64,8 @@ def build_handoff_bundle(store: Any, sprint: dict, events_limit: int, *, backend
         freshness={"generated_at": generated_at, "previous_handoff_at": previous_handoff["created_at"] if previous_handoff else None, "stale_item_count": len(context["stale_items"]), "active_reservation_count": len(context["active_reservations"]), "dirty_file_count": len(git_context["dirty_files"]) if git_context else 0},
         evidence={"dirty_files": git_context["dirty_files"] if git_context else [], "items_with_refs": sum(1 for item in items_with_refs if item.get("refs")), "total_refs": sum(len(item.get("refs", [])) for item in items_with_refs), "recent_event_count": len(recent_events), "recent_decision_count": len(context["recent_decisions"]), "validation_outcomes": []},
         git_context=git_context,
-        reservation_model={"ownership_proof": None, "reassign_command": "sprintctl reservation reassign", "stale_after_hours": 4},
+        reservation_model={"ownership_proof": None, "reassign_command": "sprintctl reservation reassign",
+                           "exclusive": False, **_policy.describe()},
         resume_instructions=["Read this handoff bundle first.", "Refresh live state with 'sprintctl usage --context --json'.", "List active reservations with 'sprintctl reservation list --all --json'."],
         agent_shutdown_protocol={"required_before_termination": ["Reassign or release each active reservation.", "Run 'sprintctl handoff' to produce a new bundle."], "resumption_hint": "Incoming agents may reserve or reassign without a credential."},
         items=items_with_refs, events=recent_events,

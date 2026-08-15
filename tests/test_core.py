@@ -943,8 +943,8 @@ class TestEdgeCases:
             "idx_claim_history_claim_id",
             "idx_event_sprint_type_ts",
             "idx_recovery_record_recovered_at",
-            "idx_reservation_active_execute",
             "idx_reservation_item_state",
+            "idx_reservation_session_active",
             "idx_sprint_aggregate_uuid",
             "idx_work_item_aggregate_uuid",
         }

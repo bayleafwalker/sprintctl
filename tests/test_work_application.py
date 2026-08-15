@@ -570,6 +570,9 @@ def test_work_item_edit_contract_requires_revision_and_is_repo_scoped_write():
         "item_id",
         "description",
         "expected_revision",
+        # Optional and never authorizing: it only lets the reservation ledger
+        # attribute a successful edit to the caller's own session.
+        "session_id",
     }
 
 
@@ -1057,8 +1060,58 @@ def test_click_free_reservation_reserve_matches_cli_state_flow(conn, runner, act
         assert reservation["session_id"] == "thread-1"
         assert reservation["correlation_ref"] == "actionq:job-1"
 
-def test_reservation_override_interrupts_prior_reservation(conn, active_sprint):
-    track = db.get_or_create_track(conn, active_sprint["id"], "reservation-override")
+def test_second_reservation_coexists_and_is_reported_as_a_conflict(conn, active_sprint):
+    """The default is coexistence: the ledger records both and says so.
+
+    Refusing the second session would not stop it working -- it would only
+    stop it being visible -- so a conflict is surfaced, not enforced.
+    """
+    track = db.get_or_create_track(conn, active_sprint["id"], "reservation-overlap")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Shared")
+    app = _application(store=conn, backend=db)
+
+    first = app.invoke(
+        "work.reservation.reserve",
+        {"item_id": item_id, "actor": "first-owner", "session_id": "session-1"},
+        _context(actor="first-owner"),
+    )
+    second = app.invoke(
+        "work.reservation.reserve",
+        {"item_id": item_id, "actor": "second-owner", "session_id": "session-2"},
+        _context(actor="second-owner"),
+    )
+
+    assert first["reservation"]["conflict"] is False
+    assert second["reservation"]["conflict"] is True
+    assert second["reservation"]["conflict_severity"] == "warning"
+    assert [row["id"] for row in second["reservation"]["conflicting_reservations"]] == [
+        first["reservation"]["id"]
+    ]
+    assert {row["state"] for row in db.list_reservations(conn, item_id, active_only=False)} == {"active"}
+
+
+def test_verification_beside_execution_is_an_informational_overlap(conn, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "reservation-roles")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Reviewed")
+    app = _application(store=conn, backend=db)
+
+    app.invoke(
+        "work.reservation.reserve",
+        {"item_id": item_id, "actor": "first-owner", "session_id": "session-1"},
+        _context(actor="first-owner"),
+    )
+    reviewer = app.invoke(
+        "work.reservation.reserve",
+        {"item_id": item_id, "actor": "second-owner", "session_id": "session-2", "role": "verification"},
+        _context(actor="second-owner"),
+    )
+
+    assert reviewer["reservation"]["conflict"] is True
+    assert reviewer["reservation"]["conflict_severity"] == "informational"
+
+
+def test_interrupt_existing_is_a_deliberate_takeover(conn, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "reservation-takeover")
     item_id = db.create_work_item(conn, active_sprint["id"], track, "Reacquire")
     app = _application(store=conn, backend=db)
 
@@ -1069,12 +1122,17 @@ def test_reservation_override_interrupts_prior_reservation(conn, active_sprint):
     )
     second = app.invoke(
         "work.reservation.reserve",
-        {"item_id": item_id, "actor": "replacement-owner", "session_id": "session-2", "override": True},
+        {"item_id": item_id, "actor": "replacement-owner", "session_id": "session-2",
+         "interrupt_existing": True},
         _context(actor="replacement-owner"),
     )
     history = db.list_reservations(conn, item_id, active_only=False)
     assert [reservation["state"] for reservation in history] == ["active", "interrupted"]
     assert second["reservation"]["id"] == history[0]["id"]
+    assert second["reservation"]["conflict"] is False
+    assert db.get_reservation(conn, first["reservation"]["id"])["interruption_reason"] == (
+        "interrupted by replacement-owner (session-2)"
+    )
 
 
 def test_item_note_records_an_event_bound_to_the_authenticated_actor_not_arguments(

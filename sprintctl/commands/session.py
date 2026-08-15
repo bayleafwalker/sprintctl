@@ -27,6 +27,8 @@ from .. import context_candidates as _context_candidates
 from .. import context_contract as _context_contract
 from .. import contracts as _contracts
 from .. import db as _db
+from .. import reservation as _reservation
+from .. import reservation_policy as _reservation_policy
 from .. import doctor as _doctor
 from .. import maintain as _maintain
 from .. import observations as _observations
@@ -121,9 +123,25 @@ def agent_protocol_cmd(as_json) -> None:
     """Print the credential-free reservation protocol for agent consumption."""
     protocol = {
         "sprintctl_agent_protocol_version": "3",
-        "reservation_model": {"ownership_proof": None, "stale_after_hours": 4,
-            "maintenance_interrupt_after_days": 7,
-            "roles": ["inspect", "execute", "review", "coordinate"]},
+        "reservation_model": {
+            "ownership_proof": None,
+            "exclusive": False,
+            "conflict_policy": (
+                "Overlapping reservations are recorded and reported, never refused. "
+                "Two active execution reservations on one item are a warning to "
+                "coordinate, not an error, and interrupting another session is a "
+                "separate explicit act: reservation reserve --interrupt-existing."
+            ),
+            "activity": (
+                "last_activity_at advances implicitly on successful item-scoped "
+                "mutations attributed to the reservation's session; "
+                "'reservation touch' stays available for work done outside sprintctl. "
+                "There is no heartbeat and nothing lapses."
+            ),
+            "stale_after_hours": _reservation_policy.stale_after().total_seconds() / 3600,
+            "maintenance_interrupt_after_days": _reservation_policy.interrupt_after().total_seconds() / 86400,
+            "maintenance_interrupt_trigger": "explicit 'sprintctl maintain sweep' only",
+            "roles": list(_reservation.ROLES)},
         "takeup_model": {
             "description": (
                 "Sprint-level takeup is an append-only visibility signal, not ownership proof. "
@@ -848,7 +866,8 @@ def usage_cmd(obj, as_context, sprint_id, project_path, as_json) -> None:
         "  item dep remove --id ID --dep-id N",
         "",
         "RESERVATION",
-        "  reservation reserve  --item-id ID --actor NAME --session-id ID [--role ROLE] [--correlation-ref REF] [--override] [--json]",
+        "  reservation reserve  --item-id ID --actor NAME --session-id ID [--role ROLE] [--correlation-ref REF]",
+        "                       [--interrupt-existing] [--json]",
         "  reservation touch    --id ID --session-id ID [--correlation-ref REF] [--json]",
         "  reservation reassign --id ID --actor NAME --session-id ID [--correlation-ref REF] [--json]",
         "  reservation release  --id ID [--actor NAME] [--json]",

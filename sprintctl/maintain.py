@@ -300,7 +300,9 @@ def sweep(
 
     Actions:
     - Stale active items → blocked (with system event)
-    - Reservations untouched for seven days are interrupted
+    - Reservations idle longer than the operator's ``interrupt_after``
+      policy (default seven days) are interrupted. This happens because a
+      sweep was run, never because time passed.
     - Auto-close overdue sprint with no active items (opt-in via auto_close)
     """
     m = _m if _m is not None else _db

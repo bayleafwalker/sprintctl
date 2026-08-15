@@ -38,8 +38,8 @@ capabilities = [
     "remote-schema-compatibility/v1",
     "sprintctl-repository-ingest-cursor/v1",
 ]
-sqlite-schema-version = 21
-remote-schema-version = 11
+sqlite-schema-version = 22
+remote-schema-version = 12
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

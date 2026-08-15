@@ -7,6 +7,7 @@ owns the single-repository service implementation.
 from __future__ import annotations
 
 from .application_common import *
+from . import reservation as _reservation
 
 
 @dataclass(slots=True)
@@ -283,7 +284,9 @@ class WorkApplication:
                 "unknown-work-operation", f"unknown work operation: {operation}", 404
             ) from exc
         try:
-            return handler(dict(arguments), context)
+            result = handler(dict(arguments), context)
+            target._note_implicit_activity(operation, arguments, result)
+            return result
         except ApplicationRejection:
             raise
         except StaleCapabilityRevision as exc:
@@ -943,6 +946,51 @@ class WorkApplication:
     ) -> dict[str, Any]:
         return self.next_work(arguments.get("sprint_id"))
 
+    #: Item-scoped mutations whose success is evidence that the reserving
+    #: session is still working.  Reads are deliberately absent: an activity
+    #: clock that a read can move measures attention, not work.
+    IMPLICIT_ACTIVITY_OPERATIONS = frozenset({
+        "work.item.edit",
+        "work.item.note",
+        "work.item.ref.add",
+        "work.item.ref.remove",
+        "work.item.dep.add",
+        "work.item.dep.remove",
+        "work.event.add",
+    })
+
+    def _note_implicit_activity(
+        self, operation: str, arguments: Mapping[str, Any], result: Mapping[str, Any]
+    ) -> None:
+        """Move the activity clock for the caller's own reservations.
+
+        This is what keeps ``last_activity_at`` a measure of work rather than
+        of remembered ceremony, without reintroducing a heartbeat: nothing is
+        required, nothing lapses, and a session that does its work outside
+        sprintctl still has explicit ``reservation touch``.
+
+        Attribution is by session, not by actor name, and a failure here is
+        never allowed to fail the operation that already committed.
+        """
+        if operation not in self.IMPLICIT_ACTIVITY_OPERATIONS:
+            return
+        session_id = arguments.get("session_id")
+        if not session_id:
+            return
+        item_id = arguments.get("item_id")
+        if item_id is None:
+            item = result.get("item") if isinstance(result, Mapping) else None
+            item_id = item.get("id") if isinstance(item, Mapping) else None
+        if item_id is None:
+            return
+        note = getattr(self.backend, "note_session_activity", None)
+        if note is None:
+            return
+        try:
+            note(self.store, int(item_id), session_id=str(session_id))
+        except Exception:  # pragma: no cover - advisory bookkeeping only
+            pass
+
     def _read_reservations(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
         return {"repo_id": self.repo_id, "reservations": self.backend.list_reservations(
             self.store, arguments.get("item_id"), active_only=arguments.get("active_only", True))}
@@ -961,7 +1009,9 @@ class WorkApplication:
             raise ApplicationRejection("actor-mismatch", "reservation actor must match the authenticated identity", 403)
         row = self.backend.reserve(self.store, _positive_int(arguments.get("item_id"), "item_id"),
             actor=actor, session_id=_required_text(arguments.get("session_id"), "session_id"),
-            role=arguments.get("role", "execute"), correlation_ref=arguments.get("correlation_ref"), override=bool(arguments.get("override", False)))
+            role=arguments.get("role") or _reservation.DEFAULT_ROLE,
+            correlation_ref=arguments.get("correlation_ref"),
+            interrupt_existing=bool(arguments.get("interrupt_existing", False)))
         return {"repo_id": self.repo_id, "reservation": row}
 
     def _reservation_touch(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:

@@ -27,6 +27,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from . import context_candidates, context_contract, contracts, db, handoff, maintain, outbox, sprint_detail
+from .context_contract import _stale_after_hours
 from .maintenance_capability import (
     MaintenanceCapabilityError,
     PostgresMaintenanceCapabilityStore,
@@ -266,7 +267,7 @@ def _derive_next_work_conflicts(
     conflicts: list[dict] = []
     stale = [row for row in active_reservations if row.get("stale")]
     if stale:
-        conflicts.append({"kind": "stale-reservation", "severity": "warning", "summary": f"{len(stale)} reservation(s) need review after four hours idle.", "reservation_ids": [row["id"] for row in stale], "item_ids": [row["work_item_id"] for row in stale]})
+        conflicts.append({"kind": "stale-reservation", "severity": "warning", "summary": f"{len(stale)} reservation(s) need review after {_stale_after_hours()} hours idle.", "reservation_ids": [row["id"] for row in stale], "item_ids": [row["work_item_id"] for row in stale]})
     if active_unreserved:
         conflicts.append({"kind": "unreserved-active-work", "severity": "warning", "summary": f"{len(active_unreserved)} active item(s) have no reservation.", "item_ids": [item["id"] for item in active_unreserved]})
     if waiting:
