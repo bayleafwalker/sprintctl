@@ -16,8 +16,8 @@ Top-level shape:
   "contract_version": "1",
   "sprint": {},
   "summary": {},
-  "active_claims": [],
-  "active_unclaimed_items": [],
+  "active_reservations": [],
+  "active_unreserved_items": [],
   "conflicts": [],
   "ready_items": [],
   "blocked_items": [],
@@ -30,10 +30,10 @@ Top-level shape:
 Field intent:
 
 - `sprint`: sprint identity and goal
-- `summary`: counts for total, done, active, pending, blocked, stale, ready, waiting-on-dependencies, active-claims, and active-unclaimed items
-- `active_claims`: proof-aware active claim state
-- `active_unclaimed_items`: active items with no live claim, usually indicating interrupted work that needs resume, handoff, or status triage
-- `conflicts`: claim, unclaimed-active-work, dependency, blocked-work, stale-work,
+- `summary`: counts for total, done, active, pending, blocked, stale, ready, waiting-on-dependencies, active-reservations, and active-unreserved items
+- `active_reservations`: visible active reservation state (no secrets)
+- `active_unreserved_items`: active items with no live reservation, usually indicating interrupted work that needs resume, reassignment, or status triage
+- `conflicts`: reservation, unreserved-active-work, dependency, blocked-work, stale-work,
   or reason-coded truth findings (overdue/all-done sprint and unlinked
   code-evidence drift) that should change operator behavior
 - `ready_items`: pending items with no unresolved blockers
@@ -46,7 +46,7 @@ Text output mirrors the same section order so human and agent paths stay aligned
 
 `maintain check --json` exposes the source diagnostics in `findings[]`. Each
 finding has a stable `reason_code`: `active-sprint-overdue`,
-`active-sprint-all-items-done`, `active-item-without-live-claim`, or
+`active-sprint-all-items-done`, `active-item-without-live-reservation`, or
 `code-evidence-without-item-link`. The check is read-only: these findings do
 not close sprints, transition items, or discard unlinked evidence. Context
 surfaces mirror them through `conflicts[]` without changing the frozen
@@ -74,8 +74,8 @@ Top-level shape:
   "summary": {},
   "ready_items": [],
   "dependency_waiting_items": [],
-  "active_claims": [],
-  "active_unclaimed_items": [],
+  "active_reservations": [],
+  "active_unreserved_items": [],
   "conflicts": [],
   "next_action": {},
   "recommended_commands": [],
@@ -88,11 +88,11 @@ Field intent:
 - `summary.pending_total`: `ready + waiting_on_dependencies`
 - `ready_items`: pending items with no unresolved blockers, each with `reason_code=ready-unblocked` and its `refs` array
 - `dependency_waiting_items`: pending items excluded from ready output due to unresolved blockers, each with `reason_code=waiting-on-dependencies`
-- `active_claims`: current active claim slice without claim secrets
-- `active_unclaimed_items`: active items with no live claim
-- `conflicts`: claim, unclaimed-active-work, and dependency conflicts derived from current sprint state
+- `active_reservations`: current active reservation slice without secrets
+- `active_unreserved_items`: active items with no live reservation
+- `conflicts`: reservation, unreserved-active-work, and dependency conflicts derived from current sprint state
 - `next_action`: one concise recommendation based on the same conflict/priority rules used by context surfaces
-- `recommended_commands`: ordered command bundle aligned with `next_action`; some entries intentionally use placeholders like `<token>` or `<name>` where proof-bearing values are required
+- `recommended_commands`: ordered command bundle aligned with `next_action`; some entries intentionally use placeholders like `<name>` where input is required
 - `recommended_command_bundle`: structured version of `recommended_commands` with ordered `steps`; each step includes `kind`, `command`, `placeholders`, and `is_executable`/`requires_input` flags for automation
 
 Command bundle schema:
@@ -100,23 +100,31 @@ Command bundle schema:
 ```json
 {
   "bundle_version": "1",
-  "next_action_kind": "start-ready-item",
+  "next_action_kind": "inspect-active-reservation",
   "steps": [
     {
       "step": 1,
-      "kind": "claim-start",
-      "command": "sprintctl claim start --item-id 123 --actor <name> --ttl 600 --json",
-      "placeholders": ["<name>"],
-      "requires_input": true,
-      "is_executable": false
+      "kind": "item-show",
+      "command": "sprintctl item show --id 1",
+      "placeholders": [],
+      "requires_input": false,
+      "is_executable": true
+    },
+    {
+      "step": 2,
+      "kind": "reservation-show",
+      "command": "sprintctl reservation show --id 3 --json",
+      "placeholders": [],
+      "requires_input": false,
+      "is_executable": true
     }
   ]
 }
 ```
 
 `recommended_command_bundle.steps[*].kind` currently uses:
-`claim-start`, `claim-resume`, `claim-heartbeat`, `claim-handoff`,
-`item-show`, `usage-context`, `next-work`, and `other`.
+`reservation-reserve`, `reservation-reassign`, `reservation-touch`,
+`reservation-show`, `item-show`, `usage-context`, `next-work`, and `other`.
 
 Compatibility note:
 
@@ -127,7 +135,7 @@ Compatibility note:
 `context-candidates` emits a bounded, deterministically ranked Tier-1
 context-candidate packet -- a small advisory list instead of the full
 backlog, for a consumer (e.g. actionq Tier-1 session start) that must not
-turn an inferred candidate into an unreviewed claim. See
+turn an inferred candidate into an unreviewed reservation. See
 `docs/ops-upgrade-plan.md` Tier 1 for the design rationale.
 
 Contract version: `1`
@@ -222,7 +230,7 @@ Top-level shape:
   "context": {},
   "next_work": {},
   "git_context": {},
-  "claim_recovery": {},
+  "reservation_status": {},
   "next_action": {},
   "recommended_sequence": [],
   "recommended_sequence_bundle": {}
@@ -234,7 +242,7 @@ Field intent:
 - `context`: embedded `usage --context --json` contract
 - `next_work`: embedded `next-work --json --explain` contract
 - `git_context`: current branch/SHA/worktree/dirty-files when in a git repo; otherwise `null`
-- `claim_recovery`: local token-recovery status and item `refs` for each active claim, including whether a sprintctl-managed recovery file exists, where it lives, and whether the current runtime/instance identity plausibly matches
+- `reservation_status`: active reservations for the current or matching identity, plus activity state
 - `next_action`: primary recommendation for resume flows
 - `recommended_sequence`: explicit follow-up command sequence
 - `recommended_sequence_bundle`: structured metadata for `recommended_sequence`, using the same step schema as `next_work.recommended_command_bundle`
@@ -249,7 +257,7 @@ Consistency rule:
 ## Backend Mode Expectations
 
 The read-contract surfaces in this document are backend-agnostic: switching
-between sqlite `local` mode and postgres `remote` mode must not change the JSON
+between sqlite `local` mode and postgres `served` mode must not change the JSON
 shape, contract versions, field names, or `next_action` semantics.
 
 Resume-specific backend rules:
@@ -259,17 +267,14 @@ Resume-specific backend rules:
 - backend selection happens before storage opens; callers should expect startup
   errors from mode mismatch or missing remote configuration before any contract
   payload is emitted
-- `claim_recovery` remains part of `session resume --json`, but local filesystem
-  recovery artifacts are only meaningful in sqlite `local` mode
-- remote mode must report claim state from postgres and must not imply that a
-  local recovery file exists or is required
-- `claim recover` is a local-mode recovery path; remote-mode operators should
-  resume with live claim state or an explicit claim token instead
+- `reservation_status` is part of `session resume --json` in all modes
+- remote mode reports reservation state from the shared authority and must not
+  imply that a local credential recovery file exists or is required
 
 Consumer guidance:
 
 - treat the contract surface as stable across backends
-- treat claim-token recovery details as backend-specific operational metadata
+- treat reservation handles as backend-specific operational metadata, not credentials
 - do not infer the active backend from missing recovery files alone
 
 ## `handoff --format json`
@@ -284,11 +289,12 @@ Top-level shape:
 {
   "bundle_type": "handoff",
   "bundle_version": "1",
+  "sprintctl_version": "...",
   "generated_at": "...",
   "generated_from": {},
   "sprint": {},
   "summary": {},
-  "active_claims": [],
+  "active_reservations": [],
   "conflicts": [],
   "work": {},
   "recent_decisions": [],
@@ -298,9 +304,9 @@ Top-level shape:
   "freshness": {},
   "evidence": {},
   "git_context": {},
+  "reservation_model": {},
   "resume_instructions": [],
-  "agent_shutdown_protocol": {},
-  "claim_identity_model": {}
+  "agent_shutdown_protocol": {}
 }
 ```
 
@@ -308,7 +314,7 @@ Behavioral rules:
 
 - one canonical bundle shape; no separate personas
 - text mode is a rendering of the same semantics, not a different contract
-- claim secrets are never included
+- no credentials or secrets are included
 - a `handoff-generated` event is recorded after successful bundle generation
   (in served mode the CLI writes or emits the fetched bundle first, then asks
   the tracker to append the event as the authenticated actor; if that second
@@ -347,16 +353,13 @@ Each recent decision entry includes:
 - `detail`
 - `tags`
 
-## Ownership Model
+## Reservation Model
 
-- proof = `claim_id + claim_token`
-- sprintctl may persist a local recovery copy of the token so `claim recover` can restore that proof after context loss
-- `claim handoff` transfers ownership
-- `handoff` transfers resumable context
-- `claim resume` finds claims by advisory identity when context is lost
-- `session resume --json` surfaces local recovery-file status without exposing the token itself
-- local recovery files are a sqlite `local` mode artifact; remote mode relies on
-  the shared claim state instead of a per-host token cache
+- reservations are advisory coordination signals; there is no ownership proof
+- `sprintctl reservation reassign` transfers the visible reservation to another session
+- `sprintctl handoff` transfers resumable context
+- `sprintctl reservation list --all` finds active reservations when context is lost
+- `session resume --json` surfaces reservation status without exposing any credential
 
 ## Design Constraints
 

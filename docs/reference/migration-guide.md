@@ -39,6 +39,10 @@ already-migrated database is a no-op for every version already applied.
 
 Current SQLite schema version: **13**.
 
+> Historical note: migrations 6 and 13 introduced `claim_token` and
+> `lease_epoch` for the legacy claim model. The v3 reservation model retired
+> those concepts; they remain in the table below as historical record only.
+
 ---
 
 ## Migration history
@@ -137,8 +141,9 @@ runner or distributed upgrade coordinator.
 ### Adding a column with a default
 
 Safe. Existing rows get the default; existing code that doesn't know about the
-new column continues to work. Example: migration 6 added `claim_token` with a
-`NULL` default — old claims become `legacy_ambiguous` and can be adopted.
+new column continues to work. Historical example: migration 6 added the legacy
+`claim_token` column with a `NULL` default; that column was retired by the v3
+reservation model and is preserved only for audit history.
 
 ### Adding a new table
 

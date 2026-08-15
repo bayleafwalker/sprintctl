@@ -14,7 +14,8 @@ that an actor had authority to ratify or publish it.
 2. Close the sprint explicitly and name the actor:
 
    ```bash
-   sprintctl sprint status --id <id> --status closed --actor <actor> --json
+   REV=$(sprintctl sprint show --id <id> --json | jq -r '.status_revision')
+   sprintctl sprint status --id <id> --status closed --actor <actor> --expected-revision "$REV" --json
    ```
 
    Sprintctl atomically commits the `active -> closed` transition and one local

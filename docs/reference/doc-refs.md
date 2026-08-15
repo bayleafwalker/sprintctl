@@ -122,11 +122,11 @@ surfaces render them:
 - `item show --id N` — full ref list; prints a nudge line when empty.
 - `next-work --explain` (text and `--json`) — refs per ready item, plus which
   ready items have none.
-- `claim create` / `claim start` — echo the claimed item's refs (text) and
-  include a `refs` array (`--json`), so the pointer lands in the claiming
-  agent's context at the moment work starts.
-- `session resume` — refs on every active-claim item in the claim-recovery
-  block.
+- `reservation reserve` — echoes the reserved item's refs (text) and includes
+  a `refs` array (`--json`), so the pointer lands in the reserving agent's
+  context at the moment work starts.
+- `session resume` — refs on every active-reservation item in the reservation
+  status block.
 
 ## Reading a doc ref as an agent
 
