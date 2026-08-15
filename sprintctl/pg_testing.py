@@ -33,7 +33,12 @@ REPO_TABLES = (
     "ingest_repo_cursor",
     "dep",
     "ref",
-    "claim",
+    # reservation cascades from work_item, but claim_history does not:
+    # CREATE TABLE ... LIKE copies checks and indexes, never foreign keys.
+    # Both are listed explicitly so scope cleanup does not depend on which
+    # of them happens to carry a cascade.
+    "reservation",
+    "claim_history",
     "event",
     "work_item",
     "track",

@@ -65,7 +65,7 @@ SPRINT_KINDS = ("active_sprint", "backlog", "archive")
 
 # Single source of truth for the local schema version; init_db() must end by
 # migrating to exactly this version, and doctor compares databases against it.
-CURRENT_SCHEMA_VERSION = 19
+CURRENT_SCHEMA_VERSION = 20
 RESERVATION_ROLES = _reservation.ROLES
 ReservationConflict = _reservation.ReservationConflict
 
@@ -413,7 +413,20 @@ def _migration_3(conn: sqlite3.Connection) -> None:
         )
 
 
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone() is not None
+
+
 def _add_column_if_missing(conn: sqlite3.Connection, table_name: str, column_name: str, definition: str) -> None:
+    # A dropped table has no columns to add. Migration 20 removes ``claim``,
+    # so replaying an earlier additive migration over a database that already
+    # passed the cutover must be a no-op rather than an error -- the same
+    # tolerance the surrounding IF NOT EXISTS statements already have.
+    if not _table_exists(conn, table_name):
+        return
     if not _column_exists(conn, table_name, column_name):
         conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {definition}")
 
@@ -680,7 +693,12 @@ def _migration_19(conn: sqlite3.Connection) -> None:
     The live reservation ledger is authoritative from v0.3 onward.  This
     archive is intentionally read-only historical evidence: no runtime path
     may use it for ownership, proof, recovery, or scheduling.
+
+    Migration 20 drops ``claim``, so replaying this step over a database that
+    already passed the cutover has nothing to copy and must not error.
     """
+    if not _table_exists(conn, "claim"):
+        return
     _execute_statements(conn, """
         CREATE TABLE IF NOT EXISTS claim_history AS SELECT * FROM claim WHERE 0;
         CREATE UNIQUE INDEX IF NOT EXISTS idx_claim_history_claim_id
@@ -690,6 +708,38 @@ def _migration_19(conn: sqlite3.Connection) -> None:
             SELECT 1 FROM claim_history h WHERE h.id = claim.id
         );
     """)
+
+
+def _migration_20(conn: sqlite3.Connection) -> None:
+    """Drop the live claim relation; ``claim_history`` is the only survivor.
+
+    Migration 19 archived every claim row, but a deployment could have
+    written more between the two upgrades, so the archive step is repeated
+    before the drop rather than assumed complete. The insert is keyed on id
+    so re-running it cannot duplicate an already-archived row.
+
+    Dropping the table removes its indexes with it. Nothing references
+    ``claim`` by foreign key, and no runtime path has read it since the
+    claim-core cutover.
+
+    ``claim_token`` is nulled out across the archive. The tokens are already
+    inert -- no code path can present one -- but the archive exists to record
+    who held what and when, not to retain proof material, and a database file
+    must not carry secret-shaped data after the system that used it is gone.
+    Every other column is preserved verbatim.
+    """
+    if _table_exists(conn, "claim"):
+        _execute_statements(conn, """
+            INSERT INTO claim_history SELECT * FROM claim
+            WHERE NOT EXISTS (
+                SELECT 1 FROM claim_history h WHERE h.id = claim.id
+            );
+            DROP TABLE claim;
+        """)
+    _execute_statements(
+        conn,
+        "UPDATE claim_history SET claim_token = NULL WHERE claim_token IS NOT NULL;",
+    )
 
 
 def _run_migration(
@@ -740,7 +790,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     _run_migration(conn, 16, _migration_16)
     _run_migration(conn, 17, _migration_17)
     _run_migration(conn, 18, _migration_18)
-    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_19)
+    _run_migration(conn, 19, _migration_19)
+    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_20)
 
 
 # --- Sprint ---
@@ -1752,7 +1803,7 @@ def backlog_seed_from_candidates(
 # --- Database maintenance ---
 
 _RECOVERY_TABLE_ORDER = (
-    "sprint", "track", "work_item", "event", "claim", "reservation",
+    "sprint", "track", "work_item", "event", "reservation",
     "claim_history", "ref", "dep",
 )
 
@@ -1785,10 +1836,11 @@ def write_recovery_snapshot(
     claim-lifecycle validation by design: this restores a prior authoritative
     state rather than replaying business operations.
 
-    Ownership is not restored: claim_token is stripped from every claim row
+    Ownership is not restored. Active reservations are recorded as
+    'interrupted', and in the archive any surviving claim_token is stripped
     and active claims are closed as 'expired'. A recovered database is a new
-    authority instance — pre-recovery credentials must not work against it,
-    and the file must never carry usable secrets.
+    authority instance — work must be re-reserved against it, and the file
+    must never carry usable secrets.
 
     Every snapshot row must match the local table's column set exactly
     (modulo the Postgres-only repo_id); any drift raises
@@ -1802,6 +1854,7 @@ def write_recovery_snapshot(
         _contracts.require_generic_event_write_allowed("recovery.completed")
     counts: dict[str, int] = {}
     claims_closed = 0
+    reservations_interrupted = 0
     try:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("PRAGMA foreign_keys = OFF")
@@ -1823,13 +1876,26 @@ def write_recovery_snapshot(
                     value = row[col]
                     if table == "event" and col == "payload" and not isinstance(value, str):
                         value = json.dumps(value)
-                    elif table in {"claim", "claim_history"} and col == "exclusive":
+                    elif table == "claim_history" and col == "exclusive":
                         value = 1 if value else 0
-                    elif table == "claim" and col == "claim_token":
+                    elif table == "claim_history" and col == "claim_token":
+                        # Defence in depth. Migration 20 nulls these at rest,
+                        # but a snapshot can come from a remote that has not
+                        # reached migration 10 yet, and a recovered file must
+                        # never carry proof material either way.
                         value = None
-                    elif table == "claim" and col == "status" and value == "active":
+                    elif table == "claim_history" and col == "status" and value == "active":
                         value = "expired"
                         claims_closed += 1
+                    elif table == "reservation" and col == "state" and value == "active":
+                        # Ownership never survives recovery. The claim path
+                        # closed active claims for this reason and the rule
+                        # was not ported when reservations replaced them: a
+                        # recovered database is a new authority instance, so a
+                        # session that held work against the old one must not
+                        # appear to still hold it here.
+                        value = "interrupted"
+                        reservations_interrupted += 1
                     values.append(value)
                 placeholders = ",".join("?" for _ in insert_cols)
                 conn.execute(
@@ -1842,6 +1908,7 @@ def write_recovery_snapshot(
             payload = dict(provenance)
             payload["source_row_counts"] = counts
             payload["claims_closed"] = claims_closed
+            payload["reservations_interrupted"] = reservations_interrupted
             for sprint_row in snapshot.get("sprint", []):
                 _insert_event(
                     conn,
@@ -1886,7 +1953,7 @@ def check_integrity(conn: sqlite3.Connection) -> dict:
     ]
     table_counts = {}
     for table in (
-        "sprint", "track", "work_item", "event", "claim", "reservation",
+        "sprint", "track", "work_item", "event", "reservation",
         "claim_history", "ref", "dep",
     ):
         table_counts[table] = conn.execute(

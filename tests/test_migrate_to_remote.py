@@ -62,7 +62,7 @@ class TestExportNdjson:
         conn, _ = sqlite_db
         buf = io.StringIO()
         counts = export_ndjson(conn, "myrepo", buf)
-        for table in ("sprint", "track", "work_item", "event", "claim", "reservation", "claim_history", "ref", "dep"):
+        for table in ("sprint", "track", "work_item", "event", "reservation", "claim_history", "ref", "dep"):
             assert counts[table] == 0
 
     def test_populated_db_exports_expected_counts(self, populated_sqlite):
@@ -74,7 +74,7 @@ class TestExportNdjson:
         assert counts["work_item"] == 1
         assert counts["event"] == 1
         assert counts["ref"] == 1
-        assert counts["claim"] == 0
+        assert counts["claim_history"] == 0
         assert counts["reservation"] == 0
         assert counts["claim_history"] == 0
         assert counts["dep"] == 0

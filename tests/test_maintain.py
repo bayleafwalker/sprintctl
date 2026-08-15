@@ -472,9 +472,9 @@ class TestArchiveAndReservationSchema:
         }
         assert {"reservation", "claim_history"} <= tables
 
-    def test_schema_version_is_19(self, conn):
+    def test_schema_version_matches_the_migration_ledger(self, conn):
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 19
+        assert version == db.CURRENT_SCHEMA_VERSION
 
     def test_claim_history_retains_legacy_claim_shape(self, conn):
         columns = {

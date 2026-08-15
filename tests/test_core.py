@@ -865,7 +865,7 @@ class TestEdgeCases:
     def test_init_db_idempotent(self, conn):
         db.init_db(conn)  # second call
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 19
+        assert version == db.CURRENT_SCHEMA_VERSION
 
     @pytest.mark.parametrize("_history", range(32))
     def test_init_db_handles_concurrent_version_lag_after_upgrade(
@@ -921,9 +921,8 @@ class TestEdgeCases:
         finally:
             conn.close()
 
-        assert version == 19
+        assert version == db.CURRENT_SCHEMA_VERSION
         assert tables == {
-            "claim",
             "claim_history",
             "dep",
             "event",
@@ -941,7 +940,6 @@ class TestEdgeCases:
         }
         assert indexes == {
             "idx_claim_history_claim_id",
-            "idx_claim_token",
             "idx_event_sprint_type_ts",
             "idx_reservation_active_execute",
             "idx_reservation_item_state",
@@ -951,23 +949,82 @@ class TestEdgeCases:
         assert foreign_keys == 1
         assert journal_mode == "wal"
 
-    def test_claim_archive_retries_only_missing_historic_rows(self, conn, active_sprint):
-        track_id = db.get_or_create_track(conn, active_sprint["id"], "archive")
-        first_item = db.create_work_item(conn, active_sprint["id"], track_id, "First")
-        second_item = db.create_work_item(conn, active_sprint["id"], track_id, "Second")
-        first_claim = seed_legacy_claim(conn, first_item, "first")
-        second_claim = seed_legacy_claim(conn, second_item, "second")
-        conn.execute("INSERT INTO claim_history SELECT * FROM claim WHERE id = ?", (first_claim,))
-        conn.commit()
+    @staticmethod
+    def _database_at_schema_19(path):
+        """Build a database stopped one migration short of the claim cutover.
 
-        db._migration_19(conn)
-        db._migration_19(conn)
+        Mirrors ``init_db`` exactly, minus migration 20, so an upgrade across
+        the cutover can be exercised against a real pre-cutover schema rather
+        than a hand-built stand-in.
+        """
+        conn = db.get_connection(path)
+        foreign_keys_off = {5, 14, 15}
+        for version in range(1, 20):
+            db._run_migration(
+                conn,
+                version,
+                getattr(db, f"_migration_{version}"),
+                foreign_keys_off=version in foreign_keys_off,
+            )
+        return conn
 
-        archived = conn.execute(
-            "SELECT id FROM claim_history WHERE id IN (?, ?) ORDER BY id",
-            (first_claim, second_claim),
-        ).fetchall()
-        assert [row["id"] for row in archived] == [first_claim, second_claim]
+    def test_upgrade_across_the_cutover_archives_then_drops_the_claim_relation(
+        self, tmp_path
+    ):
+        conn = self._database_at_schema_19(tmp_path / "cutover.db")
+        try:
+            assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 19
+            sid = db.create_sprint(conn, "Cutover")
+            track_id = db.get_or_create_track(conn, sid, "archive")
+            first_item = db.create_work_item(conn, sid, track_id, "First")
+            second_item = db.create_work_item(conn, sid, track_id, "Second")
+            # One row already archived by migration 19, one written after it:
+            # the cutover must pick up the straggler without duplicating the
+            # row that is already there.
+            conn.execute(
+                "INSERT INTO claim (work_item_id, agent, expires_at, claim_token, status)"
+                " VALUES (?, 'first', '2999-01-01T00:00:00Z', 'token-first', 'active')",
+                (first_item,),
+            )
+            conn.commit()
+            db._migration_19(conn)
+            conn.execute(
+                "INSERT INTO claim (work_item_id, agent, expires_at, claim_token, status)"
+                " VALUES (?, 'second', '2999-01-01T00:00:00Z', 'token-second', 'active')",
+                (second_item,),
+            )
+            conn.commit()
+
+            db.init_db(conn)
+
+            assert (
+                conn.execute("SELECT version FROM schema_version").fetchone()[0]
+                == db.CURRENT_SCHEMA_VERSION
+            )
+            assert conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'claim'"
+            ).fetchone() is None
+            archived = conn.execute(
+                "SELECT agent, claim_token, status FROM claim_history ORDER BY id"
+            ).fetchall()
+            assert [row["agent"] for row in archived] == ["first", "second"]
+            # Every surviving token is redacted; the rest of the row is kept.
+            assert [row["claim_token"] for row in archived] == [None, None]
+            assert [row["status"] for row in archived] == ["active", "active"]
+        finally:
+            conn.close()
+
+    def test_upgrade_across_the_cutover_is_idempotent(self, tmp_path):
+        conn = self._database_at_schema_19(tmp_path / "cutover-twice.db")
+        try:
+            db.init_db(conn)
+            db.init_db(conn)
+            assert (
+                conn.execute("SELECT version FROM schema_version").fetchone()[0]
+                == db.CURRENT_SCHEMA_VERSION
+            )
+        finally:
+            conn.close()
 
     class _StubConnection:
         def __init__(
@@ -1215,9 +1272,10 @@ class TestBlockedRevival:
         with pytest.raises(db.InvalidTransition):
             db.set_work_item_status(conn, iid, "done")
 
-    def test_active_legacy_claim_does_not_override_status_cas(self, conn, active_sprint):
+    def test_active_reservation_does_not_override_status_cas(self, conn, active_sprint):
+        """A reservation is advisory: it never gates an item's status change."""
         iid = self._add_active_item(None, conn, active_sprint["id"])
-        seed_legacy_claim(conn, iid, "legacy-worker")
+        db.reserve(conn, iid, actor="worker", session_id="cas-session")
         basis = db.item_status_revision(db.get_work_item(conn, iid))
         db.set_work_item_status(conn, iid, "done", expected_revision=basis)
         assert db.get_work_item(conn, iid)["status"] == "done"
@@ -1271,8 +1329,6 @@ class TestExportImport:
         sid, iid = self._build_sprint(runner, conn, db_path)
         db.reserve(conn, iid, actor="alice", session_id="export-session")
         claim_id = seed_legacy_claim(conn, iid, "legacy-alice")
-        db._migration_19(conn)
-        conn.commit()
         out = str(tmp_path / "export.json")
         exported = runner.invoke(cli, ["export", "--sprint-id", str(sid), "--output", out])
         assert exported.exit_code == 0, exported.output

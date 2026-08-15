@@ -151,13 +151,16 @@ def db_recover_from_remote(output_path: str, run_verify: bool) -> None:
             sys.exit(1)
         raise write_error
 
-    claims_closed = sum(1 for claim in snapshot.get("claim", []) if claim.get("status") == "active")
+    reservations_interrupted = sum(
+        1 for row in snapshot.get("reservation", []) if row.get("state") == "active"
+    )
     click.echo(f"Recovered repo '{config.repo_id}' to {dest}")
     for table, count in counts.items():
         click.echo(f"  {table}: {count}")
     click.echo(
-        f"  active claims closed: {claims_closed} (claim tokens are not carried over; "
-        "work must be reclaimed against the recovered authority)"
+        f"  active reservations interrupted: {reservations_interrupted} "
+        "(a recovered database is a new authority instance; work must be "
+        "re-reserved against it)"
     )
 
     if not run_verify:
@@ -173,7 +176,7 @@ def db_recover_from_remote(output_path: str, run_verify: bool) -> None:
     click.echo("Parity report (Postgres source vs recovered SQLite):")
     parity_ok = True
     for table in (
-        "sprint", "track", "work_item", "claim", "reservation",
+        "sprint", "track", "work_item", "reservation",
         "claim_history", "ref", "dep",
     ):
         source_count = len(snapshot.get(table, []))

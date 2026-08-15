@@ -1187,7 +1187,7 @@ def _apply_schema_version_2(cur: Any) -> None:
     # OVERRIDING SYSTEM VALUE (which bypasses the sequence). Without this,
     # the next nextval call would return a value that conflicts with
     # already-imported data.
-    _advance_identity_sequences(cur, ("sprint", "track", "work_item", "event", "claim", "ref", "dep"))
+    _advance_identity_sequences(cur, ("sprint", "track", "work_item", "event", "ref", "dep"))
 
 
 def _apply_schema_version_3(cur: Any) -> None:
@@ -1483,6 +1483,46 @@ def _apply_schema_version_9(cur: Any) -> None:
     )
 
 
+def _apply_schema_version_10(cur: Any) -> None:
+    """Drop the live claim relation; ``claim_history`` is the only survivor.
+
+    Migration 9 archived every claim row, but a deployment could have written
+    more between the two upgrades, so the archive step is repeated here rather
+    than assumed complete. The insert is keyed on (repo_id, id), so re-running
+    it cannot duplicate an already-archived row.
+
+    ``to_regclass`` guards the copy: a database that already dropped the
+    relation must still reach the drop instead of erroring on a missing table.
+    Dropping the table removes its indexes with it, and nothing references
+    ``claim`` by foreign key.
+
+    ``claim_token`` is nulled out across the archive. The tokens are already
+    inert -- no code path can present one -- but the archive exists to record
+    who held what and when, not to retain proof material, and a database must
+    not carry secret-shaped data after the system that used it is gone. Every
+    other column is preserved verbatim.
+    """
+    cur.execute(
+        """
+        DO $$
+        BEGIN
+            IF to_regclass('claim') IS NOT NULL THEN
+                INSERT INTO claim_history
+                SELECT c.* FROM claim c
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM claim_history h
+                    WHERE h.repo_id = c.repo_id AND h.id = c.id
+                );
+            END IF;
+        END $$;
+        """
+    )
+    cur.execute(
+        "UPDATE claim_history SET claim_token = NULL WHERE claim_token IS NOT NULL"
+    )
+    cur.execute("DROP TABLE IF EXISTS claim")
+
+
 def compatibility_handshake(store: PgStore) -> dict[str, Any]:
     """Return the public read-only work API/schema handshake."""
     return _pg_migrations.compatibility_handshake(store)
@@ -1534,7 +1574,7 @@ _norm = _rows.normalize_row
 
 
 _RECOVERY_TABLES = (
-    "sprint", "track", "work_item", "event", "claim", "reservation",
+    "sprint", "track", "work_item", "event", "reservation",
     "claim_history", "ref", "dep",
 )
 
@@ -2541,7 +2581,7 @@ def backlog_seed_from_candidates(
 # ---------------------------------------------------------------------------
 
 _EXPORT_TABLES = (
-    "sprint", "track", "work_item", "event", "claim", "reservation",
+    "sprint", "track", "work_item", "event", "reservation",
     "claim_history", "ref", "dep",
 )
 
@@ -2579,7 +2619,6 @@ def export_ndjson(sqlite_conn: Any, repo_id: str, out: Any) -> dict[str, int]:
         "sprint": "SELECT * FROM sprint ORDER BY id ASC",
         "track": "SELECT * FROM track ORDER BY id ASC",
         "work_item": "SELECT * FROM work_item ORDER BY id ASC",
-        "claim": "SELECT * FROM claim ORDER BY id ASC",
         "reservation": "SELECT * FROM reservation ORDER BY id ASC",
         "claim_history": "SELECT * FROM claim_history ORDER BY id ASC",
         "ref": "SELECT * FROM ref ORDER BY id ASC",
@@ -2641,7 +2680,6 @@ _IMPORT_FK_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "track":     [("sprint_id", "sprint")],
     "work_item": [("sprint_id", "sprint"), ("track_id", "track")],
     "event":     [("sprint_id", "sprint"), ("work_item_id", "work_item")],
-    "claim":         [("work_item_id", "work_item")],
     "reservation":   [("work_item_id", "work_item")],
     "claim_history": [("work_item_id", "work_item")],
     "ref":       [("work_item_id", "work_item")],
@@ -2792,7 +2830,6 @@ def _import_row(
 
     # SQLite stores booleans as integers; coerce to Python bool for psycopg.
     _BOOL_COLUMNS: dict[str, set[str]] = {
-        "claim": {"exclusive"},
         "claim_history": {"exclusive"},
     }
     for col in _BOOL_COLUMNS.get(table, set()):
@@ -2847,7 +2884,7 @@ def _import_row(
 # Database maintenance
 # ---------------------------------------------------------------------------
 
-_MAINTENANCE_TABLES = ("sprint", "track", "work_item", "event", "claim", "ref", "dep")
+_MAINTENANCE_TABLES = ("sprint", "track", "work_item", "event", "claim_history", "ref", "dep")
 
 
 def vacuum_database(store: PgStore) -> dict:
@@ -2888,8 +2925,8 @@ def check_integrity(store: PgStore) -> dict:
             " LEFT JOIN track t ON wi.repo_id = t.repo_id AND wi.track_id = t.id"
             " WHERE wi.repo_id = %s AND t.id IS NULL"
         ),
-        "claim->work_item": (
-            "SELECT COUNT(*) AS n FROM claim c"
+        "claim_history->work_item": (
+            "SELECT COUNT(*) AS n FROM claim_history c"
             " LEFT JOIN work_item wi ON c.repo_id = wi.repo_id AND c.work_item_id = wi.id"
             " WHERE c.repo_id = %s AND wi.id IS NULL"
         ),

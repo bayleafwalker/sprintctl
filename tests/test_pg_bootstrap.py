@@ -7,6 +7,19 @@ import pytest
 from sprintctl import pg, pg_migrations
 
 
+CURRENT = pg_migrations.CURRENT_SCHEMA_VERSION
+
+
+def _migrations_from(first: int) -> list[int]:
+    """The migration versions a store at ``first - 1`` still has to apply.
+
+    Derived from the ledger rather than written out, so adding a migration
+    updates these expectations instead of silently invalidating them.
+    """
+
+    return list(range(first, CURRENT + 1))
+
+
 class _SchemaCursor:
     def __init__(self, conn):
         self._conn = conn
@@ -152,7 +165,7 @@ def test_runtime_compatibility_probe_is_read_only_and_publishes_work_api():
     assert handshake == {
         "schema_version": "sprintctl-work-compatibility/v1",
         "work_api_version": "sprintctl-work/v1",
-        "remote_schema": {"actual": 6, "minimum": 5, "maximum": 9},
+        "remote_schema": {"actual": 6, "minimum": 5, "maximum": pg_migrations.CURRENT_SCHEMA_VERSION},
         "compatible": True,
         "reason": None,
         "capabilities": {
@@ -222,7 +235,7 @@ def test_schema5_bridge_rejects_wrong_or_mutated_trigger_function(kwargs):
         (None, "schema-version-table-missing"),
         (1, "schema-too-old"),
         (2, "schema-too-old"),
-        (10, "schema-too-new"),
+        (pg_migrations.CURRENT_SCHEMA_VERSION + 1, "schema-too-new"),
     ],
 )
 def test_runtime_startup_fails_closed_for_missing_old_and_new_schema(version, reason):
@@ -260,13 +273,14 @@ def test_migration_serializes_and_advances_legacy_schema_once():
     assert ("UPDATE schema_version SET version = %s", (7,)) in conn.calls
     assert ("UPDATE schema_version SET version = %s", (8,)) in conn.calls
     assert ("UPDATE schema_version SET version = %s", (9,)) in conn.calls
-    assert conn.version == 9
+    assert ("UPDATE schema_version SET version = %s", (10,)) in conn.calls
+    assert conn.version == CURRENT
     assert conn.commits == 1
     assert conn.rollbacks == 1  # release the post-migration read transaction
     assert result["from_version"] == 1
-    assert result["to_version"] == 9
-    assert result["applied_versions"] == [2, 3, 4, 5, 6, 7, 8, 9]
-    assert store.remote_schema_version == 9
+    assert result["to_version"] == CURRENT
+    assert result["applied_versions"] == _migrations_from(2)
+    assert store.remote_schema_version == CURRENT
 
 
 def test_migration_bootstraps_a_missing_schema_before_advancing():
@@ -276,19 +290,19 @@ def test_migration_bootstraps_a_missing_schema_before_advancing():
 
     assert sum(query == pg.PG_DDL for query, _ in conn.calls) == 2
     assert result["from_version"] is None
-    assert result["applied_versions"] == [2, 3, 4, 5, 6, 7, 8, 9]
-    assert conn.version == 9
+    assert result["applied_versions"] == _migrations_from(2)
+    assert conn.version == CURRENT
 
 
 def test_migration_is_idempotent_at_current_schema():
-    store, conn = _store(9)
+    store, conn = _store(CURRENT)
 
     first = pg.migrate_schema(store)
     second = pg.migrate_schema(store)
 
     assert first["applied_versions"] == []
     assert second["applied_versions"] == []
-    assert store.remote_schema_version == 9
+    assert store.remote_schema_version == CURRENT
     assert not any(query == pg.PG_DDL for query, _ in conn.calls)
     assert conn.commits == 2
 
@@ -296,7 +310,7 @@ def test_migration_is_idempotent_at_current_schema():
 def test_migration_marks_only_exact_legacy_schema6_layout():
     store, conn = _store(6, maintenance_relations=3, maintenance_triggers=2)
     result = pg.migrate_schema(store)
-    assert result["applied_versions"] == [7, 8, 9]
+    assert result["applied_versions"] == _migrations_from(7)
     assert conn.maintenance_relations == 4
     assert conn.marker_version == 1
     assert result["compatibility"]["compatible"] is True

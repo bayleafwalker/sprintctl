@@ -71,20 +71,31 @@ def seed_legacy_claim(
     claim_token: str | None = None,
     status: str = "active",
 ) -> int:
-    """Insert a legacy ``claim`` row directly and return its id.
+    """Insert a legacy claim row into the archive and return its id.
 
-    The credential-bearing claim runtime is retired; the live ``claim``
-    relation survives only until the schema cutover removes it.  Tests that
-    still need archive, export, or migration evidence seed rows through this
-    helper instead of a public API that no longer exists.
+    Both the credential-bearing claim runtime and the live ``claim`` relation
+    are retired; ``claim_history`` is the only survivor. Tests that still need
+    archive or export evidence seed rows through this helper instead of a
+    public API that no longer exists.
+
+    Tests that need a *live* pre-cutover claim table -- migration evidence --
+    must build a database at schema 19 instead; see
+    ``tests/test_core.py::TestEdgeCases``.
     """
-    cur = conn.execute(
+    # claim_history was created with CREATE TABLE ... AS SELECT, so its id
+    # column carries no autoincrement and lastrowid would report the rowid
+    # instead. Assign the id explicitly, mirroring what the archive migration
+    # copies over from the live relation.
+    claim_id = int(
+        conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM claim_history").fetchone()[0]
+    )
+    conn.execute(
         """
-        INSERT INTO claim (work_item_id, agent, claim_type, exclusive,
-                           expires_at, claim_token, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO claim_history (id, work_item_id, agent, claim_type, exclusive,
+                                   expires_at, claim_token, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (work_item_id, agent, claim_type, exclusive, expires_at, claim_token, status),
+        (claim_id, work_item_id, agent, claim_type, exclusive, expires_at, claim_token, status),
     )
     conn.commit()
-    return int(cur.lastrowid)
+    return claim_id

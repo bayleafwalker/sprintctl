@@ -29,13 +29,13 @@ class TestRecoverFromRemote:
                         work_item_id=work_item_id,
                         payload={"summary": "recovery source event"})
         pg.reserve(store, work_item_id, actor="ag", session_id="session-recovery")
-        # Archive-only: the claim relation still exists and
-        # write_recovery_snapshot still strips ownership out of it, but no
-        # API mints one any more, so the row is seeded directly. Remove this
-        # with the relation itself.
+        # Archive-only. The live claim relation is gone as of migration 10;
+        # claim_history survives as read-only evidence, and
+        # write_recovery_snapshot still strips ownership out of it, so the
+        # row is seeded directly.
         with store.conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO claim (repo_id, work_item_id, agent, exclusive, "
+                "INSERT INTO claim_history (repo_id, work_item_id, agent, exclusive, "
                 "expires_at, claim_token, status) "
                 "VALUES (%s, %s, 'ag', true, now() + interval '300 seconds', "
                 "'legacy-token', 'active')",
@@ -50,7 +50,7 @@ class TestRecoverFromRemote:
         assert any(row["id"] == sprint_id for row in snapshot["sprint"])
         assert any(row["id"] == work_item_id for row in snapshot["work_item"])
         assert snapshot["reservation"] and snapshot["ref"] and snapshot["dep"]
-        assert snapshot["claim"]
+        assert snapshot["claim_history"]
 
         dest = tmp_path / "recovery.db"
         conn = db.get_connection(dest)
@@ -77,15 +77,18 @@ class TestRecoverFromRemote:
                 (work_item_id,),
             ).fetchone()
             assert reservation_row["actor"] == "ag"
-            assert reservation_row["state"] == "active"
+            # Ownership never survives recovery: the row is kept for audit,
+            # but a recovered database is a new authority instance and must
+            # not read as still held by the pre-recovery session.
+            assert reservation_row["state"] == "interrupted"
 
             claim_row = conn.execute(
-                "SELECT exclusive, status, claim_token FROM claim WHERE work_item_id = ?",
+                "SELECT exclusive, status, claim_token FROM claim_history WHERE work_item_id = ?",
                 (work_item_id,),
             ).fetchone()
             assert claim_row["exclusive"] == 1
-            # ownership is never restored: the live pg claim comes back closed,
-            # with its bearer token stripped
+            # ownership is never restored: an archived claim comes back
+            # closed, with its bearer token stripped
             assert claim_row["status"] == "expired"
             assert claim_row["claim_token"] is None
 
@@ -160,7 +163,7 @@ class TestRemoteBackfill:
         assert counts["work_item"] == 1
         assert counts["ref"] == 1
         assert counts["event"] == 1
-        assert counts["claim"] == 0
+        assert counts["claim_history"] == 0
         assert counts["dep"] == 0
 
         records = pg.export_from_postgres(store.conn, repo_id)

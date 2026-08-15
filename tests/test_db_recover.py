@@ -64,7 +64,7 @@ def _snapshot():
                 "created_at": "2026-03-01T00:00:00Z",
             }
         ],
-        "claim": [
+        "claim_history": [
             {
                 "id": 501,
                 "work_item_id": 1219,
@@ -85,24 +85,7 @@ def _snapshot():
                 "pid": None,
                 "status": "active",
                 "lease_epoch": 1,
-            }
-        ],
-        "reservation": [
-            {
-                "id": 502,
-                "work_item_id": 1219,
-                "session_id": "recovery-session",
-                "actor": "tester",
-                "role": "execute",
-                "state": "active",
-                "created_at": "2026-03-01T00:00:00Z",
-                "last_activity_at": "2026-03-01T00:00:00Z",
-                "released_at": None,
-                "interruption_reason": None,
-                "correlation_ref": "actionq:recovery",
-            }
-        ],
-        "claim_history": [
+            },
             {
                 "id": 503,
                 "work_item_id": 1219,
@@ -123,6 +106,21 @@ def _snapshot():
                 "pid": None,
                 "status": "expired",
                 "lease_epoch": 1,
+            },
+        ],
+        "reservation": [
+            {
+                "id": 502,
+                "work_item_id": 1219,
+                "session_id": "recovery-session",
+                "actor": "tester",
+                "role": "execute",
+                "state": "active",
+                "created_at": "2026-03-01T00:00:00Z",
+                "last_activity_at": "2026-03-01T00:00:00Z",
+                "released_at": None,
+                "interruption_reason": None,
+                "correlation_ref": "actionq:recovery",
             }
         ],
         "ref": [
@@ -147,9 +145,8 @@ class TestWriteRecoverySnapshot:
             "track": 1,
             "work_item": 1,
             "event": 1,
-            "claim": 1,
+            "claim_history": 2,
             "reservation": 1,
-            "claim_history": 1,
             "ref": 1,
             "dep": 0,
         }
@@ -160,13 +157,12 @@ class TestWriteRecoverySnapshot:
         db.write_recovery_snapshot(conn, _snapshot())
         report = db.check_integrity(conn)
         assert report["ok"] is True
-        assert report["table_counts"]["claim"] == 1
+        assert report["table_counts"]["claim_history"] == 2
         assert report["table_counts"]["reservation"] == 1
-        assert report["table_counts"]["claim_history"] == 1
 
     def test_boolean_and_json_coercion(self, conn):
         db.write_recovery_snapshot(conn, _snapshot())
-        claim = conn.execute("SELECT exclusive FROM claim WHERE id = 501").fetchone()
+        claim = conn.execute("SELECT exclusive FROM claim_history WHERE id = 501").fetchone()
         assert claim["exclusive"] == 1
         event = conn.execute("SELECT payload FROM event WHERE id = 9001").fetchone()
         assert json.loads(event["payload"])["summary"] == "restored from remote"
@@ -187,32 +183,44 @@ class TestWriteRecoverySnapshot:
 
 
 class TestOwnershipInvalidation:
-    def test_active_claim_is_closed_and_token_stripped(self, conn):
+    def test_active_archived_claim_is_closed_and_token_stripped(self, conn):
         db.write_recovery_snapshot(conn, _snapshot())
         claim = conn.execute(
-            "SELECT status, claim_token FROM claim WHERE id = 501"
+            "SELECT status, claim_token FROM claim_history WHERE id = 501"
         ).fetchone()
         assert claim["status"] == "expired"
         assert claim["claim_token"] is None
 
-    def test_expired_claim_keeps_status_but_loses_token(self, conn):
+    def test_expired_archived_claim_keeps_status_but_loses_token(self, conn):
         snapshot = _snapshot()
-        snapshot["claim"][0]["status"] = "expired"
+        snapshot["claim_history"][0]["status"] = "expired"
         db.write_recovery_snapshot(conn, snapshot)
         claim = conn.execute(
-            "SELECT status, claim_token FROM claim WHERE id = 501"
+            "SELECT status, claim_token FROM claim_history WHERE id = 501"
         ).fetchone()
         assert claim["status"] == "expired"
         assert claim["claim_token"] is None
+
+    def test_active_reservation_is_interrupted(self, conn):
+        """A recovered database is a new authority instance.
+
+        Ownership never survives it: the reservation row is kept for audit
+        but must not read as still held by the pre-recovery session.
+        """
+        db.write_recovery_snapshot(conn, _snapshot())
+        row = conn.execute(
+            "SELECT state FROM reservation WHERE id = 502"
+        ).fetchone()
+        assert row["state"] == "interrupted"
 
 
 class TestSchemaMismatch:
     def test_missing_column_fails_closed(self, conn):
         snapshot = _snapshot()
-        del snapshot["claim"][0]["lease_epoch"]
+        del snapshot["claim_history"][0]["lease_epoch"]
         with pytest.raises(db.RecoverySchemaMismatch) as exc:
             db.write_recovery_snapshot(conn, snapshot)
-        assert exc.value.table == "claim"
+        assert exc.value.table == "claim_history"
         assert exc.value.missing == ["lease_epoch"]
         assert exc.value.unexpected == []
 
@@ -251,7 +259,7 @@ class TestProvenance:
         assert rows[0]["sprint_id"] == 407
         payload = json.loads(rows[0]["payload"])
         assert payload["source_repo_id"] == "sprintctl"
-        assert payload["source_row_counts"]["claim"] == 1
+        assert payload["source_row_counts"]["claim_history"] == 2
         assert payload["claims_closed"] == 1
 
     def test_no_provenance_means_no_synthetic_events(self, conn):
