@@ -133,7 +133,7 @@ If the item is yours to execute, start with a reservation:
 sprintctl reservation reserve \
   --item-id 1 \
   --actor codex-session-1 \
-  --role execute \
+  --role execution \
   --session-id "${CODEX_THREAD_ID:-manual-session}" \
   --json
 ```

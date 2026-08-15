@@ -18,7 +18,7 @@ Then propose the single best next item to reserve.
 ## 2. Reserve-and-execute snippet
 
 ```text
-Reserve item <ID> using role execute and actor <ACTOR>.
+Reserve item <ID> using role execution and actor <ACTOR>.
 Save reservation_id.
 While implementing:
 - touch activity when useful

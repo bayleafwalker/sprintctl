@@ -45,7 +45,7 @@ Git SHA as described in `docs/reference/doc-refs.md`.
 # Create an advisory reservation on the item. Save the returned id.
 RESERVATION=$(sprintctl reservation reserve \
   --item-id 7 --actor claude-session-1 \
-  --role execute \
+  --role execution \
   --session-id "${CODEX_THREAD_ID:-manual}" \
   --json)
 
@@ -63,27 +63,30 @@ still create a reservation on the same item, and the overlap will be visible in
 # Coordinator reserves the item first
 COORD=$(sprintctl reservation reserve \
   --item-id 7 --actor orchestrator \
-  --role coordinate --json)
+  --role observation --json)
 
 COORD_ID=$(echo "$COORD" | jq -r '.id')
 
-# Sub-agents reserve execute roles under the coordinator
+# Sub-agents reserve execution roles under the coordinator
 sprintctl reservation reserve \
   --item-id 7 --actor worker-a \
-  --role execute \
+  --role execution \
   --session-id worker-a-session \
   --json
 ```
 
 The coordinator role is metadata only; it does not grant an exclusivity
-exception.
+exception. Nothing does: a second `reserve` on the same item always succeeds
+and reports the conflict, and displacing an execution reservation takes an
+explicit `--interrupt-existing`.
 
 ---
 
 ## 3. Touch — keep activity fresh during long tasks
 
 ```bash
-# Bump activity on the reservation when useful; there is no lease or heartbeat
+# Activity advances by itself when your session mutates the item; touch is for
+# work happening outside sprintctl. There is no lease or heartbeat.
 sprintctl reservation touch \
   --id "$RESERVATION_ID" \
   --session-id "${CODEX_THREAD_ID:-manual}"

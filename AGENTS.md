@@ -82,7 +82,7 @@ operator-visible rather than enforced.
 ```bash
 sprintctl reservation reserve \
   --item-id <id> --actor <your-name> \
-  --role execute \
+  --role execution \
   --session-id "$SPRINTCTL_RUNTIME_SESSION_ID" \
   --json
 ```
@@ -94,10 +94,27 @@ The reservation response also carries the item's refs. Read every governing doc
 ref before editing files, and pin the executed revision as described in
 `docs/reference/doc-refs.md`.
 
+The role is the relationship to the work: `execution` (doing it),
+`verification` (reviewing or testing it), `observation` (watching it). That is
+what makes an overlap readable — two `execution` reservations are worth
+coordinating over, `execution` beside `verification` is ordinary.
+
+If somebody else already holds a reservation, yours is still created. The
+response carries `conflict`, `conflicting_reservations`, and
+`conflict_severity`; read it and coordinate rather than assuming you are alone.
+Nothing refuses you, because refusing you would only remove you from the
+ledger, not from the work.
+
+To deliberately displace an execution reservation — a stalled session, a
+takeover you have agreed — add `--interrupt-existing`. It interrupts the
+item's active execution reservations, records `interrupted by <actor>
+(<session>)`, and emits a durable audit event. Verification and observation
+reservations are left alone.
+
 **Coordinators** (orchestrators spawning sub-agents): reserve with
-`--role coordinate`. Sub-agents then reserve with `--role execute` on the same
-item. Reservations are advisory, so the coordinator role no longer grants an
-exclusivity exception; it is informational metadata only.
+`--role observation`. Orchestration is session and project context, not a
+relationship to the item, so a coordinator observes the work it coordinates.
+Sub-agents reserve with `--role execution` on the same item.
 
 ### 2. Activity — touch when useful
 
@@ -106,6 +123,11 @@ sprintctl reservation touch \
   --id <reservation_id> \
   --session-id "$SPRINTCTL_RUNTIME_SESSION_ID"
 ```
+
+`last_activity_at` also advances on its own whenever your session
+successfully mutates the item (status, edit, note, ref, dep), so `touch` is for
+work that happens outside sprintctl — long external or git-only stretches.
+Attribution is by session id, never by actor name.
 
 Touch bumps `last_activity_at`. There is no lease, no TTL, and no heartbeat
 contract to violate. Staleness is display-only.

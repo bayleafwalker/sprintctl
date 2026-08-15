@@ -63,6 +63,14 @@ Current SQLite schema version: **13**.
 | 12 | Added claim `status` (`active|expired`) with a parity default |
 | 13 | Added claim `lease_epoch` with an initial value of 1 |
 | 14 | Added explicit scope-ref kinds (`file`, `glob`, `manifest`) to `ref.ref_type` |
+| 15 | Added the `command` ref kind (validation-command refs) |
+| 16 | Installed the exact-plan-bound maintenance capability ledger |
+| 17 | Installed the maintenance observable-resource owner ledger |
+| 18 | Added the v0.3 advisory `reservation` ledger beside legacy claims |
+| 19 | Archived credential-bearing claims into `claim_history` before removal |
+| 20 | Dropped the live `claim` relation; `claim_history` is the only survivor |
+| 21 | Added the repo-level `recovery_record` |
+| 22 | Dropped the reservation exclusivity index; roles became `execution`/`verification`/`observation` |
 
 ---
 

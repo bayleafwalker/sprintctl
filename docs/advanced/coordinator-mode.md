@@ -27,25 +27,30 @@ Coordinator first:
 sprintctl reservation reserve \
   --item-id <id> \
   --actor orchestrator \
-  --role coordinate \
+  --role observation \
   --session-id orchestrator-session \
   --json
 ```
 
-Sub-agent execute reservations under the coordinator:
+Sub-agent execution reservations under the coordinator:
 
 ```sh
 sprintctl reservation reserve \
   --item-id <id> \
   --actor worker-a \
-  --role execute \
+  --role execution \
   --session-id worker-a-session \
   --json
 ```
 
-The coordinator role is informational metadata only. It does not grant an
-exclusivity exception; sub-agents still create their own advisory reservations.
-Advisory metadata (`instance_id`, branch, hostname, pid) is never proof.
+Orchestration is session and project context, not a relationship to the item,
+so a coordinator reserves as an `observation`: it is watching work it does not
+itself perform. It grants no exclusivity exception, and sub-agents create their
+own `execution` reservations beside it. Several sub-agents on one item is
+allowed and reported — each `reserve` returns the conflict set, and
+execution-beside-execution is flagged `warning` so the coordinator can decide
+whether that was intended. Advisory metadata (`instance_id`, branch, hostname,
+pid) is never proof.
 
 ## Lifecycle Discipline
 

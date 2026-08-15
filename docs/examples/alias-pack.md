@@ -50,7 +50,7 @@ sreserve() {
   reservation_json=$(sprintctl reservation reserve \
     --item-id "$item_id" \
     --actor "$actor" \
-    --role execute \
+    --role execution \
     --session-id "${SPRINTCTL_RUNTIME_SESSION_ID:-manual}" \
     --json) || return 1
 

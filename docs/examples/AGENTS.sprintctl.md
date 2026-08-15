@@ -17,7 +17,7 @@ Sprint state is managed with `sprintctl`.
 - Use a stable session identity: `runtime_session_id` and optional `instance_id`.
 - Treat actor label, branch, worktree, commit SHA, hostname, and pid as advisory metadata only.
 - A reservation is an advisory coordination signal, not ownership proof.
-- If multiple active reservations exist on the same item, treat it as a visible conflict and coordinate before editing.
+- If multiple active reservations exist on the same item, treat it as a visible conflict and coordinate before editing. `reserve` reports the overlap (`conflict`, `conflict_severity`) instead of refusing you; two `execution` reservations are a `warning`, `execution` beside `verification` or `observation` is ordinary.
 - Use `sprintctl reservation reassign` when the reservation for an active item changes sessions.
 - Use `sprintctl handoff` when the next session needs broader sprint context but not the reservation.
 - Refresh `docs/sprint-snapshots/sprint-current.txt` after material sprint-state changes.

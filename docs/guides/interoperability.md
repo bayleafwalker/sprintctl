@@ -96,14 +96,14 @@ Coordinator pattern:
 COORD=$(sprintctl reservation reserve \
   --item-id 7 \
   --actor orchestrator \
-  --role coordinate \
+  --role observation \
   --session-id orchestrator-session \
   --json)
 
 sprintctl reservation reserve \
   --item-id 7 \
   --actor worker-a \
-  --role execute \
+  --role execution \
   --session-id worker-a-session \
   --json
 ```

@@ -14,7 +14,14 @@ mutations.
   hostname, pid) are advisory only. They provide traceability, not
   authorization.
 - Multiple active reservations on the same item are surfaced as conflicts, not
-  blocked.
+  blocked. `reserve` never refuses because someone else got there first; it
+  returns `conflict`, `conflicting_reservations`, and `conflict_severity`
+  (`warning` when two sessions both claim `execution`).
+- Roles describe the relationship to the work — `execution`, `verification`,
+  `observation` — which is what makes an overlap classifiable.
+- `--interrupt-existing` is the deliberate takeover: it interrupts the item's
+  active `execution` reservations with a recorded reason and audit event. Use
+  it when you mean to displace someone, never merely to coexist.
 
 ## Startup Sequence
 
@@ -25,7 +32,7 @@ mutations.
 sprintctl reservation reserve \
   --item-id <id> \
   --actor <name> \
-  --role execute \
+  --role execution \
   --session-id "$SPRINTCTL_RUNTIME_SESSION_ID" \
   --json
 ```
@@ -43,8 +50,18 @@ sprintctl reservation touch \
   --session-id "$SPRINTCTL_RUNTIME_SESSION_ID"
 ```
 
+Touching is rarely necessary inside sprintctl: `last_activity_at` advances
+implicitly whenever your session successfully mutates the item (status, edit,
+note, ref, dep), attributed by session id rather than actor name. Reach for
+`touch` when the work is happening elsewhere — a long build, external review,
+git-only stretches.
+
 There is no TTL, no heartbeat contract, and no lease to violate. Staleness is
-display-only.
+display-only: an active reservation is marked `stale` after
+`SPRINTCTL_RESERVATION_STALE_AFTER_HOURS` (default 4), and only an explicitly
+invoked `sprintctl maintain sweep` interrupts reservations idle longer than
+`SPRINTCTL_RESERVATION_INTERRUPT_AFTER_DAYS` (default 7). Nothing expires in
+the background.
 
 ## Status Transition Rule
 

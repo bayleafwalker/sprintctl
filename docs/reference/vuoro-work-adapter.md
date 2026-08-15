@@ -20,8 +20,8 @@ no migration or DDL.
 | --- | --- | --- |
 | Reads | `work.read.sprints`, `work.read.item`, `work.read.context`, `work.read.context-candidates`, `work.read.next-work`, `work.read.records`, `work.read.decisions` | key forbidden |
 | Item edit | `work.item.edit` | key forbidden; required `expected_revision` compare-and-swap |
-| Reservation start | `work.claim.start` | key forbidden; one-shot create plus activation flow |
-| Durable reservations | `work.claim.arbitrate` | key equals immutable command `event_id` |
+| Reservation start | `work.claim.start` | key forbidden; one-shot create plus activation flow — **retired in v2** |
+| Durable reservations | `work.claim.arbitrate` | key equals immutable command `event_id` — **retired in v2** |
 | Lifecycle | `work.lifecycle.arbitrate` | key equals immutable command `event_id` |
 | Evidence | `work.evidence.ingest` | key equals canonical record-batch digest |
 | Batching | `work.batch.apply` | key equals canonical ordered-project-batch digest |
@@ -149,10 +149,10 @@ application binding on both SQLite and PostgreSQL.
 
 ## Transitional CLI parity inventory
 
-The local command surface uses `sprintctl reservation`. The served catalog
-operation names in this section retain their historical `work.claim.*` labels
-from the v1 catalog and are updated to credential-free reservation semantics
-as part of the v2 catalog cutover:
+The local command surface uses `sprintctl reservation`, and the served catalog
+now names those operations `work.reservation.*`. The historical `work.claim.*`
+labels were retired with the v2 catalog cutover; they are not accepted, and
+nothing dual-registers them.
 
 | Current local surface | Served operation |
 | --- | --- |
@@ -161,8 +161,8 @@ as part of the v2 catalog cutover:
 | `sprintctl item edit --id ID --description TEXT` | `work.item.edit` |
 | authenticated durable-command actor discovery | `work.identity.current` |
 | `sprintctl next-work --json` | `work.read.next-work` |
-| `sprintctl reservation reserve` | `work.claim.start` |
-| `sprintctl reservation touch/reassign/release` | `work.claim.arbitrate` |
+| `sprintctl reservation reserve` | `work.reservation.reserve` |
+| `sprintctl reservation touch/reassign/release` | `work.reservation.touch`, `work.reservation.reassign`, `work.reservation.release` |
 | `sprintctl item status` and `sprintctl sprint status` | `work.lifecycle.arbitrate` |
 | observation upload | `work.evidence.ingest` |
 | authority synchronization | `work.batch.apply` |

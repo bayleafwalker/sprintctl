@@ -15,8 +15,8 @@ store.  `Unavailable` likewise never opens a store: it exits with the stable
 | `item ref list`, `item dep list` | Served | `work.read.item` supplies the exact item-scoped reference/dependency views. |
 | `item ref add/remove`, `item dep add/remove` | Served | `work.item.ref.*` and `work.item.dep.*` are repository-scoped shaping writes. |
 | `next-work` | Served; project `--explain` unavailable | `work.read.next-work` preserves the list contract; `work.read.next-work-explain` returns the complete atomic explanation contract. |
-| `reservation reserve/touch/reassign/release` | Served | `reservation reserve` uses the existing immutable `claim.acquire` command through `work.claim.arbitrate`; `reservation touch`, `reassign`, and `release` use `work.claim.arbitrate`. |
-| `reservation list`, `reservation show` | Served | `work.read.claims` supports item/sprint/identity inspection; `work.read.claim` is deliberately non-secret. |
+| `reservation reserve/touch/reassign/release` | Served | `work.reservation.reserve/touch/reassign/release`. Direct operations with no arbitration ledger: `reserve` always commits and returns the conflict set, and `--interrupt-existing` is an explicit takeover rather than an authorization bypass. |
+| `reservation list`, `reservation show` | Served | `work.read.reservations` supports item-scoped inspection; `work.read.reservation` is deliberately non-secret. |
 | `item add`, `item note`, `item status`, `event add/list` | Served | Existing catalog routes. |
 | `handoff` | Served | `work.read.handoff` builds the tracker snapshot; after local artifact output, `work.handoff.record` appends the authenticated tracker record. An unconfirmed record exits nonzero without discarding the artifact. |
 

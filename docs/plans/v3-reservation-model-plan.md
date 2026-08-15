@@ -72,8 +72,9 @@ credential.
 
 - "At most one live exclusive owner" as an enforced invariant (with its
   coordinator-delegation exception). Becomes: conflicting reservations are
-  *detected and surfaced*; default reserve refuses on conflict but override
-  is a first-class, proof-free operation.
+  *detected and surfaced*. `reserve` never refuses because of an existing
+  reservation; interrupting one is a separate, proof-free, explicitly
+  requested operation (`--interrupt-existing`). See Q1 below.
 - Proof-gated item mutation (`claim_id + claim_token` as ownership proof).
 - Token rotation, rotate-mode handoff, legacy adoption, token recovery
   files, `lease_epoch` as future fencing, TTL-as-security ("a lapsed claim
@@ -150,17 +151,37 @@ one recovery table.
 
 ## 4. Open questions for the operator
 
-- **Q1 — Conflict policy at reserve time.** Default refuse-with-`--override`
-  (planning recommendation, preserves detection value), or warn-and-create
-  allowing overlapping active reservations outright? Affects V3-4 acceptance.
-- **Q2 — Claim-type taxonomy.** Keep `inspect/execute/review/coordinate` as
-  informational metadata, or collapse to a single reservation kind now that
-  coordinator delegation carries no exclusivity exception?
-- **Q3 — Activity tracking mechanism.** Explicit `claim touch`, implicit
-  bump on any mutating command by the reserving session, or both?
-- **Q4 — Stale sweep policy.** Should `maintain check --fix` auto-mark
-  long-idle reservations `interrupted` (at what horizon), or is staleness
-  display-only with takeover always manual?
+- **Q1 — Conflict policy at reserve time.** ~~Default refuse-with-`--override`,
+  or warn-and-create?~~ **Resolved: warn-and-create.** A reservation is a
+  detector, not a lease. Refusing registration either turns the ledger into
+  de-facto locking or encourages the second actor to proceed unrecorded — the
+  worst possible outcome for a coordination ledger. `reserve` always commits
+  and returns `conflict` / `conflicting_reservations` / `conflict_severity`.
+  Deliberate takeover survives as `--interrupt-existing` (renamed from
+  `--override`, which suggested bypassing an authorization check that no
+  longer exists). The partial unique index that made exclusivity a database
+  law is dropped in SQLite 22 / PostgreSQL 12.
+- **Q2 — Claim-type taxonomy.** ~~Keep `inspect/execute/review/coordinate`, or
+  collapse to one kind?~~ **Resolved: keep a taxonomy, restated as the work
+  relationship — `execution` / `verification` / `observation`.** The role is
+  what makes an overlap classifiable: `execution + execution` deserves a
+  warning, `execution + verification` is normal. `coordinate` belonged to
+  orchestration/session context rather than the work relationship, and
+  `inspect` was observation; both fold into `observation`.
+- **Q3 — Activity tracking mechanism.** **Resolved: both.** Explicit-only made
+  `last_activity_at` measure remembered ceremony (and quietly implemented a
+  very relaxed heartbeat while denying it was one). It now advances implicitly
+  on successful item-scoped mutations attributed to the reservation's
+  *session* — status, edit, note, ref, dep — never on reads and never on a
+  bare actor-name match. `reservation touch` remains for work done outside
+  sprintctl.
+- **Q4 — Stale sweep policy.** **Resolved: 4h stale display / 7d sweep
+  horizon, explicit sweep only, and both are policy rather than model.** The
+  durations moved out of `reservation.py` into `reservation_policy.py`
+  (`SPRINTCTL_RESERVATION_STALE_AFTER_HOURS`,
+  `SPRINTCTL_RESERVATION_INTERRUPT_AFTER_DAYS`). Seven days means "an
+  explicitly invoked `maintain sweep` may interrupt reservations older than
+  this", never "something expires in the background".
 - **Q5 — Vuoro transient-credentials carrier.** ~~With the work domain no
   longer consuming invocation/v2 transient proofs, does vuoro retire the
   generic carrier (`vuoro_service/identity.py`, client resolver) or retain
@@ -169,7 +190,23 @@ one recovery table.
 - **Q6 — Retirement-tract interleaving.** Confirmed by placement: #1220,
   #1221, #1164 complete on current semantics before the V3-4 schema train
   lands (#1238 is dependency-gated on #1164).
-- **Q7 — Catalog cutover window.** V3-3 proposes a clean-break catalog v2
-  with one coordinated redeploy. Acceptable, or is a brief dual-registration
-  window on the served endpoint needed because homelab clients update
-  lazily?
+- **Q7 — Catalog cutover window.** **Resolved: clean break, no dual
+  registration.** `/api/invoke/v2` was selected only when
+  `transient_credentials` was supplied; sprintctl's last producer had already
+  disappeared, so the endpoint was unreachable through the current client path
+  before it was removed. The proposed compatibility shim — re-add v2, accept
+  the transient credential, ignore it — is worse than 404/410: an old client
+  would believe the proof it supplied still had semantics when the server
+  deliberately discarded it. Compatibility that lies is not compatibility. A
+  temporary route returning **410 Gone + "upgrade client"** is defensible;
+  an accepting shim is not.
+
+- **Schema admission floor (raised during Q1 review).** **Resolved: the v0.3
+  runtime admits only the schema it was built against** —
+  `MINIMUM_SCHEMA_VERSION == CURRENT_SCHEMA_VERSION == 12`. The previous floor
+  of 5 was a false promise: reservation storage arrived in 8, the live `claim`
+  relation only disappeared in 10, and the overlap/role correction is 12, so a
+  client could pass the handshake against a schema that cannot service its
+  reservation calls. Supporting 8–10 buys little while multiplying the states
+  the release claims to support; widen it later if a rollout actually needs
+  it.

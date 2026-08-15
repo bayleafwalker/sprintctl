@@ -21,7 +21,7 @@ Coordinator reserves first:
 sprintctl reservation reserve \
   --item-id <id> \
   --actor orchestrator \
-  --role coordinate \
+  --role observation \
   --session-id orchestrator-session \
   --json
 ```
@@ -32,13 +32,16 @@ Sub-agents then reserve execute roles:
 sprintctl reservation reserve \
   --item-id <id> \
   --actor worker-a \
-  --role execute \
+  --role execution \
   --session-id worker-a-session \
   --json
 ```
 
-The coordinator role is informational metadata only; it does not grant an
-exclusivity exception.
+The coordinator reserves as an `observation` — orchestration is session
+context, not a relationship to the item — and grants no exclusivity exception.
+Several sub-agents may hold `execution` reservations on one item at once; each
+`reserve` reports the overlap it found, and two `execution` reservations are
+flagged `warning` so the coordinator can confirm that was intended.
 
 ## Guardrails
 

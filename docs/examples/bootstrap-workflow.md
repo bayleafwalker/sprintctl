@@ -73,7 +73,7 @@ sprintctl maintain check --sprint-id 1
 RESERVATION=$(sprintctl reservation reserve \
   --item-id 1 \
   --actor claude-session-1 \
-  --role execute \
+  --role execution \
   --session-id "${CODEX_THREAD_ID:-session-1}" \
   --json)
 

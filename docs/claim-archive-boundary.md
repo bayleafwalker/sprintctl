@@ -12,7 +12,9 @@ The archive must never be used to:
 
 Live coordination is represented exclusively by the reservation ledger. A
 reservation is session-bound, advisory, and may be released, reassigned, or
-interrupted after seven days of inactivity. It carries no bearer credential.
+interrupted by an explicitly invoked `maintain sweep` once idle beyond the
+operator's `interrupt_after` policy (default seven days). It carries no bearer
+credential.
 
 Migration policy:
 

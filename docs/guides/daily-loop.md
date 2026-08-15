@@ -27,7 +27,7 @@ current git state.
 RESERVATION_JSON=$(sprintctl reservation reserve \
   --item-id 42 \
   --actor codex \
-  --role execute \
+  --role execution \
   --session-id "${SPRINTCTL_RUNTIME_SESSION_ID:-manual-session}" \
   --json)
 
