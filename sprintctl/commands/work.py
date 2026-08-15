@@ -1734,33 +1734,6 @@ def _mirror_shadow_event(event: dict, *, repo_id: str) -> dict:
     }
 
 
-def _pilot_status_payload() -> dict:
-    """Collect non-mutating operator status and optional local cache facts."""
-    status = _pilot.shadow_pilot_status(cwd=Path.cwd())
-    result = status.to_dict()
-    result["outbox_records"] = None
-    result["watermark"] = None
-    if status.paths.outbox_path.exists():
-        producer = _outbox.open_outbox(status.paths.outbox_path)
-        try:
-            result["outbox_records"] = len(_outbox.list_records(producer))
-        finally:
-            producer.close()
-    if status.paths.projection_path.exists():
-        cache = _projection.open_cached_projection(status.paths.projection_path)
-        try:
-            watermark = _projection.get_watermark(cache)
-            result["watermark"] = {
-                "ingest_offset": watermark.ingest_offset,
-                "advanced_at": watermark.advanced_at,
-            }
-        finally:
-            cache.close()
-    return result
-
-
-
-
 _RUNTIME = {}
 __runtime_source: dict[str, object] | None = None
 

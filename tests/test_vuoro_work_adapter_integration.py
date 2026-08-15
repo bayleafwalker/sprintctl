@@ -30,22 +30,30 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
+# Byte-exact pins on the published served catalog. Any change to them is a
+# change to what clients see, so they must be updated in the same commit as
+# the catalog change and never re-pinned to make a red test pass.
+#
+# Last re-pinned for the claim -> reservation cutover: aeace4d added six
+# reservation operations and 1a06d1e removed five claim operations, a net +1
+# at both schema versions. Schema 7 still gates exactly the three
+# work.maintenance.resource.* operations.
 @pytest.mark.parametrize(
     ("remote_schema_version", "operation_count", "byte_count", "operations_sha", "revision"),
     [
         (
             6,
-            43,
-            51_800,
-            "b2d241957a02ae648a2e31a25a7e0f4bb616656286618864f02a1c9180138205",
-            "b2d241957a02ae648a2e31a25a7e0f4bb616656286618864f02a1c9180138205",
+            44,
+            50_749,
+            "e7774625cb825b30cbb614d3c3684e2fcd213f7b251bb58c1ce1b0a6cca3c17a",
+            "e7774625cb825b30cbb614d3c3684e2fcd213f7b251bb58c1ce1b0a6cca3c17a",
         ),
         (
             7,
-            46,
-            56_915,
-            "a111136548a051be949b32a9b29b60847287a84aef403de2fc6aa8ce141ca3b7",
-            "25367985cffea28c8de8e2c25140c3f2f8ebc0f64166b70a4b37ba8724e9c4df",
+            47,
+            55_864,
+            "c3cfc5e173fa5d09932840097c263734feb2220d5fa24ce87c9085471ff4b774",
+            "b9f0d734441c414e8d0d9ef75d18fc9759576def9d2143e2b4fc54e9d5e67143",
         ),
     ],
 )
@@ -76,32 +84,6 @@ def test_adapter_kit_migration_preserves_catalog_bytes_and_registry_revision(
     assert len(payload) == byte_count
     assert hashlib.sha256(payload).hexdigest() == operations_sha
     assert registry.revision == revision
-
-
-@pytest.mark.anyio
-async def test_preexisting_generic_client_discovers_cutover_evidence(monkeypatch):
-    evidence = {
-        "contract_version": "1", "config": {}, "parity": None,
-        "watermark": {}, "stale_tools": {}, "rollback_rehearsal": None,
-        "promotable": False, "blockers": ["parity-not-evaluated"],
-    }
-    monkeypatch.setattr(application.cutover, "build_cutover_evidence", lambda **_kwargs: evidence)
-    work = WorkApplication(
-        repo_id="sprintctl", store=None, backend=SimpleNamespace(),
-        ingest_records=lambda records: [], arbitrate_command=lambda record, credentials: None,
-        list_records=lambda after, limit: [], list_decisions=lambda after, limit: [],
-    )
-    registry = CatalogRegistry()
-    app = create_app(
-        settings=ServiceSettings(environment_name="vuoro-dev", environment_class="development", compatibility_state="compatible"),
-        registry=registry,
-        identity_resolver=StaticBearerIdentityResolver({"identity": Identity(actor="served-test", environment="vuoro-dev", authorities=frozenset({"work:pilot-read"}), repo_ids=frozenset({"sprintctl"}))}),
-    )
-    async with AsyncVuoroClient(Profile("dev", "http://test", "identity-ref", "vuoro-dev"), lambda _reference: "identity", transport=httpx.ASGITransport(app=app)) as client:
-        assert (await client.catalog())["operations"] == []
-        register_work_catalog(registry, work)
-        result = await client.invoke("work.pilot.cutover-evidence", {"rehearse": False, "max_watermark_age_seconds": 60}, request_id="old-client-new-work-operation", repo_id="sprintctl")
-    assert result == evidence
 
 
 @pytest.mark.anyio

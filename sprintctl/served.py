@@ -416,43 +416,6 @@ def project_sprints(
     )
 
 
-def cutover_evidence(
-    served_profile: ServedProfile,
-    *,
-    repo_id: str,
-    parity: dict[str, Any] | None = None,
-    max_watermark_age_seconds: int = 300,
-    rehearse: bool = True,
-) -> dict[str, Any]:
-    """Invoke ``work.pilot.cutover-evidence`` (``sprintctl pilot cutover-evidence``).
-
-    ``parity`` must already be computed by the caller (mirroring
-    ``cutover.build_cutover_evidence``'s own contract, which never fetches
-    parity itself). This function itself still never fetches parity --
-    ``work.read.events`` (added by #1247, see :func:`read_events`) exposes the
-    sprint-wide event log a caller would need to compute it, but no caller of
-    ``cutover_evidence`` has been updated to use it yet, so a served caller
-    wanting full parity should still pass ``None`` (the ``--skip-parity``
-    path, or whenever the pilot is disabled) unless/until that wiring lands.
-    See ``sprintctl.cli._served_cutover_evidence`` for the CLI-side guard
-    that enforces this today.
-    """
-
-    arguments = {
-        "parity": parity,
-        "max_watermark_age_seconds": max_watermark_age_seconds,
-        "rehearse": rehearse,
-    }
-    return asyncio.run(
-        _invoke_operation(
-            served_profile,
-            "work.pilot.cutover-evidence",
-            arguments,
-            repo_id=repo_id,
-        )
-    )
-
-
 def batch_apply(
     served_profile: ServedProfile,
     *,
@@ -569,9 +532,10 @@ def lifecycle_arbitrate(
 #
 # Every operation added to the served catalog must be added here in the same
 # change -- the #1195 postmortem found this list had already silently drifted
-# out of sync with newly-wired routes once (missing pilot.cutover-evidence),
-# meaning `doctor` was not actually verifying the
-# catalog before commands ran. See docs/plans/served-mode-gaps-plan.md.
+# out of sync with newly-wired routes once (it was missing the then-live
+# pilot cutover-evidence route, since retired), meaning `doctor` was not
+# actually verifying the catalog before commands ran. See
+# docs/plans/served-mode-gaps-plan.md.
 EXPECTED_OPERATIONS = doctor_probe_operations()
 # Compatibility for consumers that diagnosed the precise route keys. The
 # tuple itself remains owned by the route registry.
@@ -603,7 +567,6 @@ __all__ = [
     "catalog_operation_names",
     "context_candidates",
     "handoff_record",
-    "cutover_evidence",
     "event_add",
     "item_create",
     "item_dep_add",
