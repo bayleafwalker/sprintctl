@@ -37,7 +37,6 @@ _CAPABILITY_RECEIPT_REQUIRED_FIELDS = {
 _CAPABILITY_RECEIPT_OPTIONAL_FIELDS = {"boundary_summary"}
 _BOUNDARY_SUMMARY_MAX_LENGTH = 280
 _RECORD_TYPE = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
-_CREDENTIAL_REF = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 _SECRET_FIELD_NAMES = {
     "claim_token",
@@ -157,53 +156,6 @@ def _positive_int(value: Any, field: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ValueError(f"{field} must be a positive integer")
     return value
-
-
-def _positive_ttl(value: Any) -> int:
-    value = _positive_int(value, "payload.ttl_seconds")
-    if value > 86_400:
-        raise ValueError("payload.ttl_seconds must be at most 86400")
-    return value
-
-
-def _credential_ref(value: Any) -> str:
-    value = _required_string(value, "payload.credential_ref")
-    if not _CREDENTIAL_REF.fullmatch(value):
-        raise ValueError("payload.credential_ref must be sha256:<64 lowercase hex characters>")
-    return value
-
-
-def _canonical_claim_metadata(value: Any) -> dict[str, Any]:
-    source = _strict_fields(
-        value,
-        field="payload.metadata",
-        required=set(),
-        optional={
-            "runtime_session_id",
-            "instance_id",
-            "branch",
-            "worktree_path",
-            "commit_sha",
-            "pr_ref",
-            "hostname",
-            "pid",
-        },
-    )
-    result: dict[str, Any] = {}
-    for field in (
-        "runtime_session_id",
-        "instance_id",
-        "branch",
-        "worktree_path",
-        "commit_sha",
-        "pr_ref",
-        "hostname",
-    ):
-        if field in source:
-            result[field] = _optional_string(source[field], f"payload.metadata.{field}")
-    if "pid" in source:
-        result["pid"] = _positive_int(source["pid"], "payload.metadata.pid")
-    return result
 
 
 def _strict_fields(
