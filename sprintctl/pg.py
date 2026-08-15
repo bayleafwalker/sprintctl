@@ -2272,8 +2272,10 @@ def reserve(store: PgStore, work_item_id: int, *, actor: str, session_id: str, r
 
 def touch_reservation(store: PgStore, reservation_id: int, *, session_id: str, correlation_ref: str | None = None) -> dict:
     row = _reservation_row(store, reservation_id)
-    if row is None or row["state"] != "active":
-        raise ValueError(f"Reservation #{reservation_id} is not active")
+    if row is None:
+        raise ValueError(f"Reservation #{reservation_id} not found")
+    if row["state"] != "active":
+        raise ValueError(f"Reservation #{reservation_id} is {row['state']}")
     if row["session_id"] != session_id:
         raise ValueError(f"Reservation #{reservation_id} belongs to another session")
     with store.conn.cursor() as cur:

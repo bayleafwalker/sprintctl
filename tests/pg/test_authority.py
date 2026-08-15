@@ -41,42 +41,43 @@ class TestAuthorityFaultHistories:
         assert_disposable_connection(conn)
         return pg.PgStore(conn=conn, repo_id=store.repo_id)
 
-    def test_partition_expiry_reassignment_then_stale_heartbeat_is_rejected(
-        self,
-        store,
-    ):
+    def test_partition_reassignment_then_stale_touch_is_rejected(self, store):
+        """A displaced session cannot keep its reservation alive after an override.
+
+        The retired claim path proved this with lease expiry and a rejected
+        heartbeat. v3 drops the TTL ceremony: an override interrupts the old
+        row outright, and the partitioned session learns it lost ownership on
+        its next touch rather than by silently renewing a dead lease.
+        """
         sprint_id = pg.create_sprint(store, f"Partition-{_uid()}", status="active")
         track_id = pg.get_or_create_track(store, sprint_id, "protocol")
         item_id = pg.create_work_item(store, sprint_id, track_id, f"Lease-{_uid()}")
-        old_claim_id = pg.create_claim(store, item_id, "partitioned-owner")
-        old_claim = pg.get_claim(store, old_claim_id, include_secret=True)
+        old = pg.reserve(
+            store, item_id, actor="partitioned-owner", session_id="session-partitioned"
+        )
         replacement = self._independent_store(store)
         try:
-            with replacement.conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE claim SET expires_at = now() - interval '1 second' "
-                    "WHERE repo_id = %s AND id = %s",
-                    (store.repo_id, old_claim_id),
-                )
-            replacement.conn.commit()
-            assert pg.list_claims(store, item_id, active_only=True) == []
+            new = pg.reserve(
+                replacement,
+                item_id,
+                actor="replacement-owner",
+                session_id="session-replacement",
+                override=True,
+            )
 
-            new_claim_id = pg.create_claim(replacement, item_id, "replacement-owner")
-            with pytest.raises(ValueError, match="expired and is no longer active"):
-                pg.heartbeat_claim(
-                    store,
-                    old_claim_id,
-                    old_claim["claim_token"],
-                    actor="partitioned-owner",
-                )
+            with pytest.raises(ValueError, match="is interrupted"):
+                pg.touch_reservation(store, old["id"], session_id="session-partitioned")
 
             active_ids = {
-                claim["claim_id"] for claim in pg.list_claims(replacement, item_id, active_only=True)
+                row["id"]
+                for row in pg.list_reservations(replacement, item_id, active_only=True)
             }
-            assert active_ids == {new_claim_id}
-            history = pg.list_claims(replacement, item_id, active_only=False)
-            assert [claim["claim_id"] for claim in history] == [old_claim_id, new_claim_id]
-            assert [claim["status"] for claim in history] == ["expired", "active"]
+            assert active_ids == {new["id"]}
+            history = pg.list_reservations(replacement, item_id, active_only=False)
+            by_id = {row["id"]: row for row in history}
+            assert set(by_id) == {old["id"], new["id"]}
+            assert by_id[old["id"]]["state"] == "interrupted"
+            assert by_id[new["id"]]["state"] == "active"
         finally:
             replacement.conn.close()
 
@@ -437,208 +438,6 @@ class TestAuthorityCommandArbitration:
         finally:
             producer.close()
             cache.close()
-
-    def test_expired_claim_cannot_be_revived_after_reassignment(self, store, tmp_path):
-        sprint_id = pg.create_sprint(store, f"Claim-command-{_uid()}", status="active")
-        track_id = pg.get_or_create_track(store, sprint_id, "authority")
-        item_id = pg.create_work_item(store, sprint_id, track_id, f"Claim-item-{_uid()}")
-        item = pg.get_work_item(store, item_id)
-        producer = outbox.open_outbox(tmp_path / "authority-claim.db")
-        old_token = "old-" + uuid.uuid4().hex
-        new_token = "new-" + uuid.uuid4().hex
-        try:
-            first = _append_authority_command(
-                producer,
-                store,
-                record_type="claim.acquire",
-                aggregate_type="item",
-                aggregate_uuid=item["aggregate_uuid"],
-                basis_revision=authority.item_revision(item),
-                payload={
-                    "agent": "old-owner",
-                    "claim_type": "execute",
-                    "exclusive": True,
-                    "ttl_seconds": 300,
-                    "credential_ref": authority.credential_ref(old_token),
-                    "metadata": {},
-                },
-            )
-            granted = authority.arbitrate_command(
-                store,
-                first,
-                credentials={authority.credential_ref(old_token): old_token},
-            )
-            old_claim_id = granted.effect["claim_id"]
-            with store.conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE claim SET expires_at = now() - interval '1 second' "
-                    "WHERE repo_id = %s AND id = %s",
-                    (store.repo_id, old_claim_id),
-                )
-            store.conn.commit()
-            expired = pg.get_claim(store, old_claim_id, include_secret=True)
-
-            replacement = _append_authority_command(
-                producer,
-                store,
-                record_type="claim.acquire",
-                aggregate_type="item",
-                aggregate_uuid=item["aggregate_uuid"],
-                basis_revision=authority.item_revision(item),
-                payload={
-                    "agent": "new-owner",
-                    "claim_type": "execute",
-                    "exclusive": True,
-                    "ttl_seconds": 300,
-                    "credential_ref": authority.credential_ref(new_token),
-                    "metadata": {},
-                },
-            )
-            replacement_grant = authority.arbitrate_command(
-                store,
-                replacement,
-                credentials={authority.credential_ref(new_token): new_token},
-            )
-            assert replacement_grant.accepted is True
-
-            stale_renew = _append_authority_command(
-                producer,
-                store,
-                record_type="claim.renew",
-                aggregate_type="claim",
-                claim_id=old_claim_id,
-                basis_revision=authority.claim_revision(expired),
-                payload={
-                    "claim_id": old_claim_id,
-                    "ttl_seconds": 300,
-                    "credential_ref": authority.credential_ref(old_token),
-                },
-            )
-            rejected = authority.arbitrate_command(
-                store,
-                stale_renew,
-                credentials={authority.credential_ref(old_token): old_token},
-            )
-
-            assert rejected.accepted is False
-            assert rejected.reason_code == "expired-grant"
-            active_claims = pg.list_claims(store, item_id, active_only=True)
-            assert [claim["claim_id"] for claim in active_claims] == [
-                replacement_grant.effect["claim_id"]
-            ]
-        finally:
-            producer.close()
-
-    def test_claim_lifecycle_decisions_are_secret_safe(self, store, tmp_path):
-        sprint_id = pg.create_sprint(store, f"Claim-lifecycle-{_uid()}", status="active")
-        track_id = pg.get_or_create_track(store, sprint_id, "authority")
-        item_id = pg.create_work_item(store, sprint_id, track_id, f"Claim-life-item-{_uid()}")
-        item = pg.get_work_item(store, item_id)
-        producer = outbox.open_outbox(tmp_path / "authority-claim-lifecycle.db")
-        first_token = "first-" + uuid.uuid4().hex
-        rotated_token = "rotated-" + uuid.uuid4().hex
-        first_ref = authority.credential_ref(first_token)
-        rotated_ref = authority.credential_ref(rotated_token)
-        try:
-            acquire = _append_authority_command(
-                producer,
-                store,
-                record_type="claim.acquire",
-                aggregate_type="item",
-                aggregate_uuid=item["aggregate_uuid"],
-                basis_revision=authority.item_revision(item),
-                payload={
-                    "agent": "owner-a",
-                    "claim_type": "execute",
-                    "exclusive": True,
-                    "ttl_seconds": 300,
-                    "credential_ref": first_ref,
-                    "metadata": {"runtime_session_id": "session-a"},
-                },
-            )
-            granted = authority.arbitrate_command(
-                store, acquire, credentials={first_ref: first_token}
-            )
-            claim_id = granted.effect["claim_id"]
-
-            claim = pg.get_claim(store, claim_id, include_secret=True)
-            renew = _append_authority_command(
-                producer,
-                store,
-                record_type="claim.renew",
-                aggregate_type="claim",
-                claim_id=claim_id,
-                basis_revision=authority.claim_revision(claim),
-                payload={
-                    "claim_id": claim_id,
-                    "ttl_seconds": 600,
-                    "credential_ref": first_ref,
-                },
-            )
-            renewed = authority.arbitrate_command(
-                store, renew, credentials={first_ref: first_token}
-            )
-            assert renewed.decision_type == "claim.renewed"
-
-            claim = pg.get_claim(store, claim_id, include_secret=True)
-            handoff = _append_authority_command(
-                producer,
-                store,
-                record_type="claim.handoff",
-                aggregate_type="claim",
-                claim_id=claim_id,
-                basis_revision=authority.claim_revision(claim),
-                payload={
-                    "claim_id": claim_id,
-                    "to_actor": "owner-b",
-                    "mode": "rotate",
-                    "ttl_seconds": 600,
-                    "credential_ref": first_ref,
-                    "proposed_credential_ref": rotated_ref,
-                    "metadata": {"runtime_session_id": "session-b"},
-                },
-            )
-            handed_off = authority.arbitrate_command(
-                store,
-                handoff,
-                credentials={first_ref: first_token, rotated_ref: rotated_token},
-            )
-            assert handed_off.decision_type == "claim.handed-off"
-            assert handed_off.effect["actor"] == "owner-b"
-
-            claim = pg.get_claim(store, claim_id, include_secret=True)
-            release = _append_authority_command(
-                producer,
-                store,
-                record_type="claim.release",
-                aggregate_type="claim",
-                claim_id=claim_id,
-                basis_revision=authority.claim_revision(claim),
-                payload={"claim_id": claim_id, "credential_ref": rotated_ref},
-            )
-            released = authority.arbitrate_command(
-                store, release, credentials={rotated_ref: rotated_token}
-            )
-            assert released.decision_type == "claim.released"
-            assert released.effect["released"] is True
-            assert pg.get_claim(store, claim_id, include_secret=True) is None
-
-            with store.conn.cursor() as cur:
-                cur.execute(
-                    "SELECT payload::text FROM ingest_record WHERE repo_id = %s",
-                    (store.repo_id,),
-                )
-                durable_text = "\n".join(row["payload"] for row in cur.fetchall())
-                cur.execute(
-                    "SELECT effect::text || coalesce(reason_detail, '') AS text "
-                    "FROM authority_decision WHERE repo_id = %s",
-                    (store.repo_id,),
-                )
-                durable_text += "\n" + "\n".join(row["text"] for row in cur.fetchall())
-            assert first_token not in durable_text
-            assert rotated_token not in durable_text
-        finally:
-            producer.close()
 
     def test_sprint_activate_is_remotely_arbitrated(self, store, tmp_path):
         sprint_id = pg.create_sprint(store, f"Activate-command-{_uid()}", status="planned")
