@@ -4,7 +4,7 @@ Use this guide when `sprintctl` has to coexist with another planning or
 execution system.
 
 `sprintctl` is not the source of truth for every project-management field. It
-is the local execution-memory layer: claims, resumable context, decisions,
+is the local execution-memory layer: reservations, resumable context, decisions,
 handoff state, and the minimum dependency data needed to keep active work safe.
 
 ## System Boundaries
@@ -17,8 +17,8 @@ Use this split by default:
 - `sprintctl`: live execution state inside the repo
 
 If two systems disagree about live execution, prefer `sprintctl` for the active
-item, claims, and recent decisions because that state is local, proof-aware,
-and built for session recovery.
+item, reservations, and recent decisions because that state is local and built
+for session recovery.
 
 ## Minimal Mapping
 
@@ -28,7 +28,7 @@ Mirror only the fields that change execution behavior inside the repo:
 - blocking prerequisite -> `sprintctl item dep add`
 - external PR, issue, or spec -> `sprintctl item ref add`
 - decision that matters on resume -> `sprintctl item note --type decision`
-- in-flight ownership -> `sprintctl claim create`
+- in-flight visibility -> `sprintctl reservation reserve`
 - resume payload for the next session -> `sprintctl handoff --format json`
 
 Do not try to round-trip every external attribute into `sprintctl`. Status
@@ -80,7 +80,7 @@ Recommended rule:
 
 - keep external graph depth outside `sprintctl` unless a dependency changes what an agent may safely start
 - add local deps for real execution gates, not for every planning relationship
-- use `next-work` and `usage --context` as the local safety check before claiming work
+- use `next-work` and `usage --context` as the local safety check before reserving work
 
 This keeps dependency enforcement narrow and useful instead of turning
 `sprintctl` into a second planning system.
@@ -88,37 +88,36 @@ This keeps dependency enforcement narrow and useful instead of turning
 ## Pattern: Orchestrators And Sub-Agents
 
 An orchestrator may decide which item to run next, but `sprintctl` should still
-own claim proof and recovery context for the repo session.
+own reservation visibility and recovery context for the repo session.
 
 Coordinator pattern:
 
 ```sh
-COORD=$(sprintctl claim create \
+COORD=$(sprintctl reservation reserve \
   --item-id 7 \
   --actor orchestrator \
-  --type coordinate \
-  --ttl 1800 \
+  --role coordinate \
+  --session-id orchestrator-session \
   --json)
 
-sprintctl claim create \
+sprintctl reservation reserve \
   --item-id 7 \
   --actor worker-a \
-  --type execute \
-  --coordinate-claim-id <coord-id> \
-  --coordinate-claim-token <coord-token> \
+  --role execute \
+  --session-id worker-a-session \
   --json
 ```
 
 Recommended rule:
 
-- orchestrators choose work; `sprintctl` proves who currently owns execution
-- use `claim handoff` to transfer ownership between sessions
+- orchestrators choose work; `sprintctl` records who is visibly active on an item
+- use `reservation reassign` to transfer the reservation between sessions
 - use `handoff --format json` to transfer working memory
 - treat `usage --context --json` as the live re-sync call after any orchestrator restart
 
 ## Guardrails
 
-- do not expose `claim_token` in tickets, PR comments, or handoff bundles
+- do not treat a reservation as an exclusive lock
 - do not mirror every external queue or assignee update into local sprint items
 - do not add dependency edges unless they should block `next-work`
 - do not treat committed snapshots as fresher than live `usage --context`

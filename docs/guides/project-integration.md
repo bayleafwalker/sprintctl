@@ -10,7 +10,7 @@ orchestrator, also read [Interoperability Patterns](interoperability.md).
 
 This guide covers how to use `sprintctl` inside a real repository, not just how to invoke the CLI.
 
-The patterns here are based on the way a larger reference repo (`homelab-analytics`) uses `sprintctl`: local operational state, committed shared snapshots, and explicit claim-based coordination for agent sessions.
+The patterns here are based on the way a larger reference repo (`homelab-analytics`) uses `sprintctl`: local operational state, committed shared snapshots, and explicit reservation-based coordination for agent sessions.
 
 `sprintctl` should usually be the execution-memory layer inside the repo, not a
 replacement for the surrounding issue tracker or planning system. Keep external
@@ -38,7 +38,7 @@ The database is the live control plane. The committed snapshot is the reviewable
 
 Authority is scoped by concern:
 
-1. live `sprintctl` state owns item status, claims, dependencies, and events
+1. live `sprintctl` state owns item status, reservations, dependencies, and events
 2. the pinned, ratified governing doc revision owns intended scope and behavior
 3. implementation and executable evidence establish observed behavior
 4. committed `sprintctl render` output is a reviewable projection and may lag
@@ -96,8 +96,8 @@ Put a short `sprintctl` section in `AGENTS.md` so agents know:
 - require a governing doc ref or explicit `No doc:` decision while shaping
 - read and pin the governing doc revision before implementation
 - never let an agent set document `status: ratified`
-- claim sprint-scoped work before editing files when overlap is possible
-- treat `claim_id + claim_token` as the only ownership proof
+- reserve sprint-scoped work before editing files when overlap is possible
+- remember that reservations are advisory coordination signals, not ownership proof
 - refresh the shared snapshot after material sprint-state changes
 
 See [docs/examples/AGENTS.sprintctl.md](../examples/AGENTS.sprintctl.md) for a sample section.
@@ -110,10 +110,10 @@ When accepted work needs tracking:
 
 ```sh
 sprintctl sprint create --name "Sprint 4" --status active
-sprintctl item add --sprint-id 1 --track docs --title "Document claim handoff flow" \
-  --description "Document claim creation, heartbeat, rotation, and recovery."
+sprintctl item add --sprint-id 1 --track docs --title "Document reservation handoff flow" \
+  --description "Document reservation creation, activity touch, reassignment, and release."
 sprintctl item ref add --id 1 --type doc \
-  --url docs/plans/claim-handoff.md --label claim-handoff-plan
+  --url docs/plans/reservation-handoff.md --label reservation-handoff-plan
 sprintctl render > docs/sprint-snapshots/sprint-current.txt
 ```
 
@@ -124,38 +124,42 @@ Before repo edits, inspect live state:
 ```sh
 sprintctl item list --json
 sprintctl item show --id 1 --json
-sprintctl claim list-sprint --json
+sprintctl reservation list --item-id 1 --json
 ```
 
-If the item is yours to execute, start with a claim and keep its token:
+If the item is yours to execute, start with a reservation:
 
 ```sh
-sprintctl claim start \
+sprintctl reservation reserve \
   --item-id 1 \
   --actor codex-session-1 \
-  --ttl 600 \
-  --runtime-session-id "${CODEX_THREAD_ID:-manual-session}" \
-  --instance-id "$SPRINTCTL_INSTANCE_ID" \
+  --role execute \
+  --session-id "${CODEX_THREAD_ID:-manual-session}" \
   --json
 ```
 
-`claim start` already transitions `pending -> active`. For later transitions:
+Save the returned `id`. `reservation reserve` does not transition item status;
+use `item status` with `--expected-revision` for that.
+
+For later transitions:
 
 ```sh
-# Mark done and release in one flow
-sprintctl item done-from-claim \
-  --id 1 \
-  --claim-id <claim-id> \
-  --claim-token <claim-token> \
-  --actor codex-session-1
+# Get the current expected-revision basis
+REV=$(sprintctl item show --id 1 --json | jq -r '.item.status_revision')
 
-# Use explicit status transition for blocked/resume flow
+# Mark done
+sprintctl item status \
+  --id 1 \
+  --status done \
+  --actor codex-session-1 \
+  --expected-revision "$REV"
+
+# Or move to blocked
 sprintctl item status \
   --id 1 \
   --status blocked \
   --actor codex-session-1 \
-  --claim-id <claim-id> \
-  --claim-token <claim-token>
+  --expected-revision "$REV"
 ```
 
 ### Record execution history while work happens
@@ -166,9 +170,9 @@ Use structured notes or events when a decision, blocker, or coordination lesson 
 sprintctl item note \
   --id 1 \
   --type decision \
-  --summary "Use explicit claim handoff between live sessions" \
-  --detail "Shared actor labels and branch names are advisory only; ownership proof is claim_id plus claim_token." \
-  --tags claims,coordination \
+  --summary "Use explicit reservation reassignment between live sessions" \
+  --detail "Shared actor labels and branch names are advisory only; reservations carry no ownership proof." \
+  --tags reservations,coordination \
   --actor codex-session-1
 ```
 
@@ -183,17 +187,14 @@ sprintctl render > docs/sprint-snapshots/sprint-current.txt
 
 ### Hand off or release cleanly
 
-If ownership itself changes:
+If the reservation itself changes sessions:
 
 ```sh
-sprintctl claim handoff \
-  --id <claim-id> \
-  --claim-token <claim-token> \
+sprintctl reservation reassign \
+  --id <reservation-id> \
   --actor codex-session-2 \
-  --mode rotate \
-  --runtime-session-id "${CODEX_THREAD_ID:-manual-session-2}" \
-  --instance-id "$NEXT_INSTANCE_ID" \
-  --json > claim-handoff.json
+  --session-id "${CODEX_THREAD_ID:-manual-session-2}" \
+  --json
 ```
 
 If the next session only needs context, produce a broader bundle:
@@ -202,22 +203,23 @@ If the next session only needs context, produce a broader bundle:
 sprintctl handoff --output handoff-current.json
 ```
 
-If work is done via explicit status transition (instead of `done-from-claim`), release the claim:
+If work is done via explicit status transition, release the reservation:
 
 ```sh
-sprintctl claim release --id <claim-id> --claim-token <claim-token> --actor codex-session-1
+sprintctl reservation release --id <reservation-id> --actor codex-session-1
 ```
 
-## Claim Rules Worth Writing Down
+## Reservation Rules Worth Writing Down
 
 Projects that use multiple agents should repeat these rules in `AGENTS.md` or a runbook:
 
-- claim before repo edits when the task already exists as a sprint item and overlap is possible
+- reserve before repo edits when the task already exists as a sprint item and overlap is possible
 - never infer ownership from actor label, branch, worktree, or commit SHA alone
-- only `claim_id + claim_token` proves ownership
-- use `claim handoff` to transfer ownership, not `handoff`
-- use `claim resume` to recover claims by identity after session restart
-- refresh heartbeats around half-TTL for long-running sessions
+- a reservation is an advisory coordination signal, not proof of ownership
+- use `reservation reassign` to transfer the reservation to another session
+- use `handoff` when the next session needs broader sprint context but not the reservation
+- touch activity when useful; there is no heartbeat or TTL ceremony
+- status transitions use `--expected-revision`, not reservation proof
 
 ## Suggested Minimal Project Bundle
 
@@ -227,7 +229,7 @@ If you want the shortest useful integration, add only these:
 2. `.gitignore` entry for `.sprintctl/`
 3. `docs/sprint-snapshots/sprint-current.txt`
 4. governing plan/sprint docs using the doc-ref frontmatter contract
-5. one `AGENTS.md` section describing live-state, doc-ref, and claim rules
+5. one `AGENTS.md` section describing live-state, doc-ref, and reservation rules
 6. one `Makefile` target that renders the snapshot
 
 That is enough to reproduce the strongest parts of the reference usage without importing its entire documentation structure.

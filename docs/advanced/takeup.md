@@ -1,12 +1,12 @@
 # Sprint Takeup
 
 Sprint takeup is a sprint-level visibility signal. It records that an actor is
-currently looking at or operating on a sprint, without claiming any item and
+currently looking at or operating on a sprint, without reserving any item and
 without blocking anyone else.
 
 Use takeup when cockpit, operators, or coordinating agents need to answer "who
-is on this sprint right now?" Use claims when an actor needs exclusive ownership
-of a work item.
+is on this sprint right now?" Use reservations when an actor needs to make
+item-level coordination visible.
 
 ## Model
 
@@ -19,8 +19,8 @@ The current state is derived by pairing those events by sprint, actor, and
 instance id. A release can omit `--instance-id`; in that case sprintctl matches
 the most recent active takeup for the same actor.
 
-Takeup has no TTL, heartbeat, claim token, or handoff protocol. It is not proof
-of ownership.
+Takeup has no TTL, heartbeat, token, or handoff protocol. It is not proof of
+ownership.
 
 ## Commands
 
@@ -103,12 +103,12 @@ Use this to inspect active sprints:
 sprintctl sprint list --active
 ```
 
-## Claims Versus Takeup
+## Reservations Versus Takeup
 
 | Need | Use |
 |---|---|
 | Show that an actor is looking at a sprint | `takeup` |
-| Own a work item for execution or review | `claim` |
-| Prevent conflicting item transitions | `claim_id + claim_token` |
+| Make item-level coordination visible | `reservation reserve` |
+| Transition item status | `item status --expected-revision` |
 | Recover visibility after a crash | `takeup take --force` |
-| Transfer item ownership to a new session | `claim handoff` |
+| Transfer item coordination to a new session | `reservation reassign` |

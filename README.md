@@ -3,7 +3,7 @@
 `sprintctl` is a local-first execution-state and handoff CLI for a single
 developer with optional agent sessions.
 
-It tracks work items, claims, decisions, dependencies, and sprint state in
+It tracks work items, reservations, decisions, dependencies, and sprint state in
 SQLite, then projects that state into three primary read surfaces:
 
 - `usage --context` for live resume context
@@ -15,8 +15,8 @@ of an existing task graph tool.
 
 ## What It Is
 
-- A local SQLite database of sprint state: sprints, items, events, claims, refs, deps
-- A CLI that enforces state transitions and claim proof
+- A local SQLite database of sprint state: sprints, items, events, reservations, refs, deps
+- A CLI that enforces state transitions and expected-revision compare-and-swap
 - A deterministic resume surface for agent and operator sessions
 - A working-memory handoff bundle for session resumption
 - A reviewable text renderer for committed sprint snapshots
@@ -35,32 +35,30 @@ of an existing task graph tool.
 # 1. Create a sprint and a few items
 sprintctl sprint create --name "Sprint 4" --status active
 sprintctl item add --sprint-id 1 --track docs --title "Write resume guide" \
-  --description "Document the claim recovery and handoff path."
+  --description "Document the reservation reassignment and handoff path."
 
 # Descriptions can be replaced after an item is reshaped.
-sprintctl item edit --id 1 --description "Document recovery, rotation, and handoff."
+sprintctl item edit --id 1 --description "Document reservation reassignment, activity touch, and handoff."
 
 # 2. Read live context
 sprintctl session resume --json
 sprintctl usage --context --json
 sprintctl next-work --json --explain
 
-# 3. Claim or start work
-sprintctl claim start --item-id 1 --actor codex-session-1 --json
-
-# 3b. If context is lost later, recover the same token from sprintctl's
-# local recovery file instead of relying on an external runbook.
-sprintctl claim recover --item-id 1 --json
+# 3. Reserve or start work
+sprintctl reservation reserve --item-id 1 --actor codex-session-1 --json
 
 # 4. Record durable history during work
 sprintctl item note --id 1 --type decision --summary "Use handoff as working-memory snapshot"
 
-# 5a. If done: complete from claim (done + release; --id is optional when claim-id is supplied)
-sprintctl item done-from-claim --claim-id <claim_id> --claim-token <token> --actor codex-session-1
+# 5a. If done: transition status using expected-revision CAS, then release
+REV=$(sprintctl item show --id 1 --json | jq -r '.item.status_revision')
+sprintctl item status --id 1 --status done --actor codex-session-1 --expected-revision "$REV"
+sprintctl reservation release --id <reservation_id> --actor codex-session-1
 
-# 5b. If work continues: hand off claim ownership instead
+# 5b. If work continues: reassign the reservation instead
 # (do not release first)
-sprintctl claim handoff --id <claim_id> --claim-token <token> --actor codex-session-2 --mode rotate --json
+sprintctl reservation reassign --id <reservation_id> --actor codex-session-2 --session-id <next-session-id> --json
 sprintctl handoff --output handoff.json
 sprintctl render > docs/sprint-snapshots/sprint-current.txt
 ```
@@ -87,7 +85,7 @@ Detailed guides:
 - [Remote Authority Commands](docs/guides/authority-commands.md)
 - [Customization Guide](docs/customization.md)
 - [Coordinator Mode](docs/advanced/coordinator-mode.md)
-- [Claim Discipline](docs/advanced/claim-discipline.md)
+- [Reservation Discipline](docs/advanced/reservation-discipline.md)
 
 Reference:
 
@@ -199,10 +197,9 @@ and gitignore that directory.
 ## Design Defaults
 
 - CLI-first, local-first, explicit state
-- `claim_id + claim_token` remains the ownership proof for claim operations
-- sprintctl persists a local recovery copy of each active claim token next to the active database
+- Reservations are advisory coordination signals, not ownership proof
 - `usage --context --json` is the primary resume contract
-- `session resume --json` includes claim-recovery status for each active claim
+- `session resume --json` surfaces active reservations and next-work explanation
 - `handoff --format json` is the serialized working-memory contract
 - JSON and text surfaces should describe the same state in the same order
 - critical recovery ergonomics belong in the core binary; repo-local wrappers can build on top of them

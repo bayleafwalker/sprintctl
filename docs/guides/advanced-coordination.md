@@ -8,47 +8,49 @@ the same work item.
 Use coordinator mode when:
 
 - one item needs parallel sub-work
-- the coordinator must keep ownership continuity across sub-agents
+- the coordinator must keep visibility continuous across sub-agents
 - the extra ceremony is justified by the amount of overlap
 
 Do not use it for normal solo or solo-plus-one-agent work.
 
 ## Coordinator Pattern
 
-Coordinator claims first:
+Coordinator reserves first:
 
 ```sh
-sprintctl claim create \
+sprintctl reservation reserve \
   --item-id <id> \
   --actor orchestrator \
-  --type coordinate \
-  --ttl 1800 \
+  --role coordinate \
+  --session-id orchestrator-session \
   --json
 ```
 
-Sub-agents then claim under the coordinator:
+Sub-agents then reserve execute roles:
 
 ```sh
-sprintctl claim create \
+sprintctl reservation reserve \
   --item-id <id> \
   --actor worker-a \
-  --type execute \
-  --coordinate-claim-id <coord-id> \
-  --coordinate-claim-token <coord-token> \
+  --role execute \
+  --session-id worker-a-session \
   --json
 ```
+
+The coordinator role is informational metadata only; it does not grant an
+exclusivity exception.
 
 ## Guardrails
 
 - coordinator mode is advanced, not default
 - shared branch/worktree metadata is advisory only
-- each sub-agent still gets its own proof-backed claim
-- handoff discipline matters more than optimization here
+- each sub-agent still creates its own reservation
+- reassignment discipline matters more than optimization here
 
 ## Related
 
 - [Agent-Assisted Work](agent-assisted.md)
 - [Context and Handoff Contracts](../reference/context-and-handoff.md)
 - [Coordinator Mode](../advanced/coordinator-mode.md)
-- [Claim Discipline](../advanced/claim-discipline.md)
+- [Reservation Discipline](../advanced/reservation-discipline.md)
 - [UX Plan Pack](../plans/ux/00-index.md)

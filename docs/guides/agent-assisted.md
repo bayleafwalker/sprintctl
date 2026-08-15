@@ -1,7 +1,7 @@
 # Agent-Assisted Work
 
 This is the default multi-session mode for `sprintctl`: one operator, one live
-agent, explicit claims only when overlap matters.
+agent, explicit reservations only when overlap matters.
 
 ## Recommended Flow
 
@@ -11,10 +11,10 @@ agent, explicit claims only when overlap matters.
 sprintctl usage --context --json
 ```
 
-2. Agent claims one item:
+2. Agent reserves one item:
 
 ```sh
-sprintctl claim start --item-id <id> --actor codex-session-1 --ttl 900 --json
+sprintctl reservation reserve --item-id <id> --actor codex-session-1 --json
 ```
 
 3. Agent records durable notes while working:
@@ -23,28 +23,25 @@ sprintctl claim start --item-id <id> --actor codex-session-1 --ttl 900 --json
 sprintctl item note --id <id> --type decision --summary "Pinned contract v1"
 ```
 
-4. Agent marks the item done and releases the claim in one flow:
+4. Agent marks the item done and releases the reservation:
 
 ```sh
-sprintctl item done-from-claim \
-  --id <item-id> \
-  --claim-id <claim-id> \
-  --claim-token <token> \
-  --actor codex-session-1
+REV=$(sprintctl item show --id <id> --json | jq -r '.item.status_revision')
+sprintctl item status --id <id> --status done --actor codex-session-1 --expected-revision "$REV"
+sprintctl reservation release --id <reservation-id> --actor codex-session-1
 ```
 
-5. Or hands ownership to the next live session:
+5. Or hands the reservation to the next live session:
 
 ```sh
-sprintctl claim handoff \
-  --id <claim-id> \
-  --claim-token <token> \
+sprintctl reservation reassign \
+  --id <reservation-id> \
   --actor codex-session-2 \
-  --mode rotate \
+  --session-id next-session \
   --json
 ```
 
-6. Write a broader sprint snapshot when the next session needs more than claim identity:
+6. Write a broader sprint snapshot when the next session needs more than reservation identity:
 
 ```sh
 sprintctl handoff --output handoff.json
@@ -52,9 +49,9 @@ sprintctl handoff --output handoff.json
 
 ## Rules To Keep
 
-- `claim_id + claim_token` is the only ownership proof
-- `claim handoff` transfers ownership
-- `handoff` transfers context, not proof
+- a reservation is an advisory coordination signal, not ownership proof
+- `reservation reassign` transfers the visible reservation
+- `handoff` transfers context, not the reservation
 - `usage --context` remains the live restart surface even if a handoff bundle exists
 
 ## Related
