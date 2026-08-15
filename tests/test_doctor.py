@@ -517,3 +517,42 @@ def test_local_schema_probe_reports_recovery_provenance(tmp_path):
         "source_repo_id": "sprintctl-remote",
         "reservations_interrupted": 0,
     }
+
+
+def test_recovery_provenance_reaches_the_text_report_not_only_json():
+    """An operator reading plain `doctor` output must see the recovery.
+
+    A recovered database is a new authority instance; if that fact is
+    --json-only, the operator most likely to need it is the one least likely
+    to see it.
+    """
+    report = {
+        "status": "ok",
+        "provenance": {
+            "executable": {"version": "0.2.24", "path": "/usr/bin/sprintctl"},
+            "package": {"code_version": "0.2.24", "metadata_version": "0.2.24"},
+            "source": {"present": False, "version": None},
+        },
+        "backend": {
+            "environment_mode": "local", "resolved_mode": "local", "repo_id": "sprintctl",
+            "repo_source": "marker", "marker": None, "url_configured": False,
+        },
+        "extras": {"remote": {"enabled": True}, "served": {"enabled": True}},
+        "schema": {
+            "backend": "local", "expected_version": 22, "actual_version": 22, "status": "current",
+            "recovered_from": {
+                "recovered_at": "2026-08-15T00:00:00Z",
+                "source_repo_id": "sprintctl-remote",
+                "reservations_interrupted": 3,
+            },
+        },
+        "findings": [],
+    }
+
+    text = doctor.render_text(report)
+
+    assert "recovered: from=sprintctl-remote at=2026-08-15T00:00:00Z" in text
+    assert "reservations_interrupted=3" in text
+
+    report["schema"]["recovered_from"] = None
+    assert "recovered:" not in doctor.render_text(report)

@@ -13,6 +13,7 @@ from tests.pg._shared import (
     assert_disposable_connection,
     pg,
     _uid,
+    json,
     PG_MARKS,
     _PG_URL,
     dict_row,
@@ -263,3 +264,100 @@ class TestReservationRoleMigration:
                 assert cur.fetchone()["n"] == 1
             finally:
                 store.conn.rollback()
+
+
+class TestReservationAuditTrail:
+    """Lifecycle events, which are the only durable record of who did what.
+
+    Reservations carry no credential, so if the event trail is missing an
+    operator cannot reconstruct who interrupted whom. SQLite pins the same
+    trail in tests/test_reservations.py; this is the parity half.
+    """
+
+    @staticmethod
+    def _payload(event):
+        # PostgreSQL returns event payloads as JSON text (pinned by
+        # tests/pg/test_event.py::test_payload_is_string), so decode rather
+        # than assume the SQLite-side dict.
+        payload = event["payload"]
+        return json.loads(payload) if isinstance(payload, str) else payload
+
+    def _reservation_events(self, store, sprint_id):
+        # list_events reads newest-first; sort by id so the assertion is
+        # about the order things happened, not the read surface's convention.
+        return sorted(
+            (event for event in pg.list_events(store, sprint_id)
+             if event["event_type"].startswith("reservation.")),
+            key=lambda event: event["id"],
+        )
+
+    def test_reserve_touch_reassign_release_leave_an_attributable_trail(
+        self, store, sprint_id, track_id
+    ):
+        item_id = pg.create_work_item(store, sprint_id, track_id, f"Audit-{_uid()}")
+        row = pg.reserve(store, item_id, actor="one", session_id="session-one")
+        pg.reassign_reservation(store, row["id"], actor="two", session_id="session-two")
+        pg.release_reservation(store, row["id"], actor="two")
+
+        events = self._reservation_events(store, sprint_id)
+        assert [event["event_type"] for event in events] == [
+            "reservation.reserved",
+            "reservation.reassigned",
+            "reservation.released",
+        ]
+        assert [event["actor"] for event in events] == ["one", "two", "two"]
+        assert all(event["work_item_id"] == item_id for event in events)
+
+    def test_takeover_and_sweep_record_who_and_why(self, store, sprint_id, track_id):
+        item_id = pg.create_work_item(store, sprint_id, track_id, f"Audit2-{_uid()}")
+        first = pg.reserve(store, item_id, actor="one", session_id="session-one")
+        replacement = pg.reserve(store, item_id, actor="two", session_id="session-two",
+                                 interrupt_existing=True)
+
+        interrupted = [
+            event for event in self._reservation_events(store, sprint_id)
+            if event["event_type"] == "reservation.interrupted"
+        ]
+        assert len(interrupted) == 1
+        assert interrupted[0]["actor"] == "two"
+        assert self._payload(interrupted[0])["reservation_id"] == first["id"]
+        assert self._payload(interrupted[0])["reason"] == "explicit-takeover"
+        assert self._payload(interrupted[0])["replacement_id"] == replacement["id"]
+
+        with store.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE reservation SET last_activity_at = now() - interval '30 days' "
+                "WHERE repo_id = %s AND id = %s",
+                (store.repo_id, replacement["id"]),
+            )
+        store.conn.commit()
+        pg.sweep_stale_reservations(store)
+
+        swept = [
+            event for event in self._reservation_events(store, sprint_id)
+            if event["event_type"] == "reservation.interrupted"
+            and self._payload(event)["reservation_id"] == replacement["id"]
+        ]
+        assert len(swept) == 1
+        assert swept[0]["actor"] == "maintenance"
+        assert self._payload(swept[0])["reason"] == "7-day inactivity sweep"
+
+
+class TestIntegrityParity:
+    def test_both_backends_report_the_same_repository_tables(self, store, tmp_path):
+        """An operator must not see a different repository per backend.
+
+        The row-count sets are the operator-visible surface of `doctor` and
+        `db integrity`; when they diverge, a missing relation reads as a
+        missing feature rather than as a gap in the report.
+        """
+        from sprintctl import db as sqlite_backend
+
+        connection = sqlite_backend.get_connection(tmp_path / "parity.db")
+        sqlite_backend.init_db(connection)
+        try:
+            local = set(sqlite_backend.check_integrity(connection)["table_counts"])
+        finally:
+            connection.close()
+
+        assert set(pg.check_integrity(store)["table_counts"]) == local

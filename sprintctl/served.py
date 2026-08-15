@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from . import reservation as _reservation
 from .backend import ServedProfile
 from .served_routes import doctor_probe_command_paths, doctor_probe_operations
 from .vuoro_credentials import resolve_file_credential
@@ -58,8 +59,29 @@ async def _invoke_operation(
     arguments: dict[str, Any],
     **kwargs: Any,
 ) -> Any:
+    arguments = _with_session_attribution(operation, arguments)
     async with _client(served_profile) as client:
         return await client.invoke(operation, arguments, **kwargs)
+
+
+def _with_session_attribution(operation: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Tell the authority which session performed an activity-bearing mutation.
+
+    Served callers are the reason ``last_activity_at`` can advance without
+    ceremony: the server cannot see the client's session, so the client has to
+    say. This is attached here rather than in each facade so a newly served
+    operation cannot quietly lose the attribution -- the operation set lives in
+    :mod:`sprintctl.reservation`, shared with the application that consumes it.
+
+    It names a session and authorizes nothing; an explicit argument always
+    wins, and a client with no session simply omits it.
+    """
+    if operation not in _reservation.ACTIVITY_OPERATIONS or arguments.get("session_id"):
+        return arguments
+    session_id = _reservation.ambient_session_id()
+    if session_id is None:
+        return arguments
+    return {**arguments, "session_id": session_id}
 
 
 def read_sprints(

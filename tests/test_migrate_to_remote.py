@@ -76,7 +76,6 @@ class TestExportNdjson:
         assert counts["ref"] == 1
         assert counts["claim_history"] == 0
         assert counts["reservation"] == 0
-        assert counts["claim_history"] == 0
         assert counts["dep"] == 0
 
     def test_ndjson_exports_reservations_and_claim_history(self, populated_sqlite):

@@ -125,9 +125,11 @@ sprintctl reservation touch \
 ```
 
 `last_activity_at` also advances on its own whenever your session
-successfully mutates the item (status, edit, note, ref, dep), so `touch` is for
-work that happens outside sprintctl — long external or git-only stretches.
-Attribution is by session id, never by actor name.
+successfully mutates the item (status, edit, note, ref, dep, item-scoped
+events), so `touch` is for work that happens outside sprintctl — long external
+or git-only stretches. Attribution is by session id, never by actor name, and
+it works the same in served mode: the client attaches its session to the
+invocation, since the server cannot see it.
 
 Touch bumps `last_activity_at`. There is no lease, no TTL, and no heartbeat
 contract to violate. Staleness is display-only.

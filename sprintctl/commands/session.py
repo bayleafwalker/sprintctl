@@ -138,9 +138,7 @@ def agent_protocol_cmd(as_json) -> None:
                 "'reservation touch' stays available for work done outside sprintctl. "
                 "There is no heartbeat and nothing lapses."
             ),
-            "stale_after_hours": _reservation_policy.stale_after().total_seconds() / 3600,
-            "maintenance_interrupt_after_days": _reservation_policy.interrupt_after().total_seconds() / 86400,
-            "maintenance_interrupt_trigger": "explicit 'sprintctl maintain sweep' only",
+            **_reservation_policy.describe(),
             "roles": list(_reservation.ROLES)},
         "takeup_model": {
             "description": (

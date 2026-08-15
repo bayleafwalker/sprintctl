@@ -946,19 +946,6 @@ class WorkApplication:
     ) -> dict[str, Any]:
         return self.next_work(arguments.get("sprint_id"))
 
-    #: Item-scoped mutations whose success is evidence that the reserving
-    #: session is still working.  Reads are deliberately absent: an activity
-    #: clock that a read can move measures attention, not work.
-    IMPLICIT_ACTIVITY_OPERATIONS = frozenset({
-        "work.item.edit",
-        "work.item.note",
-        "work.item.ref.add",
-        "work.item.ref.remove",
-        "work.item.dep.add",
-        "work.item.dep.remove",
-        "work.event.add",
-    })
-
     def _note_implicit_activity(
         self, operation: str, arguments: Mapping[str, Any], result: Mapping[str, Any]
     ) -> None:
@@ -970,24 +957,22 @@ class WorkApplication:
         sprintctl still has explicit ``reservation touch``.
 
         Attribution is by session, not by actor name, and a failure here is
-        never allowed to fail the operation that already committed.
+        never allowed to fail the operation that already committed.  Which
+        operations qualify -- and which argument names their item -- lives in
+        :mod:`sprintctl.reservation` so the served and direct paths cannot
+        disagree about it.
         """
-        if operation not in self.IMPLICIT_ACTIVITY_OPERATIONS:
-            return
         session_id = arguments.get("session_id")
         if not session_id:
             return
-        item_id = arguments.get("item_id")
-        if item_id is None:
-            item = result.get("item") if isinstance(result, Mapping) else None
-            item_id = item.get("id") if isinstance(item, Mapping) else None
+        item_id = _reservation.activity_item_id(operation, arguments, result)
         if item_id is None:
             return
         note = getattr(self.backend, "note_session_activity", None)
         if note is None:
             return
         try:
-            note(self.store, int(item_id), session_id=str(session_id))
+            note(self.store, item_id, session_id=str(session_id))
         except Exception:  # pragma: no cover - advisory bookkeeping only
             pass
 

@@ -44,6 +44,7 @@ from .. import served as _served
 from .. import served_routes as _served_routes
 from .. import sync as _sync
 from ..cli_support import _redacted_postgres_error
+from ..cli_support import note_reservation_activity as _note_reservation_activity
 from ..render import render_sprint_doc
 
 
@@ -460,6 +461,7 @@ def _event_add_impl(
     except (TypeError, ValueError) as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+    _note_reservation_activity(store, m, work_item_id)
     backend_config = obj.get("backend_config")
     repo_id = backend_config.repo_id if backend_config is not None else Path.cwd().name
     persisted = next((event for event in m.list_events(store, sprint_id) if event["id"] == eid), None)

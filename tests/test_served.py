@@ -276,12 +276,12 @@ def test_reservation_operation_sends_credential_free_shape(fake_vuoro_client):
     result = served.reservation_operation(
         profile,
         "work.reservation.reserve",
-        {"item_id": 5, "actor": "worker", "session_id": "session-1", "role": "execute", "correlation_ref": None, "override": False},
+        {"item_id": 5, "actor": "worker", "session_id": "session-1", "role": "execution", "correlation_ref": None, "interrupt_existing": False},
         repo_id="repo-x",
     )
     assert result["operation"] == "work.reservation.reserve"
     args = result["arguments"]
-    assert set(args) == {"item_id", "actor", "session_id", "role", "correlation_ref", "override"}
+    assert set(args) == {"item_id", "actor", "session_id", "role", "correlation_ref", "interrupt_existing"}
     assert args["item_id"] == 5
     assert args["actor"] == "worker"
     assert "claim_token" not in args
@@ -536,3 +536,48 @@ def test_served_and_its_optional_dependencies_never_import_postgres_modules():
     )
     assert result.returncode == 0, result.stderr
     assert "OK" in result.stdout
+
+
+def test_activity_bearing_operations_carry_the_caller_session(fake_vuoro_client, monkeypatch):
+    """Served mutations must tell the authority which session made them.
+
+    The server cannot observe a client's session, so if the client omits it
+    the implicit activity clock cannot move and agents are pushed back to
+    explicit `reservation touch` -- the ceremony the reservation model set out
+    to remove. This is attached centrally, so the assertion covers every
+    activity-bearing facade rather than one call site.
+    """
+    monkeypatch.setenv("SPRINTCTL_RUNTIME_SESSION_ID", "session-42")
+    profile = _profile()
+
+    served.item_note(profile, repo_id="repo-x", item_id=5, note_type="progress", summary="did work")
+    served.item_ref_add(profile, repo_id="repo-x", item_id=5, ref_type="doc", url="https://example/x")
+    served.item_ref_remove(profile, repo_id="repo-x", item_id=5, ref_id=1)
+    served.item_dep_add(profile, repo_id="repo-x", item_id=5, blocked_item_id=6)
+    served.item_dep_remove(profile, repo_id="repo-x", item_id=5, dep_id=1)
+    served.item_edit(profile, repo_id="repo-x", item_id=5, description="text", expected_revision="rev")
+    served.event_add(profile, repo_id="repo-x", sprint_id=1, event_type="note", work_item_id=5)
+
+    sent = [
+        (operation, arguments)
+        for instance in fake_vuoro_client.instances
+        for operation, arguments, _kwargs in instance.invocations
+    ]
+    assert len(sent) == 7
+    for operation, arguments in sent:
+        assert arguments.get("session_id") == "session-42", operation
+
+
+def test_reads_and_sessionless_clients_send_no_session(fake_vuoro_client, monkeypatch):
+    """Attribution is scoped: it rides activity-bearing writes only."""
+    monkeypatch.setenv("SPRINTCTL_RUNTIME_SESSION_ID", "session-42")
+    profile = _profile()
+    served.read_item(profile, repo_id="repo-x", item_id=5)
+    _operation, arguments, _kwargs = fake_vuoro_client.instances[-1].invocations[0]
+    assert "session_id" not in arguments
+
+    monkeypatch.delenv("SPRINTCTL_RUNTIME_SESSION_ID")
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    served.item_note(profile, repo_id="repo-x", item_id=5, note_type="progress", summary="s")
+    _operation, arguments, _kwargs = fake_vuoro_client.instances[-1].invocations[0]
+    assert "session_id" not in arguments

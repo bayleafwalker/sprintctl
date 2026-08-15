@@ -571,6 +571,15 @@ def render_text(report: Mapping[str, Any]) -> str:
         f"schema: backend={schema['backend']} expected={schema['expected_version']} "
         f"actual={schema['actual_version'] if schema['actual_version'] is not None else schema['status']}"
     )
+    recovered = schema.get("recovered_from")
+    if recovered:
+        # A recovered database is a new authority instance, and the operator
+        # reading this text needs that before trusting anything else in the
+        # report -- so it cannot be --json-only.
+        lines.append(
+            f"recovered: from={recovered['source_repo_id']} at={recovered['recovered_at']} "
+            f"reservations_interrupted={recovered['reservations_interrupted']}"
+        )
     if report["findings"]:
         lines.append("findings:")
         for finding in report["findings"]:

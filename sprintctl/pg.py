@@ -2326,6 +2326,20 @@ RESERVATION_ROLES = _reservation.ROLES
 DEFAULT_RESERVATION_ROLE = _reservation.DEFAULT_ROLE
 
 
+def _reservation_event(store: PgStore, row: dict, event_type: str, actor: str, payload: dict) -> None:
+    """Append the reservation lifecycle event, as the SQLite backend does.
+
+    Reservations carry no credential, so this trail is the only durable record
+    of who reserved, who interrupted whom, and why.  A backend that skipped it
+    would give operators a different story depending on where the repository
+    happened to live.
+    """
+    item = get_work_item(store, int(row["work_item_id"]))
+    if item is not None:
+        create_event(store, item["sprint_id"], actor, event_type,
+                     source_type="system", work_item_id=item["id"], payload=payload)
+
+
 def _reservation_row(store: PgStore, reservation_id: int) -> dict | None:
     with store.conn.cursor() as cur:
         cur.execute("SELECT * FROM reservation WHERE repo_id = %s AND id = %s", (store.repo_id, reservation_id))
@@ -2419,6 +2433,13 @@ def reserve(store: PgStore, work_item_id: int, *, actor: str, session_id: str,
     assert row is not None
     interrupted_ids = {old["id"] for old in interrupted}
     remaining = [old for old in existing if old["id"] not in interrupted_ids]
+    for old in interrupted:
+        _reservation_event(store, dict(old), "reservation.interrupted", actor,
+                           {"reservation_id": old["id"], "reason": "explicit-takeover", "replacement_id": reservation_id})
+    _reservation_event(store, row, "reservation.reserved", actor,
+                       {"reservation_id": reservation_id, "session_id": session_id, "role": role,
+                        "correlation_ref": correlation_ref, "interrupt_existing": interrupt_existing,
+                        "conflicting_reservation_ids": [old["id"] for old in remaining]})
     return _reservation.annotate_conflicts(_reservation.display(row), remaining)
 
 
@@ -2465,7 +2486,12 @@ def reassign_reservation(store: PgStore, reservation_id: int, *, actor: str, ses
     with store.conn.cursor() as cur:
         cur.execute("UPDATE reservation SET actor = %s, session_id = %s, last_activity_at = %s, correlation_ref = COALESCE(%s, correlation_ref) WHERE repo_id = %s AND id = %s", (actor, session_id, _reservation.now_text(), correlation_ref, store.repo_id, reservation_id))
     store.conn.commit()
-    return get_reservation(store, reservation_id)  # type: ignore[return-value]
+    updated = _reservation_row(store, reservation_id)
+    assert updated is not None
+    _reservation_event(store, updated, "reservation.reassigned", actor,
+                       {"reservation_id": reservation_id, "previous_actor": row["actor"],
+                        "previous_session_id": row["session_id"]})
+    return _reservation.display(updated)
 
 
 def release_reservation(store: PgStore, reservation_id: int, *, actor: str | None = None) -> dict:
@@ -2477,6 +2503,10 @@ def release_reservation(store: PgStore, reservation_id: int, *, actor: str | Non
         with store.conn.cursor() as cur:
             cur.execute("UPDATE reservation SET state = 'released', released_at = %s, last_activity_at = %s WHERE repo_id = %s AND id = %s", (now, now, store.repo_id, reservation_id))
         store.conn.commit()
+        updated = _reservation_row(store, reservation_id)
+        assert updated is not None
+        _reservation_event(store, updated, "reservation.released", actor or row["actor"],
+                           {"reservation_id": reservation_id})
     return get_reservation(store, reservation_id)  # type: ignore[return-value]
 
 
@@ -2495,6 +2525,9 @@ def sweep_stale_reservations(store: PgStore, *, now: str | None = None,
         cur.execute("UPDATE reservation SET state = 'interrupted', released_at = %s, interruption_reason = %s WHERE repo_id = %s AND state = 'active' AND last_activity_at <= %s RETURNING *", (now, reason, store.repo_id, cutoff))
         rows = cur.fetchall()
     store.conn.commit()
+    for row in rows:
+        _reservation_event(store, dict(row), "reservation.interrupted", "maintenance",
+                           {"reservation_id": row["id"], "reason": reason})
     return [_reservation.display(row, now=now) for row in rows]
 
 
@@ -3026,7 +3059,15 @@ def _import_row(
 # Database maintenance
 # ---------------------------------------------------------------------------
 
-_MAINTENANCE_TABLES = ("sprint", "track", "work_item", "event", "claim_history", "ref", "dep")
+# Kept in step with the SQLite backend's integrity table set: an operator
+# comparing `doctor`/integrity output across backends must not see a different
+# repository just because of where it is stored. `reservation` was missing from
+# the moment reservations existed, and `recovery_record` since the claim
+# archive rename.
+_MAINTENANCE_TABLES = (
+    "sprint", "track", "work_item", "event", "reservation",
+    "claim_history", "ref", "dep", "recovery_record",
+)
 
 
 def vacuum_database(store: PgStore) -> dict:

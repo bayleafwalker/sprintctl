@@ -91,9 +91,15 @@ of ownership. Nothing lapses, and no reservation ever changes state because
 time passed.
 
 - It advances **implicitly** on a successful item-scoped mutation attributed
-  to the reservation's *session* — status, edit, note, ref, and dep
-  operations. Attribution is by session id, never by a matching actor name,
-  and reads never qualify.
+  to the reservation's *session* — status, edit, note, ref, dep, and
+  item-scoped event writes. Attribution is by session id, never by a matching
+  actor name, and reads never qualify.
+- Direct callers are attributed from the ambient session
+  (`SPRINTCTL_RUNTIME_SESSION_ID`, else `CODEX_THREAD_ID`). Served callers
+  attach that session to the invocation, because the authority cannot observe
+  a remote client's session; the operation set and the argument each one uses
+  to name its item live in `sprintctl/reservation.py` so the two paths cannot
+  disagree.
 - `reservation touch` remains available for work happening outside sprintctl
   (long external or git-only work).
 
@@ -150,8 +156,14 @@ consequently the only condition under which `reserve` still refuses, and it is
 a property of the repository rather than of who else is working on the item.
 
 Both backends durably record reservation creation, touch, reassignment, and
-release, and share one role taxonomy and one policy module, so the facades
-cannot drift. The visibility result is classified as `concurrency-tested`, not
+release as rows, and append the same lifecycle events —
+`reservation.reserved`, `reservation.interrupted`, `reservation.reassigned`,
+`reservation.released` — as system events on the item. Since reservations
+carry no credential, that trail is the only durable record of who displaced
+whom and why, so it is pinned on both backends rather than assumed. `touch`
+deliberately appends no event: it moves a clock, and an event per bump would
+recreate the heartbeat log v3 removed. One role taxonomy and one policy module
+serve both facades, so they cannot drift. The visibility result is classified as `concurrency-tested`, not
 as a general cross-operation linearizability proof.
 
 ## Schema compatibility

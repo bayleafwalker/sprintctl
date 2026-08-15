@@ -173,3 +173,75 @@ def test_role_normalization_is_shared_by_both_backends():
 
     assert pg.RESERVATION_ROLES == db.RESERVATION_ROLES == _reservation.ROLES
     assert pg.DEFAULT_RESERVATION_ROLE == db.DEFAULT_RESERVATION_ROLE == "execution"
+
+
+def test_release_and_reassign_are_attributable_in_the_event_trail(conn, active_sprint):
+    """The SQLite half of the audit-trail parity pinned in tests/pg."""
+    item = _item(conn, active_sprint)
+    row = db.reserve(conn, item, actor="one", session_id="s1")
+    db.reassign_reservation(conn, row["id"], actor="two", session_id="s2")
+    db.release_reservation(conn, row["id"], actor="two")
+
+    # list_events reads newest-first; sort by id so the assertion is about
+    # the order things happened, not about the read surface's convention.
+    events = sorted(
+        (event for event in db.list_events(conn, active_sprint["id"])
+         if event["event_type"].startswith("reservation.")),
+        key=lambda event: event["id"],
+    )
+    assert [event["event_type"] for event in events] == [
+        "reservation.reserved",
+        "reservation.reassigned",
+        "reservation.released",
+    ]
+    assert [event["actor"] for event in events] == ["one", "two", "two"]
+
+
+@pytest.mark.parametrize(
+    ("operation", "arguments"),
+    [
+        ("work.item.note", {"note_type": "progress", "summary": "did work"}),
+        ("work.event.add", {"event_type": "note", "source_type": "actor"}),
+    ],
+)
+def test_served_item_work_advances_the_activity_clock(conn, active_sprint, operation, arguments):
+    """The application half of implicit activity, including the odd key out.
+
+    ``work.event.add`` names its item ``work_item_id`` while every other
+    activity-bearing operation uses ``item_id``. Reading only one of them made
+    the clock silently stop for that operation, so both shapes are pinned.
+    """
+    item = _item(conn, active_sprint)
+    app = WorkApplication(repo_id="test", store=conn, backend=db,
+                          ingest_records=lambda _records: [], arbitrate_command=lambda *_args: None,
+                          list_records=lambda *_args: [], list_decisions=lambda *_args: [])
+    context = SimpleNamespace(identity=SimpleNamespace(actor="one"), request_id="test", repo_id=None)
+    row = app.invoke("work.reservation.reserve",
+                     {"item_id": item, "actor": "one", "session_id": "s1"}, context)["reservation"]
+    _backdate(conn, row["id"], hours=5)
+    assert db.get_reservation(conn, row["id"])["stale"] is True
+
+    item_key = "work_item_id" if operation == "work.event.add" else "item_id"
+    payload = {item_key: item, "session_id": "s1", **arguments}
+    if operation == "work.event.add":
+        payload["sprint_id"] = active_sprint["id"]
+    app.invoke(operation, payload, context)
+
+    assert db.get_reservation(conn, row["id"])["stale"] is False
+
+
+def test_a_stranger_session_cannot_move_the_clock_through_the_application(conn, active_sprint):
+    item = _item(conn, active_sprint)
+    app = WorkApplication(repo_id="test", store=conn, backend=db,
+                          ingest_records=lambda _records: [], arbitrate_command=lambda *_args: None,
+                          list_records=lambda *_args: [], list_decisions=lambda *_args: [])
+    context = SimpleNamespace(identity=SimpleNamespace(actor="one"), request_id="test", repo_id=None)
+    row = app.invoke("work.reservation.reserve",
+                     {"item_id": item, "actor": "one", "session_id": "s1"}, context)["reservation"]
+    _backdate(conn, row["id"], hours=5)
+
+    app.invoke("work.item.note",
+               {"item_id": item, "session_id": "someone-else", "note_type": "progress",
+                "summary": "not mine"}, context)
+
+    assert db.get_reservation(conn, row["id"])["stale"] is True

@@ -34,8 +34,8 @@ Return: test results, files changed, and any follow-up risks.
 
 ```text
 You are coordinator. Do not let workers conflict on the same files.
-1) Create a coordinate reservation on item <ID>.
-2) Spawn worker execute reservations on the same item.
+1) Create an observation reservation on item <ID>.
+2) Spawn worker execution reservations on the same item.
 3) Assign disjoint file ownership to each worker.
 4) Require each worker to return:
    - changed files

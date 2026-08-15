@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 import os
+from typing import Any
 
 
 DEFAULT_STALE_AFTER = timedelta(hours=4)
@@ -66,9 +67,16 @@ def sweep_reason(threshold: timedelta | None = None) -> str:
     return f"{span} inactivity sweep"
 
 
-def describe() -> dict[str, float]:
-    """Policy horizons for protocol/handoff surfaces."""
+def describe() -> dict[str, Any]:
+    """Policy horizons, named once, for every surface that publishes them.
+
+    Agent-facing protocol output and handoff bundles both advertise these, and
+    they drifted into two spellings of the same number.  Keeping the field
+    names here means the next horizon added shows up on both surfaces instead
+    of only the one whose author remembered.
+    """
     return {
         "stale_after_hours": stale_after().total_seconds() / 3600,
-        "interrupt_after_days": interrupt_after().total_seconds() / 86400,
+        "maintenance_interrupt_after_days": interrupt_after().total_seconds() / 86400,
+        "maintenance_interrupt_trigger": "explicit 'sprintctl maintain sweep' only",
     }

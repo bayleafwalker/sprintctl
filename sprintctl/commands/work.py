@@ -40,34 +40,14 @@ from .. import outbox as _outbox
 from .. import pg as _pg
 from .. import project as _project
 from .. import projection as _projection
+from .. import reservation as _reservation
 from .. import projection_reads as _projection_reads
 from .. import served as _served
 from .. import served_routes as _served_routes
 from .. import sync as _sync
 from ..cli_support import _redacted_postgres_error
+from ..cli_support import note_reservation_activity as _note_reservation_activity
 from ..render import render_sprint_doc
-
-
-def _note_reservation_activity(store, m, item_id: int) -> None:
-    """Advance the caller's own reservation clocks after a successful mutation.
-
-    Activity is derived from work, not from ceremony: a session that edits,
-    annotates, or re-links an item it reserved has demonstrably not gone away.
-    Only the reserving session matches (never a bare actor name), reads never
-    call this, and a failure here must never fail the mutation that already
-    committed -- the clock is advisory.
-    """
-    session_id = (
-        os.environ.get("SPRINTCTL_RUNTIME_SESSION_ID")
-        or os.environ.get("CODEX_THREAD_ID")
-    )
-    note = getattr(m, "note_session_activity", None)
-    if not session_id or note is None:
-        return
-    try:
-        note(store, int(item_id), session_id=session_id)
-    except Exception:  # pragma: no cover - advisory bookkeeping only
-        pass
 
 
 @click.group()
@@ -1610,6 +1590,7 @@ def item_dep_add(obj, item_id: str, blocks_item_id: str) -> None:
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+    _note_reservation_activity(store, m, item_id)
     click.echo(f"Dep #{dep_id}: item #{item_id} blocks item #{blocks_item_id}")
 
 
@@ -1672,94 +1653,13 @@ def item_dep_remove(obj, item_id: str, dep_id) -> None:
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+    _note_reservation_activity(store, m, item_id)
     click.echo(f"Dep #{dep_id} removed.")
 
 
 # ---------------------------------------------------------------------------
 # event
 # ---------------------------------------------------------------------------
-
-def _shadow_observation_envelope(event: dict, repo_id: str) -> _contracts.RecordEnvelope | None:
-    """Translate one persisted authority event into a pilot observation.
-
-    The current event table remains authoritative.  The pilot therefore uses a
-    deterministic UUID derived from its stable repository identity and the
-    backend event ID, rather than introducing another identifier allocation
-    path.  Only record types classified as observations are eligible.
-    """
-    event_type = event["event_type"]
-    try:
-        if _contracts.record_class_for_type(event_type) is not _contracts.RecordClass.OBSERVATION:
-            return None
-    except ValueError:
-        return None
-    raw_payload = event.get("payload")
-    payload = json.loads(raw_payload) if isinstance(raw_payload, str) else dict(raw_payload or {})
-    event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"sprintctl:{repo_id}:event:{event['id']}"))
-    return _contracts.Observation(
-        event_id=event_id,
-        record_type=event_type,
-        schema_version="1",
-        actor=event["actor"],
-        authored_at=event["created_at"],
-        refs={
-            "repo_id": repo_id,
-            "sprint_id": event["sprint_id"],
-            "work_item_id": event.get("work_item_id"),
-            "authority_event_id": event["id"],
-        },
-        payload={"source_type": event["source_type"], "event_payload": payload},
-    )
-
-
-def _shadow_source(envelope: _contracts.RecordEnvelope) -> dict:
-    """Return the outbox-shaped record used by parity comparison."""
-    return {
-        "record_class": envelope.record_class.value,
-        "event_id": envelope.event_id,
-        "event_type": envelope.record_type,
-        "actor": envelope.actor,
-        "occurred_at": envelope.authored_at,
-        "payload": envelope.to_dict(),
-        "runtime_session_id": None,
-        "basis_revision": envelope.basis_revision,
-        "correlation_id": envelope.correlation_id,
-        "causation_id": envelope.causation_id,
-    }
-
-
-def _mirror_shadow_event(event: dict, *, repo_id: str) -> dict:
-    """Best-effort, post-commit observation mirror for the opt-in pilot.
-
-    A mirror failure never rolls back or hides the already committed authority
-    event.  The structured outcome is instead returned to the operator so a
-    pilot defect is observable and retryable without changing normal writes.
-    """
-    try:
-        status = _pilot.shadow_pilot_status(cwd=Path.cwd())
-    except _pilot.ShadowPilotConfigError as exc:
-        return {"status": "unavailable", "detail": str(exc)}
-    if not status.enabled:
-        return {"status": "disabled"}
-    envelope = _shadow_observation_envelope(event, repo_id)
-    if envelope is None:
-        return {"status": "unsupported", "event_type": event["event_type"]}
-    producer = _outbox.open_outbox(status.paths.outbox_path)
-    try:
-        result = _dualwrite.mirror_event(
-            producer,
-            envelope,
-        )
-    except Exception as exc:  # Authority write already committed; surface, do not undo it.
-        return {"status": "error", "detail": str(exc)}
-    finally:
-        producer.close()
-    return {
-        "status": result.disposition.value,
-        "event_id": result.event_id,
-        "event_type": result.record_type,
-    }
-
 
 _RUNTIME = {}
 __runtime_source: dict[str, object] | None = None

@@ -983,10 +983,9 @@ LEGACY_REMOTE_COMMAND_PARITY: tuple[dict[str, str], ...] = (
     {"legacy": "sprintctl item note", "operation": "work.item.note"},
     {"legacy": "sprintctl item edit", "operation": "work.item.edit"},
     {"legacy": "sprintctl reservation reserve", "operation": "work.reservation.reserve"},
-    {
-        "legacy": "sprintctl reservation touch / reassign / release",
-        "operation": "work.reservation.reassign",
-    },
+    {"legacy": "sprintctl reservation touch", "operation": "work.reservation.touch"},
+    {"legacy": "sprintctl reservation reassign", "operation": "work.reservation.reassign"},
+    {"legacy": "sprintctl reservation release", "operation": "work.reservation.release"},
     {"legacy": "sprintctl next-work --project", "operation": "work.project.next-work"},
     {"legacy": "project dispatch batching", "operation": "work.project.batch"},
 )

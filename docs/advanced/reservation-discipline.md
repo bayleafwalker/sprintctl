@@ -18,7 +18,12 @@ mutations.
   returns `conflict`, `conflicting_reservations`, and `conflict_severity`
   (`warning` when two sessions both claim `execution`).
 - Roles describe the relationship to the work — `execution`, `verification`,
-  `observation` — which is what makes an overlap classifiable.
+  `observation` — which is what makes an overlap classifiable. The CLI accepts
+  only these three: the retired `execute`/`review`/`inspect`/`coordinate`
+  names fail loudly with the valid choices rather than being silently
+  translated, so instructions pinned to the old vocabulary are corrected
+  rather than left to drift. (The served API still folds the old names in, so
+  an un-updated client keeps working.)
 - `--interrupt-existing` is the deliberate takeover: it interrupts the item's
   active `execution` reservations with a recorded reason and audit event. Use
   it when you mean to displace someone, never merely to coexist.

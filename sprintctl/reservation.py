@@ -108,3 +108,55 @@ def annotate_conflicts(row: dict[str, Any], others: list[dict[str, Any]]) -> dic
     )
     result["conflict_severity"] = "warning" if executing else ("informational" if conflicts else "none")
     return result
+
+
+#: Item-scoped mutations whose success is evidence that the reserving session
+#: is still working.  Reads are deliberately absent: an activity clock a read
+#: can move measures attention, not work.
+#:
+#: The value is the argument key naming the item, because the catalog is not
+#: uniform -- ``work.event.add`` scopes itself with ``work_item_id`` while the
+#: item operations use ``item_id``.  Keeping the key beside the operation is
+#: what stops a mismatch from degrading into a silent no-op.
+ACTIVITY_OPERATIONS = {
+    "work.item.edit": "item_id",
+    "work.item.note": "item_id",
+    "work.item.ref.add": "item_id",
+    "work.item.ref.remove": "item_id",
+    "work.item.dep.add": "item_id",
+    "work.item.dep.remove": "item_id",
+    "work.event.add": "work_item_id",
+}
+
+
+def activity_item_id(operation: str, arguments, result=None) -> int | None:
+    """Resolve the item an activity-bearing operation acted on, or None."""
+    key = ACTIVITY_OPERATIONS.get(operation)
+    if key is None:
+        return None
+    value = arguments.get(key)
+    if value is None and result is not None:
+        item = result.get("item")
+        if isinstance(item, dict):
+            value = item.get("id")
+        if value is None:
+            value = result.get("item_id")
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def ambient_session_id() -> str | None:
+    """The session id a local client run is operating under, if any.
+
+    Served callers pass this so the authority can attribute their mutation to
+    their reservation; it names a session, and authorizes nothing.
+    """
+    import os
+
+    return (
+        os.environ.get("SPRINTCTL_RUNTIME_SESSION_ID")
+        or os.environ.get("CODEX_THREAD_ID")
+        or None
+    )
