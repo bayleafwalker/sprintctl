@@ -21,29 +21,25 @@ sprintctl git-context --json
 Use these as one bundle so decisions stay tied to current sprint state and
 current git state.
 
-## 2. Claim-safe execution loop
+## 2. Reservation-aware execution loop
 
 ```bash
-CLAIM_JSON=$(sprintctl claim start \
+RESERVATION_JSON=$(sprintctl reservation reserve \
   --item-id 42 \
   --actor codex \
-  --ttl 900 \
-  --instance-id "${SPRINTCTL_INSTANCE_ID:-manual-instance}" \
-  --runtime-session-id "${SPRINTCTL_RUNTIME_SESSION_ID:-manual-session}" \
+  --role execution \
+  --session-id "${SPRINTCTL_RUNTIME_SESSION_ID:-manual-session}" \
   --json)
 
-CLAIM_ID=$(echo "$CLAIM_JSON" | jq -r '.claim_id')
-CLAIM_TOKEN=$(echo "$CLAIM_JSON" | jq -r '.claim_token')
+RESERVATION_ID=$(echo "$RESERVATION_JSON" | jq -r '.id')
 ```
 
-During work, heartbeat at roughly half-TTL:
+During work, touch activity when useful:
 
 ```bash
-sprintctl claim heartbeat \
-  --id "$CLAIM_ID" \
-  --claim-token "$CLAIM_TOKEN" \
-  --ttl 900 \
-  --actor codex
+sprintctl reservation touch \
+  --id "$RESERVATION_ID" \
+  --session-id "${SPRINTCTL_RUNTIME_SESSION_ID:-manual-session}"
 ```
 
 ## 3. Capture durable notes while coding
@@ -54,7 +50,7 @@ Use notes for information the next session should not rediscover:
 sprintctl item note \
   --id 42 \
   --type decision \
-  --summary "Moved stale-claim cleanup behind maintain sweep --force-close-overdue" \
+  --summary "Moved stale-reservation cleanup behind maintain sweep --force-close-overdue" \
   --git-branch "$(git rev-parse --abbrev-ref HEAD)" \
   --git-sha "$(git rev-parse --short HEAD)" \
   --actor codex
@@ -72,23 +68,18 @@ Recommended `--type` guidance:
 When done:
 
 ```bash
-sprintctl item done-from-claim \
-  --id 42 \
-  --claim-id "$CLAIM_ID" --claim-token "$CLAIM_TOKEN" \
-  --actor codex
+REV=$(sprintctl item show --id 42 --json | jq -r '.item.status_revision')
+sprintctl item status --id 42 --status done --actor codex --expected-revision "$REV"
+sprintctl reservation release --id "$RESERVATION_ID" --actor codex
 ```
-
-If release fails, this command exits non-zero and reports `release_error`; the
-item may still be marked `done`.
 
 When work continues in the next session:
 
 ```bash
-sprintctl claim handoff \
-  --id "$CLAIM_ID" --claim-token "$CLAIM_TOKEN" \
+sprintctl reservation reassign \
+  --id "$RESERVATION_ID" \
   --actor codex-next \
-  --mode rotate \
-  --runtime-session-id next-session \
+  --session-id next-session \
   --json
 
 sprintctl handoff --format json --output handoff.json

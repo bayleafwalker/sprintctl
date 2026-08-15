@@ -11,6 +11,7 @@ from sprintctl import authority, contracts, db
 import sprintctl.cli as cli_module
 from sprintctl.cli import cli
 from sprintctl.render import render_sprint_doc
+from tests.conftest import seed_legacy_claim
 
 
 def _seed_version_5_schema_with_claim_identity_columns(db_path):
@@ -864,7 +865,7 @@ class TestEdgeCases:
     def test_init_db_idempotent(self, conn):
         db.init_db(conn)  # second call
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 17
+        assert version == db.CURRENT_SCHEMA_VERSION
 
     @pytest.mark.parametrize("_history", range(32))
     def test_init_db_handles_concurrent_version_lag_after_upgrade(
@@ -920,9 +921,9 @@ class TestEdgeCases:
         finally:
             conn.close()
 
-        assert version == 17
+        assert version == db.CURRENT_SCHEMA_VERSION
         assert tables == {
-            "claim",
+            "claim_history",
             "dep",
             "event",
             "maintenance_capability",
@@ -930,20 +931,102 @@ class TestEdgeCases:
             "maintenance_capability_recovery",
             "maintenance_resource",
             "maintenance_resource_event",
+            "recovery_record",
             "ref",
+            "reservation",
             "schema_version",
             "sprint",
             "track",
             "work_item",
         }
         assert indexes == {
-            "idx_claim_token",
+            "idx_claim_history_claim_id",
             "idx_event_sprint_type_ts",
+            "idx_recovery_record_recovered_at",
+            "idx_reservation_item_state",
+            "idx_reservation_session_active",
             "idx_sprint_aggregate_uuid",
             "idx_work_item_aggregate_uuid",
         }
         assert foreign_keys == 1
         assert journal_mode == "wal"
+
+    @staticmethod
+    def _database_at_schema_19(path):
+        """Build a database stopped one migration short of the claim cutover.
+
+        Mirrors ``init_db`` exactly, minus migration 20, so an upgrade across
+        the cutover can be exercised against a real pre-cutover schema rather
+        than a hand-built stand-in.
+        """
+        conn = db.get_connection(path)
+        foreign_keys_off = {5, 14, 15}
+        for version in range(1, 20):
+            db._run_migration(
+                conn,
+                version,
+                getattr(db, f"_migration_{version}"),
+                foreign_keys_off=version in foreign_keys_off,
+            )
+        return conn
+
+    def test_upgrade_across_the_cutover_archives_then_drops_the_claim_relation(
+        self, tmp_path
+    ):
+        conn = self._database_at_schema_19(tmp_path / "cutover.db")
+        try:
+            assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 19
+            sid = db.create_sprint(conn, "Cutover")
+            track_id = db.get_or_create_track(conn, sid, "archive")
+            first_item = db.create_work_item(conn, sid, track_id, "First")
+            second_item = db.create_work_item(conn, sid, track_id, "Second")
+            # One row already archived by migration 19, one written after it:
+            # the cutover must pick up the straggler without duplicating the
+            # row that is already there.
+            conn.execute(
+                "INSERT INTO claim (work_item_id, agent, expires_at, claim_token, status)"
+                " VALUES (?, 'first', '2999-01-01T00:00:00Z', 'token-first', 'active')",
+                (first_item,),
+            )
+            conn.commit()
+            db._migration_19(conn)
+            conn.execute(
+                "INSERT INTO claim (work_item_id, agent, expires_at, claim_token, status)"
+                " VALUES (?, 'second', '2999-01-01T00:00:00Z', 'token-second', 'active')",
+                (second_item,),
+            )
+            conn.commit()
+
+            db.init_db(conn)
+
+            assert (
+                conn.execute("SELECT version FROM schema_version").fetchone()[0]
+                == db.CURRENT_SCHEMA_VERSION
+            )
+            assert conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'claim'"
+            ).fetchone() is None
+            archived = conn.execute(
+                "SELECT agent, claim_token, status FROM claim_history ORDER BY id"
+            ).fetchall()
+            assert [row["agent"] for row in archived] == ["first", "second"]
+            # Every surviving token is redacted; the rest of the row is kept.
+            assert [row["claim_token"] for row in archived] == [None, None]
+            assert [row["status"] for row in archived] == ["active", "active"]
+        finally:
+            conn.close()
+
+    def test_upgrade_across_the_cutover_is_idempotent(self, tmp_path):
+        conn = self._database_at_schema_19(tmp_path / "cutover-twice.db")
+        try:
+            db.init_db(conn)
+            db.init_db(conn)
+            assert (
+                conn.execute("SELECT version FROM schema_version").fetchone()[0]
+                == db.CURRENT_SCHEMA_VERSION
+            )
+        finally:
+            conn.close()
 
     class _StubConnection:
         def __init__(
@@ -1191,6 +1274,14 @@ class TestBlockedRevival:
         with pytest.raises(db.InvalidTransition):
             db.set_work_item_status(conn, iid, "done")
 
+    def test_active_reservation_does_not_override_status_cas(self, conn, active_sprint):
+        """A reservation is advisory: it never gates an item's status change."""
+        iid = self._add_active_item(None, conn, active_sprint["id"])
+        db.reserve(conn, iid, actor="worker", session_id="cas-session")
+        basis = db.item_status_revision(db.get_work_item(conn, iid))
+        db.set_work_item_status(conn, iid, "done", expected_revision=basis)
+        assert db.get_work_item(conn, iid)["status"] == "done"
+
     def test_sweep_blocked_item_can_be_revived(self, conn, active_sprint):
         from datetime import datetime, timedelta, timezone
         from sprintctl import maintain as maint
@@ -1235,6 +1326,25 @@ class TestExportImport:
         assert len(data["tracks"]) == 1
         assert len(data["items"]) == 1
         assert len(data["events"]) == 1
+
+    def test_export_import_preserves_reservations_and_archived_claims(self, runner, conn, db_path, tmp_path):
+        sid, iid = self._build_sprint(runner, conn, db_path)
+        db.reserve(conn, iid, actor="alice", session_id="export-session")
+        claim_id = seed_legacy_claim(conn, iid, "legacy-alice")
+        out = str(tmp_path / "export.json")
+        exported = runner.invoke(cli, ["export", "--sprint-id", str(sid), "--output", out])
+        assert exported.exit_code == 0, exported.output
+        with open(out) as file:
+            envelope = json.load(file)
+        assert envelope["reservations"][0]["session_id"] == "export-session"
+        assert envelope["claim_history"][0]["id"] == claim_id
+
+        imported = runner.invoke(cli, ["import", "--file", out])
+        assert imported.exit_code == 0, imported.output
+        new_sid = int(imported.output.split(" as #")[1].split(" ")[0])
+        new_item = db.list_work_items(conn, sprint_id=new_sid)[0]
+        assert db.list_reservations(conn, new_item["id"])[0]["session_id"] == "export-session"
+        assert conn.execute("SELECT count(*) FROM claim_history WHERE work_item_id = ?", (new_item["id"],)).fetchone()[0] == 1
 
     def test_import_creates_sprint_with_new_id(self, runner, conn, db_path, tmp_path):
         sid, _ = self._build_sprint(runner, conn, db_path)
@@ -1389,11 +1499,12 @@ class TestSprintShowWatch:
 
 
 class TestHelpCommands:
-    def test_claim_help_does_not_create_db(self, runner, tmp_path, monkeypatch):
+    def test_retired_claim_help_does_not_create_db(self, runner, tmp_path, monkeypatch):
         db_path = tmp_path / "help" / "test.db"
         monkeypatch.setenv("SPRINTCTL_DB", str(db_path))
         result = runner.invoke(cli, ["claim", "--help"])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code != 0
+        assert "No such command 'claim'" in result.output
         assert not db_path.exists()
 
     def test_agent_protocol_help_does_not_create_db(self, runner, tmp_path, monkeypatch):
@@ -1486,7 +1597,7 @@ class TestItemShow:
         data = json.loads(result.output)
         assert data["item"]["title"] == "Build API"
         assert "events" in data
-        assert "active_claims" in data
+        assert "active_reservations" in data
         assert data["resolved_context"] == {
             "repo_id": tmp_path.name,
             "repo_source": "cwd",
@@ -1521,12 +1632,12 @@ class TestUsageCommand:
 
     def test_usage_covers_major_groups(self, runner, db_path):
         result = runner.invoke(cli, ["usage"])
-        for section in ("SPRINT", "ITEM", "EVENT", "MAINTAIN", "CLAIM", "TOP-LEVEL", "ENV"):
+        for section in ("SPRINT", "ITEM", "RESERVATION", "EVENT", "MAINTAIN", "TOP-LEVEL", "ENV"):
             assert section in result.output, f"Missing section: {section}"
 
     def test_usage_mentions_key_commands(self, runner, db_path):
         result = runner.invoke(cli, ["usage"])
-        for cmd in ("sprint create", "item add", "item edit", "claim start", "claim create", "maintain check", "handoff", "render"):
+        for cmd in ("sprint create", "item add", "item edit", "reservation reserve", "reservation list", "maintain check", "handoff", "render"):
             assert cmd in result.output, f"Missing command: {cmd}"
 
     def test_usage_mentions_env_vars(self, runner, db_path):
@@ -1678,14 +1789,14 @@ class TestHandoffTextMode:
         assert "sprint" in data
         assert data["sprint"]["name"] == "S1"
 
-    def test_handoff_text_shows_active_claims(self, runner, conn, active_sprint, db_path):
+    def test_handoff_text_shows_active_reservations(self, runner, conn, active_sprint, db_path):
         sid = active_sprint["id"]
         tid = db.get_or_create_track(conn, sid, "eng")
-        iid = db.create_work_item(conn, sid, tid, "Claimed task")
-        db.create_claim(conn, iid, agent="agent-x", ttl_seconds=300)
+        iid = db.create_work_item(conn, sid, tid, "Reserved task")
+        db.reserve(conn, iid, actor="agent-x", session_id="session-x")
         result = runner.invoke(cli, [
             "handoff", "--sprint-id", str(sid), "--output", "-", "--format", "text",
         ])
         assert result.exit_code == 0, result.output
-        assert "ACTIVE CLAIMS" in result.output
+        assert "ACTIVE RESERVATIONS" in result.output
         assert "agent-x" in result.output

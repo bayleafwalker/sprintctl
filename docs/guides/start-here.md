@@ -21,9 +21,9 @@ Add a few items:
 
 ```sh
 sprintctl item add --sprint-id 1 --track docs --title "Write resume guide" \
-  --description "Document claim recovery and handoff."
+  --description "Document reservation reassignment and handoff."
 sprintctl item add --sprint-id 1 --track cli --title "Tighten handoff contract" \
-  --description "Define and verify token rotation semantics."
+  --description "Define and verify reservation reassignment semantics."
 ```
 
 Omitting `--description` remains supported for older scripts. New shaped work
@@ -42,25 +42,26 @@ sprintctl sprint show --watch --detail --interval 30
 This is the primary resume surface. It gives you:
 
 - sprint summary
-- active claims
+- active reservations
 - conflicts
 - ready, blocked, and stale work
 - recent decisions
 - one concise next action
 
-## 3. Start or claim work
+## 3. Start or reserve work
 
-If overlap is possible, claim before editing files:
+If overlap is possible, reserve before editing files:
 
 ```sh
-sprintctl claim start --item-id 1 --actor codex-session-1 --json
+sprintctl reservation reserve --item-id 1 --actor codex-session-1 --json
 ```
 
-If you are working solo and do not need claim discipline, you can still move
-the item directly:
+If you are working solo and do not need reservation discipline, you can still
+move the item directly:
 
 ```sh
-sprintctl item status --id 1 --status active
+REV=$(sprintctl item show --id 1 --json | jq -r '.item.status_revision')
+sprintctl item status --id 1 --status active --expected-revision "$REV"
 ```
 
 ## 4. Record durable history
@@ -96,8 +97,8 @@ you want a reviewable snapshot in git.
 - [Agent Prompt Snippets](../examples/agent-prompt-snippets.md)
 - [Editor And Terminal Integration](../examples/editor-and-terminal-integration.md)
 - [Remote Mode](remote-mode.md)
-- [Shadow Projection Pilot](shadow-pilot.md)
+- [Normal synchronization](normal-sync.md)
 - [Remote Authority Commands](authority-commands.md)
 - [Coordinator Mode](../advanced/coordinator-mode.md)
-- [Claim Discipline](../advanced/claim-discipline.md)
+- [Reservation Discipline](../advanced/reservation-discipline.md)
 - [Context and Handoff Contracts](../reference/context-and-handoff.md)

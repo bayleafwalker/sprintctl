@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from . import context_contract, contracts
+from . import reservation_policy as _policy
 
 
 def _previous_handoff_generated(store: Any, sprint_id: int, backend: Any) -> dict | None:
@@ -21,18 +22,17 @@ def _previous_handoff_generated(store: Any, sprint_id: int, backend: Any) -> dic
     return None
 
 
-def _delta_since_last_handoff(*, previous_handoff: dict | None, items: list[dict], all_events: list[dict], active_claims: list[dict]) -> dict:
+def _delta_since_last_handoff(*, previous_handoff: dict | None, items: list[dict], all_events: list[dict], active_reservations: list[dict]) -> dict:
     previous_handoff_at = previous_handoff["created_at"] if previous_handoff else None
     if previous_handoff_at is None:
-        return {"previous_handoff_at": None, "item_ids_touched": [], "event_count": len(all_events), "claim_ids_touched": []}
+        return {"previous_handoff_at": None, "item_ids_touched": [], "event_count": len(all_events), "reservation_ids_touched": []}
     return {
         "previous_handoff_at": previous_handoff_at,
         "item_ids_touched": [item["id"] for item in items if item["updated_at"] > previous_handoff_at],
         "event_count": sum(1 for event in all_events if event["id"] > previous_handoff["id"]),
-        "claim_ids_touched": [
-            claim["claim_id"] for claim in active_claims
-            if ((claim.get("created_at") and claim["created_at"] > previous_handoff_at)
-                or (claim.get("heartbeat") and claim["heartbeat"] > previous_handoff_at))
+        "reservation_ids_touched": [
+            row["id"] for row in active_reservations
+            if row.get("last_activity_at") and row["last_activity_at"] > previous_handoff_at
         ],
     }
 
@@ -57,16 +57,17 @@ def build_handoff_bundle(store: Any, sprint: dict, events_limit: int, *, backend
     return contracts.HandoffBundle(
         sprintctl_version=version, generated_at=generated_at,
         generated_from={"command": "sprintctl handoff", "events_limit": events_limit},
-        sprint=dict(sprint), summary=context["summary"], active_claims=context["active_claims"], conflicts=context["conflicts"],
-        work={"active_items": active_items, "active_unclaimed_items": context["active_unclaimed_items"], "ready_items": context["ready_items"], "blocked_items": context["blocked_items"], "stale_items": context["stale_items"]},
+        sprint=dict(sprint), summary=context["summary"], active_reservations=context["active_reservations"], conflicts=context["conflicts"],
+        work={"active_items": active_items, "active_unreserved_items": context["active_unreserved_items"], "ready_items": context["ready_items"], "blocked_items": context["blocked_items"], "stale_items": context["stale_items"]},
         recent_decisions=context["recent_decisions"], recent_events=[context_contract._summarize_event(event) for event in recent_events], next_action=context["next_action"],
-        delta_since_last_handoff=_delta_since_last_handoff(previous_handoff=previous_handoff, items=items_with_refs, all_events=all_events, active_claims=context["active_claims"]),
-        freshness={"generated_at": generated_at, "previous_handoff_at": previous_handoff["created_at"] if previous_handoff else None, "stale_item_count": len(context["stale_items"]), "active_claim_count": len(context["active_claims"]), "dirty_file_count": len(git_context["dirty_files"]) if git_context else 0},
+        delta_since_last_handoff=_delta_since_last_handoff(previous_handoff=previous_handoff, items=items_with_refs, all_events=all_events, active_reservations=context["active_reservations"]),
+        freshness={"generated_at": generated_at, "previous_handoff_at": previous_handoff["created_at"] if previous_handoff else None, "stale_item_count": len(context["stale_items"]), "active_reservation_count": len(context["active_reservations"]), "dirty_file_count": len(git_context["dirty_files"]) if git_context else 0},
         evidence={"dirty_files": git_context["dirty_files"] if git_context else [], "items_with_refs": sum(1 for item in items_with_refs if item.get("refs")), "total_refs": sum(len(item.get("refs", [])) for item in items_with_refs), "recent_event_count": len(recent_events), "recent_decision_count": len(context["recent_decisions"]), "validation_outcomes": []},
         git_context=git_context,
-        claim_identity_model={"ownership_proof": "claim_id+claim_token", "claim_tokens_included": False, "ambiguous_identity_visible": True, "explicit_claim_handoff_command": "sprintctl claim handoff"},
-        resume_instructions=["Read this handoff bundle first.", "Refresh live state with 'sprintctl usage --context --json'.", "Inspect the target item with 'sprintctl item show --id <id> --json' if more detail is needed.", "Use 'sprintctl claim resume' to locate transferred claims before claiming new work."],
-        agent_shutdown_protocol={"required_before_termination": ["For each active claim you own: run 'sprintctl claim handoff --id <id> --claim-token <token> --actor <next-agent> --mode rotate' to pass ownership to the incoming session.", "If no incoming session: run 'sprintctl claim release --id <id> --claim-token <token>' to free each claim.", "If handing off the sprint: run 'sprintctl handoff' to produce a new bundle for the next agent."], "resumption_hint": "Incoming agents: use 'sprintctl claim resume --instance-id <id>' or '--runtime-session-id <id>' to locate claims transferred to you."},
+        reservation_model={"ownership_proof": None, "reassign_command": "sprintctl reservation reassign",
+                           "exclusive": False, **_policy.describe()},
+        resume_instructions=["Read this handoff bundle first.", "Refresh live state with 'sprintctl usage --context --json'.", "List active reservations with 'sprintctl reservation list --all --json'."],
+        agent_shutdown_protocol={"required_before_termination": ["Reassign or release each active reservation.", "Run 'sprintctl handoff' to produce a new bundle."], "resumption_hint": "Incoming agents may reserve or reassign without a credential."},
         items=items_with_refs, events=recent_events,
     ).to_dict()
 

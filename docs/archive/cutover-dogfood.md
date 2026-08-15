@@ -1,5 +1,10 @@
 # Per-repo authority + projection cutover dogfood (item #1163)
 
+> **Archived.** The `sprintctl pilot` command surface this procedure drives was
+> retired, and `sprintctl/pilot.py` and `sprintctl/cutover.py` were deleted. The
+> steps below are no longer executable and are kept only as a record of what
+> Phase 28 set out to prove. `sprintctl sync` replaced `pilot sync`.
+
 Phase 28 built three independent per-repository opt-in flags:
 
 - the observation-only **shadow pilot** (`sprintctl/pilot.py`) — mirrors

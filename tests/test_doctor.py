@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from sprintctl import doctor
+from sprintctl import db, doctor
 from sprintctl.cli import cli
 
 
@@ -75,6 +75,9 @@ def test_local_schema_probe_is_read_only_and_reports_mismatch(tmp_path):
         "compatible": False,
         "status": "mismatch",
         "error": None,
+        # A database predating migration 21 has no recovery_record table; the
+        # probe reports absent provenance rather than failing.
+        "recovered_from": None,
     }
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 9
@@ -364,7 +367,7 @@ def test_probe_served_backend_reports_mismatch_for_missing_operations(tmp_path, 
 
     assert result["compatible"] is False
     assert result["status"] == "mismatch"
-    assert "work.claim.start" in result["error"]
+    assert "work.reservation.reserve" in result["error"]
 
 
 def test_probe_served_backend_reports_catalog_transport_failure(tmp_path, monkeypatch):
@@ -469,7 +472,7 @@ def test_doctor_human_output_reports_served_extra(monkeypatch, runner):
     facts["extras"]["served"] = {"enabled": False, "requirement": "vuoro-client"}
     facts["schema"] = {
         "backend": "served",
-        "expected_version": ["work.claim.start"],
+        "expected_version": ["work.reservation.reserve"],
         "actual_version": None,
         "compatible": None,
         "status": "unavailable",
@@ -483,3 +486,73 @@ def test_doctor_human_output_reports_served_extra(monkeypatch, runner):
     assert "extras: remote=" in result.output
     assert "served=missing" in result.output
     assert "served-extra-missing" in result.output
+
+
+def test_local_schema_probe_reports_recovery_provenance(tmp_path):
+    """A recovered database is a new authority instance.
+
+    An operator diagnosing one needs to know that before trusting anything
+    else it reports, so the probe surfaces the most recent recovery.
+    """
+    path = tmp_path / "recovered.db"
+    conn = db.get_connection(path)
+    try:
+        db.init_db(conn)
+        db.write_recovery_snapshot(
+            conn,
+            {},
+            provenance={
+                "recovered_at": "2026-08-15T00:00:00Z",
+                "source_repo_id": "sprintctl-remote",
+            },
+        )
+    finally:
+        conn.close()
+
+    result = doctor._probe_local_schema({"SPRINTCTL_DB": str(path)})
+
+    assert result["status"] == "current"
+    assert result["recovered_from"] == {
+        "recovered_at": "2026-08-15T00:00:00Z",
+        "source_repo_id": "sprintctl-remote",
+        "reservations_interrupted": 0,
+    }
+
+
+def test_recovery_provenance_reaches_the_text_report_not_only_json():
+    """An operator reading plain `doctor` output must see the recovery.
+
+    A recovered database is a new authority instance; if that fact is
+    --json-only, the operator most likely to need it is the one least likely
+    to see it.
+    """
+    report = {
+        "status": "ok",
+        "provenance": {
+            "executable": {"version": "0.2.24", "path": "/usr/bin/sprintctl"},
+            "package": {"code_version": "0.2.24", "metadata_version": "0.2.24"},
+            "source": {"present": False, "version": None},
+        },
+        "backend": {
+            "environment_mode": "local", "resolved_mode": "local", "repo_id": "sprintctl",
+            "repo_source": "marker", "marker": None, "url_configured": False,
+        },
+        "extras": {"remote": {"enabled": True}, "served": {"enabled": True}},
+        "schema": {
+            "backend": "local", "expected_version": 22, "actual_version": 22, "status": "current",
+            "recovered_from": {
+                "recovered_at": "2026-08-15T00:00:00Z",
+                "source_repo_id": "sprintctl-remote",
+                "reservations_interrupted": 3,
+            },
+        },
+        "findings": [],
+    }
+
+    text = doctor.render_text(report)
+
+    assert "recovered: from=sprintctl-remote at=2026-08-15T00:00:00Z" in text
+    assert "reservations_interrupted=3" in text
+
+    report["schema"]["recovered_from"] = None
+    assert "recovered:" not in doctor.render_text(report)

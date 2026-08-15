@@ -76,9 +76,6 @@ def _event_has_item_link(event: dict, payload: dict) -> bool:
     target = payload.get("target")
     if isinstance(target, dict) and str(target.get("ref", "")).startswith("wi:"):
         return True
-    claim = payload.get("claim")
-    if isinstance(claim, dict) and claim.get("work_item_id") is not None:
-        return True
     refs = payload.get("refs")
     if isinstance(refs, dict) and refs.get("work_item_id") is not None:
         return True
@@ -106,7 +103,7 @@ def _event_has_code_evidence(event: dict, payload: dict) -> bool:
 def _truth_findings(
     sprint: dict,
     items: list[dict],
-    active_claims: list[dict],
+    active_reservations: list[dict],
     events: list[dict],
     risk: dict,
 ) -> list[dict]:
@@ -136,21 +133,21 @@ def _truth_findings(
                 "completion still requires an explicit sprint-close decision."
             ),
         })
-    claimed_item_ids = {claim["work_item_id"] for claim in active_claims}
-    unclaimed_item_ids = sorted(
+    reserved_item_ids = {reservation["work_item_id"] for reservation in active_reservations}
+    unreserved_item_ids = sorted(
         item["id"] for item in items
-        if item["status"] == "active" and item["id"] not in claimed_item_ids
+        if item["status"] == "active" and item["id"] not in reserved_item_ids
     )
-    if unclaimed_item_ids:
+    if unreserved_item_ids:
         findings.append({
-            "kind": "unclaimed-active-work",
-            "reason_code": "active-item-without-live-claim",
+            "kind": "unreserved-active-work",
+            "reason_code": "active-item-without-reservation",
             "severity": "warning",
             "sprint_id": sprint["id"],
-            "item_ids": unclaimed_item_ids,
+            "item_ids": unreserved_item_ids,
             "summary": (
-                f"{len(unclaimed_item_ids)} active item(s) have no live claim and need "
-                "resume, handoff, or status triage."
+                f"{len(unreserved_item_ids)} active item(s) have no reservation and need "
+                "status triage."
             ),
         })
     unlinked_evidence = []
@@ -213,7 +210,7 @@ def check(
 
     active_items = [it for it in items if it["status"] == "active"]
     risk = _calc.sprint_overrun_risk(sprint, len(active_items), now)
-    active_claims = m.list_claims_by_sprint(conn, sprint_id, active_only=True)
+    active_reservations = m.list_reservations_by_sprint(conn, sprint_id, active_only=True)
     events = m.list_events(conn, sprint_id)
 
     stale = [
@@ -239,7 +236,7 @@ def check(
         "risk": risk,
         "stale_items": stale_details,
         "track_health": track_health,
-        "findings": _truth_findings(sprint, items, active_claims, events, risk),
+        "findings": _truth_findings(sprint, items, active_reservations, events, risk),
         "threshold": threshold,
         "pending_threshold": pending_threshold,
     }
@@ -287,25 +284,6 @@ def sweep_stale_items(
     return affected
 
 
-def purge_expired_claims(conn, sprint_id: int, *, _m=None) -> int:
-    """
-    Expire claims for items in the given sprint.
-
-    SQLite preserves its established delete behavior. The remote backend
-    marks rows expired and retains them.
-    """
-    if _m is not None and _m is not _db:
-        return _m.purge_expired_claims(conn, sprint_id)
-    result = conn.execute(
-        """
-        DELETE FROM claim
-        WHERE work_item_id IN (SELECT id FROM work_item WHERE sprint_id = ?)
-          AND expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ','now')
-        """,
-        (sprint_id,),
-    )
-    conn.commit()
-    return result.rowcount
 
 
 def sweep(
@@ -322,7 +300,9 @@ def sweep(
 
     Actions:
     - Stale active items → blocked (with system event)
-    - Expired claims removed locally or marked expired and retained remotely
+    - Reservations idle longer than the operator's ``interrupt_after``
+      policy (default seven days) are interrupted. This happens because a
+      sweep was run, never because time passed.
     - Auto-close overdue sprint with no active items (opt-in via auto_close)
     """
     m = _m if _m is not None else _db
@@ -330,7 +310,9 @@ def sweep(
         threshold = _stale_threshold()
 
     blocked = sweep_stale_items(conn, sprint_id, now, threshold, _m=m)
-    expired_claims_purged = purge_expired_claims(conn, sprint_id, _m=m)
+    interrupted_reservations = m.sweep_stale_reservations(
+        conn, now=now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
 
     auto_closed = False
     if auto_close:
@@ -351,7 +333,7 @@ def sweep(
 
     return {
         "blocked_items": blocked,
-        "expired_claims_purged": expired_claims_purged,
+        "stale_reservations_interrupted": interrupted_reservations,
         "auto_closed": auto_closed,
     }
 

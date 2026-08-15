@@ -4,7 +4,7 @@ Builds the small ranked packet described in
 ``docs/ops-upgrade-plan.md`` (Tier 1) and
 ``agentops/docs/plans/agentops/session-mechanization-plan.md``: a bounded
 list of sprint items ranked by deterministic preference order, carrying an
-explicit-target claim-eligibility marker and the cached projection watermark
+explicit-target dispatch-admissibility marker and the cached projection watermark
 age so a consuming session knows how stale its view is.
 
 Ranking preference, in order:
@@ -19,8 +19,8 @@ Ranking preference, in order:
 5. remaining repo-level candidates, in the existing ready-item order.
 
 Only rank 1 (an explicit target that was actually found) is ever marked
-``claim_eligible``. Ranks 2-5 are advisory context only -- this module never
-creates or mutates a claim itself; it only exposes the policy marker for a
+``reservation_admissible``. Ranks 2-5 are advisory context only -- this module never
+creates or mutates a reservation itself; it only exposes the policy marker for a
 caller (e.g. a Tier-1 harness wrapper) to act on.
 
 This module is pure: it takes already-fetched rows and returns a plain dict,
@@ -83,7 +83,7 @@ def _make_candidate(item: dict, rank: int, reason_detail: str) -> dict:
         "rank": rank,
         "rank_reason": RANK_REASONS[rank],
         "reason_detail": reason_detail,
-        "claim_eligible": rank == RANK_EXPLICIT_TARGET and item.get("status") == "pending",
+        "reservation_admissible": rank == RANK_EXPLICIT_TARGET and item.get("status") == "pending",
     }
 
 

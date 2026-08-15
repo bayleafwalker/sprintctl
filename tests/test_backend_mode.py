@@ -8,7 +8,9 @@ from sprintctl.cli import cli
 
 
 def test_missing_backend_defaults_to_local(tmp_path, monkeypatch):
-    (tmp_path / ".git").mkdir()
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
     monkeypatch.delenv("SPRINTCTL_BACKEND", raising=False)
     monkeypatch.delenv("SPRINTCTL_URL", raising=False)
 
@@ -159,6 +161,20 @@ def test_repo_identity_prefers_backend_marker(tmp_path):
     assert repo_root == repo
     assert repo_id == "repo"
     assert marker is not None
+
+
+def test_repo_identity_ignores_an_invalid_ancestor_git_directory(tmp_path):
+    """A placeholder under /tmp must not become the child's repo identity."""
+    child = tmp_path / "local-state"
+    child.mkdir()
+    invalid_git = tmp_path / ".git"
+    invalid_git.mkdir()
+
+    repo_root, repo_id, marker = backend.resolve_repo_identity(child)
+
+    assert repo_root is None
+    assert repo_id is None
+    assert marker is None
 
 
 def test_scoped_id_parser_accepts_bare_and_explicit_references():

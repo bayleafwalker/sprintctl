@@ -76,7 +76,7 @@ def envelope():
         "start_gate": {
             "plan": "plan-1",
             "dependent_implementation_sessions": {"expected_count": 0, "observed_at": _stamp(timedelta(minutes=-1)), "evidence_ref": ref(digit="6"), "receipt_ref": ref(kind="artifact", digit="7")},
-            "active_normal_claims": {"expected_count": 0, "observed_at": _stamp(timedelta(minutes=-1)), "evidence_ref": ref(digit="8"), "receipt_ref": ref(kind="artifact", digit="9")},
+            "active_reservations": {"expected_count": 0, "observed_at": _stamp(timedelta(minutes=-1)), "evidence_ref": ref(digit="8"), "receipt_ref": ref(kind="artifact", digit="9")},
         },
         "abort": {"before_migration": "restore-reviewed-pre-migration-state", "after_migration": "restore-uid-attested-backup", "forbidden": ["delete-migration-ledger", "edit-released-migration", "recovery-request-authority", "unreviewed-commit"]},
         "recovery_policy": {"record_kinds": ["observation", "requested-command"], "authority": "none", "forbidden_uses": ["advance", "approve", "bind-jit", "claim", "grant", "publish", "reconcile"]},
@@ -121,7 +121,7 @@ def shifted_envelope(offset: timedelta):
         binding["bound_at"] = _stamp(bound)
         if binding["name"] == "drain_boundary_utc":
             binding["value"] = _stamp(observed)
-    for name in ("dependent_implementation_sessions", "active_normal_claims"):
+    for name in ("dependent_implementation_sessions", "active_reservations"):
         value["start_gate"][name]["observed_at"] = _stamp(observed)
     return value
 
@@ -235,14 +235,34 @@ def test_expiry_sweep_commits_terminal_projection_with_owner_state(store, monkey
     assert snapshot["cursor"] == "sprintctl-maintenance-cursor-2"
 
 
-def test_activation_requires_zero_live_ordinary_claims(store, conn, active_sprint):
+def test_activation_requires_zero_active_reservations(store, conn, active_sprint):
     track = db.get_or_create_track(conn, active_sprint["id"], "work")
     item = db.create_work_item(conn, active_sprint["id"], track, "ordinary")
-    db.create_claim(conn, item, "worker", ttl_seconds=3600)
+    db.reserve(conn, item, actor="worker", session_id="maintenance-test")
     prepared = prepare(store)
     attested = transition(store, prepared, "attest")
-    with pytest.raises(MaintenanceCapabilityError, match="zero live ordinary claims"):
+    with pytest.raises(MaintenanceCapabilityError, match="zero active reservations"):
         transition(store, attested, "activate", step_id="attest-backup", command_id="verify-backup", command_ref="sha256:" + "c" * 64, effect_ref="sha256:" + "d" * 64)
+
+
+def test_reservations_are_disabled_while_a_capability_is_active(store, conn, active_sprint):
+    """The activation gate is mutually exclusive, not one-directional.
+
+    Activation requires zero active reservations, so admitting a reservation
+    under a live capability would silently break the window it protects.
+    """
+    track = db.get_or_create_track(conn, active_sprint["id"], "work")
+    item = db.create_work_item(conn, active_sprint["id"], track, "ordinary")
+    prepared = prepare(store)
+    attested = transition(store, prepared, "attest")
+    transition(
+        store, attested, "activate", step_id="attest-backup",
+        command_id="verify-backup", command_ref="sha256:" + "c" * 64,
+        effect_ref="sha256:" + "d" * 64,
+    )
+    with pytest.raises(db.ReservationConflict, match="maintenance capability is active"):
+        db.reserve(conn, item, actor="worker", session_id="blocked-session")
+    assert db.list_reservations(conn, item, active_only=True) == []
 
 
 def test_capability_is_nonrenewable_and_expiry_terminalizes(store):
@@ -287,14 +307,14 @@ def test_step_cursor_cannot_jump_or_reverse(store):
     (lambda e: e["command_registry"][0]["argv"].append("; reboot"), "safe exact"),
     (lambda e: e.__setitem__("command_registry_ref", "artifact:sha256:" + "0" * 64), "bind canonical"),
     (lambda e: e["steps"][0]["reviews"][0].update(reviewer="author"), "independent"),
-    (lambda e: e["start_gate"]["active_normal_claims"].update(expected_count=1), "require zero"),
+    (lambda e: e["start_gate"]["active_reservations"].update(expected_count=1), "require zero"),
     (lambda e: e["recovery_policy"].update(authority="grant"), "non-authoritative"),
     (lambda e: e["jit_bindings"][0].update(bound_at="2026-08-02T20:01:00Z"), "deadline"),
     (lambda e: (e["jit_fields"][0].update(pattern="^<backup>$"), e["jit_bindings"][0].update(value="<backup>")), "credential-free text"),
     (lambda e: (e["jit_fields"][0].update(pattern="^[0-9]+$"), e["jit_bindings"][0].update(value=1234)), "credential-free text"),
     (lambda e: e["steps"][0].update(phase="arbitrary"), "phase"),
     (lambda e: e["steps"][0]["reviews"][0].update(authority=True), "fields must be exact"),
-    (lambda e: e["start_gate"]["active_normal_claims"].update(observed_at="2026-08-02T18:59:00Z"), "inside the maintenance window"),
+    (lambda e: e["start_gate"]["active_reservations"].update(observed_at="2026-08-02T18:59:00Z"), "inside the maintenance window"),
     (lambda e: e["operations"][0].update(allowed_commands=["verify-backup", "verify-backup"]), "sorted unique"),
     (lambda e: e["operations"][0].update(allowed_paths=["clusters//main/vuoro"]), "normalized"),
 ])
@@ -329,7 +349,7 @@ def test_stale_start_gate_evidence_is_judged_against_the_database_clock(store):
     an `at` near its observation time, which is the whole point of the gate.
     """
     stale = envelope()
-    for name in ("dependent_implementation_sessions", "active_normal_claims"):
+    for name in ("dependent_implementation_sessions", "active_reservations"):
         stale["start_gate"][name]["observed_at"] = _stamp(timedelta(minutes=-20))
     prepared = prepare(store, stale)
     attested = transition(store, prepared, "attest")

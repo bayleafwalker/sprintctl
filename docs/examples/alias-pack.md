@@ -38,47 +38,47 @@ shandoff() {
 }
 ```
 
-## Claim helpers (explicit proof retained)
+## Reservation helpers (explicit handle retained)
 
 ```bash
-# Start claim and export proof vars into the current shell
-sclaim() {
+# Start reservation and export handle var into the current shell
+sreserve() {
   local item_id="$1"
   local actor="${2:-codex}"
-  local claim_json
+  local reservation_json
 
-  claim_json=$(sprintctl claim start \
+  reservation_json=$(sprintctl reservation reserve \
     --item-id "$item_id" \
     --actor "$actor" \
-    --ttl 900 \
-    --instance-id "${SPRINTCTL_INSTANCE_ID:?set SPRINTCTL_INSTANCE_ID}" \
-    --runtime-session-id "${SPRINTCTL_RUNTIME_SESSION_ID:-manual}" \
+    --role execution \
+    --session-id "${SPRINTCTL_RUNTIME_SESSION_ID:-manual}" \
     --json) || return 1
 
-  export CLAIM_ID
-  CLAIM_ID=$(echo "$claim_json" | jq -r '.claim_id')
-  export CLAIM_TOKEN
-  CLAIM_TOKEN=$(echo "$claim_json" | jq -r '.claim_token')
+  export RESERVATION_ID
+  RESERVATION_ID=$(echo "$reservation_json" | jq -r '.id')
 
-  echo "CLAIM_ID=$CLAIM_ID"
+  echo "RESERVATION_ID=$RESERVATION_ID"
 }
 
-# Mark done using current proof vars
+# Mark done using current reservation handle
 sdone() {
   local item_id="$1"
   local actor="${2:-codex}"
+  local rev
+  rev=$(sprintctl item show --id "$item_id" --json | jq -r '.item.status_revision')
   sprintctl item status \
     --id "$item_id" --status done --actor "$actor" \
-    --claim-id "${CLAIM_ID:?missing CLAIM_ID}" \
-    --claim-token "${CLAIM_TOKEN:?missing CLAIM_TOKEN}"
+    --expected-revision "$rev"
+  sprintctl reservation release \
+    --id "${RESERVATION_ID:?missing RESERVATION_ID}" \
+    --actor "$actor"
 }
 
-# Release current claim
+# Release current reservation
 srelease() {
   local actor="${1:-codex}"
-  sprintctl claim release \
-    --id "${CLAIM_ID:?missing CLAIM_ID}" \
-    --claim-token "${CLAIM_TOKEN:?missing CLAIM_TOKEN}" \
+  sprintctl reservation release \
+    --id "${RESERVATION_ID:?missing RESERVATION_ID}" \
     --actor "$actor"
 }
 ```
@@ -95,7 +95,6 @@ alias sg='sprintctl git-context --json'
 
 ## Notes
 
-- Keep `CLAIM_TOKEN` private. Do not paste it into chat logs.
+- A reservation id is a handle, not a secret, but keep it scoped to the session.
 - Prefer shell functions over opaque wrapper scripts so behavior stays visible.
 - If a global binary is stale, pin aliases to `.venv/bin/python -m sprintctl`.
-

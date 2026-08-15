@@ -11,9 +11,77 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
+import tempfile
 from typing import Callable, Mapping
 
-from . import authority, outbox, pg, projection
+from . import authority, backend, outbox, pg, projection
+
+
+@dataclass(frozen=True, slots=True)
+class RepositorySyncPaths:
+    repo_root: Path
+    outbox_path: Path
+    projection_path: Path
+
+
+_LEGACY_OUTBOX_FILENAME = "shadow-pilot-outbox.db"
+_LEGACY_PROJECTION_FILENAME = "shadow-pilot-projection.db"
+
+
+def repository_sync_paths(*, cwd: Path | None = None) -> RepositorySyncPaths:
+    """Fixed normal-sync storage below the resolved repository root."""
+    root, _repo_id, _marker = backend.resolve_repo_identity(cwd or Path.cwd())
+    if root is None:
+        raise ValueError("cannot resolve a repository for synchronization")
+    state = root / ".sprintctl"
+    return RepositorySyncPaths(
+        repo_root=root,
+        outbox_path=state / "sync-outbox.db",
+        projection_path=state / "sync-projection.db",
+    )
+
+
+def _copy_sqlite_database(source: Path, destination: Path) -> None:
+    """Atomically copy one SQLite database without depending on WAL sidecars."""
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent, delete=False
+    ) as temporary:
+        temporary_path = Path(temporary.name)
+    try:
+        source_conn = sqlite3.connect(f"file:{source}?mode=ro", uri=True)
+        try:
+            destination_conn = sqlite3.connect(temporary_path)
+            try:
+                source_conn.backup(destination_conn)
+            finally:
+                destination_conn.close()
+        finally:
+            source_conn.close()
+        temporary_path.replace(destination)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
+
+
+def migrate_legacy_sync_state(paths: RepositorySyncPaths) -> tuple[Path, ...]:
+    """Expand legacy pilot state into the normal sync layout exactly once.
+
+    The source files remain untouched for rollback with a v0.2 artifact.  A
+    SQLite backup produces a consistent destination even when the source is
+    using WAL mode.  Existing normal files always win, making the migration
+    idempotent and safe to run before every normal append or synchronization.
+    """
+    migrations = (
+        (paths.repo_root / ".sprintctl" / _LEGACY_OUTBOX_FILENAME, paths.outbox_path),
+        (paths.repo_root / ".sprintctl" / _LEGACY_PROJECTION_FILENAME, paths.projection_path),
+    )
+    copied: list[Path] = []
+    for source, destination in migrations:
+        if source.is_file() and not destination.exists():
+            _copy_sqlite_database(source, destination)
+            copied.append(destination)
+    return tuple(copied)
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,9 +165,12 @@ def synchronize_outbox(
 
     Re-submitting every durable producer record is intentional: remote admission
     deduplicates on the producer stream tuple and returns original offsets after
-    a lost response. Commands without transient credential material remain
-    pending and never mutate authority. If projection application fails, a
-    later call repeats safe admission and resumes from unchanged watermarks.
+    a lost response. ``credential_resolver`` is now purely an upload-readiness
+    gate: a record it declines (``None``) leaves that command and every later
+    command pending, and never mutates authority. The mapping it returns is no
+    longer consumed -- the claim-proof transport it fed has been retired. If
+    projection application fails, a later call repeats safe admission and
+    resumes from unchanged watermarks.
     """
     batch_size = _validate_batch_size(batch_size)
     records = outbox.list_records(outbox_conn)
@@ -130,9 +201,7 @@ def synchronize_outbox(
                 if blocked.record_class == outbox.AUTHORITY_COMMAND
             )
             break
-        decisions.append(
-            authority.arbitrate_command(remote_store, record, credentials=credentials)
-        )
+        decisions.append(authority.arbitrate_command(remote_store, record))
     flush_observations()
 
     watermark = projection.get_watermark(projection_conn)
@@ -181,3 +250,57 @@ def synchronize_outbox(
         decision_applied_count=decision_applied_count,
         decision_watermark=decision_watermark,
     )
+
+
+def synchronize_repository(
+    remote_store: pg.PgStore,
+    *,
+    outbox_path: Path,
+    projection_path: Path,
+    batch_size: int = 100,
+    credential_resolver: Callable[[outbox.OutboxRecord], Mapping[str, str] | None]
+    | None = None,
+) -> SyncResult:
+    """Run the durable local upload and projection catch-up for one repository.
+
+    This is the normal synchronization orchestration.  Callers supply only
+    fixed repository-owned paths; no rollout or pilot state participates.
+    """
+    batch_size = _validate_batch_size(batch_size)
+    migrate_legacy_sync_state(
+        RepositorySyncPaths(
+            repo_root=outbox_path.parent.parent,
+            outbox_path=outbox_path,
+            projection_path=projection_path,
+        )
+    )
+    producer = outbox.open_outbox(outbox_path)
+    try:
+        if projection_path.exists():
+            existing = projection.open_cached_projection(projection_path)
+            try:
+                needs_rebuild = (
+                    projection.get_schema_version(existing)
+                    != projection.PROJECTION_SCHEMA_VERSION
+                )
+            finally:
+                existing.close()
+            if needs_rebuild:
+                rebuild_ingest_projection(
+                    remote_store, projection_path, batch_size=batch_size
+                )
+        cache = projection.open_cached_projection(
+            projection_path, repo_id=remote_store.repo_id
+        )
+        try:
+            return synchronize_outbox(
+                producer,
+                remote_store,
+                cache,
+                batch_size=batch_size,
+                credential_resolver=credential_resolver,
+            )
+        finally:
+            cache.close()
+    finally:
+        producer.close()

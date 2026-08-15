@@ -5,11 +5,11 @@ import re
 import sqlite3
 import time
 from collections.abc import Callable
+from datetime import timedelta
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from . import claimcore as _claimcore
 from . import contracts as _contracts
 from . import depcore as _depcore
 from . import eventcore as _eventcore
@@ -18,7 +18,8 @@ from . import rows as _rows
 from . import sprintcore as _sprintcore
 from . import trackcore as _trackcore
 from . import workitemcore as _workitemcore
-from .claimcore import CLAIM_TYPES, ClaimConflict
+from . import reservation as _reservation
+from . import reservation_policy as _policy
 from .eventcore import (
     KNOWLEDGE_EVENT_TYPES,
     TAKEUP_EVENT_TYPES,
@@ -66,7 +67,10 @@ SPRINT_KINDS = ("active_sprint", "backlog", "archive")
 
 # Single source of truth for the local schema version; init_db() must end by
 # migrating to exactly this version, and doctor compares databases against it.
-CURRENT_SCHEMA_VERSION = 17
+CURRENT_SCHEMA_VERSION = 22
+RESERVATION_ROLES = _reservation.ROLES
+DEFAULT_RESERVATION_ROLE = _reservation.DEFAULT_ROLE
+ReservationConflict = _reservation.ReservationConflict
 
 _MIGRATIONS: list[str] = [
     # Migration 1: initial schema
@@ -412,7 +416,20 @@ def _migration_3(conn: sqlite3.Connection) -> None:
         )
 
 
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone() is not None
+
+
 def _add_column_if_missing(conn: sqlite3.Connection, table_name: str, column_name: str, definition: str) -> None:
+    # A dropped table has no columns to add. Migration 20 removes ``claim``,
+    # so replaying an earlier additive migration over a database that already
+    # passed the cutover must be a no-op rather than an error -- the same
+    # tolerance the surrounding IF NOT EXISTS statements already have.
+    if not _table_exists(conn, table_name):
+        return
     if not _column_exists(conn, table_name, column_name):
         conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {definition}")
 
@@ -647,6 +664,173 @@ def _migration_17(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_18(conn: sqlite3.Connection) -> None:
+    """Add the v0.3 advisory reservation ledger beside legacy claims."""
+    _execute_statements(
+        conn,
+        """
+        CREATE TABLE IF NOT EXISTS reservation (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            work_item_id INTEGER NOT NULL REFERENCES work_item(id) ON DELETE CASCADE,
+            session_id TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('inspect','execute','review','coordinate')),
+            state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active','released','interrupted')),
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+            last_activity_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+            released_at TEXT,
+            interruption_reason TEXT,
+            correlation_ref TEXT
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_reservation_active_execute
+            ON reservation(work_item_id) WHERE state = 'active' AND role = 'execute';
+        CREATE INDEX IF NOT EXISTS idx_reservation_item_state
+            ON reservation(work_item_id, state, last_activity_at DESC);
+        """,
+    )
+
+
+def _migration_19(conn: sqlite3.Connection) -> None:
+    """Archive legacy credential-bearing claims before their clean-break removal.
+
+    The live reservation ledger is authoritative from v0.3 onward.  This
+    archive is intentionally read-only historical evidence: no runtime path
+    may use it for ownership, proof, recovery, or scheduling.
+
+    Migration 20 drops ``claim``, so replaying this step over a database that
+    already passed the cutover has nothing to copy and must not error.
+    """
+    if not _table_exists(conn, "claim"):
+        return
+    _execute_statements(conn, """
+        CREATE TABLE IF NOT EXISTS claim_history AS SELECT * FROM claim WHERE 0;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_claim_history_claim_id
+            ON claim_history(id);
+        INSERT INTO claim_history SELECT * FROM claim
+        WHERE NOT EXISTS (
+            SELECT 1 FROM claim_history h WHERE h.id = claim.id
+        );
+    """)
+
+
+def _migration_20(conn: sqlite3.Connection) -> None:
+    """Drop the live claim relation; ``claim_history`` is the only survivor.
+
+    Migration 19 archived every claim row, but a deployment could have
+    written more between the two upgrades, so the archive step is repeated
+    before the drop rather than assumed complete. The insert is keyed on id
+    so re-running it cannot duplicate an already-archived row.
+
+    Dropping the table removes its indexes with it. Nothing references
+    ``claim`` by foreign key, and no runtime path has read it since the
+    claim-core cutover.
+
+    ``claim_token`` is nulled out across the archive. The tokens are already
+    inert -- no code path can present one -- but the archive exists to record
+    who held what and when, not to retain proof material, and a database file
+    must not carry secret-shaped data after the system that used it is gone.
+    Every other column is preserved verbatim.
+    """
+    if _table_exists(conn, "claim"):
+        _execute_statements(conn, """
+            INSERT INTO claim_history SELECT * FROM claim
+            WHERE NOT EXISTS (
+                SELECT 1 FROM claim_history h WHERE h.id = claim.id
+            );
+            DROP TABLE claim;
+        """)
+    _execute_statements(
+        conn,
+        "UPDATE claim_history SET claim_token = NULL WHERE claim_token IS NOT NULL;",
+    )
+
+
+def _migration_21(conn: sqlite3.Connection) -> None:
+    """Add the repo-level recovery record.
+
+    One row per ``db recover-from-remote``, written in the same transaction
+    as the recovered data, replacing the one synthetic ``recovery.completed``
+    event that used to be appended per sprint. A recovery is a property of
+    the database, not of each sprint inside it, and the per-sprint form both
+    scaled with sprint count and put an operational fact into the append-only
+    business event log.
+
+    Existing ``recovery.completed`` events are left alone: the event history
+    is append-only, so past recoveries stay legible where they were recorded.
+    """
+    _execute_statements(conn, """
+        CREATE TABLE IF NOT EXISTS recovery_record (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recovered_at TEXT NOT NULL,
+            source_repo_id TEXT NOT NULL,
+            schema_version INTEGER NOT NULL,
+            source_row_counts TEXT NOT NULL DEFAULT '{}',
+            reservations_interrupted INTEGER NOT NULL DEFAULT 0,
+            claims_closed INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_recovery_record_recovered_at
+            ON recovery_record(recovered_at DESC);
+    """)
+
+
+def _migration_22(conn: sqlite3.Connection) -> None:
+    """Make reservations overlappable and adopt the work-relationship roles.
+
+    Two corrections land together because they are the same correction. The
+    partial unique index made "at most one active execute reservation" a
+    database law, which contradicts the advisory model the ledger is for: a
+    second actor who cannot register is not prevented from working, only from
+    being seen. Overlap is now recorded and reported at reserve time instead.
+
+    Roles collapse to the work relationship -- ``execution``, ``verification``,
+    ``observation`` -- because that is what makes an overlap classifiable.
+    ``coordinate`` was never a relationship to the item (orchestration is
+    session and project context), so coordinator rows become observations, as
+    do ``inspect`` rows.
+
+    SQLite cannot alter a CHECK constraint in place, so the table is rebuilt.
+    ``reservation`` is referenced by no foreign key, and the rebuild preserves
+    ids so audit payloads that recorded a reservation id stay resolvable.
+    """
+    _execute_statements(conn, """
+        DROP INDEX IF EXISTS idx_reservation_active_execute;
+        CREATE TABLE reservation_v22 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            work_item_id INTEGER NOT NULL REFERENCES work_item(id) ON DELETE CASCADE,
+            session_id TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('execution','verification','observation')),
+            state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active','released','interrupted')),
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+            last_activity_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+            released_at TEXT,
+            interruption_reason TEXT,
+            correlation_ref TEXT
+        );
+        INSERT INTO reservation_v22 (id, work_item_id, session_id, actor, role, state,
+                                     created_at, last_activity_at, released_at,
+                                     interruption_reason, correlation_ref)
+        SELECT id, work_item_id, session_id, actor,
+               CASE role
+                   WHEN 'execute' THEN 'execution'
+                   WHEN 'review' THEN 'verification'
+                   WHEN 'inspect' THEN 'observation'
+                   WHEN 'coordinate' THEN 'observation'
+                   ELSE role
+               END,
+               state, created_at, last_activity_at, released_at,
+               interruption_reason, correlation_ref
+        FROM reservation;
+        DROP TABLE reservation;
+        ALTER TABLE reservation_v22 RENAME TO reservation;
+        CREATE INDEX IF NOT EXISTS idx_reservation_item_state
+            ON reservation(work_item_id, state, last_activity_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_reservation_session_active
+            ON reservation(session_id, state);
+    """)
+
+
 def _run_migration(
     conn: sqlite3.Connection,
     target_version: int,
@@ -693,7 +877,12 @@ def init_db(conn: sqlite3.Connection) -> None:
     _run_migration(conn, 14, _migration_14, foreign_keys_off=True)
     _run_migration(conn, 15, _migration_15, foreign_keys_off=True)
     _run_migration(conn, 16, _migration_16)
-    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_17)
+    _run_migration(conn, 17, _migration_17)
+    _run_migration(conn, 18, _migration_18)
+    _run_migration(conn, 19, _migration_19)
+    _run_migration(conn, 20, _migration_20)
+    _run_migration(conn, 21, _migration_21)
+    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_22, foreign_keys_off=True)
 
 
 # --- Sprint ---
@@ -994,8 +1183,6 @@ def set_work_item_status(
     item_id: int,
     new_status: str,
     actor: str | None = None,
-    claim_id: int | None = None,
-    claim_token: str | None = None,
     *,
     expected_revision: str | None = None,
 ) -> None:
@@ -1022,71 +1209,6 @@ def set_work_item_status(
             raise InvalidTransition(
                 f"cannot transition {current} -> {new_status}. Allowed: {allowed}"
             )
-        active_claim = _get_active_exclusive_claim_row(conn, item_id)
-        if active_claim is not None:
-            if claim_id is None or claim_token is None:
-                _emit_claim_event(
-                    conn,
-                    active_claim,
-                    event_type="coordination-failure",
-                    actor=actor or "system",
-                    payload={
-                        "summary": f"Item transition rejected for item #{item_id}",
-                        "detail": (
-                            "An exclusive claim blocked the transition because no "
-                            "valid claim proof was supplied."
-                        ),
-                        "tags": ["claims", "coordination", "ownership-proof"],
-                        "operation": "item-status",
-                        "reason": "missing-claim-proof",
-                        "required_claim": _claim_event_identity(active_claim),
-                        "attempted_by": _claim_attempt_identity(actor=actor),
-                    },
-                )
-                raise ClaimConflict(
-                    f"Item #{item_id} is exclusively claimed by '{active_claim['agent']}' "
-                    f"(claim #{active_claim['id']}). Provide --claim-id and --claim-token."
-                )
-            selected_claim = conn.execute(
-                "SELECT * FROM claim WHERE id = ?", (claim_id,)
-            ).fetchone()
-            if (
-                selected_claim is None
-                or selected_claim["work_item_id"] != item_id
-                or not selected_claim["exclusive"]
-                or selected_claim["claim_type"] != "execute"
-                or selected_claim["status"] != "active"
-                or selected_claim["expires_at"] <= conn.execute(
-                    "SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now')"
-                ).fetchone()[0]
-            ):
-                _emit_claim_event(
-                    conn,
-                    active_claim,
-                    event_type="coordination-failure",
-                    actor=actor or "system",
-                    payload={
-                        "summary": f"Item transition rejected for item #{item_id}",
-                        "detail": (
-                            "A transition supplied a claim proof for the wrong claim id "
-                            "while another exclusive claim was active."
-                        ),
-                        "tags": ["claims", "coordination", "ownership-proof"],
-                        "operation": "item-status",
-                        "reason": "wrong-claim-id",
-                        "required_claim": _claim_event_identity(active_claim),
-                        "attempted_by": _claim_attempt_identity(
-                            actor=actor,
-                            claim_id=claim_id,
-                            claim_token_present=claim_token is not None,
-                        ),
-                    },
-                )
-                raise ClaimConflict(
-                    f"Item #{item_id} is exclusively claimed by '{active_claim['agent']}' "
-                    f"(claim #{active_claim['id']})."
-                )
-            _require_claim_proof(selected_claim, claim_token)
         if new_status == "active":
             unresolved = [
                 blocker for blocker in list_deps_blocking(conn, item_id)
@@ -1353,337 +1475,216 @@ def list_knowledge_candidates(conn: sqlite3.Connection, sprint_id: int) -> list[
     return _eventcore.list_knowledge_candidates(_EventSqlite(conn), sprint_id)
 
 
-# --- Claim ---
+# --- Advisory reservations -------------------------------------------------
 #
-# Claim query shapes -- including create_claim/handoff_claim's transactional
-# bodies as of sub-increments 4d/4e -- live in ``sprintctl.claimcore`` and are
-# shared with the PostgreSQL backend; this module supplies only the SQLite
-# execution adapter for them.  heartbeat_claim/release_claim stay here: their
-# error-path event emission is a thin wrapper around backend-neutral shapes.
+# Unlike legacy claims these rows are never credentials.  Keep these operations
+# here beside the existing repository facade so local callers do not need to
+# know which backend owns the SQL transaction.
 
-CLAIM_IDENTITY_STATUS_PROVEN = _rows.CLAIM_IDENTITY_STATUS_PROVEN
-CLAIM_IDENTITY_STATUS_LEGACY = _rows.CLAIM_IDENTITY_STATUS_LEGACY
-# Re-exported from claimcore so both backends and existing callers (cli.py,
-# pg.py) see one definition; see claimcore.py's module docstring.
-MAX_CLAIM_TOKEN_INSERT_RETRIES = _claimcore.MAX_CLAIM_TOKEN_INSERT_RETRIES
-
-# Backend-neutral claim serialization lives in ``sprintctl.rows`` so the
-# SQLite and PostgreSQL backends cannot drift apart.  These aliases keep the
-# historical ``db`` import surface stable for existing consumers.
-_claim_identity_status = _rows.claim_identity_status
-_claim_event_identity = _rows.claim_event_identity
-_claim_attempt_identity = _rows.claim_attempt_identity
-_serialize_claim = _rows.serialize_claim
+def _reservation_event(conn: sqlite3.Connection, row: dict, event_type: str, actor: str, payload: dict) -> None:
+    item = get_work_item(conn, int(row["work_item_id"]))
+    if item is not None:
+        create_event(conn, sprint_id=item["sprint_id"], work_item_id=item["id"], actor=actor,
+                     event_type=event_type, source_type="system", payload=payload)
 
 
-class _ClaimSqlite:
-    """SQLite execution adapter for ``claimcore`` claim operations."""
-
-    ph = "?"
-    true_literal = "1"
-
-    def __init__(self, conn: sqlite3.Connection) -> None:
-        self._conn = conn
-
-    def tenant_params(self) -> tuple:
-        return ()
-
-    def query_one(self, sql: str, params: tuple) -> dict | None:
-        row = self._conn.execute(sql, params).fetchone()
-        return dict(row) if row else None
-
-    def query_all(self, sql: str, params: tuple) -> list[dict]:
-        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
-
-    def mutate(self, sql: str, params: tuple) -> None:
-        self._conn.execute(sql, params)
-        self._conn.commit()
-
-    def now_sql(self) -> str:
-        return "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
-
-    def expires_at_offset_sql(self) -> str:
-        return f"strftime('%Y-%m-%dT%H:%M:%SZ', 'now', {self.ph} || ' seconds')"
-
-    def join_tenant_clause(self, left_alias: str, right_alias: str) -> str:
-        return ""
-
-    def begin_txn(self) -> None:
-        self._conn.execute("BEGIN IMMEDIATE")
-
-    def commit(self) -> None:
-        self._conn.commit()
-
-    def rollback(self) -> None:
-        self._conn.rollback()
-
-    def execute(self, sql: str, params: tuple) -> None:
-        self._conn.execute(sql, params)
-
-    def insert_row(self, sql: str, params: tuple) -> int:
-        cur = self._conn.execute(sql, params)
-        return cur.lastrowid
-
-    def lock_capability_arbitration(self) -> None:
-        pass  # BEGIN IMMEDIATE's whole-DB write lock already covers this
-
-    def lock_work_item_row(self, work_item_id: int) -> dict | None:
-        row = self._conn.execute("SELECT id FROM work_item WHERE id = ?", (work_item_id,)).fetchone()
-        return dict(row) if row else None
-
-    def is_claim_token_collision(self, exc: BaseException) -> bool:
-        if not isinstance(exc, sqlite3.IntegrityError):
-            return False
-        msg = str(exc).lower()
-        return "claim_token" in msg or "idx_claim_token" in msg
-
-    def maintenance_capability_active_sql(self) -> str:
-        return "state IN ('active','observing') AND julianday(expires_at) > julianday('now')"
-
-    def emit_claim_event(
-        self, claim_row: dict, *, event_type: str, actor: str, payload: dict
-    ) -> None:
-        _emit_claim_event(self._conn, claim_row, event_type=event_type, actor=actor, payload=payload)
+def _reservation_row(conn: sqlite3.Connection, reservation_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM reservation WHERE id = ?", (reservation_id,)).fetchone()
+    return dict(row) if row else None
 
 
-def get_claim(
-    conn: sqlite3.Connection,
-    claim_id: int,
-    *,
-    include_secret: bool = False,
-) -> dict | None:
-    row = _claimcore.get_claim_row(_ClaimSqlite(conn), claim_id)
-    return _serialize_claim(row, include_secret=include_secret) if row else None
+def get_reservation(conn: sqlite3.Connection, reservation_id: int) -> dict | None:
+    row = _reservation_row(conn, reservation_id)
+    return _reservation.display(row) if row else None
 
 
-def _get_active_exclusive_claim_row(
-    conn: sqlite3.Connection,
-    work_item_id: int,
-) -> dict | None:
-    return _claimcore.get_active_exclusive_claim_row(_ClaimSqlite(conn), work_item_id)
+def list_reservations(conn: sqlite3.Connection, work_item_id: int | None = None, *, active_only: bool = True) -> list[dict]:
+    where, params = [], []
+    if work_item_id is not None:
+        where.append("work_item_id = ?")
+        params.append(work_item_id)
+    if active_only:
+        where.append("state = 'active'")
+    clause = " WHERE " + " AND ".join(where) if where else ""
+    rows = conn.execute(f"SELECT * FROM reservation{clause} ORDER BY last_activity_at DESC, id DESC", tuple(params)).fetchall()
+    return [_reservation.display(dict(row)) for row in rows]
 
 
-def _emit_claim_event(
-    conn: sqlite3.Connection,
-    claim_row: sqlite3.Row | dict,
-    *,
-    event_type: str,
-    actor: str,
-    payload: dict,
-) -> None:
-    item = get_work_item(conn, claim_row["work_item_id"])
-    if item is None:
-        return
-    create_event(
-        conn,
-        sprint_id=item["sprint_id"],
-        actor=actor,
-        event_type=event_type,
-        source_type="system",
-        work_item_id=item["id"],
-        payload=payload,
-    )
+def list_reservations_by_sprint(conn: sqlite3.Connection, sprint_id: int, *, active_only: bool = True) -> list[dict]:
+    clause = "AND r.state = 'active'" if active_only else ""
+    rows = conn.execute(
+        "SELECT r.* FROM reservation r JOIN work_item w ON w.id = r.work_item_id "
+        "WHERE w.sprint_id = ? " + clause + " ORDER BY r.last_activity_at DESC, r.id DESC",
+        (sprint_id,),
+    ).fetchall()
+    return [_reservation.display(dict(row)) for row in rows]
 
 
-# Re-exported from claimcore so both backends and existing callers (cli.py,
-# pg.py's own wrapper) see one definition; see claimcore.py's module docstring.
-_require_claim_proof = _claimcore.require_claim_proof
+def reserve(conn: sqlite3.Connection, work_item_id: int, *, actor: str, session_id: str,
+            role: str = _reservation.DEFAULT_ROLE, correlation_ref: str | None = None,
+            interrupt_existing: bool = False) -> dict:
+    """Register a reservation, reporting -- never refusing -- overlap.
 
-
-def create_claim(
-    conn: sqlite3.Connection,
-    work_item_id: int,
-    agent: str,
-    claim_type: str = "execute",
-    exclusive: bool = True,
-    ttl_seconds: int = 300,
-    branch: str | None = None,
-    worktree_path: str | None = None,
-    commit_sha: str | None = None,
-    pr_ref: str | None = None,
-    runtime_session_id: str | None = None,
-    instance_id: str | None = None,
-    hostname: str | None = None,
-    pid: int | None = None,
-    coordinate_claim_id: int | None = None,
-    coordinate_claim_token: str | None = None,
-) -> int:
-    """Create a claim on a work item, enforcing exclusivity for exclusive claim types.
-
-    Sub-agents spawned by a coordinator may pass coordinate_claim_id +
-    coordinate_claim_token to create an execute/inspect/review claim under an
-    existing coordinate claim without triggering a ClaimConflict.
+    Overlapping reservations are the expected case for collaborating sessions,
+    so this always commits and returns the conflict set alongside the new row.
+    ``interrupt_existing`` is a deliberate takeover: it interrupts the active
+    execution reservations it displaced and records why, which is a different
+    act from merely coexisting with them.
     """
-    if claim_type not in CLAIM_TYPES:
-        raise ValueError(f"Invalid claim_type '{claim_type}'. Must be one of: {', '.join(CLAIM_TYPES)}")
-    item = get_work_item(conn, work_item_id)
-    if item is None:
+    role = _reservation.normalize_role(role)
+    if get_work_item(conn, work_item_id) is None:
         raise ValueError(f"Work item #{work_item_id} not found")
-    return _claimcore.create_claim(
-        _ClaimSqlite(conn), work_item_id, agent, claim_type, exclusive, ttl_seconds,
-        branch, worktree_path, commit_sha, pr_ref,
-        runtime_session_id, instance_id, hostname, pid,
-        coordinate_claim_id, coordinate_claim_token,
-    )
-
-
-def heartbeat_claim(
-    conn: sqlite3.Connection,
-    claim_id: int,
-    claim_token: str | None,
-    ttl_seconds: int = 300,
-    actor: str | None = None,
-    runtime_session_id: str | None = None,
-    instance_id: str | None = None,
-    branch: str | None = None,
-    worktree_path: str | None = None,
-    commit_sha: str | None = None,
-    pr_ref: str | None = None,
-    hostname: str | None = None,
-    pid: int | None = None,
-) -> None:
-    """Refresh a claim's expiry and heartbeat timestamp."""
-    row = _claimcore.get_claim_row(_ClaimSqlite(conn), claim_id)
-    if row is None:
-        raise ValueError(f"Claim #{claim_id} not found")
+    now = _reservation.now_text()
+    interrupted: list[dict] = []
     try:
-        _require_claim_proof(row, claim_token)
-    except ValueError as exc:
-        event_type, payload = _claimcore.heartbeat_rejection_event(
-            claim_id,
-            row,
-            str(exc),
-            actor=actor,
-            claim_token=claim_token,
-            runtime_session_id=runtime_session_id,
-            instance_id=instance_id,
-            branch=branch,
-            worktree_path=worktree_path,
-            commit_sha=commit_sha,
-            pr_ref=pr_ref,
-            hostname=hostname,
-            pid=pid,
+        conn.execute("BEGIN IMMEDIATE")
+        # Reservation admission and maintenance activation are mutually
+        # exclusive: activation gates on "zero active reservations", so a
+        # reservation granted under a live capability would silently break the
+        # window it protects.  BEGIN IMMEDIATE's whole-database lock supplies
+        # the serialization that PostgreSQL takes an advisory lock for.  This
+        # is the only remaining refusal -- it is a property of the repository,
+        # not of who else is working on the item.
+        if conn.execute(
+            "SELECT 1 FROM maintenance_capability WHERE state IN ('active','observing') "
+            "AND julianday(expires_at) > julianday('now') LIMIT 1"
+        ).fetchone() is not None:
+            conn.rollback()
+            raise ReservationConflict(
+                "reservations are disabled while an exact-plan maintenance capability is active"
+            )
+        existing = [dict(row) for row in conn.execute(
+            "SELECT * FROM reservation WHERE work_item_id = ? AND state = 'active' ORDER BY id",
+            (work_item_id,),
+        ).fetchall()]
+        if interrupt_existing:
+            interrupted = [row for row in existing if row["role"] == "execution"]
+            if interrupted:
+                conn.execute(
+                    "UPDATE reservation SET state = 'interrupted', released_at = ?, interruption_reason = ? "
+                    "WHERE work_item_id = ? AND state = 'active' AND role = 'execution'",
+                    (now, f"interrupted by {actor} ({session_id})", work_item_id),
+                )
+        cur = conn.execute(
+            "INSERT INTO reservation(work_item_id, session_id, actor, role, state, created_at, last_activity_at, correlation_ref) VALUES (?, ?, ?, ?, 'active', ?, ?, ?)",
+            (work_item_id, session_id, actor, role, now, now, correlation_ref),
         )
-        _emit_claim_event(conn, row, event_type=event_type, actor=actor or "system", payload=payload)
+        reservation_id = cur.lastrowid
+        conn.commit()
+    except Exception:
+        if conn.in_transaction:
+            conn.rollback()
         raise
-    _claimcore.heartbeat_update(
-        _ClaimSqlite(conn),
-        claim_id,
-        ttl_seconds,
-        runtime_session_id,
-        instance_id,
-        branch,
-        worktree_path,
-        commit_sha,
-        pr_ref,
-        hostname,
-        pid,
-    )
+    row = _reservation_row(conn, reservation_id)
+    assert row is not None
+    interrupted_ids = {old["id"] for old in interrupted}
+    remaining = [old for old in existing if old["id"] not in interrupted_ids]
+    for old in interrupted:
+        _reservation_event(conn, dict(old), "reservation.interrupted", actor,
+                           {"reservation_id": old["id"], "reason": "explicit-takeover", "replacement_id": reservation_id})
+    _reservation_event(conn, row, "reservation.reserved", actor,
+                       {"reservation_id": reservation_id, "session_id": session_id, "role": role,
+                        "correlation_ref": correlation_ref, "interrupt_existing": interrupt_existing,
+                        "conflicting_reservation_ids": [old["id"] for old in remaining]})
+    return _reservation.annotate_conflicts(_reservation.display(row), remaining)
 
 
-def release_claim(
-    conn: sqlite3.Connection,
-    claim_id: int,
-    claim_token: str | None,
-    actor: str | None = None,
-) -> None:
-    """Release (delete) a claim. Only the owning agent may release it."""
-    row = _claimcore.get_claim_row(_ClaimSqlite(conn), claim_id)
-    if row is None:
-        raise ValueError(f"Claim #{claim_id} not found")
-    try:
-        _require_claim_proof(row, claim_token)
-    except ValueError as exc:
-        event_type, payload = _claimcore.release_rejection_event(
-            claim_id, row, str(exc), actor=actor, claim_token=claim_token
-        )
-        _emit_claim_event(conn, row, event_type=event_type, actor=actor or "system", payload=payload)
-        raise
-    _claimcore.release_delete(_ClaimSqlite(conn), claim_id)
+def note_session_activity(conn: sqlite3.Connection, work_item_id: int, *, session_id: str | None) -> list[dict]:
+    """Bump the activity clock for reservations the caller's session holds.
 
-
-def handoff_claim(
-    conn: sqlite3.Connection,
-    claim_id: int,
-    claim_token: str | None,
-    *,
-    actor: str,
-    mode: str = "rotate",
-    ttl_seconds: int = 300,
-    runtime_session_id: str | None = None,
-    instance_id: str | None = None,
-    branch: str | None = None,
-    worktree_path: str | None = None,
-    commit_sha: str | None = None,
-    pr_ref: str | None = None,
-    hostname: str | None = None,
-    pid: int | None = None,
-    performed_by: str | None = None,
-    note: str | None = None,
-    allow_legacy_adopt: bool = False,
-) -> dict:
-    return _claimcore.handoff_claim(
-        _ClaimSqlite(conn), claim_id, claim_token,
-        actor=actor, mode=mode, ttl_seconds=ttl_seconds,
-        runtime_session_id=runtime_session_id, instance_id=instance_id,
-        branch=branch, worktree_path=worktree_path, commit_sha=commit_sha, pr_ref=pr_ref,
-        hostname=hostname, pid=pid, performed_by=performed_by, note=note,
-        allow_legacy_adopt=allow_legacy_adopt,
-    )
-
-
-def list_claims_by_sprint(
-    conn: sqlite3.Connection,
-    sprint_id: int,
-    active_only: bool = True,
-    expiring_within_seconds: int | None = None,
-) -> list[dict]:
-    """List all claims for items in a sprint, optionally filtered to active or expiring soon."""
-    rows = _claimcore.list_claims_by_sprint(
-        _ClaimSqlite(conn), sprint_id, active_only, expiring_within_seconds
-    )
-    return [_serialize_claim(r) for r in rows]
-
-
-def list_claims(conn: sqlite3.Connection, work_item_id: int, active_only: bool = True) -> list[dict]:
-    """List claims for a work item; active_only filters to non-expired claims."""
-    rows = _claimcore.list_claims(_ClaimSqlite(conn), work_item_id, active_only)
-    return [_serialize_claim(r) for r in rows]
-
-
-def find_claim_by_identity(
-    conn: sqlite3.Connection,
-    *,
-    instance_id: str | None = None,
-    hostname: str | None = None,
-    pid: int | None = None,
-    runtime_session_id: str | None = None,
-    active_only: bool = True,
-) -> list[dict]:
-    """Find active claims matching the given identity fields.
-
-    Useful for session resumption when the claim_token is lost but the agent
-    knows its own instance_id, runtime_session_id, or hostname+pid.
-    At least one of instance_id, runtime_session_id, or (hostname+pid) must be provided.
-    Returns serialized claims without the secret token.
+    Activity is an operational heuristic, not a heartbeat and not proof of
+    ownership: a successful item-scoped mutation attributable to the
+    reservation's *session* is evidence that session is still working. Reads
+    never qualify, and a matching actor name is not enough -- only the session
+    that registered the reservation (or was reassigned it) can move its clock.
     """
-    rows = _claimcore.find_claim_by_identity(
-        _ClaimSqlite(conn),
-        instance_id=instance_id,
-        hostname=hostname,
-        pid=pid,
-        runtime_session_id=runtime_session_id,
-        active_only=active_only,
+    if not session_id:
+        return []
+    rows = conn.execute(
+        "SELECT * FROM reservation WHERE work_item_id = ? AND session_id = ? AND state = 'active'",
+        (work_item_id, session_id),
+    ).fetchall()
+    if not rows:
+        return []
+    now = _reservation.now_text()
+    conn.execute(
+        "UPDATE reservation SET last_activity_at = ? WHERE work_item_id = ? AND session_id = ? AND state = 'active'",
+        (now, work_item_id, session_id),
     )
-    return [_serialize_claim(r) for r in rows]
+    conn.commit()
+    return [_reservation.display(dict(_reservation_row(conn, row["id"]))) for row in rows]
 
 
-def _get_active_coordinate_claim_row(
-    conn: sqlite3.Connection,
-    work_item_id: int,
-) -> dict | None:
-    """Return the first active exclusive coordinate claim on the item, if any."""
-    return _claimcore.get_active_coordinate_claim_row(_ClaimSqlite(conn), work_item_id)
+def touch_reservation(conn: sqlite3.Connection, reservation_id: int, *, session_id: str,
+                      correlation_ref: str | None = None) -> dict:
+    row = _reservation_row(conn, reservation_id)
+    if row is None:
+        raise ValueError(f"Reservation #{reservation_id} not found")
+    if row["state"] != "active":
+        raise ValueError(f"Reservation #{reservation_id} is {row['state']}")
+    if row["session_id"] != session_id:
+        raise ValueError(f"Reservation #{reservation_id} belongs to another session")
+    now = _reservation.now_text()
+    conn.execute("UPDATE reservation SET last_activity_at = ?, correlation_ref = COALESCE(?, correlation_ref) WHERE id = ?", (now, correlation_ref, reservation_id))
+    conn.commit()
+    updated = _reservation_row(conn, reservation_id)
+    assert updated is not None
+    return _reservation.display(updated)
+
+
+def reassign_reservation(conn: sqlite3.Connection, reservation_id: int, *, actor: str, session_id: str,
+                         correlation_ref: str | None = None) -> dict:
+    row = _reservation_row(conn, reservation_id)
+    if row is None or row["state"] != "active":
+        raise ValueError(f"Reservation #{reservation_id} is not active")
+    now = _reservation.now_text()
+    conn.execute("UPDATE reservation SET actor = ?, session_id = ?, last_activity_at = ?, correlation_ref = COALESCE(?, correlation_ref) WHERE id = ?",
+                 (actor, session_id, now, correlation_ref, reservation_id))
+    conn.commit()
+    updated = _reservation_row(conn, reservation_id)
+    assert updated is not None
+    _reservation_event(conn, updated, "reservation.reassigned", actor,
+                       {"reservation_id": reservation_id, "previous_actor": row["actor"], "previous_session_id": row["session_id"]})
+    return _reservation.display(updated)
+
+
+def release_reservation(conn: sqlite3.Connection, reservation_id: int, *, actor: str | None = None) -> dict:
+    row = _reservation_row(conn, reservation_id)
+    if row is None:
+        raise ValueError(f"Reservation #{reservation_id} not found")
+    if row["state"] != "active":
+        return _reservation.display(row)
+    now = _reservation.now_text()
+    conn.execute("UPDATE reservation SET state = 'released', released_at = ?, last_activity_at = ? WHERE id = ?", (now, now, reservation_id))
+    conn.commit()
+    updated = _reservation_row(conn, reservation_id)
+    assert updated is not None
+    _reservation_event(conn, updated, "reservation.released", actor or row["actor"], {"reservation_id": reservation_id})
+    return _reservation.display(updated)
+
+
+def sweep_stale_reservations(conn: sqlite3.Connection, *, now: str | None = None,
+                             interrupt_after: timedelta | None = None) -> list[dict]:
+    """Interrupt long-idle reservations.  Only an explicit sweep calls this.
+
+    Nothing expires in the background: the threshold is operator policy
+    (:mod:`sprintctl.reservation_policy`), and it takes effect when an
+    operator runs the sweep, not when the clock passes it.
+    """
+    window = _policy.interrupt_after() if interrupt_after is None else interrupt_after
+    reason = _policy.sweep_reason(window)
+    now = now or _reservation.now_text()
+    cutoff = (_reservation.parse_time(now) - window).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows = conn.execute("SELECT * FROM reservation WHERE state = 'active' AND last_activity_at <= ?", (cutoff,)).fetchall()
+    conn.execute("UPDATE reservation SET state = 'interrupted', released_at = ?, interruption_reason = ? WHERE state = 'active' AND last_activity_at <= ?", (now, reason, cutoff))
+    conn.commit()
+    result = []
+    for row in rows:
+        updated = _reservation_row(conn, row["id"])
+        assert updated is not None
+        _reservation_event(conn, updated, "reservation.interrupted", "maintenance", {"reservation_id": row["id"], "reason": reason})
+        result.append(_reservation.display(updated, now=now))
+    return result
 
 
 # --- Ref ---
@@ -1940,7 +1941,14 @@ def backlog_seed_from_candidates(
 
 # --- Database maintenance ---
 
-_RECOVERY_TABLE_ORDER = ("sprint", "track", "work_item", "event", "claim", "ref", "dep")
+# recovery_record is deliberately absent: it is this database's own
+# operational provenance ("was I recovered, when, from where"), not portable
+# business data. Carrying the source's records across would conflate the
+# source's history with this database's.
+_RECOVERY_TABLE_ORDER = (
+    "sprint", "track", "work_item", "event", "reservation",
+    "claim_history", "ref", "dep",
+)
 
 
 class RecoverySchemaMismatch(Exception):
@@ -1971,23 +1979,27 @@ def write_recovery_snapshot(
     claim-lifecycle validation by design: this restores a prior authoritative
     state rather than replaying business operations.
 
-    Ownership is not restored: claim_token is stripped from every claim row
+    Ownership is not restored. Active reservations are recorded as
+    'interrupted', and in the archive any surviving claim_token is stripped
     and active claims are closed as 'expired'. A recovered database is a new
-    authority instance — pre-recovery credentials must not work against it,
-    and the file must never carry usable secrets.
+    authority instance — work must be re-reserved against it, and the file
+    must never carry usable secrets.
 
     Every snapshot row must match the local table's column set exactly
     (modulo the Postgres-only repo_id); any drift raises
     RecoverySchemaMismatch instead of silently writing partial rows.
 
-    When provenance is given, one synthetic recovery.completed event is
-    written per recovered sprint inside the same transaction, so provenance
-    is all-or-nothing with the data. Returned counts cover source rows only.
+    When provenance is given, one row is written to ``recovery_record``
+    inside the same transaction, so provenance is all-or-nothing with the
+    data. That replaced one synthetic ``recovery.completed`` event per
+    recovered sprint: a recovery is a property of the database, not of each
+    sprint in it, and the old form both scaled with sprint count and put an
+    operational fact into the append-only business event log. Returned counts
+    cover source rows only.
     """
-    if provenance is not None:
-        _contracts.require_generic_event_write_allowed("recovery.completed")
     counts: dict[str, int] = {}
     claims_closed = 0
+    reservations_interrupted = 0
     try:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("PRAGMA foreign_keys = OFF")
@@ -2009,13 +2021,26 @@ def write_recovery_snapshot(
                     value = row[col]
                     if table == "event" and col == "payload" and not isinstance(value, str):
                         value = json.dumps(value)
-                    elif table == "claim" and col == "exclusive":
+                    elif table == "claim_history" and col == "exclusive":
                         value = 1 if value else 0
-                    elif table == "claim" and col == "claim_token":
+                    elif table == "claim_history" and col == "claim_token":
+                        # Defence in depth. Migration 20 nulls these at rest,
+                        # but a snapshot can come from a remote that has not
+                        # reached migration 10 yet, and a recovered file must
+                        # never carry proof material either way.
                         value = None
-                    elif table == "claim" and col == "status" and value == "active":
+                    elif table == "claim_history" and col == "status" and value == "active":
                         value = "expired"
                         claims_closed += 1
+                    elif table == "reservation" and col == "state" and value == "active":
+                        # Ownership never survives recovery. The claim path
+                        # closed active claims for this reason and the rule
+                        # was not ported when reservations replaced them: a
+                        # recovered database is a new authority instance, so a
+                        # session that held work against the old one must not
+                        # appear to still hold it here.
+                        value = "interrupted"
+                        reservations_interrupted += 1
                     values.append(value)
                 placeholders = ",".join("?" for _ in insert_cols)
                 conn.execute(
@@ -2025,18 +2050,19 @@ def write_recovery_snapshot(
                 n += 1
             counts[table] = n
         if provenance is not None:
-            payload = dict(provenance)
-            payload["source_row_counts"] = counts
-            payload["claims_closed"] = claims_closed
-            for sprint_row in snapshot.get("sprint", []):
-                _insert_event(
-                    conn,
-                    sprint_row["id"],
-                    "sprintctl",
-                    "recovery.completed",
-                    source_type="system",
-                    payload=payload,
-                )
+            conn.execute(
+                "INSERT INTO recovery_record (recovered_at, source_repo_id, "
+                "schema_version, source_row_counts, reservations_interrupted, "
+                "claims_closed) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    provenance["recovered_at"],
+                    provenance["source_repo_id"],
+                    CURRENT_SCHEMA_VERSION,
+                    json.dumps(counts, sort_keys=True),
+                    reservations_interrupted,
+                    claims_closed,
+                ),
+            )
         conn.execute("PRAGMA foreign_keys = ON")
         conn.commit()
     except Exception:
@@ -2071,7 +2097,10 @@ def check_integrity(conn: sqlite3.Connection) -> dict:
         for r in conn.execute("PRAGMA foreign_key_check").fetchall()
     ]
     table_counts = {}
-    for table in ("sprint", "track", "work_item", "event", "claim", "ref", "dep"):
+    for table in (
+        "sprint", "track", "work_item", "event", "reservation",
+        "claim_history", "ref", "dep", "recovery_record",
+    ):
         table_counts[table] = conn.execute(
             f"SELECT COUNT(*) FROM {table}"  # noqa: S608 — fixed identifier set
         ).fetchone()[0]

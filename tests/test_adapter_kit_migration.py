@@ -79,11 +79,12 @@ def test_resource_schema_gate_removes_exactly_the_three_owner_operations() -> No
         "work.maintenance.resource.changes",
     }
 
-    assert len(available) == 46
-    assert len(unavailable) == 43
+    assert len(available) == 47
+    assert len(unavailable) == 44
     assert {spec["name"] for spec in available} - {
         spec["name"] for spec in unavailable
     } == resource_names
+    assert not {spec["name"] for spec in available if spec["name"].startswith("work.claim.")}
 
 
 def test_runtime_dependency_and_lock_select_one_immutable_adapter_wheel() -> None:

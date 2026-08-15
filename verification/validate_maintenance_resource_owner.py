@@ -17,6 +17,8 @@ CANDIDATES = (
     "pyproject.toml", "uv.lock", "sprintctl/__init__.py", "sprintctl/db.py", "sprintctl/pg.py",
     "sprintctl/pg_migrations.py", "sprintctl/maintenance_capability.py",
     "sprintctl/maintenance_resource.py", "sprintctl/application.py",
+    "sprintctl/application_common.py", "sprintctl/work_application.py",
+    "sprintctl/project_application.py",
     "sprintctl/vuoro_adapter.py", "sprintctl/pg_testing.py",
     "tests/test_maintenance_capability.py", "tests/test_maintenance_resource.py",
     "tests/test_pg_bootstrap.py", "tests/test_work_application.py",

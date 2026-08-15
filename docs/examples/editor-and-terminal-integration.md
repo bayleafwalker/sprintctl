@@ -72,6 +72,5 @@ Use this only if your team/repo already accepts auto-updated snapshot files.
 ## Notes
 
 - Keep all integrations as transparent shell/task/editor configuration.
-- Do not hide claim proof (`claim_id` + `claim_token`) behind opaque tooling.
+- Do not hide reservation state behind opaque tooling.
 - If command drift appears, switch integration commands to `.venv/bin/python -m sprintctl`.
-

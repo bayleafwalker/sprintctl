@@ -1,16 +1,15 @@
 """The exact served-mode CLI command allowlist for sprintctl #1195.
 
 ``LEGACY_REMOTE_COMMAND_PARITY`` in ``vuoro_adapter.py`` describes parity at
-the level of prose command groups ("claim heartbeat|handoff|release",
+the level of prose command groups ("reservation touch|reassign|release",
 "item status / sprint status"). That is not precise enough to gate a CLI
 command before it opens SQLite, reads recovery state, or performs any other
 side effect: each entry here is one exact Click command path.
 
 Resolution notes from planning:
 
-- ``claim heartbeat|handoff|release`` is three separate Click commands, all
-  mapped to ``work.claim.arbitrate`` (an immutable authority-command record;
-  the operation itself, not the CLI verb, determines the transition).
+- Reservation lifecycle commands are separate Click commands mapped to their
+  corresponding ``work.reservation.*`` operations.
 - ``item status`` and ``sprint status`` are two separate Click commands,
   both mapped to ``work.lifecycle.arbitrate`` for the same reason.
 - ``next-work`` is a single Click command whose behavior branches on
@@ -45,6 +44,19 @@ class ServedRoute:
     command_path: str
     operation: str
     precondition: str = ""
+    notes: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class OperationSpec:
+    """Immutable client binding for a catalog operation."""
+
+    command_path: str
+    cli_path: str
+    operation: str
+    disposition: "ServedDisposition"
+    precondition: str = ""
+    probe: bool = False
     notes: str = ""
 
 
@@ -84,10 +96,8 @@ SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
         precondition="project_path is not None and not as_fzf",
         notes="The catalog resolves its canonical project binding and authorizes every member.",
     ),
-    ServedRoute("claim.list", "work.read.claims"),
-    ServedRoute("claim.list-sprint", "work.read.claims"),
-    ServedRoute("claim.resume", "work.read.claims"),
-    ServedRoute("claim.show", "work.read.claim"),
+    ServedRoute("reservation.list", "work.read.reservations"),
+    ServedRoute("reservation.show", "work.read.reservation"),
     ServedRoute("item.ref.add", "work.item.ref.add"),
     ServedRoute("item.ref.list", "work.read.item"),
     ServedRoute("item.ref.remove", "work.item.ref.remove"),
@@ -110,13 +120,11 @@ SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
         precondition="project_path is not None",
         notes="Same Click command as the row above; operation depends on --project.",
     ),
-    ServedRoute("claim.start", "work.claim.start"),
-    ServedRoute("claim.create", "work.claim.arbitrate"),
-    ServedRoute("claim.heartbeat", "work.claim.arbitrate"),
-    ServedRoute("claim.handoff", "work.claim.arbitrate"),
-    ServedRoute("claim.release", "work.claim.arbitrate"),
+    ServedRoute("reservation.reserve", "work.reservation.reserve"),
+    ServedRoute("reservation.touch", "work.reservation.touch"),
+    ServedRoute("reservation.reassign", "work.reservation.reassign"),
+    ServedRoute("reservation.release", "work.reservation.release"),
     ServedRoute("item.status", "work.lifecycle.arbitrate"),
-    ServedRoute("item.done-from-claim", "work.lifecycle.arbitrate"),
     ServedRoute("sprint.status", "work.lifecycle.arbitrate"),
     ServedRoute("event.observation.add", "work.evidence.ingest"),
     ServedRoute("event.list", "work.read.events"),
@@ -128,7 +136,6 @@ SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
     ServedRoute("sprint.show.detail", "work.read.sprint-detail"),
     ServedRoute("item.note", "work.item.note"),
     ServedRoute("authority.sync", "work.batch.apply"),
-    ServedRoute("pilot.cutover-evidence", "work.pilot.cutover-evidence"),
 )
 
 
@@ -156,7 +163,6 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     "item list": "catalog",
     "item note": "catalog",
     "item status": "catalog",
-    "item done-from-claim": "catalog",
     "item ref add": "catalog",
     "item ref list": "catalog",
     "item ref remove": "catalog",
@@ -185,17 +191,10 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     "authority reconcile": "local",
     "authority quarantine": "local",
     "authority rollover": "local",
-    "authority recover-proof": "unavailable",
-    "authority clear-proof": "unavailable",
-    "pilot status": "unavailable",
-    "pilot enable": "unavailable",
-    "pilot disable": "unavailable",
-    "pilot verify": "unavailable",
-    "pilot sync": "unavailable",
-    "pilot cutover-evidence": "catalog",
     "projection-reads status": "unavailable",
     "projection-reads enable": "unavailable",
     "projection-reads disable": "unavailable",
+    "sync": "unavailable",
     "takeup sweep": "unavailable",
     "takeup take": "unavailable",
     "takeup release": "unavailable",
@@ -209,16 +208,12 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     "db recover-from-remote": "unavailable",
     "export": "unavailable",
     "import": "unavailable",
-    "claim create": "catalog",
-    "claim start": "catalog",
-    "claim heartbeat": "catalog",
-    "claim release": "catalog",
-    "claim handoff": "catalog",
-    "claim list": "catalog",
-    "claim list-sprint": "catalog",
-    "claim show": "catalog",
-    "claim resume": "catalog",
-    "claim recover": "catalog",
+    "reservation reserve": "catalog",
+    "reservation touch": "catalog",
+    "reservation reassign": "catalog",
+    "reservation release": "catalog",
+    "reservation list": "catalog",
+    "reservation show": "catalog",
     "handoff": "catalog",
     "agent-protocol": "local",
     "next-work": "catalog",
@@ -253,10 +248,98 @@ def routes_for(command_path: str) -> tuple[ServedRoute, ...]:
     return _ROUTES_BY_COMMAND.get(command_path, ())
 
 
+# The doctor probes the catalog operations reached by normal served command
+# paths.  Keep this routing metadata beside the route registry so the served
+# client cannot maintain a second, drifting inventory.
+_DOCTOR_PROBE_COMMAND_PATHS = (
+    "identity.current",
+    "usage.context",
+    "context-candidates",
+    "handoff",
+    "handoff.record",
+    "sprint.list",
+    "sprint.create",
+    "item.show",
+    "item.list",
+    "reservation.list",
+    "reservation.show",
+    "item.ref.add",
+    "item.ref.list",
+    "item.ref.remove",
+    "item.dep.add",
+    "item.dep.list",
+    "item.dep.remove",
+    "next-work",
+    "next-work.explain",
+    "item.status",
+    "sprint.status",
+    "reservation.reserve",
+    "reservation.touch",
+    "reservation.reassign",
+    "reservation.release",
+    "item.note",
+    "authority.sync",
+    "event.list",
+    "event.add",
+    "item.add",
+    "item.edit",
+    "sprint.show",
+    "sprint.show.detail",
+)
+
+
+def doctor_probe_operations() -> frozenset[str]:
+    """Catalog operations that `sprintctl doctor` must discover."""
+    return frozenset(
+        spec.operation for spec in OPERATION_SPECS if spec.probe
+    )
+
+
+def doctor_probe_command_paths() -> tuple[str, ...]:
+    """Exact route keys that contribute to the served doctor probe."""
+    return _DOCTOR_PROBE_COMMAND_PATHS
+
+
+def disposition_for(cli_path: str) -> ServedDisposition:
+    """The served disposition for one executable Click path."""
+    return SERVED_COMMAND_DISPOSITIONS[cli_path]
+
+
+def classified_click_paths() -> frozenset[str]:
+    """All executable paths classified by the registry."""
+    return frozenset(SERVED_COMMAND_DISPOSITIONS)
+
+
+def _cli_path(route_path: str) -> str:
+    return route_path.replace(".", " ")
+
+
+OPERATION_SPECS: tuple[OperationSpec, ...] = tuple(
+    OperationSpec(
+        command_path=route.command_path,
+        cli_path=_cli_path(route.command_path),
+        operation=route.operation,
+        disposition=SERVED_COMMAND_DISPOSITIONS.get(
+            _cli_path(route.command_path), "catalog"
+        ),
+        precondition=route.precondition,
+        probe=route.command_path in _DOCTOR_PROBE_COMMAND_PATHS,
+        notes=route.notes,
+    )
+    for route in SERVED_COMMAND_ROUTES
+)
+
+
 __all__ = [
     "ServedDisposition",
     "ServedRoute",
+    "OperationSpec",
+    "OPERATION_SPECS",
     "SERVED_COMMAND_DISPOSITIONS",
     "SERVED_COMMAND_ROUTES",
+    "doctor_probe_operations",
+    "doctor_probe_command_paths",
+    "disposition_for",
+    "classified_click_paths",
     "routes_for",
 ]

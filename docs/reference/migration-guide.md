@@ -39,6 +39,10 @@ already-migrated database is a no-op for every version already applied.
 
 Current SQLite schema version: **13**.
 
+> Historical note: migrations 6 and 13 introduced `claim_token` and
+> `lease_epoch` for the legacy claim model. The v3 reservation model retired
+> those concepts; they remain in the table below as historical record only.
+
 ---
 
 ## Migration history
@@ -59,6 +63,14 @@ Current SQLite schema version: **13**.
 | 12 | Added claim `status` (`active|expired`) with a parity default |
 | 13 | Added claim `lease_epoch` with an initial value of 1 |
 | 14 | Added explicit scope-ref kinds (`file`, `glob`, `manifest`) to `ref.ref_type` |
+| 15 | Added the `command` ref kind (validation-command refs) |
+| 16 | Installed the exact-plan-bound maintenance capability ledger |
+| 17 | Installed the maintenance observable-resource owner ledger |
+| 18 | Added the v0.3 advisory `reservation` ledger beside legacy claims |
+| 19 | Archived credential-bearing claims into `claim_history` before removal |
+| 20 | Dropped the live `claim` relation; `claim_history` is the only survivor |
+| 21 | Added the repo-level `recovery_record` |
+| 22 | Dropped the reservation exclusivity index; roles became `execution`/`verification`/`observation` |
 
 ---
 
@@ -137,8 +149,9 @@ runner or distributed upgrade coordinator.
 ### Adding a column with a default
 
 Safe. Existing rows get the default; existing code that doesn't know about the
-new column continues to work. Example: migration 6 added `claim_token` with a
-`NULL` default — old claims become `legacy_ambiguous` and can be adopted.
+new column continues to work. Historical example: migration 6 added the legacy
+`claim_token` column with a `NULL` default; that column was retired by the v3
+reservation model and is preserved only for audit history.
 
 ### Adding a new table
 

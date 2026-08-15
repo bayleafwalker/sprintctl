@@ -269,12 +269,12 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
             {"item_id": {"type": "integer", "minimum": 1}}, required=("item_id",)
         ),
         _result_schema(
-            ("repo_id", "item", "events", "active_claims", "refs", "deps"),
+            ("repo_id", "item", "events", "active_reservations", "refs", "deps"),
             {
                 "repo_id": {"type": "string"},
                 "item": {"type": "object"},
                 "events": {"type": "array", "items": {"type": "object"}},
-                "active_claims": {"type": "array", "items": {"type": "object"}},
+                "active_reservations": {"type": "array", "items": {"type": "object"}},
                 "refs": {"type": "array", "items": {"type": "object"}},
                 "deps": {"type": "object"},
             },
@@ -318,30 +318,18 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "not-allowed",
     ),
     WorkOperationContract(
-        "work.read.claims",
-        _object_schema({"item_id": {"type": ["integer", "null"], "minimum": 1}, "sprint_id": {"type": ["integer", "null"], "minimum": 1}, "active_only": {"type": "boolean", "default": True}, "instance_id": {"type": ["string", "null"]}, "runtime_session_id": {"type": ["string", "null"]}, "hostname": {"type": ["string", "null"]}, "pid": {"type": ["integer", "null"], "minimum": 1}}),
-        _result_schema(("repo_id", "claims"), {"repo_id": {"type": "string"}, "claims": {"type": "array", "items": {"type": "object"}}}),
-        "work:read", "read", "not-allowed",
-    ),
-    WorkOperationContract(
-        "work.read.claim",
-        _object_schema({"claim_id": {"type": "integer", "minimum": 1}}, required=("claim_id",)),
-        _result_schema(("repo_id", "claim"), {"repo_id": {"type": "string"}, "claim": {"type": "object"}}),
-        "work:read", "read", "not-allowed",
-    ),
-    WorkOperationContract(
         "work.read.context",
         _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
         _result_schema(
             (
-                "contract_version", "sprint", "summary", "active_claims",
-                "active_unclaimed_items", "conflicts", "ready_items",
+                "contract_version", "sprint", "summary", "active_reservations",
+                "active_unreserved_items", "conflicts", "ready_items",
                 "blocked_items", "stale_items", "recent_decisions", "next_action",
             ),
             {
                 "contract_version": {"const": "1"}, "sprint": {"type": "object"},
-                "summary": {"type": "object"}, "active_claims": {"type": "array", "items": {"type": "object"}},
-                "active_unclaimed_items": {"type": "array", "items": {"type": "object"}},
+                "summary": {"type": "object"}, "active_reservations": {"type": "array", "items": {"type": "object"}},
+                "active_unreserved_items": {"type": "array", "items": {"type": "object"}},
                 "conflicts": {"type": "array", "items": {"type": "object"}},
                 "ready_items": {"type": "array", "items": {"type": "object"}},
                 "blocked_items": {"type": "array", "items": {"type": "object"}},
@@ -392,8 +380,8 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work.read.handoff",
         _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}, "events_limit": {"type": "integer", "minimum": 1, "maximum": 500}, "git_context": {"type": ["object", "null"]}}, required=("events_limit",)),
         _result_schema(
-            ("bundle_type", "bundle_version", "sprintctl_version", "generated_at", "generated_from", "sprint", "summary", "active_claims", "conflicts", "work", "recent_decisions", "recent_events", "next_action", "delta_since_last_handoff", "freshness", "evidence", "git_context", "claim_identity_model", "resume_instructions", "agent_shutdown_protocol", "items", "events"),
-            {"bundle_type": {"const": "handoff"}, "bundle_version": {"const": "1"}, "sprintctl_version": {"type": "string"}, "generated_at": {"type": "string"}, "generated_from": {"type": "object"}, "sprint": {"type": "object"}, "summary": {"type": "object"}, "active_claims": {"type": "array", "items": {"type": "object"}}, "conflicts": {"type": "array", "items": {"type": "object"}}, "work": {"type": "object"}, "recent_decisions": {"type": "array", "items": {"type": "object"}}, "recent_events": {"type": "array", "items": {"type": "object"}}, "next_action": {"type": "object"}, "delta_since_last_handoff": {"type": "object"}, "freshness": {"type": "object"}, "evidence": {"type": "object"}, "git_context": {"type": ["object", "null"]}, "claim_identity_model": {"type": "object"}, "resume_instructions": {"type": "array", "items": {"type": "string"}}, "agent_shutdown_protocol": {"type": "object"}, "items": {"type": "array", "items": {"type": "object"}}, "events": {"type": "array", "items": {"type": "object"}}},
+            ("bundle_type", "bundle_version", "sprintctl_version", "generated_at", "generated_from", "sprint", "summary", "active_reservations", "conflicts", "work", "recent_decisions", "recent_events", "next_action", "delta_since_last_handoff", "freshness", "evidence", "git_context", "reservation_model", "resume_instructions", "agent_shutdown_protocol", "items", "events"),
+            {"bundle_type": {"const": "handoff"}, "bundle_version": {"const": "1"}, "sprintctl_version": {"type": "string"}, "generated_at": {"type": "string"}, "generated_from": {"type": "object"}, "sprint": {"type": "object"}, "summary": {"type": "object"}, "active_reservations": {"type": "array", "items": {"type": "object"}}, "conflicts": {"type": "array", "items": {"type": "object"}}, "work": {"type": "object"}, "recent_decisions": {"type": "array", "items": {"type": "object"}}, "recent_events": {"type": "array", "items": {"type": "object"}}, "next_action": {"type": "object"}, "delta_since_last_handoff": {"type": "object"}, "freshness": {"type": "object"}, "evidence": {"type": "object"}, "git_context": {"type": ["object", "null"]}, "reservation_model": {"type": "object"}, "resume_instructions": {"type": "array", "items": {"type": "string"}}, "agent_shutdown_protocol": {"type": "object"}, "items": {"type": "array", "items": {"type": "object"}}, "events": {"type": "array", "items": {"type": "object"}}},
         ),
         "work:read", "read", "not-allowed",
     ),
@@ -407,13 +395,13 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work.read.next-work-explain",
         _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
         _result_schema(
-            ("contract_version", "sprint", "summary", "ready_items", "dependency_waiting_items", "active_claims", "active_unclaimed_items", "conflicts", "next_action", "recommended_commands", "recommended_command_bundle"),
+            ("contract_version", "sprint", "summary", "ready_items", "dependency_waiting_items", "active_reservations", "active_unreserved_items", "conflicts", "next_action", "recommended_commands", "recommended_command_bundle"),
             {
                 "contract_version": {"const": "1"}, "sprint": {"type": "object"},
                 "summary": {"type": "object"}, "ready_items": {"type": "array", "items": {"type": "object"}},
                 "dependency_waiting_items": {"type": "array", "items": {"type": "object"}},
-                "active_claims": {"type": "array", "items": {"type": "object"}},
-                "active_unclaimed_items": {"type": "array", "items": {"type": "object"}},
+                "active_reservations": {"type": "array", "items": {"type": "object"}},
+                "active_unreserved_items": {"type": "array", "items": {"type": "object"}},
                 "conflicts": {"type": "array", "items": {"type": "object"}}, "next_action": {"type": "object"},
                 "recommended_commands": {"type": "array", "items": {"type": "string"}},
                 "recommended_command_bundle": {"type": "object"},
@@ -529,6 +517,9 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
                 "sprint_id": {"type": "integer", "minimum": 1},
                 "event_type": {"type": "string", "minLength": 1},
                 "work_item_id": {"type": ["integer", "null"], "minimum": 1},
+                # Optional, never authorizing: it only lets the reservation
+                # ledger attribute this mutation to the caller's session.
+                "session_id": {"type": ["string", "null"], "minLength": 1},
                 "source_type": {"enum": ["actor", "daemon", "system"]},
                 "payload": {"type": ["object", "null"]},
             }, required=("sprint_id", "event_type"),
@@ -569,6 +560,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
             {
                 "item_id": {"type": "integer", "minimum": 1},
                 "description": {"type": "string", "minLength": 1},
+                "session_id": {"type": ["string", "null"], "minLength": 1},
                 "expected_revision": {
                     "type": "string",
                     "pattern": (
@@ -606,90 +598,11 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
     *(
         WorkOperationContract(name, _object_schema(properties, required=required), _result_schema(("repo_id", "item_id", result_id), {"repo_id": {"type": "string"}, "item_id": {"type": "integer", "minimum": 1}, result_id: {"type": "integer", "minimum": 1}}), "work:lifecycle", "write", "not-allowed")
         for name, properties, required, result_id in (
-            ("work.item.ref.add", {"item_id": {"type": "integer", "minimum": 1}, "ref_type": {"type": "string", "minLength": 1}, "url": {"type": "string", "minLength": 1}, "label": {"type": "string", "default": ""}}, ("item_id", "ref_type", "url"), "ref_id"),
-            ("work.item.ref.remove", {"item_id": {"type": "integer", "minimum": 1}, "ref_id": {"type": "integer", "minimum": 1}}, ("item_id", "ref_id"), "ref_id"),
-            ("work.item.dep.add", {"item_id": {"type": "integer", "minimum": 1}, "blocked_item_id": {"type": "integer", "minimum": 1}}, ("item_id", "blocked_item_id"), "dep_id"),
-            ("work.item.dep.remove", {"item_id": {"type": "integer", "minimum": 1}, "dep_id": {"type": "integer", "minimum": 1}}, ("item_id", "dep_id"), "dep_id"),
+            ("work.item.ref.add", {"item_id": {"type": "integer", "minimum": 1}, "ref_type": {"type": "string", "minLength": 1}, "url": {"type": "string", "minLength": 1}, "label": {"type": "string", "default": ""}, "session_id": {"type": ["string", "null"], "minLength": 1},}, ("item_id", "ref_type", "url"), "ref_id"),
+            ("work.item.ref.remove", {"item_id": {"type": "integer", "minimum": 1}, "ref_id": {"type": "integer", "minimum": 1}, "session_id": {"type": ["string", "null"], "minLength": 1},}, ("item_id", "ref_id"), "ref_id"),
+            ("work.item.dep.add", {"item_id": {"type": "integer", "minimum": 1}, "blocked_item_id": {"type": "integer", "minimum": 1}, "session_id": {"type": ["string", "null"], "minLength": 1},}, ("item_id", "blocked_item_id"), "dep_id"),
+            ("work.item.dep.remove", {"item_id": {"type": "integer", "minimum": 1}, "dep_id": {"type": "integer", "minimum": 1}, "session_id": {"type": ["string", "null"], "minLength": 1},}, ("item_id", "dep_id"), "dep_id"),
         )
-    ),
-    WorkOperationContract(
-        "work.claim.start",
-        _object_schema(
-            {
-                "item_id": {"type": "integer", "minimum": 1},
-                "ttl_seconds": {"type": "integer", "minimum": 1, "default": 300},
-                "branch": {"type": ["string", "null"], "minLength": 1},
-                "worktree_path": {"type": ["string", "null"], "minLength": 1},
-                "commit_sha": {"type": ["string", "null"], "minLength": 1},
-                "pr_ref": {"type": ["string", "null"], "minLength": 1},
-                "runtime_session_id": {"type": ["string", "null"], "minLength": 1},
-                "instance_id": {"type": ["string", "null"], "minLength": 1},
-                "hostname": {"type": ["string", "null"], "minLength": 1},
-                "pid": {"type": ["integer", "null"], "minimum": 1},
-            },
-            required=("item_id",),
-        ),
-        _result_schema(
-            (
-                "operation",
-                "claim_id",
-                "claim_token",
-                "claim",
-                "item_id",
-                "item_status_before",
-                "item_status_after",
-                "status_transition_applied",
-                "refs",
-            ),
-            {
-                "operation": {"const": "claim_start"},
-                "claim_id": {"type": "integer", "minimum": 1},
-                "claim_token": {"type": "string", "minLength": 1},
-                "claim": {"type": "object"},
-                "item_id": {"type": "integer", "minimum": 1},
-                "item_status_before": {"type": "string"},
-                "item_status_after": {"type": "string"},
-                "status_transition_applied": {"type": "boolean"},
-                "refs": {"type": "array", "items": {"type": "object"}},
-            },
-        ),
-        "work:claim",
-        "write",
-        "not-allowed",
-    ),
-    WorkOperationContract(
-        "work.claim.context",
-        _object_schema(
-            {"claim_id": {"type": "integer", "minimum": 1}}, required=("claim_id",)
-        ),
-        _result_schema(
-            (
-                "repo_id",
-                "authority_repo_uuid",
-                "actor",
-                "claim",
-                "claim_revision",
-            ),
-            {
-                "repo_id": {"type": "string"},
-                "authority_repo_uuid": {"type": ["string", "null"]},
-                "actor": {"type": "string"},
-                "claim": {"type": "object"},
-                "claim_revision": {"type": "string"},
-            },
-        ),
-        "work:claim",
-        "read",
-        "not-allowed",
-    ),
-    WorkOperationContract(
-        "work.claim.arbitrate",
-        _RECORD_INPUT,
-        _DECISION_RESULT,
-        "work:claim",
-        "write",
-        "required",
-        ("json-schema-draft-2020-12", "local-defs-ref"),
     ),
     WorkOperationContract(
         "work.lifecycle.arbitrate",
@@ -714,6 +627,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         _object_schema(
             {
                 "item_id": {"type": "integer", "minimum": 1},
+                "session_id": {"type": ["string", "null"], "minLength": 1},
                 "note_type": {"type": "string", "minLength": 1},
                 "summary": {"type": "string", "minLength": 1},
                 "detail": {"type": ["string", "null"]},
@@ -761,8 +675,8 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
                 "project": {"type": "object"},
                 "summary": {"type": "object"},
                 "sprints": {"type": "array", "items": {"type": "object"}},
-                "active_claims": {"type": "array", "items": {"type": "object"}},
-                "active_unclaimed_items": {"type": "array", "items": {"type": "object"}},
+                "active_reservations": {"type": "array", "items": {"type": "object"}},
+                "active_unreserved_items": {"type": "array", "items": {"type": "object"}},
                 "conflicts": {"type": "array", "items": {"type": "object"}},
                 "ready_items": {"type": "array", "items": {"type": "object"}},
                 "blocked_items": {"type": "array", "items": {"type": "object"}},
@@ -827,17 +741,66 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work.project.next-work",
         _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
         _result_schema(
-            ("contract_version", "project_id", "ready_items", "repositories"),
+            ("contract_version", "project_id", "project", "ready_items", "repositories", "graph_ready", "dispatch_admissible", "dispatch_reason"),
             {
                 "contract_version": {"const": "project-1"},
                 "project_id": {"type": "string"},
+                "project": {"type": "object"},
                 "ready_items": {"type": "array", "items": {"type": "object"}},
                 "repositories": {"type": "array", "items": {"type": "object"}},
+                "graph_ready": {"type": "boolean"},
+                "dispatch_admissible": {"enum": ["admissible", "inadmissible", "unknown"]},
+                "dispatch_reason": {"type": "string"},
             },
         ),
         "work:project-read",
         "read",
         "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.project.next-work-explain",
+        _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
+        _result_schema(
+            ("contract_version", "project_id", "project", "ready_items", "repositories", "graph_ready", "dispatch_admissible", "dispatch_reason", "explanation"),
+            {"contract_version": {"const": "project-1"}, "project_id": {"type": "string"}, "project": {"type": "object"}, "ready_items": {"type": "array"}, "repositories": {"type": "array"}, "graph_ready": {"type": "boolean"}, "dispatch_admissible": {"enum": ["admissible", "inadmissible", "unknown"]}, "dispatch_reason": {"type": "string"}, "explanation": {"type": "object"}},
+        ),
+        "work:project-read", "read", "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.read.reservations",
+        _object_schema({"item_id": {"type": ["integer", "null"], "minimum": 1}, "active_only": {"type": "boolean", "default": True}}),
+        _result_schema(("repo_id", "reservations"), {"repo_id": {"type": "string"}, "reservations": {"type": "array", "items": {"type": "object"}}}),
+        "work:read", "read", "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.read.reservation",
+        _object_schema({"reservation_id": {"type": "integer", "minimum": 1}}, required=("reservation_id",)),
+        _result_schema(("repo_id", "reservation"), {"repo_id": {"type": "string"}, "reservation": {"type": "object"}}),
+        "work:read", "read", "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.reservation.reserve",
+        _object_schema({"item_id": {"type": "integer", "minimum": 1}, "actor": {"type": "string", "minLength": 1}, "session_id": {"type": "string", "minLength": 1}, "role": {"enum": ["execution", "verification", "observation"]}, "correlation_ref": {"type": ["string", "null"]}, "interrupt_existing": {"type": "boolean", "default": False}}, required=("item_id", "actor", "session_id")),
+        _result_schema(("repo_id", "reservation"), {"repo_id": {"type": "string"}, "reservation": {"type": "object"}}),
+        "work:write", "write", "required",
+    ),
+    WorkOperationContract(
+        "work.reservation.touch",
+        _object_schema({"reservation_id": {"type": "integer", "minimum": 1}, "session_id": {"type": "string", "minLength": 1}, "correlation_ref": {"type": ["string", "null"]}}, required=("reservation_id", "session_id")),
+        _result_schema(("repo_id", "reservation"), {"repo_id": {"type": "string"}, "reservation": {"type": "object"}}),
+        "work:write", "write", "required",
+    ),
+    WorkOperationContract(
+        "work.reservation.reassign",
+        _object_schema({"reservation_id": {"type": "integer", "minimum": 1}, "actor": {"type": "string", "minLength": 1}, "session_id": {"type": "string", "minLength": 1}, "correlation_ref": {"type": ["string", "null"]}}, required=("reservation_id", "actor", "session_id")),
+        _result_schema(("repo_id", "reservation"), {"repo_id": {"type": "string"}, "reservation": {"type": "object"}}),
+        "work:write", "write", "required",
+    ),
+    WorkOperationContract(
+        "work.reservation.release",
+        _object_schema({"reservation_id": {"type": "integer", "minimum": 1}, "actor": {"type": ["string", "null"]}}, required=("reservation_id",)),
+        _result_schema(("repo_id", "reservation"), {"repo_id": {"type": "string"}, "reservation": {"type": "object"}}),
+        "work:write", "write", "required",
     ),
     WorkOperationContract(
         "work.project.batch",
@@ -999,45 +962,6 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "write",
         "required",
     ),
-    WorkOperationContract(
-        "work.pilot.cutover-evidence",
-        _object_schema(
-            {
-                "parity": {"type": ["object", "null"]},
-                "max_watermark_age_seconds": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "default": 300,
-                },
-                "rehearse": {"type": "boolean", "default": True},
-            }
-        ),
-        _result_schema(
-            (
-                "contract_version",
-                "config",
-                "parity",
-                "watermark",
-                "stale_tools",
-                "rollback_rehearsal",
-                "promotable",
-                "blockers",
-            ),
-            {
-                "contract_version": {"type": "string"},
-                "config": {"type": "object"},
-                "parity": {"type": ["object", "null"]},
-                "watermark": {"type": "object"},
-                "stale_tools": {"type": "object"},
-                "rollback_rehearsal": {"type": ["object", "null"]},
-                "promotable": {"type": "boolean"},
-                "blockers": {"type": "array", "items": {"type": "string"}},
-            },
-        ),
-        "work:pilot-read",
-        "read",
-        "not-allowed",
-    ),
 )
 
 
@@ -1051,30 +975,20 @@ LEGACY_REMOTE_COMMAND_PARITY: tuple[dict[str, str], ...] = (
         "operation": "work.read.next-work-explain",
     },
     {
-        "legacy": "sprintctl claim start",
-        "operation": "work.claim.start",
-    },
-    {
-        "legacy": "sprintctl claim heartbeat|handoff|release",
-        "operation": "work.claim.arbitrate",
-    },
-    {
         "legacy": "sprintctl item status / sprint status",
         "operation": "work.lifecycle.arbitrate",
     },
-    {"legacy": "sprintctl item done-from-claim", "operation": "work.lifecycle.arbitrate"},
     {"legacy": "sprintctl authority sync", "operation": "work.batch.apply"},
     {"legacy": "sprintctl event observation add", "operation": "work.evidence.ingest"},
     {"legacy": "sprintctl item note", "operation": "work.item.note"},
     {"legacy": "sprintctl item edit", "operation": "work.item.edit"},
+    {"legacy": "sprintctl reservation reserve", "operation": "work.reservation.reserve"},
+    {"legacy": "sprintctl reservation touch", "operation": "work.reservation.touch"},
+    {"legacy": "sprintctl reservation reassign", "operation": "work.reservation.reassign"},
+    {"legacy": "sprintctl reservation release", "operation": "work.reservation.release"},
     {"legacy": "sprintctl next-work --project", "operation": "work.project.next-work"},
     {"legacy": "project dispatch batching", "operation": "work.project.batch"},
-    {
-        "legacy": "sprintctl pilot cutover-evidence",
-        "operation": "work.pilot.cutover-evidence",
-    },
 )
-
 
 _RESOURCE_OPERATIONS = frozenset(
     {
@@ -1115,6 +1029,24 @@ def catalog_operation_specs(
     )
 
 
+def validate_served_operation_registry() -> None:
+    """Prove every client-exposed operation has a domain catalog contract.
+
+    The generic handler registered below dispatches by operation name, so a
+    missing contract would otherwise surface only after a served client had
+    selected a route.  Validate the binding while the catalog is composed.
+    """
+    from .served_routes import OPERATION_SPECS
+
+    contracts = {contract.name for contract in WORK_OPERATION_CONTRACTS}
+    missing = sorted({spec.operation for spec in OPERATION_SPECS} - contracts)
+    if missing:
+        raise RuntimeError(
+            "served operation registry references unpublished work contracts: "
+            + ", ".join(missing)
+        )
+
+
 def register_work_catalog(
     registry: Any,
     application: WorkApplication,
@@ -1122,6 +1054,8 @@ def register_work_catalog(
     project_application: ProjectWorkApplication | None = None,
 ) -> None:
     """Register the complete work operation catalog in a Vuoro registry."""
+
+    validate_served_operation_registry()
 
     from vuoro_service.catalog import OperationRejectedError
     from vuoro_service.contracts import (
@@ -1205,4 +1139,5 @@ __all__ = [
     "WorkOperationContract",
     "catalog_operation_specs",
     "register_work_catalog",
+    "validate_served_operation_registry",
 ]

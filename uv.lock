@@ -517,7 +517,7 @@ wheels = [
 
 [[package]]
 name = "sprintctl"
-version = "0.2.24"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },

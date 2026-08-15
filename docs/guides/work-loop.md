@@ -1,8 +1,8 @@
 # sprintctl work loop
 
-The canonical agent work loop: claim an item, do the work, record notes, hand
-off or release the claim, and commit a snapshot.  Every session follows this
-shape regardless of how much work gets done.
+The canonical agent work loop: reserve an item, do the work, record notes,
+reassign or release the reservation, and commit a snapshot. Every session
+follows this shape regardless of how much work gets done.
 
 ---
 
@@ -27,77 +27,73 @@ sprintctl item show --id "$ITEM_ID"
 ```
 
 `usage --context` is the fastest way to answer "where is the sprint right now?"
-It surfaces active claims, conflicts, ready/blocked/stale work, recent
+It surfaces active reservations, conflicts, ready/blocked/stale work, recent
 decisions, and one explicit `next_action` in a single call.
 
 ### Shape completeness
 
-Before claiming, inspect the selected item's refs. A shaped item has a governing
+Before reserving, inspect the selected item's refs. A shaped item has a governing
 doc ref or an explicit `No doc:` decision. Read the referenced doc and, for
 implementation against a ratified doc, attach a versioned label with the full
 Git SHA as described in `docs/reference/doc-refs.md`.
 
 ---
 
-## 2. Claim — establish ownership before editing files
+## 2. Reserve — make coordination visible before editing files
 
 ```bash
-# Claim an item exclusively and move it to active in one command.
-# Save both values for the entire session.
-CLAIM=$(sprintctl claim start \
+# Create an advisory reservation on the item. Save the returned id.
+RESERVATION=$(sprintctl reservation reserve \
   --item-id 7 --actor claude-session-1 \
-  --ttl 900 \
-  --branch feat/auth \
-  --runtime-session-id "${CODEX_THREAD_ID:-manual}" \
-  --instance-id "${SPRINTCTL_INSTANCE_ID:-proc-1}" \
+  --role execution \
+  --session-id "${CODEX_THREAD_ID:-manual}" \
   --json)
 
-CLAIM_ID=$(echo "$CLAIM" | jq -r '.claim_id')
-CLAIM_TOKEN=$(echo "$CLAIM" | jq -r '.claim_token')
-CLAIM_RECOVERY_PATH=$(echo "$CLAIM" | jq -r '.local_recovery.recovery_token_path')
+RESERVATION_ID=$(echo "$RESERVATION" | jq -r '.id')
 ```
 
-`claim_token` is a secret — store it for the entire session and never share it.
-`claim_id` is the stable handle used in every subsequent call.
-sprintctl also persists a local recovery token file for the claim, so the
-context-loss path is part of the CLI rather than an external repo convention.
+`reservation_id` is the stable handle used in subsequent reservation calls.
+There is no token or secret. The reservation is advisory: another session can
+still create a reservation on the same item, and the overlap will be visible in
+`usage --context` and `reservation list`.
 
 ### Coordinator + sub-agent pattern
 
 ```bash
-# Coordinator claims the item first
-COORD=$(sprintctl claim create \
+# Coordinator reserves the item first
+COORD=$(sprintctl reservation reserve \
   --item-id 7 --actor orchestrator \
-  --type coordinate --ttl 1800 --json)
+  --role observation --json)
 
-COORD_ID=$(echo "$COORD" | jq -r '.claim_id')
-COORD_TOKEN=$(echo "$COORD" | jq -r '.claim_token')
+COORD_ID=$(echo "$COORD" | jq -r '.id')
 
-# Sub-agents acquire execute claims under the coordinator — no ClaimConflict
-sprintctl claim create \
+# Sub-agents reserve execution roles under the coordinator
+sprintctl reservation reserve \
   --item-id 7 --actor worker-a \
-  --type execute --ttl 600 \
-  --coordinate-claim-id "$COORD_ID" \
-  --coordinate-claim-token "$COORD_TOKEN" \
+  --role execution \
+  --session-id worker-a-session \
   --json
 ```
 
+The coordinator role is metadata only; it does not grant an exclusivity
+exception. Nothing does: a second `reserve` on the same item always succeeds
+and reports the conflict, and displacing an execution reservation takes an
+explicit `--interrupt-existing`.
+
 ---
 
-## 3. Heartbeat — keep the claim alive during long tasks
+## 3. Touch — keep activity fresh during long tasks
 
 ```bash
-# Refresh the claim every ~half-TTL while work is in progress
-sprintctl claim heartbeat \
-  --id "$CLAIM_ID" --claim-token "$CLAIM_TOKEN" \
-  --ttl 900 --actor claude-session-1
-
-# Update git context on the claim as work progresses
-sprintctl claim heartbeat \
-  --id "$CLAIM_ID" --claim-token "$CLAIM_TOKEN" \
-  --branch feat/auth --commit-sha abc1234 \
-  --actor claude-session-1
+# Activity advances by itself when your session mutates the item; touch is for
+# work happening outside sprintctl. There is no lease or heartbeat.
+sprintctl reservation touch \
+  --id "$RESERVATION_ID" \
+  --session-id "${CODEX_THREAD_ID:-manual}"
 ```
+
+Touch updates `last_activity_at`. Staleness is display-only; a long idle
+reservation is not automatically invalidated.
 
 ---
 
@@ -143,18 +139,17 @@ Knowledge-bearing event types (`decision`, `pattern-noted`, `lesson-learned`,
 ## 5a. Complete the item
 
 ```bash
-# Mark done and release in one command
-sprintctl item done-from-claim \
-  --id 7 \
-  --claim-id "$CLAIM_ID" --claim-token "$CLAIM_TOKEN" \
-  --actor claude-session-1
+# Get the current status revision before mutating
+REV=$(sprintctl item show --id 7 --json | jq -r '.item.status_revision')
 
-# Optional: keep the claim for follow-up work after marking done
-sprintctl item done-from-claim \
-  --id 7 \
-  --claim-id "$CLAIM_ID" --claim-token "$CLAIM_TOKEN" \
+# Mark done using the expected-revision CAS
+sprintctl item status \
+  --id 7 --status done \
   --actor claude-session-1 \
-  --keep-claim
+  --expected-revision "$REV"
+
+# Release the advisory reservation
+sprintctl reservation release --id "$RESERVATION_ID" --actor claude-session-1
 
 # Commit a snapshot
 sprintctl render > docs/sprint-snapshots/sprint-current.txt
@@ -162,25 +157,21 @@ git add docs/sprint-snapshots/sprint-current.txt
 git commit -m "chore: sprint snapshot after completing auth item"
 ```
 
-`item done-from-claim` applies status first, then release. If release fails, the
-command exits non-zero and JSON includes `release_error`; the item may already
-be `done`.
+`item status` applies the transition through expected-revision compare-and-swap.
+If the basis is stale, the command rejects without effect. Release the
+reservation separately after the status change succeeds.
 
 ---
 
 ## 5b. Hand off to the next session (work continues)
 
 ```bash
-# Rotate the claim token to the next session
-HANDOFF=$(sprintctl claim handoff \
-  --id "$CLAIM_ID" --claim-token "$CLAIM_TOKEN" \
+# Reassign the advisory reservation to the next session
+sprintctl reservation reassign \
+  --id "$RESERVATION_ID" \
   --actor claude-session-2 \
-  --mode rotate \
-  --runtime-session-id "${NEXT_SESSION_ID:-next}" \
-  --json)
-
-# Save the new token — the old one is now invalid
-NEW_TOKEN=$(echo "$HANDOFF" | jq -r '.claim_token')
+  --session-id next-session \
+  --json
 
 # Write a sprint handoff bundle for the incoming session
 sprintctl handoff --output handoff.json
@@ -195,23 +186,24 @@ session. The incoming session reads it as a working-memory snapshot, then calls
 
 ---
 
-## 5c. Context loss recovery (token missing after restart)
+## 5c. Context loss recovery
+
+If session state is lost, there is no token to recover:
 
 ```bash
-# Find claims by advisory identity
-sprintctl claim resume --instance-id "$SPRINTCTL_INSTANCE_ID" --json
+# List active reservations
+sprintctl reservation list --all --json
 
-# Recover the token that sprintctl previously persisted locally
-sprintctl claim recover --id "$CLAIM_ID" --json
-
-# If no local recovery file exists, re-adopt the claim and get a fresh token
-sprintctl claim handoff \
-  --id "$CLAIM_ID" \
+# Reassign an existing reservation to the current session
+sprintctl reservation reassign \
+  --id "$RESERVATION_ID" \
   --actor claude-session-1 \
-  --mode rotate \
-  --allow-legacy-adopt \
+  --session-id "${CODEX_THREAD_ID:-manual}" \
   --json
 ```
+
+If the old reservation was released or interrupted, simply create a new one
+with `sprintctl reservation reserve`.
 
 ---
 
@@ -224,7 +216,7 @@ cat handoff.json | jq '.summary, .work, .next_action'
 # Then get the live view
 sprintctl usage --context --json
 
-# Check for stale or expired claims
+# Check for stale reservations or conflicted items
 sprintctl maintain check
 
 # Get git context
@@ -250,7 +242,7 @@ The SQLite database is live state only — it belongs in `.gitignore`.
 
 ## Checklist before session end
 
-1. All owned claims: **handoff** (work continues) or **release** (work done)
+1. All active reservations: **reassign** (work continues) or **release** (work done)
 2. `sprintctl handoff --output handoff.json` — write bundle for next session
 3. `sprintctl render > docs/sprint-snapshots/sprint-current.txt` + commit snapshot
 4. `sprintctl maintain check` — confirm no stale or conflicted items

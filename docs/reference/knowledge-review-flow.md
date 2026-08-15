@@ -39,14 +39,17 @@ kctl recognizes these durable knowledge event types:
 | `risk-accepted` | Explicit risk acceptance with reasoning and owner |
 
 These coordination event types are also extracted by kctl, but they stay in a
-separate non-publishable review stream:
+separate non-publishable review stream. The `claim-*` labels are frozen
+historical event-type names from the legacy claim model; the v3 reservation
+model records the same coordination signals without claim tokens or ownership
+proof.
 
 | Type | Meaning |
 |------|---------|
-| `claim-handoff` | Claim ownership changed intentionally between sessions |
+| `claim-handoff` | Reservation/ownership changed intentionally between sessions |
 | `claim-ownership-corrected` | Legacy or ambiguous ownership was repaired |
-| `claim-ambiguity-detected` | Ownership proof was unclear or insufficient |
-| `coordination-failure` | A claim or ownership rule blocked an attempted action |
+| `claim-ambiguity-detected` | Ownership proof was unclear or insufficient (historical) |
+| `coordination-failure` | A reservation or ownership rule blocked an attempted action |
 
 Events outside these sets are ignored by kctl's default extraction pipeline
 unless kctl is configured with a custom event-type filter.

@@ -11,7 +11,7 @@ import pytest
 from tests.pg._shared import (
     pg,
     pg_migrations,
-    ClaimConflict,
+    ReservationConflict,
     assert_disposable_connection,
     new_test_repo_id,
     MaintenanceCapabilityError,
@@ -28,6 +28,18 @@ from tests.pg._shared import (
     psycopg,
     dict_row,
 )
+
+
+def _migrations_from(first: int) -> list[int]:
+    """The migration versions a store at ``first - 1`` still has to apply.
+
+    Derived from the ledger rather than written out, so adding a migration
+    updates these expectations instead of silently invalidating them -- the
+    PostgreSQL suite is skipped without SPRINTCTL_TEST_PG_URL, so a stale
+    literal here goes unnoticed until a rehearsal runs.
+    """
+
+    return list(range(first, pg_migrations.CURRENT_SCHEMA_VERSION + 1))
 
 pytestmark = PG_MARKS
 
@@ -50,7 +62,7 @@ class TestMaintenanceCapabilityLifecycle:
         assert recovery["authority"] == "none"
         assert lifecycle.get(capability_id)["state"] == "active"
 
-    def test_claim_activation_race_has_exactly_one_authority_winner(
+    def test_reservation_activation_race_has_exactly_one_authority_winner(
         self, store, pg_test_scope
     ):
         repo_id = pg_test_scope("maintenance-race")
@@ -105,25 +117,30 @@ class TestMaintenanceCapabilityLifecycle:
             finally:
                 conn.close()
 
-        def claim() -> None:
+        def reserve() -> None:
             conn = psycopg.connect(_PG_URL, row_factory=dict_row)
             try:
                 actor_store = pg.PgStore(conn=conn, repo_id=repo_id)
                 barrier.wait()
-                pg.create_claim(actor_store, item_id, "ordinary-agent")
-                outcomes["claim"] = "accepted"
-            except ClaimConflict as exc:
-                outcomes["claim"] = f"rejected:{exc}"
+                pg.reserve(
+                    actor_store,
+                    item_id,
+                    actor="ordinary-agent",
+                    session_id="race-session",
+                )
+                outcomes["reservation"] = "accepted"
+            except ReservationConflict as exc:
+                outcomes["reservation"] = f"rejected:{exc}"
             finally:
                 conn.close()
 
-        workers = [threading.Thread(target=activate), threading.Thread(target=claim)]
+        workers = [threading.Thread(target=activate), threading.Thread(target=reserve)]
         for worker in workers:
             worker.start()
         barrier.wait()
         for worker in workers:
             worker.join(timeout=10)
-            assert not worker.is_alive(), "shared claim/capability arbitration deadlocked"
+            assert not worker.is_alive(), "shared reservation/capability arbitration deadlocked"
 
         assert sorted(value.split(":", 1)[0] for value in outcomes.values()) == [
             "accepted",
@@ -136,13 +153,13 @@ class TestMaintenanceCapabilityLifecycle:
             )
             capability_active = cur.fetchone()["state"] == "active"
             cur.execute(
-                "SELECT count(*) AS count FROM claim WHERE repo_id=%s AND status='active' AND expires_at > now()",
+                "SELECT count(*) AS count FROM reservation WHERE repo_id=%s AND state='active'",
                 (repo_id,),
             )
-            live_claims = int(cur.fetchone()["count"])
-        assert not (capability_active and live_claims), outcomes
+            live_reservations = int(cur.fetchone()["count"])
+        assert not (capability_active and live_reservations), outcomes
 
-    def test_rejected_claim_rolls_back_repo_arbitration_on_retained_connection(
+    def test_rejected_reservation_rolls_back_repo_arbitration_on_retained_connection(
         self, store, pg_test_scope
     ):
         repo_id = pg_test_scope("maintenance-conflict-rollback")
@@ -152,15 +169,20 @@ class TestMaintenanceCapabilityLifecycle:
             retained_store = pg.PgStore(conn=retained, repo_id=repo_id)
             sprint_id = pg.create_sprint(retained_store, f"Conflict rollback-{_uid()}", status="active")
             track_id = pg.get_or_create_track(retained_store, sprint_id, "authority")
-            item_id = pg.create_work_item(retained_store, sprint_id, track_id, "Rejected claim")
+            item_id = pg.create_work_item(retained_store, sprint_id, track_id, "Rejected reservation")
             lifecycle = PostgresMaintenanceCapabilityStore(retained_store)
             prepared = lifecycle.prepare(capability_id=f"mcap:{uuid.uuid4()}", request_id=str(uuid.uuid4()), envelope=envelope(), actor="operator", at=AT)
             _anchor_capability_window_to_db_clock(retained, repo_id, prepared["capability_id"])
             attested = lifecycle.transition(capability_id=prepared["capability_id"], request_id=str(uuid.uuid4()), action="attest", expected_revision=prepared["revision"], actor="operator", at=AT, effect_ref="sha256:" + "0" * 64)
             lifecycle.transition(capability_id=prepared["capability_id"], request_id=str(uuid.uuid4()), action="activate", expected_revision=attested["revision"], actor="operator", at=AT, step_id="attest-backup", command_id="verify-backup", command_ref="sha256:" + "1" * 64, effect_ref="sha256:" + "2" * 64)
 
-            with pytest.raises(ClaimConflict):
-                pg.create_claim(retained_store, item_id, "ordinary-agent")
+            with pytest.raises(ReservationConflict):
+                pg.reserve(
+                    retained_store,
+                    item_id,
+                    actor="ordinary-agent",
+                    session_id="rollback-session",
+                )
             assert retained.info.transaction_status == psycopg.pq.TransactionStatus.IDLE
             with contender.cursor() as cur:
                 cur.execute(
@@ -256,10 +278,13 @@ class TestInitDb:
 
             assert not any(thread.is_alive() for thread in threads)
             assert not errors
-            assert sorted(result["applied_versions"] for result in results) == [[], [2, 3, 4, 5, 6, 7]]
+            assert sorted(result["applied_versions"] for result in results) == [
+                [],
+                _migrations_from(2),
+            ]
             with store.conn.cursor() as cur:
                 cur.execute(f'SELECT version FROM "{schema}".schema_version')
-                assert cur.fetchone()["version"] == 7
+                assert cur.fetchone()["version"] == pg_migrations.CURRENT_SCHEMA_VERSION
             store.conn.rollback()
         finally:
             with store.conn.cursor() as cur:
@@ -325,10 +350,10 @@ class TestInitDb:
             assert [str(exc) for exc in failures] == [
                 "injected failure before ledger advance"
             ]
-            assert [result["applied_versions"] for result in results] == [[3, 4, 5, 6, 7]]
+            assert [result["applied_versions"] for result in results] == [_migrations_from(3)]
             with store.conn.cursor() as cur:
                 cur.execute(f'SELECT version FROM "{schema}".schema_version')
-                assert cur.fetchone()["version"] == 7
+                assert cur.fetchone()["version"] == pg_migrations.CURRENT_SCHEMA_VERSION
             store.conn.rollback()
         finally:
             for conn in connections:
@@ -533,7 +558,7 @@ class TestInitDb:
 
     @pytest.mark.parametrize(
         ("legacy_version", "applied_versions"),
-        [(1, [2, 3, 4, 5, 6, 7]), (2, [3, 4, 5, 6, 7])],
+        [(1, _migrations_from(2)), (2, _migrations_from(3))],
     )
     def test_interleaved_legacy_offsets_backfill_per_repository_and_translate_fk(
         self, pg_test_scope, legacy_version, applied_versions
@@ -633,6 +658,46 @@ class TestInitDb:
                     )
                     """
                 )
+                # Same rationale as the ``ref`` stub above: schema version 8
+                # adds ``reservation`` with a foreign key onto ``work_item``,
+                # and version 9 derives ``claim_history`` from ``claim``, so a
+                # legacy_version=2 fixture has to stand in for the base tables
+                # a real version-2+ deployment already carries. Only the
+                # columns those two migrations depend on are reproduced.
+                # legacy_version=1 replays the canonical PG_DDL instead, and
+                # its CREATE TABLE IF NOT EXISTS would skip a stub, leaving a
+                # work_item without the columns the rest of the schema needs.
+                if legacy_version >= 2:
+                    cur.execute(
+                        """
+                        CREATE TABLE work_item (
+                            repo_id    text        NOT NULL,
+                            id         bigint      GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                            title      text        NOT NULL DEFAULT '',
+                            status     text        NOT NULL DEFAULT 'pending',
+                            created_at timestamptz NOT NULL DEFAULT now(),
+                            UNIQUE (repo_id, id)
+                        )
+                        """
+                    )
+                    cur.execute(
+                        """
+                        CREATE TABLE claim (
+                            repo_id      text        NOT NULL,
+                            id           bigint      GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                            work_item_id bigint      NOT NULL,
+                            agent        text        NOT NULL,
+                            claim_token  text,
+                            status       text        NOT NULL DEFAULT 'active',
+                            created_at   timestamptz NOT NULL DEFAULT now(),
+                            expires_at   timestamptz NOT NULL DEFAULT now(),
+                            UNIQUE (repo_id, id),
+                            FOREIGN KEY (repo_id, work_item_id)
+                                REFERENCES work_item(repo_id, id)
+                                ON DELETE CASCADE
+                        )
+                        """
+                    )
                 for repo_id in (repo_a, repo_b):
                     cur.execute(
                         "INSERT INTO ingest_stream "

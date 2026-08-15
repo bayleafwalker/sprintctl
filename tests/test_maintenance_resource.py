@@ -44,7 +44,7 @@ def expiring_envelope(value):
         binding["observed_at"] = (now - timedelta(seconds=1)).isoformat()
         binding["bound_at"] = (now - timedelta(milliseconds=500)).isoformat()
         if binding["name"] == "drain_boundary_utc": binding["value"] = (now - timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    for name in ("dependent_implementation_sessions", "active_normal_claims"):
+    for name in ("dependent_implementation_sessions", "active_reservations"):
         value["start_gate"][name]["observed_at"] = (now - timedelta(milliseconds=500)).isoformat()
     return value
 

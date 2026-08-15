@@ -114,6 +114,72 @@ def test_project_binding_accepts_current_member_governance_fields(tmp_path):
     assert binding.members[0].access == "write"
 
 
+def test_project_binding_accepts_descriptive_role_presets(tmp_path):
+    project_path = _write_project(
+        tmp_path / "project.toml", [("agentops", True)], home_repo="agentops"
+    )
+    project_path.write_text(
+        project_path.read_text(encoding="utf-8")
+        + '''
+[role_presets.planner]
+model = "Sol"
+behavior = "xhigh"
+tool_mode = "read-only"
+
+[role_presets.worker]
+model = "Luna"
+behavior = "high"
+tool_mode = "write"
+''',
+        encoding="utf-8",
+    )
+
+    binding = project.load_project(project_path)
+
+    assert binding.summary()["backlog_repos"] == ["agentops"]
+
+
+def test_project_binding_rejects_role_preset_authority_extensions(tmp_path):
+    project_path = _write_project(
+        tmp_path / "project.toml", [("agentops", True)], home_repo="agentops"
+    )
+    project_path.write_text(
+        project_path.read_text(encoding="utf-8")
+        + '''
+[role_presets.planner]
+model = "Sol"
+behavior = "xhigh"
+tool_mode = "read-only"
+authority = "release"
+''',
+        encoding="utf-8",
+    )
+
+    try:
+        project.load_project(project_path)
+    except project.ProjectConfigError as exc:
+        assert "unsupported fields: authority" in str(exc)
+    else:  # pragma: no cover - assertion guard
+        raise AssertionError("role preset authority extension was accepted")
+
+
+def test_project_binding_accepts_repository_provenance_fields(tmp_path):
+    project_path = _write_project(
+        tmp_path / "project.toml", [("agentops", True)], home_repo="agentops"
+    )
+    project_path.write_text(
+        project_path.read_text(encoding="utf-8")
+        + 'repository = "https://github.com/bayleafwalker/agentops.git"\n'
+        + 'default_ref = "refs/heads/main"\n',
+        encoding="utf-8",
+    )
+
+    member = project.load_project(project_path).members[0]
+
+    assert member.repository == "https://github.com/bayleafwalker/agentops.git"
+    assert member.default_ref == "refs/heads/main"
+
+
 def test_remote_project_stores_use_each_repo_discriminator(tmp_path, monkeypatch):
     project_path = _write_project(
         tmp_path / "project.toml",
@@ -233,8 +299,8 @@ def test_served_project_views_do_not_read_client_binding_and_keep_sprint_json_sh
     project_context = {
         "contract_version": "project-1",
         "project": {"project_id": PROJECT_ID},
-        "summary": {}, "sprints": [], "active_claims": [],
-        "active_unclaimed_items": [], "conflicts": [], "ready_items": [],
+        "summary": {}, "sprints": [], "active_reservations": [],
+        "active_unreserved_items": [], "conflicts": [], "ready_items": [],
         "blocked_items": [], "stale_items": [], "recent_decisions": [],
         "next_actions": [], "repositories": [],
     }

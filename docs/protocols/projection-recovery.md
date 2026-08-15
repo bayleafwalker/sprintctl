@@ -76,7 +76,7 @@ output:
   its watermark has never advanced -- see `apply_ingested_records`),
   `"stale"` (watermark age exceeds the threshold), `"schema-upgrade-required"`
   (the cache's `cached_projection_meta.schema_version` does not match
-  `projection.PROJECTION_SCHEMA_VERSION` -- run `sprintctl pilot sync` against
+  `projection.PROJECTION_SCHEMA_VERSION` -- run `sprintctl sync` against
   a rebuilt cache, or delete and resynchronize the projection file), or
   `"unsupported-read-surface"` (the cache is healthy but this particular
   surface has no projection-backed content -- see below).
@@ -91,7 +91,7 @@ never silently substituted.
 ### What is actually projection-backed today
 
 Only observation-classified events (see `contracts.SPRINTCTL_RECORD_TYPE_CLASSES`)
-are ever mirrored into the shadow-pilot outbox and, from there, into the
+are appended to the normal durable outbox and, from there, into the
 cached projection -- authority commands (item status/title/assignee changes,
 claim mutations, sprint transitions) are never mirrored. This bounds what a
 guarded read can honestly reconstruct:

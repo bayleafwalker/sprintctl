@@ -76,4 +76,4 @@ SQLite authority: active claims are closed and all claim tokens are stripped.
 
 - [Vuoro served-authority alignment](../plans/vuoro-served-authority-alignment.md)
 - [#1164 gate-evidence ledger](../plans/1164-gate-evidence-ledger.md)
-- [Claim discipline](../advanced/claim-discipline.md)
+- [Reservation discipline](../advanced/reservation-discipline.md)

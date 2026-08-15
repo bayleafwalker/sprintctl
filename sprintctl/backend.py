@@ -80,6 +80,36 @@ def _find_upward(start: Path, relative: str) -> Path | None:
     return None
 
 
+def _find_git_root(start: Path) -> Path | None:
+    """Find a real Git worktree root without trusting stray ``.git`` paths.
+
+    A directory merely named ``.git`` is not repository identity.  In
+    particular, a temporary-directory parent can contain an empty placeholder
+    directory, and treating it as a repository silently assigns every child
+    the parent's tenant.  Accept both normal Git directories and linked
+    worktree gitfiles, but require the minimal metadata Git itself requires.
+    """
+    for index, directory in enumerate(_parents_from(start)):
+        git_path = directory / ".git"
+        if git_path.is_dir() and (git_path / "HEAD").is_file():
+            return directory
+        # Preserve the historical "working directory contains .git" test and
+        # bootstrap convention, while never inheriting an empty placeholder
+        # from a parent such as /tmp.
+        if index == 0 and git_path.is_dir():
+            return directory
+        if git_path.is_file():
+            try:
+                first_line = git_path.read_text(encoding="utf-8").splitlines()[0]
+            except (OSError, IndexError):
+                continue
+            if first_line.startswith("gitdir: "):
+                git_dir = (directory / first_line.removeprefix("gitdir: ")).resolve()
+                if git_dir.is_dir() and (git_dir / "HEAD").is_file():
+                    return directory
+    return None
+
+
 def _load_marker(path: Path) -> BackendMarker:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -115,8 +145,7 @@ def resolve_repo_identity(cwd: Path | None = None) -> tuple[Path | None, str | N
             repo_root = sqlite_path.parent.parent
             repo_id = repo_root.name
         else:
-            git_path = _find_upward(start, ".git")
-            repo_root = git_path.parent if git_path is not None else None
+            repo_root = _find_git_root(start)
             repo_id = repo_root.name if repo_root is not None else None
 
     return repo_root, repo_id, marker

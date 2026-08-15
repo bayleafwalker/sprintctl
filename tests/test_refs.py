@@ -471,55 +471,17 @@ class TestRefSurfacing:
         assert f"#{iid}  [doc]  docs/plans/plan.md  Plan" in result.output
         assert f"(no refs: #{other})" in result.output
 
-    def test_claim_start_text_echoes_item_refs(self, runner, conn, active_sprint, db_path):
-        iid = _item(conn, active_sprint["id"])
-        db.add_ref(conn, iid, "doc", "docs/plans/plan.md", "Plan")
-        result = runner.invoke(cli, [
-            "claim", "start", "--item-id", str(iid), "--actor", "agent-a",
-        ])
-        assert result.exit_code == 0, result.output
-        assert f"Refs on item #{iid}:" in result.output
-        assert "[doc]  docs/plans/plan.md  Plan" in result.output
-
-    def test_claim_start_text_nudges_when_no_refs(self, runner, conn, active_sprint, db_path):
-        iid = _item(conn, active_sprint["id"])
-        result = runner.invoke(cli, [
-            "claim", "start", "--item-id", str(iid), "--actor", "agent-a",
-        ])
-        assert result.exit_code == 0, result.output
-        assert "Refs: (none" in result.output
-
-    def test_claim_start_json_includes_refs(self, runner, conn, active_sprint, db_path):
-        iid = _item(conn, active_sprint["id"])
-        db.add_ref(conn, iid, "doc", "docs/plans/plan.md")
-        result = runner.invoke(cli, [
-            "claim", "start", "--item-id", str(iid), "--actor", "agent-a", "--json",
-        ])
-        assert result.exit_code == 0, result.output
-        data = json.loads(result.output)
-        assert data["refs"][0]["url"] == "docs/plans/plan.md"
-
-    def test_claim_create_json_includes_refs(self, runner, conn, active_sprint, db_path):
-        iid = _item(conn, active_sprint["id"])
-        db.add_ref(conn, iid, "doc", "docs/plans/plan.md")
-        result = runner.invoke(cli, [
-            "claim", "create", "--item-id", str(iid), "--actor", "agent-a", "--json",
-        ])
-        assert result.exit_code == 0, result.output
-        data = json.loads(result.output)
-        assert data["refs"][0]["url"] == "docs/plans/plan.md"
-
-    def test_session_resume_includes_claimed_item_refs(self, runner, conn, active_sprint, db_path):
+    def test_session_resume_includes_reserved_item_refs(self, runner, conn, active_sprint, db_path):
         iid = _item(conn, active_sprint["id"])
         db.add_ref(conn, iid, "doc", "docs/plans/plan.md", "Plan")
         db.set_work_item_status(conn, iid, "active")
-        db.create_claim(conn, iid, agent="agent-a")
+        db.reserve(conn, iid, actor="agent-a", session_id="session-refs")
         result = runner.invoke(cli, ["session", "resume", "--json"])
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
-        recovery_claims = data["claim_recovery"]["active_claims"]
-        assert len(recovery_claims) == 1
-        assert recovery_claims[0]["refs"][0]["url"] == "docs/plans/plan.md"
+        reservations = data["reservation_status"]["active_reservations"]
+        assert len(reservations) == 1
+        assert reservations[0]["refs"][0]["url"] == "docs/plans/plan.md"
 
         text_result = runner.invoke(cli, ["session", "resume"])
         assert text_result.exit_code == 0, text_result.output

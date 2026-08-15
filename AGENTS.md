@@ -13,7 +13,7 @@ Primary language: Python. Use `pytest` for testing. Markdown for documentation. 
 
 | Variable | Purpose |
 |---|---|
-| `SPRINTCTL_INSTANCE_ID` | Stable per-process UUID — set once and reuse across every claim call |
+| `SPRINTCTL_INSTANCE_ID` | Optional session metadata; never a credential |
 | `SPRINTCTL_RUNTIME_SESSION_ID` | Runtime session ID (auto-detected from `CODEX_THREAD_ID`) |
 | `SPRINTCTL_DB` | Override the database path (default: `~/.sprintctl/sprintctl.db`) |
 
@@ -40,8 +40,8 @@ If tests fail after a change, diagnose the root cause, fix, and re-run — up to
 ---
 
 sprintctl is a local sprint coordination CLI backed by a SQLite database.
-It uses a **claim system** to give agents exclusive, time-limited ownership of
-work items.  Read this file before touching any sprint item.
+It uses an **advisory reservation system** to make coordination visible among
+agent sessions.  Read this file before touching any sprint item.
 
 ---
 
@@ -71,98 +71,133 @@ uv tool upgrade sprintctl kctl
 
 ---
 
-## Claim lifecycle (summary)
+## Reservation lifecycle (summary)
 
-### 1. Startup — claim the item
+A reservation is a visible coordination signal, not a capability. Multiple
+sessions may hold active reservations on the same item; conflicts are
+operator-visible rather than enforced.
+
+### 1. Startup — reserve the item
 
 ```bash
-sprintctl claim start \
+sprintctl reservation reserve \
   --item-id <id> --actor <your-name> \
-  --ttl 600 \
-  --instance-id "$SPRINTCTL_INSTANCE_ID" \
+  --role execution \
+  --session-id "$SPRINTCTL_RUNTIME_SESSION_ID" \
   --json
 ```
 
-Save **both** `claim_id` and `claim_token` from the response.
-`claim_token` is a secret — store it for the entire session.
-sprintctl also writes a local recovery token file next to the active database
-so `claim recover` can restore the secret after context loss.
-The claim response also carries the item's refs. Read every governing doc ref
-before editing files, and pin the executed revision as described in
+Save `reservation_id` from the response. There is no token, no secret, and no
+recovery file.
+
+The reservation response also carries the item's refs. Read every governing doc
+ref before editing files, and pin the executed revision as described in
 `docs/reference/doc-refs.md`.
 
-**Coordinators** (orchestrators spawning sub-agents): claim with `--type coordinate`.
-Sub-agents then call `claim create` with `--coordinate-claim-id` and `--coordinate-claim-token`
-to acquire their own `execute` claim without triggering a conflict.
+The role is the relationship to the work: `execution` (doing it),
+`verification` (reviewing or testing it), `observation` (watching it). That is
+what makes an overlap readable — two `execution` reservations are worth
+coordinating over, `execution` beside `verification` is ordinary.
 
-### 2. Heartbeat — keep claim alive
+If somebody else already holds a reservation, yours is still created. The
+response carries `conflict`, `conflicting_reservations`, and
+`conflict_severity`; read it and coordinate rather than assuming you are alone.
+Nothing refuses you, because refusing you would only remove you from the
+ledger, not from the work.
+
+To deliberately displace an execution reservation — a stalled session, a
+takeover you have agreed — add `--interrupt-existing`. It interrupts the
+item's active execution reservations, records `interrupted by <actor>
+(<session>)`, and emits a durable audit event. Verification and observation
+reservations are left alone.
+
+**Coordinators** (orchestrators spawning sub-agents): reserve with
+`--role observation`. Orchestration is session and project context, not a
+relationship to the item, so a coordinator observes the work it coordinates.
+Sub-agents reserve with `--role execution` on the same item.
+
+### 2. Activity — touch when useful
 
 ```bash
-sprintctl claim heartbeat \
-  --id <claim_id> --claim-token <token> \
-  --ttl 600 --actor <your-name>
+sprintctl reservation touch \
+  --id <reservation_id> \
+  --session-id "$SPRINTCTL_RUNTIME_SESSION_ID"
 ```
 
-Heartbeat every ~half-TTL.  The response includes `expires_at` and a warning
-if the TTL is within the expiry-warn window.
+`last_activity_at` also advances on its own whenever your session
+successfully mutates the item (status, edit, note, ref, dep, item-scoped
+events), so `touch` is for work that happens outside sprintctl — long external
+or git-only stretches. Attribution is by session id, never by actor name, and
+it works the same in served mode: the client attaches its session to the
+invocation, since the server cannot see it.
 
-### 3. Transition item status (done/blocked, or active when using `claim create`)
+Touch bumps `last_activity_at`. There is no lease, no TTL, and no heartbeat
+contract to violate. Staleness is display-only.
+
+### 3. Transition item status
 
 ```bash
 sprintctl item status \
   --id <item_id> --status active|done|blocked \
   --actor <your-name> \
-  --claim-id <claim_id> --claim-token <token>
+  --expected-revision <revision>
 ```
 
-Status transitions are **blocked** unless you provide valid claim proof.
-`claim start` already performs the `pending -> active` transition.
+Status transitions are protected by expected-revision compare-and-swap, not by
+reservation proof. Read the current `status_revision` from `item show --json`
+before mutating.
 
-### 4. Handoff — required before session end if work continues
+### 4. Handoff — reassign when work continues
 
 ```bash
-# Transfer claim ownership to next session (token rotates)
-sprintctl claim handoff \
-  --id <claim_id> --claim-token <token> \
-  --actor <next-agent-name> --mode rotate \
-  --runtime-session-id <next-session-id> \
+# Reassign the advisory reservation to the incoming session
+sprintctl reservation reassign \
+  --id <reservation_id> \
+  --actor <next-agent-name> \
+  --session-id <next-session-id> \
   --json
 
 # Produce a sprint handoff bundle for the incoming session
 sprintctl handoff [--sprint-id N] [--output path] [--format json|text]
 ```
 
-The claim handoff response contains the new `claim_token` for the incoming agent.
-The old token is immediately invalidated.
+`reservation reassign` changes the reserving actor/session. `sprintctl handoff`
+produces a working-memory bundle; it does not carry ownership proof because
+there is none.
 
-`--format text` produces a human-readable bundle (status groups, active claims,
-shutdown protocol). `--format json` (default) produces the machine-parseable
-bundle for agent session resumption.
+`--format text` produces a human-readable bundle (status groups, active
+reservations, shutdown protocol). `--format json` (default) produces the
+machine-parseable bundle for agent session resumption.
 
 ### 5. Release — when work is done
 
 ```bash
-sprintctl claim release \
-  --id <claim_id> --claim-token <token> --actor <your-name>
+sprintctl reservation release \
+  --id <reservation_id> --actor <your-name>
 ```
 
 ---
 
 ## Session resumption (context loss recovery)
 
-If you restart and no longer have the `claim_token`:
+If you restart, there is no token to recover. List reservations and reassign or
+reserve as appropriate:
 
 ```bash
-# Find your claims by identity
-sprintctl claim resume --instance-id "$SPRINTCTL_INSTANCE_ID" --json
+# Find reservations by item or list all active reservations
+sprintctl reservation list --item-id <id> --json
+sprintctl reservation list --all --json
 
-# Recover the locally persisted token that sprintctl wrote when the claim was created
-sprintctl claim recover --id <claim_id> --json
-
-# If no local recovery file exists and the token is gone, adopt the claim (mints a fresh proof)
-sprintctl claim handoff \
-  --id <claim_id> --actor <your-name> --mode rotate --allow-legacy-adopt --json
+# Reassign an existing reservation to the current session, or release and
+# create a new one if the old session is gone.
+sprintctl reservation reassign \
+  --id <reservation_id> \
+  --actor <your-name> \
+  --session-id <current-session-id> \
+  --json
 ```
+
+Reservations contain no recoverable credential.
 
 ---
 
@@ -170,7 +205,7 @@ sprintctl claim handoff \
 
 Before terminating:
 
-1. For each owned claim: **handoff** to the next agent _or_ **release** it.
+1. For each active reservation: **reassign** to the next session _or_ **release** it.
 2. Run `sprintctl handoff` to write a bundle for the incoming session.
 3. The bundle's `agent_shutdown_protocol` field repeats these instructions.
 
@@ -178,11 +213,12 @@ Before terminating:
 
 ## Ownership model
 
-- Proof = `claim_id` **+** `claim_token` (both required)
-- sprintctl can restore the locally persisted token via `claim recover`, but the recovered secret is still the proof used by claim operations
-- `instance_id`, `hostname`, `pid`, `actor` name are advisory metadata only — never proof
-- Default TTL: 300 s.  Use `--ttl` to increase for long-running tasks
-- `coordinate` claims allow sub-agent `execute` claims; all other exclusive claim types block each other
+- There is no ownership proof. `reservation_id` is a handle, not a secret.
+- `instance_id`, `hostname`, `pid`, `actor` name, branch, worktree, and commit SHA
+  are advisory metadata only.
+- The reservation model is advisory: conflicting reservations are detected and
+  surfaced, not prevented.
+- Status transitions are gated by expected-revision CAS (`item:<uuid>@status:<status>`).
 
 ---
 
@@ -194,8 +230,9 @@ Before picking up work, read the current state in one call:
 sprintctl usage --context [--sprint-id N] [--json]
 ```
 
-This emits: sprint summary, active claims (who owns what), stale/blocked items,
-ready-to-start items (no unresolved deps), and recent knowledge candidates.
+This emits: sprint summary, active reservations (who is working on what),
+stale/blocked items, ready-to-start items (no unresolved deps), and recent
+knowledge candidates.
 
 Use `--json` for machine-readable output — compact enough to paste into a prompt
 without summarisation.
@@ -252,7 +289,7 @@ Items with unresolved blockers are excluded from `next-work` output.
 
 ---
 
-## Recording git context on notes and claims
+## Recording git context on notes
 
 `item note` accepts git provenance fields so knowledge candidates carry their origin:
 
@@ -264,15 +301,13 @@ sprintctl item note --id <item-id> --type decision \
   --actor <your-name>
 ```
 
-`claim create` and `claim heartbeat` accept `--branch`, `--commit-sha`,
-`--worktree`, and `--pr-ref` to keep the claim record current as work progresses.
-
 ---
 
 ## Capability receipt at sprint close
 
-For an intentional sprint close, first run the close gate, then close explicitly
-with `sprintctl sprint status --id <id> --status closed --actor <actor> --json`.
+For an intentional sprint close, first run the close gate, read the current
+`sprint show --json` `status_revision`, then close explicitly with
+`sprintctl sprint status --id <id> --status closed --actor <actor> --expected-revision <revision> --json`.
 The status change and one local `sprint-close-boundary` event commit atomically;
 the JSON response returns `boundary_event_id` and its database-local
 `boundary_revision` (`event:<id>`). That reference depends on preserving the
@@ -294,10 +329,12 @@ append-only procedural assertion rather than authenticated identity. An
 
 Routing and hooks are declared in `sprintctl.dispatch.json`; closed subjects
 and escalation rules live in `.agents/overlays/sprintctl.state-protocols.md`.
-Use `verify-state-protocols` for claims, proof rotation, retries, projections,
-or SQLite/PostgreSQL parity. `survey` and `reconcile` are read-only; product
-repair requires separate authorization. Run concurrent histories only against
-temporary SQLite databases and disposable PostgreSQL repository scopes.
+Use `verify-state-protocols` for reservations, retries, idempotency,
+reconciliation, append-only histories, canonical projections, crash recovery,
+dual writes, concurrent workers, or SQLite/PostgreSQL parity. `survey` and
+`reconcile` are read-only; product repair requires separate authorization. Run
+concurrent histories only against temporary SQLite databases and disposable
+PostgreSQL repository scopes.
 
 ## Hybrid dispatch
 
@@ -307,7 +344,7 @@ modify, and explicit registered gates that fail for each relevant incorrect
 behaviour. One rejected attempt returns to the coordinator.
 
 Parity fixtures, test-oracle construction, tests as the primary deliverable,
-SQLite/PostgreSQL behavioural proof, and claim, authority, compatibility,
+SQLite/PostgreSQL behavioural proof, and reservation, authority, compatibility,
 migration, recovery, or credential semantics are coordinator-only regardless
 of diff size.
 
@@ -315,7 +352,7 @@ of diff size.
 
 | Variable | Purpose |
 |---|---|
-| `SPRINTCTL_INSTANCE_ID` | Stable per-process UUID — set once and reuse across every claim call |
+| `SPRINTCTL_INSTANCE_ID` | Optional session metadata only; never a credential |
 | `SPRINTCTL_RUNTIME_SESSION_ID` | Runtime session ID (auto-detected from `CODEX_THREAD_ID`) |
 | `SPRINTCTL_DB` | Override the database path |
 

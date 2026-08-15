@@ -67,7 +67,7 @@ class TestSemanticRecordContracts:
             contracts.Observation(**_record_kwargs("item.done"))
 
     def test_remote_decision_must_use_a_remote_decision_type(self):
-        decision = contracts.RemoteDecision(**_record_kwargs("claim.granted"))
+        decision = contracts.RemoteDecision(**_record_kwargs("item.transitioned"))
         assert decision.remote_authored is True
 
         payload = decision.to_dict()
@@ -97,8 +97,8 @@ class TestContextContractModel:
         payload = contracts.ContextContract(
             sprint={"id": 4, "name": "S4"},
             summary={"total": 1},
-            active_claims=[],
-            active_unclaimed_items=[],
+            active_reservations=[],
+            active_unreserved_items=[],
             conflicts=[],
             ready_items=[],
             blocked_items=[],
@@ -110,8 +110,8 @@ class TestContextContractModel:
             "contract_version",
             "sprint",
             "summary",
-            "active_claims",
-            "active_unclaimed_items",
+            "active_reservations",
+            "active_unreserved_items",
             "conflicts",
             "ready_items",
             "blocked_items",
@@ -125,8 +125,8 @@ class TestContextContractModel:
         model = contracts.ContextContract(
             sprint={"id": 4, "name": "S4"},
             summary={"total": 1},
-            active_claims=[{"claim_id": 7, "actor": "agent"}],
-            active_unclaimed_items=[{"id": 9, "title": "Task"}],
+            active_reservations=[{"id": 7, "actor": "agent"}],
+            active_unreserved_items=[{"id": 9, "title": "Task"}],
             conflicts=[],
             ready_items=[],
             blocked_items=[],
@@ -136,14 +136,14 @@ class TestContextContractModel:
         )
 
         first = model.to_dict()
-        first["active_claims"][0]["actor"] = "mutated"
+        first["active_reservations"][0]["actor"] = "mutated"
         mutated_json = json.dumps(first)
 
         second = model.to_dict()
         second_json = json.dumps(second)
         assert mutated_json != second_json
-        assert second["active_claims"][0]["actor"] == "agent"
-        assert second["active_unclaimed_items"][0]["title"] == "Task"
+        assert second["active_reservations"][0]["actor"] == "agent"
+        assert second["active_unreserved_items"][0]["title"] == "Task"
 
 
 class TestHandoffBundleModel:
@@ -154,7 +154,7 @@ class TestHandoffBundleModel:
             generated_from={"command": "sprintctl handoff"},
             sprint={"id": 4},
             summary={"total": 0},
-            active_claims=[],
+            active_reservations=[],
             conflicts=[],
             work={"active_items": [], "ready_items": [], "blocked_items": [], "stale_items": []},
             recent_decisions=[],
@@ -164,7 +164,7 @@ class TestHandoffBundleModel:
             freshness={"generated_at": "2026-04-01T00:00:00Z"},
             evidence={"dirty_files": []},
             git_context=None,
-            claim_identity_model={"ownership_proof": "claim_id+claim_token"},
+            reservation_model={"ownership_proof": None},
             resume_instructions=[],
             agent_shutdown_protocol={"required_before_termination": []},
             items=[],
@@ -178,7 +178,7 @@ class TestHandoffBundleModel:
             "generated_from",
             "sprint",
             "summary",
-            "active_claims",
+            "active_reservations",
             "conflicts",
             "work",
             "recent_decisions",
@@ -188,7 +188,7 @@ class TestHandoffBundleModel:
             "freshness",
             "evidence",
             "git_context",
-            "claim_identity_model",
+            "reservation_model",
             "resume_instructions",
             "agent_shutdown_protocol",
             "items",
@@ -204,7 +204,7 @@ class TestHandoffBundleModel:
             generated_from={"command": "sprintctl handoff"},
             sprint={"id": 4},
             summary={"total": 0},
-            active_claims=[{"claim_id": 9, "actor": "agent-a"}],
+            active_reservations=[{"id": 9, "actor": "agent-a"}],
             conflicts=[],
             work={"active_items": [], "ready_items": [], "blocked_items": [], "stale_items": []},
             recent_decisions=[],
@@ -214,7 +214,7 @@ class TestHandoffBundleModel:
             freshness={"generated_at": "2026-04-01T00:00:00Z"},
             evidence={"dirty_files": []},
             git_context={"branch": "main"},
-            claim_identity_model={"ownership_proof": "claim_id+claim_token"},
+            reservation_model={"ownership_proof": None},
             resume_instructions=[],
             agent_shutdown_protocol={"required_before_termination": []},
             items=[],
@@ -222,10 +222,10 @@ class TestHandoffBundleModel:
         )
 
         first = model.to_dict()
-        first["active_claims"][0]["actor"] = "mutated"
+        first["active_reservations"][0]["actor"] = "mutated"
         mutated_json = json.dumps(first)
 
         second = model.to_dict()
         second_json = json.dumps(second)
         assert mutated_json != second_json
-        assert second["active_claims"][0]["actor"] == "agent-a"
+        assert second["active_reservations"][0]["actor"] == "agent-a"

@@ -29,12 +29,31 @@ def test_claim_context_records_backend_parity_race_and_stale_proof():
     assert "old-token-cannot-mutate-after-rotated-handoff" in packet["invariants"]
 
 
-def test_claim_protocol_reports_bounded_postgres_exclusivity_evidence():
-    protocol = (ROOT / "docs/protocols/claim-ownership.md").read_text(encoding="utf-8")
+def test_reservation_protocol_states_overlap_is_reported_not_enforced():
+    # Whitespace-normalized: these are prose claims, so a reflow of the
+    # paragraph must not read as the claim having been removed.
+    protocol = " ".join(
+        (ROOT / "docs/protocols/reservation-model.md").read_text(encoding="utf-8").split()
+    )
 
-    assert "work-item row lock is the arbitration point" in protocol
+    # The document must not re-acquire an exclusivity claim: the partial
+    # unique index may only be named as something that was removed.
+    assert "idx_reservation_active_execute partial unique index is the arbitration point" not in protocol
+    assert "Neither backend arbitrates who may reserve" in protocol
+    assert "removed in SQLite schema 22 and PostgreSQL schema 12" in protocol
+    assert "A reservation is a detector, not a lease." in protocol
+    assert "--interrupt-existing" in protocol
+
+    # The surviving serialization and its narrower justification.
+    assert "BEGIN IMMEDIATE" in protocol
+    assert "pg_advisory_xact_lock" in protocol
+    assert "maintenance activation gates on a *count* of active reservations" in protocol
     assert "classified as `concurrency-tested`" in protocol
     assert "general cross-operation linearizability proof" in protocol
+
+    # Activity and staleness are heuristics owned by policy, not the model.
+    assert "not a heartbeat and not proof of ownership" in protocol
+    assert "MINIMUM_SCHEMA_VERSION == CURRENT_SCHEMA_VERSION == 12" in protocol
 
 
 def test_remote_ingest_context_covers_retry_gap_and_cursor_protocol():

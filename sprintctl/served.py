@@ -25,8 +25,9 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from . import reservation as _reservation
 from .backend import ServedProfile
-from .served_routes import SERVED_COMMAND_ROUTES
+from .served_routes import doctor_probe_command_paths, doctor_probe_operations
 from .vuoro_credentials import resolve_file_credential
 
 
@@ -58,8 +59,29 @@ async def _invoke_operation(
     arguments: dict[str, Any],
     **kwargs: Any,
 ) -> Any:
+    arguments = _with_session_attribution(operation, arguments)
     async with _client(served_profile) as client:
         return await client.invoke(operation, arguments, **kwargs)
+
+
+def _with_session_attribution(operation: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Tell the authority which session performed an activity-bearing mutation.
+
+    Served callers are the reason ``last_activity_at`` can advance without
+    ceremony: the server cannot see the client's session, so the client has to
+    say. This is attached here rather than in each facade so a newly served
+    operation cannot quietly lose the attribution -- the operation set lives in
+    :mod:`sprintctl.reservation`, shared with the application that consumes it.
+
+    It names a session and authorizes nothing; an explicit argument always
+    wins, and a client with no session simply omits it.
+    """
+    if operation not in _reservation.ACTIVITY_OPERATIONS or arguments.get("session_id"):
+        return arguments
+    session_id = _reservation.ambient_session_id()
+    if session_id is None:
+        return arguments
+    return {**arguments, "session_id": session_id}
 
 
 def read_sprints(
@@ -141,20 +163,6 @@ def read_items(served_profile: ServedProfile, *, repo_id: str, sprint_id: int | 
     }, repo_id=repo_id))
 
 
-def read_claims(served_profile: ServedProfile, *, repo_id: str, item_id: int | None = None,
-                sprint_id: int | None = None, active_only: bool = True, instance_id: str | None = None,
-                runtime_session_id: str | None = None, hostname: str | None = None, pid: int | None = None) -> dict[str, Any]:
-    return asyncio.run(_invoke_operation(served_profile, "work.read.claims", {
-        "item_id": item_id, "sprint_id": sprint_id, "active_only": active_only, "instance_id": instance_id,
-        "runtime_session_id": runtime_session_id, "hostname": hostname, "pid": pid,
-    }, repo_id=repo_id))
-
-
-def read_claim(served_profile: ServedProfile, *, repo_id: str, claim_id: int) -> dict[str, Any]:
-    """Inspect a claim without ever returning its bearer token."""
-    return asyncio.run(_invoke_operation(served_profile, "work.read.claim", {"claim_id": claim_id}, repo_id=repo_id))
-
-
 def read_context(
     served_profile: ServedProfile, *, repo_id: str, sprint_id: int | None = None
 ) -> dict[str, Any]:
@@ -230,6 +238,13 @@ def read_next_work(
             served_profile, "work.read.next-work", arguments, repo_id=repo_id
         )
     )
+
+
+def reservation_operation(
+    served_profile: ServedProfile, operation: str, arguments: dict[str, Any], *, repo_id: str
+) -> dict[str, Any]:
+    """Invoke one v0.3 reservation operation through the served authority."""
+    return asyncio.run(_invoke_operation(served_profile, operation, arguments, repo_id=repo_id))
 
 
 def read_records(
@@ -423,50 +438,12 @@ def project_sprints(
     )
 
 
-def cutover_evidence(
-    served_profile: ServedProfile,
-    *,
-    repo_id: str,
-    parity: dict[str, Any] | None = None,
-    max_watermark_age_seconds: int = 300,
-    rehearse: bool = True,
-) -> dict[str, Any]:
-    """Invoke ``work.pilot.cutover-evidence`` (``sprintctl pilot cutover-evidence``).
-
-    ``parity`` must already be computed by the caller (mirroring
-    ``cutover.build_cutover_evidence``'s own contract, which never fetches
-    parity itself). This function itself still never fetches parity --
-    ``work.read.events`` (added by #1247, see :func:`read_events`) exposes the
-    sprint-wide event log a caller would need to compute it, but no caller of
-    ``cutover_evidence`` has been updated to use it yet, so a served caller
-    wanting full parity should still pass ``None`` (the ``--skip-parity``
-    path, or whenever the pilot is disabled) unless/until that wiring lands.
-    See ``sprintctl.cli._served_cutover_evidence`` for the CLI-side guard
-    that enforces this today.
-    """
-
-    arguments = {
-        "parity": parity,
-        "max_watermark_age_seconds": max_watermark_age_seconds,
-        "rehearse": rehearse,
-    }
-    return asyncio.run(
-        _invoke_operation(
-            served_profile,
-            "work.pilot.cutover-evidence",
-            arguments,
-            repo_id=repo_id,
-        )
-    )
-
-
 def batch_apply(
     served_profile: ServedProfile,
     *,
     repo_id: str,
     records: list[dict[str, Any]],
     idempotency_key: str,
-    transient_credentials: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Invoke ``work.batch.apply`` (``sprintctl authority sync``).
 
@@ -475,67 +452,23 @@ def batch_apply(
     ``record_class`` (``WorkApplication.apply_records``,
     application.py:612-644) -- consecutive observations are ingested
     together and each authority command is arbitrated individually, all
-    against one shared ``transient_credentials`` map for the whole batch
-    (omitted entirely when empty, since an observation-only batch needs no
-    credential material at all). ``idempotency_key`` must equal
+    individually. ``idempotency_key`` must equal
     ``application.batch_idempotency_key(records)`` computed over the exact
     same records in the exact same order the server will see. See
-    ``sprintctl.cli._served_authority_sync`` for the chunking,
-    credential-resolution, and sidecar-cleanup this wraps -- and for why
+    ``sprintctl.cli._served_authority_sync`` for the chunking this
+    wraps -- and for why
     ``capability-receipt.accept`` records are never included here (excluded
     from the server's ``SUPPORTED_BATCH_TYPES``, application.py:29-42).
     """
 
     arguments = {"records": records}
-    kwargs: dict[str, Any] = {"idempotency_key": idempotency_key, "repo_id": repo_id}
-    if transient_credentials:
-        kwargs["transient_credentials"] = transient_credentials
-    return asyncio.run(
-        _invoke_operation(served_profile, "work.batch.apply", arguments, **kwargs)
-    )
-
-
-def claim_start(
-    served_profile: ServedProfile,
-    *,
-    repo_id: str,
-    item_id: int,
-    ttl_seconds: int = 300,
-    branch: str | None = None,
-    worktree_path: str | None = None,
-    commit_sha: str | None = None,
-    pr_ref: str | None = None,
-    runtime_session_id: str | None = None,
-    instance_id: str | None = None,
-    hostname: str | None = None,
-    pid: int | None = None,
-) -> dict[str, Any]:
-    """Invoke ``work.claim.start`` (``sprintctl claim start ...``).
-
-    Per the "Authority and retry semantics" section of
-    ``docs/reference/vuoro-work-adapter.md``, ``work.claim.start``'s catalog
-    contract forbids an idempotency key and callers must not retry an
-    unknown outcome -- so this performs exactly one invocation with no
-    idempotency key and no retry wrapper around it. The claim's owning actor
-    is the authenticated identity the server resolves from the credential,
-    not a caller-supplied argument, so no ``actor``/``agent`` field is sent.
-    """
-
-    arguments = {
-        "item_id": item_id,
-        "ttl_seconds": ttl_seconds,
-        "branch": branch,
-        "worktree_path": worktree_path,
-        "commit_sha": commit_sha,
-        "pr_ref": pr_ref,
-        "runtime_session_id": runtime_session_id,
-        "instance_id": instance_id,
-        "hostname": hostname,
-        "pid": pid,
-    }
     return asyncio.run(
         _invoke_operation(
-            served_profile, "work.claim.start", arguments, repo_id=repo_id
+            served_profile,
+            "work.batch.apply",
+            arguments,
+            idempotency_key=idempotency_key,
+            repo_id=repo_id,
         )
     )
 
@@ -558,8 +491,7 @@ def item_note(
     """Invoke ``work.item.note`` (``sprintctl item note``).
 
     The recording actor is always the authenticated identity the server
-    resolves from the credential, not a caller-supplied argument -- same
-    rule as :func:`claim_start`.
+    resolves from the credential, not a caller-supplied argument.
     """
 
     arguments = {
@@ -579,72 +511,12 @@ def item_note(
     )
 
 
-def claim_context(
-    served_profile: ServedProfile, *, repo_id: str, claim_id: int
-) -> dict[str, Any]:
-    """Invoke ``work.claim.context`` (authenticated-actor/authority-uuid/claim-
-    snapshot/claim-revision read backing served ``claim heartbeat``/``claim
-    release``/``claim handoff``).
-
-    A plain v1 read: no ``transient_credentials``, no idempotency key, no
-    basis revision -- this never mutates anything, so there is nothing to
-    retry-guard. See the "Approved authority-context contract" section of
-    ``docs/plans/agentops/vuoro-claim-proof-transport-clarification-2026-07-23.md``
-    for the exact non-secret result shape this returns.
-    """
-
-    return asyncio.run(
-        _invoke_operation(
-            served_profile,
-            "work.claim.context",
-            {"claim_id": claim_id},
-            repo_id=repo_id,
-        )
-    )
-
-
-def claim_arbitrate(
-    served_profile: ServedProfile,
-    *,
-    repo_id: str,
-    record: dict[str, Any],
-    transient_credentials: dict[str, str],
-) -> dict[str, Any]:
-    """Invoke ``work.claim.arbitrate`` (served ``claim heartbeat``/``claim
-    release``/``claim handoff``) with the claim proof carried over the
-    ``invocation/v2`` transient-credential channel, not as a catalog
-    argument.
-
-    Per the approved transport contract, ``transient_credentials`` is a
-    transport-level facility outside the operation's ``arguments`` --
-    forwarded here to ``_invoke_operation``'s ``**kwargs``, which passes it
-    straight through to ``client.invoke(...)``. As with
-    :func:`lifecycle_arbitrate`, the idempotency key and basis revision must
-    equal the record's own ``event_id``/``basis_revision``.
-    """
-
-    arguments = {"record": record}
-    return asyncio.run(
-        _invoke_operation(
-            served_profile,
-            "work.claim.arbitrate",
-            arguments,
-            idempotency_key=record["event_id"],
-            basis_revision=record["basis_revision"],
-            repo_id=repo_id,
-            transient_credentials=transient_credentials,
-        )
-    )
-
-
 def lifecycle_arbitrate(
     served_profile: ServedProfile, *, repo_id: str, record: dict[str, Any],
-    transient_credentials: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Invoke ``work.lifecycle.arbitrate`` (``sprintctl item status`` /
     ``sprintctl sprint status``, for the ``item.transition``, ``item.done``,
-    ``sprint.activate`` and ``sprint.close`` record types only -- claim
-    arbitration is a separate, not-yet-wired operation).
+    ``sprint.activate`` and ``sprint.close`` record types only).
 
     Per the "Authority and retry semantics" section of
     ``docs/reference/vuoro-work-adapter.md``, a single-command invocation's
@@ -665,7 +537,6 @@ def lifecycle_arbitrate(
             idempotency_key=record["event_id"],
             basis_revision=record["basis_revision"],
             repo_id=repo_id,
-            **({"transient_credentials": transient_credentials} if transient_credentials is not None else {}),
         )
     )
 
@@ -675,8 +546,7 @@ def lifecycle_arbitrate(
 # gap) wire through this facade (next-work contributes three:
 # work.read.next-work, work.read.next-work-explain, and work.project.next-work; item.status and
 # sprint.status share one operation, work.lifecycle.arbitrate;
-# claim.heartbeat, claim.handoff, and claim.release share one operation,
-# work.claim.arbitrate). Excludes event.observation.add: it is a registered
+# Excludes event.observation.add: it is a registered
 # route in served_routes.py, but no served CLI path invokes work.evidence.ingest
 # directly -- `event observation add` always appends to the local outbox and
 # is only ever flushed through authority.sync's work.batch.apply (see
@@ -684,55 +554,14 @@ def lifecycle_arbitrate(
 #
 # Every operation added to the served catalog must be added here in the same
 # change -- the #1195 postmortem found this list had already silently drifted
-# out of sync with newly-wired routes once (missing claim.handoff, then
-# pilot.cutover-evidence), meaning `doctor` was not actually verifying the
-# catalog before commands ran. See docs/plans/served-mode-gaps-plan.md.
-_DOCTOR_PROBE_COMMAND_PATHS = (
-    "identity.current",
-    "usage.context",
-    "context-candidates",
-    "handoff",
-    "handoff.record",
-    "sprint.list",
-    "sprint.create",
-    "item.show",
-    "item.list",
-    "claim.list",
-    "claim.list-sprint",
-    "claim.resume",
-    "claim.show",
-    "item.ref.add",
-    "item.ref.list",
-    "item.ref.remove",
-    "item.dep.add",
-    "item.dep.list",
-    "item.dep.remove",
-    "next-work",
-    "next-work.explain",
-    "claim.start",
-    "claim.create",
-    "item.status",
-    "item.done-from-claim",
-    "sprint.status",
-    "claim.heartbeat",
-    "claim.handoff",
-    "claim.release",
-    "item.note",
-    "pilot.cutover-evidence",
-    "authority.sync",
-    "event.list",
-    "event.add",
-    "item.add",
-    "item.edit",
-    "sprint.show",
-    "sprint.show.detail",
-)
-
-EXPECTED_OPERATIONS: frozenset[str] = frozenset(
-    route.operation
-    for route in SERVED_COMMAND_ROUTES
-    if route.command_path in _DOCTOR_PROBE_COMMAND_PATHS
-)
+# out of sync with newly-wired routes once (it was missing the then-live
+# pilot cutover-evidence route, since retired), meaning `doctor` was not
+# actually verifying the catalog before commands ran. See
+# docs/plans/served-mode-gaps-plan.md.
+EXPECTED_OPERATIONS = doctor_probe_operations()
+# Compatibility for consumers that diagnosed the precise route keys. The
+# tuple itself remains owned by the route registry.
+_DOCTOR_PROBE_COMMAND_PATHS = doctor_probe_command_paths()
 
 
 async def _catalog_operation_names(served_profile: ServedProfile) -> frozenset[str]:
@@ -759,11 +588,7 @@ __all__ = [
     "batch_apply",
     "catalog_operation_names",
     "context_candidates",
-    "claim_arbitrate",
-    "claim_context",
     "handoff_record",
-    "claim_start",
-    "cutover_evidence",
     "event_add",
     "item_create",
     "item_dep_add",
@@ -779,8 +604,6 @@ __all__ = [
     "read_item",
     "read_items",
     "identity_current",
-    "read_claims",
-    "read_claim",
     "read_context",
     "read_handoff",
     "read_next_work",

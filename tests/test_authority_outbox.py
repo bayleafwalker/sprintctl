@@ -75,12 +75,12 @@ def test_append_record_rejects_remote_decisions(tmp_path):
     conn = outbox.open_outbox(tmp_path / "producer.db")
     decision = contracts.RemoteDecision(
         event_id=uuid4(),
-        record_type="claim.released",
+        record_type="item.transitioned",
         schema_version="sprintctl-record/v1",
         actor="remote-authority",
         authored_at="2026-07-14T12:00:00Z",
-        refs={"claim_id": 7},
-        payload={"status": "released"},
+        refs={"item_id": 7},
+        payload={"status": "done"},
     )
     with pytest.raises(ValueError, match="cannot append remote-decision"):
         outbox.append_record(conn, decision)

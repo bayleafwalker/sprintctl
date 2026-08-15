@@ -14,17 +14,9 @@ import pytest
 from sprintctl import db
 import sprintctl.cli as cli_module
 from sprintctl.cli import cli
-
-
 def _item(conn, sprint_id, title="Task"):
     tid = db.get_or_create_track(conn, sprint_id, "eng")
     return db.create_work_item(conn, sprint_id, tid, title)
-
-
-def _claim(conn, sprint_id, work_item_id, actor="agent"):
-    cid = db.create_claim(conn, work_item_id, agent=actor, claim_type="execute")
-    claim = db.get_claim(conn, cid, include_secret=True)
-    return cid, claim["claim_token"]
 
 
 # ---------------------------------------------------------------------------
@@ -218,65 +210,3 @@ class TestGitContextCommand:
         result = runner.invoke(cli, ["git-context"])
         # Should exit non-zero or show a clear "not a git repo" message
         assert result.exit_code != 0 or "not a git" in result.output.lower()
-
-
-# ---------------------------------------------------------------------------
-# claim handoff with git context
-# ---------------------------------------------------------------------------
-
-
-class TestClaimHandoffGitContext:
-    def test_claim_handoff_branch_recorded(self, runner, conn, active_sprint, db_path):
-        iid = _item(conn, active_sprint["id"])
-        claim_id, token = _claim(conn, active_sprint["id"], iid)
-        result = runner.invoke(cli, [
-            "claim", "handoff",
-            "--id", str(claim_id),
-            "--claim-token", token,
-            "--actor", "agent-2",
-            "--branch", "feat/handoff-branch",
-        ])
-        assert result.exit_code == 0, result.output
-        # New claim should carry branch on the claim record
-        claims = db.list_claims_by_sprint(conn, active_sprint["id"], active_only=False)
-        new_claim = next((c for c in claims if c["actor"] == "agent-2"), None)
-        assert new_claim is not None
-        assert new_claim["branch"] == "feat/handoff-branch"
-
-    def test_claim_handoff_commit_sha_recorded(self, runner, conn, active_sprint, db_path):
-        iid = _item(conn, active_sprint["id"])
-        claim_id, token = _claim(conn, active_sprint["id"], iid)
-        result = runner.invoke(cli, [
-            "claim", "handoff",
-            "--id", str(claim_id),
-            "--claim-token", token,
-            "--actor", "agent-2",
-            "--branch", "main",
-            "--commit-sha", "abc1234",
-        ])
-        assert result.exit_code == 0, result.output
-        claims = db.list_claims_by_sprint(conn, active_sprint["id"], active_only=False)
-        new_claim = next((c for c in claims if c["actor"] == "agent-2"), None)
-        assert new_claim is not None
-        assert new_claim["commit_sha"] == "abc1234"
-
-    def test_claim_handoff_git_context_in_event_payload(self, runner, conn, active_sprint, db_path):
-        iid = _item(conn, active_sprint["id"])
-        claim_id, token = _claim(conn, active_sprint["id"], iid)
-        result = runner.invoke(cli, [
-            "claim", "handoff",
-            "--id", str(claim_id),
-            "--claim-token", token,
-            "--actor", "agent-2",
-            "--branch", "main",
-            "--commit-sha", "abc1234",
-        ])
-        assert result.exit_code == 0, result.output
-        events = db.list_events(conn, active_sprint["id"])
-        handoff_events = [e for e in events if e["event_type"] in ("claim-handoff", "claim-ownership-corrected")]
-        assert len(handoff_events) > 0
-        last = handoff_events[-1]
-        payload = json.loads(last["payload"])
-        # to_identity carries the git context from the claim record
-        assert payload["to_identity"]["branch"] == "main"
-        assert payload["to_identity"]["commit_sha"] == "abc1234"

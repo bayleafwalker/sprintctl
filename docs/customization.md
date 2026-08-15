@@ -78,5 +78,5 @@ Promote external glue into core CLI only when all are true:
 - [Start Here](guides/start-here.md)
 - [Advanced Coordination](guides/advanced-coordination.md)
 - [Coordinator Mode](advanced/coordinator-mode.md)
-- [Claim Discipline](advanced/claim-discipline.md)
+- [Reservation Discipline](advanced/reservation-discipline.md)
 - [Repo Template Example](examples/repo-template.md)

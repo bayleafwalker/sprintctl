@@ -12,7 +12,6 @@ from tests.pg._shared import (
     contracts,
     db,
     pg,
-    ClaimConflict,
     InvalidTransition,
     assert_disposable_connection,
     _uid,
@@ -251,14 +250,14 @@ class TestWorkItem:
         with pytest.raises(InvalidTransition):
             pg.set_work_item_status(store, iid, "done")  # pending → done not allowed
 
-    def test_claimed_item_requires_proof_for_status(self, store, sprint_id, track_id):
+    def test_reserved_item_status_uses_ordinary_cas(self, store, sprint_id, track_id):
+        """A reservation is advisory: it never gates an item's status change."""
         iid = pg.create_work_item(store, sprint_id, track_id, f"Cp-{_uid()}")
-        claim_id = pg.create_claim(store, iid, "ag", ttl_seconds=300)
-        claim = pg.get_claim(store, claim_id, include_secret=True)
-        token = claim["claim_token"]
-        pg.set_work_item_status(store, iid, "active", claim_id=claim_id, claim_token=token)
-        with pytest.raises(ClaimConflict):
-            pg.set_work_item_status(store, iid, "done")
+        reservation = pg.reserve(store, iid, actor="ag", session_id="session-cas")
+        assert reservation["state"] == "active"
+        pg.set_work_item_status(store, iid, "active")
+        pg.set_work_item_status(store, iid, "done")
+        assert pg.get_work_item(store, iid)["status"] == "done"
 
 
 # ---------------------------------------------------------------------------

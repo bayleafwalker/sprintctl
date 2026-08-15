@@ -14,8 +14,15 @@ from typing import Any, Mapping
 
 
 WORK_API_VERSION = "sprintctl-work/v1"
-CURRENT_SCHEMA_VERSION = 7
-MINIMUM_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 12
+# The v0.3 release is a coordinated schema/runtime cutover, so the runtime
+# admits exactly the schema it was built against.  A wider window would be a
+# false promise: reservation storage only arrived in schema 8, the live
+# ``claim`` relation only disappeared in 10, and the reservation role
+# taxonomy/overlap correction is 12 -- a client that passed a 5..11 handshake
+# would fail on its first reservation call, which is worse than refusing to
+# start.  Widen this deliberately, after a release that actually needs it.
+MINIMUM_SCHEMA_VERSION = 12
 MAXIMUM_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION
 STARTUP_MODE_ENV = "SPRINTCTL_REMOTE_SCHEMA_MODE"
 READ_ONLY_STARTUP_MODE = "read-only"
@@ -263,7 +270,12 @@ def stage_schema5_maintenance_bridge(store: Any) -> dict[str, Any]:
         raise
     handshake = compatibility_handshake(store)
     store.conn.rollback()
-    if not handshake["compatible"]:
+    # Verify what this function actually installed.  Full runtime
+    # compatibility is deliberately *not* the post-condition: since the v0.3
+    # cutover a schema-5 database is below the supported floor even with a
+    # perfect maintenance bridge, and it still has to be migrated forward.
+    maintenance = handshake["capabilities"]["maintenance_storage"]
+    if not (maintenance["available"] and maintenance["complete"]):
         raise RemoteSchemaMigrationError("staged maintenance bridge is incomplete")
     return {
         "schema_version": "sprintctl-schema5-maintenance-bridge-result/v1",
@@ -360,6 +372,31 @@ def migrate_schema(store: Any) -> dict[str, Any]:
                 _pg._apply_schema_version_7(cur)
                 cur.execute("UPDATE schema_version SET version = %s", (7,))
                 applied.append(7)
+                state = SchemaState(version=7, row_count=1)
+            if state.version < 8:
+                _pg._apply_schema_version_8(cur)
+                cur.execute("UPDATE schema_version SET version = %s", (8,))
+                applied.append(8)
+                state = SchemaState(version=8, row_count=1)
+            if state.version < 9:
+                _pg._apply_schema_version_9(cur)
+                cur.execute("UPDATE schema_version SET version = %s", (9,))
+                applied.append(9)
+                state = SchemaState(version=9, row_count=1)
+            if state.version < 10:
+                _pg._apply_schema_version_10(cur)
+                cur.execute("UPDATE schema_version SET version = %s", (10,))
+                applied.append(10)
+                state = SchemaState(version=10, row_count=1)
+            if state.version < 11:
+                _pg._apply_schema_version_11(cur)
+                cur.execute("UPDATE schema_version SET version = %s", (11,))
+                applied.append(11)
+                state = SchemaState(version=11, row_count=1)
+            if state.version < 12:
+                _pg._apply_schema_version_12(cur)
+                cur.execute("UPDATE schema_version SET version = %s", (12,))
+                applied.append(12)
         store.conn.commit()
     except Exception:
         store.conn.rollback()

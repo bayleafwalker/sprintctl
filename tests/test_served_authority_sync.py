@@ -96,15 +96,6 @@ def _mint_command(tmp_path, *, record_type, refs, payload, basis_revision="rev-1
     )
 
 
-def _claim_refs(claim_id):
-    return {
-        "repo_id": str(uuid4()),
-        "aggregate_type": "claim",
-        "aggregate_id": claim_id,
-        "claim_id": claim_id,
-    }
-
-
 def _item_refs(item_id):
     return {
         "repo_id": str(uuid4()),
@@ -121,19 +112,6 @@ def _sprint_refs(sprint_id):
         "aggregate_uuid": str(uuid4()),
         "aggregate_id": sprint_id,
     }
-
-
-def _store_sidecar(tmp_path, *, event_id, credentials, recovery_credential_ref=None):
-    cli_module._authority_config.store_pending_authority_credentials(
-        _rollout_paths(tmp_path),
-        event_id=event_id,
-        credentials=credentials,
-        recovery_credential_ref=recovery_credential_ref,
-    )
-
-
-def _credential_dir(tmp_path):
-    return tmp_path / ".sprintctl" / "authority-credentials"
 
 
 def _ingest_result(record) -> dict:
@@ -174,10 +152,9 @@ def test_served_authority_sync_flushes_observation_only_batch(runner, tmp_path, 
 
     captured = {}
 
-    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key, transient_credentials=None):
+    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key):
         captured["records"] = records
         captured["idempotency_key"] = idempotency_key
-        captured["transient_credentials"] = transient_credentials
         return {"repo_id": "repo-x", "results": [_ingest_result(record)]}
 
     monkeypatch.setattr(cli_module._served, "batch_apply", fake_batch_apply)
@@ -192,7 +169,6 @@ def test_served_authority_sync_flushes_observation_only_batch(runner, tmp_path, 
 
     assert len(captured["records"]) == 1
     assert captured["records"][0]["event_id"] == record.event_id
-    assert captured["transient_credentials"] == {}
     expected_key = cli_module._application.batch_idempotency_key([record])
     assert captured["idempotency_key"] == expected_key
 
@@ -355,109 +331,6 @@ def test_authority_rollover_archives_only_a_fully_terminal_stream(runner, tmp_pa
 
 
 # ---------------------------------------------------------------------------
-# Mixed observation + command batch
-# ---------------------------------------------------------------------------
-
-
-@_requires_312
-def test_served_authority_sync_mixed_batch_with_available_credential(
-    runner, tmp_path, monkeypatch
-):
-    _configure_served_repo(tmp_path, monkeypatch)
-    observation = _append_observation(tmp_path)
-    secret = "claim-release-secret"
-    ref = cli_module._authority.credential_ref(secret)
-    command = _mint_command(
-        tmp_path,
-        record_type="claim.release",
-        refs=_claim_refs(5),
-        payload={"claim_id": 5, "credential_ref": ref},
-    )
-    _store_sidecar(tmp_path, event_id=command.event_id, credentials={ref: secret})
-
-    captured = {}
-
-    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key, transient_credentials=None):
-        captured["records"] = records
-        captured["transient_credentials"] = transient_credentials
-        return {
-            "repo_id": "repo-x",
-            "results": [
-                _ingest_result(observation),
-                _decision_result(command, effect={"claim_id": 5, "released": True}),
-            ],
-        }
-
-    monkeypatch.setattr(cli_module._served, "batch_apply", fake_batch_apply)
-
-    result = runner.invoke(cli, ["authority", "sync", "--json"])
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
-    assert payload["uploaded_observation_count"] == 1
-    assert len(payload["decisions"]) == 1
-    assert payload["decisions"][0]["outcome"] == "accepted"
-    assert payload["pending_command_event_ids"] == []
-    assert payload["unsupported_command_event_ids"] == []
-
-    assert len(captured["records"]) == 2
-    assert captured["transient_credentials"] == {ref: secret}
-
-    # Accepted claim.release is not a keep_for_recovery type: sidecar cleared.
-    assert list(_credential_dir(tmp_path).glob("*")) == []
-
-
-# ---------------------------------------------------------------------------
-# Stop-at-first-gap semantics
-# ---------------------------------------------------------------------------
-
-
-@_requires_312
-def test_served_authority_sync_stops_at_first_credential_gap(runner, tmp_path, monkeypatch):
-    _configure_served_repo(tmp_path, monkeypatch)
-    observation_before = _append_observation(tmp_path, payload={"text": "before gap"})
-    secret = "missing-secret"
-    ref = cli_module._authority.credential_ref(secret)
-    blocked_command = _mint_command(
-        tmp_path,
-        record_type="claim.release",
-        refs=_claim_refs(6),
-        payload={"claim_id": 6, "credential_ref": ref},
-    )
-    # No sidecar stored for blocked_command -- this is the gap.
-    second_command = _mint_command(
-        tmp_path,
-        record_type="item.transition",
-        refs=_item_refs(9),
-        payload={"to_status": "active"},
-    )
-    # An observation appended after the gap must also not be uploaded.
-    _append_observation(tmp_path, payload={"text": "after gap"})
-
-    captured = {}
-
-    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key, transient_credentials=None):
-        captured["records"] = records
-        return {"repo_id": "repo-x", "results": [_ingest_result(observation_before)]}
-
-    monkeypatch.setattr(cli_module._served, "batch_apply", fake_batch_apply)
-
-    result = runner.invoke(cli, ["authority", "sync", "--json"])
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
-    assert payload["uploaded_observation_count"] == 1
-    assert payload["decisions"] == []
-    assert set(payload["pending_command_event_ids"]) == {
-        blocked_command.event_id,
-        second_command.event_id,
-    }
-    assert payload["unsupported_command_event_ids"] == []
-
-    # Only the pre-gap observation was ever sent to the server.
-    assert len(captured["records"]) == 1
-    assert captured["records"][0]["event_id"] == observation_before.event_id
-
-
-# ---------------------------------------------------------------------------
 # capability-receipt.accept routed to "unsupported"
 # ---------------------------------------------------------------------------
 
@@ -494,7 +367,7 @@ def test_served_authority_sync_routes_capability_receipt_accept_to_unsupported(
 
     captured = {}
 
-    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key, transient_credentials=None):
+    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key):
         captured["records"] = records
         return {
             "repo_id": "repo-x",
@@ -550,170 +423,6 @@ def test_served_authority_sync_text_output_reports_unsupported(runner, tmp_path,
     assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in result.output
 
 
-# ---------------------------------------------------------------------------
-# keep_for_recovery sidecar retention
-# ---------------------------------------------------------------------------
-
-
-@_requires_312
-def test_served_authority_sync_keeps_sidecar_for_accepted_claim_acquire(
-    runner, tmp_path, monkeypatch
-):
-    _configure_served_repo(tmp_path, monkeypatch)
-    secret = "claim-acquire-secret"
-    ref = cli_module._authority.credential_ref(secret)
-    command = _mint_command(
-        tmp_path,
-        record_type="claim.acquire",
-        refs=_item_refs(4),
-        payload={
-            "agent": "worker",
-            "claim_type": "execute",
-            "exclusive": True,
-            "ttl_seconds": 600,
-            "credential_ref": ref,
-            "metadata": {},
-        },
-    )
-    _store_sidecar(tmp_path, event_id=command.event_id, credentials={ref: secret})
-
-    monkeypatch.setattr(
-        cli_module._served,
-        "batch_apply",
-        lambda *a, **k: {"repo_id": "repo-x", "results": [_decision_result(command)]},
-    )
-
-    result = runner.invoke(cli, ["authority", "sync"])
-    assert result.exit_code == 0, result.output
-
-    sidecars = list(_credential_dir(tmp_path).glob("*"))
-    assert len(sidecars) == 1
-
-
-@_requires_312
-def test_served_authority_sync_keeps_sidecar_for_accepted_claim_handoff_rotate(
-    runner, tmp_path, monkeypatch
-):
-    _configure_served_repo(tmp_path, monkeypatch)
-    old_secret = "old-secret"
-    new_secret = "new-secret"
-    old_ref = cli_module._authority.credential_ref(old_secret)
-    new_ref = cli_module._authority.credential_ref(new_secret)
-    command = _mint_command(
-        tmp_path,
-        record_type="claim.handoff",
-        refs=_claim_refs(7),
-        payload={
-            "claim_id": 7,
-            "to_actor": "recipient",
-            "mode": "rotate",
-            "ttl_seconds": 600,
-            "credential_ref": old_ref,
-            "proposed_credential_ref": new_ref,
-            "metadata": {},
-        },
-    )
-    _store_sidecar(
-        tmp_path,
-        event_id=command.event_id,
-        credentials={old_ref: old_secret, new_ref: new_secret},
-        recovery_credential_ref=new_ref,
-    )
-
-    monkeypatch.setattr(
-        cli_module._served,
-        "batch_apply",
-        lambda *a, **k: {"repo_id": "repo-x", "results": [_decision_result(command)]},
-    )
-
-    result = runner.invoke(cli, ["authority", "sync"])
-    assert result.exit_code == 0, result.output
-
-    sidecars = list(_credential_dir(tmp_path).glob("*"))
-    assert len(sidecars) == 1
-
-
-@_requires_312
-def test_served_authority_sync_clears_sidecar_for_accepted_claim_handoff_transfer(
-    runner, tmp_path, monkeypatch
-):
-    _configure_served_repo(tmp_path, monkeypatch)
-    secret = "shared-secret"
-    ref = cli_module._authority.credential_ref(secret)
-    command = _mint_command(
-        tmp_path,
-        record_type="claim.handoff",
-        refs=_claim_refs(8),
-        payload={
-            "claim_id": 8,
-            "to_actor": "recipient",
-            "mode": "transfer",
-            "ttl_seconds": 600,
-            "credential_ref": ref,
-            "metadata": {},
-        },
-    )
-    _store_sidecar(tmp_path, event_id=command.event_id, credentials={ref: secret})
-
-    monkeypatch.setattr(
-        cli_module._served,
-        "batch_apply",
-        lambda *a, **k: {"repo_id": "repo-x", "results": [_decision_result(command)]},
-    )
-
-    result = runner.invoke(cli, ["authority", "sync"])
-    assert result.exit_code == 0, result.output
-
-    assert list(_credential_dir(tmp_path).glob("*")) == []
-
-
-@_requires_312
-def test_served_authority_sync_clears_sidecar_on_rejected_decision(
-    runner, tmp_path, monkeypatch
-):
-    _configure_served_repo(tmp_path, monkeypatch)
-    secret = "claim-acquire-secret"
-    ref = cli_module._authority.credential_ref(secret)
-    command = _mint_command(
-        tmp_path,
-        record_type="claim.acquire",
-        refs=_item_refs(4),
-        payload={
-            "agent": "worker",
-            "claim_type": "execute",
-            "exclusive": True,
-            "ttl_seconds": 600,
-            "credential_ref": ref,
-            "metadata": {},
-        },
-    )
-    _store_sidecar(tmp_path, event_id=command.event_id, credentials={ref: secret})
-
-    monkeypatch.setattr(
-        cli_module._served,
-        "batch_apply",
-        lambda *a, **k: {
-            "repo_id": "repo-x",
-            "results": [
-                _decision_result(
-                    command,
-                    outcome="rejected",
-                    reason_code="invalid-claim-proof",
-                    reason_detail="claim proof is invalid",
-                )
-            ],
-        },
-    )
-
-    result = runner.invoke(cli, ["authority", "sync"])
-    assert result.exit_code == 0, result.output
-    # Even a would-be-recovery-eligible type is cleared once rejected.
-    assert list(_credential_dir(tmp_path).glob("*")) == []
-    assert cli_module._authority_config.is_terminal_authority_decision(
-        _rollout_paths(tmp_path), event_id=command.event_id
-    )
-
-
 @_requires_312
 def test_served_authority_sync_skips_a_terminal_rejection_and_replays_followup(
     runner, tmp_path, monkeypatch
@@ -737,7 +446,7 @@ def test_served_authority_sync_skips_a_terminal_rejection_and_replays_followup(
     )
     captured = {}
 
-    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key, transient_credentials=None):
+    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key):
         captured["event_ids"] = [record["event_id"] for record in records]
         return {"repo_id": "repo-x", "results": [_decision_result(followup)]}
 
@@ -767,7 +476,7 @@ def test_served_authority_sync_splits_batches_by_batch_size_with_separate_keys(
 
     calls = []
 
-    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key, transient_credentials=None):
+    def fake_batch_apply(profile, *, repo_id=None, records, idempotency_key):
         calls.append((list(records), idempotency_key))
         return {
             "repo_id": "repo-x",

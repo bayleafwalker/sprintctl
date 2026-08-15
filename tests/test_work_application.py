@@ -149,21 +149,6 @@ def _claim_record(
     )
 
 
-class _FakeTransientCredentialCarrier:
-    """Minimal ``TransientCredentialCarrier`` double for resolver unit tests.
-
-    Matches the ``reveal(key) -> str | None`` duck type documented on
-    :class:`application.TransientCredentialCarrier` without depending on
-    ``vuoro_service`` at all.
-    """
-
-    def __init__(self, bindings: dict[str, str]):
-        self._bindings = dict(bindings)
-
-    def reveal(self, key: str) -> str | None:
-        return self._bindings.get(key)
-
-
 class _AdminShutdown(RuntimeError):
     sqlstate = "57P01"
 
@@ -290,37 +275,13 @@ def test_admin_shutdown_factory_failure_is_not_ready_until_a_later_read_recovers
 
 def test_admin_shutdown_retry_requires_an_explicit_idempotency_key_for_writes():
     assert WorkApplication._can_retry_after_admin_shutdown(
-        "work.claim.arbitrate", _context(idempotency_key="event-1")
+        "work.lifecycle.arbitrate", _context(idempotency_key="event-1")
     )
     assert not WorkApplication._can_retry_after_admin_shutdown(
-        "work.claim.arbitrate", _context()
+        "work.lifecycle.arbitrate", _context()
     )
     assert not WorkApplication._can_retry_after_admin_shutdown(
         "work.item.edit", _context(idempotency_key="revision-1")
-    )
-
-
-def _fake_authority_command_record(inner_payload: dict) -> outbox.OutboxRecord:
-    """An ``authority-command``-classed record shaped only well enough for
-    :func:`application.make_transient_credential_resolver` -- it never
-    round-trips through ``record_from_dict``/canonical validation."""
-
-    return outbox.OutboxRecord(
-        origin_stream_id="00000000-0000-4000-8000-000000000001",
-        origin_seq=1,
-        event_id="00000000-0000-4000-8000-000000000099",
-        schema_version=1,
-        record_class=contracts.RecordClass.AUTHORITY_COMMAND.value,
-        event_type="claim.handoff",
-        actor="resolver-test",
-        runtime_session_id=None,
-        occurred_at="2026-07-23T00:00:00Z",
-        basis_revision="claim:1@sha256:" + "0" * 64,
-        correlation_id=None,
-        causation_id=None,
-        payload={"payload": inner_payload},
-        payload_sha256="0" * 64,
-        created_at="2026-07-23T00:00:00Z",
     )
 
 
@@ -375,10 +336,8 @@ def _application(
             results.append(_IngestResult(record, offset, duplicate))
         return results
 
-    def arbitrate(record, credentials, authenticated_actor=None):
-        calls.append(
-            (repo_id, "arbitrate", record.event_id, dict(credentials), authenticated_actor)
-        )
+    def arbitrate(record, authenticated_actor=None):
+        calls.append((repo_id, "arbitrate", record.event_id, authenticated_actor))
         duplicate = record.event_id in decided
         decided.add(record.event_id)
         return _Decision(record, duplicate)
@@ -412,8 +371,10 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         "work.handoff.record",
         "work.item.create",
         "work.item.edit",
-        "work.claim.start",
-        "work.claim.arbitrate",
+        "work.reservation.reserve",
+        "work.reservation.touch",
+        "work.reservation.reassign",
+        "work.reservation.release",
         "work.lifecycle.arbitrate",
         "work.evidence.ingest",
         "work.batch.apply",
@@ -426,7 +387,6 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         "work.maintenance.transition",
         "work.maintenance.recovery-record",
         "work.maintenance.resource.prepare",
-        "work.pilot.cutover-evidence",
     } <= set(names)
     assert {row["operation"] for row in LEGACY_REMOTE_COMMAND_PARITY} <= set(names)
     for contract in WORK_OPERATION_CONTRACTS:
@@ -440,7 +400,6 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         if contract.idempotency == "required"
     }
     assert required_idempotency == {
-        "work.claim.arbitrate",
         "work.lifecycle.arbitrate",
         "work.evidence.ingest",
         "work.batch.apply",
@@ -448,8 +407,12 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         "work.maintenance.prepare",
         "work.maintenance.transition",
         "work.maintenance.recovery-record",
-        "work.maintenance.resource.prepare",
-    }
+            "work.maintenance.resource.prepare",
+            "work.reservation.reserve",
+            "work.reservation.touch",
+            "work.reservation.reassign",
+            "work.reservation.release",
+        }
 
 
 def test_preexisting_maintenance_descriptors_remain_byte_identical():
@@ -500,12 +463,12 @@ def test_served_handoff_uses_shared_bundle_and_authenticated_append_only_record(
     assert first["event_id"] != second["event_id"]
     events = [event for event in db.list_events(conn, active_sprint["id"]) if event["event_type"] == "handoff-generated"]
     assert [event["actor"] for event in events] == ["authenticated-agent", "authenticated-agent"]
-    claim_start = next(
+    reservation_reserve = next(
         contract
         for contract in WORK_OPERATION_CONTRACTS
-        if contract.name == "work.claim.start"
+        if contract.name == "work.reservation.reserve"
     )
-    assert claim_start.idempotency == "not-allowed"
+    assert reservation_reserve.idempotency == "required"
 
 
 def test_work_read_context_returns_the_exact_frozen_v1_contract(conn, active_sprint):
@@ -514,8 +477,8 @@ def test_work_read_context_returns_the_exact_frozen_v1_contract(conn, active_spr
     app = _application(store=conn, backend=db)
     result = app.invoke("work.read.context", {"sprint_id": active_sprint["id"]}, _context())
     assert list(result) == [
-        "contract_version", "sprint", "summary", "active_claims",
-        "active_unclaimed_items", "conflicts", "ready_items", "blocked_items",
+        "contract_version", "sprint", "summary", "active_reservations",
+        "active_unreserved_items", "conflicts", "ready_items", "blocked_items",
         "stale_items", "recent_decisions", "next_action",
     ]
     assert result["contract_version"] == "1"
@@ -524,7 +487,7 @@ def test_work_read_context_returns_the_exact_frozen_v1_contract(conn, active_spr
     assert result["next_action"]["kind"] == "start-ready-item"
 
 
-def test_work_read_context_candidates_returns_claim_eligible_explicit_target(
+def test_work_read_context_candidates_returns_reservation_admissible_explicit_target(
     conn, active_sprint
 ):
     track = db.get_or_create_track(conn, active_sprint["id"], "served")
@@ -542,7 +505,7 @@ def test_work_read_context_candidates_returns_claim_eligible_explicit_target(
     assert result["explicit_target"] == {"item_id": target, "found": True}
     candidate = next(row for row in result["candidates"] if row["item_id"] == target)
     assert candidate["rank"] == 1
-    assert candidate["claim_eligible"] is True
+    assert candidate["reservation_admissible"] is True
     assert result["projection"]["fallback_reason"] == "served-authority"
 
 
@@ -558,7 +521,7 @@ def test_served_maintain_check_uses_the_owning_readonly_diagnostic(conn, active_
     assert result["sprint"]["id"] == active_sprint["id"]
     assert result["threshold_hours"] > 0
     assert result["pending_threshold_hours"] is None
-    assert "active-item-without-live-claim" in {
+    assert "active-item-without-reservation" in {
         finding["reason_code"] for finding in result["findings"]
     }
 
@@ -607,6 +570,9 @@ def test_work_item_edit_contract_requires_revision_and_is_repo_scoped_write():
         "item_id",
         "description",
         "expected_revision",
+        # Optional and never authorizing: it only lets the reservation ledger
+        # attribute a successful edit to the caller's own session.
+        "session_id",
     }
 
 
@@ -756,30 +722,13 @@ def test_served_item_links_and_claim_reads_use_backend_contracts(conn, active_sp
     app.invoke("work.item.dep.remove", {"item_id": blocker, "dep_id": dep["dep_id"]}, _context())
 
 
-def test_served_claim_resume_filters_identity_on_server(conn, active_sprint):
-    track = db.get_or_create_track(conn, active_sprint["id"], "served")
-    item_id = db.create_work_item(conn, active_sprint["id"], track, "Resume")
-    db.create_claim(conn, item_id, "agent", instance_id="instance-a", runtime_session_id="run-a", hostname="host", pid=7)
-    other_sprint = db.create_sprint(conn, "other", status="planned")
-    other_track = db.get_or_create_track(conn, other_sprint, "served")
-    other_item = db.create_work_item(conn, other_sprint, other_track, "Other")
-    mismatch_item = db.create_work_item(conn, other_sprint, other_track, "Mismatch")
-    db.create_claim(conn, other_item, "agent", instance_id="instance-a", runtime_session_id="run-a", hostname="host", pid=7)
-    db.create_claim(conn, mismatch_item, "agent", instance_id="instance-a", runtime_session_id="different", hostname="host", pid=7)
-    app = _application(store=conn, backend=db)
-    result = app.invoke("work.read.claims", {"item_id": None, "sprint_id": None, "active_only": True, "instance_id": "instance-a", "runtime_session_id": "run-a", "hostname": "host", "pid": 7}, _context())
-    assert {claim["work_item_id"] for claim in result["claims"]} == {item_id, other_item}
-    assert all(claim["runtime_session_id"] == "run-a" for claim in result["claims"])
-    assert app.invoke("work.read.claims", {"item_id": item_id, "active_only": True, "instance_id": "other", "runtime_session_id": None, "hostname": None, "pid": None}, _context())["claims"] == []
-
-
-def test_served_claim_show_never_returns_bearer_token(conn, active_sprint):
+def test_served_reservation_show_is_credential_free(conn, active_sprint):
     track = db.get_or_create_track(conn, active_sprint["id"], "served")
     item_id = db.create_work_item(conn, active_sprint["id"], track, "Inspect")
-    claim_id = db.create_claim(conn, item_id, "agent")
-    result = _application(store=conn, backend=db).invoke("work.read.claim", {"claim_id": claim_id}, _context())
-    assert result["claim"]["claim_id"] == claim_id
-    assert "claim_token" not in result["claim"]
+    reservation = db.reserve(conn, item_id, actor="agent", session_id="session-a")
+    result = _application(store=conn, backend=db).invoke("work.read.reservation", {"reservation_id": reservation["id"]}, _context())
+    assert result["reservation"]["id"] == reservation["id"]
+    assert "claim_token" not in result["reservation"]
 
 
 def test_read_events_returns_sprint_events_in_order(conn, active_sprint):
@@ -957,6 +906,18 @@ def test_click_next_work_and_application_handler_share_backend_semantics(
     assert [item["title"] for item in project_payload["ready_items"]] == [
         "Not direct next-work"
     ]
+    assert project_payload["graph_ready"] is True
+    assert project_payload["dispatch_admissible"] == "admissible"
+    assert project_payload["dispatch_reason"] == "ready-items-available"
+
+    explained = project.invoke(
+        "work.project.next-work-explain", {}, _context(repo_ids=frozenset({"test-repo"}))
+    )
+    assert explained["explanation"] == {
+        "canonical_member_order": ["test-repo"],
+        "authorization_checked_before_member_reads": True,
+        "unavailable_members": [],
+    }
 
     project_items = project.invoke(
         "work.project.items",
@@ -982,7 +943,7 @@ def test_next_work_explain_is_one_application_aggregate(conn, active_sprint):
         "work.read.next-work-explain", {"sprint_id": active_sprint["id"]}, _context()
     )
 
-    assert payload["contract_version"] == "1"
+    assert payload["contract_version"] == "2"
     assert [item["id"] for item in payload["ready_items"]] == [ready_id, blocker_id]
     assert payload["dependency_waiting_items"][0]["id"] == waiting_id
     assert payload["next_action"]["kind"] == "unblock-dependent-work"
@@ -1044,192 +1005,134 @@ def test_authority_handlers_enforce_actor_basis_and_idempotency_before_backend()
     assert retried == {**accepted, "duplicate": True}
 
 
-@pytest.mark.parametrize(
-    ("record", "expected_code"),
-    [
-        (
-            _claim_record(
-                sequence=10,
-                command_actor="nested-actor",
-                claim_agent="nested-actor",
-                outer_actor="served-test",
-            ),
-            "actor-mismatch",
-        ),
-        (
-            _claim_record(
-                sequence=11,
-                command_actor="served-test",
-                claim_agent="different-agent",
-            ),
-            "claim-agent-mismatch",
-        ),
-    ],
-)
-def test_authority_actor_binding_rejects_single_command_before_backend(record, expected_code):
+def test_reservation_actor_binding_rejects_before_backend(conn, active_sprint):
     calls = []
-    app = _application(calls=calls)
-    arguments = {"record": record_to_dict(record)}
-    key = record.event_id
+    track = db.get_or_create_track(conn, active_sprint["id"], "reservation-actor")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Reserved")
+    app = _application(store=conn, backend=db, calls=calls)
 
     with pytest.raises(ApplicationRejection) as rejected:
         app.invoke(
-            "work.claim.arbitrate",
-            arguments,
-            _context(basis_revision=record.basis_revision, idempotency_key=key),
+            "work.reservation.reserve",
+            {"item_id": item_id, "actor": "different-agent", "session_id": "session-1"},
+            _context(actor="served-test"),
         )
 
-    assert rejected.value.code == expected_code
+    assert rejected.value.code == "actor-mismatch"
     assert calls == []
 
-
-@pytest.mark.parametrize(
-    "record",
-    [
-        _claim_record(
-            sequence=10,
-            command_actor="nested-actor",
-            claim_agent="nested-actor",
-            outer_actor="served-test",
-        ),
-        _claim_record(
-            sequence=11,
-            command_actor="served-test",
-            claim_agent="different-agent",
-        ),
-    ],
-)
-def test_batch_routes_actor_mismatches_to_authority_for_durable_rejection(record):
-    calls = []
-    app = _application(calls=calls)
-
-    result = app.invoke(
-        "work.batch.apply",
-        {"records": [record_to_dict(record)]},
-        _context(idempotency_key=batch_idempotency_key([record])),
-    )
-
-    assert result["results"][0]["event_id"] == record.event_id
-    assert calls == [
-        ("test-repo", "arbitrate", record.event_id, {}, "served-test")
-    ]
-
-
-def test_click_free_claim_start_matches_cli_state_flow(conn, runner, active_sprint):
-    track = db.get_or_create_track(conn, active_sprint["id"], "claim-start")
+def test_click_free_reservation_reserve_matches_cli_state_flow(conn, runner, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "reservation-reserve")
     app_item = db.create_work_item(conn, active_sprint["id"], track, "Application")
     cli_item = db.create_work_item(conn, active_sprint["id"], track, "CLI")
     app = _application(store=conn, backend=db)
     shared = {
-        "ttl_seconds": 900,
-        "runtime_session_id": "thread-1",
-        "instance_id": "process-1",
-        "branch": "feat/served",
-        "hostname": "test-host",
-        "pid": 4242,
+        "actor": "worker",
+        "session_id": "thread-1",
+        "correlation_ref": "actionq:job-1",
     }
 
     served = app.invoke(
-        "work.claim.start", {"item_id": app_item, **shared}, _context(actor="worker")
+        "work.reservation.reserve", {"item_id": app_item, **shared}, _context(actor="worker")
     )
     cli_result = runner.invoke(
         cli,
         [
-            "claim",
-            "start",
+            "reservation",
+            "reserve",
             "--item-id",
             str(cli_item),
             "--actor",
             "worker",
-            "--ttl",
-            "900",
-            "--runtime-session-id",
+            "--session-id",
             "thread-1",
-            "--instance-id",
-            "process-1",
-            "--branch",
-            "feat/served",
-            "--hostname",
-            "test-host",
-            "--pid",
-            "4242",
+            "--correlation-ref",
+            "actionq:job-1",
             "--json",
         ],
     )
 
     assert cli_result.exit_code == 0, cli_result.output
-    legacy = json.loads(cli_result.output)
-    for result in (served, legacy):
-        assert result["operation"] == "claim_start"
-        assert result["item_status_before"] == "pending"
-        assert result["item_status_after"] == "active"
-        assert result["status_transition_applied"] is True
-        assert result["claim_token"] == result["claim"]["claim_token"]
-        assert result["claim"]["agent"] == "worker"
-        assert result["claim"]["claim_type"] == "execute"
-        assert result["claim"]["exclusive"] in (1, True)
-        assert result["claim"]["runtime_session_id"] == "thread-1"
-        assert result["claim"]["instance_id"] == "process-1"
-        assert result["claim"]["branch"] == "feat/served"
-        assert result["claim"]["hostname"] == "test-host"
-        assert result["claim"]["pid"] == 4242
+    local = json.loads(cli_result.output)
+    for result in (served, local):
+        reservation = result["reservation"] if "reservation" in result else result
+        assert reservation["actor"] == "worker"
+        assert reservation["session_id"] == "thread-1"
+        assert reservation["correlation_ref"] == "actionq:job-1"
 
-    failing_item = db.create_work_item(conn, active_sprint["id"], track, "Rollback")
-    db.set_work_item_status(conn, failing_item, "active", actor="seed")
-    db.set_work_item_status(conn, failing_item, "done", actor="seed")
-    with pytest.raises(ApplicationRejection) as failed:
-        app.invoke(
-            "work.claim.start", {"item_id": failing_item}, _context(actor="worker")
-        )
-    assert failed.value.code == "claim-start-transition-failed"
-    assert db.list_claims(conn, failing_item, active_only=False) == []
+def test_second_reservation_coexists_and_is_reported_as_a_conflict(conn, active_sprint):
+    """The default is coexistence: the ledger records both and says so.
+
+    Refusing the second session would not stop it working -- it would only
+    stop it being visible -- so a conflict is surfaced, not enforced.
+    """
+    track = db.get_or_create_track(conn, active_sprint["id"], "reservation-overlap")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Shared")
+    app = _application(store=conn, backend=db)
+
+    first = app.invoke(
+        "work.reservation.reserve",
+        {"item_id": item_id, "actor": "first-owner", "session_id": "session-1"},
+        _context(actor="first-owner"),
+    )
+    second = app.invoke(
+        "work.reservation.reserve",
+        {"item_id": item_id, "actor": "second-owner", "session_id": "session-2"},
+        _context(actor="second-owner"),
+    )
+
+    assert first["reservation"]["conflict"] is False
+    assert second["reservation"]["conflict"] is True
+    assert second["reservation"]["conflict_severity"] == "warning"
+    assert [row["id"] for row in second["reservation"]["conflicting_reservations"]] == [
+        first["reservation"]["id"]
+    ]
+    assert {row["state"] for row in db.list_reservations(conn, item_id, active_only=False)} == {"active"}
 
 
-def test_claim_start_reacquires_after_backend_expiry_and_retains_epoch_history(
-    conn, active_sprint
-):
-    track = db.get_or_create_track(conn, active_sprint["id"], "claim-expiry")
+def test_verification_beside_execution_is_an_informational_overlap(conn, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "reservation-roles")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Reviewed")
+    app = _application(store=conn, backend=db)
+
+    app.invoke(
+        "work.reservation.reserve",
+        {"item_id": item_id, "actor": "first-owner", "session_id": "session-1"},
+        _context(actor="first-owner"),
+    )
+    reviewer = app.invoke(
+        "work.reservation.reserve",
+        {"item_id": item_id, "actor": "second-owner", "session_id": "session-2", "role": "verification"},
+        _context(actor="second-owner"),
+    )
+
+    assert reviewer["reservation"]["conflict"] is True
+    assert reviewer["reservation"]["conflict_severity"] == "informational"
+
+
+def test_interrupt_existing_is_a_deliberate_takeover(conn, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "reservation-takeover")
     item_id = db.create_work_item(conn, active_sprint["id"], track, "Reacquire")
     app = _application(store=conn, backend=db)
 
     first = app.invoke(
-        "work.claim.start",
-        {"item_id": item_id, "ttl_seconds": 300},
+        "work.reservation.reserve",
+        {"item_id": item_id, "actor": "first-owner", "session_id": "session-1"},
         _context(actor="first-owner"),
     )
-    conn.execute(
-        "UPDATE claim SET expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', "
-        "'now', '-1 second') WHERE id = ?",
-        (first["claim"]["claim_id"],),
-    )
-    conn.commit()
-
-    assert app.invoke(
-        "work.read.item", {"item_id": item_id}, _context()
-    )["active_claims"] == []
-    assert db.list_claims(conn, item_id) == []
-
     second = app.invoke(
-        "work.claim.start",
-        {"item_id": item_id, "ttl_seconds": 300},
+        "work.reservation.reserve",
+        {"item_id": item_id, "actor": "replacement-owner", "session_id": "session-2",
+         "interrupt_existing": True},
         _context(actor="replacement-owner"),
     )
-    history = db.list_claims(conn, item_id, active_only=False)
-
-    assert second["item_status_before"] == "active"
-    assert second["status_transition_applied"] is False
-    assert [claim["status"] for claim in history] == ["expired", "active"]
-    assert [claim["lease_epoch"] for claim in history] == [1, 2]
-    assert [claim["claim_id"] for claim in db.list_claims(conn, item_id)] == [
-        second["claim"]["claim_id"]
-    ]
-    with pytest.raises(ValueError, match="expired"):
-        db.heartbeat_claim(
-            conn,
-            first["claim"]["claim_id"],
-            first["claim_token"],
-            actor="first-owner",
-        )
+    history = db.list_reservations(conn, item_id, active_only=False)
+    assert [reservation["state"] for reservation in history] == ["active", "interrupted"]
+    assert second["reservation"]["id"] == history[0]["id"]
+    assert second["reservation"]["conflict"] is False
+    assert db.get_reservation(conn, first["reservation"]["id"])["interruption_reason"] == (
+        "interrupted by replacement-owner (session-2)"
+    )
 
 
 def test_item_note_records_an_event_bound_to_the_authenticated_actor_not_arguments(
@@ -1286,7 +1189,7 @@ def test_item_edit_is_cas_protected_and_appends_authenticated_audit(conn, active
     )
     db.add_ref(conn, item_id, "doc", "docs/edit-contract.md", "edit-contract")
     db.add_dep(conn, blocker_id, item_id)
-    db.create_claim(conn, item_id, "claim-owner", claim_type="inspect", exclusive=False)
+    db.reserve(conn, item_id, actor="reservation-owner", session_id="session-edit", role="inspect")
     app = _application(store=conn, backend=db)
     before = app.invoke("work.read.item", {"item_id": item_id}, _context())
     revision = before["item"]["edit_revision"]
@@ -1314,7 +1217,7 @@ def test_item_edit_is_cas_protected_and_appends_authenticated_audit(conn, active
     assert after["item"]["edit_revision"] == edited["revision"]
     assert after["item"]["title"] == before["item"]["title"]
     assert after["item"]["status"] == before["item"]["status"]
-    assert after["active_claims"] == before["active_claims"]
+    assert after["active_reservations"] == before["active_reservations"]
     assert after["refs"] == before["refs"]
     assert after["deps"] == before["deps"]
     assert prior_event_ids == [
@@ -1468,7 +1371,7 @@ def test_batch_is_content_bound_idempotent_and_preserves_producer_order():
 
     expected_calls = [
         ("test-repo", "ingest", [records[0].event_id]),
-        ("test-repo", "arbitrate", records[1].event_id, {}, "served-test"),
+        ("test-repo", "arbitrate", records[1].event_id, "served-test"),
         ("test-repo", "ingest", [records[2].event_id]),
     ]
     assert calls[:3] == expected_calls
@@ -1662,11 +1565,12 @@ def test_project_batch_validates_all_actor_bindings_before_any_member_mutation()
         sequence=20,
         record_class=contracts.RecordClass.OBSERVATION.value,
     )
-    impersonated = _claim_record(
+    impersonated = _record(
+        "item.transition",
         sequence=21,
-        command_actor="nested-actor",
-        claim_agent="nested-actor",
-        outer_actor="served-test",
+        record_class=contracts.RecordClass.AUTHORITY_COMMAND.value,
+        actor="nested-actor",
+        basis_revision="item:1:pending",
     )
     units = [("agentops", [observation]), ("sprintctl", [impersonated])]
     arguments = {
@@ -1690,159 +1594,44 @@ def test_project_batch_validates_all_actor_bindings_before_any_member_mutation()
     assert calls == []
 
 
-def test_cutover_evidence_handler_is_the_same_domain_core(monkeypatch, tmp_path):
-    expected = {
-        "contract_version": "1",
-        "config": {},
-        "parity": None,
-        "watermark": {},
-        "stale_tools": {},
-        "rollback_rehearsal": None,
-        "promotable": False,
-        "blockers": ["parity-not-evaluated"],
-    }
-    observed = {}
 
-    def build(**kwargs):
-        observed.update(kwargs)
-        return expected
-
-    monkeypatch.setattr(application.cutover, "build_cutover_evidence", build)
-    app = _application()
-    app.repo_root = tmp_path
-
-    assert (
-        app.invoke(
-            "work.pilot.cutover-evidence",
-            {"rehearse": False, "max_watermark_age_seconds": 90},
-            _context(),
-        )
-        == expected
-    )
-    assert observed == {
-        "cwd": tmp_path,
-        "repo_root": tmp_path,
-        "parity": None,
-        "max_watermark_age_seconds": 90,
-        "rehearse": False,
-    }
-
-
-def test_claim_context_catalog_contract_is_an_unauthenticated_read_op_shape():
+def test_reservation_read_catalog_contract_is_a_credential_free_read():
     contract = next(
         contract
         for contract in WORK_OPERATION_CONTRACTS
-        if contract.name == "work.claim.context"
+        if contract.name == "work.read.reservation"
     )
-    assert contract.required_authority == "work:claim"
+    assert contract.required_authority == "work:read"
     assert contract.execution_semantics == "read"
     assert contract.idempotency == "not-allowed"
-    assert contract.input_schema["required"] == ["claim_id"]
+    assert contract.input_schema["required"] == ["reservation_id"]
 
 
-def test_claim_context_returns_non_secret_snapshot_and_current_revision(
+def test_reservation_read_returns_credential_free_snapshot(
     conn, active_sprint
 ):
     track = db.get_or_create_track(conn, active_sprint["id"], "served")
-    item_id = db.create_work_item(conn, active_sprint["id"], track, "Context item")
-    claim_id = db.create_claim(conn, item_id, "claim-owner")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Reserved item")
+    reservation = db.reserve(conn, item_id, actor="reservation-owner", session_id="session-a")
 
     app = _application(store=conn, backend=db)
     result = app.invoke(
-        "work.claim.context",
-        {"claim_id": claim_id},
+        "work.read.reservation",
+        {"reservation_id": reservation["id"]},
         _context(actor="context-reader"),
     )
 
     assert result["repo_id"] == "test-repo"
-    assert result["authority_repo_uuid"] is None
-    assert result["actor"] == "context-reader"
-    assert result["claim"]["work_item_id"] == item_id
-    assert "claim_token" not in result["claim"]
-
-    secret_claim = db.get_claim(conn, claim_id, include_secret=True)
-    assert result["claim_revision"] == authority.claim_revision(secret_claim)
-    assert secret_claim["claim_token"] not in json.dumps(result)
+    assert result["reservation"]["work_item_id"] == item_id
+    assert result["reservation"]["actor"] == "reservation-owner"
+    assert "claim_token" not in json.dumps(result)
 
 
-def test_claim_context_missing_claim_rejects_without_backend_mutation(conn):
+def test_reservation_read_missing_row_rejects_without_backend_mutation(conn):
     app = _application(store=conn, backend=db)
 
     with pytest.raises(ApplicationRejection) as rejected:
-        app.invoke("work.claim.context", {"claim_id": 999}, _context())
+        app.invoke("work.read.reservation", {"reservation_id": 999}, _context())
 
-    assert rejected.value.code == "claim-not-found"
+    assert rejected.value.code == "reservation-not-found"
     assert rejected.value.http_status == 404
-
-
-def test_transient_credential_resolver_reveals_only_referenced_refs():
-    resolver = application.make_transient_credential_resolver()
-    referenced_ref = "sha256:" + "1" * 64
-    proposed_ref = "sha256:" + "2" * 64
-    unrelated_ref = "sha256:" + "3" * 64
-    carrier = _FakeTransientCredentialCarrier(
-        {
-            referenced_ref: "secret-one",
-            proposed_ref: "secret-two",
-            unrelated_ref: "secret-three",
-        }
-    )
-    context = SimpleNamespace(transient_credentials=carrier)
-    record = _fake_authority_command_record(
-        {
-            "credential_ref": referenced_ref,
-            "proposed_credential_ref": proposed_ref,
-        }
-    )
-
-    resolved = resolver(context, record)
-
-    assert resolved == {referenced_ref: "secret-one", proposed_ref: "secret-two"}
-
-
-def test_transient_credential_resolver_returns_none_without_a_carrier():
-    resolver = application.make_transient_credential_resolver()
-    record = _fake_authority_command_record({"credential_ref": "sha256:" + "1" * 64})
-
-    assert resolver(SimpleNamespace(transient_credentials=None), record) is None
-    # A context built before v2 existed (no attribute at all) behaves the same.
-    assert resolver(SimpleNamespace(), record) is None
-
-
-def test_transient_credential_resolver_skips_unresolvable_bindings():
-    resolver = application.make_transient_credential_resolver()
-    ref = "sha256:" + "4" * 64
-    context = SimpleNamespace(transient_credentials=_FakeTransientCredentialCarrier({}))
-    record = _fake_authority_command_record({"credential_ref": ref})
-
-    assert resolver(context, record) == {}
-
-
-def test_transient_credential_resolver_reads_the_flat_payload_for_observations():
-    """Only ``authority-command``-classed records nest their domain payload
-    one level down (``record.payload["payload"]``); an observation's own
-    payload already sits at the top level."""
-
-    resolver = application.make_transient_credential_resolver()
-    ref = "sha256:" + "5" * 64
-    carrier = _FakeTransientCredentialCarrier({ref: "secret"})
-    context = SimpleNamespace(transient_credentials=carrier)
-    observation = outbox.OutboxRecord(
-        origin_stream_id="00000000-0000-4000-8000-000000000001",
-        origin_seq=1,
-        event_id="00000000-0000-4000-8000-000000000098",
-        schema_version=1,
-        record_class=contracts.RecordClass.OBSERVATION.value,
-        event_type="event.observed",
-        actor="resolver-test",
-        runtime_session_id=None,
-        occurred_at="2026-07-23T00:00:00Z",
-        basis_revision=None,
-        correlation_id=None,
-        causation_id=None,
-        payload={"credential_ref": ref},
-        payload_sha256="0" * 64,
-        created_at="2026-07-23T00:00:00Z",
-    )
-
-    assert resolver(context, observation) == {ref: "secret"}

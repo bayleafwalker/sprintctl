@@ -151,13 +151,16 @@ def db_recover_from_remote(output_path: str, run_verify: bool) -> None:
             sys.exit(1)
         raise write_error
 
-    claims_closed = sum(1 for claim in snapshot.get("claim", []) if claim.get("status") == "active")
+    reservations_interrupted = sum(
+        1 for row in snapshot.get("reservation", []) if row.get("state") == "active"
+    )
     click.echo(f"Recovered repo '{config.repo_id}' to {dest}")
     for table, count in counts.items():
         click.echo(f"  {table}: {count}")
     click.echo(
-        f"  active claims closed: {claims_closed} (claim tokens are not carried over; "
-        "work must be reclaimed against the recovered authority)"
+        f"  active reservations interrupted: {reservations_interrupted} "
+        "(a recovered database is a new authority instance; work must be "
+        "re-reserved against it)"
     )
 
     if not run_verify:
@@ -172,24 +175,29 @@ def db_recover_from_remote(output_path: str, run_verify: bool) -> None:
     click.echo("")
     click.echo("Parity report (Postgres source vs recovered SQLite):")
     parity_ok = True
-    for table in ("sprint", "track", "work_item", "claim", "ref", "dep"):
+    for table in (
+        "sprint", "track", "work_item", "reservation",
+        "claim_history", "ref", "dep",
+    ):
         source_count = len(snapshot.get(table, []))
         destination_count = report["table_counts"].get(table, 0)
         status = "ok" if source_count == destination_count else "MISMATCH"
         if status != "ok":
             parity_ok = False
         click.echo(f"  {table}: source={source_count} recovered={destination_count} [{status}]")
-    # event count in the recovered DB includes one synthetic recovery.completed
-    # event per recovered sprint, on top of the recovered source events.
+    # Events now recover one-for-one: provenance is a single recovery_record
+    # row rather than one synthetic event per sprint appended to the log.
     source_events = len(snapshot.get("event", []))
-    expected_events = source_events + len(snapshot.get("sprint", []))
     destination_events = report["table_counts"].get("event", 0)
-    status = "ok" if expected_events == destination_events else "MISMATCH"
+    status = "ok" if source_events == destination_events else "MISMATCH"
     if status != "ok":
         parity_ok = False
     click.echo(
-        f"  event: source={source_events} (+{len(snapshot.get('sprint', []))} recovery.completed) "
-        f"recovered={destination_events} [{status}]"
+        f"  event: source={source_events} recovered={destination_events} [{status}]"
+    )
+    click.echo(
+        f"  recovery_record: +1 (this recovery; "
+        f"{report['table_counts'].get('recovery_record', 0)} total)"
     )
 
     click.echo("")
