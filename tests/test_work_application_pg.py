@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import threading
 import time
@@ -415,100 +414,6 @@ def test_maintenance_application_postgres_replay_and_repo_isolation(
     store_b.conn.close()
 
 
-def _renew_command(store, claim, token, event_id, *, metadata=None):
-    reference = authority.credential_ref(token)
-    payload = {
-        "claim_id": claim["id"],
-        "ttl_seconds": 900,
-        "credential_ref": reference,
-    }
-    if metadata is not None:
-        payload["metadata"] = metadata
-    command = contracts.AuthorityCommand(
-        event_id=event_id,
-        record_type="claim.renew",
-        schema_version="1",
-        actor=claim["agent"],
-        authored_at="2026-07-21T12:00:00Z",
-        refs={
-            "repo_id": store.authority_repo_uuid,
-            "aggregate_type": "claim",
-            "claim_id": claim["id"],
-        },
-        payload=payload,
-        basis_revision=authority.claim_revision(claim),
-    )
-    return command, {reference: token}
-
-
-def _release_command(store, claim, token, event_id):
-    reference = authority.credential_ref(token)
-    command = contracts.AuthorityCommand(
-        event_id=event_id,
-        record_type="claim.release",
-        schema_version="1",
-        actor=claim["agent"],
-        authored_at="2026-07-21T12:00:00Z",
-        refs={
-            "repo_id": store.authority_repo_uuid,
-            "aggregate_type": "claim",
-            "claim_id": claim["id"],
-        },
-        payload={
-            "claim_id": claim["id"],
-            "credential_ref": reference,
-        },
-        basis_revision=authority.claim_revision(claim),
-    )
-    return command, {reference: token}
-
-
-def _handoff_command(
-    store,
-    claim,
-    *,
-    actor,
-    to_actor,
-    token,
-    event_id,
-    mode="rotate",
-    proposed_token=None,
-    metadata=None,
-    note=None,
-):
-    reference = authority.credential_ref(token)
-    payload = {
-        "claim_id": claim["id"],
-        "to_actor": to_actor,
-        "mode": mode,
-        "ttl_seconds": 900,
-        "credential_ref": reference,
-        "metadata": metadata or {},
-    }
-    credentials = {reference: token}
-    if mode == "rotate":
-        proposed_reference = authority.credential_ref(proposed_token)
-        payload["proposed_credential_ref"] = proposed_reference
-        credentials[proposed_reference] = proposed_token
-    if note is not None:
-        payload["note"] = note
-    command = contracts.AuthorityCommand(
-        event_id=event_id,
-        record_type="claim.handoff",
-        schema_version="1",
-        actor=actor,
-        authored_at="2026-07-21T12:00:00Z",
-        refs={
-            "repo_id": store.authority_repo_uuid,
-            "aggregate_type": "claim",
-            "claim_id": claim["id"],
-        },
-        payload=payload,
-        basis_revision=authority.claim_revision(claim),
-    )
-    return command, credentials
-
-
 def test_item_note_records_an_event_bound_to_the_authenticated_actor(store_factory):
     store = store_factory("item-note")
     sprint_id = pg.create_sprint(store, "Notes", status="active")
@@ -773,90 +678,81 @@ def test_snapshot_uses_store_connection_factory_instead_of_redacted_dsn(monkeypa
     assert sibling.closed is True
 
 
-@pytest.mark.parametrize(
-    ("operation", "mismatch", "expected_code"),
-    [
-        ("work.claim.arbitrate", "nested-actor", "actor-mismatch"),
-        ("work.claim.arbitrate", "claim-agent", "claim-agent-mismatch"),
-        ("work.batch.apply", "nested-actor", "actor-mismatch"),
-        ("work.batch.apply", "claim-agent", "claim-agent-mismatch"),
-    ],
-)
-def test_authenticated_actor_binding_rejects_before_pg_mutation(
-    store_factory, tmp_path, operation, mismatch, expected_code
-):
-    store = store_factory(f"actor-binding-{operation}-{mismatch}")
+def _transition_command(store, item, actor, event_id, *, to_status="active"):
+    return contracts.AuthorityCommand(
+        event_id=event_id,
+        record_type="item.transition",
+        schema_version="1",
+        actor=actor,
+        authored_at="2026-08-15T12:00:00Z",
+        refs={
+            "repo_id": store.authority_repo_uuid,
+            "aggregate_type": "item",
+            "aggregate_uuid": item["aggregate_uuid"],
+        },
+        payload={"to_status": to_status},
+        basis_revision=authority.item_revision(item),
+    )
+
+
+def test_authenticated_actor_binding_rejects_before_pg_mutation(store_factory, tmp_path):
+    """A command whose nested actor is not the authenticated one never mutates.
+
+    Batch application deliberately lets authority commands reach arbitration
+    so the producer stream receives a durable rejection rather than a silent
+    drop. The retired claim path also carried a second, more granular
+    ``claim-agent-mismatch`` rejection for the payload's own ``agent`` field;
+    no surviving payload contract has an actor-bearing field, so
+    ``actor-mismatch`` is now the only binding this can violate.
+    """
+    store = store_factory("actor-binding")
     sprint_id = pg.create_sprint(store, "Actor binding", status="active")
     track_id = pg.get_or_create_track(store, sprint_id, "work")
-    item_id = pg.create_work_item(store, sprint_id, track_id, "Do not claim")
+    item_id = pg.create_work_item(store, sprint_id, track_id, "Do not transition")
     item = pg.get_work_item(store, item_id)
     authenticated_actor = "authenticated-worker"
-    command_actor = (
-        "nested-impersonator" if mismatch == "nested-actor" else authenticated_actor
-    )
-    claim_agent = "claim-impersonator" if mismatch == "claim-agent" else command_actor
-    command, credentials = _claim_command(
-        store,
-        item,
-        command_actor,
-        "actor-binding-proof",
-        str(uuid.uuid4()),
-        claim_agent=claim_agent,
-    )
-    record = _command_record(tmp_path / f"{operation}-{mismatch}-producer.db", command)
-    if mismatch == "nested-actor":
-        record = replace(record, actor=authenticated_actor)
 
-    if operation == "work.claim.arbitrate":
-        arguments = {"record": record_to_dict(record)}
-        key = record.event_id
-    else:
-        arguments = {"records": [record_to_dict(record)]}
-        key = batch_idempotency_key([record])
+    command = _transition_command(store, item, "nested-impersonator", str(uuid.uuid4()))
+    record = _command_record(tmp_path / "actor-binding-producer.db", command)
+    record = replace(record, actor=authenticated_actor)
+
+    key = batch_idempotency_key([record])
     context = _context(authenticated_actor, record.basis_revision, key)
+    result = _application(store).invoke(
+        "work.batch.apply", {"records": [record_to_dict(record)]}, context
+    )
 
-    if operation == "work.claim.arbitrate":
-        with pytest.raises(ApplicationRejection) as rejected:
-            _application(store, credentials).invoke(operation, arguments, context)
-        assert rejected.value.code == expected_code
-    else:
-        # Batch application deliberately lets authority commands reach
-        # arbitration so the producer stream receives a durable rejection.
-        result = _application(store, credentials).invoke(operation, arguments, context)
-        decision = result["results"][0]
-        # Authority binds every actor-bearing claim field as one durable
-        # actor-mismatch decision; the direct route preserves its more
-        # granular pre-backend claim-agent rejection.
-        assert decision["reason_code"] == "actor-mismatch"
-        assert decision["outcome"] == "rejected"
-    assert pg.list_claims(store, item_id, active_only=False) == []
+    decision = result["results"][0]
+    assert decision["reason_code"] == "actor-mismatch"
+    assert decision["outcome"] == "rejected"
+    assert pg.get_work_item(store, item_id)["status"] == "pending"
     decisions = authority.list_authority_decisions(store, after_offset=0, limit=None)
-    assert len(decisions) == (0 if operation == "work.claim.arbitrate" else 1)
+    assert len(decisions) == 1
     store.conn.close()
 
 
+def test_concurrent_served_reserves_admit_exactly_one_holder(store_factory, tmp_path):
+    """Two served sessions racing for the same item: one holds it, one is told.
 
-
-def test_concurrent_served_claims_have_one_durable_acceptance(store_factory, tmp_path):
-    primary = store_factory("served-claim")
-    sprint_id = pg.create_sprint(primary, "Served claims", status="active")
+    The retired claim path proved this through authority arbitration, where
+    the loser received a durable ``claim-conflict`` decision and the winner's
+    command could be replayed idempotently. Reservations are direct
+    operations with no durable decision ledger and no idempotency contract,
+    so the surviving property is narrower and stated as such: exactly one
+    active execute reservation exists afterwards, and the loser is rejected
+    rather than silently queued.
+    """
+    primary = store_factory("served-reserve")
+    sprint_id = pg.create_sprint(primary, "Served reservations", status="active")
     track_id = pg.get_or_create_track(primary, sprint_id, "work")
-    item_id = pg.create_work_item(primary, sprint_id, track_id, "Claim once")
-    item = pg.get_work_item(primary, item_id)
-
-    commands = []
-    for index, actor in enumerate(("served-a", "served-b"), start=1):
-        command, credentials = _claim_command(
-            primary, item, actor, f"proof-{actor}", str(uuid.uuid4())
-        )
-        record = _command_record(tmp_path / f"producer-{index}.db", command)
-        commands.append((actor, record, credentials))
+    item_id = pg.create_work_item(primary, sprint_id, track_id, "Reserve once")
 
     barrier = threading.Barrier(3)
     outcomes = []
+    rejections = []
     failures = []
 
-    def worker(actor, record, credentials):
+    def worker(actor):
         connection = psycopg.connect(_PG_URL, row_factory=dict_row)
         assert_disposable_connection(connection)
         store = pg.PgStore(
@@ -866,20 +762,27 @@ def test_concurrent_served_claims_have_one_durable_acceptance(store_factory, tmp
         )
         try:
             barrier.wait(timeout=15)
-            result = _application(store, credentials).invoke(
-                "work.claim.arbitrate",
-                {"record": record_to_dict(record)},
-                _context(actor, record.basis_revision, record.event_id),
+            outcomes.append(
+                _application(store).invoke(
+                    "work.reservation.reserve",
+                    {
+                        "item_id": item_id,
+                        "actor": actor,
+                        "session_id": f"session-{actor}",
+                    },
+                    _context(actor, None, str(uuid.uuid4())),
+                )
             )
-            outcomes.append(result)
+        except ApplicationRejection as exc:
+            rejections.append(exc)
         except BaseException as exc:
             failures.append(exc)
         finally:
             connection.close()
 
     threads = [
-        threading.Thread(target=worker, args=command, name=command[0])
-        for command in commands
+        threading.Thread(target=worker, args=(actor,), name=actor)
+        for actor in ("served-a", "served-b")
     ]
     for thread in threads:
         thread.start()
@@ -889,28 +792,10 @@ def test_concurrent_served_claims_have_one_durable_acceptance(store_factory, tmp
 
     assert not any(thread.is_alive() for thread in threads)
     assert not failures
-    assert sorted(result["outcome"] for result in outcomes) == ["accepted", "rejected"]
-    assert sorted(result["reason_code"] or "accepted" for result in outcomes) == [
-        "accepted",
-        "claim-conflict",
-    ]
-    assert len(pg.list_claims(primary, item_id)) == 1
-
-    accepted = next(result for result in outcomes if result["outcome"] == "accepted")
-    accepted_actor, accepted_record, accepted_credentials = next(
-        command
-        for command in commands
-        if command[1].event_id == accepted["request_event_id"]
-    )
-    retried = _application(primary, accepted_credentials).invoke(
-        "work.claim.arbitrate",
-        {"record": record_to_dict(accepted_record)},
-        _context(
-            accepted_actor, accepted_record.basis_revision, accepted_record.event_id
-        ),
-    )
-    assert retried == {**accepted, "duplicate": True}
-
+    assert len(outcomes) == 1
+    assert len(rejections) == 1
+    active = pg.list_reservations(primary, item_id, active_only=True)
+    assert [row["id"] for row in active] == [outcomes[0]["reservation"]["id"]]
     primary.conn.close()
 
 
@@ -952,343 +837,4 @@ def test_served_lifecycle_retry_and_stale_basis_are_durable(store_factory, tmp_p
     assert rejected["reason_code"] == "stale-basis"
     assert retried == {**rejected, "duplicate": True}
     assert pg.get_work_item(store, item_id)["status"] == "active"
-    store.conn.close()
-
-
-    sprint_id = pg.create_sprint(store, "Delegated transition", status="active")
-    track_id = pg.get_or_create_track(store, sprint_id, "work")
-    item_id = pg.create_work_item(store, sprint_id, track_id, "Activate me")
-    item = pg.get_work_item(store, item_id)
-    coordinate_id = pg.create_claim(
-        store, item_id, "coordinator", claim_type="coordinate", ttl_seconds=600
-    )
-    coordinate = pg.get_claim(store, coordinate_id, include_secret=True)
-    execute_id = pg.create_claim(
-        store, item_id, "worker", claim_type="execute", ttl_seconds=600,
-        coordinate_claim_id=coordinate_id,
-        coordinate_claim_token=coordinate["claim_token"],
-    )
-    execute = pg.get_claim(store, execute_id, include_secret=True)
-
-    def transition(claim, proof, label):
-        ref = authority.credential_ref(proof)
-        command = contracts.AuthorityCommand(
-            event_id=str(uuid.uuid4()), record_type="item.transition", schema_version="1",
-            actor="worker", authored_at="2026-08-02T12:00:00Z",
-            refs={
-                "repo_id": store.authority_repo_uuid, "aggregate_type": "item",
-                "aggregate_uuid": item["aggregate_uuid"], "aggregate_id": item_id,
-            },
-            payload={"to_status": "active", "claim_id": claim["claim_id"], "credential_ref": ref},
-            basis_revision=authority.item_revision(item),
-        )
-        record = _command_record(tmp_path / f"{label}.db", command)
-        return _application(store, {ref: proof}).invoke(
-            "work.lifecycle.arbitrate", {"record": record_to_dict(record)},
-            _context("worker", record.basis_revision, record.event_id),
-        )
-
-    rejected = transition(coordinate, coordinate["claim_token"], "coordinate")
-    assert rejected["outcome"] == "rejected"
-    assert rejected["reason_code"] == "invalid-claim-proof"
-    assert pg.get_work_item(store, item_id)["status"] == "pending"
-
-    accepted = transition(execute, execute["claim_token"], "execute")
-    assert accepted["outcome"] == "accepted"
-    assert accepted["effect"]["status"] == "active"
-    assert pg.get_work_item(store, item_id)["status"] == "active"
-    store.conn.close()
-
-
-
-
-def test_claim_renew_applies_metadata_with_legacy_heartbeat_semantics(
-    store_factory, tmp_path
-):
-    store = store_factory("claim-renew-metadata")
-    sprint_id = pg.create_sprint(store, "Claim renew", status="active")
-    track_id = pg.get_or_create_track(store, sprint_id, "work")
-    item_id = pg.create_work_item(store, sprint_id, track_id, "Renew item")
-    item = pg.get_work_item(store, item_id)
-
-    acquire, acquire_credentials = _claim_command(
-        store, item, "renew-actor", "renew-proof", str(uuid.uuid4())
-    )
-    acquire_record = _command_record(tmp_path / "renew-acquire.db", acquire)
-    app = _application(store, acquire_credentials)
-    accepted = app.invoke(
-        "work.claim.arbitrate",
-        {"record": record_to_dict(acquire_record)},
-        _context("renew-actor", acquire_record.basis_revision, acquire_record.event_id),
-    )
-    claim_id = accepted["effect"]["claim_id"]
-
-    # First renew: supply full metadata.
-    claim = pg.get_claim(store, claim_id, include_secret=True)
-    renew_one_command, renew_one_credentials = _renew_command(
-        store,
-        claim,
-        "renew-proof",
-        str(uuid.uuid4()),
-        metadata={
-            "runtime_session_id": "session-one",
-            "instance_id": "instance-one",
-            "branch": "feature/one",
-            "worktree_path": "/work/one",
-            "commit_sha": "a" * 40,
-            "pr_ref": "org/repo#1",
-            "hostname": "host-one",
-            "pid": 111,
-        },
-    )
-    renew_one = _command_record(tmp_path / "renew-one.db", renew_one_command)
-    app_one = _application(store, renew_one_credentials)
-    result_one = app_one.invoke(
-        "work.claim.arbitrate",
-        {"record": record_to_dict(renew_one)},
-        _context("renew-actor", renew_one.basis_revision, renew_one.event_id),
-    )
-    assert result_one["outcome"] == "accepted"
-    after_one = pg.get_claim(store, claim_id, include_secret=False)
-    assert after_one["runtime_session_id"] == "session-one"
-    assert after_one["instance_id"] == "instance-one"
-    assert after_one["branch"] == "feature/one"
-    assert after_one["worktree_path"] == "/work/one"
-    assert after_one["commit_sha"] == "a" * 40
-    assert after_one["pr_ref"] == "org/repo#1"
-    assert after_one["hostname"] == "host-one"
-    assert after_one["pid"] == 111
-
-    # Second renew: omit metadata entirely -- existing values must survive
-    # (the same COALESCE / "only apply non-null values" semantics legacy
-    # ``pg.heartbeat_claim`` uses).
-    claim = pg.get_claim(store, claim_id, include_secret=True)
-    renew_two_command, renew_two_credentials = _renew_command(
-        store, claim, "renew-proof", str(uuid.uuid4()), metadata=None
-    )
-    renew_two = _command_record(tmp_path / "renew-two.db", renew_two_command)
-    app_two = _application(store, renew_two_credentials)
-    result_two = app_two.invoke(
-        "work.claim.arbitrate",
-        {"record": record_to_dict(renew_two)},
-        _context("renew-actor", renew_two.basis_revision, renew_two.event_id),
-    )
-    assert result_two["outcome"] == "accepted"
-    after_two = pg.get_claim(store, claim_id, include_secret=False)
-    assert after_two["runtime_session_id"] == "session-one"
-    assert after_two["branch"] == "feature/one"
-    assert after_two["pid"] == 111
-
-    # Third renew: a partial metadata object overrides only the named field.
-    claim = pg.get_claim(store, claim_id, include_secret=True)
-    renew_three_command, renew_three_credentials = _renew_command(
-        store,
-        claim,
-        "renew-proof",
-        str(uuid.uuid4()),
-        metadata={"branch": "feature/two"},
-    )
-    renew_three = _command_record(tmp_path / "renew-three.db", renew_three_command)
-    app_three = _application(store, renew_three_credentials)
-    result_three = app_three.invoke(
-        "work.claim.arbitrate",
-        {"record": record_to_dict(renew_three)},
-        _context("renew-actor", renew_three.basis_revision, renew_three.event_id),
-    )
-    assert result_three["outcome"] == "accepted"
-    after_three = pg.get_claim(store, claim_id, include_secret=False)
-    assert after_three["branch"] == "feature/two"
-    assert after_three["runtime_session_id"] == "session-one"
-    assert after_three["pid"] == 111
-    store.conn.close()
-
-
-def test_expired_claim_release_accepts_valid_proof_and_rejects_wrong_proof(
-    store_factory, tmp_path
-):
-    store = store_factory("expired-claim-release")
-    sprint_id = pg.create_sprint(store, "Expired claim release", status="active")
-    track_id = pg.get_or_create_track(store, sprint_id, "work")
-    item_id = pg.create_work_item(store, sprint_id, track_id, "Release item")
-    item = pg.get_work_item(store, item_id)
-
-    acquire, acquire_credentials = _claim_command(
-        store, item, "release-owner", "release-proof", str(uuid.uuid4())
-    )
-    acquire_record = _command_record(tmp_path / "release-acquire.db", acquire)
-    acquired = _application(store, acquire_credentials).invoke(
-        "work.claim.arbitrate",
-        {"record": record_to_dict(acquire_record)},
-        _context(
-            "release-owner",
-            acquire_record.basis_revision,
-            acquire_record.event_id,
-        ),
-    )
-    claim_id = acquired["effect"]["claim_id"]
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "UPDATE claim SET expires_at = now() - interval '1 second' "
-            "WHERE repo_id = %s AND id = %s",
-            (store.repo_id, claim_id),
-        )
-    store.conn.commit()
-
-    expired = pg.get_claim(store, claim_id, include_secret=True)
-    wrong_command, wrong_credentials = _release_command(
-        store, expired, "wrong-proof", str(uuid.uuid4())
-    )
-    wrong_record = _command_record(tmp_path / "release-wrong.db", wrong_command)
-    wrong = _application(store, wrong_credentials).invoke(
-        "work.claim.arbitrate",
-        {"record": record_to_dict(wrong_record)},
-        _context("release-owner", wrong_record.basis_revision, wrong_record.event_id),
-    )
-    assert wrong["outcome"] == "rejected"
-    assert wrong["reason_code"] == "invalid-claim-proof"
-    assert pg.get_claim(store, claim_id, include_secret=False) is not None
-
-    release_command, release_credentials = _release_command(
-        store, expired, "release-proof", str(uuid.uuid4())
-    )
-    release_record = _command_record(tmp_path / "release-valid.db", release_command)
-    released = _application(store, release_credentials).invoke(
-        "work.claim.arbitrate",
-        {"record": record_to_dict(release_record)},
-        _context(
-            "release-owner",
-            release_record.basis_revision,
-            release_record.event_id,
-        ),
-    )
-    assert released["outcome"] == "accepted"
-    assert released["effect"]["released"] is True
-    assert released["effect"]["status"] == "active"
-    assert pg.get_claim(store, claim_id, include_secret=False) is None
-    store.conn.close()
-
-
-def test_claim_handoff_atomically_emits_non_secret_coordination_event(
-    store_factory, tmp_path
-):
-    store = store_factory("claim-handoff-event")
-    sprint_id = pg.create_sprint(store, "Claim handoff", status="active")
-    track_id = pg.get_or_create_track(store, sprint_id, "work")
-    item_id = pg.create_work_item(store, sprint_id, track_id, "Handoff item")
-    item = pg.get_work_item(store, item_id)
-
-    acquire, acquire_credentials = _claim_command(
-        store, item, "handoff-owner", "handoff-old-proof", str(uuid.uuid4())
-    )
-    acquire_record = _command_record(tmp_path / "handoff-acquire.db", acquire)
-    app = _application(store, acquire_credentials)
-    accepted = app.invoke(
-        "work.claim.arbitrate",
-        {"record": record_to_dict(acquire_record)},
-        _context(
-            "handoff-owner", acquire_record.basis_revision, acquire_record.event_id
-        ),
-    )
-    claim_id = accepted["effect"]["claim_id"]
-
-    claim = pg.get_claim(store, claim_id, include_secret=True)
-    handoff_command, handoff_credentials = _handoff_command(
-        store,
-        claim,
-        actor="handoff-owner",
-        to_actor="handoff-recipient",
-        token="handoff-old-proof",
-        proposed_token="handoff-new-proof",
-        event_id=str(uuid.uuid4()),
-        note="Structured handoff note.",
-    )
-    handoff = _command_record(tmp_path / "handoff.db", handoff_command)
-    handoff_app = _application(store, handoff_credentials)
-    handoff_context = _context(
-        "handoff-owner", handoff.basis_revision, handoff.event_id
-    )
-    handoff_result = handoff_app.invoke(
-        "work.claim.arbitrate", {"record": record_to_dict(handoff)}, handoff_context
-    )
-    assert handoff_result["outcome"] == "accepted"
-    assert handoff_result["effect"]["actor"] == "handoff-recipient"
-
-    events = [
-        event
-        for event in pg.list_events(store, sprint_id)
-        if event["event_type"] == "claim-handoff"
-    ]
-    assert len(events) == 1
-    event = events[0]
-    assert event["actor"] == "handoff-owner"
-    assert event["work_item_id"] == item_id
-    payload = json.loads(event["payload"])
-    assert payload["operation"] == "handoff"
-    assert payload["mode"] == "rotate"
-    assert payload["detail"] == "Structured handoff note."
-    assert payload["token_rotated"] is True
-    assert payload["from_identity"]["actor"] == "handoff-owner"
-    assert payload["to_identity"]["actor"] == "handoff-recipient"
-    assert payload["from_identity"]["claim_token_present"] is True
-    assert payload["to_identity"]["claim_token_present"] is True
-
-    serialized = json.dumps(payload)
-    assert "handoff-old-proof" not in serialized
-    assert "handoff-new-proof" not in serialized
-    assert "claim_token" not in payload["from_identity"]
-    assert "claim_token" not in payload["to_identity"]
-
-    # A handoff rejected *inside* the handoff branch itself (credential
-    # conflict, discovered after proof resolution but before the ownership
-    # UPDATE) must leave both claim ownership and coordination evidence
-    # untouched -- the ownership UPDATE and the evidence INSERT commit or
-    # roll back together.
-    blocker_item_id = pg.create_work_item(store, sprint_id, track_id, "Blocker item")
-    blocker_item = pg.get_work_item(store, blocker_item_id)
-    blocker_acquire, blocker_credentials = _claim_command(
-        store, blocker_item, "handoff-recipient", "blocker-proof", str(uuid.uuid4())
-    )
-    blocker_record = _command_record(tmp_path / "handoff-blocker.db", blocker_acquire)
-    _application(store, blocker_credentials).invoke(
-        "work.claim.arbitrate",
-        {"record": record_to_dict(blocker_record)},
-        _context(
-            "handoff-recipient",
-            blocker_acquire.basis_revision,
-            blocker_acquire.event_id,
-        ),
-    )
-
-    claim_after_handoff = pg.get_claim(store, claim_id, include_secret=True)
-    conflicting_command, conflicting_credentials = _handoff_command(
-        store,
-        claim_after_handoff,
-        actor="handoff-recipient",
-        to_actor="handoff-third",
-        token="handoff-new-proof",
-        proposed_token="blocker-proof",
-        event_id=str(uuid.uuid4()),
-    )
-    conflicting = _command_record(
-        tmp_path / "handoff-conflicting.db", conflicting_command
-    )
-    conflicting_result = _application(store, conflicting_credentials).invoke(
-        "work.claim.arbitrate",
-        {"record": record_to_dict(conflicting)},
-        _context(
-            "handoff-recipient", conflicting.basis_revision, conflicting.event_id
-        ),
-    )
-    assert conflicting_result["outcome"] == "rejected"
-    assert conflicting_result["reason_code"] == "credential-conflict"
-
-    events_after = [
-        event
-        for event in pg.list_events(store, sprint_id)
-        if event["event_type"] == "claim-handoff"
-    ]
-    assert len(events_after) == 1
-    assert pg.get_claim(store, claim_id, include_secret=False)["agent"] == (
-        "handoff-recipient"
-    )
     store.conn.close()

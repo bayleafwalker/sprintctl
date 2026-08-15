@@ -19,51 +19,72 @@ pytestmark = PG_MARKS
 
 
 class TestMaintain:
-    def test_purge_expired_claims_marks_and_retains_history(self, store, sprint_id, track_id):
-        iid = pg.create_work_item(store, sprint_id, track_id, f"Pu-{_uid()}")
-        cid = pg.create_claim(store, iid, "ag-pu", ttl_seconds=300)
-        with store.conn.cursor() as cur:
-            cur.execute(
-                "UPDATE claim SET expires_at = now() - interval '1 second'"
-                " WHERE repo_id = %s AND id = %s",
-                (store.repo_id, cid),
-            )
-        store.conn.commit()
-        expired = pg.purge_expired_claims(store, sprint_id)
-        assert expired >= 1
-        claim = pg.get_claim(store, cid)
-        assert claim is not None
-        assert claim["status"] == "expired"
-
-    def test_expiry_reacquire_retains_both_rows_and_increments_epoch(
+    def test_sweep_stale_reservations_interrupts_without_deleting(
         self, store, sprint_id, track_id
     ):
-        iid = pg.create_work_item(store, sprint_id, track_id, f"Epoch-{_uid()}")
-        old_id = pg.create_claim(store, iid, "old-owner")
-        old = pg.get_claim(store, old_id, include_secret=True)
-        assert old["lease_epoch"] == 1
+        """The v3 replacement for claim expiry: inactivity interrupts, never deletes.
 
-        rotated = pg.handoff_claim(
-            store,
-            old_id,
-            old["claim_token"],
-            actor="rotated-owner",
-            mode="rotate",
-        )
-        assert rotated["lease_epoch"] == 2
+        A swept reservation stays queryable as 'interrupted' with its reason
+        recorded, so an operator can see what the sweep took and why.
+        """
+        iid = pg.create_work_item(store, sprint_id, track_id, f"Sw-{_uid()}")
+        row = pg.reserve(store, iid, actor="ag-sw", session_id="session-sw")
         with store.conn.cursor() as cur:
             cur.execute(
-                "UPDATE claim SET expires_at = now() - interval '1 second' "
-                "WHERE repo_id = %s AND id = %s",
-                (store.repo_id, old_id),
+                "UPDATE reservation SET last_activity_at = now() - interval '30 days'"
+                " WHERE repo_id = %s AND id = %s",
+                (store.repo_id, row["id"]),
             )
         store.conn.commit()
 
-        new_id = pg.create_claim(store, iid, "new-owner")
-        history = pg.list_claims(store, iid, active_only=False)
-        assert [claim["claim_id"] for claim in history] == [old_id, new_id]
-        assert [claim["status"] for claim in history] == ["expired", "active"]
-        assert [claim["lease_epoch"] for claim in history] == [2, 3]
+        swept = pg.sweep_stale_reservations(store)
+
+        assert [entry["id"] for entry in swept] == [row["id"]]
+        after = pg.get_reservation(store, row["id"])
+        assert after is not None
+        assert after["state"] == "interrupted"
+        assert after["interruption_reason"] == "seven-day inactivity sweep"
+
+    def test_sweep_leaves_recently_active_reservations_alone(
+        self, store, sprint_id, track_id
+    ):
+        iid = pg.create_work_item(store, sprint_id, track_id, f"Fresh-{_uid()}")
+        row = pg.reserve(store, iid, actor="ag-fresh", session_id="session-fresh")
+
+        assert pg.sweep_stale_reservations(store) == []
+        assert pg.get_reservation(store, row["id"])["state"] == "active"
+
+    def test_reassign_then_override_retains_the_full_ownership_history(
+        self, store, sprint_id, track_id
+    ):
+        """Ownership changes accumulate rows; nothing is rewritten in place.
+
+        The retired claim path proved this with a rotating token and a
+        lease_epoch counter, both dropped in v3. Reservations carry the same
+        auditability without a secret: reassign renames the live row, and an
+        override interrupts it and opens a new one beside it.
+        """
+        iid = pg.create_work_item(store, sprint_id, track_id, f"Hist-{_uid()}")
+        first = pg.reserve(store, iid, actor="old-owner", session_id="session-old")
+
+        reassigned = pg.reassign_reservation(
+            store, first["id"], actor="rotated-owner", session_id="session-rotated"
+        )
+        assert reassigned["id"] == first["id"]
+        assert reassigned["actor"] == "rotated-owner"
+        assert reassigned["state"] == "active"
+
+        second = pg.reserve(
+            store, iid, actor="new-owner", session_id="session-new", override=True
+        )
+
+        history = pg.list_reservations(store, iid, active_only=False)
+        by_id = {entry["id"]: entry for entry in history}
+        assert set(by_id) == {first["id"], second["id"]}
+        assert by_id[first["id"]]["state"] == "interrupted"
+        assert by_id[first["id"]]["actor"] == "rotated-owner"
+        assert by_id[second["id"]]["state"] == "active"
+        assert by_id[second["id"]]["actor"] == "new-owner"
 
     def test_truth_findings_match_remote_backend(self, store, sprint_id, track_id):
         item_id = pg.create_work_item(store, sprint_id, track_id, f"Drift-{_uid()}")

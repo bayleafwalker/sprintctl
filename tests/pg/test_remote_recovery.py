@@ -28,7 +28,20 @@ class TestRecoverFromRemote:
         pg.create_event(store, sprint_id, "ag", "note", source_type="actor",
                         work_item_id=work_item_id,
                         payload={"summary": "recovery source event"})
-        pg.create_claim(store, work_item_id, "ag", ttl_seconds=300)
+        pg.reserve(store, work_item_id, actor="ag", session_id="session-recovery")
+        # Archive-only: the claim relation still exists and
+        # write_recovery_snapshot still strips ownership out of it, but no
+        # API mints one any more, so the row is seeded directly. Remove this
+        # with the relation itself.
+        with store.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO claim (repo_id, work_item_id, agent, exclusive, "
+                "expires_at, claim_token, status) "
+                "VALUES (%s, %s, 'ag', true, now() + interval '300 seconds', "
+                "'legacy-token', 'active')",
+                (store.repo_id, work_item_id),
+            )
+        store.conn.commit()
         pg.add_ref(store, work_item_id, "doc", "docs/plans/x.md")
         other_item = pg.create_work_item(store, sprint_id, track_id, f"Dep-{_uid()}")
         pg.add_dep(store, work_item_id, other_item)
@@ -36,7 +49,8 @@ class TestRecoverFromRemote:
         snapshot = pg.recover_repo_snapshot(store)
         assert any(row["id"] == sprint_id for row in snapshot["sprint"])
         assert any(row["id"] == work_item_id for row in snapshot["work_item"])
-        assert snapshot["claim"] and snapshot["ref"] and snapshot["dep"]
+        assert snapshot["reservation"] and snapshot["ref"] and snapshot["dep"]
+        assert snapshot["claim"]
 
         dest = tmp_path / "recovery.db"
         conn = db.get_connection(dest)
@@ -57,6 +71,13 @@ class TestRecoverFromRemote:
 
             report = db.check_integrity(conn)
             assert report["ok"] is True, report
+
+            reservation_row = conn.execute(
+                "SELECT actor, state FROM reservation WHERE work_item_id = ?",
+                (work_item_id,),
+            ).fetchone()
+            assert reservation_row["actor"] == "ag"
+            assert reservation_row["state"] == "active"
 
             claim_row = conn.execute(
                 "SELECT exclusive, status, claim_token FROM claim WHERE work_item_id = ?",
