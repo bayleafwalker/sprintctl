@@ -34,26 +34,25 @@ def anyio_backend() -> str:
 # change to what clients see, so they must be updated in the same commit as
 # the catalog change and never re-pinned to make a red test pass.
 #
-# Last re-pinned for the claim -> reservation cutover: aeace4d added six
-# reservation operations and 1a06d1e removed five claim operations, a net +1
-# at both schema versions. Schema 7 still gates exactly the three
-# work.maintenance.resource.* operations.
+# Re-pinned for the bounded volatile-context pilot, which adds exactly two
+# read-only owner operations at both schema versions. Schema 7 still gates
+# exactly the three work.maintenance.resource.* operations.
 @pytest.mark.parametrize(
     ("remote_schema_version", "operation_count", "byte_count", "operations_sha", "revision"),
     [
         (
             6,
-            44,
-            50_749,
-            "e7774625cb825b30cbb614d3c3684e2fcd213f7b251bb58c1ce1b0a6cca3c17a",
-            "e7774625cb825b30cbb614d3c3684e2fcd213f7b251bb58c1ce1b0a6cca3c17a",
+            46,
+            53_243,
+            "2e1100b582060a283100ef6d2f47be49031d104a4f783a6b32b87a7daf609937",
+            "2e1100b582060a283100ef6d2f47be49031d104a4f783a6b32b87a7daf609937",
         ),
         (
             7,
-            47,
-            55_864,
-            "c3cfc5e173fa5d09932840097c263734feb2220d5fa24ce87c9085471ff4b774",
-            "b9f0d734441c414e8d0d9ef75d18fc9759576def9d2143e2b4fc54e9d5e67143",
+            49,
+            58_358,
+            "54d630b66f0869b074ec057b0708f3ef9f08c366db5a2b3b1913898af6e7357e",
+            "d1994bf90b9506955a39cf2ceacae1f89468aa04a7e8519a990db29f869e8504",
         ),
     ],
 )

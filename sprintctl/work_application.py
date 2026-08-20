@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .application_common import *
 from . import reservation as _reservation
+from . import volatile_context as _volatile_context
 
 
 @dataclass(slots=True)
@@ -238,6 +239,8 @@ class WorkApplication:
             "work.identity.current": target._identity_current,
             "work.read.sprints": target._read_sprints,
             "work.read.item": target._read_item,
+            "work.read.item-projection": target._read_item_projection,
+            "work.validate.item-status-mutation": target._validate_item_status_mutation,
             "work.read.items": target._read_items,
             "work.read.reservations": target._read_reservations,
             "work.read.reservation": target._read_reservation,
@@ -356,7 +359,11 @@ class WorkApplication:
         item, edit_revision = current
         return {
             "repo_id": self.repo_id,
-            "item": {**item, "edit_revision": edit_revision},
+            "item": {
+                **item,
+                "edit_revision": edit_revision,
+                "status_revision": self.backend.item_status_revision(item),
+            },
             "events": [
                 event
                 for event in self.backend.list_events(self.store, item["sprint_id"])
@@ -371,6 +378,41 @@ class WorkApplication:
                 "blocks": self.backend.list_deps_blocked_by(self.store, item_id),
             },
         }
+
+    def _read_item_projection(
+        self, arguments: dict[str, Any], _context: InvocationContext
+    ) -> dict[str, Any]:
+        item_id = _positive_int(arguments.get("item_id"), "item_id")
+        projection = _volatile_context.project_work_item(
+            self.backend, self.store, repo_id=self.repo_id, item_id=item_id
+        )
+        if projection is None:
+            raise ApplicationRejection(
+                "item-not-found", f"Item #{item_id} not found", 404
+            )
+        return {"repo_id": self.repo_id, "projection": projection}
+
+    def _validate_item_status_mutation(
+        self, arguments: dict[str, Any], _context: InvocationContext
+    ) -> dict[str, Any]:
+        item_id = _positive_int(arguments.get("item_id"), "item_id")
+        expected_revision = arguments.get("expected_revision")
+        if expected_revision is not None and not isinstance(expected_revision, str):
+            raise ApplicationRejection(
+                "invalid-arguments", "expected_revision must be a string or null", 422
+            )
+        result = _volatile_context.validate_status_mutation(
+            self.backend,
+            self.store,
+            repo_id=self.repo_id,
+            item_id=item_id,
+            expected_revision=expected_revision,
+        )
+        if result is None:
+            raise ApplicationRejection(
+                "item-not-found", f"Item #{item_id} not found", 404
+            )
+        return {"repo_id": self.repo_id, **result}
 
     def _read_items(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
         sprint_id = _optional_positive_int(arguments.get("sprint_id"), "sprint_id")
@@ -1387,4 +1429,3 @@ class WorkApplication:
                 "idempotency key must equal the canonical batch digest",
                 422,
             )
-

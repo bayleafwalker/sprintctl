@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import pytest
 
+from sprintctl import volatile_context
+
 from tests.pg._shared import (
     contracts,
     db,
@@ -208,6 +210,34 @@ class TestWorkItem:
 
         assert pg.get_work_item(store, iid)["status"] == "active"
         assert pg.list_events(store, sprint_id) == events_after_accept
+
+    def test_status_projection_and_precheck_match_postgres_owner_cas(
+        self, store, sprint_id, track_id
+    ):
+        iid = pg.create_work_item(store, sprint_id, track_id, f"Projection-{_uid()}")
+        projected = volatile_context.project_work_item(
+            pg, store, repo_id=store.repo_id, item_id=iid
+        )
+        assert projected is not None
+        basis = projected["revision"]
+        assert volatile_context.validate_status_mutation(
+            pg,
+            store,
+            repo_id=store.repo_id,
+            item_id=iid,
+            expected_revision=basis,
+        )["allowed"] is True
+
+        pg.set_work_item_status(store, iid, "active", expected_revision=basis)
+        assert volatile_context.validate_status_mutation(
+            pg,
+            store,
+            repo_id=store.repo_id,
+            item_id=iid,
+            expected_revision=basis,
+        )["allowed"] is False
+        with pytest.raises(db.StatusConflict):
+            pg.set_work_item_status(store, iid, "done", expected_revision=basis)
 
     def test_two_connections_accept_exactly_one_status_cas_writer(
         self, store, sprint_id, track_id

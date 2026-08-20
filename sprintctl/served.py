@@ -156,6 +156,40 @@ def read_item(
     )
 
 
+def read_item_projection(
+    served_profile: ServedProfile, *, repo_id: str, item_id: int
+) -> dict[str, Any]:
+    """Read one bounded, revision-bearing item projection."""
+
+    return asyncio.run(
+        _invoke_operation(
+            served_profile,
+            "work.read.item-projection",
+            {"item_id": item_id},
+            repo_id=repo_id,
+        )
+    )
+
+
+def validate_item_status_mutation(
+    served_profile: ServedProfile,
+    *,
+    repo_id: str,
+    item_id: int,
+    expected_revision: str | None,
+) -> dict[str, Any]:
+    """Run the read-only early-feedback check for a status mutation."""
+
+    return asyncio.run(
+        _invoke_operation(
+            served_profile,
+            "work.validate.item-status-mutation",
+            {"item_id": item_id, "expected_revision": expected_revision},
+            repo_id=repo_id,
+        )
+    )
+
+
 def read_items(served_profile: ServedProfile, *, repo_id: str, sprint_id: int | None = None,
                track_name: str | None = None, status: str | None = None) -> dict[str, Any]:
     return asyncio.run(_invoke_operation(served_profile, "work.read.items", {

@@ -20,6 +20,7 @@ no migration or DDL.
 | --- | --- | --- |
 | Reads | `work.read.sprints`, `work.read.item`, `work.read.context`, `work.read.context-candidates`, `work.read.next-work`, `work.read.records`, `work.read.decisions` | key forbidden |
 | Item edit | `work.item.edit` | key forbidden; required `expected_revision` compare-and-swap |
+| Volatile item context | `work.read.item-projection`, `work.validate.item-status-mutation` | read-only, key forbidden; validation is advisory and owner CAS remains final |
 | Reservation start | `work.claim.start` | key forbidden; one-shot create plus activation flow — **retired in v2** |
 | Durable reservations | `work.claim.arbitrate` | key equals immutable command `event_id` — **retired in v2** |
 | Lifecycle | `work.lifecycle.arbitrate` | key equals immutable command `event_id` |
@@ -45,6 +46,14 @@ appends one `item-edited` event in the same transaction; the event records the
 old/new revisions and descriptions. Existing events and item identity are
 never rewritten. A stale revision is rejected as `item-edit-conflict`, and an
 unchanged description is rejected without creating another revision.
+
+`work.read.item` also exposes the opaque item `status_revision` already used by
+direct and served lifecycle CAS. `work.read.item-projection` emits a bounded,
+field-allowlisted status projection for native runtime context. The companion
+`work.validate.item-status-mutation` operation only gives early feedback; it
+does not reserve, mutate, or authorize an item, and the lifecycle owner repeats
+the comparison atomically. See
+[`volatile-context-native-hook-pilot.md`](../plans/volatile-context-native-hook-pilot.md).
 
 `work.read.context` is the server-side aggregate for `usage --context`. It
 returns the ContextContract v1 itself (rather than adding an envelope field),

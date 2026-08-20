@@ -55,6 +55,7 @@ PUBLISHED_OPERATIONS = (
         "work.read.events",
         "work.read.handoff",
         "work.read.item",
+        "work.read.item-projection",
         "work.read.items",
         "work.read.maintenance-capability",
         "work.read.next-work",
@@ -70,6 +71,7 @@ PUBLISHED_OPERATIONS = (
         "work.reservation.reserve",
         "work.reservation.touch",
         "work.sprint.create",
+        "work.validate.item-status-mutation",
 )
 
 

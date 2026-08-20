@@ -284,6 +284,63 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "not-allowed",
     ),
     WorkOperationContract(
+        "work.read.item-projection",
+        _object_schema(
+            {"item_id": {"type": "integer", "minimum": 1}}, required=("item_id",)
+        ),
+        _result_schema(
+            ("repo_id", "projection"),
+            {
+                "repo_id": {"type": "string"},
+                "projection": {
+                    "type": "object",
+                    "required": [
+                        "contract_version", "provider_id", "resource_id",
+                        "revision", "data_class", "item", "truncated",
+                    ],
+                    "properties": {
+                        "contract_version": {"const": "work-item-context/v1"},
+                        "provider_id": {"const": "sprintctl.work-item"},
+                        "resource_id": {"type": "string", "minLength": 3},
+                        "revision": {"type": "string", "minLength": 1},
+                        "data_class": {"const": "untrusted-work-state"},
+                        "item": {"type": "object"},
+                        "truncated": {"type": "boolean"},
+                    },
+                    "additionalProperties": False,
+                },
+            },
+        ),
+        "work:read",
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.validate.item-status-mutation",
+        _object_schema(
+            {
+                "item_id": {"type": "integer", "minimum": 1},
+                "expected_revision": {"type": ["string", "null"]},
+            },
+            required=("item_id", "expected_revision"),
+        ),
+        _result_schema(
+            (
+                "repo_id", "allowed", "reason", "current_revision", "projection",
+            ),
+            {
+                "repo_id": {"type": "string"},
+                "allowed": {"type": "boolean"},
+                "reason": {"type": "string"},
+                "current_revision": {"type": "string"},
+                "projection": {"type": "object"},
+            },
+        ),
+        "work:read",
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
         "work.read.items",
         _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}, "track_name": {"type": ["string", "null"]}, "status": {"type": ["string", "null"]}}),
         _result_schema(("repo_id", "items"), {"repo_id": {"type": "string"}, "items": {"type": "array", "items": {"type": "object"}}}),
