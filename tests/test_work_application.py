@@ -950,6 +950,30 @@ def test_next_work_explain_is_one_application_aggregate(conn, active_sprint):
     assert payload["recommended_command_bundle"]["bundle_version"] == "1"
 
 
+def test_item_projection_and_status_precheck_are_owner_reads(conn, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "context")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Context item")
+    app = _application(store=conn, backend=db)
+
+    read = app.invoke("work.read.item", {"item_id": item_id}, _context())
+    projected = app.invoke(
+        "work.read.item-projection", {"item_id": item_id}, _context()
+    )
+    revision = read["item"]["status_revision"]
+
+    assert projected["projection"]["revision"] == revision
+    assert app.invoke(
+        "work.validate.item-status-mutation",
+        {"item_id": item_id, "expected_revision": revision},
+        _context(),
+    )["allowed"] is True
+    assert app.invoke(
+        "work.validate.item-status-mutation",
+        {"item_id": item_id, "expected_revision": None},
+        _context(),
+    )["allowed"] is False
+
+
 def test_authority_handlers_enforce_actor_basis_and_idempotency_before_backend():
     calls = []
     app = _application(calls=calls)

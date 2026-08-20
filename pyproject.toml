@@ -13,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 sprintctl = "sprintctl.cli:cli"
+sprintctl-volatile-hook = "sprintctl.volatile_hook:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
@@ -37,6 +38,7 @@ capabilities = [
     "remote-backend/v1",
     "remote-schema-compatibility/v1",
     "sprintctl-repository-ingest-cursor/v1",
+    "volatile-context-item-projection/v1",
 ]
 sqlite-schema-version = 22
 remote-schema-version = 12

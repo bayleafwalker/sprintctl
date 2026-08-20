@@ -9,4 +9,5 @@ CLI_CAPABILITIES = (
     "remote-backend/v1",
     "remote-schema-compatibility/v1",
     "sprintctl-repository-ingest-cursor/v1",
+    "volatile-context-item-projection/v1",
 )
