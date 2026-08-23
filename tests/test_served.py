@@ -287,6 +287,25 @@ def test_reservation_operation_sends_credential_free_shape(fake_vuoro_client):
     assert "claim_token" not in args
 
 
+def test_reservation_operation_always_sends_an_idempotency_key(fake_vuoro_client):
+    """Every work.reservation.* operation is ``idempotency: required`` on the
+    adapter, and the authority rejects a keyless call only *after* the
+    authority check -- so a missing key looked like a grant problem in the
+    field. Default keys are unique per call (touch must advance activity every
+    time); an explicit key is passed through for callers that retry."""
+    profile = _profile()
+    args = {"item_id": 5, "actor": "worker", "session_id": "session-1"}
+    served.reservation_operation(profile, "work.reservation.reserve", dict(args), repo_id="repo-x")
+    served.reservation_operation(profile, "work.reservation.touch", dict(args), repo_id="repo-x")
+    served.reservation_operation(
+        profile, "work.reservation.release", dict(args), repo_id="repo-x", idempotency_key="retry-7"
+    )
+    keys = [inv[2].get("idempotency_key") for client in fake_vuoro_client.instances for inv in client.invocations]
+    assert len(keys) == 3 and all(keys), keys
+    assert keys[0] != keys[1]
+    assert keys[2] == "retry-7"
+
+
 def test_item_note_sends_full_shape_and_never_an_actor_field(fake_vuoro_client):
     profile = _profile()
     result = served.item_note(

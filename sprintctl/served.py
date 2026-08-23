@@ -23,6 +23,7 @@ This module also never imports ``psycopg``, ``sprintctl.pg`` or
 from __future__ import annotations
 
 import asyncio
+import uuid
 from typing import Any
 
 from . import reservation as _reservation
@@ -275,10 +276,32 @@ def read_next_work(
 
 
 def reservation_operation(
-    served_profile: ServedProfile, operation: str, arguments: dict[str, Any], *, repo_id: str
+    served_profile: ServedProfile,
+    operation: str,
+    arguments: dict[str, Any],
+    *,
+    repo_id: str,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
-    """Invoke one v0.3 reservation operation through the served authority."""
-    return asyncio.run(_invoke_operation(served_profile, operation, arguments, repo_id=repo_id))
+    """Invoke one v0.3 reservation operation through the served authority.
+
+    Every ``work.reservation.*`` operation is declared ``idempotency: required``
+    by the adapter, so the authority rejects a call without a key
+    (``idempotency-key-required``) *after* the authority check has passed --
+    which is how a correctly granted identity was first seen failing here. A
+    reservation is a coordination signal, and ``touch`` in particular must be
+    able to advance ``last_activity_at`` on every call, so the default key is
+    unique per invocation (the same convention as the per-event key used by
+    ``publish_events``) rather than derived from the arguments. Callers that
+    retry a single logical call pass their own key to deduplicate. Reads
+    (``work.read.reservation``) are never keyed.
+    """
+    kwargs: dict[str, Any] = {"repo_id": repo_id}
+    if operation.startswith("work.reservation."):
+        # Only the mutations are keyed: ``work.read.reservation`` travels
+        # through here too and the authority rejects a key on a read.
+        kwargs["idempotency_key"] = idempotency_key or uuid.uuid4().hex
+    return asyncio.run(_invoke_operation(served_profile, operation, arguments, **kwargs))
 
 
 def read_records(
