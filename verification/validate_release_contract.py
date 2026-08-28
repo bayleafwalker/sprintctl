@@ -14,7 +14,7 @@ from urllib.parse import urldefrag, urlparse
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RELEASE_VERSION = "0.3.2"
+RELEASE_VERSION = "0.3.3"
 ADAPTER_NAME = "vuoro-adapter-kit"
 ADAPTER_DIGEST_RE = re.compile(r"^sha256=(?P<digest>[0-9a-f]{64})$")
 ADAPTER_PATH_RE = re.compile(
