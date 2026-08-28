@@ -245,3 +245,54 @@ def test_a_stranger_session_cannot_move_the_clock_through_the_application(conn, 
                 "summary": "not mine"}, context)
 
     assert db.get_reservation(conn, row["id"])["stale"] is True
+
+
+def test_served_reservation_rejection_reads_like_every_other_served_failure(monkeypatch):
+    """A server-side refusal must not reach the operator as a traceback.
+
+    Reservation commands are registered without the runtime table the other
+    served commands receive, so ``_served_result`` called the transport
+    directly.  On 2026-08-28 ``reservation reserve --actor <someone-else>``
+    printed a full Python traceback ending in
+    ``vuoro_client.errors.InvocationRejectedError: actor-mismatch: ...``.
+    The refusal is correct -- it is the served authority binding the actor to
+    the authenticated identity -- and it should read that way.
+    """
+
+    from click.testing import CliRunner
+
+    from sprintctl import backend as _backend
+    from sprintctl import served as _served
+    from sprintctl.cli import cli
+
+    class _Rejected(Exception):
+        pass
+
+    config = SimpleNamespace(
+        mode="served",
+        served_profile="profile.json",
+        repo_id="test-repo",
+    )
+    monkeypatch.setattr(_backend, "load_backend_config", lambda **_kwargs: config)
+
+    def _reject(*_args, **_kwargs):
+        raise _Rejected(
+            "actor-mismatch: reservation actor must match the authenticated identity"
+        )
+
+    monkeypatch.setattr(_served, "reservation_operation", _reject)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "reservation", "reserve",
+            "--item-id", "1",
+            "--actor", "someone-else",
+            "--session-id", "s1",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "actor-mismatch" in result.output
+    assert result.output.startswith("Error: served reserve reservation failed:")

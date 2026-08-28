@@ -159,7 +159,22 @@ def _served_result(obj: dict[str, Any], operation: str, arguments: dict[str, Any
     if config.mode != "served":
         return None
     assert config.served_profile is not None and config.repo_id is not None
-    return _served.reservation_operation(config.served_profile, operation, arguments, repo_id=config.repo_id)
+    # Reservation commands are registered without the runtime table the other
+    # served commands get, so this call used to reach vuoro_client directly and
+    # a rejection escaped as a Python traceback.  A correct server-side refusal
+    # -- "actor-mismatch: reservation actor must match the authenticated
+    # identity" -- should read like every other served failure.  Imported here
+    # rather than at module scope: cli_runtime imports this package.
+    from ..cli_runtime import _run_served
+
+    return _run_served(
+        f"{operation.rsplit('.', 1)[-1]} reservation",
+        _served.reservation_operation,
+        config.served_profile,
+        operation,
+        arguments,
+        repo_id=config.repo_id,
+    )
 
 
 def _echo(value, as_json: bool) -> None:
