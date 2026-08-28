@@ -421,12 +421,19 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
     WorkOperationContract(
         "work.read.next-work",
         _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
+        # The three dispatch fields are advisory facts the handler has emitted
+        # since the project variant gained them; that variant's contract was
+        # updated and this one was not, so every served next-work call failed
+        # its own result schema.  Keep the two in step.
         _result_schema(
-            ("repo_id", "sprint", "ready_items"),
+            ("repo_id", "sprint", "ready_items", "graph_ready", "dispatch_admissible", "dispatch_reason"),
             {
                 "repo_id": {"type": "string"},
                 "sprint": {"type": "object"},
                 "ready_items": {"type": "array", "items": {"type": "object"}},
+                "graph_ready": {"type": "boolean"},
+                "dispatch_admissible": {"enum": ["admissible", "inadmissible", "unknown"]},
+                "dispatch_reason": {"type": "string"},
             },
         ),
         "work:read",
@@ -454,7 +461,12 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         _result_schema(
             ("contract_version", "sprint", "summary", "ready_items", "dependency_waiting_items", "active_reservations", "active_unreserved_items", "conflicts", "next_action", "recommended_commands", "recommended_command_bundle"),
             {
-                "contract_version": {"const": "1"}, "sprint": {"type": "object"},
+                # The served aggregate has emitted "2" since the
+                # reservation-derived explanation landed (2026-08-14); this
+                # const still said "1", so every served explain call failed
+                # its own result schema.  The local CLI aggregate remains at
+                # "1" -- a real divergence, tracked separately.
+                "contract_version": {"const": "2"}, "sprint": {"type": "object"},
                 "summary": {"type": "object"}, "ready_items": {"type": "array", "items": {"type": "object"}},
                 "dependency_waiting_items": {"type": "array", "items": {"type": "object"}},
                 "active_reservations": {"type": "array", "items": {"type": "object"}},
