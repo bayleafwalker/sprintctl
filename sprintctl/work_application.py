@@ -1055,8 +1055,20 @@ class WorkApplication:
             actor=actor, session_id=_required_text(arguments.get("session_id"), "session_id"), correlation_ref=arguments.get("correlation_ref"))
         return {"repo_id": self.repo_id, "reservation": row}
 
-    def _reservation_release(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
-        row = self.backend.release_reservation(self.store, _positive_int(arguments.get("reservation_id"), "reservation_id"), actor=arguments.get("actor"))
+    def _reservation_release(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        # The supplied actor is not decoration: `release_reservation` writes it as
+        # the `reservation.released` event actor (`db.py`/`pg.py`), so an
+        # unvalidated value is recorded in the durable work record as the party
+        # that released. `reserve` and `reassign` have always bound this to the
+        # authenticated identity; `release` did not, which made attribution
+        # forgeable by any principal authorized for the repository. Bind it the
+        # same way, and default to the authenticated actor when none is given
+        # rather than falling through to the original reserver.
+        authenticated_actor = getattr(context.identity, "actor", None)
+        actor = arguments.get("actor")
+        if actor is not None and authenticated_actor is not None and actor != authenticated_actor:
+            raise ApplicationRejection("actor-mismatch", "reservation actor must match the authenticated identity", 403)
+        row = self.backend.release_reservation(self.store, _positive_int(arguments.get("reservation_id"), "reservation_id"), actor=actor or authenticated_actor)
         return {"repo_id": self.repo_id, "reservation": row}
 
     def _read_next_work_explain(

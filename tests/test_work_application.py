@@ -1045,6 +1045,47 @@ def test_reservation_actor_binding_rejects_before_backend(conn, active_sprint):
     assert rejected.value.code == "actor-mismatch"
     assert calls == []
 
+
+def test_reservation_release_binds_actor_to_the_authenticated_identity(conn, active_sprint):
+    """A released reservation must not be attributable to an unauthenticated actor.
+
+    `release_reservation` writes the supplied actor as the `reservation.released`
+    event actor, so an unvalidated value lands in the durable work record as the
+    party that released. Before this bound, any principal authorized for the
+    repository could name any string and have it recorded -- verified in
+    production on 2026-08-29 against scribectl item #2326, where
+    `--actor not-my-identity` released a reservation held by `workstation-vuoro`
+    and was recorded as event #2620.
+    """
+    track = db.get_or_create_track(conn, active_sprint["id"], "reservation-release-actor")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Released")
+    app = _application(store=conn, backend=db)
+    reserved = app.invoke(
+        "work.reservation.reserve",
+        {"item_id": item_id, "actor": "holder", "session_id": "session-1"},
+        _context(actor="holder"),
+    )
+    reservation_id = reserved["reservation"]["id"]
+
+    with pytest.raises(ApplicationRejection) as rejected:
+        app.invoke(
+            "work.reservation.release",
+            {"reservation_id": reservation_id, "actor": "not-my-identity"},
+            _context(actor="holder"),
+        )
+    assert rejected.value.code == "actor-mismatch"
+    assert db.get_reservation(conn, reservation_id)["state"] == "active"
+
+    # Omitting the actor attributes the release to the authenticated identity,
+    # not to whoever originally reserved it.
+    released = app.invoke(
+        "work.reservation.release",
+        {"reservation_id": reservation_id},
+        _context(actor="holder"),
+    )
+    assert released["reservation"]["state"] == "released"
+
+
 def test_click_free_reservation_reserve_matches_cli_state_flow(conn, runner, active_sprint):
     track = db.get_or_create_track(conn, active_sprint["id"], "reservation-reserve")
     app_item = db.create_work_item(conn, active_sprint["id"], track, "Application")
