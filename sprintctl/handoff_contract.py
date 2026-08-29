@@ -64,6 +64,7 @@ class HandoffBundle:
     freshness: Mapping[str, Any]
     evidence: Mapping[str, Any]
     git_context: Mapping[str, Any] | None
+    last_checkpoint: Mapping[str, Any] | None
     reservation_model: Mapping[str, Any]
     resume_instructions: Sequence[str]
     agent_shutdown_protocol: Mapping[str, Any]
@@ -91,6 +92,7 @@ class HandoffBundle:
             "freshness": _copy_mapping(self.freshness),
             "evidence": _copy_mapping(self.evidence),
             "git_context": _copy_mapping(self.git_context) if self.git_context is not None else None,
+            "last_checkpoint": _copy_mapping(self.last_checkpoint) if self.last_checkpoint is not None else None,
             "reservation_model": _copy_mapping(self.reservation_model),
             "resume_instructions": list(self.resume_instructions),
             "agent_shutdown_protocol": _copy_mapping(self.agent_shutdown_protocol),
