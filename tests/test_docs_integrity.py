@@ -340,3 +340,69 @@ def test_start_here_next_guides_links_resolve():
 
     for label, target in links:
         _assert_markdown_link_declared_and_resolves("docs/guides/start-here.md", label, target)
+
+
+SKILL_COMMAND_RE = re.compile(r"\bsprintctl[ \t]+([a-z][a-z0-9-]*)(?:[ \t]+([a-z][a-z0-9-]*))?")
+INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
+FENCE_RE = re.compile(r"^\s*```")
+
+
+def _code_spans(text: str) -> list[str]:
+    """Only the parts of a document that are actually commands.
+
+    Prose says things like "live sprintctl state" and "sprintctl permits overlap",
+    which are not invocations. Checking those would make the test noisy enough to be
+    switched off, which is worse than not having it.
+    """
+    spans: list[str] = []
+    in_fence = False
+    for line in text.splitlines():
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            spans.append(line)
+        else:
+            spans.extend(INLINE_CODE_RE.findall(line))
+    return spans
+
+
+def _cli_surface() -> dict[str, set[str]]:
+    """The command groups and subcommands the CLI actually constructs."""
+    from click import Group
+
+    from sprintctl.cli import cli
+
+    surface: dict[str, set[str]] = {}
+    for name, command in cli.commands.items():
+        if isinstance(command, Group):
+            surface[name] = set(command.commands)
+        else:
+            surface[name] = set()
+    return surface
+
+
+def test_skill_documents_only_cite_commands_that_exist() -> None:
+    """A skill is an instruction to an agent, so a wrong command fails on first contact.
+
+    Three canonical skills taught `sprintctl claim ...` for months after the claim
+    model was deleted -- sqlite migration 19 archived the table, pg migration 9 drops
+    it -- and nothing caught it, because doc integrity checked links rather than
+    commands. Ordinary docs drift and get corrected by a reader; a skill is executed.
+    """
+    surface = _cli_surface()
+    skills_root = REPO_ROOT / ".agents" / "skills"
+    if not skills_root.is_dir():
+        return
+
+    unknown: list[str] = []
+    for skill in sorted(skills_root.glob("*/SKILL.md")):
+        spans = _code_spans(skill.read_text(encoding="utf-8"))
+        for group, sub in [m for span in spans for m in SKILL_COMMAND_RE.findall(span)]:
+            if group not in surface:
+                unknown.append(f"{skill.relative_to(REPO_ROOT)}: sprintctl {group}")
+                continue
+            if sub and surface[group] and sub not in surface[group]:
+                unknown.append(f"{skill.relative_to(REPO_ROOT)}: sprintctl {group} {sub}")
+
+    assert not unknown, "skills cite commands that do not exist:\n" + "\n".join(sorted(set(unknown)))
