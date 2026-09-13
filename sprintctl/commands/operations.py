@@ -861,7 +861,8 @@ def authority_reconcile(obj, apply_changes: bool, as_json: bool) -> None:
     remote_stream_high_water: dict[str, int] = {}
 
     def read_record_page(after: int, limit: int) -> object:
-        response = _served.read_records(
+        response = _run_served(
+            "authority reconcile", _served.read_records,
             config.served_profile, repo_id=config.repo_id,
             after_offset=after, limit=limit,
         )
@@ -884,7 +885,8 @@ def authority_reconcile(obj, apply_changes: bool, as_json: bool) -> None:
 
     remote_entries = _served_authority_pages(read_record_page)
     decisions = _served_authority_pages(
-        lambda after, limit: _served.read_decisions(
+        lambda after, limit: _run_served(
+            "authority reconcile", _served.read_decisions,
             config.served_profile, repo_id=config.repo_id,
             after_offset=after, limit=limit,
         ).get("decisions"), offset_key="decision_ingest_offset",
