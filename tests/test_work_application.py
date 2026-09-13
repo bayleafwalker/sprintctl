@@ -526,6 +526,36 @@ def test_served_maintain_check_uses_the_owning_readonly_diagnostic(conn, active_
     }
 
 
+def test_served_maintain_check_without_an_active_sprint_is_clean(conn):
+    app = _application(store=conn, backend=db)
+    assert db.get_active_sprint(conn) is None
+
+    result = app.invoke("work.maintain.check", {}, _context())
+
+    assert result["repo_id"] == "test-repo"
+    assert result["sprint"] is None
+    assert result["stale_items"] == []
+    assert result["findings"] == []
+    assert result["track_health"] == {}
+    assert result["risk"]["at_risk"] is False
+    assert result["threshold_hours"] > 0
+    contract = next(
+        c for c in WORK_OPERATION_CONTRACTS if c.name == "work.maintain.check"
+    )
+    jsonschema = pytest.importorskip("jsonschema")
+    jsonschema.validate(result, contract.result_schema)
+
+
+def test_served_maintain_check_still_rejects_an_unknown_explicit_sprint(conn):
+    app = _application(store=conn, backend=db)
+
+    with pytest.raises(ApplicationRejection) as rejection:
+        app.invoke("work.maintain.check", {"sprint_id": 9999}, _context())
+
+    assert rejection.value.code == "sprint-not-found"
+    assert rejection.value.http_status == 404
+
+
 def test_work_read_events_contract_shape():
     """sprintctl#1247: ``work.read.events`` follows the ``work.read.records``/
     ``work.read.decisions`` read-contract template, but with ``sprint_id``

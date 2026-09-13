@@ -407,7 +407,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
             ),
             {
                 "repo_id": {"type": "string"},
-                "sprint": {"type": "object"},
+                "sprint": {"type": ["object", "null"]},
                 "risk": {"type": "object"},
                 "stale_items": {"type": "array", "items": {"type": "object"}},
                 "track_health": {"type": "object"},

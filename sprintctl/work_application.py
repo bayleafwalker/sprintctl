@@ -504,9 +504,16 @@ class WorkApplication:
 
         def build(store: Any) -> dict[str, Any]:
             snapshot_app = replace(self, store=store)
+            requested = arguments.get("sprint_id")
+            # A repo with no active sprint has nothing to diagnose, which is a
+            # healthy answer rather than a failure: preflight callers ask
+            # without a sprint_id and must not see a rejection for it.  An
+            # explicit sprint_id that does not exist is still rejected.
+            if requested is None and self.backend.get_active_sprint(store) is None:
+                return self._maintain_check_without_sprint()
             report = maintain.check(
                 store,
-                snapshot_app._resolve_sprint(arguments.get("sprint_id"))["id"],
+                snapshot_app._resolve_sprint(requested)["id"],
                 now,
                 _m=self.backend,
             )
@@ -531,6 +538,30 @@ class WorkApplication:
             with snapshot(self.store) as snapshot_store:
                 return build(snapshot_store)
         return build(self.store)
+
+    def _maintain_check_without_sprint(self) -> dict[str, Any]:
+        """Return the clean diagnostic for a repo that has no active sprint."""
+        pending_threshold = maintain._pending_stale_threshold()
+        return {
+            "repo_id": self.repo_id,
+            "sprint": None,
+            "risk": {
+                "date_bound": False,
+                "days_remaining": None,
+                "active_items": 0,
+                "at_risk": False,
+                "overdue": False,
+            },
+            "stale_items": [],
+            "track_health": {},
+            "findings": [],
+            "threshold_hours": maintain._stale_threshold().total_seconds() / 3600,
+            "pending_threshold_hours": (
+                pending_threshold.total_seconds() / 3600
+                if pending_threshold is not None
+                else None
+            ),
+        }
 
     def _maintenance_store(self) -> Any:
         """Bind the owner lifecycle to this invocation's repository scope."""
