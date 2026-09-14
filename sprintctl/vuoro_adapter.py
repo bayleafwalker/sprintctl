@@ -93,6 +93,19 @@ _RECORD_DEFINITION: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+# Every served event carries its storage ``created_at``: NOT NULL with a
+# default on both backends, emitted as a UTC ISO-8601 string ending in ``Z``
+# (SQLite ``strftime('%Y-%m-%dT%H:%M:%SZ')``; PostgreSQL ``timestamptz`` via
+# ``rows.iso_timestamp``, which keeps fractional seconds). Other event fields
+# stay open, so this is deliberately not ``_object_schema`` (which closes
+# ``additionalProperties``).
+_EVENT_ITEM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"created_at": {"type": "string", "minLength": 1}},
+    "required": ["created_at"],
+    "additionalProperties": True,
+}
+
 _RECORD_INPUT = _object_schema(
     {"record": {"$ref": "#/$defs/record"}},
     required=("record",),
@@ -535,7 +548,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
             ("repo_id", "events"),
             {
                 "repo_id": {"type": "string"},
-                "events": {"type": "array", "items": {"type": "object"}},
+                "events": {"type": "array", "items": _EVENT_ITEM_SCHEMA},
             },
         ),
         "work:read",

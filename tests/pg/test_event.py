@@ -202,3 +202,36 @@ class TestTakeup:
     def test_list_active_takeups(self, store, sprint_id):
         result = pg.list_active_takeups(store, sprint_id)
         assert isinstance(result, list)
+
+
+class TestServedEventsCreatedAt:
+    def test_read_events_every_event_has_iso_created_at_satisfying_contract(
+        self, store, sprint_id
+    ):
+        """M4 parity: PG ``timestamptz`` ``created_at`` reaches the served
+        ``work.read.events`` result as a UTC ISO-8601 ``...Z`` string and the
+        result passes the published result schema."""
+        import re
+        from datetime import datetime
+
+        from sprintctl.vuoro_adapter import WORK_OPERATION_CONTRACTS
+        from tests.test_work_application import _application, _context
+
+        pg.create_event(store, sprint_id, "agent", "decision", payload={"summary": "first"})
+        pg.create_event(store, sprint_id, "agent", "pattern-noted", payload={"summary": "second"})
+
+        # invoke() re-scopes the store to the application's repo_id, so it must be the fixture's.
+        app = _application(store=store, backend=pg, repo_id=store.repo_id)
+        result = app.invoke("work.read.events", {"sprint_id": sprint_id}, _context())
+
+        assert len(result["events"]) >= 2
+        iso_utc = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
+        for event in result["events"]:
+            assert isinstance(event["created_at"], str)
+            assert iso_utc.match(event["created_at"]), event["created_at"]
+            datetime.fromisoformat(event["created_at"].replace("Z", "+00:00"))
+        contract = next(
+            c for c in WORK_OPERATION_CONTRACTS if c.name == "work.read.events"
+        )
+        jsonschema = pytest.importorskip("jsonschema")
+        jsonschema.Draft202012Validator(contract.result_schema).validate(result)
