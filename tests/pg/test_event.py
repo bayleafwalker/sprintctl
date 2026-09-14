@@ -220,7 +220,8 @@ class TestServedEventsCreatedAt:
         pg.create_event(store, sprint_id, "agent", "decision", payload={"summary": "first"})
         pg.create_event(store, sprint_id, "agent", "pattern-noted", payload={"summary": "second"})
 
-        app = _application(store=store, backend=pg)
+        # invoke() re-scopes the store to the application's repo_id, so it must be the fixture's.
+        app = _application(store=store, backend=pg, repo_id=store.repo_id)
         result = app.invoke("work.read.events", {"sprint_id": sprint_id}, _context())
 
         assert len(result["events"]) >= 2
