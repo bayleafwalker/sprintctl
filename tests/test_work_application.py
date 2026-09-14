@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+from datetime import datetime
 import json
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -550,7 +552,12 @@ def test_work_read_events_contract_shape():
     assert contract.result_schema["required"] == ["repo_id", "events"]
     assert contract.result_schema["properties"]["events"] == {
         "type": "array",
-        "items": {"type": "object"},
+        "items": {
+            "type": "object",
+            "properties": {"created_at": {"type": "string", "minLength": 1}},
+            "required": ["created_at"],
+            "additionalProperties": True,
+        },
     }
 
 
@@ -790,6 +797,49 @@ def test_read_events_applies_after_offset_and_limit(conn, active_sprint):
     )
 
     assert [e["id"] for e in result["events"]] == ids[1:3]
+
+
+_ISO_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
+
+
+def test_read_events_every_event_has_iso_created_at_satisfying_contract(
+    conn, active_sprint
+):
+    """M4: the served ``work.read.events`` result promises ``created_at`` on
+    every event. SQLite stores it as ``YYYY-MM-DDTHH:MM:SSZ`` text; the result
+    must pass the published result schema, which the Vuoro service and client
+    both validate with Draft 2020-12 (nested ``items`` included)."""
+    jsonschema = pytest.importorskip("jsonschema")
+    track = db.get_or_create_track(conn, active_sprint["id"], "served")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Item")
+    db.create_event(
+        conn, active_sprint["id"], "agent", event_type="decision",
+        work_item_id=item_id, payload={"summary": "first"},
+    )
+    db.create_event(
+        conn, active_sprint["id"], "agent", event_type="pattern-noted",
+        payload={"summary": "second"},
+    )
+
+    app = _application(store=conn, backend=db)
+    result = app.invoke("work.read.events", {"sprint_id": active_sprint["id"]}, _context())
+
+    assert len(result["events"]) >= 2
+    for event in result["events"]:
+        assert isinstance(event["created_at"], str)
+        assert _ISO_UTC.match(event["created_at"]), event["created_at"]
+        datetime.fromisoformat(event["created_at"].replace("Z", "+00:00"))
+
+    contract = next(
+        c for c in WORK_OPERATION_CONTRACTS if c.name == "work.read.events"
+    )
+    validator = jsonschema.Draft202012Validator(contract.result_schema)
+    validator.validate(result)
+    missing = {**result, "events": [
+        {k: v for k, v in result["events"][0].items() if k != "created_at"}
+    ]}
+    with pytest.raises(jsonschema.ValidationError, match="created_at"):
+        validator.validate(missing)
 
 
 def test_read_events_rejects_missing_sprint_before_backend(conn):
