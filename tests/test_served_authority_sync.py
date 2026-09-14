@@ -540,3 +540,92 @@ def test_local_authority_sync_still_requires_enforce_mode(runner, tmp_path, monk
     result = runner.invoke(cli, ["authority", "sync"])
     assert result.exit_code != 0
     assert "authority sync requires enforce mode" in result.output
+
+
+@_requires_312
+def test_served_authority_reconcile_rejection_reaches_the_operator_as_a_cli_error(
+    runner, tmp_path, monkeypatch
+):
+    """A served refusal during the audit must not reach the operator raw.
+
+    ``authority reconcile`` read the served ledger through ``_served`` directly
+    instead of ``_run_served``, so a rejected invocation -- the served authority
+    refusing the audit for this identity -- left the CLI with no operator
+    message at all and propagated ``InvocationRejectedError`` out of the command
+    callback as a traceback.  Every other served failure renders as one
+    ``Error: served ... failed: ...`` line.
+    """
+
+    class _Rejected(Exception):
+        pass
+
+    _configure_served_repo(tmp_path, monkeypatch)
+    _mint_command(
+        tmp_path,
+        record_type="item.done",
+        refs=_item_refs(4),
+        payload={"to_status": "done"},
+    )
+
+    def _reject(*_args, **_kwargs):
+        raise _Rejected(
+            "not-authorized: authority audit is not available to this identity"
+        )
+
+    monkeypatch.setattr(cli_module._served, "read_records", _reject)
+
+    result = runner.invoke(cli, ["authority", "reconcile", "--json"])
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert isinstance(result.exception, SystemExit)
+    lines = [line for line in result.output.splitlines() if line.strip()]
+    assert lines == [
+        "Error: served authority reconcile failed: not-authorized: "
+        "authority audit is not available to this identity"
+    ]
+
+
+@_requires_312
+def test_served_authority_reconcile_decision_rejection_is_a_cli_error(
+    runner, tmp_path, monkeypatch
+):
+    """The decision page read shares the record page read's failure surface."""
+
+    class _Rejected(Exception):
+        pass
+
+    _configure_served_repo(tmp_path, monkeypatch)
+    command = _mint_command(
+        tmp_path,
+        record_type="item.done",
+        refs=_item_refs(4),
+        payload={"to_status": "done"},
+    )
+
+    monkeypatch.setattr(
+        cli_module._served, "read_records",
+        lambda *args, **kwargs: {
+            "records": [
+                {
+                    "ingest_offset": 12,
+                    "record": cli_module._served_record_argument(command),
+                }
+            ],
+        },
+    )
+
+    def _reject(*_args, **_kwargs):
+        raise _Rejected("not-authorized: decision ledger is not readable")
+
+    monkeypatch.setattr(cli_module._served, "read_decisions", _reject)
+
+    result = runner.invoke(cli, ["authority", "reconcile", "--json"])
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    lines = [line for line in result.output.splitlines() if line.strip()]
+    assert lines == [
+        "Error: served authority reconcile failed: "
+        "not-authorized: decision ledger is not readable"
+    ]
