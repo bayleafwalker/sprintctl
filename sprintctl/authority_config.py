@@ -260,6 +260,21 @@ def _terminal_path(paths: AuthorityCommandPaths, event_id: str | UUID) -> Path:
     return path
 
 
+def _make_private_directory(path: Path) -> None:
+    """Create ``path`` as a 0700 directory.
+
+    ``mkdir(mode=0o700)`` is filtered by the umask and inherits S_ISGID from a
+    setgid parent, so the resulting mode is set explicitly. A directory that
+    already exists is left untouched: its permissions are for
+    ``_require_private`` to judge, not for creation to silently repair.
+    """
+    try:
+        path.mkdir(mode=0o700)
+    except FileExistsError:
+        return
+    os.chmod(path, 0o700)
+
+
 def _require_private(path: Path, *, directory: bool) -> None:
     try:
         metadata = path.stat(follow_symlinks=False)
@@ -275,7 +290,13 @@ def _require_private(path: Path, *, directory: bool) -> None:
         )
     expected_mode = 0o700 if directory else 0o600
     actual_mode = stat.S_IMODE(metadata.st_mode)
-    if actual_mode != expected_mode:
+    # A directory under a setgid parent inherits S_ISGID. That bit only makes
+    # new entries inherit the directory's group; it grants no group or other
+    # access, so a 02700 directory is exactly as private as 0700. Tolerate that
+    # one bit on directories only; every permission bit must still match, and
+    # setuid/sticky (or setgid on a file) are still refused.
+    checked_mode = actual_mode & ~stat.S_ISGID if directory else actual_mode
+    if checked_mode != expected_mode:
         raise AuthorityCommandConfigError(
             f"authority state path has unsafe permissions {actual_mode:04o}; "
             f"expected {expected_mode:04o}: {path}"
@@ -311,7 +332,7 @@ def mark_terminal_authority_decision(
         raise AuthorityCommandConfigError("only a quarantined stream may carry a quarantine reason")
     path = _terminal_path(paths, event_id)
     paths.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    paths.terminal_dir.mkdir(mode=0o700, exist_ok=True)
+    _make_private_directory(paths.terminal_dir)
     _require_private(paths.terminal_dir, directory=True)
     payload_value: dict[str, object] = {
         "event_id": _canonical_event_id(event_id), "outcome": outcome,

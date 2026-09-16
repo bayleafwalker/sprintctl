@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 from pathlib import Path
 from uuid import uuid4
 
@@ -109,3 +110,53 @@ def test_terminal_receipt_is_private_and_rejects_unsafe_event_ids(tmp_path):
 
 def stat_mode(path: Path) -> int:
     return os.stat(path).st_mode & 0o777
+
+
+def _setgid_directory(path: Path) -> Path:
+    path.mkdir()
+    path.chmod(0o2775)
+    if not path.stat().st_mode & stat.S_ISGID:
+        pytest.skip("filesystem does not keep the setgid bit on directories")
+    return path
+
+
+def test_terminal_directory_created_under_setgid_parent_is_0700(tmp_path):
+    # 2026-09-16 (#2423): under a setgid parent the new terminal directory
+    # inherited 02700 and the very next check refused it.
+    repo = _setgid_directory(tmp_path / "repo")
+    paths = authority_config.authority_command_paths(repo_root=repo)
+    event_id = str(uuid4())
+    authority_config.mark_terminal_authority_decision(
+        paths, event_id=event_id, outcome="accepted"
+    )
+    assert stat.S_IMODE(paths.terminal_dir.stat().st_mode) == 0o700
+    assert authority_config.is_terminal_authority_decision(paths, event_id=event_id) is True
+
+
+def test_terminal_directory_creation_does_not_repair_an_existing_directory(tmp_path):
+    paths = authority_config.authority_command_paths(repo_root=tmp_path)
+    paths.terminal_dir.mkdir(parents=True)
+    paths.terminal_dir.chmod(0o755)
+    with pytest.raises(authority_config.AuthorityCommandConfigError, match="unsafe permissions 0755"):
+        authority_config.mark_terminal_authority_decision(
+            paths, event_id=str(uuid4()), outcome="accepted"
+        )
+
+
+def test_require_private_accepts_setgid_only_on_an_otherwise_private_directory(tmp_path):
+    directory = _setgid_directory(tmp_path / "private")
+    directory.chmod(0o2700)
+    assert stat.S_IMODE(directory.stat().st_mode) == 0o2700
+    authority_config._require_private(directory, directory=True)
+
+    for unsafe in (0o2750, 0o2705, 0o2500, 0o3700):
+        directory.chmod(unsafe)
+        with pytest.raises(authority_config.AuthorityCommandConfigError, match="unsafe permissions"):
+            authority_config._require_private(directory, directory=True)
+
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text("{}", encoding="utf-8")
+    receipt.chmod(0o2600)
+    if receipt.stat().st_mode & stat.S_ISGID:
+        with pytest.raises(authority_config.AuthorityCommandConfigError, match="unsafe permissions"):
+            authority_config._require_private(receipt, directory=False)
