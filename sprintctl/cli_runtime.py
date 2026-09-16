@@ -369,6 +369,24 @@ def _guard_served_command(command_path: str, params: dict[str, object]) -> None:
     _served_operation_unavailable(command_path, replacement=replacements.get(command_path))
 
 
+def _served_failure_detail(exc: BaseException) -> str:
+    """Never render an empty failure detail.
+
+    Transport exceptions (timeouts, closed connections) often stringify to ''.
+    An operator then sees ``Error: served item list failed:`` and nothing else,
+    which reads like an empty result piped through jq (dogfood 2026-09-16).
+    Name the exception type, and its cause when that carries the detail.
+    """
+    detail = str(exc).strip()
+    if detail:
+        return detail
+    cause = exc.__cause__ or exc.__context__
+    cause_detail = str(cause).strip() if cause is not None else ""
+    if cause_detail:
+        return f"{type(exc).__name__}: {type(cause).__name__}: {cause_detail}"
+    return f"{type(exc).__name__} (no detail from the served client)"
+
+
 def _run_served(operation_label: str, func, *args, resolved_context: dict[str, str | None] | None = None, **kwargs):
     """Invoke a sprintctl.served facade function, translating any failure
     (transport, catalog validation, or an operation rejection) into the same
@@ -376,7 +394,7 @@ def _run_served(operation_label: str, func, *args, resolved_context: dict[str, s
     try:
         return func(*args, **kwargs)
     except Exception as exc:  # noqa: BLE001 - surface any served-mode failure uniformly
-        message = f"Error: served {operation_label} failed: {exc}"
+        message = f"Error: served {operation_label} failed: {_served_failure_detail(exc)}"
         if resolved_context is not None:
             message = f"{message}\n{_render_resolved_context(resolved_context)}"
         click.echo(message, err=True)
