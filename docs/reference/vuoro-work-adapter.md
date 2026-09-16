@@ -82,7 +82,12 @@ through authenticated identity, not client-supplied secrets.
 repository scope. Served lifecycle clients use it before minting a durable
 command so a local OS username or operator-supplied label cannot create a
 permanently unflushable actor-mismatch record; credentials and token material
-are never returned.
+are never returned. Served `reservation reserve`, `reassign` and `release` use
+it the same way: `--actor` defaults to the authenticated actor, and a different
+value is reported on stderr and not sent. `sprintctl doctor` shows that actor
+(`identity: actor=...`; `schema.authenticated_actor` in `--json`), and a
+reservation `actor-mismatch` rejection names both the given and the
+authenticated actor.
 
 For `work.batch.apply` only, an already-durable authority command with an
 actor or reservation-agent mismatch is admitted in its producer order and

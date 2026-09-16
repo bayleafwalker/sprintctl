@@ -556,3 +556,91 @@ def test_recovery_provenance_reaches_the_text_report_not_only_json():
 
     report["schema"]["recovered_from"] = None
     assert "recovered:" not in doctor.render_text(report)
+
+
+def _current_served_profile(tmp_path, monkeypatch):
+    from sprintctl.backend import ServedProfile
+
+    cred_path = tmp_path / "cred"
+    cred_path.write_text("token-value\n", encoding="utf-8")
+    cred_path.chmod(0o600)
+    profile = ServedProfile(
+        name="workstation-vuoro-shared",
+        endpoint="https://vuoro-shared.example/",
+        credential_ref=f"file:{cred_path}",
+        expected_environment="vuoro-shared",
+        source_path=tmp_path / "profile.json",
+    )
+    monkeypatch.setattr(doctor.importlib.util, "find_spec", lambda name: object())
+    monkeypatch.setattr(
+        doctor._served,
+        "catalog_operation_names",
+        lambda served_profile: set(doctor._SERVED_EXPECTED_OPERATIONS),
+    )
+    return profile
+
+
+def test_probe_served_backend_reports_the_authenticated_actor(tmp_path, monkeypatch):
+    """agentops #2422: doctor names the actor the server binds reservations to."""
+    profile = _current_served_profile(tmp_path, monkeypatch)
+    calls = []
+
+    def _identity(served_profile, *, repo_id):
+        calls.append(repo_id)
+        return {"repo_id": repo_id, "actor": "workstation-vuoro"}
+
+    monkeypatch.setattr(doctor._served, "identity_current", _identity)
+
+    result = doctor._probe_served_backend({}, profile, repo_id="agentops")
+
+    assert calls == ["agentops"]
+    assert result["status"] == "current"
+    assert result["authenticated_actor"] == "workstation-vuoro"
+    assert result["identity_error"] is None
+    text = doctor.render_text(
+        {
+            "status": "ok",
+            "provenance": {
+                "executable": {"version": "0.3.6", "path": "/bin/sprintctl"},
+                "package": {"code_version": "0.3.6", "metadata_version": "0.3.6"},
+                "source": {"present": False},
+            },
+            "extras": {"remote": {"enabled": False}, "served": {"enabled": True}},
+            "backend": {
+                "environment_mode": "served", "resolved_mode": "served", "repo_id": "agentops",
+                "repo_source": "marker", "marker": None, "url_configured": False,
+            },
+            "schema": result,
+            "findings": [],
+        }
+    )
+    assert "identity: actor=workstation-vuoro" in text
+
+
+def test_probe_served_backend_identity_failure_does_not_change_status(tmp_path, monkeypatch):
+    profile = _current_served_profile(tmp_path, monkeypatch)
+
+    def _reject(served_profile, *, repo_id):
+        raise RuntimeError("repo-not-authorized: identity has no grant")
+
+    monkeypatch.setattr(doctor._served, "identity_current", _reject)
+
+    result = doctor._probe_served_backend({}, profile, repo_id="agentops")
+
+    assert result["status"] == "current"
+    assert result["error"] is None
+    assert result["authenticated_actor"] is None
+    assert result["identity_error"] == "repo-not-authorized: identity has no grant"
+
+
+def test_probe_served_backend_skips_identity_without_a_repository(tmp_path, monkeypatch):
+    profile = _current_served_profile(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        doctor._served, "identity_current",
+        lambda *_a, **_k: pytest.fail("identity must not be invoked without a repo"),
+    )
+
+    result = doctor._probe_served_backend({}, profile)
+
+    assert result["authenticated_actor"] is None
+    assert result["identity_error"] == "repository is unresolved"

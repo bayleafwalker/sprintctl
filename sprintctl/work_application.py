@@ -11,6 +11,20 @@ from . import reservation as _reservation
 from . import volatile_context as _volatile_context
 
 
+def _reservation_actor_mismatch(given: object, authenticated: object) -> ApplicationRejection:
+    """Name both actors, so the caller need not guess which one is accepted.
+
+    The authenticated actor is the caller's own identity, so returning it to
+    that caller discloses nothing it could not read from work.identity.current.
+    """
+    return ApplicationRejection(
+        "actor-mismatch",
+        "reservation actor must match the authenticated identity "
+        f"(given {given!r}; authenticated {authenticated!r})",
+        403,
+    )
+
+
 @dataclass(slots=True)
 class WorkApplication:
     """One repository-scoped work authority application."""
@@ -1064,7 +1078,7 @@ class WorkApplication:
         actor = _required_text(arguments.get("actor"), "actor")
         authenticated_actor = getattr(context.identity, "actor", None)
         if authenticated_actor is not None and actor != authenticated_actor:
-            raise ApplicationRejection("actor-mismatch", "reservation actor must match the authenticated identity", 403)
+            raise _reservation_actor_mismatch(actor, authenticated_actor)
         row = self.backend.reserve(self.store, _positive_int(arguments.get("item_id"), "item_id"),
             actor=actor, session_id=_required_text(arguments.get("session_id"), "session_id"),
             role=arguments.get("role") or _reservation.DEFAULT_ROLE,
@@ -1081,7 +1095,7 @@ class WorkApplication:
         actor = _required_text(arguments.get("actor"), "actor")
         authenticated_actor = getattr(context.identity, "actor", None)
         if authenticated_actor is not None and actor != authenticated_actor:
-            raise ApplicationRejection("actor-mismatch", "reservation actor must match the authenticated identity", 403)
+            raise _reservation_actor_mismatch(actor, authenticated_actor)
         row = self.backend.reassign_reservation(self.store, _positive_int(arguments.get("reservation_id"), "reservation_id"),
             actor=actor, session_id=_required_text(arguments.get("session_id"), "session_id"), correlation_ref=arguments.get("correlation_ref"))
         return {"repo_id": self.repo_id, "reservation": row}
@@ -1098,7 +1112,7 @@ class WorkApplication:
         authenticated_actor = getattr(context.identity, "actor", None)
         actor = arguments.get("actor")
         if actor is not None and authenticated_actor is not None and actor != authenticated_actor:
-            raise ApplicationRejection("actor-mismatch", "reservation actor must match the authenticated identity", 403)
+            raise _reservation_actor_mismatch(actor, authenticated_actor)
         row = self.backend.release_reservation(self.store, _positive_int(arguments.get("reservation_id"), "reservation_id"), actor=actor or authenticated_actor)
         return {"repo_id": self.repo_id, "reservation": row}
 

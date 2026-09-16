@@ -22,9 +22,13 @@ def reservation() -> None:
     """Coordinate work with advisory reservations."""
 
 
+_ACTOR_HELP = ("Reservation actor. Served mode always records the authenticated identity "
+               "and defaults to it; local mode requires this option.")
+
+
 @reservation.command("reserve")
 @click.option("--item-id", type=int, required=True)
-@click.option("--actor", required=True)
+@click.option("--actor", default=None, help=_ACTOR_HELP)
 @click.option("--session-id", default=None)
 @click.option("--role", type=click.Choice(_db.RESERVATION_ROLES), default=_db.DEFAULT_RESERVATION_ROLE,
               help="Work relationship: execution, verification, or observation")
@@ -33,17 +37,18 @@ def reservation() -> None:
               help="Deliberately interrupt the item's active execution reservations first")
 @click.option("--json", "as_json", is_flag=True, default=False)
 @click.pass_obj
-def reserve(obj: dict[str, Any], item_id: int, actor: str, session_id: str | None, role: str,
+def reserve(obj: dict[str, Any], item_id: int, actor: str | None, session_id: str | None, role: str,
             correlation_ref: str | None, interrupt_existing: bool, as_json: bool) -> None:
     """Register a reservation on a work item.
 
     Overlapping reservations are allowed and reported, not refused: a
     reservation is a coordination signal, not a lease.
     """
-    served = _served_result(obj, "work.reservation.reserve", {"item_id": item_id, "actor": actor, "session_id": _session(session_id), "role": role, "correlation_ref": correlation_ref, "interrupt_existing": interrupt_existing})
+    served = _served_result(obj, "work.reservation.reserve", {"item_id": item_id, "actor": actor, "session_id": _session(session_id), "role": role, "correlation_ref": correlation_ref, "interrupt_existing": interrupt_existing}, bind_actor=True)
     if served is not None:
         _echo(served["reservation"], as_json)
         return
+    actor = _require_local_actor(actor)
     conn, _ = _db_store(obj)
     try:
         row = _db.reserve(conn, item_id, actor=actor, session_id=_session(session_id), role=role,
@@ -74,16 +79,17 @@ def touch(obj, reservation_id, session_id, correlation_ref, as_json) -> None:
 
 @reservation.command("reassign")
 @click.option("--id", "reservation_id", type=int, required=True)
-@click.option("--actor", required=True)
+@click.option("--actor", default=None, help=_ACTOR_HELP)
 @click.option("--session-id", required=True)
 @click.option("--correlation-ref", default=None)
 @click.option("--json", "as_json", is_flag=True, default=False)
 @click.pass_obj
 def reassign(obj, reservation_id, actor, session_id, correlation_ref, as_json) -> None:
-    served = _served_result(obj, "work.reservation.reassign", {"reservation_id": reservation_id, "actor": actor, "session_id": session_id, "correlation_ref": correlation_ref})
+    served = _served_result(obj, "work.reservation.reassign", {"reservation_id": reservation_id, "actor": actor, "session_id": session_id, "correlation_ref": correlation_ref}, bind_actor=True)
     if served is not None:
         _echo(served["reservation"], as_json)
         return
+    actor = _require_local_actor(actor)
     conn, _ = _db_store(obj)
     try:
         row = _db.reassign_reservation(conn, reservation_id, actor=actor, session_id=session_id, correlation_ref=correlation_ref)
@@ -94,11 +100,12 @@ def reassign(obj, reservation_id, actor, session_id, correlation_ref, as_json) -
 
 @reservation.command("release")
 @click.option("--id", "reservation_id", type=int, required=True)
-@click.option("--actor", default=None)
+@click.option("--actor", default=None,
+              help="Releasing actor. Served mode always records the authenticated identity.")
 @click.option("--json", "as_json", is_flag=True, default=False)
 @click.pass_obj
 def release(obj, reservation_id, actor, as_json) -> None:
-    served = _served_result(obj, "work.reservation.release", {"reservation_id": reservation_id, "actor": actor})
+    served = _served_result(obj, "work.reservation.release", {"reservation_id": reservation_id, "actor": actor}, bind_actor=True)
     if served is not None:
         _echo(served["reservation"], as_json)
         return
@@ -150,7 +157,14 @@ def _db_store(obj):
     return conn, _db
 
 
-def _served_result(obj: dict[str, Any], operation: str, arguments: dict[str, Any]) -> dict | None:
+def _require_local_actor(actor: str | None) -> str:
+    if actor is None:
+        raise click.UsageError("--actor is required outside served mode.")
+    return actor
+
+
+def _served_result(obj: dict[str, Any], operation: str, arguments: dict[str, Any], *,
+                   bind_actor: bool = False) -> dict | None:
     """Keep served reservation commands out of SQLite and direct PostgreSQL."""
     config = _backend.load_backend_config(
         explicit_repo_id=obj.get("explicit_repo_id"),
@@ -167,8 +181,27 @@ def _served_result(obj: dict[str, Any], operation: str, arguments: dict[str, Any
     # rather than at module scope: cli_runtime imports this package.
     from ..cli_runtime import _run_served
 
+    label = f"{operation.rsplit('.', 1)[-1]} reservation"
+    if bind_actor:
+        # The served authority binds reservation actors to the authenticated
+        # identity and refuses anything else with actor-mismatch. Resolve that
+        # identity up front -- as ``sprint status`` and ``item status`` do --
+        # so an omitted --actor defaults to it and a different one is reported
+        # and ignored instead of guessed at (agentops #2422).
+        identity = _run_served(label, _served.identity_current, config.served_profile,
+                               repo_id=config.repo_id)
+        authenticated_actor = identity["actor"]
+        given = arguments.get("actor")
+        if given is not None and given != authenticated_actor:
+            click.echo(
+                f"Note: served mode records the authenticated identity "
+                f"({authenticated_actor}); --actor {given!r} was not sent and is ignored.",
+                err=True,
+            )
+        arguments = {**arguments, "actor": authenticated_actor}
+
     return _run_served(
-        f"{operation.rsplit('.', 1)[-1]} reservation",
+        label,
         _served.reservation_operation,
         config.served_profile,
         operation,

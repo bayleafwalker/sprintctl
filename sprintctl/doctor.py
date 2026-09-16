@@ -286,15 +286,19 @@ def _probe_remote_schema(environ: Mapping[str, str]) -> dict[str, Any]:
 
 
 def _probe_served_backend(
-    environ: Mapping[str, str], served_profile: Any | None
+    environ: Mapping[str, str], served_profile: Any | None, *, repo_id: str | None = None
 ) -> dict[str, Any]:
     """Verify the three things served mode needs before any command runs:
     the credential file resolves, the profile parsed (already implied by the
     caller having a ``served_profile``), and the catalog the profile points
     at exposes the operations ``sprintctl.served`` invokes.
 
-    Read-only: never invokes a served operation, only unauthenticated
-    catalog discovery.
+    Read-only. Beyond unauthenticated catalog discovery it invokes exactly
+    one authenticated operation, the ``work.identity.current`` read, once the
+    catalog is current and a repository is resolved, so the report names the
+    actor the server will record and bind reservations to (agentops #2422).
+    An identity failure is reported in ``identity_error`` and never changes
+    the schema status.
     """
     result: dict[str, Any] = {
         "backend": "served",
@@ -305,6 +309,8 @@ def _probe_served_backend(
         "error": None,
         "credential_resolved": None,
         "profile": None,
+        "authenticated_actor": None,
+        "identity_error": None,
     }
     if served_profile is None:
         result["error"] = "served profile did not parse"
@@ -341,6 +347,15 @@ def _probe_served_backend(
     result["status"] = "current" if not missing else "mismatch"
     if missing:
         result["error"] = "catalog is missing expected operations: " + ", ".join(missing)
+        return result
+    if repo_id is None:
+        result["identity_error"] = "repository is unresolved"
+        return result
+    try:
+        identity = _served.identity_current(served_profile, repo_id=repo_id)
+        result["authenticated_actor"] = identity["actor"]
+    except Exception as exc:  # rejection, transport, and shape failures vary by client
+        result["identity_error"] = str(exc) or type(exc).__name__
     return result
 
 
@@ -499,11 +514,14 @@ def collect_report(
     }
     if backend["valid"] and backend["resolved_mode"] == "served":
         served_profile = None
+        served_repo_id = None
         try:
-            served_profile = _backend.load_backend_config(cwd=cwd, environ=environ).served_profile
+            served_config = _backend.load_backend_config(cwd=cwd, environ=environ)
+            served_profile = served_config.served_profile
+            served_repo_id = served_config.repo_id
         except _backend.BackendConfigError:
             served_profile = None
-        schema = _probe_served_backend(environ, served_profile)
+        schema = _probe_served_backend(environ, served_profile, repo_id=served_repo_id)
     elif backend["valid"]:
         schema = _probe_local_schema(environ)
     else:
@@ -571,6 +589,11 @@ def render_text(report: Mapping[str, Any]) -> str:
         f"schema: backend={schema['backend']} expected={schema['expected_version']} "
         f"actual={schema['actual_version'] if schema['actual_version'] is not None else schema['status']}"
     )
+    if schema["backend"] == "served" and schema.get("status") == "current":
+        lines.append(
+            f"identity: actor={schema.get('authenticated_actor') or 'unknown'}"
+            + (f" error={schema['identity_error']}" if schema.get("identity_error") else "")
+        )
     recovered = schema.get("recovered_from")
     if recovered:
         # A recovered database is a new authority instance, and the operator

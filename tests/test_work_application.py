@@ -1123,6 +1123,9 @@ def test_reservation_actor_binding_rejects_before_backend(conn, active_sprint):
         )
 
     assert rejected.value.code == "actor-mismatch"
+    # agentops #2422: name both the given and the authenticated actor.
+    assert "given 'different-agent'" in rejected.value.message
+    assert "authenticated 'served-test'" in rejected.value.message
     assert calls == []
 
 

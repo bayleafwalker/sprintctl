@@ -281,6 +281,9 @@ def test_served_reservation_rejection_reads_like_every_other_served_failure(monk
         )
 
     monkeypatch.setattr(_served, "reservation_operation", _reject)
+    monkeypatch.setattr(
+        _served, "identity_current", lambda *_args, **_kwargs: {"actor": "someone-else"}
+    )
 
     result = CliRunner().invoke(
         cli,
@@ -296,3 +299,106 @@ def test_served_reservation_rejection_reads_like_every_other_served_failure(monk
     assert "Traceback" not in result.output
     assert "actor-mismatch" in result.output
     assert result.output.startswith("Error: served reserve reservation failed:")
+
+
+def _served_reservation_cli(monkeypatch, *, authenticated_actor="workstation-vuoro"):
+    from sprintctl import backend as _backend
+    from sprintctl import served as _served
+
+    config = SimpleNamespace(mode="served", served_profile="profile.json", repo_id="test-repo")
+    monkeypatch.setattr(_backend, "load_backend_config", lambda **_kwargs: config)
+    identity_calls = []
+    sent = []
+
+    def _identity(profile, *, repo_id):
+        identity_calls.append((profile, repo_id))
+        return {"repo_id": repo_id, "actor": authenticated_actor}
+
+    def _operation(profile, operation, arguments, *, repo_id, idempotency_key=None):
+        sent.append((operation, dict(arguments)))
+        reservation_id = arguments.get("reservation_id", 7)
+        return {"reservation": {"id": reservation_id, "work_item_id": arguments.get("item_id", 1),
+                                "state": "active", "actor": arguments["actor"]}}
+
+    monkeypatch.setattr(_served, "identity_current", _identity)
+    monkeypatch.setattr(_served, "reservation_operation", _operation)
+    return identity_calls, sent
+
+
+@pytest.mark.parametrize(
+    ("argv", "operation"),
+    [
+        (["reservation", "reserve", "--item-id", "1", "--session-id", "s1"], "work.reservation.reserve"),
+        (["reservation", "reassign", "--id", "7", "--session-id", "s1"], "work.reservation.reassign"),
+        (["reservation", "release", "--id", "7"], "work.reservation.release"),
+    ],
+)
+def test_served_reservation_actor_defaults_to_the_authenticated_identity(monkeypatch, argv, operation):
+    """agentops #2422: a served caller should not have to guess its actor."""
+    from click.testing import CliRunner
+
+    from sprintctl.cli import cli
+
+    identity_calls, sent = _served_reservation_cli(monkeypatch)
+
+    result = CliRunner().invoke(cli, argv)
+
+    assert result.exit_code == 0, result.output
+    assert identity_calls == [("profile.json", "test-repo")]
+    assert sent == [(operation, {**sent[0][1], "actor": "workstation-vuoro"})]
+    assert "Note:" not in result.output
+
+
+def test_served_reservation_reports_and_ignores_a_different_actor(monkeypatch):
+    from click.testing import CliRunner
+
+    from sprintctl.cli import cli
+
+    _identity_calls, sent = _served_reservation_cli(monkeypatch)
+
+    result = CliRunner().invoke(
+        cli,
+        ["reservation", "reserve", "--item-id", "1", "--session-id", "s1",
+         "--actor", "codex-coordinator-dogfood"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert sent[0][1]["actor"] == "workstation-vuoro"
+    assert (
+        "Note: served mode records the authenticated identity (workstation-vuoro); "
+        "--actor 'codex-coordinator-dogfood' was not sent and is ignored."
+    ) in result.output
+
+
+def test_served_reservation_with_the_authenticated_actor_prints_no_note(monkeypatch):
+    from click.testing import CliRunner
+
+    from sprintctl.cli import cli
+
+    _identity_calls, sent = _served_reservation_cli(monkeypatch)
+
+    result = CliRunner().invoke(
+        cli,
+        ["reservation", "reserve", "--item-id", "1", "--session-id", "s1",
+         "--actor", "workstation-vuoro"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert sent[0][1]["actor"] == "workstation-vuoro"
+    assert "Note:" not in result.output
+
+
+def test_local_reservation_reserve_still_requires_an_actor(monkeypatch):
+    from click.testing import CliRunner
+
+    from sprintctl import backend as _backend
+    from sprintctl.cli import cli
+
+    monkeypatch.setattr(
+        _backend, "load_backend_config", lambda **_kwargs: SimpleNamespace(mode="local")
+    )
+
+    result = CliRunner().invoke(cli, ["reservation", "reserve", "--item-id", "1"])
+
+    assert result.exit_code == 2
+    assert "--actor is required outside served mode" in result.output
