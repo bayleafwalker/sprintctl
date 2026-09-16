@@ -22,3 +22,6 @@ claim-handoff*.json
 docs/knowledge/*
 !docs/knowledge/README.md
 !docs/knowledge/knowledge-base.md
+
+# Per-user Claude Code settings; untracked copies made devbox checkouts read as dirty (dogfood 2026-09-16)
+.claude/settings.local.json
