@@ -1,5 +1,10 @@
 # Capability receipts at sprint close
 
+> **Retired 2026-09-16** (vuoro consolidation S2 item 6). Capability receipts
+> are no longer part of sprint close, the `capability-receipt` skill and its
+> validator have been removed, and there is no replacement. Do not draft
+> receipts. The text below is kept for history only.
+
 A capability receipt records what became newly reliable, cheaper, or better
 governed across a meaningful project boundary. It is an unpublished workspace artifact meant
 to remain an unpublished draft until operator-directed procedural ratification,
