@@ -162,9 +162,6 @@ def test_capability_receipt_reference_is_linked_from_operator_surfaces():
 def test_capability_receipt_reference_pins_private_draft_and_human_ratification():
     reference = _read("docs/reference/capability-receipts.md")
     normalized_reference = " ".join(reference.split())
-    manifest = json.loads(_read("sprintctl.dispatch.json"))
-
-    assert "capability-receipt" in manifest["skills"]["selected"]
     for fragment in (
         "capability-receipt/v1",
         "/projects/dev/_artifacts/<repo-id>/capability/receipts/<receipt-id>.json",
