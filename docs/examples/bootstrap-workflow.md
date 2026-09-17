@@ -2,7 +2,7 @@
 
 The minimal pattern for onboarding `sprintctl` onto a fresh repository and running the first sprint.
 
-For a full worked example including AGENTS.md, sprint naming conventions, workflow docs, and sample knowledge flow, see the [sprintctl-bootstrap-template](https://github.com/bayleafwalker/sprintctl-bootstrap-template) repo.
+The `sprintctl-bootstrap-template` reference repo is retired; this walkthrough and [docs/guides/project-integration.md](../guides/project-integration.md) are the served onboarding path.
 
 ---
 
@@ -142,4 +142,4 @@ For the `YYYY-SNN-<anchor>-<focus>-<phase>` format, a minimal starting vocabular
 
 Example names: `2026-S01-forge-schema-overture`, `2026-S02-harbor-reservation-weave`, `2026-S03-signal-review-harvest`
 
-See the [sprintctl-bootstrap-template](https://github.com/bayleafwalker/sprintctl-bootstrap-template) repo for the full vocabulary, naming rules, and worked examples.
+The `sprintctl-bootstrap-template` reference repo that used to carry the full vocabulary and worked examples is retired; the sample above is the served starting vocabulary.
