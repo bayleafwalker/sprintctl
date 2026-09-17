@@ -2,7 +2,7 @@
 
 A prompt to paste into an agent session when onboarding `sprintctl` onto a fresh repository.
 
-For detailed context, workflow docs, sample sprints, and the full worked example, see [sprintctl-bootstrap-template](https://github.com/bayleafwalker/sprintctl-bootstrap-template).
+The `sprintctl-bootstrap-template` reference repo is retired; this prompt and [docs/guides/project-integration.md](../guides/project-integration.md) are the served onboarding path.
 
 ---
 

@@ -241,11 +241,10 @@ To initialize `sprintctl` on a fresh repository using an agent session, see:
 - [docs/examples/bootstrap-prompt.md](../examples/bootstrap-prompt.md) — copy-paste prompt for agent onboarding
 - [docs/examples/bootstrap-workflow.md](../examples/bootstrap-workflow.md) — minimal walkthrough of the setup + work loop
 
-For a complete worked example — including AGENTS.md, sprint naming conventions, all five workflow patterns (idea-to-backlog, direct implementation, review, knowledge promotion, fresh-repo bootstrap), and a sample rendered sprint — see the separate bootstrap template repository:
-
-**[sprintctl-bootstrap-template](https://github.com/bayleafwalker/sprintctl-bootstrap-template)**
-
-That repo demonstrates "what does good look like when starting from nothing?" It is designed to be forked and adapted, not read in-place.
+The `sprintctl-bootstrap-template` reference repository is retired; the two
+examples above and the [Baseline Setup](#baseline-setup) / [Suggested Minimal
+Project Bundle](#suggested-minimal-project-bundle) sections in this guide are
+the served onboarding path for a fresh repository.
 
 If the repository already has another system for backlog or orchestration,
 [Interoperability Patterns](interoperability.md) describes the boundary to keep.
