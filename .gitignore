@@ -25,3 +25,8 @@ docs/knowledge/*
 
 # Per-user Claude Code settings; untracked copies made devbox checkouts read as dirty (dogfood 2026-09-16)
 .claude/settings.local.json
+
+# auditctl local event database and NDJSON audit shards (auditctl 0.1.8, hook output
+# from nearest-marker rooting; not committed in this repo)
+.auditctl/
+_artifacts/*/audit*/
