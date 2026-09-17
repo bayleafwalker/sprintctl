@@ -303,7 +303,7 @@ sprintctl item note --id <item-id> --type decision \
 
 ---
 
-## Capability receipt at sprint close
+## Sprint close
 
 For an intentional sprint close, first run the close gate, read the current
 `sprint show --json` `status_revision`, then close explicitly with
@@ -312,16 +312,7 @@ The status change and one local `sprint-close-boundary` event commit atomically;
 the JSON response returns `boundary_event_id` and its database-local
 `boundary_revision` (`event:<id>`). That reference depends on preserving the
 database, event row, and project/sprint mapping; it is not migration-stable.
-
-Only after that boundary exists should the operator decide whether capability
-changed. A supported delta invokes the `capability-receipt` dispatch skill; a
-routine close records an evidence-backed no-receipt decision. Drafts live under
-`/projects/dev/_artifacts/<repo-id>/capability/receipts/`, while sprint state
-stores only the canonical pointer and SHA-256 digest. Agents draft but never
-ratify or publish receipts; operator-directed ratification is an external,
-append-only procedural assertion rather than authenticated identity. An
-`--auto-close` maintenance sweep emits no capability boundary. See
-[Capability receipts at sprint close](docs/reference/capability-receipts.md).
+An `--auto-close` maintenance sweep emits no boundary event.
 
 ---
 

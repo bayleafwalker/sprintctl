@@ -146,51 +146,16 @@ def test_readme_links_phase3_docs():
     )
 
 
-def test_capability_receipt_reference_is_linked_from_operator_surfaces():
-    _assert_markdown_link_declared_and_resolves(
-        "README.md",
-        "Capability Receipts",
-        "docs/reference/capability-receipts.md",
-    )
-    _assert_markdown_link_declared_and_resolves(
-        "AGENTS.md",
-        "Capability receipts at sprint close",
-        "docs/reference/capability-receipts.md",
-    )
-
-
-def test_capability_receipt_reference_pins_private_draft_and_human_ratification():
+def test_capability_receipt_reference_is_marked_retired():
     reference = _read("docs/reference/capability-receipts.md")
     normalized_reference = " ".join(reference.split())
-    for fragment in (
-        "capability-receipt/v1",
-        "/projects/dev/_artifacts/<repo-id>/capability/receipts/<receipt-id>.json",
-        "sprint-close-boundary",
-        "boundary_revision: event:<id>",
-        "capability-receipt-drafted",
-        "project",
-        "receipt_id",
-        "receipt_path",
-        "receipt_sha256",
-        "Any unknown field is rejected",
-        "agents must not ratify it",
-        "sprintctl maintain sweep --auto-close",
-        "does not count as a ratified capability boundary",
-    ):
-        assert fragment in normalized_reference
-
-    # The close step is pinned by its flags, not its full command string:
-    # --expected-revision is required for a direct sprint transition, so the
-    # example must carry it, and a future flag must not silently break the
-    # ordering check below into a ValueError.
-    close_position = normalized_reference.index(
-        "sprintctl sprint status --id <id> --status closed --actor <actor>"
-    )
-    assert "--expected-revision" in normalized_reference
-    draft_position = normalized_reference.index(
-        "For a supported delta, run the `capability-receipt` dispatch skill"
-    )
-    assert close_position < draft_position
+    assert (
+        "**Retired 2026-09-16** (vuoro consolidation S2 item 6). Capability "
+        "receipts > are no longer part of sprint close, the `capability-receipt` "
+        "skill and its > validator have been removed, and there is no "
+        "replacement. Do not draft > receipts. The text below is kept for "
+        "history only."
+    ) in normalized_reference
 
 
 def test_start_here_links_phase4_docs():

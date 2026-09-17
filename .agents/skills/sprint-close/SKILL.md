@@ -1,11 +1,11 @@
 ---
 name: sprint-close
-description: Use at the end of a sprint to verify the close gate, decide whether a real capability boundary occurred, preserve evidence, and close the sprint cleanly.
+description: Use at the end of a sprint to verify the close gate, preserve evidence, and close the sprint cleanly.
 ---
 
 ## Goal
 
-Encode the full sprint close-out sequence so steps are not repeated ad-hoc across sessions. Produces a confirmed close gate, an explicit capability-boundary decision, a committed snapshot, reviewed knowledge candidates, and a closed sprint record.
+Encode the full sprint close-out sequence so steps are not repeated ad-hoc across sessions. Produces a confirmed close gate, a committed snapshot, reviewed knowledge candidates, and a closed sprint record.
 
 ## Inputs
 
@@ -39,41 +39,20 @@ Encode the full sprint close-out sequence so steps are not repeated ad-hoc acros
    ```
 
    Retain `boundary_event_id` and `boundary_revision` (`event:<id>`) from the
-   response. Do not draft a sprint-close receipt unless this command succeeds.
-   This revision is a local database row reference, not a content digest or a
-   migration-stable identity. Preserve the Sprintctl database, event, and
-   source mapping; a bound receipt is not independently durable if the event is
-   deleted or resequenced.
+   response. This revision is a local database row reference, not a content
+   digest or a migration-stable identity. Preserve the Sprintctl database and
+   event to keep this reference valid.
 
-5. **Decide whether this was a capability boundary.** Use
-   `capability-receipt` when the evidence supports a newly reliable, cheaper,
-   or better-governed capability. The receipt must use the
-   `sprint-close-boundary` event from step 4 as its boundary ref. The skill
-   writes an unpublished workspace draft, validates it, and records only its
-   project, project-prefixed id, path, and SHA-256 digest in sprint state. It
-   stops before an operator-directed procedural ratification assertion or
-   publication. Validator success does not authenticate a person or prove
-   human action.
+5. **Refresh the sprint snapshot.** Run `sprint-snapshot` to commit the final state. Use a standalone `chore:` commit.
 
-   A routine sprint may legitimately contain no capability delta. Record that
-   decision without manufacturing a receipt:
-
-   ```bash
-   sprintctl event add --sprint-id <id> --type decision \
-     --actor <actor> \
-     --payload '{"summary":"No capability receipt for this close","detail":"<evidence-backed reason>","tags":["capability","boundary"],"evidence_event_id":<boundary_event_id>}'
-   ```
-
-6. **Refresh the sprint snapshot.** Run `sprint-snapshot` to commit the final state. Use a standalone `chore:` commit.
-
-7. **Extract knowledge.** Run `kctl-extract`. Key steps:
+6. **Extract knowledge.** Run `kctl-extract`. Key steps:
    ```bash
    kctl extract --sprint-id <id>
    kctl review list --kind all
    ```
    Review all candidates before completing.
 
-8. **Verify clean state.**
+7. **Verify clean state.**
    ```bash
    kctl status --sprint-id <id> --kind all
    ```
@@ -83,11 +62,6 @@ Encode the full sprint close-out sequence so steps are not repeated ad-hoc acros
 - Sprint close gate passes before close-out proceeds.
 - All sprint items are in `done` or explicitly deferred with a recorded reason.
 - Sprint status and the local `sprint-close-boundary` event commit atomically.
-- The close records either a validated capability-receipt draft or an explicit
-  decision that the sprint was not a capability boundary.
-- Any drafted receipt remains pending an operator-directed procedural
-  ratification assertion and private unless the operator separately changes
-  those states. Validator success is not identity proof.
 - Final snapshot committed.
 - All knowledge candidates reviewed (approved or rejected).
 - Sprint status is `closed` in `sprintctl`.
@@ -95,8 +69,6 @@ Encode the full sprint close-out sequence so steps are not repeated ad-hoc acros
 ## Do Not
 
 - Do not skip the close gate.
-- Do not draft a sprint-close receipt before the close boundary event exists.
 - Do not treat task completion or sprint closure as proof of capability.
-- Do not ratify or publish a capability receipt on the operator's behalf.
 - Do not close the sprint with `candidate` knowledge entries still unreviewed.
 - Do not carry implementation work into close-out commits.
