@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import posixpath
@@ -5,12 +6,14 @@ import re
 import sqlite3
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 from uuid import uuid4
 
 from . import contracts as _contracts
+from . import decisions as _decisions
 from . import depcore as _depcore
 from . import eventcore as _eventcore
 from . import refcore as _refcore
@@ -67,7 +70,7 @@ SPRINT_KINDS = ("active_sprint", "backlog", "archive")
 
 # Single source of truth for the local schema version; init_db() must end by
 # migrating to exactly this version, and doctor compares databases against it.
-CURRENT_SCHEMA_VERSION = 22
+CURRENT_SCHEMA_VERSION = 23
 RESERVATION_ROLES = _reservation.ROLES
 DEFAULT_RESERVATION_ROLE = _reservation.DEFAULT_ROLE
 ReservationConflict = _reservation.ReservationConflict
@@ -831,6 +834,174 @@ def _migration_22(conn: sqlite3.Connection) -> None:
     """)
 
 
+# Retired capability-receipt draft events folded into legacy evidence by
+# migration 23.  Nothing writes them any more.
+_LEGACY_RECEIPT_DRAFTED_EVENT_TYPES = (
+    "capability-receipt-drafted",
+    "capability-receipt-drafted-imported",
+)
+
+
+def _migration_23(conn: sqlite3.Connection) -> None:
+    """Decision core (TS-5), mirroring PostgreSQL schema 14.
+
+    A work decision is the only writer of terminal status.  Every existing
+    item is marked legacy and gets no invented decision.  SQLite has no
+    deferred triggers, so the decision row is always written before the item
+    row that names it; recovery and archive import follow the same order.
+    Drafted capability-receipt events are recorded as legacy evidence.
+    """
+    _execute_statements(
+        conn,
+        """
+        CREATE TABLE IF NOT EXISTS work_decision (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind                  TEXT    NOT NULL CHECK (
+                                      kind IN ('accept', 'reject', 'withdraw', 'supersede', 'revise')
+                                  ),
+            work_item_id          INTEGER REFERENCES work_item(id),
+            sprint_id             INTEGER REFERENCES sprint(id),
+            release_digest        TEXT    CHECK (
+                                      release_digest IS NULL OR (
+                                          length(release_digest) = 64
+                                          AND release_digest NOT GLOB '*[^0-9a-f]*'
+                                      )
+                                  ),
+            evidence_digests      TEXT    NOT NULL DEFAULT '[]' CHECK (
+                                      json_valid(evidence_digests)
+                                      AND json_type(evidence_digests) = 'array'
+                                  ),
+            rationale             TEXT    NOT NULL DEFAULT '',
+            actor                 TEXT    NOT NULL CHECK (trim(actor) <> ''),
+            superseded_by_item_id INTEGER REFERENCES work_item(id),
+            legacy_source         TEXT,
+            created_at            TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+            CHECK ((work_item_id IS NULL) <> (sprint_id IS NULL)),
+            CHECK (sprint_id IS NULL OR legacy_source IS NOT NULL),
+            CHECK ((superseded_by_item_id IS NOT NULL) = (kind = 'supersede')),
+            CHECK (superseded_by_item_id IS NULL OR superseded_by_item_id <> work_item_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_work_decision_item ON work_decision(work_item_id);
+
+        CREATE TABLE IF NOT EXISTS work_legacy_evidence (
+            event_id       INTEGER PRIMARY KEY REFERENCES event(id) ON DELETE RESTRICT,
+            sprint_id      INTEGER NOT NULL REFERENCES sprint(id) ON DELETE RESTRICT,
+            payload_sha256 TEXT    NOT NULL CHECK (length(payload_sha256) = 64),
+            kind           TEXT    NOT NULL,
+            recorded_at    TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+        );
+
+        -- A row here, written and removed inside one import transaction, lets
+        -- a state transfer carry rows that were legacy at their source.
+        CREATE TABLE IF NOT EXISTS legacy_import_gate (opened INTEGER NOT NULL);
+        """,
+    )
+    _add_column_if_missing(
+        conn,
+        "work_item",
+        "resolution",
+        "resolution TEXT CHECK (resolution IS NULL "
+        "OR resolution IN ('accepted', 'rejected', 'withdrawn', 'superseded'))",
+    )
+    _add_column_if_missing(
+        conn,
+        "work_item",
+        "terminal_decision_id",
+        "terminal_decision_id INTEGER REFERENCES work_decision(id)",
+    )
+    if not _column_exists(conn, "work_item", "legacy"):
+        # Every row that predates decisions is legacy.  Marking happens only
+        # when the column is added, before the immutability trigger exists,
+        # so replaying this migration never touches the flag again.
+        conn.execute(
+            "ALTER TABLE work_item ADD COLUMN legacy INTEGER NOT NULL DEFAULT 0 "
+            "CHECK (legacy IN (0, 1))"
+        )
+        conn.execute("UPDATE work_item SET legacy = 1")
+    guards = {
+        "work_item_legacy_insert": (
+            "BEFORE INSERT ON work_item "
+            "WHEN NEW.legacy <> 0 AND NOT EXISTS (SELECT 1 FROM legacy_import_gate)",
+            "work_item.legacy is set only by the schema 23 migration",
+        ),
+        "work_item_legacy_immutable": (
+            "BEFORE UPDATE OF legacy ON work_item WHEN NEW.legacy IS NOT OLD.legacy",
+            "work_item.legacy is immutable",
+        ),
+        "work_item_done_is_terminal": (
+            "BEFORE UPDATE OF status ON work_item "
+            "WHEN OLD.status = 'done' AND NEW.status <> 'done'",
+            "work item is terminal; done cannot transition back",
+        ),
+        "work_item_done_requires_decision_insert": (
+            "BEFORE INSERT ON work_item WHEN NEW.status = 'done' "
+            "AND NEW.legacy = 0 AND NEW.terminal_decision_id IS NULL",
+            "work item is done without a terminal decision",
+        ),
+        "work_item_done_requires_decision": (
+            "BEFORE UPDATE ON work_item WHEN NEW.status = 'done' "
+            "AND NEW.legacy = 0 AND NEW.terminal_decision_id IS NULL",
+            "work item is done without a terminal decision",
+        ),
+        "work_item_terminal_immutable": (
+            "BEFORE UPDATE ON work_item WHEN OLD.terminal_decision_id IS NOT NULL AND ("
+            "NEW.terminal_decision_id IS NOT OLD.terminal_decision_id "
+            "OR NEW.resolution IS NOT OLD.resolution)",
+            "work item terminal decision is immutable",
+        ),
+        "work_item_legacy_done_takes_no_decision": (
+            "BEFORE UPDATE ON work_item WHEN OLD.legacy <> 0 AND OLD.status = 'done' "
+            "AND NEW.terminal_decision_id IS NOT NULL",
+            "legacy done work item takes no decision",
+        ),
+    }
+    shape_check = (
+        "(NEW.resolution IS NULL) <> (NEW.terminal_decision_id IS NULL) "
+        "OR (NEW.terminal_decision_id IS NOT NULL AND ("
+        "NEW.status <> 'done' OR NEW.resolution IS NOT ("
+        "SELECT CASE kind WHEN 'accept' THEN 'accepted' WHEN 'reject' THEN 'rejected' "
+        "WHEN 'withdraw' THEN 'withdrawn' WHEN 'supersede' THEN 'superseded' END "
+        "FROM work_decision WHERE id = NEW.terminal_decision_id "
+        "AND work_item_id = NEW.id)))"
+    )
+    guards["work_item_terminal_shape_insert"] = (
+        f"BEFORE INSERT ON work_item WHEN {shape_check}",
+        "work item resolution must match its terminal decision",
+    )
+    guards["work_item_terminal_shape"] = (
+        f"BEFORE UPDATE ON work_item WHEN {shape_check}",
+        "work item resolution must match its terminal decision",
+    )
+    for table in ("work_decision", "work_legacy_evidence"):
+        for operation in ("UPDATE", "DELETE"):
+            guards[f"{table}_immutable_{operation.lower()}"] = (
+                f"BEFORE {operation} ON {table}",
+                "work decisions and legacy evidence are append-only",
+            )
+    for name, (when, message) in guards.items():
+        conn.execute(
+            f"CREATE TRIGGER IF NOT EXISTS {name} {when} "
+            f"BEGIN SELECT RAISE(ABORT, '{message}'); END"
+        )
+    placeholders = ",".join("?" for _ in _LEGACY_RECEIPT_DRAFTED_EVENT_TYPES)
+    drafted = conn.execute(
+        f"SELECT id, sprint_id, event_type, payload FROM event "
+        f"WHERE event_type IN ({placeholders}) ORDER BY id",
+        _LEGACY_RECEIPT_DRAFTED_EVENT_TYPES,
+    ).fetchall()
+    for event_id, sprint_id, event_type, payload in drafted:
+        conn.execute(
+            "INSERT OR IGNORE INTO work_legacy_evidence "
+            "(event_id, sprint_id, payload_sha256, kind) VALUES (?, ?, ?, ?)",
+            (
+                event_id,
+                sprint_id,
+                hashlib.sha256(str(payload or "").encode("utf-8")).hexdigest(),
+                event_type,
+            ),
+        )
+
+
 def _run_migration(
     conn: sqlite3.Connection,
     target_version: int,
@@ -882,7 +1053,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     _run_migration(conn, 19, _migration_19)
     _run_migration(conn, 20, _migration_20)
     _run_migration(conn, 21, _migration_21)
-    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_22, foreign_keys_off=True)
+    _run_migration(conn, 22, _migration_22, foreign_keys_off=True)
+    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_23)
 
 
 # --- Sprint ---
@@ -1024,6 +1196,14 @@ def get_track(conn: sqlite3.Connection, track_id: int) -> dict | None:
 # their transactional locking is backend-specific.
 
 
+def _work_item_row(row: sqlite3.Row) -> dict:
+    item = dict(row)
+    # SQLite stores the boolean as 0/1; both backends return a bool.
+    if "legacy" in item and item["legacy"] is not None:
+        item["legacy"] = bool(item["legacy"])
+    return item
+
+
 class _WorkItemSqlite:
     """SQLite execution adapter for ``workitemcore`` work-item operations."""
 
@@ -1038,10 +1218,10 @@ class _WorkItemSqlite:
 
     def query_one(self, sql: str, params: tuple) -> dict | None:
         row = self._conn.execute(sql, params).fetchone()
-        return dict(row) if row else None
+        return _work_item_row(row) if row else None
 
     def query_all(self, sql: str, params: tuple) -> list[dict]:
-        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+        return [_work_item_row(r) for r in self._conn.execute(sql, params).fetchall()]
 
     def insert_id(self, sql: str, params: tuple) -> int:
         cur = self._conn.execute(sql, params)
@@ -1219,10 +1399,18 @@ def set_work_item_status(
                 raise InvalidTransition(
                     f"cannot transition {current} -> active while blockers remain unresolved: {blocker_ids}"
                 )
-        wi.execute(
-            f"UPDATE work_item SET status = ?, updated_at = {wi.updated_at_sql} WHERE id = ?",
-            (new_status, item_id),
-        )
+        if new_status == "done":
+            # ``done`` is an alias for an accept decision (TS-5).
+            _decide_locked(
+                conn,
+                item,
+                _decisions.normalize_decision("accept", actor=actor or "sprintctl"),
+            )
+        else:
+            wi.execute(
+                f"UPDATE work_item SET status = ?, updated_at = {wi.updated_at_sql} WHERE id = ?",
+                (new_status, item_id),
+            )
         wi.commit()
     except Exception:
         wi.rollback()
@@ -1318,26 +1506,10 @@ def create_event(
     source_type: str = "actor",
     work_item_id: int | None = None,
     payload: dict | None = None,
-    expected_project: str | None = None,
 ) -> int:
     try:
         _contracts.require_generic_event_write_allowed(event_type)
         canonical_payload = _contracts.canonicalize_event_payload(event_type, payload)
-        if event_type == _contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE:
-            if (
-                expected_project is not None
-                and canonical_payload["project"] != expected_project
-            ):
-                raise ValueError(
-                    "capability receipt project must match the owning repository "
-                    f"{expected_project!r}"
-                )
-            boundary_event_id = _require_receipt_close_boundary(conn, sprint_id)
-            _contracts.verify_capability_receipt_draft_pointer(
-                canonical_payload,
-                sprint_id=sprint_id,
-                boundary_event_id=boundary_event_id,
-            )
         event_id = _insert_event(
             conn,
             sprint_id,
@@ -1352,23 +1524,6 @@ def create_event(
     except Exception:
         conn.rollback()
         raise
-
-
-def _require_receipt_close_boundary(conn: sqlite3.Connection, sprint_id: int) -> int:
-    sprint = get_sprint(conn, sprint_id)
-    if sprint is None:
-        raise ValueError(f"Sprint #{sprint_id} not found")
-    if sprint["status"] != "closed":
-        raise ValueError("capability-receipt-drafted requires a closed sprint")
-    rows = conn.execute(
-        "SELECT id FROM event WHERE sprint_id = ? AND event_type = ? ORDER BY id",
-        (sprint_id, _contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE),
-    ).fetchall()
-    if len(rows) != 1:
-        raise ValueError(
-            "capability-receipt-drafted requires exactly one local sprint-close-boundary"
-        )
-    return int(rows[0]["id"])
 
 
 def create_archive_import_event(
@@ -1873,13 +2028,129 @@ def get_ready_items(
     return ready
 
 
-def force_item_done_for_carryover(conn: sqlite3.Connection, item_id: int) -> None:
-    """Set item status to 'done' bypassing the state machine. Carryover use only."""
-    conn.execute(
-        "UPDATE work_item SET status = 'done', "
-        "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
-        (item_id,),
+# --- Work decisions (TS-5): the only writer of terminal status ---
+
+
+def _decision_rows(cur: sqlite3.Cursor) -> list[dict]:
+    columns = [column[0] for column in cur.description]
+    return [_decision_row(dict(zip(columns, row))) for row in cur.fetchall()]
+
+
+def _decision_row(row: dict) -> dict:
+    decision = dict(row)
+    digests = decision.get("evidence_digests")
+    if isinstance(digests, str):
+        decision["evidence_digests"] = json.loads(digests)
+    return decision
+
+
+def _decide_locked(conn: sqlite3.Connection, item: dict, decision: dict) -> dict:
+    """Record one normalized decision inside the caller's write transaction.
+
+    The decision row is written first and a terminal kind then closes the item
+    in one statement that binds it, which is the order the triggers require.
+    """
+    item_id = int(item["id"])
+    error = _decisions.transition_error(decision["kind"], item_id, item["status"])
+    if error is not None:
+        raise InvalidTransition(error)
+    superseded_by = decision["superseded_by_item_id"]
+    if superseded_by is not None:
+        if superseded_by == item_id:
+            raise ValueError("an item cannot supersede itself")
+        if conn.execute("SELECT 1 FROM work_item WHERE id = ?", (superseded_by,)).fetchone() is None:
+            raise ValueError(f"Superseding item #{superseded_by} not found")
+    cur = conn.execute(
+        "INSERT INTO work_decision (kind, work_item_id, release_digest, evidence_digests, "
+        "rationale, actor, superseded_by_item_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            decision["kind"],
+            item_id,
+            decision["release_digest"],
+            json.dumps(decision["evidence_digests"]),
+            decision["rationale"],
+            decision["actor"],
+            superseded_by,
+        ),
     )
+    decision_id = cur.lastrowid
+    resolution = _decisions.resolution_for(decision["kind"])
+    if resolution is not None:
+        conn.execute(
+            "UPDATE work_item SET status = 'done', resolution = ?, terminal_decision_id = ?, "
+            "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+            (resolution, decision_id, item_id),
+        )
+    return _decision_rows(
+        conn.execute("SELECT * FROM work_decision WHERE id = ?", (decision_id,))
+    )[0]
+
+
+def record_decision(
+    conn: sqlite3.Connection,
+    item_id: int,
+    kind: str,
+    *,
+    actor: str,
+    rationale: str = "",
+    evidence_digests: list[str] | None = None,
+    release_digest: str | None = None,
+    superseded_by_item_id: int | None = None,
+    expected_revision: str | None = None,
+) -> dict:
+    """Record a work decision and apply its terminal effect atomically."""
+    decision = _decisions.normalize_decision(
+        kind,
+        actor=actor,
+        rationale=rationale,
+        evidence_digests=evidence_digests,
+        release_digest=release_digest,
+        superseded_by_item_id=superseded_by_item_id,
+    )
+    if expected_revision is not None:
+        expected_revision = validate_item_status_revision(expected_revision)
+    try:
+        if not conn.in_transaction:
+            conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM work_item WHERE id = ?", (item_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"Item #{item_id} not found")
+        item = dict(row)
+        current_revision = item_status_revision(item)
+        if expected_revision is not None and expected_revision != current_revision:
+            raise StatusConflict(
+                f"Item #{item_id} status revision mismatch: "
+                f"expected {expected_revision}, current {current_revision}"
+            )
+        recorded = _decide_locked(conn, item, decision)
+        conn.commit()
+        return recorded
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def list_decisions(conn: sqlite3.Connection, item_id: int | None = None) -> list[dict]:
+    """Return work decisions, oldest first."""
+    if item_id is None:
+        return _decision_rows(conn.execute("SELECT * FROM work_decision ORDER BY id"))
+    return _decision_rows(
+        conn.execute(
+            "SELECT * FROM work_decision WHERE work_item_id = ? ORDER BY id", (item_id,)
+        )
+    )
+
+
+@contextmanager
+def legacy_import_gate(conn: sqlite3.Connection):
+    """Admit rows that were legacy at their source, inside the caller's txn."""
+    conn.execute("INSERT INTO legacy_import_gate (opened) VALUES (1)")
+    try:
+        yield
+    finally:
+        conn.execute("DELETE FROM legacy_import_gate")
+
+
 
 
 # --- Backlog seeding ---
@@ -1945,8 +2216,10 @@ def backlog_seed_from_candidates(
 # operational provenance ("was I recovered, when, from where"), not portable
 # business data. Carrying the source's records across would conflate the
 # source's history with this database's.
+# Decisions precede the items that name them: SQLite checks the terminal
+# binding immediately, not at commit.
 _RECOVERY_TABLE_ORDER = (
-    "sprint", "track", "work_item", "event", "reservation",
+    "sprint", "track", "work_decision", "work_item", "event", "reservation",
     "claim_history", "ref", "dep",
 )
 
@@ -2003,6 +2276,7 @@ def write_recovery_snapshot(
     try:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("INSERT INTO legacy_import_gate (opened) VALUES (1)")
         for table in _RECOVERY_TABLE_ORDER:
             rows = snapshot.get(table, [])
             table_cols = set(_table_columns(conn, table))
@@ -2021,6 +2295,14 @@ def write_recovery_snapshot(
                     value = row[col]
                     if table == "event" and col == "payload" and not isinstance(value, str):
                         value = json.dumps(value)
+                    elif (
+                        table == "work_decision"
+                        and col == "evidence_digests"
+                        and not isinstance(value, str)
+                    ):
+                        value = json.dumps(value if value is not None else [])
+                    elif table == "work_item" and col == "legacy":
+                        value = 1 if value else 0
                     elif table == "claim_history" and col == "exclusive":
                         value = 1 if value else 0
                     elif table == "claim_history" and col == "claim_token":
@@ -2063,6 +2345,7 @@ def write_recovery_snapshot(
                     claims_closed,
                 ),
             )
+        conn.execute("DELETE FROM legacy_import_gate")
         conn.execute("PRAGMA foreign_keys = ON")
         conn.commit()
     except Exception:

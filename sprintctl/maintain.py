@@ -13,22 +13,6 @@ from . import calc as _calc
 from . import db as _db
 
 
-def _force_item_done_for_carryover(conn, item_id: int, *, _m=None) -> None:
-    """
-    Set a work item to 'done' without going through the state machine.
-
-    ONLY valid for carryover: items being carried forward may be in
-    pending/active/blocked, none of which have an allowed transition to
-    'done'. Any other caller should use db.set_work_item_status() instead.
-    """
-    if _m is not None and _m is not _db:
-        _m.force_item_done_for_carryover(conn, item_id)
-        return
-    conn.execute(
-        "UPDATE work_item SET status = 'done', "
-        "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
-        (item_id,),
-    )
 
 DEFAULT_STALE_THRESHOLD = timedelta(hours=4)
 _CODE_EVIDENCE_EVENT_TYPES = frozenset({
@@ -345,7 +329,8 @@ def sweep(
 def carryover(conn, from_sprint_id: int, to_sprint_id: int, *, _m=None) -> list[dict]:
     """
     Move incomplete items (pending/active/blocked) from source sprint to
-    target sprint. Each original item is marked done with a carryover payload.
+    target sprint. Each original item is closed by a ``supersede`` decision
+    naming its new item (TS-5: only a decision writes terminal status).
     New items are created in the target sprint preserving track name and title.
 
     Returns a list of new item dicts created in the target sprint.
@@ -392,7 +377,14 @@ def carryover(conn, from_sprint_id: int, to_sprint_id: int, *, _m=None) -> list[
             },
         )
 
-        _force_item_done_for_carryover(conn, item["id"], _m=m)
+        m.record_decision(
+            conn,
+            item["id"],
+            "supersede",
+            actor="maintain-carryover",
+            rationale=f"carried over to sprint #{to_sprint_id} as item #{new_id}",
+            superseded_by_item_id=new_id,
+        )
         m.create_event(
             conn,
             from_sprint_id,

@@ -2,10 +2,18 @@
 
 The authority-command journal is the opt-in migration path from direct backend
 mutations to the outbox model in `adr-outbox-sync-model`. It covers item
-transition and completion; sprint activation and close; and capability-receipt
-acceptance.
+transition and completion; sprint activation and close; and work decisions
+(`decision.record`).
 
-The path defaults to `off`. Existing item, sprint, and receipt commands
+Completion is a decision. `item.done`, and `item.transition` to `done`, record
+an `accept` decision and bind the item to it in the same transaction, so
+outboxes written by older clients still apply. `decision.record` records any
+kind (`accept`, `reject`, `withdraw`, `supersede`, `revise`) with its
+rationale and evidence digests; `supersede` names the superseding item by
+`superseded_by_aggregate_uuid`. The former capability-receipt commands are
+retired and every `capability-receipt*` type is refused.
+
+The path defaults to `off`. Existing item and sprint commands
 continue to use their current backend implementation. Enabling this path does
 not silently intercept those commands; operators invoke the explicit
 `sprintctl authority` surface while rollout evidence is gathered.
@@ -57,7 +65,7 @@ sprintctl authority submit \
 
 The CLI reads the current local aggregate revision unless `--basis-revision`
 is given. Shadow submissions do not mutate shared authority. The served
-authority validates the command basis, close boundaries, and receipt artifacts
+authority validates the command basis, transitions, and decisions
 when a corresponding served command is invoked or an already-recorded request
 is retried through served `authority sync`.
 
@@ -79,8 +87,9 @@ validated before use) so later passes skip it; an unknown transport outcome
 writes no receipt and stays replayable. Local direct-PostgreSQL `sync` is
 retired.
 
-`capability-receipt.accept` records are the one exception: the served batch
-operation does not support them, so `sync` reports them under
+Authority commands the served batch operation does not support
+(`decision.record` until its served operation exists, or a retired type left
+in an old outbox) are the one exception: `sync` reports them under
 `unsupported_command_event_ids` rather than failing the chunk that contains
 them.
 

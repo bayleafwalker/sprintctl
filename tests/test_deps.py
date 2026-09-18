@@ -11,10 +11,19 @@ import sprintctl.cli as cli_module
 from sprintctl.cli import cli
 
 
+def _finish(conn, iid):
+    """Close an item the only way an item closes: through an accept decision."""
+    if db.get_work_item(conn, iid)["status"] != "active":
+        db.set_work_item_status(conn, iid, "active")
+    db.record_decision(conn, iid, "accept", actor="test")
+
+
 def _item(conn, sprint_id, title="Task", status="pending"):
     tid = db.get_or_create_track(conn, sprint_id, "eng")
     iid = db.create_work_item(conn, sprint_id, tid, title)
-    if status != "pending":
+    if status == "done":
+        _finish(conn, iid)
+    elif status != "pending":
         conn.execute(
             "UPDATE work_item SET status = ? WHERE id = ?", (status, iid)
         )
@@ -172,7 +181,7 @@ class TestGetReadyItems:
         iid_a = _item(conn, active_sprint["id"], "A")
         iid_b = _item(conn, active_sprint["id"], "B")
         db.add_dep(conn, iid_a, iid_b)
-        conn.execute("UPDATE work_item SET status = 'done' WHERE id = ?", (iid_a,))
+        _finish(conn, iid_a)
         conn.commit()
         ready = db.get_ready_items(conn, active_sprint["id"])
         ready_ids = {it["id"] for it in ready}
@@ -202,7 +211,7 @@ class TestGetReadyItems:
         iid_a = _item(conn, active_sprint["id"], "A")
         iid_b = _item(conn, active_sprint["id"], "B")
         db.add_dep(conn, iid_a, iid_b)
-        conn.execute("UPDATE work_item SET status = 'done' WHERE id = ?", (iid_a,))
+        _finish(conn, iid_a)
         conn.commit()
         ready = db.get_ready_items(conn, active_sprint["id"])
         b_ready = next(it for it in ready if it["id"] == iid_b)
@@ -404,7 +413,7 @@ class TestNextWork:
         iid_a = _item(conn, active_sprint["id"], "Prerequisite")
         iid_b = _item(conn, active_sprint["id"], "Previously blocked")
         db.add_dep(conn, iid_a, iid_b)
-        conn.execute("UPDATE work_item SET status = 'done' WHERE id = ?", (iid_a,))
+        _finish(conn, iid_a)
         conn.commit()
         result = runner.invoke(cli, ["next-work", "--sprint-id", str(active_sprint["id"])])
         assert result.exit_code == 0, result.output

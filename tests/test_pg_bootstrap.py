@@ -51,6 +51,14 @@ class _SchemaCursor:
             self._conn.maintenance_triggers = 2
         return self
 
+    rowcount = 0
+
+    def fetchall(self):
+        # Schema 14 folds retired capability receipts; this fake holds none.
+        if "FROM authority_decision ad" in self._query:
+            return []
+        raise AssertionError(f"unexpected fetchall for query: {self._query}")
+
     def fetchone(self):
         if "AS catalog_fingerprint" in self._query:
             if self._conn.maintenance_relations == 4 and self._conn.maintenance_triggers == 2:

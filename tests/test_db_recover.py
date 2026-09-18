@@ -50,6 +50,9 @@ def _snapshot():
                 "created_at": "2026-03-01T00:00:00Z",
                 "updated_at": "2026-03-01T00:00:00Z",
                 "aggregate_uuid": "a0000000-0000-0000-0000-000000000011",
+                "resolution": None,
+                "terminal_decision_id": None,
+                "legacy": True,
             }
         ],
         "event": [
@@ -144,6 +147,7 @@ class TestWriteRecoverySnapshot:
             "sprint": 1,
             "track": 1,
             "work_item": 1,
+            "work_decision": 0,
             "event": 1,
             "claim_history": 2,
             "reservation": 1,

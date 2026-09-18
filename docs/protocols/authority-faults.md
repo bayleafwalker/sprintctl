@@ -54,18 +54,15 @@ retry returns the first decision without a second effect. The retained direct
 commands still provide only mutation safety and do not manufacture journal
 history.
 
-## Unavailable capability artifacts
+## Terminal status is a decision
 
-A capability-receipt draft pointer is accepted only after the sprint is closed,
-one local close boundary exists, and the referenced private artifact can be
-read and validated. SQLite and PostgreSQL both reject a missing artifact before
-appending the pointer event.
-
-This proves process-local validation and no-event-on-failure. The remote
-arbiter now performs the same validation within its effect savepoint and
-retains `artifact-unavailable` as a semantic rejection. Artifact transport is
-still outside sprintctl: the authority must be able to resolve the canonical
-private pointer from its own runtime.
+Capability-receipt pointers were retired in PostgreSQL schema 14 (SQLite 23):
+accepted receipts became legacy sprint-subject `accept` decisions and drafted
+receipt events are listed in `work_legacy_evidence`. The arbiter now records
+work decisions inside its effect savepoint. A decision that is not allowed
+from the item's current status (anything on a terminal item, `accept` on an
+item that is not active) is a semantic rejection, and the rolled-back effect
+leaves neither a decision row nor a status change.
 
 ## Duplicate and conflicting proposals
 

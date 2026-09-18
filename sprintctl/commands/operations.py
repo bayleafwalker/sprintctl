@@ -446,17 +446,9 @@ def _event_add_impl(
         click.echo(f"Work item #{work_item_id} not found.", err=True)
         sys.exit(1)
     try:
-        backend_config = obj.get("backend_config")
-        expected_project = (
-            backend_config.repo_id
-            if backend_config is not None
-            and (backend_config.mode != "local" or backend_config.marker is not None)
-            else None
-        )
         eid = m.create_event(
             store, sprint_id, actor, event_type,
             source_type=source_type, work_item_id=work_item_id, payload=payload_dict,
-            expected_project=expected_project,
         )
     except (TypeError, ValueError) as e:
         click.echo(f"Error: {e}", err=True)
@@ -544,7 +536,7 @@ _AUTHORITY_COMMAND_TYPES = (
     "item.done",
     "sprint.activate",
     "sprint.close",
-    "capability-receipt.accept",
+    "decision.record",
 )
 
 
@@ -621,7 +613,7 @@ def _authority_rollout_status() -> _authority_config.AuthorityCommandStatus:
 
 
 def _authority_command_target(store, m, record_type: str, aggregate_id: int):
-    if record_type in {"item.transition", "item.done"}:
+    if record_type in {"item.transition", "item.done", "decision.record"}:
         item = m.get_work_item(store, aggregate_id)
         if item is None:
             raise click.ClickException(f"Item #{aggregate_id} not found")
@@ -639,20 +631,9 @@ def _authority_basis_revision(
     aggregate_id: int,
     aggregate: dict,
 ) -> str:
-    if record_type in {"item.transition", "item.done"}:
+    if record_type in {"item.transition", "item.done", "decision.record"}:
         return _authority.item_revision(aggregate)
-    if record_type in {"sprint.activate", "sprint.close"}:
-        return _authority.sprint_revision(aggregate)
-    events = [
-        event
-        for event in m.list_events(store, aggregate_id)
-        if event["event_type"] == _contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE
-    ]
-    if len(events) != 1:
-        raise click.ClickException(
-            "capability receipt acceptance requires exactly one sprint-close-boundary"
-        )
-    return f"event:{events[0]['id']}"
+    return _authority.sprint_revision(aggregate)
 
 
 def _mint_authority_command_record(
@@ -1265,14 +1246,14 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
     else to route here: served mode keeps no local projection at all, every
     served read already goes live to the server.
 
-    One record type is deliberately excluded from every outgoing chunk, and
-    reported rather than silently dropped: a ``capability-receipt.accept``
-    record. The server's ``SUPPORTED_BATCH_TYPES`` (application.py:29-42)
-    excludes it, so sending one would abort its *entire chunk* with a
+    Authority commands whose type the server's ``SUPPORTED_BATCH_TYPES``
+    (application_common.py) excludes -- ``decision.record`` until its served
+    operation exists, or a retired type left in an old outbox -- are
+    deliberately excluded from every outgoing chunk, and reported rather than
+    silently dropped: sending one would abort its *entire chunk* with a
     confusing ``record-type-not-allowed`` rejection rather than just that
-    one record. It is skipped without stopping anything after it -- no
-    future retry ever makes it sendable over this operation -- and reported
-    under ``unsupported_command_event_ids``.
+    one record. Each is skipped without stopping anything after it and
+    reported under ``unsupported_command_event_ids``.
 
     Nothing else stalls a pass. This path once stopped at the first command
     whose payload named a ``...credential_ref`` with no matching local proof
@@ -1305,7 +1286,7 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
         if record.record_class == _outbox.OBSERVATION:
             included.append(record)
             continue
-        if record.event_type == "capability-receipt.accept":
+        if record.event_type not in _application.SUPPORTED_BATCH_TYPES:
             unsupported_event_ids.append(record.event_id)
             continue
         if _authority_config.is_terminal_authority_decision(
@@ -1375,7 +1356,7 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
         )
         if unsupported_event_ids:
             click.echo(
-                "capability-receipt.accept is not supported over the served batch "
+                "these authority commands are not supported over the served batch "
                 f"operation; unsupported event ids: {', '.join(unsupported_event_ids)}",
                 err=True,
             )

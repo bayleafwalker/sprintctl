@@ -14,7 +14,7 @@ from typing import Any, Mapping
 
 
 WORK_API_VERSION = "sprintctl-work/v1"
-CURRENT_SCHEMA_VERSION = 13
+CURRENT_SCHEMA_VERSION = 14
 # The v0.3 release is a coordinated schema/runtime cutover, so the runtime
 # admits exactly the schema it was built against.  A wider window would be a
 # false promise: reservation storage only arrived in schema 8, the live
@@ -24,7 +24,9 @@ CURRENT_SCHEMA_VERSION = 13
 # start.  Widen this deliberately, after a release that actually needs it.
 # 13 makes the ingest/authority records immutable and the sprint->event
 # relation RESTRICT; a 12 runtime has no reason to rely on either being absent.
-MINIMUM_SCHEMA_VERSION = 13
+# 14 makes a work decision the only writer of terminal status: a 13 runtime
+# would set done directly and be refused by the schema's terminal guard.
+MINIMUM_SCHEMA_VERSION = 14
 MAXIMUM_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION
 STARTUP_MODE_ENV = "SPRINTCTL_REMOTE_SCHEMA_MODE"
 READ_ONLY_STARTUP_MODE = "read-only"
@@ -404,6 +406,11 @@ def migrate_schema(store: Any) -> dict[str, Any]:
                 _pg._apply_schema_version_13(cur)
                 cur.execute("UPDATE schema_version SET version = %s", (13,))
                 applied.append(13)
+                state = SchemaState(version=13, row_count=1)
+            if state.version < 14:
+                _pg._apply_schema_version_14(cur)
+                cur.execute("UPDATE schema_version SET version = %s", (14,))
+                applied.append(14)
         store.conn.commit()
     except Exception:
         store.conn.rollback()

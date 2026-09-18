@@ -923,7 +923,6 @@ class WorkApplication:
             event_id = self.backend.create_event(
                 self.store, sprint_id, actor=context.identity.actor, event_type=event_type,
                 source_type=source_type, work_item_id=work_item_id, payload=payload,
-                expected_project=self.repo_id,
             )
         except ValueError as exc:
             raise ApplicationRejection("event-rejected", str(exc)) from exc

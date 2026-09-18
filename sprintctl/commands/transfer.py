@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -126,6 +127,9 @@ def import_cmd(obj: dict[str, Any], input_path: str) -> None:
                 payload = {}
             event_type = event["event_type"]
             source_event_id = event["id"]
+            if _contracts.is_retired_capability_receipt_type(event_type):
+                # Refuse before anything is written, not halfway through.
+                _contracts.require_generic_event_write_allowed(event_type)
             archive_only = _contracts.requires_archive_import_handling(event_type)
             if archive_only:
                 _contracts.canonicalize_event_for_archive_import(
@@ -171,6 +175,30 @@ def import_cmd(obj: dict[str, Any], input_path: str) -> None:
     item_id_map: dict[int, int] = {}
     for item in envelope.get("items", []):
         new_track_id = track_id_map[item["track_id"]]  # guaranteed present after pre-flight
+        imported_status = item.get("status", "pending")
+        if imported_status == "done":
+            # Only a decision writes terminal status, and the decision that
+            # closed this item belongs to the source database.  The copy is
+            # carried as legacy history rather than given an invented one.
+            with _db.legacy_import_gate(conn):
+                new_item_id = conn.execute(
+                    "INSERT INTO work_item (sprint_id, track_id, title, description, "
+                    "assignee, status, legacy, aggregate_uuid, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, 'done', 1, ?, "
+                    "COALESCE(?, strftime('%Y-%m-%dT%H:%M:%SZ','now')))",
+                    (
+                        new_sprint_id,
+                        new_track_id,
+                        item["title"],
+                        item.get("description", ""),
+                        item.get("assignee"),
+                        str(uuid.uuid4()),
+                        item.get("updated_at", item.get("created_at")),
+                    ),
+                ).lastrowid
+            conn.commit()
+            item_id_map[item["id"]] = new_item_id
+            continue
         new_item_id = _db.create_work_item(
             conn,
             new_sprint_id,
@@ -180,7 +208,6 @@ def import_cmd(obj: dict[str, Any], input_path: str) -> None:
             assignee=item.get("assignee"),
         )
         # Restore status via raw update (bypasses transition guard for import)
-        imported_status = item.get("status", "pending")
         if imported_status != "pending":
             conn.execute(
                 "UPDATE work_item SET status = ?, updated_at = ? WHERE id = ?",
