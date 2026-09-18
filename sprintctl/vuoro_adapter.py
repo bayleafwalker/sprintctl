@@ -18,6 +18,7 @@ from vuoro_adapter_kit import (
     operation_spec,
 )
 
+from . import decisions as _decisions
 from .application import (
     ApplicationRejection,
     ProjectWorkApplication,
@@ -44,6 +45,10 @@ class WorkOperationContract:
 
 
 _object_schema = object_schema
+
+_DECISION_KINDS = _decisions.DECISION_KINDS
+_RESOLUTIONS = _decisions.RESOLUTIONS
+_SHA256_HEX: dict[str, Any] = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
 
 
 def _result_schema(
@@ -736,6 +741,90 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         ),
         "work:evidence",
         "write",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.decision.record",
+        _object_schema(
+            {
+                "item_id": {"type": "integer", "minimum": 1},
+                "kind": {"enum": list(_DECISION_KINDS)},
+                "rationale": {"type": "string"},
+                "evidence_digests": {
+                    "type": "array",
+                    "items": _SHA256_HEX,
+                    "maxItems": 64,
+                },
+                "release_digest": {**_SHA256_HEX, "type": ["string", "null"]},
+                "superseded_by_item_id": {"type": ["integer", "null"], "minimum": 1},
+                # Optional, never authorizing: it only lets the reservation
+                # ledger attribute this decision to the caller's session.
+                "session_id": {"type": ["string", "null"], "minLength": 1},
+            },
+            required=("item_id", "kind", "rationale", "evidence_digests"),
+        ),
+        _result_schema(
+            (
+                "repo_id",
+                "item_id",
+                "decision",
+                "status",
+                "resolution",
+                "terminal_decision_id",
+                "replayed",
+            ),
+            {
+                "repo_id": {"type": "string"},
+                "item_id": {"type": "integer", "minimum": 1},
+                "decision": {"type": "object"},
+                "status": {"enum": ["pending", "active", "done", "blocked"]},
+                "resolution": {"enum": [*_RESOLUTIONS, None]},
+                "terminal_decision_id": {"type": ["integer", "null"], "minimum": 1},
+                "replayed": {"type": "boolean"},
+            },
+        ),
+        "work:lifecycle",
+        "write",
+        "required",
+    ),
+    WorkOperationContract(
+        "work.read.item-decisions",
+        _object_schema(
+            {"item_id": {"type": "integer", "minimum": 1}}, required=("item_id",)
+        ),
+        _result_schema(
+            ("repo_id", "item_id", "status", "resolution", "terminal_decision_id", "decisions"),
+            {
+                "repo_id": {"type": "string"},
+                "item_id": {"type": "integer", "minimum": 1},
+                "status": {"enum": ["pending", "active", "done", "blocked"]},
+                "resolution": {"enum": [*_RESOLUTIONS, None]},
+                "terminal_decision_id": {"type": ["integer", "null"], "minimum": 1},
+                "decisions": {"type": "array", "items": {"type": "object"}},
+            },
+        ),
+        "work:read",
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.read.release",
+        _object_schema(
+            {
+                "release_digest": _SHA256_HEX,
+                "item_id": {"type": "integer", "minimum": 1},
+            }
+        ),
+        _result_schema(
+            ("repo_id", "release", "commits"),
+            {
+                "repo_id": {"type": "string"},
+                "release": {"type": "object"},
+                "commits": {"type": "array", "items": {"type": "object"}},
+            },
+        ),
+        "work:read",
+        "read",
         "not-allowed",
     ),
     WorkOperationContract(

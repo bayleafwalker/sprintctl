@@ -126,6 +126,7 @@ ACTIVITY_OPERATIONS = {
     "work.item.dep.add": "item_id",
     "work.item.dep.remove": "item_id",
     "work.event.add": "work_item_id",
+    "work.decision.record": "item_id",
 }
 
 

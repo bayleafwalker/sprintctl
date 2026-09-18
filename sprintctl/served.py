@@ -157,6 +157,72 @@ def read_item(
     )
 
 
+def decision_record(
+    served_profile: ServedProfile,
+    *,
+    repo_id: str,
+    item_id: int,
+    kind: str,
+    rationale: str,
+    evidence_digests: list[str],
+    release_digest: str | None = None,
+    superseded_by_item_id: int | None = None,
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
+    """Invoke ``work.decision.record`` (``sprintctl item decide``).
+
+    The decision actor is the authenticated identity; no actor is sent.  The
+    operation is keyed: a caller retrying one logical decision passes the same
+    key and gets the first attempt's decision back.
+    """
+    arguments: dict[str, Any] = {
+        "item_id": item_id,
+        "kind": kind,
+        "rationale": rationale,
+        "evidence_digests": list(evidence_digests),
+        "release_digest": release_digest,
+        "superseded_by_item_id": superseded_by_item_id,
+    }
+    return asyncio.run(
+        _invoke_operation(
+            served_profile,
+            "work.decision.record",
+            arguments,
+            repo_id=repo_id,
+            idempotency_key=idempotency_key or uuid.uuid4().hex,
+        )
+    )
+
+
+def read_item_decisions(
+    served_profile: ServedProfile, *, repo_id: str, item_id: int
+) -> dict[str, Any]:
+    """Invoke ``work.read.item-decisions`` (terminal decision in ``item show``)."""
+
+    return asyncio.run(
+        _invoke_operation(
+            served_profile, "work.read.item-decisions", {"item_id": item_id}, repo_id=repo_id
+        )
+    )
+
+
+def read_release(
+    served_profile: ServedProfile,
+    *,
+    repo_id: str,
+    release_digest: str | None = None,
+    item_id: int | None = None,
+) -> dict[str, Any]:
+    """Invoke ``work.read.release`` by digest, or for an item's current release."""
+
+    arguments: dict[str, Any] = (
+        {"release_digest": release_digest} if release_digest is not None else {"item_id": item_id}
+    )
+    return asyncio.run(
+        _invoke_operation(served_profile, "work.read.release", arguments, repo_id=repo_id)
+    )
+
+
 def read_item_projection(
     served_profile: ServedProfile, *, repo_id: str, item_id: int
 ) -> dict[str, Any]:

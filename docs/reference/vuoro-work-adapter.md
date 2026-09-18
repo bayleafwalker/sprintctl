@@ -24,6 +24,8 @@ no migration or DDL.
 | Reservation start | `work.claim.start` | key forbidden; one-shot create plus activation flow — **retired in v2** |
 | Durable reservations | `work.claim.arbitrate` | key equals immutable command `event_id` — **retired in v2** |
 | Lifecycle | `work.lifecycle.arbitrate` | key equals immutable command `event_id` |
+| Decisions | `work.decision.record` | key required; a replay with the same key returns the first decision |
+| Decision and release reads | `work.read.item-decisions`, `work.read.release` | key forbidden |
 | Evidence | `work.evidence.ingest` | key equals canonical record-batch digest |
 | Batching | `work.batch.apply` | key equals canonical ordered-project-batch digest |
 | Project | `work.project.context`, `work.project.sprints`, `work.project.items`, `work.project.next-work`, `work.project.batch` | aggregates require a canonical binding and authorization for every member; writes use canonical ordered-project-batch digest |
@@ -66,6 +68,23 @@ ActionQ and other bounded workers. It uses the established deterministic
 ranking function over one repository's ready items and refs. An explicit
 pending target is the only reservation-eligible result; invocation never
 reserves or starts work.
+
+`work.decision.record` records a work decision (`accept`, `reject`,
+`withdraw`, `supersede`, `revise`) with its rationale and evidence digests, as
+the authenticated identity; the contract has no actor argument. It returns the
+decision row with the item's resulting `status`, `resolution` and
+`terminal_decision_id`, and `replayed`. The decision is written with one
+`item-decided` event carrying the request idempotency key (the event type is
+reserved for this writer), so a retry under the same key returns the first
+decision and the same key with a different request is refused
+(`idempotency-conflict`, 409). Refusals: `release-mismatch` (a digest that is
+not a release of the item), `invalid-transition` (for example accepting a
+non-active item), `item-terminal`, `legacy-done-item` (all 409),
+`decision-rejected` (422) and `item-not-found` (404).
+`work.read.item-decisions` lists an item's decisions oldest first.
+`work.read.release` returns a release and its `release_commit` rows, by
+`release_digest` or for an `item_id`'s current release. `work.read.decisions`
+is the authority-decision journal read and is unrelated.
 
 ## Authority and retry semantics
 

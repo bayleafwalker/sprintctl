@@ -50,12 +50,14 @@ If sprintctl mutation is not allowed in the current session, do not half-complet
 
    Where the repo's CI runs only on `pull_request`, say so when you land: either the merge went unverified, or the PR existed to get it verified. Do not let that gap pass silently.
 
-5. **Mark done, then release the reservation.**
+5. **Record the accept decision, then release the reservation.**
    ```bash
-   sprintctl item status --id <id> --status done --expected-revision <revision>
+   sprintctl item decide --id <id> --kind accept \
+     --rationale "<what was verified and where it landed>" \
+     [--evidence <sha256-of-evidence> ...]
    sprintctl reservation release --id <reservation-id> --actor <actor>
    ```
-   Read `<revision>` from `sprintctl item show --id <id> --json`. These are two operations: the transition is guarded by the revision compare-and-swap, and releasing is a separate coordination signal. There is no token file to clean up.
+   Closing an item is a decision: `accept` makes it done with resolution `accepted`, against the item's current release by default. The decision actor is your authenticated identity in served mode. `reject`, `withdraw` and `supersede --superseded-by <item>` close it with other resolutions; `revise` records that more work is needed and keeps it open. `sprintctl item status --id <id> --status done --expected-revision <revision>` still works as an alias for `accept`, but carries no rationale. Releasing is a separate coordination signal. There is no token file to clean up.
 
 6. **Refresh the snapshot only when it is needed now.** If updated sprint state must be shared immediately (handoff, end-of-batch, review handoff, sprint close), run `sprint-snapshot`. Otherwise stop after the release and batch the refresh at the next natural milestone instead of creating a mechanical per-item snapshot commit.
 
@@ -74,7 +76,8 @@ If sprintctl mutation is not allowed in the current session, do not half-complet
 - Do not release another session's reservation as part of finishing your own work.
 - Do not background a verification command whose exit status gates item closeout.
 - Do not manufacture events if nothing non-obvious happened; one honest event beats three thin ones.
-- Do not omit `--expected-revision`; a direct transition requires it, and it is what makes a stale basis fail closed.
-- Do not silently skip the done transition, the release, or a required snapshot refresh; if state mutation is unavailable, report the block instead.
+- Do not close an item with a bare status change when you can record `item decide --kind accept` with a rationale; the decision is the durable record of why it closed.
+- Do not omit `--expected-revision` when you do use the `item status` alias; a direct transition requires it, and it is what makes a stale basis fail closed.
+- Do not silently skip the accept decision, the release, or a required snapshot refresh; if state mutation is unavailable, report the block instead.
 - Do not leave work on an unlanded local branch, and do not open a PR without naming the action it is open for; both turn finished work into drift nobody is tracking.
 - Do not treat "the writer must not mint its own acceptance" as a reason to hold a PR open — CI on the target branch after the merge is an equally independent evaluation.

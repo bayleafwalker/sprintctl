@@ -68,8 +68,7 @@ Recommended `--type` guidance:
 When done:
 
 ```bash
-REV=$(sprintctl item show --id 42 --json | jq -r '.item.status_revision')
-sprintctl item status --id 42 --status done --actor codex --expected-revision "$REV"
+sprintctl item decide --id 42 --kind accept --rationale "Tests pass; merged" --actor codex
 sprintctl reservation release --id "$RESERVATION_ID" --actor codex
 ```
 

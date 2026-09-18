@@ -56,6 +56,8 @@ SUPPORTED_BATCH_TYPES = (
 _ADMIN_SHUTDOWN_IDEMPOTENT_OPERATIONS = frozenset(
     {
         "work.lifecycle.arbitrate",
+        # Keyed: a replay returns the decision the first attempt recorded.
+        "work.decision.record",
         "work.reservation.reserve",
         "work.reservation.touch",
         "work.reservation.reassign",

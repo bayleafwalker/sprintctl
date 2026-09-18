@@ -24,6 +24,7 @@ from sprintctl.vuoro_adapter import WORK_OPERATION_CONTRACTS
 
 PUBLISHED_OPERATIONS = (
         "work.batch.apply",
+        "work.decision.record",
         "work.event.add",
         "work.evidence.ingest",
         "work.handoff.record",
@@ -55,12 +56,14 @@ PUBLISHED_OPERATIONS = (
         "work.read.events",
         "work.read.handoff",
         "work.read.item",
+        "work.read.item-decisions",
         "work.read.item-projection",
         "work.read.items",
         "work.read.maintenance-capability",
         "work.read.next-work",
         "work.read.next-work-explain",
         "work.read.records",
+        "work.read.release",
         "work.read.reservation",
         "work.read.reservations",
         "work.read.sprint",

@@ -2245,8 +2245,56 @@ def record_decision(
     release_digest: str | None = None,
     superseded_by_item_id: int | None = None,
     expected_revision: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict:
     """Record a work decision and apply its terminal effect atomically."""
+    recorded, _replayed = record_decision_keyed(
+        conn,
+        item_id,
+        kind,
+        actor=actor,
+        rationale=rationale,
+        evidence_digests=evidence_digests,
+        release_digest=release_digest,
+        superseded_by_item_id=superseded_by_item_id,
+        expected_revision=expected_revision,
+        idempotency_key=idempotency_key,
+    )
+    return recorded
+
+
+def _keyed_decision(conn: sqlite3.Connection, idempotency_key: str) -> dict | None:
+    rows = _decision_rows(
+        conn.execute(
+            "SELECT d.* FROM event e JOIN work_decision d "
+            "ON d.id = CAST(json_extract(e.payload, '$.decision_id') AS INTEGER) "
+            "WHERE e.event_type = ? AND json_extract(e.payload, '$.idempotency_key') = ? "
+            "ORDER BY e.id LIMIT 1",
+            (_decisions.ITEM_DECIDED_EVENT_TYPE, idempotency_key),
+        )
+    )
+    return rows[0] if rows else None
+
+
+def record_decision_keyed(
+    conn: sqlite3.Connection,
+    item_id: int,
+    kind: str,
+    *,
+    actor: str,
+    rationale: str = "",
+    evidence_digests: list[str] | None = None,
+    release_digest: str | None = None,
+    superseded_by_item_id: int | None = None,
+    expected_revision: str | None = None,
+    idempotency_key: str | None = None,
+) -> tuple[dict, bool]:
+    """Record a decision; return it and whether it replayed an earlier request.
+
+    With ``idempotency_key``, a request that repeats an earlier one under the
+    same key returns the decision that request recorded; the same key with a
+    different request raises :class:`~sprintctl.decisions.IdempotencyConflict`.
+    """
     decision = _decisions.normalize_decision(
         kind,
         actor=actor,
@@ -2255,6 +2303,7 @@ def record_decision(
         release_digest=release_digest,
         superseded_by_item_id=superseded_by_item_id,
     )
+    idempotency_key = _decisions.validate_idempotency_key(idempotency_key)
     if expected_revision is not None:
         expected_revision = validate_item_status_revision(expected_revision)
     try:
@@ -2264,6 +2313,13 @@ def record_decision(
         if row is None:
             raise ValueError(f"Item #{item_id} not found")
         item = dict(row)
+        if idempotency_key is not None:
+            replayed = _decisions.replay_or_conflict(
+                _keyed_decision(conn, idempotency_key), item_id, decision, idempotency_key
+            )
+            if replayed is not None:
+                conn.rollback()
+                return replayed, True
         current_revision = item_status_revision(item)
         if expected_revision is not None and expected_revision != current_revision:
             raise StatusConflict(
@@ -2271,8 +2327,16 @@ def record_decision(
                 f"expected {expected_revision}, current {current_revision}"
             )
         recorded = _decide_locked(conn, item, decision)
+        _insert_event(
+            conn,
+            int(item["sprint_id"]),
+            decision["actor"],
+            _decisions.ITEM_DECIDED_EVENT_TYPE,
+            work_item_id=item_id,
+            payload=_decisions.decided_event_payload(recorded, idempotency_key),
+        )
         conn.commit()
-        return recorded
+        return recorded, False
     except Exception:
         conn.rollback()
         raise

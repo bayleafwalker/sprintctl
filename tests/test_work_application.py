@@ -403,6 +403,7 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
     }
     assert required_idempotency == {
         "work.lifecycle.arbitrate",
+        "work.decision.record",
         "work.evidence.ingest",
         "work.batch.apply",
         "work.project.batch",

@@ -935,6 +935,15 @@ def _projection_item_events(projection_path: Path, item_id: int) -> list[dict]:
     return events
 
 
+def _terminal_decision(item: Mapping[str, Any], decisions: list) -> dict | None:
+    """Return the decision an item's ``terminal_decision_id`` points at."""
+    terminal_id = item.get("terminal_decision_id")
+    for decision in decisions:
+        if terminal_id is not None and int(decision["id"]) == int(terminal_id):
+            return decision
+    return None
+
+
 @item.command("show")
 @click.option("--id", "item_id", type=str, required=True, help="Item ID or repo#id")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
@@ -960,6 +969,19 @@ def item_show(obj, item_id: str, as_json) -> None:
         refs = result["refs"]
         blocking = result["deps"]["blocked_by"]
         blocked_by_me = result["deps"]["blocks"]
+        terminal_decision = None
+        if it.get("terminal_decision_id") is not None:
+            decisions_result = _run_served(
+                "item show",
+                _served.read_item_decisions,
+                config.served_profile,
+                repo_id=config.repo_id,
+                item_id=item_id,
+                resolved_context=context,
+            )
+            terminal_decision = _terminal_decision(
+                it, decisions_result.get("decisions", [])
+            )
     else:
         store, m = _get_store(obj)
         current = m.get_work_item_with_edit_revision(store, item_id)
@@ -994,10 +1016,14 @@ def item_show(obj, item_id: str, as_json) -> None:
         refs = m.list_refs(store, item_id)
         blocking = m.list_deps_blocking(store, item_id)
         blocked_by_me = m.list_deps_blocked_by(store, item_id)
+        terminal_decision = None
+        if it.get("terminal_decision_id") is not None:
+            terminal_decision = _terminal_decision(it, m.list_decisions(store, item_id))
 
     if as_json:
         payload = {
             "item": dict(it),
+            "terminal_decision": terminal_decision,
             "events": item_events,
             "active_reservations": reservations,
             "refs": refs,
@@ -1024,6 +1050,21 @@ def item_show(obj, item_id: str, as_json) -> None:
     description = it.get("description") or "-"
     click.echo(f"  Description: {description}")
     click.echo(f"  Updated:  {it['updated_at']}")
+    if it.get("resolution"):
+        click.echo(f"  Resolution: {it['resolution']}")
+    elif it.get("status") == "done" and it.get("legacy"):
+        click.echo("  Resolution: - (legacy: done before decisions existed)")
+    if terminal_decision is not None:
+        click.echo(
+            f"  Decision: #{terminal_decision['id']} {terminal_decision['kind']} "
+            f"by {terminal_decision['actor']} at {terminal_decision['created_at']}"
+        )
+        if terminal_decision.get("rationale"):
+            click.echo(f"    Rationale: {terminal_decision['rationale']}")
+        if terminal_decision.get("release_digest"):
+            click.echo(f"    Release:   {terminal_decision['release_digest']}")
+        if terminal_decision.get("superseded_by_item_id"):
+            click.echo(f"    Superseded by: #{terminal_decision['superseded_by_item_id']}")
 
     if refs:
         click.echo("\nRefs:")
@@ -1456,6 +1497,131 @@ def item_status(
         click.echo(json.dumps({"item_id": item_id, "previous": current, "status": new_status}, indent=2))
         return
     click.echo(f"Item #{item_id} status: {current} -> {new_status}")
+
+
+_DECISION_KIND_CHOICES = ("accept", "reject", "withdraw", "supersede", "revise")
+
+
+def _echo_decision_result(result: dict, *, as_json: bool) -> None:
+    if as_json:
+        click.echo(json.dumps(result, indent=2, default=str))
+        return
+    decision = result["decision"]
+    outcome = (
+        f"status {result['status']} ({result['resolution']})"
+        if result.get("resolution")
+        else f"status {result['status']}"
+    )
+    replay = " (replayed)" if result.get("replayed") else ""
+    click.echo(
+        f"Recorded {decision['kind']} decision #{decision['id']} on item "
+        f"#{result['item_id']}{replay}; {outcome}"
+    )
+    if decision.get("release_digest"):
+        click.echo(f"  Release: {decision['release_digest']}")
+
+
+@item.command("decide")
+@click.option("--id", "item_id", type=str, required=True, help="Item ID or repo#id")
+@click.option(
+    "--kind",
+    required=True,
+    type=click.Choice(_DECISION_KIND_CHOICES),
+    help="accept, reject, withdraw and supersede close the item; revise keeps it open",
+)
+@click.option("--rationale", required=True, help="Why this decision was made")
+@click.option(
+    "--evidence",
+    "evidence_digests",
+    multiple=True,
+    help="SHA-256 digest (64 lowercase hex) of supporting evidence; repeatable",
+)
+@click.option(
+    "--release",
+    "release_digest",
+    default=None,
+    help="Release digest the decision is about (default: the item's current release)",
+)
+@click.option(
+    "--superseded-by",
+    "superseded_by",
+    type=str,
+    default=None,
+    help="Item ID or repo#id that supersedes this one (required for --kind supersede)",
+)
+@click.option("--actor", default=None, help="Decision actor for direct backends (served mode uses the authenticated identity)")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output the decision as JSON")
+@click.pass_obj
+def item_decide(
+    obj, item_id: str, kind, rationale, evidence_digests, release_digest,
+    superseded_by, actor, as_json,
+) -> None:
+    """Record a work decision on an item.
+
+    A terminal decision (accept, reject, withdraw, supersede) closes the item
+    with the matching resolution; ``item status --status done`` remains an
+    alias for ``--kind accept``.  ``revise`` records a revision request and
+    leaves the item open.
+    """
+    item_id = _apply_scoped_id(obj, item_id, field="item")
+    superseded_by_item_id = (
+        _apply_scoped_id(obj, superseded_by, field="item") if superseded_by is not None else None
+    )
+    evidence = list(evidence_digests)
+    config = _served_config_or_none(obj)
+    if config is not None:
+        context = _resolved_context(config)
+        if actor is not None:
+            click.echo(
+                "Note: served mode records the authenticated identity as the decision "
+                f"actor; --actor {actor!r} was not sent and is ignored.", err=True,
+            )
+        result = _run_served(
+            "item decide",
+            _served.decision_record,
+            config.served_profile,
+            repo_id=config.repo_id,
+            item_id=item_id,
+            kind=kind,
+            rationale=rationale,
+            evidence_digests=evidence,
+            release_digest=release_digest,
+            superseded_by_item_id=superseded_by_item_id,
+            resolved_context=context,
+        )
+        _echo_decision_result(result, as_json=as_json)
+        return
+    store, m = _get_store(obj)
+    if m.get_work_item(store, item_id) is None:
+        click.echo(f"Item #{item_id} not found.", err=True)
+        sys.exit(1)
+    try:
+        decision = m.record_decision(
+            store,
+            item_id,
+            kind,
+            actor=actor or "sprintctl",
+            rationale=rationale,
+            evidence_digests=evidence,
+            release_digest=release_digest,
+            superseded_by_item_id=superseded_by_item_id,
+        )
+    except (_db.InvalidTransition, ValueError) as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    _note_reservation_activity(store, m, item_id)
+    it = m.get_work_item(store, item_id)
+    _echo_decision_result(
+        {
+            "item_id": item_id,
+            "decision": decision,
+            "status": it["status"],
+            "resolution": it.get("resolution"),
+            "terminal_decision_id": it.get("terminal_decision_id"),
+            "replayed": False,
+        },
+        as_json=as_json,
+    )
 
 
 # ---------------------------------------------------------------------------

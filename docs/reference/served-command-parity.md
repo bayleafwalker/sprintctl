@@ -18,6 +18,7 @@ store.  `Unavailable` likewise never opens a store: it exits with the stable
 | `reservation reserve/touch/reassign/release` | Served | `work.reservation.reserve/touch/reassign/release`. Direct operations with no arbitration ledger: `reserve` always commits and returns the conflict set, and `--interrupt-existing` is an explicit takeover rather than an authorization bypass. |
 | `reservation list`, `reservation show` | Served | `work.read.reservations` supports item-scoped inspection; `work.read.reservation` is deliberately non-secret. |
 | `item add`, `item note`, `item status`, `event add/list` | Served | Existing catalog routes. |
+| `item decide` | Served | `work.decision.record`, keyed by the request idempotency key; the actor is the authenticated identity. `item show` reads the terminal decision through `work.read.item-decisions`. |
 | `handoff` | Served | `work.read.handoff` builds the tracker snapshot; after local artifact output, `work.handoff.record` appends the authenticated tracker record. An unconfirmed record exits nonzero without discarding the artifact. |
 
 `reservation list` and `reservation show` are served-catalog-aware reads. They

@@ -157,3 +157,78 @@ def legacy_evidence_digest(payload: Any) -> str:
         payload = {}
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+# --- Recorded-decision events and idempotent replay ---
+#
+# ``record_decision`` appends one ``item-decided`` event beside the decision
+# row, in the same transaction.  It is the item's audit line for the decision
+# and, when the caller supplied one, carries the request idempotency key: a
+# retried request with the same key finds its event and gets the original
+# decision back instead of a second row (or a "terminal item" refusal).  The
+# event type is reserved, so no generic event write can forge a key.
+
+ITEM_DECIDED_EVENT_TYPE = "item-decided"
+_MAX_IDEMPOTENCY_KEY_LENGTH = 200
+
+
+class IdempotencyConflict(ValueError):
+    """An idempotency key was reused for a different decision request."""
+
+
+def validate_idempotency_key(key: Any) -> str | None:
+    if key is None:
+        return None
+    if not isinstance(key, str) or not key.strip():
+        raise ValueError("idempotency key must be a non-empty string")
+    if len(key) > _MAX_IDEMPOTENCY_KEY_LENGTH:
+        raise ValueError(
+            f"idempotency key must be at most {_MAX_IDEMPOTENCY_KEY_LENGTH} characters"
+        )
+    return key
+
+
+def decided_event_payload(decision: dict, idempotency_key: str | None) -> dict[str, Any]:
+    """The payload of the ``item-decided`` event for a recorded decision."""
+    payload: dict[str, Any] = {
+        "decision_id": int(decision["id"]),
+        "kind": decision["kind"],
+        "resolution": resolution_for(decision["kind"]),
+        "release_digest": decision.get("release_digest"),
+    }
+    if idempotency_key is not None:
+        payload["idempotency_key"] = idempotency_key
+    return payload
+
+
+def replay_mismatch(stored: dict, item_id: int, decision: dict) -> str | None:
+    """Return why ``decision`` is not a replay of ``stored``, or None.
+
+    A request that named no release accepted whichever release the original
+    defaulted to, so the release is compared only when the request named one.
+    """
+    if int(stored["work_item_id"]) != int(item_id):
+        return f"it decided item #{stored['work_item_id']}"
+    for field in ("kind", "actor", "rationale", "evidence_digests", "superseded_by_item_id"):
+        if stored.get(field) != decision.get(field):
+            return f"its {field} differs"
+    if decision.get("release_digest") is not None and (
+        stored.get("release_digest") != decision["release_digest"]
+    ):
+        return "its release_digest differs"
+    return None
+
+
+def replay_or_conflict(
+    stored: dict | None, item_id: int, decision: dict, idempotency_key: str
+) -> dict | None:
+    """Return the stored decision a keyed request replays, or None if new."""
+    if stored is None:
+        return None
+    reason = replay_mismatch(stored, item_id, decision)
+    if reason is not None:
+        raise IdempotencyConflict(
+            f"idempotency key {idempotency_key!r} was already used for decision "
+            f"#{stored['id']}, and {reason}"
+        )
+    return stored

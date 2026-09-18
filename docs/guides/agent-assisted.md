@@ -23,11 +23,11 @@ sprintctl reservation reserve --item-id <id> --actor codex-session-1 --json
 sprintctl item note --id <id> --type decision --summary "Pinned contract v1"
 ```
 
-4. Agent marks the item done and releases the reservation:
+4. Agent records the accept decision (which closes the item) and releases the
+   reservation:
 
 ```sh
-REV=$(sprintctl item show --id <id> --json | jq -r '.item.status_revision')
-sprintctl item status --id <id> --status done --actor codex-session-1 --expected-revision "$REV"
+sprintctl item decide --id <id> --kind accept --rationale "<what was verified>" --actor codex-session-1
 sprintctl reservation release --id <reservation-id> --actor codex-session-1
 ```
 

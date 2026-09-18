@@ -634,6 +634,10 @@ def require_generic_event_write_allowed(event_type: str) -> None:
     """Reject event names whose provenance requires an internal workflow."""
     if event_type == ITEM_EDITED_EVENT_TYPE:
         raise ValueError("item-edited is reserved; use the item edit operation")
+    if event_type == _decisions.ITEM_DECIDED_EVENT_TYPE:
+        raise ValueError(
+            "item-decided is reserved; record a decision with item decide"
+        )
     if event_type == SESSION_CAPSULE_RECORDED_EVENT_TYPE:
         raise ValueError(
             "session-capsule.recorded is reserved; use event observation add"
