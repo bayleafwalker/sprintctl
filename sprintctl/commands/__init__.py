@@ -109,7 +109,6 @@ remote_schema_stage_maintenance_bridge_cmd = (
 )
 repo_group = repo.repo
 repo_list = repo.repo_list
-repo_delete = repo.repo_delete
 db_group = db.db_group
 db_vacuum = db.db_vacuum
 db_integrity = db.db_integrity

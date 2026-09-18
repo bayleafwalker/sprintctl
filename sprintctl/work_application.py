@@ -7,6 +7,7 @@ owns the single-repository service implementation.
 from __future__ import annotations
 
 from .application_common import *
+from . import contracts as _contracts
 from . import reservation as _reservation
 from . import volatile_context as _volatile_context
 
@@ -246,6 +247,12 @@ class WorkApplication:
                 "identity is not bound to a repository",
                 403,
             )
+        # Pre-admission (S1, owner decision D3): nothing credential-shaped is
+        # admitted through any served operation, whatever field carries it.
+        try:
+            _contracts.reject_credential_shaped_values(dict(arguments), operation)
+        except ValueError as exc:
+            raise ApplicationRejection("credential-shaped-value", str(exc), 422) from exc
         if not self._ensure_postgres_runtime_available(operation, context):
             raise self._admin_shutdown_unavailable()
         target = self._scoped_for(requested_repo_id)

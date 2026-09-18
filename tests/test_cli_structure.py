@@ -134,14 +134,13 @@ def test_extracted_remote_schema_leaves_receive_served_guard_markers():
 
 def test_extracted_repo_preserves_order_aliases_and_served_guard_markers():
     assert list(cli.commands)[-2:] == ["repo", "remote-schema"]
-    assert list(cli.commands["repo"].commands) == ["list", "delete"]
+    assert list(cli.commands["repo"].commands) == ["list"]
     assert cli_module.repo is cli.commands["repo"]
     assert cli_module.repo_list is cli.commands["repo"].commands["list"]
-    assert cli_module.repo_delete is cli.commands["repo"].commands["delete"]
+    assert not hasattr(cli_module, "repo_delete")
 
     leaves = {
         "repo list": cli.commands["repo"].commands["list"],
-        "repo delete": cli.commands["repo"].commands["delete"],
     }
     assert {
         getattr(command.callback, "__served_guard_path__", None)
