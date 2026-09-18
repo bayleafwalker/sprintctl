@@ -16,6 +16,7 @@ from . import decisions as _decisions
 from . import depcore as _depcore
 from . import eventcore as _eventcore
 from . import refcore as _refcore
+from . import releases as _releases
 from . import rows as _rows
 from . import sprintcore as _sprintcore
 from . import trackcore as _trackcore
@@ -69,7 +70,7 @@ SPRINT_KINDS = ("active_sprint", "backlog", "archive")
 
 # Single source of truth for the local schema version; init_db() must end by
 # migrating to exactly this version, and doctor compares databases against it.
-CURRENT_SCHEMA_VERSION = 23
+CURRENT_SCHEMA_VERSION = 24
 RESERVATION_ROLES = _reservation.ROLES
 DEFAULT_RESERVATION_ROLE = _reservation.DEFAULT_ROLE
 ReservationConflict = _reservation.ReservationConflict
@@ -1005,6 +1006,126 @@ def _migration_23(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migration_24(conn: sqlite3.Connection) -> None:
+    """Release (S3 PR2), mirroring PostgreSQL schema 15.
+
+    An execution reservation freezes a content-addressed, append-only
+    ``work_release``; ``release_commit`` is installed empty for commit
+    observations.  Reservations gain the digest of the release they froze.
+    """
+    _execute_statements(
+        conn,
+        """
+        CREATE TABLE IF NOT EXISTS work_release (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            work_item_id        INTEGER NOT NULL REFERENCES work_item(id),
+            item_revision       TEXT    NOT NULL CHECK (
+                                    item_revision LIKE 'item:%@description:v%@sha256:%@revise:%'
+                                ),
+            revise_count        INTEGER NOT NULL DEFAULT 0 CHECK (revise_count >= 0),
+            release_digest      TEXT    NOT NULL UNIQUE CHECK (
+                                    length(release_digest) = 64
+                                    AND release_digest NOT GLOB '*[^0-9a-f]*'
+                                ),
+            acceptance_contract TEXT    NOT NULL DEFAULT '{"review_required":true}' CHECK (
+                                    json_valid(acceptance_contract)
+                                    AND json_type(acceptance_contract) = 'object'
+                                ),
+            context_refs        TEXT    NOT NULL DEFAULT '[]' CHECK (
+                                    json_valid(context_refs) AND json_type(context_refs) = 'array'
+                                ),
+            created_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+            actor               TEXT    NOT NULL CHECK (trim(actor) <> ''),
+            CHECK (item_revision LIKE '%@revise:' || revise_count)
+        );
+        CREATE INDEX IF NOT EXISTS idx_work_release_item
+            ON work_release(work_item_id, revise_count);
+
+        CREATE TABLE IF NOT EXISTS release_commit (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            release_digest TEXT    NOT NULL REFERENCES work_release(release_digest),
+            commit_sha     TEXT    NOT NULL CHECK (
+                               length(commit_sha) = 40 AND commit_sha NOT GLOB '*[^0-9a-f]*'
+                           ),
+            remote_hint    TEXT,
+            ref            TEXT,
+            observed_at    TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+            UNIQUE (release_digest, commit_sha)
+        );
+        """,
+    )
+    _add_column_if_missing(
+        conn,
+        "reservation",
+        "release_digest",
+        "release_digest TEXT REFERENCES work_release(release_digest)",
+    )
+    guards = {
+        "reservation_release_execution_only_insert": (
+            "BEFORE INSERT ON reservation "
+            "WHEN NEW.release_digest IS NOT NULL AND NEW.role <> 'execution'",
+            "only an execution reservation freezes a release",
+        ),
+        "reservation_release_execution_only": (
+            "BEFORE UPDATE ON reservation "
+            "WHEN NEW.release_digest IS NOT NULL AND NEW.role <> 'execution'",
+            "only an execution reservation freezes a release",
+        ),
+        # A runtime older than 24 reserves without freezing a release and
+        # decides without binding one; these make it fail loudly instead.
+        # Existing rows are never re-checked, and recovery (which opens the
+        # legacy import gate) carries history as it was.
+        "reservation_release_required": (
+            "BEFORE INSERT ON reservation "
+            "WHEN NEW.role = 'execution' AND NEW.release_digest IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM legacy_import_gate)",
+            "an execution reservation must freeze a release (schema 24)",
+        ),
+        "reservation_release_same_item": (
+            "BEFORE INSERT ON reservation WHEN NEW.release_digest IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM work_release WHERE "
+            "release_digest = NEW.release_digest AND work_item_id = NEW.work_item_id)",
+            "a reservation may only name a release of its own item",
+        ),
+        "reservation_release_immutable": (
+            "BEFORE UPDATE ON reservation "
+            "WHEN NEW.release_digest IS NOT OLD.release_digest",
+            "reservation release_digest is immutable",
+        ),
+        "work_decision_release_of_item": (
+            "BEFORE INSERT ON work_decision WHEN NEW.work_item_id IS NOT NULL "
+            "AND NEW.legacy_source IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM legacy_import_gate) "
+            "AND NEW.release_digest IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM work_release WHERE "
+            "release_digest = NEW.release_digest AND work_item_id = NEW.work_item_id)",
+            "release is not a release of this work item",
+        ),
+        "work_decision_binds_current_release": (
+            "BEFORE INSERT ON work_decision WHEN NEW.work_item_id IS NOT NULL "
+            "AND NEW.legacy_source IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM legacy_import_gate) "
+            "AND NEW.release_digest IS NULL "
+            "AND EXISTS (SELECT 1 FROM work_release wr WHERE "
+            "wr.work_item_id = NEW.work_item_id AND wr.revise_count = ("
+            "SELECT COUNT(*) FROM work_decision d WHERE d.work_item_id = NEW.work_item_id "
+            "AND d.kind = 'revise'))",
+            "work item has a current release; a decision must bind it",
+        ),
+    }
+    for table in ("work_release", "release_commit"):
+        for operation in ("UPDATE", "DELETE"):
+            guards[f"{table}_immutable_{operation.lower()}"] = (
+                f"BEFORE {operation} ON {table}",
+                "releases and release commits are append-only",
+            )
+    for name, (when, message) in guards.items():
+        conn.execute(
+            f"CREATE TRIGGER IF NOT EXISTS {name} {when} "
+            f"BEGIN SELECT RAISE(ABORT, '{message}'); END"
+        )
+
+
 def _run_migration(
     conn: sqlite3.Connection,
     target_version: int,
@@ -1057,7 +1178,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     _run_migration(conn, 20, _migration_20)
     _run_migration(conn, 21, _migration_21)
     _run_migration(conn, 22, _migration_22, foreign_keys_off=True)
-    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_23)
+    _run_migration(conn, 23, _migration_23)
+    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_24)
 
 
 # --- Sprint ---
@@ -1680,7 +1802,8 @@ def list_reservations_by_sprint(conn: sqlite3.Connection, sprint_id: int, *, act
 
 def reserve(conn: sqlite3.Connection, work_item_id: int, *, actor: str, session_id: str,
             role: str = _reservation.DEFAULT_ROLE, correlation_ref: str | None = None,
-            interrupt_existing: bool = False) -> dict:
+            interrupt_existing: bool = False, expected_revision: str | None = None,
+            acceptance_contract: dict | None = None) -> dict:
     """Register a reservation, reporting -- never refusing -- overlap.
 
     Overlapping reservations are the expected case for collaborating sessions,
@@ -1688,8 +1811,16 @@ def reserve(conn: sqlite3.Connection, work_item_id: int, *, actor: str, session_
     ``interrupt_existing`` is a deliberate takeover: it interrupts the active
     execution reservations it displaced and records why, which is a different
     act from merely coexisting with them.
+
+    An ``execution`` reservation freezes the item's Release in the same
+    transaction (idempotently) and records its digest.  A queued request whose
+    ``expected_revision`` basis moved on is refused with
+    :class:`sprintctl.releases.StaleReleaseBasis`.
     """
     role = _reservation.normalize_role(role)
+    if expected_revision is not None:
+        expected_revision = _releases.validate_basis(expected_revision)
+    contract = _releases.normalize_acceptance_contract(acceptance_contract)
     if get_work_item(conn, work_item_id) is None:
         raise ValueError(f"Work item #{work_item_id} not found")
     now = _reservation.now_text()
@@ -1711,6 +1842,18 @@ def reserve(conn: sqlite3.Connection, work_item_id: int, *, actor: str, session_
             raise ReservationConflict(
                 "reservations are disabled while an exact-plan maintenance capability is active"
             )
+        release_digest = None
+        if role == "execution" or expected_revision is not None:
+            item, revision, revise_count = _release_basis(conn, work_item_id)
+            if expected_revision is not None and not _releases.basis_matches(
+                expected_revision, revision
+            ):
+                raise _releases.StaleReleaseBasis(work_item_id, expected_revision, revision)
+            if role == "execution":
+                release_digest = _freeze_release(
+                    conn, item, revision, revise_count,
+                    actor=actor, acceptance_contract=contract,
+                )
         existing = [dict(row) for row in conn.execute(
             "SELECT * FROM reservation WHERE work_item_id = ? AND state = 'active' ORDER BY id",
             (work_item_id,),
@@ -1724,8 +1867,8 @@ def reserve(conn: sqlite3.Connection, work_item_id: int, *, actor: str, session_
                     (now, f"interrupted by {actor} ({session_id})", work_item_id),
                 )
         cur = conn.execute(
-            "INSERT INTO reservation(work_item_id, session_id, actor, role, state, created_at, last_activity_at, correlation_ref) VALUES (?, ?, ?, ?, 'active', ?, ?, ?)",
-            (work_item_id, session_id, actor, role, now, now, correlation_ref),
+            "INSERT INTO reservation(work_item_id, session_id, actor, role, state, created_at, last_activity_at, correlation_ref, release_digest) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)",
+            (work_item_id, session_id, actor, role, now, now, correlation_ref, release_digest),
         )
         reservation_id = cur.lastrowid
         conn.commit()
@@ -1743,7 +1886,8 @@ def reserve(conn: sqlite3.Connection, work_item_id: int, *, actor: str, session_
     _reservation_event(conn, row, "reservation.reserved", actor,
                        {"reservation_id": reservation_id, "session_id": session_id, "role": role,
                         "correlation_ref": correlation_ref, "interrupt_existing": interrupt_existing,
-                        "conflicting_reservation_ids": [old["id"] for old in remaining]})
+                        "conflicting_reservation_ids": [old["id"] for old in remaining],
+                        "release_digest": row["release_digest"]})
     return _reservation.annotate_conflicts(_reservation.display(row), remaining)
 
 
@@ -2063,13 +2207,14 @@ def _decide_locked(conn: sqlite3.Connection, item: dict, decision: dict) -> dict
             raise ValueError("an item cannot supersede itself")
         if conn.execute("SELECT 1 FROM work_item WHERE id = ?", (superseded_by,)).fetchone() is None:
             raise ValueError(f"Superseding item #{superseded_by} not found")
+    release_digest = _decision_release(conn, item_id, decision["release_digest"])
     cur = conn.execute(
         "INSERT INTO work_decision (kind, work_item_id, release_digest, evidence_digests, "
         "rationale, actor, superseded_by_item_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (
             decision["kind"],
             item_id,
-            decision["release_digest"],
+            release_digest,
             json.dumps(decision["evidence_digests"]),
             decision["rationale"],
             decision["actor"],
@@ -2142,6 +2287,149 @@ def list_decisions(conn: sqlite3.Connection, item_id: int | None = None) -> list
             "SELECT * FROM work_decision WHERE work_item_id = ? ORDER BY id", (item_id,)
         )
     )
+
+
+# --- Releases (S3 PR2) ---
+#
+# What an execution reservation froze.  See ``sprintctl.releases`` for the
+# digest and the "current release" rule; PostgreSQL mirrors every function.
+
+
+def _release_basis(conn: sqlite3.Connection, item_id: int) -> tuple[dict, str, int]:
+    """Return an item with its release revision and revise count.
+
+    Callers inside a write transaction hold SQLite's database lock, which
+    serializes this read with edits and decisions.
+    """
+    row = conn.execute(
+        "SELECT wi.*, "
+        "(SELECT COUNT(*) FROM event e WHERE e.work_item_id = wi.id "
+        " AND e.event_type = ?) AS edit_version, "
+        "(SELECT COUNT(*) FROM work_decision d WHERE d.work_item_id = wi.id "
+        " AND d.kind = 'revise') AS revise_count "
+        "FROM work_item wi WHERE wi.id = ?",
+        (_contracts.ITEM_EDITED_EVENT_TYPE, item_id),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"Work item #{item_id} not found")
+    item = dict(row)
+    edit_version = int(item.pop("edit_version"))
+    revise_count = int(item.pop("revise_count"))
+    edit_revision = _description_revision(item, edit_version)
+    return item, _releases.release_revision(edit_revision, revise_count), revise_count
+
+
+def _freeze_release(
+    conn: sqlite3.Connection,
+    item: dict,
+    revision: str,
+    revise_count: int,
+    *,
+    actor: str,
+    acceptance_contract: dict,
+) -> str:
+    """Create the release for an item's current state, idempotently."""
+    refs = [
+        dict(row)
+        for row in conn.execute(
+            "SELECT ref_type, url, label FROM ref WHERE work_item_id = ?", (item["id"],)
+        ).fetchall()
+    ]
+    context_refs = _releases.canonical_context_refs(refs)
+    digest = _releases.release_digest(
+        item["aggregate_uuid"], revision, acceptance_contract, context_refs
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO work_release (work_item_id, item_revision, revise_count, "
+        "release_digest, acceptance_contract, context_refs, actor) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            item["id"],
+            revision,
+            revise_count,
+            digest,
+            _releases.canonical_json(acceptance_contract),
+            _releases.canonical_json(context_refs),
+            actor,
+        ),
+    )
+    return digest
+
+
+def _current_release_row(conn: sqlite3.Connection, item_id: int) -> dict | None:
+    row = conn.execute(
+        """
+        SELECT wr.* FROM work_release wr
+        WHERE wr.work_item_id = ?
+          AND wr.revise_count = (
+              SELECT COUNT(*) FROM work_decision d
+              WHERE d.work_item_id = wr.work_item_id AND d.kind = 'revise'
+          )
+        ORDER BY (
+            SELECT MAX(r.id) FROM reservation r WHERE r.release_digest = wr.release_digest
+        ) DESC NULLS LAST, wr.id DESC
+        LIMIT 1
+        """,
+        (item_id,),
+    ).fetchone()
+    return _releases.release_row(dict(row)) if row else None
+
+
+def _decision_release(
+    conn: sqlite3.Connection, item_id: int, release_digest: str | None
+) -> str | None:
+    """Default a decision's release to the current one; refuse a foreign one."""
+    if release_digest is None:
+        current = _current_release_row(conn, item_id)
+        return current["release_digest"] if current else None
+    if conn.execute(
+        "SELECT 1 FROM work_release WHERE release_digest = ? AND work_item_id = ?",
+        (release_digest, item_id),
+    ).fetchone() is None:
+        raise _releases.ReleaseMismatch(
+            f"release {release_digest} is not a release of item #{item_id}"
+        )
+    return release_digest
+
+
+def get_release(conn: sqlite3.Connection, digest: str) -> dict | None:
+    """Return one release by digest."""
+    digest = _releases.validate_digest(digest)
+    row = conn.execute(
+        "SELECT * FROM work_release WHERE release_digest = ?", (digest,)
+    ).fetchone()
+    return _releases.release_row(dict(row)) if row else None
+
+
+def list_releases(conn: sqlite3.Connection, work_item_id: int) -> list[dict]:
+    """Return an item's releases, oldest first."""
+    return [
+        _releases.release_row(dict(row))
+        for row in conn.execute(
+            "SELECT * FROM work_release WHERE work_item_id = ? ORDER BY id", (work_item_id,)
+        ).fetchall()
+    ]
+
+
+def current_release(conn: sqlite3.Connection, work_item_id: int) -> dict | None:
+    """Return the item's current release, or None after a revise decision."""
+    return _current_release_row(conn, work_item_id)
+
+
+def list_release_commits(conn: sqlite3.Connection, digest: str) -> list[dict]:
+    """Return the commits observed for a release, oldest first."""
+    digest = _releases.validate_digest(digest)
+    return [
+        dict(row)
+        for row in conn.execute(
+            "SELECT * FROM release_commit WHERE release_digest = ? ORDER BY id", (digest,)
+        ).fetchall()
+    ]
+
+
+def item_release_revision(conn: sqlite3.Connection, work_item_id: int) -> str:
+    """Return the item revision an execution reservation would freeze now."""
+    return _release_basis(conn, work_item_id)[1]
 
 
 @contextmanager
@@ -2223,8 +2511,9 @@ def backlog_seed_from_candidates(
 # triggers read the decision row immediately; the decision's own foreign key
 # to its item is deferred to commit (see write_recovery_snapshot).
 _RECOVERY_TABLE_ORDER = (
-    "sprint", "track", "work_decision", "work_item", "event",
-    "work_legacy_evidence", "reservation", "claim_history", "ref", "dep",
+    "sprint", "track", "work_decision", "work_item", "work_release",
+    "release_commit", "event", "work_legacy_evidence", "reservation",
+    "claim_history", "ref", "dep",
 )
 
 
@@ -2308,6 +2597,12 @@ def write_recovery_snapshot(
                         and not isinstance(value, str)
                     ):
                         value = json.dumps(value if value is not None else [])
+                    elif (
+                        table == "work_release"
+                        and col in ("acceptance_contract", "context_refs")
+                        and not isinstance(value, str)
+                    ):
+                        value = _releases.canonical_json(value)
                     elif table == "work_item" and col == "legacy":
                         value = 1 if value else 0
                     elif table == "claim_history" and col == "exclusive":

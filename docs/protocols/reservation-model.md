@@ -103,6 +103,40 @@ time passed.
 - `reservation touch` remains available for work happening outside sprintctl
   (long external or git-only work).
 
+## Releases
+
+An `execution` reservation freezes what it picked up (S3, schema 15 /
+SQLite 24). In the reservation's own transaction it creates, idempotently, a
+`work_release` row and stores its `release_digest` on the reservation.
+`verification` and `observation` reservations freeze nothing.
+
+- A release holds the item revision
+  (`item:<uuid>@description:v<N>@sha256:<hex>@revise:<count>`), the
+  acceptance contract (default `{"review_required": true}`, TS-11) and the
+  item's context refs (type, target, label). `release_digest` is the sha256
+  hex of their canonical JSON with the item's aggregate UUID, so the same item
+  state always yields the same digest and any edit, ref change or revise
+  yields a new one.
+- `work_release` and `release_commit` are append-only: UPDATE, DELETE and
+  TRUNCATE are refused by trigger.
+- The current release is derived, never stored: the release frozen most
+  recently at the item's current revise count. A `revise` decision retires it,
+  and the next execution reservation freezes a new one.
+- A decision without a `release_digest` binds the item's current release, if
+  any. A digest that is not a release of that item is refused.
+- The schema enforces the same rules against an older runtime during a
+  rolling deploy. A new execution reservation without a release is refused. A
+  reservation can only name a release of its own item, and its
+  `release_digest` never changes once written. A new item decision must name a
+  release of its item, and it may omit one only while the item has no current
+  release. Existing rows are not re-checked, so legacy execution reservations
+  with no digest stay valid, and archive import and recovery carry history
+  unchanged.
+- A queued reservation request may carry `expected_revision` (the release
+  revision, or the item's description `edit_revision`). If the item moved on
+  since, the reservation is refused with `stale-basis` instead of freezing a
+  revision the requester never saw.
+
 ## Staleness is policy, not model
 
 The ledger stores facts; what an age *means* is operator policy in
@@ -169,7 +203,7 @@ as a general cross-operation linearizability proof.
 ## Schema compatibility
 
 The v0.3 runtime admits exactly the PostgreSQL schema it was built against
-(`MINIMUM_SCHEMA_VERSION == CURRENT_SCHEMA_VERSION`, 14 since S3). A wider window
+(`MINIMUM_SCHEMA_VERSION == CURRENT_SCHEMA_VERSION`, 15 since S3). A wider window
 would be a false promise: reservation storage only arrived in schema 8, the
 live `claim` relation only disappeared in 10, and the overlap/role correction
 is 12 — a client admitted at 5..11 would pass the handshake and then fail on

@@ -15,7 +15,7 @@ from typing import Any, Mapping
 
 
 WORK_API_VERSION = "sprintctl-work/v1"
-CURRENT_SCHEMA_VERSION = 14
+CURRENT_SCHEMA_VERSION = 15
 # The v0.3 release is a coordinated schema/runtime cutover, so the runtime
 # admits exactly the schema it was built against.  A wider window would be a
 # false promise: reservation storage only arrived in schema 8, the live
@@ -27,7 +27,9 @@ CURRENT_SCHEMA_VERSION = 14
 # relation RESTRICT; a 12 runtime has no reason to rely on either being absent.
 # 14 makes a work decision the only writer of terminal status: a 13 runtime
 # would set done directly and be refused by the schema's terminal guard.
-MINIMUM_SCHEMA_VERSION = 14
+# 15 freezes a Release on every execution reservation: a 14 runtime would
+# reserve without one and leave decisions unbound to what was picked up.
+MINIMUM_SCHEMA_VERSION = 15
 MAXIMUM_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION
 STARTUP_MODE_ENV = "SPRINTCTL_REMOTE_SCHEMA_MODE"
 MIGRATION_LOCK_TIMEOUT_ENV = "SPRINTCTL_MIGRATION_LOCK_TIMEOUT"
@@ -435,11 +437,16 @@ def migrate_schema(store: Any) -> dict[str, Any]:
                 _pg._apply_schema_version_14(cur)
                 cur.execute("UPDATE schema_version SET version = %s", (14,))
                 applied.append(14)
+                state = SchemaState(version=14, row_count=1)
             else:
-                # Already at 14: re-run only the idempotent receipt fold, so
-                # a second migrate after a rolling deploy folds what an old
-                # pod wrote in the window.  No DDL is re-applied.
+                # Already at 14 or later: re-run only the idempotent receipt
+                # fold, so a second migrate after a rolling deploy folds what
+                # an old pod wrote in the window.  No DDL is re-applied.
                 refolded = _pg._fold_capability_receipts(cur)
+            if state.version < 15:
+                _pg._apply_schema_version_15(cur)
+                cur.execute("UPDATE schema_version SET version = %s", (15,))
+                applied.append(15)
         store.conn.commit()
     except Exception:
         store.conn.rollback()

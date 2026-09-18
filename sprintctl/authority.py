@@ -15,7 +15,7 @@ import json
 from typing import Any, Mapping
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from . import contracts, decisions, outbox, pg
+from . import contracts, decisions, outbox, pg, releases
 from .db import (
     SPRINT_TRANSITIONS,
     VALID_TRANSITIONS,
@@ -402,7 +402,12 @@ def _handle_decision(
         raise _RejectedCommand(
             "invalid-transition", error, current_revision=current_revision
         )
-    decision = pg._decide_locked(cur, store.repo_id, item, normalized)
+    try:
+        decision = pg._decide_locked(cur, store.repo_id, item, normalized)
+    except releases.ReleaseMismatch as exc:
+        raise _RejectedCommand(
+            "invalid-command", str(exc), current_revision=current_revision
+        ) from exc
     effect = _item_effect(cur, store, item, item["status"])
     effect["decision_id"] = int(decision["id"])
     effect["decision_kind"] = decision["kind"]

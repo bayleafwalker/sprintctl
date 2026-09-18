@@ -261,13 +261,16 @@ def import_cmd(obj: dict[str, Any], input_path: str) -> None:
         new_item_id = item_id_map.get(reservation.get("work_item_id"))
         if new_item_id is None:
             continue
-        conn.execute(
-            "INSERT INTO reservation(work_item_id, session_id, actor, role, state, created_at, last_activity_at, released_at, interruption_reason, correlation_ref) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (new_item_id, reservation["session_id"], reservation["actor"], reservation["role"],
-             reservation["state"], reservation["created_at"], reservation["last_activity_at"],
-             reservation.get("released_at"), reservation.get("interruption_reason"), reservation.get("correlation_ref")),
-        )
+        # Copied items get new identities and no releases, so a copied
+        # reservation is carried as history without one, as before schema 24.
+        with _db.legacy_import_gate(conn):
+            conn.execute(
+                "INSERT INTO reservation(work_item_id, session_id, actor, role, state, created_at, last_activity_at, released_at, interruption_reason, correlation_ref) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (new_item_id, reservation["session_id"], reservation["actor"], reservation["role"],
+                 reservation["state"], reservation["created_at"], reservation["last_activity_at"],
+                 reservation.get("released_at"), reservation.get("interruption_reason"), reservation.get("correlation_ref")),
+            )
 
     history_columns = [row["name"] for row in conn.execute("PRAGMA table_info(claim_history)")]
     for historical_claim in envelope.get("claim_history", []):
