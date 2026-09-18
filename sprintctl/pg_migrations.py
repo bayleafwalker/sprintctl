@@ -202,10 +202,23 @@ def _is_legacy_schema6_maintenance_layout(layout: Mapping[str, Any]) -> bool:
 
 
 def compatibility_handshake(store: Any) -> dict[str, Any]:
-    """Return read-only work API/schema compatibility data for service startup."""
-    with store.conn.cursor() as cur:
-        state = _read_schema_state(cur)
-        maintenance = _read_maintenance_bridge(cur)
+    """Return read-only work API/schema compatibility data for service startup.
+
+    A transaction this probe opens on an idle connection is ended here.  The
+    Vuoro composition calls it on the service's shared runtime connection at
+    startup; left open, that transaction made every later request look like
+    it ran inside a caller's transaction, so none of them ended theirs and the
+    connection sat idle in transaction holding locks for the pod's lifetime.
+    """
+    info = getattr(store.conn, "info", None)
+    was_idle = info is not None and info.transaction_status == 0  # TransactionStatus.IDLE
+    try:
+        with store.conn.cursor() as cur:
+            state = _read_schema_state(cur)
+            maintenance = _read_maintenance_bridge(cur)
+    finally:
+        if was_idle:
+            store.conn.rollback()
     compatible = (
         state.version is not None
         and MINIMUM_SCHEMA_VERSION <= state.version <= MAXIMUM_SCHEMA_VERSION

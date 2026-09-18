@@ -889,3 +889,54 @@ def test_schema_migration_gives_up_on_a_held_ddl_lock(store_factory, monkeypatch
         store.conn.rollback()
         monkeypatch.delenv("SPRINTCTL_MIGRATION_LOCK_TIMEOUT", raising=False)
         assert pg_migrations.migrate_schema(store)["to_version"] == 14
+
+
+@pytest.mark.parametrize(
+    "operation", ["work.project.next-work", "work.project.items", "work.project.sprints"]
+)
+def test_project_reads_do_not_leave_member_connections_idle_in_transaction(
+    store_factory, operation
+):
+    """Project reads use member applications directly, not WorkApplication.invoke."""
+    from psycopg.pq import TransactionStatus
+    from sprintctl.application import ProjectMemberApplication, ProjectWorkApplication
+
+    first = store_factory("project-read-a")
+    second = store_factory("project-read-b")
+    for store in (first, second):
+        pg.create_sprint(store, f"Project-read-{uuid.uuid4().hex[:8]}", status="active")
+    project = ProjectWorkApplication(
+        "vuoro",
+        (
+            ProjectMemberApplication(first.repo_id, _application(first)),
+            ProjectMemberApplication(second.repo_id, _application(second)),
+        ),
+        canonical_binding={
+            "project_id": "vuoro",
+            "display_name": "Vuoro",
+            "home_repo": first.repo_id,
+            "backlog_repos": [first.repo_id, second.repo_id],
+        },
+    )
+    context = _context("reader", None, f"project-{uuid.uuid4().hex}")
+    context.identity.authorizes_repo = lambda repo_id: True
+    project.invoke(operation, {}, context)
+    for store in (first, second):
+        assert store.conn.info.transaction_status == TransactionStatus.IDLE
+
+
+def test_compatibility_handshake_does_not_leave_the_shared_connection_in_a_transaction(
+    store_factory,
+):
+    """Vuoro's composition calls this on the served runtime connection at startup."""
+    from psycopg.pq import TransactionStatus
+    from sprintctl import pg_migrations
+
+    store = store_factory("handshake-tx")
+    store.conn.rollback()
+    assert pg_migrations.compatibility_handshake(store)["compatible"] is True
+    assert store.conn.info.transaction_status == TransactionStatus.IDLE
+    # And the reads that follow on that connection end their own transactions.
+    app = _application(store)
+    app.invoke("work.read.sprints", {}, _context("reader", None, f"hs-{uuid.uuid4().hex}", repo_id=store.repo_id))
+    assert store.conn.info.transaction_status == TransactionStatus.IDLE
