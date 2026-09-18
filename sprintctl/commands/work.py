@@ -1095,6 +1095,8 @@ def item_show(obj, item_id: str, as_json) -> None:
             ]
             if reservation.get("correlation_ref"):
                 parts.append(f"  correlation={reservation['correlation_ref']}")
+            if reservation.get("release_digest"):
+                parts.append(f"\n      release={reservation['release_digest']}")
             click.echo("".join(parts))
 
     if item_events:

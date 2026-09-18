@@ -505,6 +505,8 @@ def test_served_authority_sync_does_not_require_enforce_mode(
     result = runner.invoke(cli, ["authority", "sync", "--json"])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
+    # The fixture's fake .git is no real checkout: nothing is harvested.
+    assert payload.pop("release_trailers")["status"] == "skipped"
     assert payload == {
         "uploaded_observation_count": 0,
         "decisions": [],

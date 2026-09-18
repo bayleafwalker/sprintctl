@@ -8,13 +8,14 @@ authority-changing CLI paths or treat cached records as authoritative state.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import sqlite3
 import tempfile
 from typing import Callable, Mapping
 
 from . import authority, backend, outbox, pg, projection
+from . import release_trailers
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +96,7 @@ class SyncResult:
     pending_command_event_ids: tuple[str, ...] = ()
     decision_applied_count: int = 0
     decision_watermark: projection.ProjectionWatermark | None = None
+    release_harvest: release_trailers.HarvestResult | None = None
 
 
 def _validate_batch_size(batch_size: int) -> int:
@@ -260,11 +262,16 @@ def synchronize_repository(
     batch_size: int = 100,
     credential_resolver: Callable[[outbox.OutboxRecord], Mapping[str, str] | None]
     | None = None,
+    harvest_release_trailers: bool = True,
+    harvest_actor: str = "sprintctl-sync",
 ) -> SyncResult:
     """Run the durable local upload and projection catch-up for one repository.
 
     This is the normal synchronization orchestration.  Callers supply only
     fixed repository-owned paths; no rollout or pilot state participates.
+    Before uploading, ``Vuoro-Release`` commit trailers of the owning checkout
+    are harvested into the outbox (``release_trailers``) so they ride the
+    same upload.
     """
     batch_size = _validate_batch_size(batch_size)
     migrate_legacy_sync_state(
@@ -276,6 +283,13 @@ def synchronize_repository(
     )
     producer = outbox.open_outbox(outbox_path)
     try:
+        harvest = (
+            release_trailers.harvest_release_trailers(
+                producer, outbox_path.parent.parent, actor=harvest_actor
+            )
+            if harvest_release_trailers
+            else None
+        )
         if projection_path.exists():
             existing = projection.open_cached_projection(projection_path)
             try:
@@ -293,13 +307,14 @@ def synchronize_repository(
             projection_path, repo_id=remote_store.repo_id
         )
         try:
-            return synchronize_outbox(
+            result = synchronize_outbox(
                 producer,
                 remote_store,
                 cache,
                 batch_size=batch_size,
                 credential_resolver=credential_resolver,
             )
+            return replace(result, release_harvest=harvest)
         finally:
             cache.close()
     finally:
