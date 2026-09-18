@@ -1783,3 +1783,41 @@ def test_reservation_read_missing_row_rejects_without_backend_mutation(conn):
 
     assert rejected.value.code == "reservation-not-found"
     assert rejected.value.http_status == 404
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "postgresql://sprintctl:hunter2-secret@db.internal:5432/sprintctl",
+        "ghp_" + "A1b2C3d4" * 5,
+        "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----",
+    ],
+)
+def test_credential_shaped_values_are_refused_before_admission(conn, active_sprint, value):
+    app = _application(store=conn, backend=db)
+
+    with pytest.raises(ApplicationRejection) as refused:
+        app.invoke(
+            "work.event.add",
+            {
+                "sprint_id": active_sprint["id"],
+                "event_type": "note",
+                "source_type": "actor",
+                "payload": {"text": f"deploy notes: {value}"},
+            },
+            _context(),
+        )
+
+    assert refused.value.code == "credential-shaped-value"
+    assert refused.value.http_status == 422
+    assert db.list_events(conn, active_sprint["id"]) == []
+
+
+def test_placeholders_and_digests_are_not_credentials():
+    for text in (
+        "postgresql://<username>:<password>@vuoro-postgres-rw:5432/vuoro",
+        "sha256:" + "a" * 64,
+        "commit 0123456789abcdef0123456789abcdef01234567",
+        "https://github.com/bayleafwalker/sprintctl/pull/58",
+    ):
+        assert contracts.credential_shape(text) is None

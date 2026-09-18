@@ -766,6 +766,9 @@ class TestInitDb:
                 assert int(cur.fetchone()["highest_offset"]) == 2
             with pytest.raises(psycopg.errors.ForeignKeyViolation):
                 with conn.cursor() as cur:
+                    # Schema 13 makes decisions immutable; lift that in this
+                    # throwaway schema so the statement reaches the FK.
+                    cur.execute("ALTER TABLE authority_decision DISABLE TRIGGER USER")
                     cur.execute(
                         "UPDATE authority_decision SET decision_ingest_offset = 3 "
                         "WHERE repo_id = %s",

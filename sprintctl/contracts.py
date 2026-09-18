@@ -139,6 +139,49 @@ def _canonical_json_object(value: Any, field: str) -> dict[str, Any]:
     return canonical
 
 
+# Credential-shaped values (owner decision D3: prevention before insert).
+# Each pattern is a well-known token or key format with a fixed prefix, so a
+# match is a real credential far more often than a false positive.  Git SHAs,
+# UUIDs and sha256 digests deliberately do not match.
+_CREDENTIAL_VALUE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("private-key", re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")),
+    ("age-secret-key", re.compile(r"AGE-SECRET-KEY-1[0-9A-Z]{50,}")),
+    ("github-token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,})")),
+    ("aws-access-key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
+    ("anthropic-or-openai-key", re.compile(r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{32,}")),
+    ("slack-token", re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{10,}")),
+    ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")),
+    ("bearer-credential", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{24,}")),
+    (
+        "uri-with-password",
+        re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s/:@]+:(?!(?:\*+|<[^>]*>|\$\{[^}]*\}|redacted|password)@)[^\s/@]+@", re.I),
+    ),
+)
+
+
+def credential_shape(text: str) -> str | None:
+    """Return the name of the credential shape found in text, if any."""
+    for name, pattern in _CREDENTIAL_VALUE_PATTERNS:
+        if pattern.search(text):
+            return name
+    return None
+
+
+def reject_credential_shaped_values(value: Any, field: str) -> None:
+    """Refuse any string (key or value) anywhere in value that looks like a credential."""
+    if isinstance(value, str):
+        shape = credential_shape(value)
+        if shape is not None:
+            raise ValueError(f"{field} contains a credential-shaped value ({shape}); it must not be recorded")
+    elif isinstance(value, Mapping):
+        for key, nested in value.items():
+            reject_credential_shaped_values(str(key), f"{field} key")
+            reject_credential_shaped_values(nested, f"{field}.{key}")
+    elif isinstance(value, (list, tuple)):
+        for index, nested in enumerate(value):
+            reject_credential_shaped_values(nested, f"{field}[{index}]")
+
+
 def _reject_secret_material(value: Any, field: str) -> None:
     """Reject raw proof or credential material anywhere in a command body."""
     if isinstance(value, Mapping):

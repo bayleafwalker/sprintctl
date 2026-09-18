@@ -169,7 +169,7 @@ as a general cross-operation linearizability proof.
 ## Schema compatibility
 
 The v0.3 runtime admits exactly the PostgreSQL schema it was built against
-(`MINIMUM_SCHEMA_VERSION == CURRENT_SCHEMA_VERSION == 12`). A wider window
+(`MINIMUM_SCHEMA_VERSION == CURRENT_SCHEMA_VERSION`, 13 since S1). A wider window
 would be a false promise: reservation storage only arrived in schema 8, the
 live `claim` relation only disappeared in 10, and the overlap/role correction
 is 12 — a client admitted at 5..11 would pass the handshake and then fail on

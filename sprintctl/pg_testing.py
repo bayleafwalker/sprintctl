@@ -186,6 +186,8 @@ def cleanup_test_repositories(conn: Any, repo_ids: Iterable[str]) -> dict[str, A
             immutable_tables = (
                 "maintenance_capability_receipt",
                 "maintenance_capability_recovery",
+                "authority_decision",
+                "ingest_record",
             )
             for table in immutable_tables:
                 cur.execute(f"ALTER TABLE {table} DISABLE TRIGGER USER")  # noqa: S608

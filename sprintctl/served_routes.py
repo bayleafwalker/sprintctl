@@ -230,7 +230,6 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     "migrate-to-remote": "unavailable",
     "remote-backfill": "unavailable",
     "repo list": "unavailable",
-    "repo delete": "unavailable",
 }
 
 

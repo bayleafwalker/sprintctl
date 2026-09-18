@@ -129,7 +129,6 @@ remote_schema_stage_maintenance_bridge_cmd = (
 )
 repo = _commands.repo_group
 repo_list = _commands.repo_list
-repo_delete = _commands.repo_delete
 
 
 _commands.register_commands(cli, get_store=lambda obj: _get_store(obj))

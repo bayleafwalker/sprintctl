@@ -1557,6 +1557,62 @@ def _apply_schema_version_11(cur: Any) -> None:
     )
 
 
+def _apply_schema_version_13(cur: Any) -> None:
+    """Make authority evidence immutable and stop sprint deletion erasing events.
+
+    S1 hardening (dossier section 11).  ``ingest_record`` and
+    ``authority_decision`` are the served authority's record of what was
+    admitted and decided; the runtime only ever inserts them, so UPDATE,
+    DELETE and TRUNCATE are refused by trigger for every role, the owner
+    included.  The sprint -> event relation becomes RESTRICT, so deleting a
+    sprint can no longer silently delete its history.
+    """
+    cur.execute(
+        """
+        CREATE OR REPLACE FUNCTION sprintctl_authority_record_immutable()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            RAISE EXCEPTION 'authority ingest and decision records are immutable (%)', TG_TABLE_NAME;
+        END;
+        $$
+        """
+    )
+    for table in ("ingest_record", "authority_decision"):
+        cur.execute(f"DROP TRIGGER IF EXISTS {table}_immutable ON {table}")
+        cur.execute(
+            f"CREATE TRIGGER {table}_immutable BEFORE UPDATE OR DELETE ON {table} "
+            "FOR EACH ROW EXECUTE FUNCTION sprintctl_authority_record_immutable()"
+        )
+        cur.execute(f"DROP TRIGGER IF EXISTS {table}_no_truncate ON {table}")
+        cur.execute(
+            f"CREATE TRIGGER {table}_no_truncate BEFORE TRUNCATE ON {table} "
+            "FOR EACH STATEMENT EXECUTE FUNCTION sprintctl_authority_record_immutable()"
+        )
+    # The FK was declared inline, so drop it by what it references rather
+    # than by a generated name; the named re-add makes a re-run a no-op.
+    cur.execute(
+        """
+        DO $$
+        DECLARE constraint_name text;
+        BEGIN
+            IF to_regclass('event') IS NULL OR to_regclass('sprint') IS NULL THEN
+                RETURN;
+            END IF;
+            FOR constraint_name IN
+                SELECT conname FROM pg_constraint
+                WHERE conrelid = to_regclass('event') AND contype = 'f'
+                  AND confrelid = to_regclass('sprint')
+            LOOP
+                EXECUTE format('ALTER TABLE event DROP CONSTRAINT %I', constraint_name);
+            END LOOP;
+            ALTER TABLE event ADD CONSTRAINT event_sprint_fk
+                FOREIGN KEY (repo_id, sprint_id) REFERENCES sprint(repo_id, id)
+                ON DELETE RESTRICT;
+        END $$;
+        """
+    )
+
+
 def _apply_schema_version_12(cur: Any) -> None:
     """Make reservations overlappable and adopt the work-relationship roles.
 
@@ -2867,25 +2923,6 @@ def list_repos(conn: Any) -> list[str]:
     with conn.cursor() as cur:
         cur.execute("SELECT DISTINCT repo_id FROM sprint ORDER BY repo_id")
         return [row["repo_id"] for row in cur.fetchall()]
-
-
-def delete_repo(conn: Any, repo_id: str) -> dict[str, int]:
-    """Delete all rows for repo_id across all tables. Returns deleted row counts per table."""
-    counts: dict[str, int] = {}
-    with conn.cursor() as cur:
-        for table in (
-            "authority_decision",
-            "ingest_record",
-            "ingest_stream",
-            "ingest_repo_cursor",
-        ):
-            cur.execute(f"DELETE FROM {table} WHERE repo_id = %s", (repo_id,))  # noqa: S608
-            counts[table] = cur.rowcount
-        for table in reversed(_EXPORT_TABLES):
-            cur.execute(f"DELETE FROM {table} WHERE repo_id = %s", (repo_id,))  # noqa: S608
-            counts[table] = cur.rowcount
-    conn.commit()
-    return counts
 
 
 def import_ndjson(
