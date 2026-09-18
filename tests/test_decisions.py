@@ -195,6 +195,8 @@ class TestMigration23:
         try:
             with monkeypatch.context() as patch:
                 patch.setattr(db, "_migration_23", lambda _conn: None)
+                # 24's guards name the decision table 23 creates.
+                patch.setattr(db, "_migration_24", lambda _conn: None)
                 db.init_db(conn)
             conn.execute("UPDATE schema_version SET version = 22")
             sprint_id = conn.execute(

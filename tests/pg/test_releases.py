@@ -210,6 +210,88 @@ class TestAppendOnly:
             store.conn.rollback()
 
 
+def _refused(store, statement, params, match):
+    with pytest.raises(psycopg.errors.Error, match=match):
+        with store.conn.cursor() as cur:
+            cur.execute(statement, params)
+        store.conn.commit()
+    store.conn.rollback()
+
+
+class TestRollingWindow:
+    """Writes shaped like a v0.4.1 (schema 14) pod against schema 15 fail loudly."""
+
+    def test_old_pod_execution_reserve_without_a_release_is_refused(self, store):
+        item_id = _item(store)
+        _refused(
+            store,
+            "INSERT INTO reservation(repo_id, work_item_id, session_id, actor, role, state, "
+            "created_at, last_activity_at, correlation_ref) "
+            "VALUES (%s, %s, 's', 'old-pod', 'execution', 'active', now(), now(), NULL)",
+            (store.repo_id, item_id),
+            "must freeze a release",
+        )
+        with store.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO reservation(repo_id, work_item_id, session_id, actor, role) "
+                "VALUES (%s, %s, 's', 'old-pod', 'observation')",
+                (store.repo_id, item_id),
+            )
+        store.conn.commit()
+        assert pg.list_releases(store, item_id) == []
+
+    def test_old_pod_decision_with_a_foreign_or_null_release_is_refused(self, store):
+        item_id = _item(store)
+        foreign = _reserve(store, _item(store))["release_digest"]
+        insert = (
+            "INSERT INTO work_decision (repo_id, kind, work_item_id, release_digest, actor) "
+            "VALUES (%s, 'revise', %s, %s, 'old-pod')"
+        )
+        _refused(store, insert, (store.repo_id, item_id, foreign), "not a release of work item")
+        _refused(store, insert, (store.repo_id, item_id, "f" * 64), "not a release of work item")
+        # No release yet: an unbound decision is still what a decision is.
+        with store.conn.cursor() as cur:
+            cur.execute(insert, (store.repo_id, item_id, None))
+        store.conn.commit()
+        _reserve(store, item_id)
+        _refused(store, insert, (store.repo_id, item_id, None), "must bind it")
+        # The old pod's done path (a direct status write) stays refused too.
+        _refused(
+            store,
+            "UPDATE work_item SET status = 'done' WHERE repo_id = %s AND id = %s",
+            (store.repo_id, item_id),
+            "terminal decision",
+        )
+
+    def test_reservation_cannot_name_another_items_release(self, store):
+        item_id = _item(store)
+        foreign = _reserve(store, _item(store))["release_digest"]
+        _refused(
+            store,
+            "INSERT INTO reservation(repo_id, work_item_id, session_id, actor, role, "
+            "release_digest) VALUES (%s, %s, 's', 'a', 'execution', %s)",
+            (store.repo_id, item_id, foreign),
+            "reservation_release_item_fk",
+        )
+
+    def test_reservation_release_digest_is_immutable(self, store):
+        item_id = _item(store)
+        reservation = _reserve(store, item_id)
+        _edit(pg, store, item_id, "moved on")
+        other = _reserve(store, item_id)["release_digest"]
+        for value in (None, other):
+            _refused(
+                store,
+                "UPDATE reservation SET release_digest = %s WHERE repo_id = %s AND id = %s",
+                (value, store.repo_id, reservation["id"]),
+                "release_digest is immutable",
+            )
+        pg.release_reservation(store, reservation["id"], actor="agent")
+        assert pg.get_reservation(store, reservation["id"])["release_digest"] == (
+            reservation["release_digest"]
+        )
+
+
 class TestSchema15Migration:
     def test_migrating_14_to_15_is_idempotent(self, pg_test_scope, monkeypatch):
         schema = "release_v15_" + uuid.uuid4().hex
@@ -251,6 +333,10 @@ class TestSchema15Migration:
             with conn.cursor() as cur:
                 cur.execute("SELECT release_digest FROM reservation WHERE repo_id = %s", (repo_id,))
                 assert [row["release_digest"] for row in cur.fetchall()] == [None]
+                # A legacy execution reservation stays valid and updatable.
+                cur.execute(
+                    "UPDATE reservation SET state = 'released' WHERE repo_id = %s", (repo_id,)
+                )
             conn.commit()
             assert pg.list_releases(store, item_id) == []
             assert _reserve(store, item_id)["release_digest"] is not None

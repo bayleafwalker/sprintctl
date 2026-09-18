@@ -327,6 +327,8 @@ class TestSchema14Fold:
             # Build exactly schema 13: run the ladder with 14 withheld.
             with monkeypatch.context() as patch:
                 patch.setattr(pg, "_apply_schema_version_14", lambda cur: None)
+                # 15's guards name the decision table 14 creates.
+                patch.setattr(pg, "_apply_schema_version_15", lambda cur: None)
                 pg_migrations.migrate_schema(store)
             with conn.cursor() as cur:
                 cur.execute("UPDATE schema_version SET version = 13")

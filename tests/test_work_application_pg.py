@@ -888,7 +888,7 @@ def test_schema_migration_gives_up_on_a_held_ddl_lock(store_factory, monkeypatch
         blocker.close()
         store.conn.rollback()
         monkeypatch.delenv("SPRINTCTL_MIGRATION_LOCK_TIMEOUT", raising=False)
-        assert pg_migrations.migrate_schema(store)["to_version"] == 14
+        assert pg_migrations.migrate_schema(store)["to_version"] == pg_migrations.CURRENT_SCHEMA_VERSION
 
 
 @pytest.mark.parametrize(

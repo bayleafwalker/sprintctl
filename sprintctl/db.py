@@ -1071,6 +1071,47 @@ def _migration_24(conn: sqlite3.Connection) -> None:
             "WHEN NEW.release_digest IS NOT NULL AND NEW.role <> 'execution'",
             "only an execution reservation freezes a release",
         ),
+        # A runtime older than 24 reserves without freezing a release and
+        # decides without binding one; these make it fail loudly instead.
+        # Existing rows are never re-checked, and recovery (which opens the
+        # legacy import gate) carries history as it was.
+        "reservation_release_required": (
+            "BEFORE INSERT ON reservation "
+            "WHEN NEW.role = 'execution' AND NEW.release_digest IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM legacy_import_gate)",
+            "an execution reservation must freeze a release (schema 24)",
+        ),
+        "reservation_release_same_item": (
+            "BEFORE INSERT ON reservation WHEN NEW.release_digest IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM work_release WHERE "
+            "release_digest = NEW.release_digest AND work_item_id = NEW.work_item_id)",
+            "a reservation may only name a release of its own item",
+        ),
+        "reservation_release_immutable": (
+            "BEFORE UPDATE ON reservation "
+            "WHEN NEW.release_digest IS NOT OLD.release_digest",
+            "reservation release_digest is immutable",
+        ),
+        "work_decision_release_of_item": (
+            "BEFORE INSERT ON work_decision WHEN NEW.work_item_id IS NOT NULL "
+            "AND NEW.legacy_source IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM legacy_import_gate) "
+            "AND NEW.release_digest IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM work_release WHERE "
+            "release_digest = NEW.release_digest AND work_item_id = NEW.work_item_id)",
+            "release is not a release of this work item",
+        ),
+        "work_decision_binds_current_release": (
+            "BEFORE INSERT ON work_decision WHEN NEW.work_item_id IS NOT NULL "
+            "AND NEW.legacy_source IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM legacy_import_gate) "
+            "AND NEW.release_digest IS NULL "
+            "AND EXISTS (SELECT 1 FROM work_release wr WHERE "
+            "wr.work_item_id = NEW.work_item_id AND wr.revise_count = ("
+            "SELECT COUNT(*) FROM work_decision d WHERE d.work_item_id = NEW.work_item_id "
+            "AND d.kind = 'revise'))",
+            "work item has a current release; a decision must bind it",
+        ),
     }
     for table in ("work_release", "release_commit"):
         for operation in ("UPDATE", "DELETE"):

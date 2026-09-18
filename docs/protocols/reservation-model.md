@@ -124,6 +124,14 @@ SQLite 24). In the reservation's own transaction it creates, idempotently, a
   and the next execution reservation freezes a new one.
 - A decision without a `release_digest` binds the item's current release, if
   any. A digest that is not a release of that item is refused.
+- The schema enforces the same rules against an older runtime during a
+  rolling deploy. A new execution reservation without a release is refused. A
+  reservation can only name a release of its own item, and its
+  `release_digest` never changes once written. A new item decision must name a
+  release of its item, and it may omit one only while the item has no current
+  release. Existing rows are not re-checked, so legacy execution reservations
+  with no digest stay valid, and archive import and recovery carry history
+  unchanged.
 - A queued reservation request may carry `expected_revision` (the release
   revision, or the item's description `edit_revision`). If the item moved on
   since, the reservation is refused with `stale-basis` instead of freezing a

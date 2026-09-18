@@ -287,6 +287,74 @@ class TestAppendOnly:
         conn.rollback()
 
 
+class TestRollingWindow:
+    """Writes shaped like a schema 23 runtime against schema 24 fail loudly."""
+
+    def test_old_runtime_execution_reserve_without_a_release_is_refused(self, conn):
+        item_id = _item(conn)
+        with pytest.raises(sqlite3.IntegrityError, match="must freeze a release"):
+            conn.execute(
+                "INSERT INTO reservation(work_item_id, session_id, actor, role, state, "
+                "created_at, last_activity_at, correlation_ref) "
+                "VALUES (?, 's', 'old', 'execution', 'active', '2026-01-01T00:00:00Z', "
+                "'2026-01-01T00:00:00Z', NULL)",
+                (item_id,),
+            )
+        conn.rollback()
+        conn.execute(
+            "INSERT INTO reservation(work_item_id, session_id, actor, role) "
+            "VALUES (?, 's', 'old', 'verification')",
+            (item_id,),
+        )
+        conn.commit()
+
+    def test_old_runtime_decision_with_a_foreign_or_null_release_is_refused(self, conn):
+        item_id = _item(conn, "mine")
+        foreign = _reserve(conn, _item(conn, "theirs"))["release_digest"]
+        insert = (
+            "INSERT INTO work_decision (kind, work_item_id, release_digest, actor) "
+            "VALUES ('revise', ?, ?, 'old')"
+        )
+        for digest in (foreign, "f" * 64):
+            with pytest.raises(sqlite3.IntegrityError, match="not a release of this work item"):
+                conn.execute(insert, (item_id, digest))
+            conn.rollback()
+        conn.execute(insert, (item_id, None))
+        conn.commit()
+        _reserve(conn, item_id)
+        with pytest.raises(sqlite3.IntegrityError, match="must bind it"):
+            conn.execute(insert, (item_id, None))
+        conn.rollback()
+
+    def test_reservation_cannot_name_another_items_release(self, conn):
+        item_id = _item(conn, "mine")
+        foreign = _reserve(conn, _item(conn, "theirs"))["release_digest"]
+        with pytest.raises(sqlite3.IntegrityError, match="release of its own item"):
+            conn.execute(
+                "INSERT INTO reservation(work_item_id, session_id, actor, role, release_digest) "
+                "VALUES (?, 's', 'a', 'execution', ?)",
+                (item_id, foreign),
+            )
+        conn.rollback()
+
+    def test_reservation_release_digest_is_immutable(self, conn):
+        item_id = _item(conn)
+        reservation = _reserve(conn, item_id)
+        _edit(conn, item_id, "moved on")
+        other = _reserve(conn, item_id)["release_digest"]
+        for value in (None, other):
+            with pytest.raises(sqlite3.IntegrityError, match="release_digest is immutable"):
+                conn.execute(
+                    "UPDATE reservation SET release_digest = ? WHERE id = ?",
+                    (value, reservation["id"]),
+                )
+            conn.rollback()
+        db.release_reservation(conn, reservation["id"], actor="agent")
+        assert db.get_reservation(conn, reservation["id"])["release_digest"] == (
+            reservation["release_digest"]
+        )
+
+
 class TestMigration24:
     def test_migrating_23_to_24_keeps_rows_and_is_idempotent(self, db_path):
         conn = db.get_connection(db_path)
@@ -315,6 +383,8 @@ class TestMigration24:
         assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 24
         [row] = conn.execute("SELECT release_digest FROM reservation").fetchall()
         assert row[0] is None
+        conn.execute("UPDATE reservation SET state = 'released'")
+        conn.commit()
         assert db.list_releases(conn, item_id) == []
         db.set_work_item_status(conn, item_id, "active")
         assert _reserve(conn, item_id)["release_digest"] is not None

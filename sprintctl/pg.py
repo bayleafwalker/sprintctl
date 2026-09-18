@@ -2135,6 +2135,10 @@ def _apply_schema_version_15(cur: Any) -> None:
             actor               text        NOT NULL CHECK (btrim(actor) <> ''),
             UNIQUE (repo_id, id),
             CONSTRAINT work_release_digest_unique UNIQUE (repo_id, release_digest),
+            -- The target of reservation_release_item_fk, so a reservation can
+            -- only name a release of its own item.
+            CONSTRAINT work_release_item_digest_unique
+                UNIQUE (repo_id, work_item_id, release_digest),
             CONSTRAINT work_release_revise_count_matches
                 CHECK (item_revision LIKE '%@revise:' || revise_count::text),
             CONSTRAINT work_release_item_fk
@@ -2166,11 +2170,23 @@ def _apply_schema_version_15(cur: Any) -> None:
         BEGIN
             IF NOT EXISTS (
                 SELECT 1 FROM pg_constraint
-                WHERE conname = 'reservation_release_fk' AND conrelid = 'reservation'::regclass
+                WHERE conname = 'work_release_item_digest_unique'
+                  AND conrelid = 'work_release'::regclass
             ) THEN
-                ALTER TABLE reservation ADD CONSTRAINT reservation_release_fk
-                    FOREIGN KEY (repo_id, release_digest)
-                    REFERENCES work_release(repo_id, release_digest);
+                ALTER TABLE work_release ADD CONSTRAINT work_release_item_digest_unique
+                    UNIQUE (repo_id, work_item_id, release_digest);
+            END IF;
+            -- An earlier draft of this migration keyed the reservation's
+            -- release by digest alone, which let it name another item's.
+            ALTER TABLE reservation DROP CONSTRAINT IF EXISTS reservation_release_fk;
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'reservation_release_item_fk'
+                  AND conrelid = 'reservation'::regclass
+            ) THEN
+                ALTER TABLE reservation ADD CONSTRAINT reservation_release_item_fk
+                    FOREIGN KEY (repo_id, work_item_id, release_digest)
+                    REFERENCES work_release(repo_id, work_item_id, release_digest);
             END IF;
             IF NOT EXISTS (
                 SELECT 1 FROM pg_constraint
@@ -2189,7 +2205,74 @@ def _apply_schema_version_15(cur: Any) -> None:
             RAISE EXCEPTION 'releases and release commits are append-only (%)', TG_TABLE_NAME;
         END;
         $$;
+
+        -- A runtime older than 15 reserves without freezing a release and
+        -- decides without binding one.  These guards make such a pod fail
+        -- loudly during a rolling deploy instead of writing rows that later
+        -- decisions would bind wrongly.  Rows that already exist (legacy
+        -- execution reservations with no digest, older decisions) are never
+        -- re-checked; archive import and recovery carry history as it was.
+        CREATE OR REPLACE FUNCTION sprintctl_reservation_release_guard()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            IF TG_OP = 'INSERT' THEN
+                IF NEW.role = 'execution' AND NEW.release_digest IS NULL
+                   AND COALESCE(current_setting('sprintctl.legacy_import', true), '') <> 'on' THEN
+                    RAISE EXCEPTION 'an execution reservation must freeze a release (schema 15)'
+                        USING ERRCODE = '23514';
+                END IF;
+            ELSIF NEW.release_digest IS DISTINCT FROM OLD.release_digest THEN
+                RAISE EXCEPTION 'reservation % release_digest is immutable', OLD.id
+                    USING ERRCODE = '23514';
+            END IF;
+            RETURN NEW;
+        END;
+        $$;
+
+        CREATE OR REPLACE FUNCTION sprintctl_work_decision_release_guard()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            IF NEW.work_item_id IS NULL OR NEW.legacy_source IS NOT NULL
+               OR COALESCE(current_setting('sprintctl.legacy_import', true), '') = 'on' THEN
+                RETURN NEW;
+            END IF;
+            IF NEW.release_digest IS NOT NULL THEN
+                IF NOT EXISTS (
+                    SELECT 1 FROM work_release
+                    WHERE repo_id = NEW.repo_id AND work_item_id = NEW.work_item_id
+                      AND release_digest = NEW.release_digest
+                ) THEN
+                    RAISE EXCEPTION 'release % is not a release of work item %',
+                        NEW.release_digest, NEW.work_item_id
+                        USING ERRCODE = '23514';
+                END IF;
+            ELSIF EXISTS (
+                SELECT 1 FROM work_release wr
+                WHERE wr.repo_id = NEW.repo_id AND wr.work_item_id = NEW.work_item_id
+                  AND wr.revise_count = (
+                      SELECT COUNT(*) FROM work_decision d
+                      WHERE d.repo_id = NEW.repo_id AND d.work_item_id = NEW.work_item_id
+                        AND d.kind = 'revise'
+                  )
+            ) THEN
+                RAISE EXCEPTION 'work item % has a current release; a decision must bind it',
+                    NEW.work_item_id
+                    USING ERRCODE = '23514';
+            END IF;
+            RETURN NEW;
+        END;
+        $$;
         """
+    )
+    cur.execute("DROP TRIGGER IF EXISTS reservation_release_guard ON reservation")
+    cur.execute(
+        "CREATE TRIGGER reservation_release_guard BEFORE INSERT OR UPDATE ON reservation "
+        "FOR EACH ROW EXECUTE FUNCTION sprintctl_reservation_release_guard()"
+    )
+    cur.execute("DROP TRIGGER IF EXISTS work_decision_release_guard ON work_decision")
+    cur.execute(
+        "CREATE TRIGGER work_decision_release_guard BEFORE INSERT ON work_decision "
+        "FOR EACH ROW EXECUTE FUNCTION sprintctl_work_decision_release_guard()"
     )
     for table in ("work_release", "release_commit"):
         cur.execute(f"DROP TRIGGER IF EXISTS {table}_immutable ON {table}")
