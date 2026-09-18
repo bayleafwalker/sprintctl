@@ -62,6 +62,8 @@ def normalize_decision_fields(
         rationale = ""
     if not isinstance(rationale, str):
         raise ValueError("decision rationale must be a string")
+    if "\x00" in rationale:
+        raise ValueError("decision rationale must not contain NUL characters")
     if len(rationale) > _MAX_RATIONALE_LENGTH:
         raise ValueError(
             f"decision rationale must be at most {_MAX_RATIONALE_LENGTH} characters"
@@ -110,6 +112,8 @@ def normalize_decision(
     )
     if not isinstance(actor, str) or not actor.strip():
         raise ValueError("decision actor must be a non-empty string")
+    if "\x00" in actor:
+        raise ValueError("decision actor must not contain NUL characters")
     if kind == "supersede":
         if (
             isinstance(superseded_by_item_id, bool)
@@ -181,6 +185,8 @@ def validate_idempotency_key(key: Any) -> str | None:
         return None
     if not isinstance(key, str) or not key.strip():
         raise ValueError("idempotency key must be a non-empty string")
+    if "\x00" in key:
+        raise ValueError("idempotency key must not contain NUL characters")
     if len(key) > _MAX_IDEMPOTENCY_KEY_LENGTH:
         raise ValueError(
             f"idempotency key must be at most {_MAX_IDEMPOTENCY_KEY_LENGTH} characters"

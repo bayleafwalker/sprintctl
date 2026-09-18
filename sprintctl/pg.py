@@ -2946,6 +2946,14 @@ def record_decision_keyed(
         expected_revision = validate_item_status_revision(expected_revision)
     try:
         with store.conn.cursor() as cur:
+            if idempotency_key is not None:
+                # The item lock serializes requests for one item only; a key
+                # reused on another item must see the first request's event,
+                # so the key itself is locked until this transaction ends.
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    (f"sprintctl-decision-key:{store.repo_id}:{idempotency_key}",),
+                )
             cur.execute(
                 "SELECT * FROM work_item WHERE repo_id = %s AND id = %s FOR UPDATE",
                 (store.repo_id, item_id),

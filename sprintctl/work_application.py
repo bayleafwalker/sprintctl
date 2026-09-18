@@ -28,6 +28,14 @@ def _reservation_actor_mismatch(given: object, authenticated: object) -> Applica
     )
 
 
+def _is_postgres_data_error(error: BaseException) -> bool:
+    try:
+        from psycopg import DataError
+    except ImportError:  # standalone SQLite has no psycopg
+        return False
+    return isinstance(error, DataError)
+
+
 def _transaction_status(conn: Any) -> Any:
     info = getattr(conn, "info", None)  # None for SQLite or no connection
     return None if info is None else info.transaction_status
@@ -356,6 +364,12 @@ class WorkApplication:
         except ValueError as exc:
             raise ApplicationRejection("validation-failed", str(exc), 422) from exc
         except Exception as exc:
+            if _is_postgres_data_error(exc):
+                # A value PostgreSQL cannot store (a NUL character in text, for
+                # example) is the caller's input, not a server fault.
+                raise ApplicationRejection(
+                    "invalid-value", f"PostgreSQL refused a value: {exc}", 422
+                ) from exc
             if not self._is_postgres_admin_shutdown(exc):
                 raise
             if _admin_shutdown_retry or not self._can_retry_after_admin_shutdown(

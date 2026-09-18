@@ -17,6 +17,12 @@ ITEM_EDITED_EVENT_TYPE = "item-edited"
 SPRINT_CLOSE_BOUNDARY_EVENT_TYPE = "sprint-close-boundary"
 SPRINT_CLOSE_BOUNDARY_IMPORTED_EVENT_TYPE = "sprint-close-boundary-imported"
 SESSION_CAPSULE_RECORDED_EVENT_TYPE = "session-capsule.recorded"
+ITEM_DECIDED_EVENT_TYPE = _decisions.ITEM_DECIDED_EVENT_TYPE
+ITEM_DECIDED_IMPORTED_EVENT_TYPE = "item-decided-imported"
+ITEM_EDITED_IMPORTED_EVENT_TYPE = "item-edited-imported"
+# Request-scoped fields of an ``item-decided`` event.  They name a decision
+# row and a request of the source database, so imported history drops them.
+_ITEM_DECIDED_SOURCE_ONLY_FIELDS = ("idempotency_key", "decision_id")
 
 # The capability-receipt surface was retired in PostgreSQL schema 14 / SQLite
 # schema 23: accepted receipts became legacy accept decisions and drafted
@@ -25,6 +31,8 @@ SESSION_CAPSULE_RECORDED_EVENT_TYPE = "session-capsule.recorded"
 _RETIRED_CAPABILITY_RECEIPT_PREFIX = "capability-receipt"
 _IMPORT_ONLY_EVENT_TYPES = {
     SPRINT_CLOSE_BOUNDARY_IMPORTED_EVENT_TYPE,
+    ITEM_DECIDED_IMPORTED_EVENT_TYPE,
+    ITEM_EDITED_IMPORTED_EVENT_TYPE,
 }
 
 _LOWERCASE_SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -602,6 +610,9 @@ def _canonicalize_imported_typed_event_payload(
     if source["source_event_type"] != original_event_type:
         raise ValueError(f"source_event_type must be {original_event_type}")
     source_payload = canonicalize_event_payload(original_event_type, source["source_payload"])
+    if original_event_type == ITEM_DECIDED_EVENT_TYPE:
+        for field in _ITEM_DECIDED_SOURCE_ONLY_FIELDS:
+            source_payload.pop(field, None)
     return {
         "source_event_id": source_event_id,
         "source_event_type": original_event_type,
@@ -625,6 +636,16 @@ def canonicalize_event_payload(event_type: str, payload: Mapping[str, Any] | Non
             payload,
             original_event_type=SPRINT_CLOSE_BOUNDARY_EVENT_TYPE,
         )
+    if event_type == ITEM_DECIDED_IMPORTED_EVENT_TYPE:
+        return _canonicalize_imported_typed_event_payload(
+            payload,
+            original_event_type=ITEM_DECIDED_EVENT_TYPE,
+        )
+    if event_type == ITEM_EDITED_IMPORTED_EVENT_TYPE:
+        return _canonicalize_imported_typed_event_payload(
+            payload,
+            original_event_type=ITEM_EDITED_EVENT_TYPE,
+        )
     # Retired capability-receipt history is carried verbatim; writing a new
     # one is refused by require_generic_event_write_allowed.
     return dict(payload or {})
@@ -634,7 +655,7 @@ def require_generic_event_write_allowed(event_type: str) -> None:
     """Reject event names whose provenance requires an internal workflow."""
     if event_type == ITEM_EDITED_EVENT_TYPE:
         raise ValueError("item-edited is reserved; use the item edit operation")
-    if event_type == _decisions.ITEM_DECIDED_EVENT_TYPE:
+    if event_type == ITEM_DECIDED_EVENT_TYPE:
         raise ValueError(
             "item-decided is reserved; record a decision with item decide"
         )
@@ -666,26 +687,53 @@ def is_archive_only_event_type(event_type: str) -> bool:
     return event_type in _IMPORT_ONLY_EVENT_TYPES
 
 
-def requires_archive_import_handling(event_type: str) -> bool:
-    return event_type in {
+def requires_archive_import_handling(event_type: str, *, demote_item_edits: bool = False) -> bool:
+    """True for event types an import must carry as archive-only history.
+
+    ``demote_item_edits`` is for sprint import, which creates new items: the
+    source's ``item-edited`` events describe edits of a different item, so
+    they are kept as history instead of counting toward the new item's edit
+    revision.  Whole-repository transfers keep them, because they carry the
+    item they belong to.
+    """
+    types = {
         SPRINT_CLOSE_BOUNDARY_EVENT_TYPE,
         SPRINT_CLOSE_BOUNDARY_IMPORTED_EVENT_TYPE,
+        ITEM_DECIDED_EVENT_TYPE,
+        ITEM_DECIDED_IMPORTED_EVENT_TYPE,
+        ITEM_EDITED_IMPORTED_EVENT_TYPE,
     }
+    if demote_item_edits:
+        types.add(ITEM_EDITED_EVENT_TYPE)
+    return event_type in types
 
 
 def canonicalize_event_for_archive_import(
     event_type: str,
     payload: Mapping[str, Any] | None,
     source_event_id: int,
+    *,
+    demote_item_edits: bool = False,
 ) -> tuple[str, dict[str, Any]]:
-    """Demote local-authority events to explicit non-authoritative history."""
+    """Demote local-authority events to explicit non-authoritative history.
+
+    An imported ``item-decided`` event loses its idempotency key and decision
+    id: both belong to the source database, and a key left in place would let
+    an imported event answer a new request's replay lookup.
+    """
     canonical_payload = canonicalize_event_payload(event_type, payload)
     imported_types = {
         SPRINT_CLOSE_BOUNDARY_EVENT_TYPE: SPRINT_CLOSE_BOUNDARY_IMPORTED_EVENT_TYPE,
+        ITEM_DECIDED_EVENT_TYPE: ITEM_DECIDED_IMPORTED_EVENT_TYPE,
     }
+    if demote_item_edits:
+        imported_types[ITEM_EDITED_EVENT_TYPE] = ITEM_EDITED_IMPORTED_EVENT_TYPE
     imported_type = imported_types.get(event_type)
     if imported_type is None:
         return event_type, canonical_payload
+    if event_type == ITEM_DECIDED_EVENT_TYPE:
+        for field in _ITEM_DECIDED_SOURCE_ONLY_FIELDS:
+            canonical_payload.pop(field, None)
     imported_payload = {
         "source_event_id": source_event_id,
         "source_event_type": event_type,

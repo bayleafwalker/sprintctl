@@ -1659,12 +1659,15 @@ def create_archive_import_event(
     source_event_id: int,
     work_item_id: int | None = None,
     payload: dict | None = None,
+    *,
+    demote_item_edits: bool = False,
 ) -> int:
     """Insert a typed event as explicit non-authoritative imported history."""
     imported_type, imported_payload = _contracts.canonicalize_event_for_archive_import(
         event_type,
         payload,
         source_event_id,
+        demote_item_edits=demote_item_edits,
     )
     if imported_type == event_type and not _contracts.is_archive_only_event_type(event_type):
         raise ValueError(f"{event_type} is not a reserved typed import event")
@@ -2307,6 +2310,9 @@ def record_decision_keyed(
     if expected_revision is not None:
         expected_revision = validate_item_status_revision(expected_revision)
     try:
+        # BEGIN IMMEDIATE takes the database write lock before the key lookup,
+        # so two requests with one key serialize whatever items they name
+        # (PostgreSQL takes an advisory lock on the key instead).
         if not conn.in_transaction:
             conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT * FROM work_item WHERE id = ?", (item_id,)).fetchone()

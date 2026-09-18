@@ -277,6 +277,25 @@ class DecisionOperationContract:
                 env.invoke("work.read.release", arguments)
             assert rejected.value.http_status == status, arguments
 
+    def test_nul_characters_are_refused_before_storage(self, env):
+        item_id = env.new_item()
+        with pytest.raises(ApplicationRejection) as rationale:
+            env.decide(item_id, "revise", rationale="bad\x00rationale")
+        assert (rationale.value.code, rationale.value.http_status) == ("decision-rejected", 422)
+        with pytest.raises(ApplicationRejection) as key:
+            env.decide(item_id, "revise", key="bad\x00key")
+        assert (key.value.code, key.value.http_status) == ("decision-rejected", 422)
+        assert env.backend.list_decisions(env.store, item_id) == []
+
+    def test_same_key_on_another_item_is_a_conflict(self, env):
+        first, second = env.new_item(), env.new_item()
+        key = _key()
+        env.decide(first, "revise", key=key)
+        with pytest.raises(ApplicationRejection) as rejected:
+            env.decide(second, "revise", key=key)
+        assert (rejected.value.code, rejected.value.http_status) == ("idempotency-conflict", 409)
+        assert env.backend.list_decisions(env.store, second) == []
+
     def test_item_decided_events_cannot_be_forged(self, env):
         item_id = env.new_item()
         sprint_id = env.backend.get_work_item(env.store, item_id)["sprint_id"]
@@ -490,3 +509,98 @@ def test_served_decision_facade_is_keyed(monkeypatch):
     assert seen["kwargs"]["idempotency_key"] == "fixed"
     served.read_release(object(), repo_id="r", item_id=4)
     assert (seen["operation"], seen["arguments"]) == ("work.read.release", {"item_id": 4})
+
+
+# --- Sprint export/import carries decisions as archive-only history ---------
+
+
+def _export(runner, sprint_id, path):
+    result = runner.invoke(
+        cli, ["export", "--sprint-id", str(sprint_id), "--output", str(path)]
+    )
+    assert result.exit_code == 0, result.output
+    return json.loads(path.read_text())
+
+
+def test_sprint_with_decisions_and_edits_round_trips_through_export(
+    runner, conn, tmp_path, monkeypatch
+):
+    item_id = _sqlite_item(conn)
+    _row, revision = db.get_work_item_with_edit_revision(conn, item_id)
+    db.update_work_item_description(
+        conn, item_id, "edited", expected_revision=revision, actor="editor"
+    )
+    db.record_decision(
+        conn, item_id, "withdraw", actor="alice", rationale="dropped",
+        idempotency_key="source-key",
+    )
+    sprint_id = db.get_work_item(conn, item_id)["sprint_id"]
+    exported = _export(runner, sprint_id, tmp_path / "sprint.json")
+    assert {"item-decided", "item-edited"} <= {e["event_type"] for e in exported["events"]}
+
+    fresh = tmp_path / "fresh.db"
+    monkeypatch.setenv("SPRINTCTL_DB", str(fresh))
+    result = runner.invoke(cli, ["import", "--file", str(tmp_path / "sprint.json")])
+    assert result.exit_code == 0, result.output
+
+    target = db.get_connection(fresh)
+    try:
+        [imported_item] = target.execute("SELECT * FROM work_item").fetchall()
+        assert imported_item["status"] == "done"
+        events = target.execute(
+            "SELECT event_type, payload FROM event WHERE work_item_id = ? ORDER BY id",
+            (imported_item["id"],),
+        ).fetchall()
+        types = [row["event_type"] for row in events]
+        assert "item-decided" not in types and "item-edited" not in types
+        assert {"item-decided-imported", "item-edited-imported"} <= set(types)
+        decided = next(
+            json.loads(row["payload"]) for row in events
+            if row["event_type"] == "item-decided-imported"
+        )
+        assert decided["source_event_type"] == "item-decided"
+        assert decided["source_payload"]["kind"] == "withdraw"
+        assert "idempotency_key" not in decided["source_payload"]
+        assert "decision_id" not in decided["source_payload"]
+        # The imported item starts a fresh edit history.
+        _item, new_revision = db.get_work_item_with_edit_revision(target, imported_item["id"])
+        assert "@description:v0@" in new_revision
+    finally:
+        target.close()
+
+
+def test_import_refuses_reserved_events_before_writing_anything(
+    runner, conn, tmp_path, monkeypatch
+):
+    item_id = _sqlite_item(conn)
+    sprint_id = db.get_work_item(conn, item_id)["sprint_id"]
+    exported = _export(runner, sprint_id, tmp_path / "sprint.json")
+    exported["events"].append(
+        {
+            "id": 999_999, "sprint_id": sprint_id, "work_item_id": item_id,
+            "source_type": "actor", "actor": "x", "event_type": "session-capsule.recorded",
+            "payload": "{}", "created_at": "2026-09-18T00:00:00Z",
+        }
+    )
+    path = tmp_path / "tampered.json"
+    path.write_text(json.dumps(exported))
+    fresh = tmp_path / "fresh.db"
+    monkeypatch.setenv("SPRINTCTL_DB", str(fresh))
+    result = runner.invoke(cli, ["import", "--file", str(path)])
+    assert result.exit_code == 1
+    assert "Import aborted" in result.output
+    target = db.get_connection(fresh)
+    try:
+        db.init_db(target)
+        assert target.execute("SELECT count(*) FROM sprint").fetchone()[0] == 0
+        assert target.execute("SELECT count(*) FROM work_item").fetchone()[0] == 0
+    finally:
+        target.close()
+
+
+def test_decision_history_types_cannot_be_written_generically(conn):
+    item_id = _sqlite_item(conn)
+    sprint_id = db.get_work_item(conn, item_id)["sprint_id"]
+    for event_type in ("item-decided", "item-decided-imported", "item-edited-imported"):
+        with pytest.raises(ValueError, match="reserved"):
+            db.create_event(conn, sprint_id, "x", event_type, work_item_id=item_id, payload={})

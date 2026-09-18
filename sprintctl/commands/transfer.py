@@ -127,18 +127,23 @@ def import_cmd(obj: dict[str, Any], input_path: str) -> None:
                 payload = {}
             event_type = event["event_type"]
             source_event_id = event["id"]
-            if _contracts.is_retired_capability_receipt_type(event_type):
-                # Refuse before anything is written, not halfway through.
-                _contracts.require_generic_event_write_allowed(event_type)
-            archive_only = _contracts.requires_archive_import_handling(event_type)
+            # Sprint import creates new items, so the source's item edits are
+            # history of other items, not edits of these.
+            archive_only = _contracts.requires_archive_import_handling(
+                event_type, demote_item_edits=True
+            )
             if archive_only:
                 _contracts.canonicalize_event_for_archive_import(
                     event_type,
                     payload,
                     source_event_id,
+                    demote_item_edits=True,
                 )
                 imported_history_count += 1
             else:
+                # Every refusal the generic writer would make happens here,
+                # before anything is written, not halfway through the import.
+                _contracts.require_generic_event_write_allowed(event_type)
                 payload["source_id"] = source_event_id
                 payload = _contracts.canonicalize_event_payload(event_type, payload)
             prepared_events.append({
@@ -230,6 +235,7 @@ def import_cmd(obj: dict[str, Any], input_path: str) -> None:
                 source_event_id=event["id"],
                 work_item_id=new_item_id,
                 payload=prepared["payload"],
+                demote_item_edits=True,
             )
         else:
             _db.create_event(
