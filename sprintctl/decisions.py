@@ -17,6 +17,8 @@ backend owns its SQL and the database triggers that enforce the same rule.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from typing import Any, Sequence
 
@@ -140,3 +142,18 @@ def transition_error(kind: str, item_id: int, current_status: str) -> str | None
             "an accept decision requires an active item"
         )
     return None
+
+
+def legacy_evidence_digest(payload: Any) -> str:
+    """SHA-256 of an event payload in the canonical JSON form.
+
+    Sorted keys and compact separators, as the authority journal hashes its
+    records, so both backends record the same digest for the same payload
+    whatever their storage type (jsonb on PostgreSQL, text on SQLite).
+    """
+    if isinstance(payload, (bytes, str)):
+        payload = json.loads(payload or "{}")
+    if payload is None:
+        payload = {}
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()

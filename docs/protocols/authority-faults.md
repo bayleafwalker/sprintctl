@@ -64,6 +64,13 @@ from the item's current status (anything on a terminal item, `accept` on an
 item that is not active) is a semantic rejection, and the rolled-back effect
 leaves neither a decision row nor a status change.
 
+Legacy marks history, not open work: an item that was open when schema 14
+ran still needs a decision to become done. During a rolling deploy an older
+runtime that writes `done` directly is refused by the database
+(`cannot become done without a terminal decision`), and a receipt it records
+is folded by running `sprintctl remote-schema migrate` again once the new
+pods are up; at schema 14 that re-runs only the idempotent receipt fold.
+
 ## Duplicate and conflicting proposals
 
 The bounded reference model uses a stable proposal ID plus payload digest:

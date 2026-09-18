@@ -149,6 +149,7 @@ class TestWriteRecoverySnapshot:
             "work_item": 1,
             "work_decision": 0,
             "event": 1,
+            "work_legacy_evidence": 0,
             "claim_history": 2,
             "reservation": 1,
             "ref": 1,

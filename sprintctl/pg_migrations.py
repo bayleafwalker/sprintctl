@@ -311,6 +311,7 @@ def migrate_schema(store: Any) -> dict[str, Any]:
 
     applied: list[int] = []
     starting_version: int | None = None
+    refolded: dict[str, int] | None = None
     try:
         with store.conn.cursor() as cur:
             cur.execute(
@@ -411,6 +412,11 @@ def migrate_schema(store: Any) -> dict[str, Any]:
                 _pg._apply_schema_version_14(cur)
                 cur.execute("UPDATE schema_version SET version = %s", (14,))
                 applied.append(14)
+            else:
+                # Already at 14: re-run only the idempotent receipt fold, so
+                # a second migrate after a rolling deploy folds what an old
+                # pod wrote in the window.  No DDL is re-applied.
+                refolded = _pg._fold_capability_receipts(cur)
         store.conn.commit()
     except Exception:
         store.conn.rollback()
@@ -430,6 +436,7 @@ def migrate_schema(store: Any) -> dict[str, Any]:
         "from_version": starting_version,
         "to_version": CURRENT_SCHEMA_VERSION,
         "applied_versions": applied,
+        "capability_receipts_refolded": refolded,
         "compatibility": handshake,
     }
 

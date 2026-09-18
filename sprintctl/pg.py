@@ -1825,13 +1825,24 @@ def _apply_schema_version_14(cur: Any) -> None:
                 RAISE EXCEPTION 'work item % is terminal; done cannot transition to %',
                     OLD.id, NEW.status;
             END IF;
+            -- Becoming done is a decision, for legacy rows too: the legacy
+            -- exemption covers only rows that were already done when they
+            -- became legacy.  An older runtime that still writes done
+            -- directly fails here, loudly, instead of closing work silently.
+            IF OLD.status IS DISTINCT FROM 'done' AND NEW.status = 'done'
+               AND NEW.terminal_decision_id IS NULL THEN
+                RAISE EXCEPTION 'work item % cannot become done without a terminal decision', OLD.id
+                    USING ERRCODE = '23514';
+            END IF;
             IF OLD.terminal_decision_id IS NOT NULL AND (
                    NEW.terminal_decision_id IS DISTINCT FROM OLD.terminal_decision_id
                    OR NEW.resolution IS DISTINCT FROM OLD.resolution
                ) THEN
                 RAISE EXCEPTION 'work item % terminal decision is immutable', OLD.id;
             END IF;
-            IF OLD.legacy AND OLD.status = 'done'
+            -- A row that was done before decisions existed keeps no invented
+            -- decision.  An open legacy row binds one when it closes above.
+            IF OLD.status = 'done' AND OLD.terminal_decision_id IS NULL
                AND NEW.terminal_decision_id IS NOT NULL THEN
                 RAISE EXCEPTION 'legacy done work item % takes no decision', OLD.id;
             END IF;
@@ -2044,18 +2055,55 @@ def _fold_capability_receipts(cur: Any) -> dict[str, int]:
         folded += 1
     cur.execute(
         """
-        INSERT INTO work_legacy_evidence (repo_id, event_id, sprint_id, payload_sha256, kind)
-        SELECT e.repo_id, e.id, e.sprint_id,
-               encode(sha256(convert_to(e.payload::text, 'UTF8')), 'hex'),
-               e.event_type
+        SELECT e.repo_id, e.id, e.sprint_id, e.event_type, e.payload
         FROM event e
         WHERE e.event_type = ANY(%s)
+          AND NOT EXISTS (
+              SELECT 1 FROM work_legacy_evidence w
+              WHERE w.repo_id = e.repo_id AND w.event_id = e.id
+          )
         ORDER BY e.id
-        ON CONFLICT (repo_id, event_id) DO NOTHING
         """,
         (list(_LEGACY_RECEIPT_DRAFTED_EVENT_TYPES),),
     )
-    return {"accept_decisions": folded, "drafted_evidence": cur.rowcount}
+    drafted = cur.fetchall()
+    for row in drafted:
+        cur.execute(
+            "INSERT INTO work_legacy_evidence (repo_id, event_id, sprint_id, payload_sha256, kind) "
+            "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (repo_id, event_id) DO NOTHING",
+            (
+                row["repo_id"],
+                row["id"],
+                row["sprint_id"],
+                _decisions.legacy_evidence_digest(row["payload"]),
+                row["event_type"],
+            ),
+        )
+    return {"accept_decisions": folded, "drafted_evidence": len(drafted)}
+
+
+def refold_capability_receipts(conn: Any) -> dict[str, int]:
+    """Fold capability receipts written after schema 14 was applied.
+
+    During a rolling deploy an old (<= 0.3.7) pod can still record a drafted
+    or accepted receipt after the migration ran.  The fold is idempotent, so
+    running it again once the new pods are up picks those up and leaves the
+    rest untouched.  ``migrate_schema`` calls this whenever the schema is
+    already at 14 or later, so the rollout step is a second
+    ``sprintctl remote-schema migrate``.  Commits on success.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT pg_advisory_xact_lock(%s, %s)",
+                _pg_migrations.SCHEMA_MIGRATION_LOCK_KEYS,
+            )
+            result = _fold_capability_receipts(cur)
+        conn.commit()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def compatibility_handshake(store: PgStore) -> dict[str, Any]:
@@ -2109,8 +2157,8 @@ _norm = _rows.normalize_row
 
 
 _RECOVERY_TABLES = (
-    "sprint", "track", "work_item", "work_decision", "event", "reservation",
-    "claim_history", "ref", "dep",
+    "sprint", "track", "work_item", "work_decision", "event",
+    "work_legacy_evidence", "reservation", "claim_history", "ref", "dep",
 )
 
 
@@ -2125,7 +2173,8 @@ def recover_repo_snapshot(store: PgStore) -> dict[str, list[dict]]:
     with store.conn.cursor() as cur:
         for table in _RECOVERY_TABLES:
             cur.execute(
-                f"SELECT * FROM {table} WHERE repo_id = %s ORDER BY id ASC",  # noqa: S608 — fixed identifier set
+                f"SELECT * FROM {table} WHERE repo_id = %s "  # noqa: S608 — fixed identifier set
+                f"ORDER BY {_ORDER_COLUMN.get(table, 'id')} ASC",
                 (store.repo_id,),
             )
             snapshot[table] = [_norm(r) for r in cur.fetchall()]
@@ -3273,9 +3322,13 @@ def backlog_seed_from_candidates(
 # ---------------------------------------------------------------------------
 
 _EXPORT_TABLES = (
-    "sprint", "track", "work_item", "work_decision", "event", "reservation",
-    "claim_history", "ref", "dep",
+    "sprint", "track", "work_item", "work_decision", "event",
+    "work_legacy_evidence", "reservation", "claim_history", "ref", "dep",
 )
+# Tables with an identity ``id``; work_legacy_evidence is keyed by event.
+_IDENTITY_TABLES = tuple(t for t in _EXPORT_TABLES if t != "work_legacy_evidence")
+# work_legacy_evidence has no ``id``; it is keyed and ordered by its event.
+_ORDER_COLUMN = {"work_legacy_evidence": "event_id"}
 
 
 def export_ndjson(sqlite_conn: Any, repo_id: str, out: Any) -> dict[str, int]:
@@ -3312,6 +3365,7 @@ def export_ndjson(sqlite_conn: Any, repo_id: str, out: Any) -> dict[str, int]:
         "track": "SELECT * FROM track ORDER BY id ASC",
         "work_item": "SELECT * FROM work_item ORDER BY id ASC",
         "work_decision": "SELECT * FROM work_decision ORDER BY id ASC",
+        "work_legacy_evidence": "SELECT * FROM work_legacy_evidence ORDER BY event_id ASC",
         "reservation": "SELECT * FROM reservation ORDER BY id ASC",
         "claim_history": "SELECT * FROM claim_history ORDER BY id ASC",
         "ref": "SELECT * FROM ref ORDER BY id ASC",
@@ -3351,7 +3405,8 @@ def export_from_postgres(source_conn: Any, repo_id: str) -> list[dict]:
                 # A source older than schema 14 has no decisions to carry.
                 continue
             cur.execute(
-                f"SELECT * FROM {table} WHERE repo_id = %s ORDER BY id ASC",  # noqa: S608
+                f"SELECT * FROM {table} WHERE repo_id = %s "  # noqa: S608
+                f"ORDER BY {_ORDER_COLUMN.get(table, 'id')} ASC",
                 (repo_id,),
             )
             for row in cur.fetchall():
@@ -3366,6 +3421,11 @@ def backfill_repo_row_counts(conn: Any, repo_id: str) -> dict[str, int]:
     counts: dict[str, int] = {}
     with conn.cursor() as cur:
         for table in _EXPORT_TABLES:
+            cur.execute("SELECT to_regclass(%s) AS relation", (table,))
+            if cur.fetchone()["relation"] is None:
+                # A source older than schema 14 has no decision tables.
+                counts[table] = 0
+                continue
             cur.execute(f"SELECT COUNT(*) AS n FROM {table} WHERE repo_id = %s", (repo_id,))  # noqa: S608
             row = cur.fetchone()
             counts[table] = row["n"] if row else 0
@@ -3375,13 +3435,19 @@ def backfill_repo_row_counts(conn: Any, repo_id: str) -> dict[str, int]:
 # FK columns that may need id remapping during import, keyed by child table.
 _IMPORT_FK_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "track":     [("sprint_id", "sprint")],
-    "work_item": [("sprint_id", "sprint"), ("track_id", "track")],
+    # terminal_decision_id resolves through ids reserved before any insert.
+    "work_item": [
+        ("sprint_id", "sprint"),
+        ("track_id", "track"),
+        ("terminal_decision_id", "work_decision"),
+    ],
     "work_decision": [
         ("sprint_id", "sprint"),
         ("work_item_id", "work_item"),
         ("superseded_by_item_id", "work_item"),
     ],
     "event":     [("sprint_id", "sprint"), ("work_item_id", "work_item")],
+    "work_legacy_evidence": [("event_id", "event"), ("sprint_id", "sprint")],
     "reservation":   [("work_item_id", "work_item")],
     "claim_history": [("work_item_id", "work_item")],
     "ref":       [("work_item_id", "work_item")],
@@ -3431,91 +3497,109 @@ def import_ndjson(
     counts: dict[str, int] = {t: 0 for t in _EXPORT_TABLES}
     # old sqlite id → new postgres id, per table (only populated when remap_ids=True)
     id_maps: dict[str, dict[int, int]] = {t: {} for t in _EXPORT_TABLES}
-    # new work_item id → (old terminal decision id, resolution), bound after
-    # the decisions exist when ids are remapped.
-    pending_terminal: dict[int, tuple[int, str]] = {}
 
-    with store.conn.cursor() as cur:
-        # Rows that were legacy at their source stay legacy: a backend move
-        # carries history, it does not create new work.  The switch is
-        # transaction-local and only this import sets it.
-        cur.execute(f"SET LOCAL {LEGACY_IMPORT_SETTING} = 'on'")
-        # Serialize against every other concurrent import_ndjson call (any
-        # repo) before touching identity sequences: both call sites below
-        # read MAX(id) then setval() it, which races across concurrent
-        # backfills into this shared database. See IDENTITY_SEQUENCE_LOCK_KEYS.
-        cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", IDENTITY_SEQUENCE_LOCK_KEYS)
+    try:
+        with store.conn.cursor() as cur:
+            # Rows that were legacy at their source stay legacy: a backend move
+            # carries history, it does not create new work.  The switch is
+            # transaction-local and only this import sets it.
+            cur.execute(f"SET LOCAL {LEGACY_IMPORT_SETTING} = 'on'")
+            # Serialize against every other concurrent import_ndjson call (any
+            # repo) before touching identity sequences: both call sites below
+            # read MAX(id) then setval() it, which races across concurrent
+            # backfills into this shared database. See IDENTITY_SEQUENCE_LOCK_KEYS.
+            cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", IDENTITY_SEQUENCE_LOCK_KEYS)
 
-        if remap_ids:
-            # Advance every sequence past the current global max BEFORE any deletes,
-            # so the max reflects all committed data. Running this after the replace
-            # DELETE would lower the max and could reset the sequence back to 1.
-            _advance_identity_sequences(cur, tuple(_EXPORT_TABLES))
+            if replace:
+                # Decisions and legacy evidence are append-only, and evidence
+                # pins the events it names; deleting them is never a
+                # replace.  Refuse before anything is written.
+                cur.execute(
+                    "SELECT (SELECT count(*) FROM work_decision WHERE repo_id = %s) AS decisions, "
+                    "(SELECT count(*) FROM work_legacy_evidence WHERE repo_id = %s) AS evidence",
+                    (store.repo_id, store.repo_id),
+                )
+                held = cur.fetchone()
+                if held["decisions"] or held["evidence"]:
+                    raise ValueError(
+                        f"cannot replace repository {store.repo_id!r}: it holds "
+                        f"{held['decisions']} work decision(s) and {held['evidence']} "
+                        "legacy evidence row(s), which are append-only; import into "
+                        "an empty repository instead"
+                    )
 
-        if replace:
-            for table in reversed(_EXPORT_TABLES):
-                cur.execute(f"DELETE FROM {table} WHERE repo_id = %s", (store.repo_id,))
-
-        for record in records:
-            table = record["table"]
-            data = dict(record["data"])
-            rid = record.get("repo_id", store.repo_id)
-
-            if table == "work_item" and "legacy" not in data:
-                # An archive that predates decisions holds only legacy rows.
-                data["legacy"] = True
             if remap_ids:
-                # Remap any FK columns that reference tables we've already inserted.
-                for fk_col, ref_table in _IMPORT_FK_COLUMNS.get(table, []):
-                    old_ref = data.get(fk_col)
-                    if old_ref is not None and old_ref in id_maps[ref_table]:
-                        data[fk_col] = id_maps[ref_table][old_ref]
-                terminal = None
-                if table == "work_item" and data.get("terminal_decision_id") is not None:
-                    terminal = (int(data["terminal_decision_id"]), data.get("resolution"))
-                    data["terminal_decision_id"] = None
-                    data["resolution"] = None
-                old_id = data.pop("id", None)
-                new_id = _import_row(
-                    cur,
-                    table,
-                    rid,
-                    data,
-                    returning_id=True,
-                    source_event_id=old_id if table == "event" else None,
-                    preserve_typed_authority=trusted_state_transfer,
-                )
-                if old_id is not None and new_id is not None:
-                    id_maps[table][old_id] = new_id
-                if terminal is not None and new_id is not None:
-                    pending_terminal[new_id] = terminal
-            else:
-                _import_row(
-                    cur,
-                    table,
-                    rid,
-                    data,
-                    preserve_typed_authority=trusted_state_transfer,
-                )
+                # Advance every sequence past the current global max BEFORE any deletes,
+                # so the max reflects all committed data. Running this after the replace
+                # DELETE would lower the max and could reset the sequence back to 1.
+                _advance_identity_sequences(cur, _IDENTITY_TABLES)
+                # Items and their terminal decisions name each other.  Reserve
+                # the decisions' new ids first so every item binds its decision
+                # as it is inserted; both foreign keys are deferred to commit.
+                for record in records:
+                    if record["table"] == "work_decision" and record["data"].get("id") is not None:
+                        cur.execute(
+                            "SELECT nextval(pg_get_serial_sequence('work_decision', 'id')) AS id"
+                        )
+                        id_maps["work_decision"][int(record["data"]["id"])] = int(
+                            cur.fetchone()["id"]
+                        )
 
-            counts[table] = counts.get(table, 0) + 1
+            if replace:
+                for table in reversed(_EXPORT_TABLES):
+                    cur.execute(f"DELETE FROM {table} WHERE repo_id = %s", (store.repo_id,))
 
-        for item_id, (old_decision_id, resolution) in pending_terminal.items():
-            cur.execute(
-                "UPDATE work_item SET terminal_decision_id = %s, resolution = %s "
-                "WHERE repo_id = %s AND id = %s",
-                (
-                    id_maps["work_decision"].get(old_decision_id, old_decision_id),
-                    resolution,
-                    store.repo_id,
-                    item_id,
-                ),
-            )
+            for record in records:
+                table = record["table"]
+                data = dict(record["data"])
+                rid = record.get("repo_id", store.repo_id)
 
-        # Advance sequences so next auto-generated IDs don't collide.
-        _advance_identity_sequences(cur, tuple(_EXPORT_TABLES))
+                if table == "work_item" and "legacy" not in data:
+                    # An archive that predates decisions holds only legacy rows.
+                    data["legacy"] = True
+                if remap_ids:
+                    # Remap any FK columns that reference tables we've already inserted.
+                    for fk_col, ref_table in _IMPORT_FK_COLUMNS.get(table, []):
+                        old_ref = data.get(fk_col)
+                        if old_ref is not None and old_ref in id_maps[ref_table]:
+                            data[fk_col] = id_maps[ref_table][old_ref]
+                    if table == "work_decision" and data.get("id") is not None:
+                        # Keep the id reserved above; its item already names it.
+                        _import_row(cur, table, rid, {**data, "id": id_maps[table][int(data["id"])]})
+                    else:
+                        old_id = data.pop("id", None)
+                        new_id = _import_row(
+                            cur,
+                            table,
+                            rid,
+                            data,
+                            returning_id=table in _IDENTITY_TABLES,
+                            source_event_id=old_id if table == "event" else None,
+                            preserve_typed_authority=trusted_state_transfer,
+                        )
+                        if old_id is not None and new_id is not None:
+                            id_maps[table][old_id] = new_id
+                else:
+                    _import_row(
+                        cur,
+                        table,
+                        rid,
+                        data,
+                        preserve_typed_authority=trusted_state_transfer,
+                    )
 
-    store.conn.commit()
+                counts[table] = counts.get(table, 0) + 1
+
+            # Advance sequences so next auto-generated IDs don't collide.
+            _advance_identity_sequences(cur, _IDENTITY_TABLES)
+            # Settle the deferred decision constraints here, so a violation
+            # names this import instead of surfacing at a later commit.
+            cur.execute("SET CONSTRAINTS ALL IMMEDIATE")
+
+        store.conn.commit()
+    except Exception:
+        store.conn.rollback()
+        raise
     return counts
 
 

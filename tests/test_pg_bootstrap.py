@@ -55,7 +55,7 @@ class _SchemaCursor:
 
     def fetchall(self):
         # Schema 14 folds retired capability receipts; this fake holds none.
-        if "FROM authority_decision ad" in self._query:
+        if "FROM authority_decision ad" in self._query or "FROM event e" in self._query:
             return []
         raise AssertionError(f"unexpected fetchall for query: {self._query}")
 

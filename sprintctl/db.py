@@ -1,4 +1,3 @@
-import hashlib
 import json
 import os
 import posixpath
@@ -938,10 +937,12 @@ def _migration_23(conn: sqlite3.Connection) -> None:
             "AND NEW.legacy = 0 AND NEW.terminal_decision_id IS NULL",
             "work item is done without a terminal decision",
         ),
+        # Becoming done is a decision, legacy rows included: the legacy
+        # exemption covers only rows already done when they became legacy.
         "work_item_done_requires_decision": (
-            "BEFORE UPDATE ON work_item WHEN NEW.status = 'done' "
-            "AND NEW.legacy = 0 AND NEW.terminal_decision_id IS NULL",
-            "work item is done without a terminal decision",
+            "BEFORE UPDATE ON work_item WHEN OLD.status IS NOT 'done' "
+            "AND NEW.status = 'done' AND NEW.terminal_decision_id IS NULL",
+            "work item cannot become done without a terminal decision",
         ),
         "work_item_terminal_immutable": (
             "BEFORE UPDATE ON work_item WHEN OLD.terminal_decision_id IS NOT NULL AND ("
@@ -950,8 +951,8 @@ def _migration_23(conn: sqlite3.Connection) -> None:
             "work item terminal decision is immutable",
         ),
         "work_item_legacy_done_takes_no_decision": (
-            "BEFORE UPDATE ON work_item WHEN OLD.legacy <> 0 AND OLD.status = 'done' "
-            "AND NEW.terminal_decision_id IS NOT NULL",
+            "BEFORE UPDATE ON work_item WHEN OLD.status = 'done' "
+            "AND OLD.terminal_decision_id IS NULL AND NEW.terminal_decision_id IS NOT NULL",
             "legacy done work item takes no decision",
         ),
     }
@@ -979,8 +980,10 @@ def _migration_23(conn: sqlite3.Connection) -> None:
                 "work decisions and legacy evidence are append-only",
             )
     for name, (when, message) in guards.items():
+        # Replace rather than keep, so a re-run installs the current rule.
+        conn.execute(f"DROP TRIGGER IF EXISTS {name}")
         conn.execute(
-            f"CREATE TRIGGER IF NOT EXISTS {name} {when} "
+            f"CREATE TRIGGER {name} {when} "
             f"BEGIN SELECT RAISE(ABORT, '{message}'); END"
         )
     placeholders = ",".join("?" for _ in _LEGACY_RECEIPT_DRAFTED_EVENT_TYPES)
@@ -996,7 +999,7 @@ def _migration_23(conn: sqlite3.Connection) -> None:
             (
                 event_id,
                 sprint_id,
-                hashlib.sha256(str(payload or "").encode("utf-8")).hexdigest(),
+                _decisions.legacy_evidence_digest(payload),
                 event_type,
             ),
         )
@@ -2216,11 +2219,12 @@ def backlog_seed_from_candidates(
 # operational provenance ("was I recovered, when, from where"), not portable
 # business data. Carrying the source's records across would conflate the
 # source's history with this database's.
-# Decisions precede the items that name them: SQLite checks the terminal
-# binding immediately, not at commit.
+# Decisions precede the items that name them, because the terminal-binding
+# triggers read the decision row immediately; the decision's own foreign key
+# to its item is deferred to commit (see write_recovery_snapshot).
 _RECOVERY_TABLE_ORDER = (
-    "sprint", "track", "work_decision", "work_item", "event", "reservation",
-    "claim_history", "ref", "dep",
+    "sprint", "track", "work_decision", "work_item", "event",
+    "work_legacy_evidence", "reservation", "claim_history", "ref", "dep",
 )
 
 
@@ -2275,7 +2279,10 @@ def write_recovery_snapshot(
     reservations_interrupted = 0
     try:
         conn.execute("BEGIN IMMEDIATE")
-        conn.execute("PRAGMA foreign_keys = OFF")
+        # ``PRAGMA foreign_keys`` is a no-op inside a transaction, so it never
+        # switched checking off here.  Deferring keeps every foreign key
+        # checked, at commit, once decisions and items both exist.
+        conn.execute("PRAGMA defer_foreign_keys = ON")
         conn.execute("INSERT INTO legacy_import_gate (opened) VALUES (1)")
         for table in _RECOVERY_TABLE_ORDER:
             rows = snapshot.get(table, [])

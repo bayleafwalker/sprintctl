@@ -205,8 +205,12 @@ def _ingest(cur, repo_id, stream, seq, offset, event_id, event_type, record_clas
     )
 
 
-def _seed_v13_fixture(cur, repo_id):
-    """A schema-13 repository holding the whole retired receipt surface."""
+def _seed_v13_fixture(cur, repo_id, *, with_items=True):
+    """A schema-13 repository holding the whole retired receipt surface.
+
+    ``with_items=False`` seeds only what an old (0.3.7) pod can still write
+    after schema 14 is live: receipt events and journal rows.
+    """
     sprint_ids = []
     for name in ("closed-a", "closed-b", "closed-c"):
         cur.execute(
@@ -220,7 +224,7 @@ def _seed_v13_fixture(cur, repo_id):
         (repo_id, sprint_ids[0]["id"]),
     )
     track_id = cur.fetchone()["id"]
-    for title, status in (("finished", "done"), ("open", "pending")):
+    for title, status in (("finished", "done"), ("open", "pending")) if with_items else ():
         cur.execute(
             "INSERT INTO work_item (repo_id, sprint_id, track_id, title, status, aggregate_uuid) "
             "VALUES (%s, %s, %s, %s, %s, %s)",
@@ -384,4 +388,256 @@ class TestSchema14Fold:
                 cur.execute("SET search_path TO public")
                 cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
             conn.commit()
+            conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Legacy items that were open at migration
+# ---------------------------------------------------------------------------
+
+# The statements a 0.3.7 runtime issues to make an item done.  They stay
+# here verbatim because a rolling deploy runs that code against schema 14.
+_OLD_RUNTIME_DONE_WRITES = {
+    "set_work_item_status": (
+        "UPDATE work_item SET status = %s, updated_at = now() WHERE repo_id = %s AND id = %s",
+        lambda repo_id, item_id: ("done", repo_id, item_id),
+    ),
+    "force_item_done_for_carryover (maintain.carryover)": (
+        "UPDATE work_item SET status = 'done', updated_at = now() WHERE repo_id = %s AND id = %s",
+        lambda repo_id, item_id: (repo_id, item_id),
+    ),
+    "authority item.done (_handle_item)": (
+        "UPDATE work_item SET status = %s, updated_at = now() "
+        "WHERE repo_id = %s AND id = %s RETURNING *",
+        lambda repo_id, item_id: ("done", repo_id, item_id),
+    ),
+}
+
+
+def _legacy_item(store, status):
+    """Insert a row as the schema 14 migration leaves a pre-decision item."""
+    sprint_id = pg.create_sprint(store, f"Legacy-{_uid()}", status="active")
+    track_id = pg.get_or_create_track(store, sprint_id, "legacy")
+    with store.conn.cursor() as cur:
+        cur.execute(f"SET LOCAL {pg.LEGACY_IMPORT_SETTING} = 'on'")
+        cur.execute(
+            "INSERT INTO work_item (repo_id, sprint_id, track_id, title, status, legacy, "
+            "aggregate_uuid) VALUES (%s, %s, %s, 'legacy', %s, true, %s) RETURNING id",
+            (store.repo_id, sprint_id, track_id, status, str(uuid.uuid4())),
+        )
+        item_id = cur.fetchone()["id"]
+    store.conn.commit()
+    return sprint_id, track_id, item_id
+
+
+class TestLegacyOpenItems:
+    @pytest.mark.parametrize("writer", sorted(_OLD_RUNTIME_DONE_WRITES))
+    @pytest.mark.parametrize("status", ["pending", "active", "blocked"])
+    def test_old_runtime_done_writes_fail_loudly(self, store, writer, status):
+        _sprint_id, _track_id, item_id = _legacy_item(store, status)
+        statement, params = _OLD_RUNTIME_DONE_WRITES[writer]
+        with pytest.raises(
+            psycopg.errors.CheckViolation,
+            match="cannot become done without a terminal decision",
+        ):
+            with store.conn.cursor() as cur:
+                cur.execute(statement, params(store.repo_id, item_id))
+        store.conn.rollback()
+        item = pg.get_work_item(store, item_id)
+        assert (item["status"], item["legacy"]) == (status, True)
+
+    def test_open_legacy_item_closes_through_a_decision(self, store):
+        _sprint_id, _track_id, item_id = _legacy_item(store, "active")
+        pg.set_work_item_status(store, item_id, "done", actor="closer")
+        item = pg.get_work_item(store, item_id)
+        [decision] = pg.list_decisions(store, item_id)
+        assert (item["status"], item["legacy"], item["resolution"]) == ("done", True, "accepted")
+        assert item["terminal_decision_id"] == decision["id"]
+
+    def test_done_legacy_item_stays_undecided(self, store):
+        _sprint_id, _track_id, item_id = _legacy_item(store, "done")
+        with pytest.raises(pg.InvalidTransition, match="terminal"):
+            pg.record_decision(store, item_id, "reject", actor="owner")
+        with store.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO work_decision (repo_id, kind, work_item_id, actor) "
+                "VALUES (%s, 'reject', %s, 'forger') RETURNING id",
+                (store.repo_id, item_id),
+            )
+            forged = cur.fetchone()["id"]
+        _raises_on_commit(
+            store,
+            "UPDATE work_item SET resolution = 'rejected', terminal_decision_id = %s "
+            "WHERE repo_id = %s AND id = %s",
+            (forged, store.repo_id, item_id),
+            "takes no decision",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Copies: PG -> PG backfill, import --replace, SQLite parity of evidence
+# ---------------------------------------------------------------------------
+
+
+def _schema_url(schema):
+    separator = "&" if "?" in _PG_URL else "?"
+    return f"{_PG_URL}{separator}options=-csearch_path%3D{schema}"
+
+
+class TestCopies:
+    def test_remote_backfill_carries_decisions_evidence_and_legacy_rows(
+        self, pg_test_scope, tmp_path
+    ):
+        from click.testing import CliRunner
+        from sprintctl.cli import cli
+
+        schema = "decision_copy_" + uuid.uuid4().hex
+        repo_id = pg_test_scope("decision-copy")
+        source_conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+        assert_disposable_connection(source_conn)
+        try:
+            with source_conn.cursor() as cur:
+                cur.execute(f'CREATE SCHEMA "{schema}"')
+                cur.execute(f'SET search_path TO "{schema}"')
+            source_conn.commit()
+            source = pg.PgStore(source_conn, repo_id)
+            pg_migrations.migrate_schema(source)
+            sprint_id, track_id, legacy_open = _legacy_item(source, "active")
+            _s, _t, legacy_done = _legacy_item(source, "done")
+            pg.set_work_item_status(source, legacy_open, "done", actor="closer")
+            fresh = pg.create_work_item(source, sprint_id, track_id, "fresh")
+            successor = pg.create_work_item(source, sprint_id, track_id, "successor")
+            pg.record_decision(
+                source, fresh, "supersede", actor="planner", superseded_by_item_id=successor
+            )
+            pg.record_decision(source, successor, "revise", actor="reviewer")
+            with source_conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO event (repo_id, sprint_id, source_type, actor, event_type, "
+                    "payload) VALUES (%s, %s, 'actor', 'agent', 'capability-receipt-drafted', "
+                    "%s) RETURNING id",
+                    (repo_id, sprint_id, json.dumps({"receipt_id": "r", "b": 1})),
+                )
+            source_conn.commit()
+            pg.refold_capability_receipts(source_conn)
+
+            # The copy lands among other repositories' rows, so ids remap.
+            result = CliRunner().invoke(
+                cli,
+                [
+                    "remote-backfill", "--source-url", _schema_url(schema),
+                    "--url", _PG_URL, "--repo-id", repo_id, "--yes", "--json",
+                ],
+            )
+            assert result.exit_code == 0, result.output
+            summary = json.loads(result.output)
+            assert summary["parity"]["work_decision"] == {"source": 3, "destination": 3}
+            assert summary["parity"]["work_legacy_evidence"] == {"source": 1, "destination": 1}
+
+            dest = pg.PgStore(psycopg.connect(_PG_URL, row_factory=dict_row), repo_id)
+            try:
+                items = pg.list_work_items(dest)
+                decisions = {d["id"]: d for d in pg.list_decisions(dest)}
+                closed = [i for i in items if i["terminal_decision_id"]]
+                for item in closed:
+                    assert decisions[item["terminal_decision_id"]]["work_item_id"] == item["id"]
+                assert sorted(i["resolution"] for i in closed) == ["accepted", "superseded"]
+                assert {(i["status"], i["legacy"], i["resolution"]) for i in items} >= {
+                    ("done", True, "accepted"),   # legacy-open, decided after 14
+                    ("done", True, None),         # legacy-done, no invented decision
+                    ("done", False, "superseded"),
+                }
+                with dest.conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT w.event_id, e.event_type, w.payload_sha256 FROM work_legacy_evidence w "
+                        "JOIN event e ON e.repo_id = w.repo_id AND e.id = w.event_id "
+                        "WHERE w.repo_id = %s",
+                        (repo_id,),
+                    )
+                    [evidence] = cur.fetchall()
+                assert evidence["event_type"] == "capability-receipt-drafted"
+                assert evidence["payload_sha256"] == pg._decisions.legacy_evidence_digest(
+                    {"receipt_id": "r", "b": 1}
+                )
+
+                # Replace refuses up front: the copy now holds append-only rows.
+                again = CliRunner().invoke(
+                    cli,
+                    [
+                        "remote-backfill", "--source-url", _schema_url(schema),
+                        "--url", _PG_URL, "--repo-id", repo_id, "--yes", "--replace",
+                    ],
+                )
+                assert again.exit_code == 1
+                assert "append-only" in again.output
+                assert len(pg.list_decisions(dest)) == 3
+            finally:
+                dest.conn.close()
+        finally:
+            source_conn.rollback()
+            with source_conn.cursor() as cur:
+                cur.execute("SET search_path TO public")
+                cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            source_conn.commit()
+            source_conn.close()
+
+    def test_replace_is_refused_before_any_delete(self, store):
+        _sprint_id, _track_id, item_id = _item(store)
+        pg.record_decision(store, item_id, "withdraw", actor="owner")
+        before = pg.backfill_repo_row_counts(store.conn, store.repo_id)
+        with pytest.raises(ValueError, match="cannot replace repository .* append-only"):
+            pg.import_ndjson(store, [], replace=True)
+        assert pg.backfill_repo_row_counts(store.conn, store.repo_id) == before
+
+    def test_recovery_snapshot_carries_evidence(self, store):
+        sprint_id, _track_id, _item_id = _item(store)
+        with store.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO event (repo_id, sprint_id, source_type, actor, event_type, payload) "
+                "VALUES (%s, %s, 'actor', 'agent', 'capability-receipt-drafted', '{}') RETURNING id",
+                (store.repo_id, sprint_id),
+            )
+            event_id = cur.fetchone()["id"]
+        store.conn.commit()
+        pg.refold_capability_receipts(store.conn)
+        snapshot = pg.recover_repo_snapshot(store)
+        assert [row["event_id"] for row in snapshot["work_legacy_evidence"]] == [event_id]
+        assert snapshot["work_legacy_evidence"][0]["payload_sha256"] == (
+            pg._decisions.legacy_evidence_digest({})
+        )
+
+
+class TestRefold:
+    def test_receipts_written_after_14_fold_on_the_next_migrate(self, pg_test_scope):
+        conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+        assert_disposable_connection(conn)
+        repo_id = pg_test_scope("decision-refold")
+        store = pg.PgStore(conn, repo_id)
+        try:
+            pg_migrations.migrate_schema(store)
+            with conn.cursor() as cur:
+                # What a 0.3.7 pod writes during the rolling window.
+                sprint_ids = _seed_v13_fixture(cur, repo_id, with_items=False)
+            conn.commit()
+            with conn.cursor() as cur:
+                assert _fold_counts(cur, repo_id)[:2] == ([], {})
+            conn.rollback()
+
+            result = pg_migrations.migrate_schema(store)
+            assert result["applied_versions"] == []
+            assert result["capability_receipts_refolded"]["accept_decisions"] >= 2
+            with conn.cursor() as cur:
+                decisions, evidence, _items = _fold_counts(cur, repo_id)
+            conn.rollback()
+            assert [(d["sprint_id"], d["kind"]) for d in decisions] == [
+                (sprint_ids[0], "accept"), (sprint_ids[1], "accept"),
+            ]
+            assert evidence == {
+                "capability-receipt-drafted": 4,
+                "capability-receipt-drafted-imported": 1,
+            }
+            assert pg.refold_capability_receipts(conn) == {
+                "accept_decisions": 0, "drafted_evidence": 0,
+            }
+        finally:
             conn.close()

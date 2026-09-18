@@ -240,3 +240,113 @@ class TestMigration23:
             assert db.get_work_item(conn, new_id)["legacy"] is False
         finally:
             conn.close()
+
+
+def _legacy_item(conn, status):
+    """Insert a row as migration 23 leaves a pre-decision item."""
+    sprint_id = db.create_sprint(conn, f"Legacy {uuid.uuid4().hex[:6]}", status="active")
+    track_id = db.get_or_create_track(conn, sprint_id, "legacy")
+    with db.legacy_import_gate(conn):
+        item_id = conn.execute(
+            "INSERT INTO work_item (sprint_id, track_id, title, status, legacy, aggregate_uuid) "
+            "VALUES (?, ?, 'legacy', ?, 1, ?)",
+            (sprint_id, track_id, status, str(uuid.uuid4())),
+        ).lastrowid
+    conn.commit()
+    return sprint_id, track_id, item_id
+
+
+# The statements a 0.3.7 runtime issues to make an item done.
+_OLD_RUNTIME_DONE_WRITES = {
+    "set_work_item_status": (
+        "UPDATE work_item SET status = ?, "
+        "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+        lambda item_id: ("done", item_id),
+    ),
+    "force_item_done_for_carryover (maintain.carryover)": (
+        "UPDATE work_item SET status = 'done', "
+        "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+        lambda item_id: (item_id,),
+    ),
+}
+
+
+class TestLegacyOpenItems:
+    @pytest.mark.parametrize("writer", sorted(_OLD_RUNTIME_DONE_WRITES))
+    @pytest.mark.parametrize("status", ["pending", "active", "blocked"])
+    def test_old_runtime_done_writes_fail_loudly(self, conn, writer, status):
+        _sprint_id, _track_id, item_id = _legacy_item(conn, status)
+        statement, params = _OLD_RUNTIME_DONE_WRITES[writer]
+        _refused(conn, statement, params(item_id), "cannot become done without a terminal decision")
+        item = db.get_work_item(conn, item_id)
+        assert (item["status"], item["legacy"]) == (status, True)
+
+    def test_open_legacy_item_closes_through_a_decision(self, conn):
+        _sprint_id, _track_id, item_id = _legacy_item(conn, "active")
+        db.set_work_item_status(conn, item_id, "done", actor="closer")
+        item = db.get_work_item(conn, item_id)
+        [decision] = db.list_decisions(conn, item_id)
+        assert (item["status"], item["legacy"], item["resolution"]) == ("done", True, "accepted")
+        assert item["terminal_decision_id"] == decision["id"]
+
+    def test_done_legacy_item_stays_undecided(self, conn):
+        _sprint_id, _track_id, item_id = _legacy_item(conn, "done")
+        with pytest.raises(db.InvalidTransition, match="terminal"):
+            db.record_decision(conn, item_id, "reject", actor="owner")
+
+
+def _rows(conn, table, order="id"):
+    cur = conn.execute(f"SELECT * FROM {table} ORDER BY {order}")
+    columns = [column[0] for column in cur.description]
+    return [dict(zip(columns, row)) for row in cur.fetchall()]
+
+
+class TestRecoveryWithDecisions:
+    def test_snapshot_with_decisions_and_evidence_restores(self, conn, tmp_path):
+        sprint_id, track_id, legacy_open = _legacy_item(conn, "active")
+        _s, _t, legacy_done = _legacy_item(conn, "done")
+        db.set_work_item_status(conn, legacy_open, "done", actor="closer")
+        fresh = db.create_work_item(conn, sprint_id, track_id, "fresh")
+        successor = db.create_work_item(conn, sprint_id, track_id, "successor")
+        db.record_decision(conn, fresh, "supersede", actor="p", superseded_by_item_id=successor)
+        db.record_decision(conn, successor, "revise", actor="r")
+        event_id = conn.execute(
+            "INSERT INTO event (sprint_id, source_type, actor, event_type, payload) "
+            "VALUES (?, 'actor', 'agent', 'capability-receipt-drafted', ?)",
+            (sprint_id, '{"b": 1,  "a": "x"}'),
+        ).lastrowid
+        conn.execute(
+            "INSERT INTO work_legacy_evidence (event_id, sprint_id, payload_sha256, kind) "
+            "VALUES (?, ?, ?, 'capability-receipt-drafted')",
+            (event_id, sprint_id, decisions.legacy_evidence_digest('{"b": 1,  "a": "x"}')),
+        )
+        conn.commit()
+        snapshot = {
+            table: _rows(conn, table, "event_id" if table == "work_legacy_evidence" else "id")
+            for table in db._RECOVERY_TABLE_ORDER
+        }
+
+        target = db.get_connection(tmp_path / "recovered.db")
+        try:
+            db.init_db(target)
+            counts = db.write_recovery_snapshot(target, snapshot)
+            assert counts["work_decision"] == 3
+            assert counts["work_legacy_evidence"] == 1
+            assert target.execute("PRAGMA foreign_key_check").fetchall() == []
+            for table in ("work_item", "work_decision", "work_legacy_evidence"):
+                order = "event_id" if table == "work_legacy_evidence" else "id"
+                assert _rows(target, table, order) == snapshot[table]
+            assert db.get_work_item(target, legacy_done)["terminal_decision_id"] is None
+        finally:
+            target.close()
+
+    def test_evidence_digest_is_canonical_json(self):
+        spaced = '{"b": 1,  "a": "x"}'
+        assert decisions.legacy_evidence_digest(spaced) == decisions.legacy_evidence_digest(
+            {"a": "x", "b": 1}
+        )
+        import hashlib
+
+        assert decisions.legacy_evidence_digest({"a": "x", "b": 1}) == hashlib.sha256(
+            b'{"a":"x","b":1}'
+        ).hexdigest()

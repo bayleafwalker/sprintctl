@@ -84,6 +84,13 @@ def remote_schema_migrate_cmd(pg_url: str | None, as_json: bool) -> None:
             f"remote schema {result['from_version']} -> {result['to_version']}; "
             f"applied={versions or 'none'}"
         )
+        refolded = result.get("capability_receipts_refolded")
+        if refolded is not None:
+            click.echo(
+                "capability receipts refolded: "
+                f"accept_decisions={refolded['accept_decisions']} "
+                f"drafted_evidence={refolded['drafted_evidence']}"
+            )
 
 
 @remote_schema.command("stage-maintenance-bridge")
