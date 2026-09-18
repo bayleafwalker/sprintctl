@@ -124,8 +124,27 @@ def _snapshot():
                 "released_at": None,
                 "interruption_reason": None,
                 "correlation_ref": "actionq:recovery",
+                "release_digest": "c" * 64,
             }
         ],
+        "work_release": [
+            {
+                "id": 31,
+                "work_item_id": 1219,
+                "item_revision": (
+                    "item:a0000000-0000-0000-0000-000000000011@description:v0"
+                    "@sha256:" + "e" * 64 + "@revise:0"
+                ),
+                "revise_count": 0,
+                "release_digest": "c" * 64,
+                # PostgreSQL hands jsonb back decoded; recovery re-encodes it.
+                "acceptance_contract": {"review_required": True},
+                "context_refs": [{"label": "", "ref_type": "doc", "url": "docs/plans/x.md"}],
+                "created_at": "2026-03-01T00:00:00Z",
+                "actor": "tester",
+            }
+        ],
+        "release_commit": [],
         "ref": [
             {
                 "id": 77,
@@ -148,6 +167,8 @@ class TestWriteRecoverySnapshot:
             "track": 1,
             "work_item": 1,
             "work_decision": 0,
+            "work_release": 1,
+            "release_commit": 0,
             "event": 1,
             "work_legacy_evidence": 0,
             "claim_history": 2,
@@ -157,6 +178,9 @@ class TestWriteRecoverySnapshot:
         }
         assert db.get_sprint(conn, 407) is not None
         assert db.get_work_item(conn, 1219)["title"] == "Recovery rehearsal"
+        release = db.get_release(conn, "c" * 64)
+        assert release["acceptance_contract"] == {"review_required": True}
+        assert db.get_reservation(conn, 502)["release_digest"] == "c" * 64
 
     def test_integrity_clean_after_write(self, conn):
         db.write_recovery_snapshot(conn, _snapshot())

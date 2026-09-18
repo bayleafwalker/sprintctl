@@ -9,6 +9,7 @@ from __future__ import annotations
 from .application_common import *
 from . import contracts as _contracts
 from . import reservation as _reservation
+from . import releases as _releases
 from . import volatile_context as _volatile_context
 
 
@@ -1116,11 +1117,23 @@ class WorkApplication:
         authenticated_actor = getattr(context.identity, "actor", None)
         if authenticated_actor is not None and actor != authenticated_actor:
             raise _reservation_actor_mismatch(actor, authenticated_actor)
-        row = self.backend.reserve(self.store, _positive_int(arguments.get("item_id"), "item_id"),
-            actor=actor, session_id=_required_text(arguments.get("session_id"), "session_id"),
-            role=arguments.get("role") or _reservation.DEFAULT_ROLE,
-            correlation_ref=arguments.get("correlation_ref"),
-            interrupt_existing=bool(arguments.get("interrupt_existing", False)))
+        expected_revision = arguments.get("expected_revision")
+        if expected_revision is not None:
+            try:
+                _releases.validate_basis(expected_revision)
+            except ValueError as exc:
+                raise ApplicationRejection("invalid-arguments", str(exc), 422) from exc
+        try:
+            row = self.backend.reserve(self.store, _positive_int(arguments.get("item_id"), "item_id"),
+                actor=actor, session_id=_required_text(arguments.get("session_id"), "session_id"),
+                role=arguments.get("role") or _reservation.DEFAULT_ROLE,
+                correlation_ref=arguments.get("correlation_ref"),
+                interrupt_existing=bool(arguments.get("interrupt_existing", False)),
+                expected_revision=expected_revision)
+        except _releases.StaleReleaseBasis as exc:
+            # A queued request made against an item revision that has since
+            # moved on: the same stale-basis refusal authority commands get.
+            raise ApplicationRejection(exc.reason_code, str(exc), 409) from exc
         return {"repo_id": self.repo_id, "reservation": row}
 
     def _reservation_touch(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:

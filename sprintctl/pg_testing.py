@@ -40,6 +40,8 @@ REPO_TABLES = (
     # of them happens to carry a cascade.
     "reservation",
     "claim_history",
+    "release_commit",
+    "work_release",
     "work_legacy_evidence",
     "work_decision",
     "event",
@@ -192,6 +194,8 @@ def cleanup_test_repositories(conn: Any, repo_ids: Iterable[str]) -> dict[str, A
                 "ingest_record",
                 "work_decision",
                 "work_legacy_evidence",
+                "work_release",
+                "release_commit",
             )
             for table in immutable_tables:
                 cur.execute(f"ALTER TABLE {table} DISABLE TRIGGER USER")  # noqa: S608

@@ -139,6 +139,8 @@ class TestDecisionWritePath:
     )
     def test_terminal_kinds_close_any_open_item(self, store, kind, resolution):
         _sprint_id, _track_id, item_id = _item(store, status="blocked")
+        # A decision may only name a release of its own item (schema 15).
+        digest = pg.reserve(store, item_id, actor="owner", session_id="s")["release_digest"]
         decision = pg.record_decision(
             store,
             item_id,
@@ -146,12 +148,12 @@ class TestDecisionWritePath:
             actor="owner",
             rationale="not needed",
             evidence_digests=["b" * 64, "b" * 64],
-            release_digest="c" * 64,
+            release_digest=digest,
         )
         item = pg.get_work_item(store, item_id)
         assert (item["status"], item["resolution"]) == ("done", resolution)
         assert decision["evidence_digests"] == ["b" * 64]
-        assert decision["release_digest"] == "c" * 64
+        assert decision["release_digest"] == digest
 
     def test_revise_is_recorded_and_leaves_the_item_open(self, store):
         _sprint_id, _track_id, item_id = _item(store)
@@ -334,7 +336,7 @@ class TestSchema14Fold:
             conn.commit()
 
             migrated = pg_migrations.migrate_schema(store)
-            assert migrated["applied_versions"] == [14]
+            assert migrated["applied_versions"] == [14, 15]
 
             with conn.cursor() as cur:
                 decisions, evidence, items = _fold_counts(cur, repo_id)

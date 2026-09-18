@@ -10,7 +10,9 @@ an `accept` decision and bind the item to it in the same transaction, so
 outboxes written by older clients still apply. `decision.record` records any
 kind (`accept`, `reject`, `withdraw`, `supersede`, `revise`) with its
 rationale and evidence digests; `supersede` names the superseding item by
-`superseded_by_aggregate_uuid`. The former capability-receipt commands are
+`superseded_by_aggregate_uuid`. A decision binds the item's current Release
+unless it names a `release_digest`, which must be a release of that item (see
+`docs/protocols/reservation-model.md`). The former capability-receipt commands are
 retired and every `capability-receipt*` type is refused.
 
 The path defaults to `off`. Existing item and sprint commands

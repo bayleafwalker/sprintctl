@@ -940,10 +940,13 @@ class TestEdgeCases:
             "work_item",
             "work_decision",
             "work_legacy_evidence",
+            "work_release",
+            "release_commit",
             "legacy_import_gate",
         }
         assert indexes == {
             "idx_work_decision_item",
+            "idx_work_release_item",
             "idx_claim_history_claim_id",
             "idx_event_sprint_type_ts",
             "idx_recovery_record_recovered_at",
