@@ -841,3 +841,51 @@ def test_served_lifecycle_retry_and_stale_basis_are_durable(store_factory, tmp_p
     assert retried == {**rejected, "duplicate": True}
     assert pg.get_work_item(store, item_id)["status"] == "active"
     store.conn.close()
+
+
+def test_served_reads_do_not_leave_the_connection_idle_in_transaction(store_factory):
+    """A pooled connection idle in a read transaction holds ACCESS SHARE locks.
+
+    That blocked the schema 14 ALTER in production, and every later query
+    queued behind the ALTER.
+    """
+    from psycopg.pq import TransactionStatus
+
+    store = store_factory("read-tx-closed")
+    sprint_id = pg.create_sprint(store, f"Read-tx-{uuid.uuid4().hex[:8]}", status="active")
+    app = _application(store)
+    context = _context("reader", None, f"read-{uuid.uuid4().hex}", repo_id=store.repo_id)
+    for operation, arguments in (
+        ("work.read.sprints", {}),
+        ("work.read.sprint", {"sprint_id": sprint_id}),
+        ("work.read.items", {"sprint_id": sprint_id}),
+    ):
+        app.invoke(operation, arguments, context)
+        assert store.conn.info.transaction_status == TransactionStatus.IDLE, operation
+
+
+def test_schema_migration_gives_up_on_a_held_ddl_lock(store_factory, monkeypatch):
+    """The production case: a session idle in a read transaction on work_item.
+
+    The migration's ALTER must fail fast rather than queue every later query.
+    """
+    from sprintctl import pg_migrations
+
+    store = store_factory("migration-lock-timeout")
+    blocker = psycopg.connect(_PG_URL, row_factory=dict_row)
+    try:
+        blocker.execute("SELECT * FROM work_item LIMIT 1")  # idle in transaction
+        with store.conn.cursor() as cur:
+            cur.execute("UPDATE schema_version SET version = 13")
+        store.conn.commit()
+        monkeypatch.setenv("SPRINTCTL_MIGRATION_LOCK_TIMEOUT", "300ms")
+        started = time.monotonic()
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            pg_migrations.migrate_schema(store)
+        assert time.monotonic() - started < 10
+    finally:
+        blocker.rollback()
+        blocker.close()
+        store.conn.rollback()
+        monkeypatch.delenv("SPRINTCTL_MIGRATION_LOCK_TIMEOUT", raising=False)
+        assert pg_migrations.migrate_schema(store)["to_version"] == 14
