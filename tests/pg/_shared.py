@@ -194,40 +194,6 @@ def _append_authority_command(
     return outbox.append_authority_command(conn, command)
 
 
-def _receipt_bytes(store, sprint_id, boundary_event_id, **overrides):
-    receipt_id = f"{store.repo_id}.2026-07-13.boundary"
-    receipt = {
-        "schema_version": "capability-receipt/v1",
-        "id": receipt_id,
-        "project": store.repo_id,
-        "status": "draft",
-        "publication": "private",
-        "boundary": {
-            "kind": "sprint-close",
-            "ref": {
-                "kind": "sprint-event",
-                "source": f"sprintctl:{store.repo_id}:sprint:{sprint_id}",
-                "revision": f"event:{boundary_event_id}",
-            },
-        },
-    }
-    receipt.update(overrides)
-    return json.dumps(receipt, sort_keys=True).encode()
-
-
-def _receipt_payload(store, receipt_bytes):
-    receipt_id = f"{store.repo_id}.2026-07-13.boundary"
-    return {
-        "project": store.repo_id,
-        "receipt_id": receipt_id,
-        "receipt_path": (
-            f"/projects/dev/_artifacts/{store.repo_id}/capability/receipts/"
-            f"{receipt_id}.json"
-        ),
-        "receipt_sha256": hashlib.sha256(receipt_bytes).hexdigest(),
-    }
-
-
 @pytest.fixture
 def sprint_id(store):
     return pg.create_sprint(store, f"S-{_uid()}", "Goal", "2026-01-01", "2026-12-31", "active")

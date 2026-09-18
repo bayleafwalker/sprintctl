@@ -53,7 +53,7 @@ def test_reservation_protocol_states_overlap_is_reported_not_enforced():
 
     # Activity and staleness are heuristics owned by policy, not the model.
     assert "not a heartbeat and not proof of ownership" in protocol
-    assert "MINIMUM_SCHEMA_VERSION == CURRENT_SCHEMA_VERSION`, 13 since S1" in protocol
+    assert "MINIMUM_SCHEMA_VERSION == CURRENT_SCHEMA_VERSION`, 14 since S3" in protocol
 
 
 def test_remote_ingest_context_covers_retry_gap_and_cursor_protocol():

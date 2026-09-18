@@ -67,6 +67,9 @@ CANONICAL_ITEMS = [
         "created_at": "2026-03-01T00:02:00Z",
         "updated_at": "2026-03-01T00:02:00Z",
         "aggregate_uuid": "33333333-3333-4333-8333-333333333333",
+        "resolution": None,
+        "terminal_decision_id": None,
+        "legacy": False,
         "track_name": TRACK_NAME,
     },
     {
@@ -81,6 +84,9 @@ CANONICAL_ITEMS = [
         "created_at": "2026-03-01T00:01:00Z",
         "updated_at": "2026-03-01T00:01:00Z",
         "aggregate_uuid": "44444444-4444-4444-8444-444444444444",
+        "resolution": None,
+        "terminal_decision_id": None,
+        "legacy": False,
         "track_name": TRACK_NAME,
     },
     {
@@ -95,6 +101,9 @@ CANONICAL_ITEMS = [
         "created_at": "2026-03-01T00:00:00Z",
         "updated_at": "2026-03-01T00:00:00Z",
         "aggregate_uuid": "55555555-5555-4555-8555-555555555555",
+        "resolution": None,
+        "terminal_decision_id": None,
+        "legacy": False,
         "track_name": TRACK_NAME,
     },
     {

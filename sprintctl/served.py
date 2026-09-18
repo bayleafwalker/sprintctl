@@ -513,9 +513,9 @@ def batch_apply(
     ``application.batch_idempotency_key(records)`` computed over the exact
     same records in the exact same order the server will see. See
     ``sprintctl.cli._served_authority_sync`` for the chunking this
-    wraps -- and for why
-    ``capability-receipt.accept`` records are never included here (excluded
-    from the server's ``SUPPORTED_BATCH_TYPES``, application.py:29-42).
+    wraps -- and for why authority commands outside the server's
+    ``SUPPORTED_BATCH_TYPES`` (application_common.py) are never included
+    here.
     """
 
     arguments = {"records": records}

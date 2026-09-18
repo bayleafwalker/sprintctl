@@ -331,30 +331,20 @@ def test_authority_rollover_archives_only_a_fully_terminal_stream(runner, tmp_pa
 
 
 # ---------------------------------------------------------------------------
-# capability-receipt.accept routed to "unsupported"
+# decision.record (no served operation yet) routed to "unsupported"
 # ---------------------------------------------------------------------------
 
 
 @_requires_312
-def test_served_authority_sync_routes_capability_receipt_accept_to_unsupported(
+def test_served_authority_sync_routes_decision_record_to_unsupported(
     runner, tmp_path, monkeypatch
 ):
     _configure_served_repo(tmp_path, monkeypatch)
     unsupported = _mint_command(
         tmp_path,
-        record_type="capability-receipt.accept",
-        refs=_sprint_refs(2),
-        payload={
-            "pointer": {
-                "project": "sprintctl",
-                "receipt_id": "sprintctl.2026-07-14.boundary",
-                "receipt_path": (
-                    "/projects/dev/_artifacts/sprintctl/capability/receipts/"
-                    "sprintctl.2026-07-14.boundary.json"
-                ),
-                "receipt_sha256": "c" * 64,
-            }
-        },
+        record_type="decision.record",
+        refs=_item_refs(2),
+        payload={"kind": "withdraw", "rationale": "no longer needed"},
     )
     # A regular command after the unsupported record must still be sent --
     # unlike a credential gap, an unsupported record does not block anything.
@@ -393,19 +383,9 @@ def test_served_authority_sync_text_output_reports_unsupported(runner, tmp_path,
     _configure_served_repo(tmp_path, monkeypatch)
     unsupported = _mint_command(
         tmp_path,
-        record_type="capability-receipt.accept",
-        refs=_sprint_refs(2),
-        payload={
-            "pointer": {
-                "project": "sprintctl",
-                "receipt_id": "sprintctl.2026-07-14.boundary",
-                "receipt_path": (
-                    "/projects/dev/_artifacts/sprintctl/capability/receipts/"
-                    "sprintctl.2026-07-14.boundary.json"
-                ),
-                "receipt_sha256": "c" * 64,
-            }
-        },
+        record_type="decision.record",
+        refs=_item_refs(2),
+        payload={"kind": "withdraw", "rationale": "no longer needed"},
     )
     monkeypatch.setattr(
         cli_module._served,
@@ -418,7 +398,7 @@ def test_served_authority_sync_text_output_reports_unsupported(runner, tmp_path,
     result = runner.invoke(cli, ["authority", "sync"])
     assert result.exit_code == 0, result.output
     assert "1 unsupported" in result.output
-    assert "capability-receipt.accept is not supported over the served batch operation" in result.output
+    assert "not supported over the served batch operation" in result.output
     assert unsupported.event_id in result.output
     assert f"Context: repo={tmp_path.name} (source=marker) backend=served" in result.output
 

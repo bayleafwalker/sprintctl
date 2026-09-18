@@ -146,18 +146,6 @@ def test_readme_links_phase3_docs():
     )
 
 
-def test_capability_receipt_reference_is_marked_retired():
-    reference = _read("docs/reference/capability-receipts.md")
-    normalized_reference = " ".join(reference.split())
-    assert (
-        "**Retired 2026-09-16** (vuoro consolidation S2 item 6). Capability "
-        "receipts > are no longer part of sprint close, the `capability-receipt` "
-        "skill and its > validator have been removed, and there is no "
-        "replacement. Do not draft > receipts. The text below is kept for "
-        "history only."
-    ) in normalized_reference
-
-
 def test_start_here_links_phase4_docs():
     _assert_markdown_link_declared_and_resolves(
         "docs/guides/start-here.md", "Customization Guide", "../customization.md"
@@ -279,7 +267,6 @@ def test_readme_docs_map_links_resolve():
     links = _iter_local_markdown_links_in_section("README.md", "Docs Map")
     required = {
         ("Daily Loop", "docs/guides/daily-loop.md"),
-        ("Capability Receipts", "docs/reference/capability-receipts.md"),
         ("alias-pack.md", "docs/examples/alias-pack.md"),
         ("agent-prompt-snippets.md", "docs/examples/agent-prompt-snippets.md"),
         ("editor-and-terminal-integration.md", "docs/examples/editor-and-terminal-integration.md"),

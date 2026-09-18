@@ -29,17 +29,6 @@ class TestNdjsonRoundTrip:
     def test_trusted_state_transfer_preserves_typed_event_ids_exactly(self, store):
         sprint_id = 2_000_000_000 + int(uuid.uuid4().hex[:6], 16)
         boundary_event_id = sprint_id + 1
-        receipt_event_id = sprint_id + 2
-        receipt_id = f"{store.repo_id}.2026-07-13.migration"
-        receipt_payload = {
-            "project": store.repo_id,
-            "receipt_id": receipt_id,
-            "receipt_path": (
-                f"/projects/dev/_artifacts/{store.repo_id}/capability/receipts/"
-                f"{receipt_id}.json"
-            ),
-            "receipt_sha256": "c" * 64,
-        }
         records = [
             {
                 "table": "sprint",
@@ -64,27 +53,12 @@ class TestNdjsonRoundTrip:
                     "payload": {"previous_status": "active", "status": "closed"},
                 },
             },
-            {
-                "table": "event",
-                "repo_id": store.repo_id,
-                "data": {
-                    "id": receipt_event_id,
-                    "sprint_id": sprint_id,
-                    "work_item_id": None,
-                    "source_type": "actor",
-                    "actor": "drafting-agent",
-                    "event_type": contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE,
-                    "payload": receipt_payload,
-                },
-            },
         ]
 
         pg.import_ndjson(store, records, trusted_state_transfer=True)
 
         events = {event["id"]: event for event in pg.list_events(store, sprint_id)}
         assert events[boundary_event_id]["event_type"] == contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE
-        assert events[receipt_event_id]["event_type"] == contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE
-        assert json.loads(events[receipt_event_id]["payload"]) == receipt_payload
         with pytest.raises(ValueError, match="cannot remap IDs"):
             pg.import_ndjson(
                 store,
@@ -130,6 +104,60 @@ class TestNdjsonRoundTrip:
             assert any(s["name"] == "RT Sprint" for s in sprints)
             items = pg.list_work_items(rt_store)
             assert any(i["title"] == "RT Item" for i in items)
+        finally:
+            rt_store.conn.close()
+
+    def test_decisions_and_legacy_items_survive_a_remapped_round_trip(
+        self, store, pg_test_scope, tmp_path
+    ):
+        from sprintctl import db as _db
+
+        conn = _db.get_connection(tmp_path / "decisions.db")
+        _db.init_db(conn)
+        sid = _db.create_sprint(conn, "Decisions RT", "G", "2026-01-01", "2026-12-31", "active")
+        tid = _db.get_or_create_track(conn, sid, "eng")
+        accepted = _db.create_work_item(conn, sid, tid, "accepted")
+        _db.set_work_item_status(conn, accepted, "active")
+        _db.set_work_item_status(conn, accepted, "done", actor="closer")
+        old = _db.create_work_item(conn, sid, tid, "superseded")
+        new = _db.create_work_item(conn, sid, tid, "successor")
+        _db.record_decision(conn, old, "supersede", actor="planner", superseded_by_item_id=new)
+        with _db.legacy_import_gate(conn):
+            conn.execute(
+                "INSERT INTO work_item (sprint_id, track_id, title, status, legacy, "
+                "aggregate_uuid) VALUES (?, ?, 'pre-decision', 'done', 1, ?)",
+                (sid, tid, str(uuid.uuid4())),
+            )
+        conn.commit()
+        rt_repo_id = pg_test_scope("decision-round-trip")
+        buf = io.StringIO()
+        pg.export_ndjson(conn, rt_repo_id, buf)
+        conn.close()
+
+        rt_store = pg.PgStore(
+            conn=psycopg.connect(_PG_URL, row_factory=dict_row), repo_id=rt_repo_id
+        )
+        pg.init_db(rt_store)
+        try:
+            records = [json.loads(ln) for ln in buf.getvalue().splitlines() if ln.strip()]
+            counts = pg.import_ndjson(rt_store, records, remap_ids=True)
+            assert counts["work_decision"] == 2
+            items = {item["title"]: item for item in pg.list_work_items(rt_store)}
+            decisions = {d["id"]: d for d in pg.list_decisions(rt_store)}
+            accepted_item = items["accepted"]
+            assert decisions[accepted_item["terminal_decision_id"]]["kind"] == "accept"
+            assert decisions[accepted_item["terminal_decision_id"]]["work_item_id"] == accepted_item["id"]
+            superseded = items["superseded"]
+            assert superseded["resolution"] == "superseded"
+            assert (
+                decisions[superseded["terminal_decision_id"]]["superseded_by_item_id"]
+                == items["successor"]["id"]
+            )
+            legacy = items["pre-decision"]
+            assert (legacy["status"], legacy["legacy"], legacy["terminal_decision_id"]) == (
+                "done", True, None,
+            )
+            assert items["successor"]["legacy"] is False
         finally:
             rt_store.conn.close()
 

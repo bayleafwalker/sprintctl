@@ -938,8 +938,12 @@ class TestEdgeCases:
             "sprint",
             "track",
             "work_item",
+            "work_decision",
+            "work_legacy_evidence",
+            "legacy_import_gate",
         }
         assert indexes == {
+            "idx_work_decision_item",
             "idx_claim_history_claim_id",
             "idx_event_sprint_type_ts",
             "idx_recovery_record_recovered_at",

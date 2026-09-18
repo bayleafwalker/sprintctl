@@ -7,7 +7,6 @@ model, including regressions that previously demonstrated known gaps.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 import itertools
 
 import pytest
@@ -24,19 +23,6 @@ def _sqlite_authority(db_path):
     track_id = db.get_or_create_track(owner, sprint_id, "protocol")
     item_id = db.create_work_item(owner, sprint_id, track_id, "Partitioned work")
     return owner, observer, sprint_id, item_id
-
-
-def _missing_receipt_payload(project: str = "sprintctl") -> dict[str, str]:
-    receipt_id = f"{project}.2026-07-14.missing"
-    return {
-        "project": project,
-        "receipt_id": receipt_id,
-        "receipt_path": (
-            f"/projects/dev/_artifacts/{project}/capability/receipts/"
-            f"{receipt_id}.json"
-        ),
-        "receipt_sha256": hashlib.sha256(b"unavailable").hexdigest(),
-    }
 
 
 def test_sqlite_partition_reassignment_rejects_stale_reservation_touch(db_path):
@@ -118,25 +104,19 @@ def test_sqlite_stale_item_and_sprint_commands_reject_without_second_mutation(db
         actor_b.close()
 
 
-def test_sqlite_unavailable_capability_artifact_rejects_pointer_without_event(
-    db_path,
-    monkeypatch,
+@pytest.mark.parametrize(
+    "event_type",
+    ["capability-receipt-drafted", "capability-receipt.accept", "capability-receipt.accepted"],
+)
+def test_sqlite_retired_capability_receipt_events_are_refused_without_event(
+    db_path, event_type
 ):
     operator, drafting_agent, sprint_id, _item_id = _sqlite_authority(db_path)
     try:
         db.close_sprint_with_boundary_event(operator, sprint_id, "operator")
-
-        def missing(receipt_path: str) -> bytes:
-            raise ValueError(f"capability receipt file does not exist: {receipt_path}")
-
-        monkeypatch.setattr(contracts, "_read_capability_receipt_bytes", missing)
-        with pytest.raises(ValueError, match="file does not exist"):
+        with pytest.raises(ValueError, match="capability receipts were retired"):
             db.create_event(
-                drafting_agent,
-                sprint_id,
-                "drafting-agent",
-                contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE,
-                payload=_missing_receipt_payload(),
+                drafting_agent, sprint_id, "drafting-agent", event_type, payload={}
             )
 
         event_types = [event["event_type"] for event in db.list_events(operator, sprint_id)]

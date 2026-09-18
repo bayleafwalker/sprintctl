@@ -15,7 +15,7 @@ import json
 from typing import Any, Mapping
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from . import contracts, outbox, pg
+from . import contracts, decisions, outbox, pg
 from .db import (
     SPRINT_TRANSITIONS,
     VALID_TRANSITIONS,
@@ -244,7 +244,7 @@ def _decision_type(command_type: str) -> str:
         "item.done": "item.transitioned",
         "sprint.activate": "sprint-activated",
         "sprint.close": "sprint-closed",
-        "capability-receipt.accept": "capability-receipt.accepted",
+        "decision.record": "work-decision.recorded",
     }[command_type]
 
 
@@ -311,20 +311,104 @@ def _handle_item(
                 current_revision=current_revision,
             )
 
+    decision = None
+    if to_status == "done":
+        # ``item.done`` and ``item.transition`` to done are aliases for an
+        # accept decision (TS-5), so outboxes written by older clients still
+        # apply and still produce the decision that makes the item terminal.
+        decision = pg._decide_locked(
+            cur,
+            store.repo_id,
+            item,
+            decisions.normalize_decision("accept", actor=envelope.actor),
+        )
+    else:
+        cur.execute(
+            "UPDATE work_item SET status = %s, updated_at = now() "
+            "WHERE repo_id = %s AND id = %s",
+            (to_status, store.repo_id, item["id"]),
+        )
+    effect = _item_effect(cur, store, item, current)
+    if decision is not None:
+        effect["decision_id"] = int(decision["id"])
+        effect["decision_kind"] = decision["kind"]
+    return effect
+
+
+def _item_effect(
+    cur: Any,
+    store: pg.PgStore,
+    item: Mapping[str, Any],
+    previous_status: str,
+) -> dict[str, Any]:
     cur.execute(
-        "UPDATE work_item SET status = %s, updated_at = now() "
-        "WHERE repo_id = %s AND id = %s RETURNING *",
-        (to_status, store.repo_id, item["id"]),
+        "SELECT * FROM work_item WHERE repo_id = %s AND id = %s",
+        (store.repo_id, item["id"]),
     )
     updated = cur.fetchone()
-    return {
+    effect: dict[str, Any] = {
         "aggregate_type": "item",
         "aggregate_uuid": str(updated["aggregate_uuid"]),
         "item_id": int(updated["id"]),
-        "previous_status": current,
+        "previous_status": previous_status,
         "status": updated["status"],
         "revision": item_revision(updated),
     }
+    if updated["resolution"] is not None:
+        effect["resolution"] = updated["resolution"]
+    return effect
+
+
+def _handle_decision(
+    cur: Any,
+    store: pg.PgStore,
+    envelope: contracts.AuthorityCommand,
+) -> dict[str, Any]:
+    """Arbitrate ``decision.record``: the first-class decision command."""
+    item = _lock_item(cur, store, str(_required_ref(envelope, "aggregate_uuid")))
+    current_revision = item_revision(item)
+    _check_basis(envelope, current_revision)
+    payload = envelope.payload
+    superseded_by_item_id = None
+    superseded_by_uuid = payload.get("superseded_by_aggregate_uuid")
+    if superseded_by_uuid is not None:
+        cur.execute(
+            "SELECT id FROM work_item WHERE repo_id = %s AND aggregate_uuid = %s",
+            (store.repo_id, superseded_by_uuid),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise _RejectedCommand(
+                "not-found",
+                "superseding work item aggregate not found",
+                current_revision=current_revision,
+            )
+        superseded_by_item_id = int(row["id"])
+    try:
+        normalized = decisions.normalize_decision(
+            payload.get("kind"),
+            actor=envelope.actor,
+            rationale=payload.get("rationale", ""),
+            evidence_digests=payload.get("evidence_digests", []),
+            release_digest=payload.get("release_digest"),
+            superseded_by_item_id=superseded_by_item_id,
+        )
+    except ValueError as exc:
+        raise _RejectedCommand(
+            "invalid-command", str(exc), current_revision=current_revision
+        ) from exc
+    error = decisions.transition_error(normalized["kind"], int(item["id"]), item["status"])
+    if error is not None:
+        raise _RejectedCommand(
+            "invalid-transition", error, current_revision=current_revision
+        )
+    decision = pg._decide_locked(cur, store.repo_id, item, normalized)
+    effect = _item_effect(cur, store, item, item["status"])
+    effect["decision_id"] = int(decision["id"])
+    effect["decision_kind"] = decision["kind"]
+    if superseded_by_item_id is not None:
+        effect["superseded_by_item_id"] = superseded_by_item_id
+    return effect
 
 
 def _handle_sprint(
@@ -381,67 +465,6 @@ def _handle_sprint(
 
 
 
-def _handle_receipt(
-    cur: Any,
-    store: pg.PgStore,
-    envelope: contracts.AuthorityCommand,
-) -> dict[str, Any]:
-    sprint = _lock_sprint(cur, store, str(_required_ref(envelope, "aggregate_uuid")))
-    if sprint["status"] != "closed":
-        raise _RejectedCommand("invalid-transition", "capability receipt requires a closed sprint")
-    cur.execute(
-        "SELECT id FROM event WHERE repo_id = %s AND sprint_id = %s AND event_type = %s ORDER BY id",
-        (store.repo_id, sprint["id"], contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE),
-    )
-    boundaries = cur.fetchall()
-    if len(boundaries) != 1:
-        raise _RejectedCommand(
-            "invalid-boundary",
-            "capability receipt requires exactly one sprint-close-boundary",
-        )
-    boundary_id = int(boundaries[0]["id"])
-    current_revision = f"event:{boundary_id}"
-    _check_basis(envelope, current_revision)
-    pointer = envelope.payload.get("pointer")
-    try:
-        canonical = contracts.canonicalize_capability_receipt_drafted_payload(pointer)
-        if canonical["project"] != store.repo_id:
-            raise ValueError("capability receipt project must match repository authority")
-        contracts.verify_capability_receipt_draft_pointer(
-            canonical,
-            sprint_id=int(sprint["id"]),
-            boundary_event_id=boundary_id,
-        )
-    except (TypeError, ValueError) as exc:
-        raise _RejectedCommand("artifact-unavailable", str(exc), current_revision=current_revision) from exc
-    cur.execute(
-        """
-        INSERT INTO event (
-            repo_id, sprint_id, work_item_id, source_type, actor, event_type, payload
-        ) VALUES (%s, %s, NULL, 'actor', %s, %s, %s)
-        RETURNING id
-        """,
-        (
-            store.repo_id,
-            sprint["id"],
-            envelope.actor,
-            contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE,
-            json.dumps(canonical),
-        ),
-    )
-    event_id = int(cur.fetchone()["id"])
-    return {
-        "aggregate_type": "sprint",
-        "aggregate_uuid": str(sprint["aggregate_uuid"]),
-        "sprint_id": int(sprint["id"]),
-        "receipt_event_id": event_id,
-        "boundary_revision": current_revision,
-        "receipt_id": canonical["receipt_id"],
-        "receipt_path": canonical["receipt_path"],
-        "receipt_sha256": canonical["receipt_sha256"],
-    }
-
-
 def _apply_command(
     cur: Any,
     store: pg.PgStore,
@@ -473,8 +496,8 @@ def _apply_command(
         return _handle_item(cur, store, envelope)
     if envelope.record_type in {"sprint.activate", "sprint.close"}:
         return _handle_sprint(cur, store, envelope)
-    if envelope.record_type == "capability-receipt.accept":
-        return _handle_receipt(cur, store, envelope)
+    if envelope.record_type == "decision.record":
+        return _handle_decision(cur, store, envelope)
     raise _RejectedCommand("unsupported-command", f"unsupported authority command {envelope.record_type}")
 
 def _decision_record(

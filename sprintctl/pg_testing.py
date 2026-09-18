@@ -40,6 +40,8 @@ REPO_TABLES = (
     # of them happens to carry a cascade.
     "reservation",
     "claim_history",
+    "work_legacy_evidence",
+    "work_decision",
     "event",
     "work_item",
     "track",
@@ -188,6 +190,8 @@ def cleanup_test_repositories(conn: Any, repo_ids: Iterable[str]) -> dict[str, A
                 "maintenance_capability_recovery",
                 "authority_decision",
                 "ingest_record",
+                "work_decision",
+                "work_legacy_evidence",
             )
             for table in immutable_tables:
                 cur.execute(f"ALTER TABLE {table} DISABLE TRIGGER USER")  # noqa: S608
@@ -197,6 +201,9 @@ def cleanup_test_repositories(conn: Any, repo_ids: Iterable[str]) -> dict[str, A
                     (scopes,),
                 )
                 deleted_rows[table] = cur.rowcount
+            # Decision foreign keys are deferred; settle them before the
+            # triggers can be re-enabled.
+            cur.execute("SET CONSTRAINTS ALL IMMEDIATE")
             for table in immutable_tables:
                 cur.execute(f"ALTER TABLE {table} ENABLE TRIGGER USER")  # noqa: S608
             for table in REPO_TABLES:

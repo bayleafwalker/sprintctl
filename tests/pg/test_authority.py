@@ -20,8 +20,6 @@ from tests.pg._shared import (
     _uid,
     _authority_repo_uuid,
     _append_authority_command,
-    _receipt_bytes,
-    _receipt_payload,
     PG_MARKS,
     _PG_URL,
     replace,
@@ -549,70 +547,112 @@ class TestAuthorityCommandArbitration:
         finally:
             producer.close()
 
-    def test_capability_receipt_acceptance_is_a_remote_decision(
-        self, store, tmp_path, monkeypatch
-    ):
-        sprint_id = pg.create_sprint(store, f"Receipt-command-{_uid()}", status="active")
-        boundary_id = pg.close_sprint_with_boundary_event(store, sprint_id, "operator")
-        sprint = pg.get_sprint(store, sprint_id)
-        receipt_bytes = _receipt_bytes(store, sprint_id, boundary_id)
-        pointer = _receipt_payload(store, receipt_bytes)
-        producer = outbox.open_outbox(tmp_path / "authority-receipt.db")
-        monkeypatch.setattr(
-            contracts,
-            "verify_capability_receipt_draft_pointer",
-            lambda payload, *, sprint_id, boundary_event_id: payload,
-        )
+    def _active_item(self, store, label):
+        sprint_id = pg.create_sprint(store, f"{label}-{_uid()}", status="active")
+        track_id = pg.get_or_create_track(store, sprint_id, "decisions")
+        item_id = pg.create_work_item(store, sprint_id, track_id, f"{label} item")
+        pg.set_work_item_status(store, item_id, "active")
+        return sprint_id, track_id, item_id
+
+    def test_old_client_item_done_becomes_an_accept_decision(self, store, tmp_path):
+        _sprint_id, _track_id, item_id = self._active_item(store, "Old-client-done")
+        item = pg.get_work_item(store, item_id)
+        producer = outbox.open_outbox(tmp_path / "authority-done.db")
         try:
             command = _append_authority_command(
                 producer,
                 store,
-                record_type="capability-receipt.accept",
-                aggregate_type="sprint",
-                aggregate_uuid=sprint["aggregate_uuid"],
-                basis_revision=f"event:{boundary_id}",
-                payload={"pointer": pointer},
+                record_type="item.done",
+                aggregate_type="item",
+                aggregate_uuid=item["aggregate_uuid"],
+                basis_revision=authority.item_revision(item),
+                payload={"to_status": "done"},
             )
             decision = authority.arbitrate_command(store, command)
-            assert decision.accepted is True
-            assert decision.decision_type == "capability-receipt.accepted"
-            assert decision.effect["boundary_revision"] == f"event:{boundary_id}"
-            event_types = [event["event_type"] for event in pg.list_events(store, sprint_id)]
-            assert event_types == [
-                contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE,
-                contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE,
-            ]
         finally:
             producer.close()
 
-    def test_unavailable_capability_artifact_rejects_pointer_without_event(
-        self,
-        store,
-        monkeypatch,
-    ):
-        sprint_id = pg.create_sprint(store, f"Artifact-{_uid()}", status="active")
-        boundary_id = pg.close_sprint_with_boundary_event(store, sprint_id, "operator")
-        receipt_bytes = _receipt_bytes(store, sprint_id, boundary_id)
-        payload = _receipt_payload(store, receipt_bytes)
+        assert decision.accepted is True
+        assert decision.decision_type == "item.transitioned"
+        assert decision.effect["status"] == "done"
+        assert decision.effect["resolution"] == "accepted"
+        assert decision.effect["decision_kind"] == "accept"
+        closed = pg.get_work_item(store, item_id)
+        [recorded] = pg.list_decisions(store, item_id)
+        assert recorded["kind"] == "accept"
+        assert recorded["actor"] == "authority-test"
+        assert closed["status"] == "done"
+        assert closed["resolution"] == "accepted"
+        assert closed["terminal_decision_id"] == recorded["id"]
+        assert closed["legacy"] is False
 
-        def missing(receipt_path):
-            raise ValueError(f"capability receipt file does not exist: {receipt_path}")
-
-        monkeypatch.setattr(contracts, "_read_capability_receipt_bytes", missing)
-        drafting_agent = self._independent_store(store)
+    def test_decision_record_supersedes_by_aggregate_uuid(self, store, tmp_path):
+        sprint_id, track_id, item_id = self._active_item(store, "Decision-record")
+        replacement_id = pg.create_work_item(store, sprint_id, track_id, "replacement")
+        item = pg.get_work_item(store, item_id)
+        replacement = pg.get_work_item(store, replacement_id)
+        producer = outbox.open_outbox(tmp_path / "authority-decision.db")
         try:
-            with pytest.raises(ValueError, match="file does not exist"):
-                pg.create_event(
-                    drafting_agent,
-                    sprint_id,
-                    "drafting-agent",
-                    contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE,
-                    payload=payload,
-                )
-            event_types = [event["event_type"] for event in pg.list_events(store, sprint_id)]
-            assert event_types == [contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE]
+            command = _append_authority_command(
+                producer,
+                store,
+                record_type="decision.record",
+                aggregate_type="item",
+                aggregate_uuid=item["aggregate_uuid"],
+                basis_revision=authority.item_revision(item),
+                payload={
+                    "kind": "supersede",
+                    "rationale": "split into a narrower item",
+                    "evidence_digests": ["a" * 64],
+                    "superseded_by_aggregate_uuid": replacement["aggregate_uuid"],
+                },
+            )
+            decision = authority.arbitrate_command(store, command)
+            closed = pg.get_work_item(store, item_id)
+            again = _append_authority_command(
+                producer,
+                store,
+                record_type="decision.record",
+                aggregate_type="item",
+                aggregate_uuid=item["aggregate_uuid"],
+                basis_revision=authority.item_revision(closed),
+                payload={"kind": "withdraw"},
+            )
+            refused = authority.arbitrate_command(store, again)
         finally:
-            drafting_agent.conn.close()
+            producer.close()
+
+        assert decision.accepted is True
+        assert decision.decision_type == "work-decision.recorded"
+        assert decision.effect["superseded_by_item_id"] == replacement_id
+        assert closed["resolution"] == "superseded"
+        [recorded] = pg.list_decisions(store, item_id)
+        assert recorded["superseded_by_item_id"] == replacement_id
+        assert recorded["evidence_digests"] == ["a" * 64]
+        assert refused.accepted is False
+        assert refused.reason_code == "invalid-transition"
+        assert len(pg.list_decisions(store, item_id)) == 1
+
+    def test_retired_capability_receipt_commands_are_refused(self, store):
+        sprint_id = pg.create_sprint(store, f"Retired-receipt-{_uid()}", status="active")
+        sprint = pg.get_sprint(store, sprint_id)
+        for record_type in ("capability-receipt.accept", "capability-receipt.accepted"):
+            with pytest.raises(ValueError, match="not classified"):
+                contracts.AuthorityCommand(
+                    event_id=str(uuid.uuid4()),
+                    record_type=record_type,
+                    schema_version="1",
+                    actor="authority-test",
+                    authored_at="2026-07-14T18:00:00Z",
+                    refs={
+                        "repo_id": _authority_repo_uuid(store),
+                        "aggregate_type": "sprint",
+                        "aggregate_uuid": sprint["aggregate_uuid"],
+                    },
+                    payload={"pointer": {}},
+                    basis_revision="event:1",
+                    correlation_id=str(uuid.uuid4()),
+                )
 
 
 # ---------------------------------------------------------------------------

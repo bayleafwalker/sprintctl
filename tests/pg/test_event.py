@@ -11,8 +11,6 @@ import pytest
 from tests.pg._shared import (
     contracts,
     pg,
-    _receipt_bytes,
-    _receipt_payload,
     PG_MARKS,
     json,
 )
@@ -31,20 +29,24 @@ class TestEvent:
                 payload={"previous_status": "active", "status": "closed"},
             )
 
-    def test_capability_pointer_requires_closed_sprint_and_local_boundary(
-        self,
-        store,
-        sprint_id,
+    @pytest.mark.parametrize(
+        "event_type",
+        [
+            "capability-receipt-drafted",
+            "capability-receipt-drafted-imported",
+            "capability-receipt.accept",
+            "capability-receipt.accepted",
+        ],
+    )
+    def test_retired_capability_receipt_event_types_are_refused(
+        self, store, sprint_id, event_type
     ):
-        receipt_bytes = _receipt_bytes(store, sprint_id, 1)
-        with pytest.raises(ValueError, match="requires a closed sprint"):
-            pg.create_event(
-                store,
-                sprint_id,
-                "drafting-agent",
-                contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE,
-                payload=_receipt_payload(store, receipt_bytes),
-            )
+        with pytest.raises(ValueError, match="capability receipts were retired"):
+            pg.create_event(store, sprint_id, "drafting-agent", event_type, payload={})
+        assert not [
+            event for event in pg.list_events(store, sprint_id)
+            if event["event_type"] == event_type
+        ]
 
     def test_create_and_list(self, store, sprint_id):
         pg.create_event(store, sprint_id, "ag", "note", source_type="actor",
@@ -59,116 +61,6 @@ class TestEvent:
         note = next(e for e in reversed(events) if e["event_type"] == "note")
         assert isinstance(note["payload"], str)
         assert json.loads(note["payload"])["summary"] is not None
-
-    def test_capability_receipt_pointer_matches_sqlite_contract(
-        self,
-        store,
-        sprint_id,
-        monkeypatch,
-    ):
-        boundary_event_id = pg.close_sprint_with_boundary_event(store, sprint_id, "operator")
-        receipt_bytes = _receipt_bytes(store, sprint_id, boundary_event_id)
-        payload = _receipt_payload(store, receipt_bytes)
-        monkeypatch.setattr(
-            contracts,
-            "_read_capability_receipt_bytes",
-            lambda receipt_path: receipt_bytes,
-        )
-
-        event_id = pg.create_event(
-            store,
-            sprint_id,
-            "drafting-agent",
-            "capability-receipt-drafted",
-            payload=payload,
-        )
-
-        event = next(
-            event
-            for event in pg.list_events(store, sprint_id)
-            if event["id"] == event_id
-        )
-        assert json.loads(event["payload"]) == payload
-
-    @pytest.mark.parametrize(
-        ("mutate", "message"),
-        [
-            (lambda payload: payload.update(receipt_id="other.receipt"), "must start"),
-            (lambda payload: payload.update(receipt_path="/tmp/receipt.json"), "must be exactly"),
-            (lambda payload: payload.update(receipt_sha256="A" * 64), "lowercase hexadecimal"),
-            (lambda payload: payload.update(receipt_body={"private": True}), "unknown fields"),
-            (
-                lambda payload: payload.update(
-                    project="other",
-                    receipt_id="other.receipt",
-                    receipt_path=(
-                        "/projects/dev/_artifacts/other/capability/receipts/"
-                        "other.receipt.json"
-                    ),
-                ),
-                "owning repository",
-            ),
-        ],
-    )
-    def test_malformed_capability_pointer_matches_sqlite_rejection(
-        self,
-        store,
-        sprint_id,
-        mutate,
-        message,
-    ):
-        receipt_bytes = _receipt_bytes(store, sprint_id, 1)
-        payload = _receipt_payload(store, receipt_bytes)
-        mutate(payload)
-
-        with pytest.raises(ValueError, match=message):
-            pg.create_event(
-                store,
-                sprint_id,
-                "drafting-agent",
-                contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE,
-                payload=payload,
-            )
-
-    def test_capability_pointer_file_and_boundary_are_verified_before_insert(
-        self,
-        store,
-        sprint_id,
-        monkeypatch,
-    ):
-        boundary_event_id = pg.close_sprint_with_boundary_event(store, sprint_id, "operator")
-        wrong_revision_bytes = _receipt_bytes(
-            store,
-            sprint_id,
-            boundary_event_id,
-            boundary={
-                "kind": "sprint-close",
-                "ref": {
-                    "kind": "sprint-event",
-                    "source": f"sprintctl:{store.repo_id}:sprint:{sprint_id}",
-                    "revision": f"event:{boundary_event_id + 1}",
-                },
-            },
-        )
-        payload = _receipt_payload(store, wrong_revision_bytes)
-        monkeypatch.setattr(
-            contracts,
-            "_read_capability_receipt_bytes",
-            lambda receipt_path: wrong_revision_bytes,
-        )
-
-        with pytest.raises(ValueError, match="boundary.ref.revision"):
-            pg.create_event(
-                store,
-                sprint_id,
-                "drafting-agent",
-                contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE,
-                payload=payload,
-            )
-        assert not any(
-            event["event_type"] == contracts.CAPABILITY_RECEIPT_DRAFTED_EVENT_TYPE
-            for event in pg.list_events(store, sprint_id)
-        )
 
     def test_list_events_limited(self, store, sprint_id):
         for _ in range(4):

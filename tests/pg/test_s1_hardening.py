@@ -67,9 +67,9 @@ def _refused(store, statement, params=()):
 
 
 class TestSchema13:
-    def test_schema_is_13(self):
-        assert pg_migrations.CURRENT_SCHEMA_VERSION == 13
-        assert pg_migrations.MINIMUM_SCHEMA_VERSION == 13
+    def test_schema_is_at_least_13(self):
+        assert pg_migrations.CURRENT_SCHEMA_VERSION >= 13
+        assert pg_migrations.MINIMUM_SCHEMA_VERSION >= 13
 
     def test_ingest_records_refuse_update_delete_and_truncate(self, store, tmp_path):
         admitted = _ingest_one(store, tmp_path)
@@ -115,7 +115,7 @@ class TestSchema13:
         pg_migrations.migrate_schema(store)
         result = pg_migrations.migrate_schema(store)
         assert result["applied_versions"] == []
-        assert result["to_version"] == 13
+        assert result["to_version"] == pg_migrations.CURRENT_SCHEMA_VERSION
         with store.conn.cursor() as cur:
             cur.execute(
                 "SELECT confdeltype FROM pg_constraint "
