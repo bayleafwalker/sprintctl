@@ -6,7 +6,11 @@ The service composes one WorkApplication per authorized repository.
 from __future__ import annotations
 
 from .application_common import *
-from .work_application import WorkApplication
+from .work_application import (
+    WorkApplication,
+    _end_transaction_opened_by_operation,
+    _transaction_status,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +50,23 @@ class ProjectWorkApplication:
     canonical_binding: Mapping[str, Any] | None = None
 
     def invoke(
+        self, operation: str, arguments: Mapping[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        # Member reads call member applications directly, not through
+        # WorkApplication.invoke, so their connections need the same care: a
+        # read left open holds ACCESS SHARE locks on a pooled connection.
+        connections = [
+            getattr(getattr(member.application, "store", None), "conn", None)
+            for member in self.members
+        ]
+        before = [_transaction_status(conn) for conn in connections]
+        try:
+            return self._dispatch(operation, arguments, context)
+        finally:
+            for conn, status in zip(connections, before):
+                _end_transaction_opened_by_operation(conn, status)
+
+    def _dispatch(
         self, operation: str, arguments: Mapping[str, Any], context: InvocationContext
     ) -> dict[str, Any]:
         if operation == "work.project.next-work":
