@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import os
 from typing import Any, Mapping
 
 
@@ -29,6 +30,7 @@ CURRENT_SCHEMA_VERSION = 14
 MINIMUM_SCHEMA_VERSION = 14
 MAXIMUM_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION
 STARTUP_MODE_ENV = "SPRINTCTL_REMOTE_SCHEMA_MODE"
+MIGRATION_LOCK_TIMEOUT_ENV = "SPRINTCTL_MIGRATION_LOCK_TIMEOUT"
 READ_ONLY_STARTUP_MODE = "read-only"
 OPERATOR_MIGRATE_STARTUP_MODE = "operator-migrate"
 
@@ -317,6 +319,14 @@ def migrate_schema(store: Any) -> dict[str, Any]:
             cur.execute(
                 "SELECT pg_advisory_xact_lock(%s, %s)",
                 SCHEMA_MIGRATION_LOCK_KEYS,
+            )
+            # Only after the advisory lock, so concurrent migrators still
+            # serialize.  A DDL lock that cannot be had quickly fails the
+            # migration instead of queueing every served query behind it; the
+            # deployment Job retries.
+            cur.execute(
+                "SELECT set_config('lock_timeout', %s, true)",
+                (os.environ.get(MIGRATION_LOCK_TIMEOUT_ENV, "5s"),),
             )
             state = _read_schema_state(cur)
             starting_version = state.version

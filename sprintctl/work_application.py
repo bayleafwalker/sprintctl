@@ -26,6 +26,32 @@ def _reservation_actor_mismatch(given: object, authenticated: object) -> Applica
     )
 
 
+def _transaction_status(conn: Any) -> Any:
+    info = getattr(conn, "info", None)  # None for SQLite or no connection
+    return None if info is None else info.transaction_status
+
+
+def _end_transaction_opened_by_operation(conn: Any, status_before: Any) -> None:
+    """Close a transaction the operation itself left open on PostgreSQL.
+
+    Reads open an implicit transaction and nothing ended it, so a pooled
+    connection sat "idle in transaction" holding ACCESS SHARE locks until its
+    next use.  The schema 14 ALTER queued behind one in production, and every
+    later query queued behind the ALTER.  Writes commit inside their handlers,
+    so a transaction still open here holds nothing worth keeping.  A
+    transaction the caller already had open before the operation is theirs and
+    is left alone.
+    """
+    try:
+        from psycopg.pq import TransactionStatus
+    except ImportError:  # pragma: no cover - psycopg is present wherever info is
+        return
+    if status_before != TransactionStatus.IDLE:
+        return
+    if _transaction_status(conn) in (TransactionStatus.INTRANS, TransactionStatus.INERROR):
+        conn.rollback()
+
+
 @dataclass(slots=True)
 class WorkApplication:
     """One repository-scoped work authority application."""
@@ -307,6 +333,7 @@ class WorkApplication:
             raise ApplicationRejection(
                 "unknown-work-operation", f"unknown work operation: {operation}", 404
             ) from exc
+        status_before = _transaction_status(getattr(target.store, "conn", None))
         try:
             result = handler(dict(arguments), context)
             target._note_implicit_activity(operation, arguments, result)
@@ -342,6 +369,10 @@ class WorkApplication:
                 arguments,
                 context,
                 _admin_shutdown_retry=True,
+            )
+        finally:
+            _end_transaction_opened_by_operation(
+                getattr(target.store, "conn", None), status_before
             )
 
     def _identity_current(
