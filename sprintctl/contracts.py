@@ -293,13 +293,19 @@ def _canonical_authority_refs(record_type: str, refs: Mapping[str, Any]) -> dict
     return result
 
 
+#: Mirrors sprintctl.db.RELEASE_REASONS.  Duplicated rather than imported:
+#: db.py already imports this module, and contracts.py must stay import-free
+#: of db.py to avoid a cycle.
+_ITEM_RELEASE_REASONS = ("rework", "partial", "abandoned")
+
+
 def _canonical_authority_payload(record_type: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     if record_type in {"item.transition", "item.done"}:
         source = _strict_fields(
             payload,
             field="payload",
             required={"to_status"},
-            optional=set(),
+            optional={"reason"},
         )
         allowed_statuses = {"pending", "active", "done", "blocked"}
         to_status = _required_string(source["to_status"], "payload.to_status")
@@ -307,7 +313,20 @@ def _canonical_authority_payload(record_type: str, payload: Mapping[str, Any]) -
             raise ValueError("payload.to_status must be pending, active, done, or blocked")
         if record_type == "item.done" and to_status != "done":
             raise ValueError("item.done payload.to_status must be 'done'")
+        reason = _optional_string(source.get("reason"), "payload.reason")
+        if to_status == "pending":
+            if reason not in _ITEM_RELEASE_REASONS:
+                raise ValueError(
+                    "payload.reason is required for a transition to pending and must be "
+                    f"one of {sorted(_ITEM_RELEASE_REASONS)}"
+                )
+        elif reason is not None:
+            raise ValueError(
+                "payload.reason is only accepted when payload.to_status is 'pending'"
+            )
         result: dict[str, Any] = {"to_status": to_status}
+        if to_status == "pending":
+            result["reason"] = reason
         return result
 
     if record_type in {"sprint.activate", "sprint.close"}:
