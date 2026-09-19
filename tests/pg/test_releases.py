@@ -407,3 +407,82 @@ class TestBackendParity:
         finally:
             rt_store.conn.close()
             conn.close()
+
+
+class TestAcceptanceContractEvidenceObligations:
+    """#2446: a Release may declare the evidence it owes; nothing blocks on it."""
+
+    def test_normalize_rejects_a_non_list(self):
+        with pytest.raises(ValueError, match="evidence_obligations"):
+            releases.normalize_acceptance_contract({"evidence_obligations": "test-run"})
+
+    def test_normalize_rejects_an_empty_string_label(self):
+        with pytest.raises(ValueError, match="evidence_obligations"):
+            releases.normalize_acceptance_contract({"evidence_obligations": ["test-run", ""]})
+
+    def test_unmet_obligations_empty_list_for_a_release_without_the_key(self, store):
+        item_id = _item(store)
+        digest = _reserve(store, item_id)["release_digest"]
+        pg.record_decision(store, item_id, "accept", actor="owner")
+        assert pg.unmet_obligations(store, digest) == []
+
+    def test_unmet_obligations_never_raises_for_an_unknown_digest(self, store):
+        assert pg.unmet_obligations(store, "a" * 64) == []
+
+    def test_unmet_obligations_met(self, store):
+        item_id = _item(store)
+        digest = _reserve(
+            store, item_id, acceptance_contract={"evidence_obligations": ["test-run"]}
+        )["release_digest"]
+        pg.record_decision(
+            store, item_id, "accept", actor="owner", evidence_digests=["a" * 64]
+        )
+        assert pg.unmet_obligations(store, digest) == []
+
+    def test_unmet_obligations_unmet(self, store):
+        item_id = _item(store)
+        digest = _reserve(
+            store, item_id, acceptance_contract={"evidence_obligations": ["test-run", "review"]}
+        )["release_digest"]
+        decision = pg.record_decision(store, item_id, "accept", actor="owner")
+        assert pg.unmet_obligations(store, digest) == [
+            {
+                "item_id": item_id,
+                "decision_id": decision["id"],
+                "release_digest": digest,
+                "unmet": ["test-run", "review"],
+            }
+        ]
+
+    def test_unmet_obligations_undeclared(self, store):
+        item_id = _item(store)
+        digest = _reserve(store, item_id)["release_digest"]
+        pg.record_decision(store, item_id, "accept", actor="owner")
+        assert pg.unmet_obligations(store, digest) == []
+
+    def test_list_unmet_obligations_reports_only_the_unmet_release(self, store):
+        met_item = _item(store, "met")
+        met_digest = _reserve(
+            store, met_item, acceptance_contract={"evidence_obligations": ["review"]}
+        )["release_digest"]
+        pg.record_decision(store, met_item, "accept", actor="owner", evidence_digests=["b" * 64])
+        unmet_item = _item(store, "unmet")
+        unmet_digest = _reserve(
+            store, unmet_item, acceptance_contract={"evidence_obligations": ["review"]}
+        )["release_digest"]
+        unmet_decision = pg.record_decision(store, unmet_item, "accept", actor="owner")
+        undeclared_item = _item(store, "undeclared")
+        _reserve(store, undeclared_item)
+        pg.record_decision(store, undeclared_item, "accept", actor="owner")
+
+        report = pg.list_unmet_obligations(store)
+        assert report["count"] == 1
+        assert report["items"] == [
+            {
+                "item_id": unmet_item,
+                "decision_id": unmet_decision["id"],
+                "release_digest": unmet_digest,
+                "unmet": ["review"],
+            }
+        ]
+        assert met_digest not in {row["release_digest"] for row in report["items"]}

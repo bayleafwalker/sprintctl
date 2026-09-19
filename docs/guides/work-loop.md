@@ -222,7 +222,14 @@ sprintctl item decide --id 7 --kind revise --rationale "Review asked for an API 
   (open items whose frozen current release still awaits a decision), and
   counts done items by resolution with legacy done kept apart and re-marked
   legacy items counted as `legacy_remarked`. Served operation:
-  `work.read.unbound`.
+  `work.read.unbound`. Local (non-served) backends also carry an
+  `unmet_obligations` report (#2446): every accept Decision on a release
+  whose `acceptance_contract` declared an `evidence_obligations` list --
+  labels naming the evidence it owes, e.g. `["test-run", "review"]` -- and
+  carries no matching evidence. Evidence digests carry no `kind` in the
+  current schema, so any evidence digest on the Decision satisfies every
+  declared label; it is not filtered by `--category`, and it only reports --
+  nothing consults it to gate or block.
 - A generic event or note cannot pose as a decision: `event add` and
   `item note` refuse decision-like types (`item.done`, `item-decided`,
   `accept`, `rejected`, `decision.record`, ...) with
