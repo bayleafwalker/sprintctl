@@ -2884,8 +2884,55 @@ def record_decision(
     release_digest: str | None = None,
     superseded_by_item_id: int | None = None,
     expected_revision: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict:
     """Record a work decision and apply its terminal effect atomically."""
+    recorded, _replayed = record_decision_keyed(
+        store,
+        item_id,
+        kind,
+        actor=actor,
+        rationale=rationale,
+        evidence_digests=evidence_digests,
+        release_digest=release_digest,
+        superseded_by_item_id=superseded_by_item_id,
+        expected_revision=expected_revision,
+        idempotency_key=idempotency_key,
+    )
+    return recorded
+
+
+def _keyed_decision_locked(cur: Any, repo_id: str, idempotency_key: str) -> dict | None:
+    cur.execute(
+        "SELECT d.* FROM event e JOIN work_decision d "
+        "ON d.repo_id = e.repo_id AND d.id = (e.payload->>'decision_id')::bigint "
+        "WHERE e.repo_id = %s AND e.event_type = %s "
+        "AND e.payload->>'idempotency_key' = %s ORDER BY e.id LIMIT 1",
+        (repo_id, _decisions.ITEM_DECIDED_EVENT_TYPE, idempotency_key),
+    )
+    row = cur.fetchone()
+    return _decision_row(row) if row else None
+
+
+def record_decision_keyed(
+    store: PgStore,
+    item_id: int,
+    kind: str,
+    *,
+    actor: str,
+    rationale: str = "",
+    evidence_digests: list[str] | None = None,
+    release_digest: str | None = None,
+    superseded_by_item_id: int | None = None,
+    expected_revision: str | None = None,
+    idempotency_key: str | None = None,
+) -> tuple[dict, bool]:
+    """Record a decision; return it and whether it replayed an earlier request.
+
+    With ``idempotency_key``, a request that repeats an earlier one under the
+    same key returns the decision that request recorded; the same key with a
+    different request raises :class:`~sprintctl.decisions.IdempotencyConflict`.
+    """
     decision = _decisions.normalize_decision(
         kind,
         actor=actor,
@@ -2894,10 +2941,19 @@ def record_decision(
         release_digest=release_digest,
         superseded_by_item_id=superseded_by_item_id,
     )
+    idempotency_key = _decisions.validate_idempotency_key(idempotency_key)
     if expected_revision is not None:
         expected_revision = validate_item_status_revision(expected_revision)
     try:
         with store.conn.cursor() as cur:
+            if idempotency_key is not None:
+                # The item lock serializes requests for one item only; a key
+                # reused on another item must see the first request's event,
+                # so the key itself is locked until this transaction ends.
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    (f"sprintctl-decision-key:{store.repo_id}:{idempotency_key}",),
+                )
             cur.execute(
                 "SELECT * FROM work_item WHERE repo_id = %s AND id = %s FOR UPDATE",
                 (store.repo_id, item_id),
@@ -2905,6 +2961,16 @@ def record_decision(
             item = cur.fetchone()
             if item is None:
                 raise ValueError(f"Item #{item_id} not found")
+            if idempotency_key is not None:
+                replayed = _decisions.replay_or_conflict(
+                    _keyed_decision_locked(cur, store.repo_id, idempotency_key),
+                    item_id,
+                    decision,
+                    idempotency_key,
+                )
+                if replayed is not None:
+                    store.conn.rollback()
+                    return replayed, True
             current_revision = item_status_revision(_norm(item))
             if expected_revision is not None and expected_revision != current_revision:
                 raise StatusConflict(
@@ -2912,8 +2978,16 @@ def record_decision(
                     f"expected {expected_revision}, current {current_revision}"
                 )
             recorded = _decide_locked(cur, store.repo_id, item, decision)
+        _insert_event(
+            store,
+            int(item["sprint_id"]),
+            decision["actor"],
+            _decisions.ITEM_DECIDED_EVENT_TYPE,
+            work_item_id=item_id,
+            payload=_decisions.decided_event_payload(recorded, idempotency_key),
+        )
         store.conn.commit()
-        return recorded
+        return recorded, False
     except Exception:
         store.conn.rollback()
         raise

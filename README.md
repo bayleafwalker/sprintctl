@@ -51,9 +51,8 @@ sprintctl reservation reserve --item-id 1 --actor codex-session-1 --json
 # 4. Record durable history during work
 sprintctl item note --id 1 --type decision --summary "Use handoff as working-memory snapshot"
 
-# 5a. If done: transition status using expected-revision CAS, then release
-REV=$(sprintctl item show --id 1 --json | jq -r '.item.status_revision')
-sprintctl item status --id 1 --status done --actor codex-session-1 --expected-revision "$REV"
+# 5a. If done: record an accept decision (it closes the item), then release
+sprintctl item decide --id 1 --kind accept --rationale "Verified and merged" --actor codex-session-1
 sprintctl reservation release --id <reservation_id> --actor codex-session-1
 
 # 5b. If work continues: reassign the reservation instead

@@ -139,14 +139,11 @@ Knowledge-bearing event types (`decision`, `pattern-noted`, `lesson-learned`,
 ## 5a. Complete the item
 
 ```bash
-# Get the current status revision before mutating
-REV=$(sprintctl item show --id 7 --json | jq -r '.item.status_revision')
-
-# Mark done using the expected-revision CAS
-sprintctl item status \
-  --id 7 --status done \
-  --actor claude-session-1 \
-  --expected-revision "$REV"
+# Closing an item is a decision: accept makes it done (resolution "accepted")
+sprintctl item decide \
+  --id 7 --kind accept \
+  --rationale "Auth flow verified; merged in #123" \
+  --actor claude-session-1
 
 # Release the advisory reservation
 sprintctl reservation release --id "$RESERVATION_ID" --actor claude-session-1
@@ -157,9 +154,46 @@ git add docs/sprint-snapshots/sprint-current.txt
 git commit -m "chore: sprint snapshot after completing auth item"
 ```
 
-`item status` applies the transition through expected-revision compare-and-swap.
-If the basis is stale, the command rejects without effect. Release the
-reservation separately after the status change succeeds.
+Release the reservation separately after the decision is recorded. See
+[Deciding items](#deciding-items) for the other decision kinds.
+
+### Deciding items
+
+A work item becomes terminal only by recording a decision. `item decide`
+records one; the decision row is append-only and the item points at it
+(`terminal_decision_id`) with a `resolution` derived from its kind.
+
+| `--kind` | Item afterwards | Notes |
+| --- | --- | --- |
+| `accept` | `done`, resolution `accepted` | Requires an `active` item. |
+| `reject` | `done`, resolution `rejected` | Any open item. |
+| `withdraw` | `done`, resolution `withdrawn` | Any open item. |
+| `supersede` | `done`, resolution `superseded` | Requires `--superseded-by <item>`. |
+| `revise` | unchanged (stays open) | Retires the current release; the next execution reservation freezes a new one. |
+
+```bash
+sprintctl item decide --id 7 --kind accept --rationale "Verified" \
+  --evidence <sha256-hex> [--evidence ...] \
+  [--release <release-digest>] [--json]
+sprintctl item decide --id 7 --kind supersede --superseded-by 9 --rationale "Folded into #9"
+sprintctl item decide --id 7 --kind revise --rationale "Review asked for an API change"
+```
+
+- `--rationale` is required; `--evidence` takes 64-character lowercase hex
+  SHA-256 digests and may repeat.
+- A decision binds the item's current release unless `--release` names one;
+  a digest that is not a release of that item is refused.
+- A terminal item takes no further decision. An item that was already done
+  before decisions existed (`legacy`) takes none either.
+- In served mode the decision actor is the authenticated identity; `--actor`
+  applies to direct backends only and is otherwise ignored with a note. The
+  served operation is `work.decision.record`; a retry with the same
+  idempotency key returns the first decision instead of recording another.
+- `item show` prints the item's resolution and terminal decision
+  (`terminal_decision` in `--json`).
+- `item status --status done` still works: it is an alias for an `accept`
+  decision with no rationale, and still requires `--expected-revision` on a
+  direct backend.
 
 ---
 

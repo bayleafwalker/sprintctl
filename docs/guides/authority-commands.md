@@ -90,8 +90,9 @@ writes no receipt and stays replayable. Local direct-PostgreSQL `sync` is
 retired.
 
 Authority commands the served batch operation does not support
-(`decision.record` until its served operation exists, or a retired type left
-in an old outbox) are the one exception: `sync` reports them under
+(`decision.record`, which served clients record directly through
+`work.decision.record` / `sprintctl item decide`, or a retired type left in an
+old outbox) are the one exception: `sync` reports them under
 `unsupported_command_event_ids` rather than failing the chunk that contains
 them.
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .application_common import *
 from . import contracts as _contracts
+from . import decisions as _decisions
 from . import reservation as _reservation
 from . import releases as _releases
 from . import volatile_context as _volatile_context
@@ -25,6 +26,14 @@ def _reservation_actor_mismatch(given: object, authenticated: object) -> Applica
         f"(given {given!r}; authenticated {authenticated!r})",
         403,
     )
+
+
+def _is_postgres_data_error(error: BaseException) -> bool:
+    try:
+        from psycopg import DataError
+    except ImportError:  # standalone SQLite has no psycopg
+        return False
+    return isinstance(error, DataError)
 
 
 def _transaction_status(conn: Any) -> Any:
@@ -327,6 +336,9 @@ class WorkApplication:
             "work.evidence.ingest": target._evidence_ingest,
             "work.item.note": target._item_note,
             "work.batch.apply": target._batch_apply,
+            "work.decision.record": target._decision_record,
+            "work.read.item-decisions": target._read_item_decisions,
+            "work.read.release": target._read_release,
         }
         try:
             handler = handlers[operation]
@@ -352,6 +364,14 @@ class WorkApplication:
         except ValueError as exc:
             raise ApplicationRejection("validation-failed", str(exc), 422) from exc
         except Exception as exc:
+            if _is_postgres_data_error(exc):
+                # A value PostgreSQL cannot store (a NUL character in text, for
+                # example) is the caller's input, not a server fault. Only the
+                # first line goes back: psycopg appends context and the query.
+                first_line = str(exc).strip().partition("\n")[0]
+                raise ApplicationRejection(
+                    "invalid-value", f"PostgreSQL refused a value: {first_line}", 422
+                ) from exc
             if not self._is_postgres_admin_shutdown(exc):
                 raise
             if _admin_shutdown_retry or not self._can_retry_after_admin_shutdown(
@@ -1352,6 +1372,130 @@ class WorkApplication:
             "item_id": item_id,
             "note_type": note_type,
             "summary": summary,
+        }
+
+    def _require_item(self, item_id: int) -> dict[str, Any]:
+        item = self.backend.get_work_item(self.store, item_id)
+        if item is None:
+            raise ApplicationRejection(
+                "item-not-found", f"Item #{item_id} not found", 404
+            )
+        return item
+
+    def _decision_record(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        """Record a work decision (TS-5) as the authenticated identity.
+
+        The decision actor is always the authenticated identity; the contract
+        has no actor argument.  The request idempotency key makes a retry
+        return the decision the first attempt recorded.
+        """
+        item_id = _positive_int(arguments.get("item_id"), "item_id")
+        superseded_by = _optional_positive_int(
+            arguments.get("superseded_by_item_id"), "superseded_by_item_id"
+        )
+        self._require_item(item_id)
+        idempotency_key = getattr(context, "idempotency_key", None)
+        if not idempotency_key:
+            raise ApplicationRejection(
+                "idempotency-key-required",
+                "work.decision.record requires an idempotency key",
+                428,
+            )
+        try:
+            decision, replayed = self.backend.record_decision_keyed(
+                self.store,
+                item_id,
+                arguments.get("kind"),
+                actor=context.identity.actor,
+                rationale=arguments.get("rationale", ""),
+                evidence_digests=arguments.get("evidence_digests", []),
+                release_digest=arguments.get("release_digest"),
+                superseded_by_item_id=superseded_by,
+                idempotency_key=idempotency_key,
+            )
+        except _decisions.IdempotencyConflict as exc:
+            raise ApplicationRejection("idempotency-conflict", str(exc), 409) from exc
+        except _releases.ReleaseMismatch as exc:
+            raise ApplicationRejection("release-mismatch", str(exc), 409) from exc
+        except db.InvalidTransition as exc:
+            current = self.backend.get_work_item(self.store, item_id) or {}
+            if (
+                current.get("status") == "done"
+                and current.get("terminal_decision_id") is None
+                and current.get("legacy")
+            ):
+                raise ApplicationRejection(
+                    "legacy-done-item",
+                    f"Item #{item_id} was done before decisions existed; "
+                    "it takes no decision",
+                    409,
+                ) from exc
+            code = "item-terminal" if current.get("status") == "done" else "invalid-transition"
+            raise ApplicationRejection(code, str(exc), 409) from exc
+        except ValueError as exc:
+            raise ApplicationRejection("decision-rejected", str(exc), 422) from exc
+        item = self._require_item(item_id)
+        return {
+            "repo_id": self.repo_id,
+            "item_id": item_id,
+            "decision": decision,
+            "status": item["status"],
+            "resolution": item.get("resolution"),
+            "terminal_decision_id": item.get("terminal_decision_id"),
+            "replayed": replayed,
+        }
+
+    def _read_item_decisions(
+        self, arguments: dict[str, Any], _context: InvocationContext
+    ) -> dict[str, Any]:
+        item_id = _positive_int(arguments.get("item_id"), "item_id")
+        item = self._require_item(item_id)
+        return {
+            "repo_id": self.repo_id,
+            "item_id": item_id,
+            "status": item["status"],
+            "resolution": item.get("resolution"),
+            "terminal_decision_id": item.get("terminal_decision_id"),
+            "decisions": self.backend.list_decisions(self.store, item_id),
+        }
+
+    def _read_release(
+        self, arguments: dict[str, Any], _context: InvocationContext
+    ) -> dict[str, Any]:
+        digest = arguments.get("release_digest")
+        item_id = _optional_positive_int(arguments.get("item_id"), "item_id")
+        if (digest is None) == (item_id is None):
+            raise ApplicationRejection(
+                "invalid-arguments",
+                "give exactly one of release_digest or item_id",
+                422,
+            )
+        if digest is not None:
+            try:
+                release = self.backend.get_release(self.store, digest)
+            except ValueError as exc:
+                raise ApplicationRejection("invalid-arguments", str(exc), 422) from exc
+            if release is None:
+                raise ApplicationRejection(
+                    "release-not-found", f"release {digest} not found", 404
+                )
+        else:
+            self._require_item(item_id)
+            release = self.backend.current_release(self.store, item_id)
+            if release is None:
+                raise ApplicationRejection(
+                    "release-not-found",
+                    f"Item #{item_id} has no current release",
+                    404,
+                )
+        return {
+            "repo_id": self.repo_id,
+            "release": release,
+            "commits": self.backend.list_release_commits(
+                self.store, release["release_digest"]
+            ),
         }
 
     def _batch_apply(
