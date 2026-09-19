@@ -16,6 +16,7 @@ from typing import Any, Mapping
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from . import contracts, decisions, outbox, pg, releases
+from . import reservation as _reservation
 from .db import (
     SPRINT_TRANSITIONS,
     VALID_TRANSITIONS,
@@ -272,6 +273,43 @@ def _lock_sprint(cur: Any, store: pg.PgStore, aggregate_uuid: str) -> Mapping[st
 
 
 
+def _release_actor_reservations_locked(
+    cur: Any, store: pg.PgStore, item: Mapping[str, Any], *, actor: str
+) -> list[int]:
+    """Release the authenticated caller's active reservations on ``item``.
+
+    The served item.transition/item.done payload carries no client session
+    id (unlike the direct SQLite/PostgreSQL CAS path, which matches
+    reservations by session -- see pg._release_caller_reservations_locked);
+    the only caller identity this handler has is the authenticated actor, so
+    this matches on actor instead. This is a deliberate divergence from the
+    direct-backend semantics, not an oversight: a served caller has no way to
+    present a session id the authority could trust.
+    """
+    item_id = int(item["id"])
+    cur.execute(
+        "SELECT * FROM reservation WHERE repo_id = %s AND work_item_id = %s "
+        "AND actor = %s AND state = 'active'",
+        (store.repo_id, item_id, actor),
+    )
+    rows = [dict(row) for row in cur.fetchall()]
+    if not rows:
+        return []
+    now = _reservation.now_text()
+    cur.execute(
+        "UPDATE reservation SET state = 'released', released_at = %s, last_activity_at = %s "
+        "WHERE repo_id = %s AND work_item_id = %s AND actor = %s AND state = 'active'",
+        (now, now, store.repo_id, item_id, actor),
+    )
+    for row in rows:
+        pg._insert_event(
+            store, int(item["sprint_id"]), actor, "reservation.released",
+            source_type="system", work_item_id=item_id,
+            payload={"reservation_id": row["id"]},
+        )
+    return [row["id"] for row in rows]
+
+
 def _handle_item(
     cur: Any,
     store: pg.PgStore,
@@ -290,7 +328,6 @@ def _handle_item(
             f"cannot transition item {current} -> {to_status}",
             current_revision=current_revision,
         )
-
     if to_status == "active":
         cur.execute(
             """
@@ -328,10 +365,30 @@ def _handle_item(
             "WHERE repo_id = %s AND id = %s",
             (to_status, store.repo_id, item["id"]),
         )
+    released_reservation_ids: list[int] | None = None
+    if to_status == "pending":
+        # contracts._canonical_authority_payload already required and
+        # validated ``reason`` against RELEASE_REASONS for this target, so it
+        # is trusted here.
+        reason = str(envelope.payload["reason"])
+        released_reservation_ids = _release_actor_reservations_locked(
+            cur, store, item, actor=envelope.actor
+        )
+        pg._insert_event(
+            store, int(item["sprint_id"]), envelope.actor, "item-released",
+            source_type="system", work_item_id=int(item["id"]),
+            payload={
+                "reason": reason,
+                "previous_status": current,
+                "released_reservation_ids": released_reservation_ids,
+            },
+        )
     effect = _item_effect(cur, store, item, current)
     if decision is not None:
         effect["decision_id"] = int(decision["id"])
         effect["decision_kind"] = decision["kind"]
+    if released_reservation_ids is not None:
+        effect["released_reservation_ids"] = released_reservation_ids
     return effect
 
 

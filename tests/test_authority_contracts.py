@@ -112,3 +112,62 @@ def test_no_surviving_command_accepts_proof_material(
             aggregate_type=aggregate_type,
             aggregate_uuid=aggregate_uuid,
         )
+
+
+# ---------------------------------------------------------------------------
+# item.transition/item.done -- release-to-pending reason (agentops#2431)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("reason", ["rework", "partial", "abandoned"])
+def test_item_transition_to_pending_with_a_valid_reason_round_trips(reason):
+    command = _command(
+        "item.transition",
+        payload={"to_status": "pending", "reason": reason},
+        aggregate_type="item",
+        aggregate_uuid=ITEM_UUID,
+    )
+    assert command.payload == {"to_status": "pending", "reason": reason}
+    assert contracts.record_from_dict(command.to_dict()) == command
+
+
+def test_item_transition_to_pending_without_a_reason_is_rejected():
+    with pytest.raises(ValueError, match="payload.reason is required"):
+        _command(
+            "item.transition",
+            payload={"to_status": "pending"},
+            aggregate_type="item",
+            aggregate_uuid=ITEM_UUID,
+        )
+
+
+def test_item_transition_to_pending_with_an_unknown_reason_is_rejected():
+    with pytest.raises(ValueError, match="payload.reason is required"):
+        _command(
+            "item.transition",
+            payload={"to_status": "pending", "reason": "because"},
+            aggregate_type="item",
+            aggregate_uuid=ITEM_UUID,
+        )
+
+
+@pytest.mark.parametrize("to_status", ["active", "blocked", "done"])
+def test_reason_on_a_non_pending_target_is_rejected(to_status):
+    record_type = "item.done" if to_status == "done" else "item.transition"
+    with pytest.raises(ValueError, match="only accepted when"):
+        _command(
+            record_type,
+            payload={"to_status": to_status, "reason": "rework"},
+            aggregate_type="item",
+            aggregate_uuid=ITEM_UUID,
+        )
+
+
+def test_item_done_never_accepts_a_reason():
+    with pytest.raises(ValueError, match="only accepted when"):
+        _command(
+            "item.done",
+            payload={"to_status": "done", "reason": "rework"},
+            aggregate_type="item",
+            aggregate_uuid=ITEM_UUID,
+        )

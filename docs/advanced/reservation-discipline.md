@@ -85,6 +85,12 @@ sprintctl item status \
 Treat status transition and reservation as separate operation boundaries:
 first mutate status, then release or reassign the reservation.
 
+The one exception is releasing an item back to pending
+(`--status pending --reason rework|partial|abandoned`, see
+[work-loop.md](../guides/work-loop.md#releasing-an-item-back-to-pending)): that
+transition releases the caller's own reservation on the item as part of the
+same mutation, since the whole point of the transition is to give the item up.
+
 ## Recovery Rule
 
 If session state is lost, there is no token to recover:

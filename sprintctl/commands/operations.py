@@ -564,6 +564,7 @@ def _find_pending_served_item_status_record(
     record_type: str,
     item_id: int,
     to_status: str,
+    reason: str | None = None,
     aggregate_uuid: str | None = None,
     basis_revision: str | None = None,
 ) -> _outbox.OutboxRecord | None:
@@ -573,6 +574,13 @@ def _find_pending_served_item_status_record(
     admits the record.  Re-minting creates a later origin sequence and can
     only deepen that gap.  Keep the check deliberately conservative: callers
     must use the ordered outbox replay path to resolve the prior request.
+
+    For a release into ``pending``, ``reason`` is part of what "the exact
+    unchanged transition" means: a pending durable request with a different
+    reason is not this request replayed, it is a second, distinct release
+    attempt racing the first. Silently reusing the stale record would report
+    (and event-log) the wrong reason, so that case is refused outright rather
+    than matched.
     """
 
     producer = _outbox.open_outbox(outbox_path)
@@ -598,6 +606,13 @@ def _find_pending_served_item_status_record(
                 and command.payload.get("to_status") == to_status
                 and (basis_revision is None or command.basis_revision == basis_revision)
             ):
+                if to_status == "pending" and command.payload.get("reason") != reason:
+                    raise click.ClickException(
+                        f"a pending durable release request for item #{item_id} already exists "
+                        f"with reason {command.payload.get('reason')!r} (event "
+                        f"{record.event_id}); retry this exact command with that reason, "
+                        "not a new one"
+                    )
                 return record
     finally:
         producer.close()
