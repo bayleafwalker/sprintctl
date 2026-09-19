@@ -206,6 +206,22 @@ def read_item_decisions(
     )
 
 
+def read_unbound(
+    served_profile: ServedProfile,
+    *,
+    repo_id: str,
+    sprint_id: int | None = None,
+    category: str | None = None,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    """Invoke ``work.read.unbound`` (``sprintctl item unbound``)."""
+
+    arguments = {"sprint_id": sprint_id, "category": category, "limit": limit}
+    return asyncio.run(
+        _invoke_operation(served_profile, "work.read.unbound", arguments, repo_id=repo_id)
+    )
+
+
 def read_release(
     served_profile: ServedProfile,
     *,

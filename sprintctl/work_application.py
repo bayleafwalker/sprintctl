@@ -62,6 +62,20 @@ def _end_transaction_opened_by_operation(conn: Any, status_before: Any) -> None:
         conn.rollback()
 
 
+DECISION_LIKE_EVENT_REJECTION = "decision-like-event-type"
+
+
+def _refuse_decision_like_event_type(event_type: str) -> None:
+    """A generic event or note cannot pose as a work decision (S3)."""
+    if _contracts.is_decision_like_event_type(event_type):
+        raise ApplicationRejection(
+            DECISION_LIKE_EVENT_REJECTION,
+            f"{event_type} is reserved: it is a decision-like event type, and a "
+            "note cannot pose as a work decision; record one with work.decision.record",
+            422,
+        )
+
+
 @dataclass(slots=True)
 class WorkApplication:
     """One repository-scoped work authority application."""
@@ -339,6 +353,7 @@ class WorkApplication:
             "work.decision.record": target._decision_record,
             "work.read.item-decisions": target._read_item_decisions,
             "work.read.release": target._read_release,
+            "work.read.unbound": target._read_unbound,
         }
         try:
             handler = handlers[operation]
@@ -960,6 +975,7 @@ class WorkApplication:
         event_type = _optional_text(arguments.get("event_type"), "event_type")
         if not event_type:
             raise ApplicationRejection("invalid-arguments", "event_type is required", 422)
+        _refuse_decision_like_event_type(event_type)
         if self.backend.get_sprint(self.store, sprint_id) is None:
             raise ApplicationRejection("sprint-not-found", f"Sprint #{sprint_id} not found", 404)
         work_item_id = _optional_positive_int(arguments.get("work_item_id"), "work_item_id")
@@ -1323,6 +1339,7 @@ class WorkApplication:
             raise ApplicationRejection(
                 "invalid-arguments", "note_type and summary are required", 422
             )
+        _refuse_decision_like_event_type(note_type)
         item = self.backend.get_work_item(self.store, item_id)
         if item is None:
             raise ApplicationRejection(
@@ -1426,12 +1443,9 @@ class WorkApplication:
                 and current.get("terminal_decision_id") is None
                 and current.get("legacy")
             ):
-                raise ApplicationRejection(
-                    "legacy-done-item",
-                    f"Item #{item_id} was done before decisions existed; "
-                    "it takes no decision",
-                    409,
-                ) from exc
+                # A legacy done item takes one re-mark: a terminal decision
+                # with a rationale and evidence.  Anything else is refused.
+                raise ApplicationRejection("legacy-done-item", str(exc), 409) from exc
             code = "item-terminal" if current.get("status") == "done" else "invalid-transition"
             raise ApplicationRejection(code, str(exc), 409) from exc
         except ValueError as exc:
@@ -1497,6 +1511,30 @@ class WorkApplication:
                 self.store, release["release_digest"]
             ),
         }
+
+    def _read_unbound(
+        self, arguments: dict[str, Any], _context: InvocationContext
+    ) -> dict[str, Any]:
+        """Items not bound to a decision, in three categories (S3).
+
+        ``legacy_done``, ``decided_unreleased`` and ``released_undecided``
+        (see :mod:`sprintctl.unbound`), each with its total count and up to
+        ``limit`` items, plus done items counted by resolution with
+        ``legacy_done`` kept apart from decided done.
+        """
+        sprint_id = _optional_positive_int(arguments.get("sprint_id"), "sprint_id")
+        if sprint_id is not None and self.backend.get_sprint(self.store, sprint_id) is None:
+            raise ApplicationRejection("sprint-not-found", f"Sprint #{sprint_id} not found", 404)
+        try:
+            unbound = self.backend.list_unbound(
+                self.store,
+                sprint_id=sprint_id,
+                category=arguments.get("category"),
+                limit=arguments.get("limit"),
+            )
+        except ValueError as exc:
+            raise ApplicationRejection("invalid-arguments", str(exc), 422) from exc
+        return {"repo_id": self.repo_id, **unbound}
 
     def _batch_apply(
         self, arguments: dict[str, Any], context: InvocationContext

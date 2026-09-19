@@ -635,6 +635,14 @@ def _emit_sprint_show_text(payload: dict, detail: bool) -> None:
             f"{c['pending']} pending, "
             f"{c['blocked']} blocked ({blocked_pct}%)"
         )
+        resolutions = health.get("resolutions")
+        if resolutions and resolutions["done"]:
+            parts = [
+                f"{resolutions[key]} {key}"
+                for key in ("accepted", "rejected", "withdrawn", "superseded", "legacy_done")
+                if resolutions[key]
+            ]
+            click.echo(f"    done by resolution: {', '.join(parts)}")
     takeup = detail_payload.get("takeup", {})
     active_takeups = takeup.get("active", [])
     if active_takeups:

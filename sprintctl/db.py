@@ -20,6 +20,7 @@ from . import releases as _releases
 from . import rows as _rows
 from . import sprintcore as _sprintcore
 from . import trackcore as _trackcore
+from . import unbound as _unbound
 from . import workitemcore as _workitemcore
 from . import reservation as _reservation
 from . import reservation_policy as _policy
@@ -70,7 +71,7 @@ SPRINT_KINDS = ("active_sprint", "backlog", "archive")
 
 # Single source of truth for the local schema version; init_db() must end by
 # migrating to exactly this version, and doctor compares databases against it.
-CURRENT_SCHEMA_VERSION = 24
+CURRENT_SCHEMA_VERSION = 25
 RESERVATION_ROLES = _reservation.ROLES
 DEFAULT_RESERVATION_ROLE = _reservation.DEFAULT_ROLE
 ReservationConflict = _reservation.ReservationConflict
@@ -1126,6 +1127,75 @@ def _migration_24(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migration_25(conn: sqlite3.Connection) -> None:
+    """Legacy re-mark (S3 PR5), mirroring PostgreSQL schema 16.
+
+    A legacy item that was already done has no decision; schema 23 refused
+    to bind one.  It may now take exactly one: a terminal decision about it,
+    written first, with a rationale and at least one evidence digest, that is
+    not a folded legacy decision.  The item stays done, and the bound decision
+    is immutable (``work_item_terminal_immutable``), so the re-mark is
+    one-shot.  The legacy import gate's release-guard exemption is narrowed
+    to decisions about legacy rows.
+    """
+    conn.execute("DROP TRIGGER IF EXISTS work_item_legacy_done_takes_no_decision")
+    conn.execute("DROP TRIGGER IF EXISTS work_item_legacy_done_remark")
+    conn.execute(
+        "CREATE TRIGGER work_item_legacy_done_remark BEFORE UPDATE ON work_item "
+        "WHEN OLD.status = 'done' AND OLD.terminal_decision_id IS NULL "
+        "AND NEW.terminal_decision_id IS NOT NULL AND NOT ("
+        "OLD.legacy = 1 AND EXISTS (SELECT 1 FROM work_decision d "
+        "WHERE d.id = NEW.terminal_decision_id AND d.work_item_id = OLD.id "
+        "AND d.kind IN ('accept', 'reject', 'withdraw', 'supersede') "
+        "AND d.legacy_source IS NULL "
+        # Blank means only whitespace, tabs, newlines and no-break spaces.
+        "AND trim(d.rationale, ' ' || char(9, 10, 11, 12, 13, 160)) <> '' "
+        # Every evidence element is a SHA-256 digest.
+        "AND json_array_length(d.evidence_digests) > 0 "
+        "AND NOT EXISTS (SELECT 1 FROM json_each(d.evidence_digests) e "
+        "WHERE e.type <> 'text' OR length(e.value) <> 64 "
+        "OR e.value GLOB '*[^0-9a-f]*'))) "
+        "BEGIN SELECT RAISE(ABORT, 'done work item takes a decision only as a legacy "
+        "re-mark with a rationale and evidence'); END"
+    )
+    # The legacy import gate used to exempt every decision from the release
+    # binding.  It now exempts only decisions about rows that are legacy, as
+    # PostgreSQL 16 does for import_ndjson; recovery writes releases before
+    # decisions, so a consistent history still passes.
+    gate_exempt = (
+        "(EXISTS (SELECT 1 FROM legacy_import_gate) AND EXISTS ("
+        "SELECT 1 FROM work_item WHERE id = NEW.work_item_id AND legacy = 1))"
+    )
+    release_guards = {
+        "work_decision_release_of_item": (
+            "BEFORE INSERT ON work_decision WHEN NEW.work_item_id IS NOT NULL "
+            "AND NEW.legacy_source IS NULL "
+            f"AND NOT {gate_exempt} "
+            "AND NEW.release_digest IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM work_release WHERE "
+            "release_digest = NEW.release_digest AND work_item_id = NEW.work_item_id)",
+            "release is not a release of this work item",
+        ),
+        "work_decision_binds_current_release": (
+            "BEFORE INSERT ON work_decision WHEN NEW.work_item_id IS NOT NULL "
+            "AND NEW.legacy_source IS NULL "
+            f"AND NOT {gate_exempt} "
+            "AND NEW.release_digest IS NULL "
+            "AND EXISTS (SELECT 1 FROM work_release wr WHERE "
+            "wr.work_item_id = NEW.work_item_id AND wr.revise_count = ("
+            "SELECT COUNT(*) FROM work_decision d WHERE d.work_item_id = NEW.work_item_id "
+            "AND d.kind = 'revise'))",
+            "work item has a current release; a decision must bind it",
+        ),
+    }
+    for name, (when, message) in release_guards.items():
+        conn.execute(f"DROP TRIGGER IF EXISTS {name}")
+        conn.execute(
+            f"CREATE TRIGGER {name} {when} "
+            f"BEGIN SELECT RAISE(ABORT, '{message}'); END"
+        )
+
+
 def _run_migration(
     conn: sqlite3.Connection,
     target_version: int,
@@ -1179,7 +1249,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     _run_migration(conn, 21, _migration_21)
     _run_migration(conn, 22, _migration_22, foreign_keys_off=True)
     _run_migration(conn, 23, _migration_23)
-    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_24)
+    _run_migration(conn, 24, _migration_24)
+    _run_migration(conn, CURRENT_SCHEMA_VERSION, _migration_25)
 
 
 # --- Sprint ---
@@ -1970,18 +2041,29 @@ def release_reservation(conn: sqlite3.Connection, reservation_id: int, *, actor:
 
 def sweep_stale_reservations(conn: sqlite3.Connection, *, now: str | None = None,
                              interrupt_after: timedelta | None = None) -> list[dict]:
-    """Interrupt long-idle reservations.  Only an explicit sweep calls this.
+    """Interrupt long-idle reservations of open items.  Only an explicit sweep calls this.
 
     Nothing expires in the background: the threshold is operator policy
     (:mod:`sprintctl.reservation_policy`), and it takes effect when an
-    operator runs the sweep, not when the clock passes it.
+    operator runs the sweep, not when the clock passes it.  Reservations of
+    done items are never touched.
     """
     window = _policy.interrupt_after() if interrupt_after is None else interrupt_after
     reason = _policy.sweep_reason(window)
     now = now or _reservation.now_text()
     cutoff = (_reservation.parse_time(now) - window).strftime("%Y-%m-%dT%H:%M:%SZ")
-    rows = conn.execute("SELECT * FROM reservation WHERE state = 'active' AND last_activity_at <= ?", (cutoff,)).fetchall()
-    conn.execute("UPDATE reservation SET state = 'interrupted', released_at = ?, interruption_reason = ? WHERE state = 'active' AND last_activity_at <= ?", (now, reason, cutoff))
+    # A sweep only touches open work: a done item's history belongs to the
+    # decision that closed it, and nothing sweeps it afterwards.
+    stale = (
+        "state = 'active' AND last_activity_at <= ? AND work_item_id IN "
+        "(SELECT id FROM work_item WHERE status <> 'done')"
+    )
+    rows = conn.execute(f"SELECT * FROM reservation WHERE {stale}", (cutoff,)).fetchall()
+    conn.execute(
+        f"UPDATE reservation SET state = 'interrupted', released_at = ?, "
+        f"interruption_reason = ? WHERE {stale}",
+        (now, reason, cutoff),
+    )
     conn.commit()
     result = []
     for row in rows:
@@ -2201,9 +2283,10 @@ def _decide_locked(conn: sqlite3.Connection, item: dict, decision: dict) -> dict
     in one statement that binds it, which is the order the triggers require.
     """
     item_id = int(item["id"])
-    error = _decisions.transition_error(decision["kind"], item_id, item["status"])
+    error = _decisions.decision_error(item, decision)
     if error is not None:
         raise InvalidTransition(error)
+    remark = _decisions.is_legacy_remark_target(item)
     superseded_by = decision["superseded_by_item_id"]
     if superseded_by is not None:
         if superseded_by == item_id:
@@ -2226,7 +2309,14 @@ def _decide_locked(conn: sqlite3.Connection, item: dict, decision: dict) -> dict
     )
     decision_id = cur.lastrowid
     resolution = _decisions.resolution_for(decision["kind"])
-    if resolution is not None:
+    if remark:
+        # A re-mark binds the closure that already happened: the item stays
+        # done and keeps its updated_at, the only record of when it closed.
+        conn.execute(
+            "UPDATE work_item SET resolution = ?, terminal_decision_id = ? WHERE id = ?",
+            (resolution, decision_id, item_id),
+        )
+    elif resolution is not None:
         conn.execute(
             "UPDATE work_item SET status = 'done', resolution = ?, terminal_decision_id = ?, "
             "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
@@ -2332,6 +2422,7 @@ def record_decision_keyed(
                 f"Item #{item_id} status revision mismatch: "
                 f"expected {expected_revision}, current {current_revision}"
             )
+        remark = _decisions.is_legacy_remark_target(item)
         recorded = _decide_locked(conn, item, decision)
         _insert_event(
             conn,
@@ -2339,7 +2430,9 @@ def record_decision_keyed(
             decision["actor"],
             _decisions.ITEM_DECIDED_EVENT_TYPE,
             work_item_id=item_id,
-            payload=_decisions.decided_event_payload(recorded, idempotency_key),
+            payload=_decisions.decided_event_payload(
+                recorded, idempotency_key, legacy_remark=remark
+            ),
         )
         conn.commit()
         return recorded, False
@@ -2356,6 +2449,29 @@ def list_decisions(conn: sqlite3.Connection, item_id: int | None = None) -> list
         conn.execute(
             "SELECT * FROM work_decision WHERE work_item_id = ? ORDER BY id", (item_id,)
         )
+    )
+
+
+def list_unbound(
+    conn: sqlite3.Connection,
+    *,
+    sprint_id: int | None = None,
+    category: str | None = None,
+    limit: int | None = None,
+) -> dict:
+    """Items not bound to a decision, by category (see :mod:`sprintctl.unbound`)."""
+
+    def query_all(sql: str, params: dict) -> list[dict]:
+        return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+    return _unbound.list_unbound(
+        query_all,
+        param=lambda name: f":{name}",
+        tenant=lambda alias: "",
+        params={},
+        sprint_id=sprint_id,
+        category=category,
+        limit=limit,
     )
 
 
@@ -2580,9 +2696,11 @@ def backlog_seed_from_candidates(
 # Decisions precede the items that name them, because the terminal-binding
 # triggers read the decision row immediately; the decision's own foreign key
 # to its item is deferred to commit (see write_recovery_snapshot).
+# Releases before decisions (the decision release guards read them; their
+# item foreign key is deferred), decisions before the items that name them.
 _RECOVERY_TABLE_ORDER = (
-    "sprint", "track", "work_decision", "work_item", "work_release",
-    "release_commit", "event", "work_legacy_evidence", "reservation",
+    "sprint", "track", "work_release", "release_commit", "work_decision",
+    "work_item", "event", "work_legacy_evidence", "reservation",
     "claim_history", "ref", "dep",
 )
 

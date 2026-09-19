@@ -397,7 +397,7 @@ def _handle_decision(
         raise _RejectedCommand(
             "invalid-command", str(exc), current_revision=current_revision
         ) from exc
-    error = decisions.transition_error(normalized["kind"], int(item["id"]), item["status"])
+    error = decisions.decision_error(item, normalized)
     if error is not None:
         raise _RejectedCommand(
             "invalid-transition", error, current_revision=current_revision

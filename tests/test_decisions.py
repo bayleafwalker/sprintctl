@@ -197,6 +197,7 @@ class TestMigration23:
                 patch.setattr(db, "_migration_23", lambda _conn: None)
                 # 24's guards name the decision table 23 creates.
                 patch.setattr(db, "_migration_24", lambda _conn: None)
+                patch.setattr(db, "_migration_25", lambda _conn: None)
                 db.init_db(conn)
             conn.execute("UPDATE schema_version SET version = 22")
             sprint_id = conn.execute(
@@ -291,10 +292,13 @@ class TestLegacyOpenItems:
         assert (item["status"], item["legacy"], item["resolution"]) == ("done", True, "accepted")
         assert item["terminal_decision_id"] == decision["id"]
 
-    def test_done_legacy_item_stays_undecided(self, conn):
+    def test_done_legacy_item_takes_no_unevidenced_decision(self, conn):
+        # A re-mark (schema 25) needs a rationale and evidence; see
+        # tests/test_legacy_remark.py for the path that succeeds.
         _sprint_id, _track_id, item_id = _legacy_item(conn, "done")
-        with pytest.raises(db.InvalidTransition, match="terminal"):
+        with pytest.raises(db.InvalidTransition, match="rationale"):
             db.record_decision(conn, item_id, "reject", actor="owner")
+        assert db.get_work_item(conn, item_id)["terminal_decision_id"] is None
 
 
 def _rows(conn, table, order="id"):

@@ -208,11 +208,152 @@ class DecisionOperationContract:
             env.decide(closed, "reject")
         assert (terminal.value.code, terminal.value.http_status) == ("item-terminal", 409)
 
-    def test_a_legacy_done_item_takes_no_decision(self, env):
+    def test_a_legacy_done_item_takes_one_remark(self, env):
         item_id = env.legacy_item("done")
-        with pytest.raises(ApplicationRejection) as rejected:
+        before = env.backend.get_work_item(env.store, item_id)
+        key = _key()
+        result = env.decide(item_id, "reject", key=key, rationale="never built")
+        assert (result["status"], result["resolution"]) == ("done", "rejected")
+        decision = result["decision"]
+        assert result["terminal_decision_id"] == decision["id"]
+        assert (decision["rationale"], decision["evidence_digests"]) == (
+            "never built", [EVIDENCE]
+        )
+        assert decision["release_digest"] is None
+        after = env.backend.get_work_item(env.store, item_id)
+        # The item stays done and legacy; its close time is not rewritten.
+        assert (after["status"], after["legacy"]) == ("done", True)
+        assert after["updated_at"] == before["updated_at"]
+        [event] = [
+            event
+            for event in env.backend.list_events(env.store, after["sprint_id"])
+            if event.get("work_item_id") == item_id and event["event_type"] == "item-decided"
+        ]
+        payload = event["payload"]
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        assert payload["legacy_remark"] is True
+        # A retry replays; any further decision is refused: the re-mark is one-shot.
+        again = env.decide(item_id, "reject", key=key, rationale="never built")
+        assert again["replayed"] is True
+        assert again["decision"]["id"] == decision["id"]
+        with pytest.raises(ApplicationRejection) as second:
             env.decide(item_id, "accept")
-        assert (rejected.value.code, rejected.value.http_status) == ("legacy-done-item", 409)
+        assert (second.value.code, second.value.http_status) == ("item-terminal", 409)
+        assert len(env.backend.list_decisions(env.store, item_id)) == 1
+
+    def test_a_legacy_remark_needs_a_terminal_kind_rationale_and_evidence(self, env):
+        item_id = env.legacy_item("done")
+        for kind, extra in (
+            ("reject", {"evidence_digests": []}),
+            ("reject", {"rationale": "   "}),
+            ("revise", {}),
+        ):
+            with pytest.raises(ApplicationRejection) as rejected:
+                env.decide(item_id, kind, **extra)
+            assert (rejected.value.code, rejected.value.http_status) == (
+                "legacy-done-item", 409
+            ), (kind, extra)
+        item = env.backend.get_work_item(env.store, item_id)
+        assert (item["resolution"], item["terminal_decision_id"]) == (None, None)
+        assert env.backend.list_decisions(env.store, item_id) == []
+
+    def test_unbound_lists_three_categories_and_resolutions(self, env):
+        legacy = env.legacy_item("done")
+        sprint_id = env.backend.get_work_item(env.store, legacy)["sprint_id"]
+        track_id = env.backend.get_work_item(env.store, legacy)["track_id"]
+
+        def item_in_sprint(title):
+            item_id = env.backend.create_work_item(env.store, sprint_id, track_id, title)
+            env.backend.set_work_item_status(env.store, item_id, "active")
+            return item_id
+
+        unreleased = item_in_sprint("closed without a release")
+        env.decide(unreleased, "accept")
+        released = item_in_sprint("picked up")
+        digest = env.reserve(released)
+        bound = item_in_sprint("closed against its release")
+        env.reserve(bound)
+        env.decide(bound, "withdraw")
+        open_item = item_in_sprint("not picked up")
+
+        result = env.invoke("work.read.unbound", {"sprint_id": sprint_id})
+        categories = result["categories"]
+        assert [i["id"] for i in categories["legacy_done"]["items"]] == [legacy]
+        assert [i["id"] for i in categories["decided_unreleased"]["items"]] == [unreleased]
+        [picked] = categories["released_undecided"]["items"]
+        assert (picked["id"], picked["release_digest"]) == (released, digest)
+        assert {name: c["count"] for name, c in categories.items()} == {
+            "legacy_done": 1, "decided_unreleased": 1, "released_undecided": 1,
+        }
+        assert open_item not in {
+            i["id"] for c in categories.values() for i in c["items"]
+        }
+        assert result["resolutions"] == {
+            "accepted": 1, "rejected": 0, "withdrawn": 1, "superseded": 0,
+            "decided_done": 2, "legacy_done": 1, "legacy_remarked": 0, "done": 3,
+        }
+
+        # A re-mark takes the legacy item out of every unbound category: it
+        # has no release to bind, and the re-mark is its repair.  It is
+        # counted as legacy_remarked instead.
+        env.decide(legacy, "reject")
+        after = env.invoke("work.read.unbound", {"sprint_id": sprint_id})
+        assert after["categories"]["legacy_done"] == {"count": 0, "items": []}
+        assert [i["id"] for i in after["categories"]["decided_unreleased"]["items"]] == [
+            unreleased
+        ]
+        assert after["resolutions"] == {
+            "accepted": 1, "rejected": 1, "withdrawn": 1, "superseded": 0,
+            "decided_done": 3, "legacy_done": 0, "legacy_remarked": 1, "done": 3,
+        }
+        only = env.invoke(
+            "work.read.unbound", {"sprint_id": sprint_id, "category": "legacy_done"}
+        )
+        assert list(only["categories"]) == ["legacy_done"]
+
+        second = item_in_sprint("also closed without a release")
+        env.decide(second, "accept")
+        limited = env.invoke("work.read.unbound", {"sprint_id": sprint_id, "limit": 1})
+        assert limited["categories"]["decided_unreleased"]["count"] == 2
+        assert len(limited["categories"]["decided_unreleased"]["items"]) == 1
+        for arguments, status in (
+            ({"category": "nope"}, 422),
+            ({"limit": 0}, 422),
+            ({"sprint_id": 99_999_999}, 404),
+        ):
+            with pytest.raises(ApplicationRejection) as rejected:
+                env.invoke("work.read.unbound", arguments)
+            assert rejected.value.http_status == status, arguments
+
+    def test_notes_cannot_pose_as_decisions(self, env):
+        item_id = env.new_item()
+        sprint_id = env.backend.get_work_item(env.store, item_id)["sprint_id"]
+        for event_type in ("item.done", "accept", "rejected", "work-decision.recorded", "Item-Done"):
+            with pytest.raises(ApplicationRejection) as event:
+                env.app.invoke(
+                    "work.event.add",
+                    {"sprint_id": sprint_id, "work_item_id": item_id, "event_type": event_type},
+                    _context(),
+                )
+            assert (event.value.code, event.value.http_status) == (
+                "decision-like-event-type", 422
+            ), event_type
+            with pytest.raises(ApplicationRejection) as note:
+                env.app.invoke(
+                    "work.item.note",
+                    {"item_id": item_id, "note_type": event_type, "summary": "closed"},
+                    _context(),
+                )
+            assert note.value.code == "decision-like-event-type", event_type
+        # A design-decision knowledge note is still a note.
+        note = env.app.invoke(
+            "work.item.note",
+            {"item_id": item_id, "note_type": "decision", "summary": "use pg"},
+            _context(),
+        )
+        assert note["note_type"] == "decision"
+        assert env.backend.get_work_item(env.store, item_id)["status"] == "active"
 
     def test_arguments_are_validated(self, env):
         item_id = env.new_item()

@@ -9,7 +9,9 @@ decision row is append-only; the item keeps a pointer to it
 Rows that predate decisions are marked ``legacy`` by the migration that
 introduced them (PostgreSQL schema 14, SQLite schema 23).  A legacy item that
 is already done keeps no invented decision; an open legacy item still needs a
-decision to become terminal.
+decision to become terminal.  A legacy done item may later take exactly one
+authored terminal decision with a rationale and evidence, a re-mark
+(PostgreSQL schema 16, SQLite schema 25).
 
 Both backends share the argument validation and transition rule here; each
 backend owns its SQL and the database triggers that enforce the same rule.
@@ -148,6 +150,47 @@ def transition_error(kind: str, item_id: int, current_status: str) -> str | None
     return None
 
 
+# --- Legacy re-mark (PostgreSQL schema 16, SQLite schema 25) ---
+#
+# An item that was already done when decisions were introduced is legacy and
+# has no decision.  It may take exactly one authored terminal decision that
+# says what that old closure actually was -- a re-mark.  The item stays done;
+# the decision binds its resolution.  Because a terminal decision is immutable
+# once bound, the re-mark is one-shot, and the database refuses a re-mark
+# that carries no rationale or no evidence.
+
+
+def is_legacy_remark_target(item: Any) -> bool:
+    """True for a legacy item that is done and bound to no decision."""
+    return (
+        item["status"] == "done"
+        and bool(item["legacy"])
+        and item["terminal_decision_id"] is None
+    )
+
+
+def decision_error(item: Any, decision: dict) -> str | None:
+    """Return why ``decision`` cannot be recorded on ``item``, or None.
+
+    A legacy done item without a decision takes one re-mark; every other item
+    follows :func:`transition_error`.
+    """
+    item_id = int(item["id"])
+    if not is_legacy_remark_target(item):
+        return transition_error(decision["kind"], item_id, item["status"])
+    if not is_terminal(decision["kind"]):
+        return (
+            f"Item #{item_id} was done before decisions existed; only a terminal "
+            "decision can re-mark it"
+        )
+    if not decision["rationale"].strip() or not decision["evidence_digests"]:
+        return (
+            f"Item #{item_id} was done before decisions existed; re-marking it "
+            "needs a rationale and at least one evidence digest"
+        )
+    return None
+
+
 def legacy_evidence_digest(payload: Any) -> str:
     """SHA-256 of an event payload in the canonical JSON form.
 
@@ -194,7 +237,9 @@ def validate_idempotency_key(key: Any) -> str | None:
     return key
 
 
-def decided_event_payload(decision: dict, idempotency_key: str | None) -> dict[str, Any]:
+def decided_event_payload(
+    decision: dict, idempotency_key: str | None, *, legacy_remark: bool = False
+) -> dict[str, Any]:
     """The payload of the ``item-decided`` event for a recorded decision."""
     payload: dict[str, Any] = {
         "decision_id": int(decision["id"]),
@@ -202,6 +247,8 @@ def decided_event_payload(decision: dict, idempotency_key: str | None) -> dict[s
         "resolution": resolution_for(decision["kind"]),
         "release_digest": decision.get("release_digest"),
     }
+    if legacy_remark:
+        payload["legacy_remark"] = True
     if idempotency_key is not None:
         payload["idempotency_key"] = idempotency_key
     return payload

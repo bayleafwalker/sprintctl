@@ -142,6 +142,7 @@ SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
         precondition="item['terminal_decision_id'] is not None",
         notes="Second read of `item show`: the terminal decision of a closed item.",
     ),
+    ServedRoute("item.unbound", "work.read.unbound"),
     ServedRoute("authority.sync", "work.batch.apply"),
 )
 
@@ -171,6 +172,7 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     "item note": "catalog",
     "item status": "catalog",
     "item decide": "catalog",
+    "item unbound": "catalog",
     "item ref add": "catalog",
     "item ref list": "catalog",
     "item ref remove": "catalog",
@@ -287,6 +289,7 @@ _DOCTOR_PROBE_COMMAND_PATHS = (
     "item.note",
     "item.decide",
     "item.show.decisions",
+    "item.unbound",
     "authority.sync",
     "event.list",
     "event.add",

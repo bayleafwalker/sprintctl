@@ -338,7 +338,7 @@ class TestSchema14Fold:
             conn.commit()
 
             migrated = pg_migrations.migrate_schema(store)
-            assert migrated["applied_versions"] == [14, 15]
+            assert migrated["applied_versions"] == [14, 15, 16]
 
             with conn.cursor() as cur:
                 decisions, evidence, items = _fold_counts(cur, repo_id)
@@ -458,9 +458,11 @@ class TestLegacyOpenItems:
         assert (item["status"], item["legacy"], item["resolution"]) == ("done", True, "accepted")
         assert item["terminal_decision_id"] == decision["id"]
 
-    def test_done_legacy_item_stays_undecided(self, store):
+    def test_done_legacy_item_takes_no_unevidenced_decision(self, store):
+        # A re-mark (schema 16) needs a rationale and evidence; see
+        # tests/pg/test_legacy_remark.py for the path that succeeds.
         _sprint_id, _track_id, item_id = _legacy_item(store, "done")
-        with pytest.raises(pg.InvalidTransition, match="terminal"):
+        with pytest.raises(pg.InvalidTransition, match="rationale"):
             pg.record_decision(store, item_id, "reject", actor="owner")
         with store.conn.cursor() as cur:
             cur.execute(
@@ -474,7 +476,7 @@ class TestLegacyOpenItems:
             "UPDATE work_item SET resolution = 'rejected', terminal_decision_id = %s "
             "WHERE repo_id = %s AND id = %s",
             (forged, store.repo_id, item_id),
-            "takes no decision",
+            "legacy re-mark",
         )
 
 

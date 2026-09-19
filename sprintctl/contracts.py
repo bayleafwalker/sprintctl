@@ -35,6 +35,42 @@ _IMPORT_ONLY_EVENT_TYPES = {
     ITEM_EDITED_IMPORTED_EVENT_TYPE,
 }
 
+# A generic event is a note: it can describe a decision but never be one.
+# These names are the vocabulary of work decisions and of the commands and
+# authority records that carry them -- the decision kinds and resolutions,
+# ``item-decided`` (reserved for the decision writer), the authority command
+# and record types, and the terminal-status names an older client used.  A
+# generic event under any of them could pose as the decision that closed an
+# item, so the generic writer refuses them.  ``decision`` itself stays open:
+# it is the knowledge-note type for a design decision and closes nothing.
+DECISION_LIKE_EVENT_TYPES = frozenset(
+    {
+        *_decisions.DECISION_KINDS,
+        *_decisions.RESOLUTIONS,
+        _decisions.ITEM_DECIDED_EVENT_TYPE,
+        "item.decide",
+        "item.done",
+        "item.transition",
+        "item.transitioned",
+        "decision.record",
+        "work.decision.record",
+        "work-decision.recorded",
+        "work-decision",
+        "item-done",
+        "item-closed",
+        "item-resolved",
+        "item-accepted",
+        "item-rejected",
+        "item-withdrawn",
+        "item-superseded",
+    }
+)
+
+
+class DecisionLikeEventType(ValueError):
+    """A generic event write named a decision-like event type."""
+
+
 _LOWERCASE_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _RECORD_TYPE = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
 
@@ -656,9 +692,10 @@ def require_generic_event_write_allowed(event_type: str) -> None:
     """Reject event names whose provenance requires an internal workflow."""
     if event_type == ITEM_EDITED_EVENT_TYPE:
         raise ValueError("item-edited is reserved; use the item edit operation")
-    if event_type == ITEM_DECIDED_EVENT_TYPE:
-        raise ValueError(
-            "item-decided is reserved; record a decision with item decide"
+    if is_decision_like_event_type(event_type):
+        raise DecisionLikeEventType(
+            f"{event_type} is reserved: it is a decision-like event type, and a "
+            "note cannot pose as a work decision; record one with item decide"
         )
     if event_type == SESSION_CAPSULE_RECORDED_EVENT_TYPE:
         raise ValueError(
@@ -675,6 +712,11 @@ def require_generic_event_write_allowed(event_type: str) -> None:
             f"{event_type} is reserved: capability receipts were retired; "
             "acceptance is recorded only as a work decision"
         )
+
+
+def is_decision_like_event_type(event_type: str) -> bool:
+    """True for an event type a generic note may not use (see above)."""
+    return isinstance(event_type, str) and event_type.strip().lower() in DECISION_LIKE_EVENT_TYPES
 
 
 def is_retired_capability_receipt_type(event_type: str) -> bool:

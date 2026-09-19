@@ -208,8 +208,25 @@ sprintctl item decide --id 7 --kind revise --rationale "Review asked for an API 
   SHA-256 digests and may repeat.
 - A decision binds the item's current release unless `--release` names one;
   a digest that is not a release of that item is refused.
-- A terminal item takes no further decision. An item that was already done
-  before decisions existed (`legacy`) takes none either.
+- A terminal item takes no further decision.
+- An item that was already done before decisions existed (`legacy`, shown as
+  `Resolution: - (legacy ...)`) takes exactly one terminal decision that says
+  what that closure really was: a *re-mark*. It needs a terminal `--kind`,
+  a `--rationale` and at least one `--evidence` digest; the item stays done
+  and keeps its original `updated_at`. Once recorded it is immutable like any
+  terminal decision.
+- `sprintctl item unbound [--sprint-id N] [--category C] [--json]` lists
+  what is not bound to a decision: `legacy_done` (legacy done items with no
+  decision -- re-mark candidates), `decided_unreleased` (closed by a decision
+  that names no release; legacy rows excluded) and `released_undecided`
+  (open items whose frozen current release still awaits a decision), and
+  counts done items by resolution with legacy done kept apart and re-marked
+  legacy items counted as `legacy_remarked`. Served operation:
+  `work.read.unbound`.
+- A generic event or note cannot pose as a decision: `event add` and
+  `item note` refuse decision-like types (`item.done`, `item-decided`,
+  `accept`, `rejected`, `decision.record`, ...) with
+  `decision-like-event-type`. The knowledge note type `decision` stays open.
 - In served mode the decision actor is the authenticated identity; `--actor`
   applies to direct backends only and is otherwise ignored with a note. The
   served operation is `work.decision.record`; a retry with the same
