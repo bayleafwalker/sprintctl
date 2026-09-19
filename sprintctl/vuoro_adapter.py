@@ -19,6 +19,7 @@ from vuoro_adapter_kit import (
 )
 
 from . import decisions as _decisions
+from . import unbound as _unbound
 from .application import (
     SUPPORTED_BATCH_TYPES,
     ApplicationRejection,
@@ -47,6 +48,16 @@ class WorkOperationContract:
 
 _object_schema = object_schema
 
+_UNBOUND_CATEGORIES = _unbound.CATEGORIES
+_UNBOUND_CATEGORY_RESULT: dict[str, Any] = {
+    "type": "object",
+    "required": ["count", "items"],
+    "properties": {
+        "count": {"type": "integer", "minimum": 0},
+        "items": {"type": "array", "items": {"type": "object"}},
+    },
+    "additionalProperties": False,
+}
 _DECISION_KINDS = _decisions.DECISION_KINDS
 _RESOLUTIONS = _decisions.RESOLUTIONS
 _SHA256_HEX: dict[str, Any] = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
@@ -850,6 +861,42 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
                 "repo_id": {"type": "string"},
                 "release": {"type": "object"},
                 "commits": {"type": "array", "items": {"type": "object"}},
+            },
+        ),
+        "work:read",
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.read.unbound",
+        _object_schema(
+            {
+                "sprint_id": {"type": ["integer", "null"], "minimum": 1},
+                "category": {"enum": [*_UNBOUND_CATEGORIES, None]},
+                "limit": {
+                    "type": ["integer", "null"],
+                    "minimum": 1,
+                    "maximum": _unbound.MAX_LIMIT,
+                },
+            }
+        ),
+        _result_schema(
+            ("repo_id", "sprint_id", "limit", "categories", "resolutions"),
+            {
+                "repo_id": {"type": "string"},
+                "sprint_id": {"type": ["integer", "null"], "minimum": 1},
+                "limit": {"type": "integer", "minimum": 1},
+                "categories": {
+                    "type": "object",
+                    "properties": {
+                        name: _UNBOUND_CATEGORY_RESULT for name in _UNBOUND_CATEGORIES
+                    },
+                    "additionalProperties": False,
+                },
+                "resolutions": {
+                    "type": "object",
+                    "additionalProperties": {"type": "integer", "minimum": 0},
+                },
             },
         ),
         "work:read",

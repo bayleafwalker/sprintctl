@@ -48,6 +48,7 @@ from . import refcore as _refcore
 from . import rows as _rows
 from . import sprintcore as _sprintcore
 from . import trackcore as _trackcore
+from . import unbound as _unbound
 from . import workitemcore as _workitemcore
 from .workitemcore import (
     EditConflict,
@@ -2336,6 +2337,132 @@ def _apply_schema_version_15(cur: Any) -> None:
         )
 
 
+def _apply_schema_version_16(cur: Any) -> None:
+    """Legacy re-mark (S3 PR5): one authored decision on a legacy done item.
+
+    A legacy item that was already done when decisions arrived has no
+    decision, and schema 14 refused to bind one.  This replaces only the body
+    of the row guard so such an item may take exactly one terminal decision
+    that names it, carries a rationale and at least one evidence digest, and
+    is not a folded legacy decision.  The item stays done.  The rest of the
+    guard is unchanged: done still needs a decision, and a bound terminal
+    decision is immutable, which is what makes the re-mark one-shot.
+
+    It also narrows the archive-import exemption of the decision release
+    guard to decisions about legacy rows (``import_ndjson`` is its only
+    user).
+
+    Both statements are ``CREATE OR REPLACE FUNCTION``: no table changes and
+    no table lock is taken, so the 5s migration lock timeout is never at
+    risk from served traffic.  The row guard refuses nothing the old body
+    allowed, so a pod still running the previous release keeps working while
+    this commits; only an operator-run import of an inconsistent archive is
+    refused that was admitted before.
+    """
+    cur.execute(
+        """
+        CREATE OR REPLACE FUNCTION sprintctl_work_item_terminal_guard()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            IF TG_OP = 'INSERT' THEN
+                IF NEW.legacy
+                   AND COALESCE(current_setting('sprintctl.legacy_import', true), '') <> 'on' THEN
+                    RAISE EXCEPTION 'work_item.legacy is set only by the schema 14 migration';
+                END IF;
+                RETURN NEW;
+            END IF;
+            IF NEW.legacy IS DISTINCT FROM OLD.legacy THEN
+                RAISE EXCEPTION 'work_item.legacy is immutable';
+            END IF;
+            IF OLD.status = 'done' AND NEW.status IS DISTINCT FROM 'done' THEN
+                RAISE EXCEPTION 'work item % is terminal; done cannot transition to %',
+                    OLD.id, NEW.status;
+            END IF;
+            IF OLD.status IS DISTINCT FROM 'done' AND NEW.status = 'done'
+               AND NEW.terminal_decision_id IS NULL THEN
+                RAISE EXCEPTION 'work item % cannot become done without a terminal decision', OLD.id
+                    USING ERRCODE = '23514';
+            END IF;
+            IF OLD.terminal_decision_id IS NOT NULL AND (
+                   NEW.terminal_decision_id IS DISTINCT FROM OLD.terminal_decision_id
+                   OR NEW.resolution IS DISTINCT FROM OLD.resolution
+               ) THEN
+                RAISE EXCEPTION 'work item % terminal decision is immutable', OLD.id;
+            END IF;
+            -- A row that was done before decisions existed binds a decision
+            -- only by re-mark: a legacy row, an authored terminal decision
+            -- about it (written first, in this transaction), with a
+            -- rationale and evidence.  Once bound it is immutable (above).
+            IF OLD.status = 'done' AND OLD.terminal_decision_id IS NULL
+               AND NEW.terminal_decision_id IS NOT NULL
+               AND NOT (
+                   OLD.legacy AND EXISTS (
+                       SELECT 1 FROM work_decision d
+                       WHERE d.repo_id = NEW.repo_id AND d.id = NEW.terminal_decision_id
+                         AND d.work_item_id = OLD.id
+                         AND d.kind IN ('accept', 'reject', 'withdraw', 'supersede')
+                         AND d.legacy_source IS NULL
+                         AND btrim(d.rationale) <> ''
+                         AND jsonb_array_length(d.evidence_digests) > 0
+                   )
+               ) THEN
+                RAISE EXCEPTION 'done work item % takes a decision only as a legacy re-mark with a rationale and evidence',
+                    OLD.id
+                    USING ERRCODE = '23514';
+            END IF;
+            RETURN NEW;
+        END;
+        $$;
+
+        -- import_ndjson's legacy switch used to exempt every decision it
+        -- carried from the release binding.  It now exempts only decisions
+        -- about rows that are legacy; an imported decision about any other
+        -- item must name a release of that item, or bind its current one,
+        -- exactly as it had to when it was first recorded.  Import inserts
+        -- items and releases before decisions, so the check sees them.
+        CREATE OR REPLACE FUNCTION sprintctl_work_decision_release_guard()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            IF NEW.work_item_id IS NULL OR NEW.legacy_source IS NOT NULL THEN
+                RETURN NEW;
+            END IF;
+            IF COALESCE(current_setting('sprintctl.legacy_import', true), '') = 'on'
+               AND EXISTS (
+                   SELECT 1 FROM work_item
+                   WHERE repo_id = NEW.repo_id AND id = NEW.work_item_id AND legacy
+               ) THEN
+                RETURN NEW;
+            END IF;
+            IF NEW.release_digest IS NOT NULL THEN
+                IF NOT EXISTS (
+                    SELECT 1 FROM work_release
+                    WHERE repo_id = NEW.repo_id AND work_item_id = NEW.work_item_id
+                      AND release_digest = NEW.release_digest
+                ) THEN
+                    RAISE EXCEPTION 'release % is not a release of work item %',
+                        NEW.release_digest, NEW.work_item_id
+                        USING ERRCODE = '23514';
+                END IF;
+            ELSIF EXISTS (
+                SELECT 1 FROM work_release wr
+                WHERE wr.repo_id = NEW.repo_id AND wr.work_item_id = NEW.work_item_id
+                  AND wr.revise_count = (
+                      SELECT COUNT(*) FROM work_decision d
+                      WHERE d.repo_id = NEW.repo_id AND d.work_item_id = NEW.work_item_id
+                        AND d.kind = 'revise'
+                  )
+            ) THEN
+                RAISE EXCEPTION 'work item % has a current release; a decision must bind it',
+                    NEW.work_item_id
+                    USING ERRCODE = '23514';
+            END IF;
+            RETURN NEW;
+        END;
+        $$;
+        """
+    )
+
+
 def compatibility_handshake(store: PgStore) -> dict[str, Any]:
     """Return the public read-only work API/schema handshake."""
     return _pg_migrations.compatibility_handshake(store)
@@ -2862,9 +2989,10 @@ def _decide_locked(cur: Any, repo_id: str, item: Any, decision: dict) -> dict:
     decision, so the item can never be done without one.
     """
     item_id = int(item["id"])
-    error = _decisions.transition_error(decision["kind"], item_id, item["status"])
+    error = _decisions.decision_error(item, decision)
     if error is not None:
         raise InvalidTransition(error)
+    remark = _decisions.is_legacy_remark_target(item)
     superseded_by = decision["superseded_by_item_id"]
     if superseded_by is not None:
         if superseded_by == item_id:
@@ -2899,7 +3027,15 @@ def _decide_locked(cur: Any, repo_id: str, item: Any, decision: dict) -> dict:
     )
     recorded = _decision_row(cur.fetchone())
     resolution = _decisions.resolution_for(decision["kind"])
-    if resolution is not None:
+    if remark:
+        # A re-mark binds the closure that already happened: the item stays
+        # done and keeps its updated_at, the only record of when it closed.
+        cur.execute(
+            "UPDATE work_item SET resolution = %s, terminal_decision_id = %s "
+            "WHERE repo_id = %s AND id = %s",
+            (resolution, recorded["id"], repo_id, item_id),
+        )
+    elif resolution is not None:
         cur.execute(
             "UPDATE work_item SET status = 'done', resolution = %s, "
             "terminal_decision_id = %s, updated_at = now() "
@@ -3013,6 +3149,7 @@ def record_decision_keyed(
                     f"Item #{item_id} status revision mismatch: "
                     f"expected {expected_revision}, current {current_revision}"
                 )
+            remark = _decisions.is_legacy_remark_target(item)
             recorded = _decide_locked(cur, store.repo_id, item, decision)
         _insert_event(
             store,
@@ -3020,7 +3157,9 @@ def record_decision_keyed(
             decision["actor"],
             _decisions.ITEM_DECIDED_EVENT_TYPE,
             work_item_id=item_id,
-            payload=_decisions.decided_event_payload(recorded, idempotency_key),
+            payload=_decisions.decided_event_payload(
+                recorded, idempotency_key, legacy_remark=remark
+            ),
         )
         store.conn.commit()
         return recorded, False
@@ -3040,6 +3179,31 @@ def list_decisions(store: PgStore, item_id: int | None = None) -> list[dict]:
         cur.execute(query + " ORDER BY id", params)
         rows = cur.fetchall()
     return [_decision_row(row) for row in rows]
+
+
+def list_unbound(
+    store: PgStore,
+    *,
+    sprint_id: int | None = None,
+    category: str | None = None,
+    limit: int | None = None,
+) -> dict:
+    """Items not bound to a decision, by category (see :mod:`sprintctl.unbound`)."""
+
+    def query_all(sql: str, params: dict) -> list[dict]:
+        with store.conn.cursor() as cur:
+            cur.execute(sql, params)
+            return [_norm(row) for row in cur.fetchall()]
+
+    return _unbound.list_unbound(
+        query_all,
+        param=lambda name: f"%({name})s",
+        tenant=lambda alias: f"{alias}.repo_id = %(repo_id)s AND",
+        params={"repo_id": store.repo_id},
+        sprint_id=sprint_id,
+        category=category,
+        limit=limit,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -3585,17 +3749,27 @@ def release_reservation(store: PgStore, reservation_id: int, *, actor: str | Non
 
 def sweep_stale_reservations(store: PgStore, *, now: str | None = None,
                              interrupt_after: timedelta | None = None) -> list[dict]:
-    """Interrupt long-idle reservations.  Only an explicit sweep calls this.
+    """Interrupt long-idle reservations of open items.  Only an explicit sweep calls this.
 
     Nothing expires in the background: the threshold is operator policy
     (:mod:`sprintctl.reservation_policy`) applied when a sweep runs.
+    Reservations of done items are never touched.
     """
     window = _policy.interrupt_after() if interrupt_after is None else interrupt_after
     reason = _policy.sweep_reason(window)
     now = now or _reservation.now_text()
     cutoff = (_reservation.parse_time(now) - window).strftime("%Y-%m-%dT%H:%M:%SZ")
     with store.conn.cursor() as cur:
-        cur.execute("UPDATE reservation SET state = 'interrupted', released_at = %s, interruption_reason = %s WHERE repo_id = %s AND state = 'active' AND last_activity_at <= %s RETURNING *", (now, reason, store.repo_id, cutoff))
+        # A sweep only touches open work: a done item's history belongs to
+        # the decision that closed it, and nothing sweeps it afterwards.
+        cur.execute(
+            "UPDATE reservation r SET state = 'interrupted', released_at = %s, "
+            "interruption_reason = %s WHERE r.repo_id = %s AND r.state = 'active' "
+            "AND r.last_activity_at <= %s AND EXISTS (SELECT 1 FROM work_item wi "
+            "WHERE wi.repo_id = r.repo_id AND wi.id = r.work_item_id "
+            "AND wi.status <> 'done') RETURNING r.*",
+            (now, reason, store.repo_id, cutoff),
+        )
         rows = cur.fetchall()
     store.conn.commit()
     for row in rows:
@@ -4068,8 +4242,14 @@ def import_ndjson(
                 rid = record.get("repo_id", store.repo_id)
 
                 if table == "work_item" and "legacy" not in data:
-                    # An archive that predates decisions holds only legacy rows.
-                    data["legacy"] = True
+                    # An archive that predates decisions holds only legacy
+                    # rows.  A row that already carries decision columns is
+                    # from a later archive, and a missing flag there is not
+                    # read as legacy: the legacy exemptions cover only rows
+                    # that were legacy at their source.
+                    data["legacy"] = not (
+                        "terminal_decision_id" in data or "resolution" in data
+                    )
                 if remap_ids:
                     # Remap any FK columns that reference tables we've already inserted.
                     for fk_col, ref_table in _IMPORT_FK_COLUMNS.get(table, []):

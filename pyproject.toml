@@ -40,8 +40,8 @@ capabilities = [
     "sprintctl-repository-ingest-cursor/v1",
     "volatile-context-item-projection/v1",
 ]
-sqlite-schema-version = 24
-remote-schema-version = 15
+sqlite-schema-version = 25
+remote-schema-version = 16
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -25,7 +25,7 @@ no migration or DDL.
 | Durable reservations | `work.claim.arbitrate` | key equals immutable command `event_id` — **retired in v2** |
 | Lifecycle | `work.lifecycle.arbitrate` | key equals immutable command `event_id` |
 | Decisions | `work.decision.record` | key required; a replay with the same key returns the first decision |
-| Decision and release reads | `work.read.item-decisions`, `work.read.release` | key forbidden |
+| Decision and release reads | `work.read.item-decisions`, `work.read.release`, `work.read.unbound` | key forbidden |
 | Evidence | `work.evidence.ingest` | key equals canonical record-batch digest |
 | Batching | `work.batch.apply` | key equals canonical ordered-project-batch digest |
 | Project | `work.project.context`, `work.project.sprints`, `work.project.items`, `work.project.next-work`, `work.project.batch` | aggregates require a canonical binding and authorization for every member; writes use canonical ordered-project-batch digest |
@@ -81,7 +81,23 @@ decision and the same key with a different request is refused
 not a release of the item), `invalid-transition` (for example accepting a
 non-active item), `item-terminal`, `legacy-done-item` (all 409),
 `decision-rejected` (422) and `item-not-found` (404).
+A legacy item that was done before decisions existed and has no decision
+takes one *re-mark* through the same operation: a terminal kind with a
+non-empty rationale and at least one evidence digest. The item stays done and
+keeps its `updated_at`; the `item-decided` event carries `legacy_remark:
+true`. A re-mark without a rationale or evidence, or a `revise`, is refused as
+`legacy-done-item` (409); once bound, the decision is immutable, so a second
+one is `item-terminal`. Schema 16 (SQLite 25) enforces the same in its
+trigger.
 `work.read.item-decisions` lists an item's decisions oldest first.
+`work.read.unbound` lists items not bound to a decision in three categories
+-- `legacy_done`, `decided_unreleased`, `released_undecided` -- each with its
+total `count` and up to `limit` (default 100, at most 1000) `items`,
+optionally for one `sprint_id` or one `category`, and `resolutions`: done
+items counted as `accepted`, `rejected`, `withdrawn`, `superseded`,
+`decided_done`, `legacy_done` and `done`.
+`work.event.add` and `work.item.note` refuse decision-like event types with
+`decision-like-event-type` (422), so a note cannot pose as a decision.
 `work.read.release` returns a release and its `release_commit` rows, by
 `release_digest` or for an `item_id`'s current release. `work.read.decisions`
 is the authority-decision journal read and is unrelated.

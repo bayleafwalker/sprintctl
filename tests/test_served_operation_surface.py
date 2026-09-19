@@ -69,6 +69,7 @@ PUBLISHED_OPERATIONS = (
         "work.read.sprint",
         "work.read.sprint-detail",
         "work.read.sprints",
+        "work.read.unbound",
         "work.reservation.reassign",
         "work.reservation.release",
         "work.reservation.reserve",

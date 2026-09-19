@@ -43,8 +43,39 @@ def item_staleness(
     }
 
 
+RESOLUTION_METRIC_KEYS = ("accepted", "rejected", "withdrawn", "superseded")
+
+
+def resolution_counts(items: list[dict]) -> dict:
+    """Count done items by how they were closed.
+
+    Each decided done item counts under its resolution, and ``decided_done``
+    is their sum.  ``legacy_done`` counts items that were done before
+    decisions existed and have no decision (a re-marked legacy item counts
+    under its resolution instead); it is never folded into ``accepted``.
+    ``done`` is the sum of both.
+    """
+    counts = {key: 0 for key in RESOLUTION_METRIC_KEYS}
+    legacy_done = 0
+    for it in items:
+        if it.get("status") != "done":
+            continue
+        resolution = it.get("resolution")
+        if resolution in counts:
+            counts[resolution] += 1
+        else:
+            legacy_done += 1
+    decided = sum(counts.values())
+    return {
+        **counts,
+        "decided_done": decided,
+        "legacy_done": legacy_done,
+        "done": decided + legacy_done,
+    }
+
+
 def track_health(items: list[dict]) -> dict:
-    """Summarise status distribution for a track."""
+    """Summarise status and resolution distribution for a track."""
     counts = {"pending": 0, "active": 0, "done": 0, "blocked": 0}
     for it in items:
         counts[it["status"]] += 1
@@ -52,6 +83,7 @@ def track_health(items: list[dict]) -> dict:
     return {
         "total": total,
         "counts": counts,
+        "resolutions": resolution_counts(items),
         "blocked_ratio": counts["blocked"] / total if total else 0.0,
         "done_ratio": counts["done"] / total if total else 0.0,
     }

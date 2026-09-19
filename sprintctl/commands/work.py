@@ -33,6 +33,7 @@ from .. import context_candidates as _context_candidates
 from .. import context_contract as _context_contract
 from .. import contracts as _contracts
 from .. import db as _db
+from .. import unbound as _unbound
 from .. import doctor as _doctor
 from .. import maintain as _maintain
 from .. import observations as _observations
@@ -1563,7 +1564,9 @@ def item_decide(
     A terminal decision (accept, reject, withdraw, supersede) closes the item
     with the matching resolution; ``item status --status done`` remains an
     alias for ``--kind accept``.  ``revise`` records a revision request and
-    leaves the item open.
+    leaves the item open.  A legacy item that was done before decisions
+    existed takes one terminal decision with ``--evidence`` (a re-mark); it
+    stays done.
     """
     item_id = _apply_scoped_id(obj, item_id, field="item")
     superseded_by_item_id = (
@@ -1624,6 +1627,81 @@ def item_decide(
         },
         as_json=as_json,
     )
+
+
+_UNBOUND_CATEGORY_TITLES = {
+    "legacy_done": "Legacy done (done before decisions; no decision -- re-mark with item decide)",
+    "decided_unreleased": "Decided without a release (terminal decision names no release)",
+    "released_undecided": "Picked up, undecided (open with a frozen current release)",
+}
+
+
+@item.command("unbound")
+@click.option("--sprint-id", type=str, default=None, help="Limit to one sprint (ID or repo#id)")
+@click.option(
+    "--category",
+    type=click.Choice(_unbound.CATEGORIES),
+    default=None,
+    help="Show one category only",
+)
+@click.option(
+    "--limit",
+    type=click.IntRange(1, _unbound.MAX_LIMIT),
+    default=_unbound.DEFAULT_LIMIT,
+    show_default=True,
+    help="Items listed per category (counts are always totals)",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.pass_obj
+def item_unbound(obj, sprint_id, category, limit, as_json) -> None:
+    """List items that are not bound to a decision.
+
+    Three categories: legacy done items with no decision, items closed by a
+    decision that names no release, and open items whose frozen release
+    still awaits a decision.  Also counts done items by resolution, with
+    legacy done kept apart from decided done.
+    """
+    if sprint_id is not None:
+        sprint_id = _apply_scoped_id(obj, sprint_id, field="sprint")
+    config = _served_config_or_none(obj)
+    if config is not None:
+        result = _run_served(
+            "item unbound",
+            _served.read_unbound,
+            config.served_profile,
+            repo_id=config.repo_id,
+            sprint_id=sprint_id,
+            category=category,
+            limit=limit,
+            resolved_context=_resolved_context(config),
+        )
+    else:
+        store, m = _get_store(obj)
+        if sprint_id is not None and m.get_sprint(store, sprint_id) is None:
+            click.echo(f"Sprint #{sprint_id} not found.", err=True)
+            sys.exit(1)
+        result = m.list_unbound(store, sprint_id=sprint_id, category=category, limit=limit)
+    if as_json:
+        click.echo(json.dumps(result, indent=2, default=str))
+        return
+    resolutions = result["resolutions"]
+    click.echo(
+        f"Done: {resolutions['done']} ({resolutions['decided_done']} decided: "
+        f"{resolutions['accepted']} accepted, {resolutions['rejected']} rejected, "
+        f"{resolutions['withdrawn']} withdrawn, {resolutions['superseded']} superseded; "
+        f"{resolutions['legacy_done']} legacy)"
+    )
+    for name, section in result["categories"].items():
+        click.echo(f"\n{_UNBOUND_CATEGORY_TITLES[name]}: {section['count']}")
+        for it in section["items"]:
+            extra = ""
+            if it.get("release_digest"):
+                extra = f"  release {it['release_digest'][:12]}"
+            elif it.get("decision_kind"):
+                extra = f"  {it['decision_kind']} by {it.get('decision_actor')}"
+            click.echo(f"  #{it['id']} [{it['status']}] {it['title']}{extra}")
+        if section["count"] > len(section["items"]):
+            click.echo(f"  ... {section['count'] - len(section['items'])} more (--limit)")
 
 
 # ---------------------------------------------------------------------------

@@ -380,7 +380,7 @@ class TestMigration24:
         with conn:
             db._migration_24(conn)
 
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 24
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == db.CURRENT_SCHEMA_VERSION
         [row] = conn.execute("SELECT release_digest FROM reservation").fetchall()
         assert row[0] is None
         conn.execute("UPDATE reservation SET state = 'released'")
