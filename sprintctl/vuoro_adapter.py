@@ -68,6 +68,28 @@ _UNBOUND_CATEGORY_RESULT: dict[str, Any] = {
 _DECISION_KINDS = _decisions.DECISION_KINDS
 _RESOLUTIONS = _decisions.RESOLUTIONS
 _SHA256_HEX: dict[str, Any] = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+# #2451: the unmet_obligations report (#2446) is report-only, alongside the
+# four categories above -- it names no gate, no validator, no transition.
+_UNMET_OBLIGATION_ITEM: dict[str, Any] = {
+    "type": "object",
+    "required": ["item_id", "decision_id", "release_digest", "unmet"],
+    "properties": {
+        "item_id": {"type": "integer", "minimum": 1},
+        "decision_id": {"type": "integer", "minimum": 1},
+        "release_digest": _SHA256_HEX,
+        "unmet": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    },
+    "additionalProperties": False,
+}
+_UNMET_OBLIGATIONS_RESULT: dict[str, Any] = {
+    "type": "object",
+    "required": ["count", "items"],
+    "properties": {
+        "count": {"type": "integer", "minimum": 0},
+        "items": {"type": "array", "items": _UNMET_OBLIGATION_ITEM},
+    },
+    "additionalProperties": False,
+}
 
 
 def _result_schema(
@@ -909,6 +931,10 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
                     },
                     "additionalProperties": False,
                 },
+                # #2451: optional, alongside the categories above -- see
+                # sprintctl.unbound and db.list_unmet_obligations.  Report
+                # only: no transition or validator reads this key.
+                "unmet_obligations": _UNMET_OBLIGATIONS_RESULT,
             },
         ),
         "work:read",
