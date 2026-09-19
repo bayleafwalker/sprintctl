@@ -39,9 +39,18 @@ trailers. They enqueue one `release.commit-observed` observation per
   counted under `release_trailers.malformed` in the sync result and never
   enqueued.
 - `remote_hint` is the `origin` URL with userinfo, query and fragment removed,
-  so a token-bearing remote URL never reaches the outbox.
+  so a token-bearing remote URL never reaches the outbox. A hint that still
+  looks like a credential is dropped (`null`).
 - In served mode the observation actor is the authenticated identity
   (`work.identity.current`). It is resolved only when something is enqueued.
+- In served mode the harvest runs only against a server whose catalog
+  advertises `release.commit-observed` among the record types
+  `work.batch.apply` accepts. Against an older server nothing is enqueued, the
+  cursor stays put, and the rest of the sync proceeds; the same commits are
+  harvested once the server is upgraded.
+- The harvest never fails a sync. A missing `git`, an unreadable repository or
+  a failed identity or catalog lookup reports `release_trailers.status:
+  skipped` with the reason in `detail`.
 
 On ingest the server records the pair in `release_commit` (idempotently) when
 the digest is a release of the repository. An unknown digest is kept only as

@@ -1276,14 +1276,19 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
     rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
     producer = _outbox.open_outbox(rollout_paths.outbox_path)
     try:
-        # Observations must carry the authenticated identity; resolve it only
-        # when a new Vuoro-Release trailer is actually being enqueued.
+        # Only when a new Vuoro-Release trailer is actually being enqueued:
+        # first ask the catalog whether this server accepts the record type
+        # (an older server would reject it, and an outbox record can be
+        # neither sent nor skipped), then resolve the authenticated identity
+        # observations must carry.  Both are called directly, not through
+        # ``_run_served`` (which exits): any failure only skips the harvest.
         harvest = _release_trailers.harvest_release_trailers(
             producer,
             rollout_paths.repo_root,
-            actor=lambda: _run_served(
-                "authority sync", _served.identity_current, config.served_profile,
-                repo_id=config.repo_id, resolved_context=resolved_context,
+            server_accepts=lambda: _release_trailers.EVENT_TYPE
+            in (_served.batch_record_types(config.served_profile) or ()),
+            actor=lambda: _served.identity_current(
+                config.served_profile, repo_id=config.repo_id
             )["actor"],
         )
         records = _outbox.list_records(producer)
@@ -1432,7 +1437,11 @@ def sync_cmd(obj, batch_size: int, as_json: bool) -> None:
 
 
 def _echo_release_harvest(harvest) -> None:
-    """One line on harvested Vuoro-Release trailers; malformed ones to stderr."""
+    """One line on harvested Vuoro-Release trailers; malformed ones and a
+    noteworthy skip (harvest failure, server without support) to stderr."""
+    if harvest.noteworthy_skip:
+        click.echo(f"Release trailers: skipped ({harvest.detail}).", err=True)
+        return
     if harvest.status != "harvested":
         return
     click.echo(

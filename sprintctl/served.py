@@ -706,9 +706,50 @@ def catalog_operation_names(served_profile: ServedProfile) -> frozenset[str]:
     return asyncio.run(_catalog_operation_names(served_profile))
 
 
+def batch_record_types_from_catalog(catalog: Any) -> frozenset[str] | None:
+    """The record types a catalog's ``work.batch.apply`` advertises.
+
+    The server publishes its accepted batch record types as the ``enum`` of
+    the record ``event_type`` in that operation's input schema.  ``None``
+    means the catalog does not say (a server that predates the
+    advertisement); callers treat that as "only the types every server has
+    always accepted", never as "anything goes".
+    """
+    if not isinstance(catalog, dict):
+        return None
+    for operation in catalog.get("operations", ()):
+        if not isinstance(operation, dict) or operation.get("name") != "work.batch.apply":
+            continue
+        try:
+            enum = operation["input_schema"]["$defs"]["record"]["properties"]["event_type"]["enum"]
+        except (KeyError, TypeError):
+            return None
+        if not isinstance(enum, list):
+            return None
+        return frozenset(value for value in enum if isinstance(value, str))
+    return None
+
+
+async def _batch_record_types(served_profile: ServedProfile) -> frozenset[str] | None:
+    async with _client(served_profile) as client:
+        catalog = await client.catalog()
+    return batch_record_types_from_catalog(catalog)
+
+
+def batch_record_types(served_profile: ServedProfile) -> frozenset[str] | None:
+    """Record types the server's ``work.batch.apply`` accepts, from the
+    unauthenticated catalog (``None`` when the server does not advertise
+    them). One ``asyncio.run(...)`` with a fresh client, like every function
+    above."""
+
+    return asyncio.run(_batch_record_types(served_profile))
+
+
 __all__ = [
     "EXPECTED_OPERATIONS",
     "batch_apply",
+    "batch_record_types",
+    "batch_record_types_from_catalog",
     "catalog_operation_names",
     "context_candidates",
     "handoff_record",

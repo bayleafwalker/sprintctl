@@ -14,7 +14,18 @@ of the repository (``pg.ingest_records``).
 Only the *form* of a trailer is validated here (40-hex commit, 64-hex
 digest).  Malformed trailers are counted and never enqueued.  Remote hints
 never carry credentials: URL userinfo, query and fragment are stripped
-before anything is written to the outbox.
+before anything is written to the outbox, and a hint that still looks
+credential-shaped is dropped.
+
+The harvest is best effort and never blocks synchronization:
+:func:`harvest_release_trailers` turns any failure (git missing, an
+unreadable repository, a failed identity or capability lookup) into a
+``skipped`` result with a reason.  A caller that talks to a server which may
+predate this record type passes ``server_accepts``; when it says no, nothing
+is enqueued and the cursor stays put, so the same commits are harvested once
+the server accepts them.  An observation the server rejects must never enter
+the outbox: every record shares one contiguous origin stream, so it could
+be neither sent nor skipped.
 
 Local (SQLite) mode has no harvest: it has no ingest ledger and no
 synchronization pass (``sprintctl sync`` and ``authority sync`` refuse the
@@ -31,7 +42,6 @@ import re
 import sqlite3
 import subprocess
 from typing import Callable
-from urllib.parse import urlsplit, urlunsplit
 
 from . import contracts, outbox
 
@@ -46,7 +56,11 @@ INITIAL_WINDOW = 500
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 _DIGEST_PREFIX = "sha256:"
-_SCP_LIKE_RE = re.compile(r"^(?:(?P<user>[^@/:]+)@)?(?P<host>[^/:]+):(?P<path>(?!//).*)$")
+_QUERY_OR_FRAGMENT_RE = re.compile(r"[?#]")
+
+_NOT_A_CHECKOUT = "not a git checkout"
+_NO_COMMITS = "repository has no commits"
+_QUIET_SKIPS = frozenset({None, _NOT_A_CHECKOUT, _NO_COMMITS})
 
 _CURSOR_SCHEMA = """
 CREATE TABLE IF NOT EXISTS release_trailer_cursor (
@@ -70,6 +84,11 @@ class HarvestResult:
     malformed_trailers: tuple[dict[str, str], ...] = field(default_factory=tuple)
     cursor: str | None = None
     detail: str | None = None
+
+    @property
+    def noteworthy_skip(self) -> bool:
+        """A skip the operator should hear about (not merely "no checkout")."""
+        return self.status == "skipped" and self.detail not in _QUIET_SKIPS
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -99,20 +118,29 @@ def strip_url_credentials(url: str | None) -> str | None:
 
     Handles scheme URLs (``https://user:token@host/path``) and scp-like git
     remotes (``git@host:owner/repo``).  Local paths pass through unchanged.
+
+    Userinfo is removed *before* cutting at ``?``/``#``: a password may
+    itself contain those characters, and cutting first would keep its prefix.
+    Everything up to the last ``@`` of the remote counts as userinfo.  A
+    result that still matches :func:`contracts.credential_shape` is dropped
+    (``None``): a hint is optional, a leaked credential is not.
     """
     if url is None:
         return None
     text = url.strip()
     if not text:
         return None
-    if "://" in text:
-        parts = urlsplit(text)
-        host = parts.netloc.rpartition("@")[2]
-        return urlunsplit((parts.scheme, host, parts.path, "", ""))
-    scp = _SCP_LIKE_RE.match(text)
-    if scp and not text.startswith(("/", ".", "~")):
-        return f"{scp.group('host')}:{scp.group('path')}"
-    return text
+    if text.startswith(("/", ".", "~")):
+        hint = text
+    elif "://" in text:
+        scheme, _sep, rest = text.partition("://")
+        rest = _QUERY_OR_FRAGMENT_RE.split(rest.rpartition("@")[2], maxsplit=1)[0]
+        hint = f"{scheme}://{rest}"
+    else:
+        hint = _QUERY_OR_FRAGMENT_RE.split(text.rpartition("@")[2], maxsplit=1)[0]
+    if not hint or contracts.credential_shape(hint) is not None:
+        return None
+    return hint
 
 
 def _git(repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -162,7 +190,11 @@ def _already_enqueued(conn: sqlite3.Connection) -> set[tuple[str, str]]:
 
 def _scan(repo_root: Path, revision_args: list[str]) -> list[tuple[str, list[str]]] | None:
     fmt = f"%H%x00%(trailers:key={TRAILER_KEY},valueonly,separator=%x00)%x1e"
-    proc = _git(repo_root, "log", f"--format={fmt}", *revision_args, "--")
+    # ``--no-show-signature``: a user's ``log.showSignature=true`` would
+    # otherwise prefix each record with gpg output and break ``%H`` parsing.
+    proc = _git(
+        repo_root, "log", "--no-show-signature", f"--format={fmt}", *revision_args, "--"
+    )
     if proc.returncode != 0:
         return None
     commits: list[tuple[str, list[str]]] = []
@@ -190,25 +222,52 @@ def harvest_release_trailers(
     *,
     actor: str | Callable[[], str],
     window: int = INITIAL_WINDOW,
+    server_accepts: Callable[[], bool] | None = None,
 ) -> HarvestResult:
     """Enqueue one observation per new (commit, digest) trailer on the HEAD ref.
 
     ``actor`` may be a callable so a served caller resolves the authenticated
-    identity only when there is something to enqueue.  A checkout that is not
-    a git repository (or has no commits) is skipped, never an error.
+    identity only when there is something to enqueue; ``server_accepts`` is
+    consulted the same way, before ``actor``.  A checkout that is not a git
+    repository (or has no commits) is skipped, and so is any failure: this
+    never raises, so a broken harvest cannot abort the synchronization that
+    runs it.
     """
+    try:
+        return _harvest(
+            conn, repo_root, actor=actor, window=window, server_accepts=server_accepts
+        )
+    except Exception as exc:  # noqa: BLE001 - best effort; sync must go on
+        return HarvestResult("skipped", detail=f"harvest failed: {_failure(exc)}")
+
+
+def _failure(exc: BaseException) -> str:
+    text = f"{type(exc).__name__}: {exc}".strip()
+    if contracts.credential_shape(text) is not None:
+        return f"{type(exc).__name__}: <redacted credential-shaped detail>"
+    return text[:300]
+
+
+def _harvest(
+    conn: sqlite3.Connection,
+    repo_root: Path,
+    *,
+    actor: str | Callable[[], str],
+    window: int,
+    server_accepts: Callable[[], bool] | None,
+) -> HarvestResult:
     # Only the checkout that owns this state: never scan an enclosing repo.
     if not (repo_root / ".git").exists():
-        return HarvestResult("skipped", detail="not a git checkout")
+        return HarvestResult("skipped", detail=_NOT_A_CHECKOUT)
     toplevel = _git(repo_root, "rev-parse", "--show-toplevel")
     if (
         toplevel.returncode != 0
         or Path(toplevel.stdout.strip()).resolve() != repo_root.resolve()
     ):
-        return HarvestResult("skipped", detail="not a git checkout")
+        return HarvestResult("skipped", detail=_NOT_A_CHECKOUT)
     head = _git(repo_root, "rev-parse", "--verify", "-q", "HEAD^{commit}")
     if head.returncode != 0:
-        return HarvestResult("skipped", detail="repository has no commits")
+        return HarvestResult("skipped", detail=_NO_COMMITS)
     head_sha = head.stdout.strip()
     symbolic = _git(repo_root, "symbolic-ref", "-q", "HEAD")
     ref = symbolic.stdout.strip() if symbolic.returncode == 0 else "HEAD"
@@ -257,6 +316,20 @@ def harvest_release_trailers(
                 }
             )
 
+    if pending and server_accepts is not None and not server_accepts():
+        # Cursor deliberately not advanced: harvested once the server rolls.
+        return HarvestResult(
+            "skipped",
+            ref=ref,
+            scanned_commits=len(commits),
+            malformed=len(malformed),
+            malformed_trailers=tuple(malformed),
+            cursor=cursor,
+            detail=(
+                f"server does not accept {EVENT_TYPE} observations yet; "
+                f"{len(pending)} trailer(s) left for a later sync"
+            ),
+        )
     if pending:
         resolved_actor = actor() if callable(actor) else actor
         for payload in pending:
