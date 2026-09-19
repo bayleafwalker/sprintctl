@@ -159,7 +159,7 @@ git commit -m "chore: backlog snapshot after knowledge seed"
 ## Pipeline summary
 
 ```
-sprintctl events
+sprintctl event store
   durable + coordination signals
         │
         │  kctl reads (never writes)

@@ -31,9 +31,9 @@ an explicit promotion gate.
 (see [`adr-outbox-sync-model.md`](../plans/adr-outbox-sync-model.md)). It
 never decides to promote a repository by itself — `promotable` is evidence
 for an operator-directed decision, the same posture
-[`capability-receipts.md`](capability-receipts.md) documents for capability
-receipts. Item #1164 ("retire split backend mode") depends on this evidence
-but is explicitly out of scope here.
+[`authority-commands.md`](../guides/authority-commands.md) documents for the
+now-retired capability-receipt commands. Item #1164 ("retire split backend
+mode") depends on this evidence but is explicitly out of scope here.
 
 ## Running the dogfood
 
