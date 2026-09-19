@@ -1364,7 +1364,7 @@ def item_note(
     click.echo(f"Recorded note #{eid} ({note_type}) on item #{item_id}: {summary}")
 
 
-def _served_item_status(config, item_id, new_status, actor, as_json) -> None:
+def _served_item_status(config, item_id, new_status, actor, reason, as_json) -> None:
     """Run one immutable served item transition through its revision basis."""
     context = _resolved_context(config)
 
@@ -1372,7 +1372,7 @@ def _served_item_status(config, item_id, new_status, actor, as_json) -> None:
     record_type = "item.done" if new_status == "done" else "item.transition"
     durable = _find_pending_served_item_status_record(
         rollout_paths.outbox_path, record_type=record_type,
-        item_id=item_id, to_status=new_status,
+        item_id=item_id, to_status=new_status, reason=reason,
     )
     if durable is not None:
         command = _contracts.record_from_dict(durable.payload)
@@ -1399,6 +1399,8 @@ def _served_item_status(config, item_id, new_status, actor, as_json) -> None:
 
     if durable is None:
         payload: dict[str, object] = {"to_status": new_status}
+        if new_status == "pending":
+            payload["reason"] = reason
         try:
             durable = _mint_authority_command_record(
                 record_type=record_type, actor=actor_value,
@@ -1454,6 +1456,13 @@ def _served_item_status(config, item_id, new_status, actor, as_json) -> None:
 )
 @click.option("--actor", default=None, help="Actor name")
 @click.option(
+    "--reason",
+    default=None,
+    type=click.Choice(_db.RELEASE_REASONS),
+    help="Required with --status pending: why the item is being released "
+    f"({', '.join(_db.RELEASE_REASONS)}).",
+)
+@click.option(
     "--expected-revision",
     default=None,
     help="Required expected item status revision for direct local transitions",
@@ -1461,7 +1470,7 @@ def _served_item_status(config, item_id, new_status, actor, as_json) -> None:
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output status transition as JSON")
 @click.pass_obj
 def item_status(
-    obj, item_id: str, new_status, actor, expected_revision, as_json
+    obj, item_id: str, new_status, actor, reason, expected_revision, as_json
 ) -> None:
     """Update an item's status through an ordinary CAS transition."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
@@ -1474,7 +1483,7 @@ def item_status(
                 err=True,
             )
             sys.exit(1)
-        _served_item_status(config, item_id, new_status, actor, as_json)
+        _served_item_status(config, item_id, new_status, actor, reason, as_json)
         return
     if expected_revision is None:
         raise click.UsageError("Missing option '--expected-revision' for direct item status.")
@@ -1491,6 +1500,8 @@ def item_status(
             new_status,
             actor=actor,
             expected_revision=expected_revision,
+            reason=reason,
+            session_id=_reservation.ambient_session_id(),
         )
     except (_db.InvalidTransition, _db.StatusConflict, ValueError) as e:
         click.echo(f"Error: {e}", err=True)

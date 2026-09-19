@@ -237,6 +237,36 @@ sprintctl item decide --id 7 --kind revise --rationale "Review asked for an API 
   decision with no rationale, and still requires `--expected-revision` on a
   direct backend.
 
+### Releasing an item back to pending
+
+An `active` or `blocked` item that cannot proceed under the current session
+goes back to `pending` -- not `blocked` -- so the ready queue offers it again:
+
+```bash
+sprintctl item status --id 7 --status pending --reason rework \
+  --expected-revision "$REV"
+```
+
+- `--reason` is required for this transition and must be one of `rework`
+  (send it back for another pass), `partial` (some progress landed but the
+  item is not done), or `abandoned` (the attempt is being dropped). Every
+  other `item status` transition keeps its existing signature; `--reason` on
+  any of them is rejected.
+- The transition releases any reservation the caller's own session holds on
+  the item in the same step -- there is nothing further to release
+  separately, unlike the decide-then-release sequence in
+  [Completing the item](#5a-complete-the-item). If the caller holds no
+  reservation, the transition still succeeds.
+- It emits an `item-released` event carrying the `reason` and the item's
+  `previous_status`, visible in `sprintctl event list`, so lane first-pass
+  and rework metrics can be derived from events rather than inferred.
+- `pending -> done` is still rejected; `done` stays terminal.
+- This transition is also available over the served authority path
+  (`sprintctl item status` against a served repo, through
+  `work.lifecycle.arbitrate`); the served authority matches the caller's
+  reservation by the authenticated actor identity instead of a session id,
+  since a served command carries no client session.
+
 ---
 
 ## 5b. Hand off to the next session (work continues)

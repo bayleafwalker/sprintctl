@@ -56,10 +56,16 @@ class InvalidTransition(ValueError):
 
 VALID_TRANSITIONS: dict[str, set[str]] = {
     "pending": {"active"},
-    "active": {"done", "blocked"},
+    "active": {"done", "blocked", "pending"},
     "done": set(),
-    "blocked": {"active"},
+    "blocked": {"active", "pending"},
 }
+
+#: Reasons accepted on an active/blocked -> pending release transition.  A
+#: release without one of these is unattributable rework and is refused --
+#: the ready queue and lane metrics both depend on knowing why an item came
+#: back rather than merely that it did.
+RELEASE_REASONS: tuple[str, ...] = ("rework", "partial", "abandoned")
 
 SPRINT_TRANSITIONS: dict[str, set[str]] = {
     "planned": {"active"},
@@ -1554,6 +1560,42 @@ def list_work_items(
     return _workitemcore.list_work_items(_WorkItemSqlite(conn), sprint_id, track_name, status)
 
 
+def _release_caller_reservations_locked(
+    conn: sqlite3.Connection, item: dict, *, session_id: str | None, actor: str
+) -> list[int]:
+    """Release the caller's own active reservations on ``item``, in-transaction.
+
+    Only the session named by ``session_id`` matches -- never a bare actor
+    name, matching :func:`note_session_activity`.  No session is not an
+    error: the caller may hold no reservation at all, and the transition
+    still succeeds.
+    """
+    if not session_id:
+        return []
+    item_id = int(item["id"])
+    rows = [
+        dict(row) for row in conn.execute(
+            "SELECT * FROM reservation WHERE work_item_id = ? AND session_id = ? AND state = 'active'",
+            (item_id, session_id),
+        ).fetchall()
+    ]
+    if not rows:
+        return []
+    now = _reservation.now_text()
+    conn.execute(
+        "UPDATE reservation SET state = 'released', released_at = ?, last_activity_at = ? "
+        "WHERE work_item_id = ? AND session_id = ? AND state = 'active'",
+        (now, now, item_id, session_id),
+    )
+    for row in rows:
+        _insert_event(
+            conn, int(item["sprint_id"]), actor, "reservation.released",
+            source_type="system", work_item_id=item_id,
+            payload={"reservation_id": row["id"]},
+        )
+    return [row["id"] for row in rows]
+
+
 def set_work_item_status(
     conn: sqlite3.Connection,
     item_id: int,
@@ -1561,6 +1603,8 @@ def set_work_item_status(
     actor: str | None = None,
     *,
     expected_revision: str | None = None,
+    reason: str | None = None,
+    session_id: str | None = None,
 ) -> None:
     if expected_revision is not None:
         expected_revision = validate_item_status_revision(expected_revision)
@@ -1585,6 +1629,16 @@ def set_work_item_status(
             raise InvalidTransition(
                 f"cannot transition {current} -> {new_status}. Allowed: {allowed}"
             )
+        if new_status == "pending":
+            if reason not in RELEASE_REASONS:
+                raise InvalidTransition(
+                    f"cannot transition {current} -> pending without --reason in "
+                    f"{sorted(RELEASE_REASONS)}"
+                )
+        elif reason is not None:
+            raise InvalidTransition(
+                "--reason is only accepted when the target status is pending"
+            )
         if new_status == "active":
             unresolved = [
                 blocker for blocker in list_deps_blocking(conn, item_id)
@@ -1606,6 +1660,20 @@ def set_work_item_status(
             wi.execute(
                 f"UPDATE work_item SET status = ?, updated_at = {wi.updated_at_sql} WHERE id = ?",
                 (new_status, item_id),
+            )
+        if new_status == "pending":
+            actor_value = actor or "sprintctl"
+            released_ids = _release_caller_reservations_locked(
+                conn, item, session_id=session_id, actor=actor_value
+            )
+            _insert_event(
+                conn, int(item["sprint_id"]), actor_value, "item-released",
+                source_type="system", work_item_id=item_id,
+                payload={
+                    "reason": reason,
+                    "previous_status": current,
+                    "released_reservation_ids": released_ids,
+                },
             )
         wi.commit()
     except Exception:

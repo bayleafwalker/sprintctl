@@ -71,6 +71,7 @@ from .eventcore import (
 )
 from .db import (
     VALID_TRANSITIONS,
+    RELEASE_REASONS,
     SPRINT_TRANSITIONS,
     SPRINT_KINDS,
     REF_TYPES,
@@ -2920,6 +2921,43 @@ def list_work_items(
     return _workitemcore.list_work_items(_WorkItemPg(store), sprint_id, track_name, status)
 
 
+def _release_caller_reservations_locked(
+    store: PgStore, item: Any, *, session_id: str | None, actor: str
+) -> list[int]:
+    """Release the caller's own active reservations on ``item``, in-transaction.
+
+    Mirrors :func:`sprintctl.db._release_caller_reservations_locked`: only the
+    session named by ``session_id`` matches, and no session held is not an
+    error -- the transition still succeeds.
+    """
+    if not session_id:
+        return []
+    item_id = int(item["id"])
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM reservation WHERE repo_id = %s AND work_item_id = %s "
+            "AND session_id = %s AND state = 'active'",
+            (store.repo_id, item_id, session_id),
+        )
+        rows = [dict(row) for row in cur.fetchall()]
+    if not rows:
+        return []
+    now = _reservation.now_text()
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE reservation SET state = 'released', released_at = %s, last_activity_at = %s "
+            "WHERE repo_id = %s AND work_item_id = %s AND session_id = %s AND state = 'active'",
+            (now, now, store.repo_id, item_id, session_id),
+        )
+    for row in rows:
+        _insert_event(
+            store, int(item["sprint_id"]), actor, "reservation.released",
+            source_type="system", work_item_id=item_id,
+            payload={"reservation_id": row["id"]},
+        )
+    return [row["id"] for row in rows]
+
+
 def set_work_item_status(
     store: PgStore,
     item_id: int,
@@ -2927,6 +2965,8 @@ def set_work_item_status(
     actor: str | None = None,
     *,
     expected_revision: str | None = None,
+    reason: str | None = None,
+    session_id: str | None = None,
 ) -> None:
     if expected_revision is not None:
         expected_revision = validate_item_status_revision(expected_revision)
@@ -2950,6 +2990,16 @@ def set_work_item_status(
             raise InvalidTransition(
                 f"cannot transition {current} -> {new_status}. Allowed: {allowed}"
             )
+        if new_status == "pending":
+            if reason not in RELEASE_REASONS:
+                raise InvalidTransition(
+                    f"cannot transition {current} -> pending without --reason in "
+                    f"{sorted(RELEASE_REASONS)}"
+                )
+        elif reason is not None:
+            raise InvalidTransition(
+                "--reason is only accepted when the target status is pending"
+            )
         if new_status == "active":
             unresolved = [
                 b for b in list_deps_blocking(store, item_id) if b["blocker_status"] != "done"
@@ -2970,6 +3020,20 @@ def set_work_item_status(
             wi.execute(
                 f"UPDATE work_item SET status = %s, updated_at = {wi.updated_at_sql} WHERE repo_id = %s AND id = %s",
                 (new_status, store.repo_id, item_id),
+            )
+        if new_status == "pending":
+            actor_value = actor or "sprintctl"
+            released_ids = _release_caller_reservations_locked(
+                store, item, session_id=session_id, actor=actor_value
+            )
+            _insert_event(
+                store, int(item["sprint_id"]), actor_value, "item-released",
+                source_type="system", work_item_id=item_id,
+                payload={
+                    "reason": reason,
+                    "previous_status": current,
+                    "released_reservation_ids": released_ids,
+                },
             )
         wi.commit()
     except Exception:
