@@ -285,6 +285,7 @@ class DecisionOperationContract:
         assert (picked["id"], picked["release_digest"]) == (released, digest)
         assert {name: c["count"] for name, c in categories.items()} == {
             "legacy_done": 1, "decided_unreleased": 1, "released_undecided": 1,
+            "accepted_without_evidence": 0,
         }
         assert open_item not in {
             i["id"] for c in categories.values() for i in c["items"]
@@ -325,6 +326,77 @@ class DecisionOperationContract:
             with pytest.raises(ApplicationRejection) as rejected:
                 env.invoke("work.read.unbound", arguments)
             assert rejected.value.http_status == status, arguments
+
+    def _item_in_sprint(self, env, sprint_id, track_id, title):
+        item_id = env.backend.create_work_item(env.store, sprint_id, track_id, title)
+        env.backend.set_work_item_status(env.store, item_id, "active")
+        return item_id
+
+    def test_accepted_without_evidence_reports_never_blocks(self, env):
+        anchor = env.new_item()
+        item = env.backend.get_work_item(env.store, anchor)
+        sprint_id, track_id = item["sprint_id"], item["track_id"]
+
+        # ``item status --status done`` is the accept alias (TS-5): it takes
+        # the item's default review-required release with no evidence.
+        alias_item = self._item_in_sprint(env, sprint_id, track_id, "alias accept")
+        alias_digest = env.reserve(alias_item)
+        env.backend.set_work_item_status(env.store, alias_item, "done", actor="agent")
+
+        # An explicit accept that also names no evidence takes the same
+        # obligation through the other door.
+        explicit_item = self._item_in_sprint(env, sprint_id, track_id, "explicit accept")
+        env.reserve(explicit_item)
+        explicit_decision = env.decide(explicit_item, "accept", evidence_digests=[])[
+            "decision"
+        ]
+
+        # An explicit accept carrying evidence satisfies the obligation and
+        # must not appear.
+        evidenced_item = self._item_in_sprint(env, sprint_id, track_id, "evidenced accept")
+        env.reserve(evidenced_item)
+        env.decide(evidenced_item, "accept")
+
+        result = env.invoke(
+            "work.read.unbound",
+            {"sprint_id": sprint_id, "category": "accepted_without_evidence"},
+        )
+        section = result["categories"]["accepted_without_evidence"]
+        rows = {row["id"]: row for row in section["items"]}
+        assert alias_item in rows and explicit_item in rows
+        assert evidenced_item not in rows
+        assert (rows[alias_item]["release_digest"], rows[alias_item]["accept_path"]) == (
+            alias_digest, "alias",
+        )
+        assert (
+            rows[explicit_item]["decision_id"], rows[explicit_item]["accept_path"]
+        ) == (explicit_decision["id"], "explicit")
+        # The write itself is never refused: both accepts above closed their
+        # items normally.
+        for item_id in (alias_item, explicit_item, evidenced_item):
+            assert env.backend.get_work_item(env.store, item_id)["status"] == "done"
+
+    def test_one_alias_accept_and_one_evidenced_explicit_accept_is_one_row(self, env):
+        anchor = env.new_item()
+        item = env.backend.get_work_item(env.store, anchor)
+        sprint_id, track_id = item["sprint_id"], item["track_id"]
+
+        alias_item = self._item_in_sprint(env, sprint_id, track_id, "alias accept")
+        env.reserve(alias_item)
+        env.backend.set_work_item_status(env.store, alias_item, "done", actor="agent")
+
+        evidenced_item = self._item_in_sprint(env, sprint_id, track_id, "evidenced accept")
+        env.reserve(evidenced_item)
+        env.decide(evidenced_item, "accept")
+
+        result = env.invoke(
+            "work.read.unbound",
+            {"sprint_id": sprint_id, "category": "accepted_without_evidence"},
+        )
+        section = result["categories"]["accepted_without_evidence"]
+        assert section["count"] == 1
+        [row] = section["items"]
+        assert (row["id"], row["accept_path"]) == (alias_item, "alias")
 
     def test_notes_cannot_pose_as_decisions(self, env):
         item_id = env.new_item()
