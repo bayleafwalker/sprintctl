@@ -20,6 +20,7 @@ from vuoro_adapter_kit import (
 
 from . import decisions as _decisions
 from .application import (
+    SUPPORTED_BATCH_TYPES,
     ApplicationRejection,
     ProjectWorkApplication,
     WorkApplication,
@@ -126,6 +127,34 @@ _BATCH_INPUT = _object_schema(
     },
     required=("records",),
     definitions={"record": _RECORD_DEFINITION},
+)
+# ``work.batch.apply`` advertises the record types it accepts, so a newer
+# client can see in the (unauthenticated) catalog whether this server knows
+# a record type before minting one into its contiguous outbox stream
+# (``sprintctl.served.batch_record_types``).  The server's own
+# ``record-type-not-allowed`` check (``SUPPORTED_BATCH_TYPES``) is unchanged.
+_BATCH_APPLY_INPUT = _object_schema(
+    {
+        "records": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"$ref": "#/$defs/record"},
+        }
+    },
+    required=("records",),
+    definitions={
+        "record": {
+            **_RECORD_DEFINITION,
+            "properties": {
+                **_RECORD_DEFINITION["properties"],
+                "event_type": {
+                    "type": "string",
+                    "minLength": 1,
+                    "enum": sorted(SUPPORTED_BATCH_TYPES),
+                },
+            },
+        }
+    },
 )
 
 _DECISION_RESULT = _result_schema(
@@ -829,7 +858,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
     ),
     WorkOperationContract(
         "work.batch.apply",
-        _BATCH_INPUT,
+        _BATCH_APPLY_INPUT,
         _REPO_RESULTS,
         "work:batch",
         "write",

@@ -57,6 +57,31 @@ There is no token or secret. The reservation is advisory: another session can
 still create a reservation on the same item, and the overlap will be visible in
 `usage --context` and `reservation list`.
 
+### Mark delivering commits with `Vuoro-Release`
+
+An execution reservation freezes the item's current release. Every commit
+that delivers that release carries its digest as a git trailer, on its own
+line in the trailer block at the end of the commit message:
+
+```
+feat(auth): rotate session keys
+
+Vuoro-Release: <64-hex digest>
+```
+
+A `sha256:` prefix on the digest is also accepted. To find the digest:
+
+- `sprintctl reservation reserve` prints `commit trailer: Vuoro-Release: <digest>`
+  (JSON: `.release_digest`);
+- `sprintctl item show --id 7` lists it as `release=<digest>` under the
+  active execution reservation (JSON: `.active_reservations[].release_digest`);
+- the served `work.read.release` operation returns the item's current release.
+
+A commit may carry several `Vuoro-Release:` trailers when it delivers several
+releases. `sprintctl sync` and `sprintctl authority sync` harvest the trailers
+(see [normal synchronization](normal-sync.md#vuoro-release-trailer-harvest)).
+Malformed values are reported and skipped, never uploaded.
+
 ### Coordinator + sub-agent pattern
 
 ```bash

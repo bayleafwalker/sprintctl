@@ -921,6 +921,40 @@ def _advance_ingest_repo_cursor(cur: Any, store: PgStore, highest_offset: int) -
     )
 
 
+_RELEASE_COMMIT_OBSERVED = "release.commit-observed"
+
+
+def _bind_release_commit_observation(cur: Any, store: PgStore, payload: Any) -> None:
+    """Record a harvested ``Vuoro-Release`` trailer against a known release.
+
+    Idempotent (``ON CONFLICT DO NOTHING``).  A digest that is not a release
+    of this repository, or a payload of the wrong form, binds nothing: the
+    observation stays only as its ingest record (surfaced later as unbound)
+    and never fails the batch.
+    """
+    if not isinstance(payload, dict):
+        return
+    try:
+        digest = _releases.validate_digest(payload.get("release_digest"))
+        commit_sha = _releases.validate_commit_sha(payload.get("commit_sha"))
+    except ValueError:
+        return
+    ref = payload.get("ref") if isinstance(payload.get("ref"), str) else None
+    remote_hint = (
+        payload.get("remote_hint") if isinstance(payload.get("remote_hint"), str) else None
+    )
+    cur.execute(
+        """
+        INSERT INTO release_commit (repo_id, release_digest, commit_sha, remote_hint, ref)
+        SELECT wr.repo_id, wr.release_digest, %s, %s, %s
+        FROM work_release wr
+        WHERE wr.repo_id = %s AND wr.release_digest = %s
+        ON CONFLICT (repo_id, release_digest, commit_sha) DO NOTHING
+        """,
+        (commit_sha, remote_hint, ref, store.repo_id, digest),
+    )
+
+
 def ingest_records(store: PgStore, records: list[outbox.OutboxRecord]) -> list[IngestResult]:
     """Atomically admit contiguous producer records into the remote ledger.
 
@@ -1013,6 +1047,8 @@ def ingest_records(store: PgStore, records: list[outbox.OutboxRecord]) -> list[I
                 )
                 high_water[record.origin_stream_id] = record.origin_seq
                 result = _ingested_record_from_row(inserted)
+                if record.event_type == _RELEASE_COMMIT_OBSERVED:
+                    _bind_release_commit_observation(cur, store, record.payload)
                 results.append(IngestResult(result.record, result.ingest_offset, duplicate=False))
             if next_offset != cursor_start:
                 _advance_ingest_repo_cursor(cur, store, next_offset)

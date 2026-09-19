@@ -218,6 +218,11 @@ def _echo(value, as_json: bool) -> None:
             click.echo(f"#{row['id']} item #{row['work_item_id']} {row['actor']} {row['state']}")
     else:
         click.echo(f"Reservation #{value['id']} on item #{value['work_item_id']}: {value['state']}")
+        if value.get("release_digest"):
+            # Commits delivering this reservation's release carry it as a
+            # ``Vuoro-Release:`` trailer (harvested at sync).
+            click.echo(f"  release: {value['release_digest']}")
+            click.echo(f"  commit trailer: Vuoro-Release: {value['release_digest']}")
         for other in value.get("conflicting_reservations") or []:
             click.echo(
                 f"  conflict: reservation #{other['id']} {other['role']} held by "

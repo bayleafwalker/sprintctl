@@ -40,6 +40,7 @@ from .. import pg as _pg
 from .. import project as _project
 from .. import projection as _projection
 from .. import projection_reads as _projection_reads
+from .. import release_trailers as _release_trailers
 from .. import served as _served
 from .. import served_routes as _served_routes
 from .. import sync as _sync
@@ -1275,6 +1276,21 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
     rollout_paths = _authority_config.authority_command_paths(cwd=Path.cwd())
     producer = _outbox.open_outbox(rollout_paths.outbox_path)
     try:
+        # Only when a new Vuoro-Release trailer is actually being enqueued:
+        # first ask the catalog whether this server accepts the record type
+        # (an older server would reject it, and an outbox record can be
+        # neither sent nor skipped), then resolve the authenticated identity
+        # observations must carry.  Both are called directly, not through
+        # ``_run_served`` (which exits): any failure only skips the harvest.
+        harvest = _release_trailers.harvest_release_trailers(
+            producer,
+            rollout_paths.repo_root,
+            server_accepts=lambda: _release_trailers.EVENT_TYPE
+            in (_served.batch_record_types(config.served_profile) or ()),
+            actor=lambda: _served.identity_current(
+                config.served_profile, repo_id=config.repo_id
+            )["actor"],
+        )
         records = _outbox.list_records(producer)
     finally:
         producer.close()
@@ -1345,6 +1361,7 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
         # payload contract admits proof material.
         "pending_command_event_ids": [],
         "unsupported_command_event_ids": unsupported_event_ids,
+        "release_trailers": harvest.to_dict(),
     }
     if as_json:
         click.echo(json.dumps(payload, indent=2))
@@ -1354,6 +1371,7 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
             f"{len(decisions)} decisions, {len(payload['pending_command_event_ids'])} pending, "
             f"{len(unsupported_event_ids)} unsupported."
         )
+        _echo_release_harvest(harvest)
         if unsupported_event_ids:
             click.echo(
                 "these authority commands are not supported over the served batch "
@@ -1409,9 +1427,33 @@ def sync_cmd(obj, batch_size: int, as_json: bool) -> None:
         "watermark": result.watermark.ingest_offset,
         "decision_applied_count": result.decision_applied_count,
     }
+    if result.release_harvest is not None:
+        payload["release_trailers"] = result.release_harvest.to_dict()
     click.echo(json.dumps(payload, indent=2) if as_json else (
         f"Synchronized {payload['uploaded']} records; watermark {payload['watermark']}."
     ))
+    if not as_json and result.release_harvest is not None:
+        _echo_release_harvest(result.release_harvest)
+
+
+def _echo_release_harvest(harvest) -> None:
+    """One line on harvested Vuoro-Release trailers; malformed ones and a
+    noteworthy skip (harvest failure, server without support) to stderr."""
+    if harvest.noteworthy_skip:
+        click.echo(f"Release trailers: skipped ({harvest.detail}).", err=True)
+        return
+    if harvest.status != "harvested":
+        return
+    click.echo(
+        f"Release trailers: {harvest.enqueued} enqueued, "
+        f"{harvest.malformed} malformed (skipped) on {harvest.ref}."
+    )
+    for item in harvest.malformed_trailers:
+        click.echo(
+            f"  malformed Vuoro-Release trailer on {item['commit_sha'][:12]}: "
+            f"{item['value']!r}",
+            err=True,
+        )
 
 
 

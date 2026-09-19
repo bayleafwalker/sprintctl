@@ -69,6 +69,7 @@ SPRINTCTL_RECORD_TYPE_CLASSES: dict[str, RecordClass] = {
     "work.completed": RecordClass.OBSERVATION,
     SESSION_CAPSULE_RECORDED_EVENT_TYPE: RecordClass.OBSERVATION,
     "doc-ref.added": RecordClass.OBSERVATION,
+    "release.commit-observed": RecordClass.OBSERVATION,
     "command.requested": RecordClass.AUTHORITY_COMMAND,
     "item.done": RecordClass.AUTHORITY_COMMAND,
     "item.transition": RecordClass.AUTHORITY_COMMAND,
