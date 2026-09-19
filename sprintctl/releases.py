@@ -92,10 +92,27 @@ def basis_matches(expected_revision: str, current_release_revision: str) -> bool
 
 
 def normalize_acceptance_contract(contract: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Validate and canonicalize an acceptance contract.
+
+    ``evidence_obligations`` (TS-12/#2446) is an optional list of non-empty
+    strings naming the evidence a Release owes -- free-form labels such as
+    ``"test-run"`` or ``"review"``.  Absent or empty means none declared.
+    Nothing in the schema requires it; ``unmet_obligations`` below reports
+    against it, and no lifecycle transition or validator consults it.
+    """
     if contract is None:
         return dict(DEFAULT_ACCEPTANCE_CONTRACT)
     if not isinstance(contract, Mapping):
         raise ValueError("acceptance_contract must be an object")
+    if "evidence_obligations" in contract:
+        obligations = contract["evidence_obligations"]
+        if not isinstance(obligations, list) or not all(
+            isinstance(label, str) and label.strip() for label in obligations
+        ):
+            raise ValueError(
+                "acceptance_contract.evidence_obligations must be a list of "
+                "non-empty strings"
+            )
     normalized = json.loads(canonical_json(dict(contract)))
     if not isinstance(normalized, dict):
         raise ValueError("acceptance_contract must be an object")

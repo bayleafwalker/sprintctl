@@ -389,3 +389,96 @@ class TestMigration24:
         db.set_work_item_status(conn, item_id, "active")
         assert _reserve(conn, item_id)["release_digest"] is not None
         conn.close()
+
+
+class TestAcceptanceContractEvidenceObligations:
+    """#2446: a Release may declare the evidence it owes; nothing blocks on it."""
+
+    def test_normalize_rejects_a_non_list(self):
+        with pytest.raises(ValueError, match="evidence_obligations"):
+            releases.normalize_acceptance_contract({"evidence_obligations": "test-run"})
+
+    def test_normalize_rejects_an_empty_string_label(self):
+        with pytest.raises(ValueError, match="evidence_obligations"):
+            releases.normalize_acceptance_contract({"evidence_obligations": ["test-run", ""]})
+
+    def test_normalize_accepts_absent_or_empty(self):
+        assert "evidence_obligations" not in releases.normalize_acceptance_contract(None)
+        contract = releases.normalize_acceptance_contract({"evidence_obligations": []})
+        assert contract["evidence_obligations"] == []
+
+    def test_normalize_accepts_a_list_of_labels(self):
+        contract = releases.normalize_acceptance_contract(
+            {"evidence_obligations": ["test-run", "ci-check"]}
+        )
+        assert contract["evidence_obligations"] == ["test-run", "ci-check"]
+
+    def test_unmet_obligations_empty_list_for_a_release_without_the_key(self, conn):
+        item_id = _item(conn)
+        digest = _reserve(conn, item_id)["release_digest"]
+        db.record_decision(conn, item_id, "accept", actor="owner")
+        assert db.unmet_obligations(conn, digest) == []
+
+    def test_unmet_obligations_never_raises_for_an_unknown_digest(self, conn):
+        assert db.unmet_obligations(conn, "a" * 64) == []
+
+    def test_unmet_obligations_met(self, conn):
+        item_id = _item(conn)
+        digest = _reserve(
+            conn, item_id, acceptance_contract={"evidence_obligations": ["test-run"]}
+        )["release_digest"]
+        db.record_decision(
+            conn, item_id, "accept", actor="owner", evidence_digests=["a" * 64]
+        )
+        assert db.unmet_obligations(conn, digest) == []
+
+    def test_unmet_obligations_unmet(self, conn):
+        item_id = _item(conn)
+        digest = _reserve(
+            conn, item_id, acceptance_contract={"evidence_obligations": ["test-run", "review"]}
+        )["release_digest"]
+        decision = db.record_decision(conn, item_id, "accept", actor="owner")
+        assert db.unmet_obligations(conn, digest) == [
+            {
+                "item_id": item_id,
+                "decision_id": decision["id"],
+                "release_digest": digest,
+                "unmet": ["test-run", "review"],
+            }
+        ]
+
+    def test_unmet_obligations_undeclared(self, conn):
+        item_id = _item(conn)
+        digest = _reserve(conn, item_id)["release_digest"]
+        db.record_decision(conn, item_id, "accept", actor="owner")
+        assert db.unmet_obligations(conn, digest) == []
+
+    def test_list_unmet_obligations_reports_only_the_unmet_release(self, conn):
+        met_item = _item(conn, "met")
+        met_digest = _reserve(
+            conn, met_item, acceptance_contract={"evidence_obligations": ["review"]}
+        )["release_digest"]
+        db.record_decision(
+            conn, met_item, "accept", actor="owner", evidence_digests=["b" * 64]
+        )
+        unmet_item = _item(conn, "unmet")
+        unmet_digest = _reserve(
+            conn, unmet_item, acceptance_contract={"evidence_obligations": ["review"]}
+        )["release_digest"]
+        unmet_decision = db.record_decision(conn, unmet_item, "accept", actor="owner")
+        undeclared_item = _item(conn, "undeclared")
+        _reserve(conn, undeclared_item)
+        db.record_decision(conn, undeclared_item, "accept", actor="owner")
+
+        report = db.list_unmet_obligations(conn)
+        assert report["count"] == 1
+        assert report["items"] == [
+            {
+                "item_id": unmet_item,
+                "decision_id": unmet_decision["id"],
+                "release_digest": unmet_digest,
+                "unmet": ["review"],
+            }
+        ]
+        assert met_digest not in {row["release_digest"] for row in report["items"]}
+
