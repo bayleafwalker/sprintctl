@@ -461,21 +461,32 @@ class TestAcceptanceContractEvidenceObligations:
         assert pg.unmet_obligations(store, digest) == []
 
     def test_list_unmet_obligations_reports_only_the_unmet_release(self, store):
-        met_item = _item(store, "met")
+        # The pg ``store`` fixture is module-scoped, so scope the report to a
+        # sprint of this test's own making; an unfiltered report would also
+        # carry the releases the tests above declared.
+        sprint_id = pg.create_sprint(store, f"Releases-{_uid()}", status="active")
+        track_id = pg.get_or_create_track(store, sprint_id, "releases")
+
+        def _sprint_item(title):
+            item_id = pg.create_work_item(store, sprint_id, track_id, f"{title} {_uid()}")
+            pg.set_work_item_status(store, item_id, "active")
+            return item_id
+
+        met_item = _sprint_item("met")
         met_digest = _reserve(
             store, met_item, acceptance_contract={"evidence_obligations": ["review"]}
         )["release_digest"]
         pg.record_decision(store, met_item, "accept", actor="owner", evidence_digests=["b" * 64])
-        unmet_item = _item(store, "unmet")
+        unmet_item = _sprint_item("unmet")
         unmet_digest = _reserve(
             store, unmet_item, acceptance_contract={"evidence_obligations": ["review"]}
         )["release_digest"]
         unmet_decision = pg.record_decision(store, unmet_item, "accept", actor="owner")
-        undeclared_item = _item(store, "undeclared")
+        undeclared_item = _sprint_item("undeclared")
         _reserve(store, undeclared_item)
         pg.record_decision(store, undeclared_item, "accept", actor="owner")
 
-        report = pg.list_unmet_obligations(store)
+        report = pg.list_unmet_obligations(store, sprint_id=sprint_id)
         assert report["count"] == 1
         assert report["items"] == [
             {
