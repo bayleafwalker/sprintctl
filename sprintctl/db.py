@@ -1135,7 +1135,8 @@ def _migration_25(conn: sqlite3.Connection) -> None:
     written first, with a rationale and at least one evidence digest, that is
     not a folded legacy decision.  The item stays done, and the bound decision
     is immutable (``work_item_terminal_immutable``), so the re-mark is
-    one-shot.
+    one-shot.  The legacy import gate's release-guard exemption is narrowed
+    to decisions about legacy rows.
     """
     conn.execute("DROP TRIGGER IF EXISTS work_item_legacy_done_takes_no_decision")
     conn.execute("DROP TRIGGER IF EXISTS work_item_legacy_done_remark")
@@ -1146,11 +1147,53 @@ def _migration_25(conn: sqlite3.Connection) -> None:
         "OLD.legacy = 1 AND EXISTS (SELECT 1 FROM work_decision d "
         "WHERE d.id = NEW.terminal_decision_id AND d.work_item_id = OLD.id "
         "AND d.kind IN ('accept', 'reject', 'withdraw', 'supersede') "
-        "AND d.legacy_source IS NULL AND trim(d.rationale) <> '' "
-        "AND json_array_length(d.evidence_digests) > 0)) "
+        "AND d.legacy_source IS NULL "
+        # Blank means only whitespace, tabs, newlines and no-break spaces.
+        "AND trim(d.rationale, ' ' || char(9, 10, 11, 12, 13, 160)) <> '' "
+        # Every evidence element is a SHA-256 digest.
+        "AND json_array_length(d.evidence_digests) > 0 "
+        "AND NOT EXISTS (SELECT 1 FROM json_each(d.evidence_digests) e "
+        "WHERE e.type <> 'text' OR length(e.value) <> 64 "
+        "OR e.value GLOB '*[^0-9a-f]*'))) "
         "BEGIN SELECT RAISE(ABORT, 'done work item takes a decision only as a legacy "
         "re-mark with a rationale and evidence'); END"
     )
+    # The legacy import gate used to exempt every decision from the release
+    # binding.  It now exempts only decisions about rows that are legacy, as
+    # PostgreSQL 16 does for import_ndjson; recovery writes releases before
+    # decisions, so a consistent history still passes.
+    gate_exempt = (
+        "(EXISTS (SELECT 1 FROM legacy_import_gate) AND EXISTS ("
+        "SELECT 1 FROM work_item WHERE id = NEW.work_item_id AND legacy = 1))"
+    )
+    release_guards = {
+        "work_decision_release_of_item": (
+            "BEFORE INSERT ON work_decision WHEN NEW.work_item_id IS NOT NULL "
+            "AND NEW.legacy_source IS NULL "
+            f"AND NOT {gate_exempt} "
+            "AND NEW.release_digest IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM work_release WHERE "
+            "release_digest = NEW.release_digest AND work_item_id = NEW.work_item_id)",
+            "release is not a release of this work item",
+        ),
+        "work_decision_binds_current_release": (
+            "BEFORE INSERT ON work_decision WHEN NEW.work_item_id IS NOT NULL "
+            "AND NEW.legacy_source IS NULL "
+            f"AND NOT {gate_exempt} "
+            "AND NEW.release_digest IS NULL "
+            "AND EXISTS (SELECT 1 FROM work_release wr WHERE "
+            "wr.work_item_id = NEW.work_item_id AND wr.revise_count = ("
+            "SELECT COUNT(*) FROM work_decision d WHERE d.work_item_id = NEW.work_item_id "
+            "AND d.kind = 'revise'))",
+            "work item has a current release; a decision must bind it",
+        ),
+    }
+    for name, (when, message) in release_guards.items():
+        conn.execute(f"DROP TRIGGER IF EXISTS {name}")
+        conn.execute(
+            f"CREATE TRIGGER {name} {when} "
+            f"BEGIN SELECT RAISE(ABORT, '{message}'); END"
+        )
 
 
 def _run_migration(
@@ -2653,9 +2696,11 @@ def backlog_seed_from_candidates(
 # Decisions precede the items that name them, because the terminal-binding
 # triggers read the decision row immediately; the decision's own foreign key
 # to its item is deferred to commit (see write_recovery_snapshot).
+# Releases before decisions (the decision release guards read them; their
+# item foreign key is deferred), decisions before the items that name them.
 _RECOVERY_TABLE_ORDER = (
-    "sprint", "track", "work_decision", "work_item", "work_release",
-    "release_commit", "event", "work_legacy_evidence", "reservation",
+    "sprint", "track", "work_release", "release_commit", "work_decision",
+    "work_item", "event", "work_legacy_evidence", "reservation",
     "claim_history", "ref", "dep",
 )
 

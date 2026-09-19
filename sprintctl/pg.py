@@ -2402,8 +2402,16 @@ def _apply_schema_version_16(cur: Any) -> None:
                          AND d.work_item_id = OLD.id
                          AND d.kind IN ('accept', 'reject', 'withdraw', 'supersede')
                          AND d.legacy_source IS NULL
-                         AND btrim(d.rationale) <> ''
+                         -- Blank means only whitespace, tabs, newlines
+                         -- and no-break spaces included.
+                         AND btrim(d.rationale, E' \t\n\r\f\v' || chr(160)) <> ''
+                         -- Every evidence element is a SHA-256 digest.
                          AND jsonb_array_length(d.evidence_digests) > 0
+                         AND NOT EXISTS (
+                             SELECT 1 FROM jsonb_array_elements(d.evidence_digests) e
+                             WHERE jsonb_typeof(e) <> 'string'
+                                OR (e #>> '{}') !~ '^[0-9a-f]{64}$'
+                         )
                    )
                ) THEN
                 RAISE EXCEPTION 'done work item % takes a decision only as a legacy re-mark with a rationale and evidence',

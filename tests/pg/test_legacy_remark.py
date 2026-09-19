@@ -65,7 +65,13 @@ class TestRemarkTriggers:
         "decision",
         [
             {"rationale": ""},
+            {"rationale": "\t\r\n"},
+            {"rationale": "\u00a0 \u00a0"},
             {"evidence": ()},
+            {"evidence": ("",)},
+            {"evidence": (1,)},
+            {"evidence": (EVIDENCE, "AB" * 32)},
+            {"evidence": ("ab" * 31,)},
             {"legacy_source": "capability-receipt"},
         ],
     )
@@ -273,6 +279,15 @@ class TestOpenOnlySweep:
         assert done_row["id"] not in {row["id"] for row in swept}
         assert pg.get_reservation(store, open_row["id"])["state"] == "interrupted"
         assert pg.get_reservation(store, done_row["id"])["state"] == "active"
+
+
+def test_a_remarked_legacy_item_is_not_unbound(store):
+    sprint_id, _t, item_id = _legacy_item(store, "done")
+    _remark_sql(store, item_id)
+    result = pg.list_unbound(store, sprint_id=sprint_id)
+    assert all(section["count"] == 0 for section in result["categories"].values())
+    assert result["resolutions"]["legacy_remarked"] == 1
+    assert result["resolutions"]["rejected"] == 1
 
 
 def test_list_unbound_is_scoped_to_the_repository(store, pg_test_scope):

@@ -62,7 +62,13 @@ class TestRemark:
         [
             {"rationale": ""},
             {"rationale": "   "},
+            {"rationale": "\t\r\n"},
+            {"rationale": "\u00a0 \u00a0"},
             {"evidence": ()},
+            {"evidence": ("",)},
+            {"evidence": (1,)},
+            {"evidence": (EVIDENCE, "AB" * 32)},
+            {"evidence": ("ab" * 31,)},
             {"legacy_source": "capability-receipt"},
         ],
     )
@@ -120,6 +126,48 @@ class TestRemark:
             (decision_id, item_id),
             "immutable",
         )
+
+
+class TestImportGateCoversOnlyLegacyRows:
+    """Migration 25 narrows the gate's release-guard exemption, as PG 16 does."""
+
+    def _released_item(self, conn, legacy):
+        sprint_id = db.create_sprint(conn, "Gate", status="active")
+        track_id = db.get_or_create_track(conn, sprint_id, "t")
+        item_id = _active_item(conn, sprint_id, track_id)
+        db.reserve(conn, item_id, actor="a", session_id="s")
+        if legacy:
+            # Only a migration or an import makes a row legacy; flip it the
+            # way migration 23 did, with the immutability trigger bypassed.
+            conn.execute("DROP TRIGGER work_item_legacy_immutable")
+            conn.execute("UPDATE work_item SET legacy = 1 WHERE id = ?", (item_id,))
+            conn.commit()
+        return item_id
+
+    def _gated_decision(self, conn, item_id, release_digest):
+        with db.legacy_import_gate(conn):
+            conn.execute(
+                "INSERT INTO work_decision (kind, work_item_id, release_digest, actor) "
+                "VALUES ('revise', ?, ?, 'importer')",
+                (item_id, release_digest),
+            )
+        conn.commit()
+
+    @pytest.mark.parametrize("release_digest", ["e" * 64, None])
+    def test_a_non_legacy_decision_is_checked_under_the_gate(self, conn, release_digest):
+        item_id = self._released_item(conn, legacy=False)
+        with pytest.raises(sqlite3.IntegrityError, match="release"):
+            self._gated_decision(conn, item_id, release_digest)
+        conn.rollback()
+        conn.execute("DELETE FROM legacy_import_gate")
+        conn.commit()
+        assert db.list_decisions(conn, item_id) == []
+
+    def test_a_legacy_decision_is_still_exempt(self, conn):
+        item_id = self._released_item(conn, legacy=True)
+        self._gated_decision(conn, item_id, "e" * 64)
+        [decision] = db.list_decisions(conn, item_id)
+        assert decision["release_digest"] == "e" * 64
 
 
 class TestMigration25:
@@ -217,7 +265,7 @@ class TestResolutionMetrics:
         ]
         assert calc.resolution_counts(items) == {
             "accepted": 1, "rejected": 1, "withdrawn": 0, "superseded": 0,
-            "decided_done": 2, "legacy_done": 1, "done": 3,
+            "decided_done": 2, "legacy_done": 1, "legacy_remarked": 1, "done": 3,
         }
         health = calc.track_health(items)
         assert health["counts"]["done"] == 3

@@ -11,7 +11,10 @@ of that, each for a different reason and with a different remedy:
     Done by a terminal decision that names no Release: the item was closed
     without an execution reservation ever freezing what was picked up (or
     before releases existed).  The closure is recorded but not bound to what
-    it closed; it is immutable, so this is reported, not repaired.
+    it closed; it is immutable, so this is reported, not repaired.  Legacy
+    rows are left out: a re-marked legacy item has no Release to bind, and
+    its re-mark is the repair.  It is counted as ``legacy_remarked`` in
+    ``resolutions`` instead.
 ``released_undecided``
     Open, with a current Release frozen by an execution reservation, and no
     decision yet: picked-up work waiting for the decision that must bind that
@@ -29,6 +32,8 @@ and is used bare so that both read it the same way.
 from __future__ import annotations
 
 from typing import Any, Callable
+
+from .calc import RESOLUTION_METRIC_KEYS
 
 CATEGORIES = ("legacy_done", "decided_unreleased", "released_undecided")
 DEFAULT_LIMIT = 100
@@ -87,7 +92,8 @@ def _queries(tenant: Callable[[str], str]) -> dict[str, tuple[str, str, str]]:
             f"{_ITEM_COLUMNS}, d.kind AS decision_kind, d.actor AS decision_actor, "
             "d.created_at AS decided_at",
             f"work_item wi JOIN work_decision d ON {decision_join}",
-            f"{tenant('wi')} wi.status = 'done' AND d.release_digest IS NULL",
+            f"{tenant('wi')} wi.status = 'done' AND NOT wi.legacy "
+            "AND d.release_digest IS NULL",
         ),
         "released_undecided": (
             f"{_ITEM_COLUMNS}, {current_release} AS release_digest",
@@ -137,8 +143,9 @@ def list_unbound(
             "items": [_item_row(row) for row in rows],
         }
     totals = query_all(
-        "SELECT wi.resolution AS resolution, COUNT(*) AS n FROM work_item wi "
-        f"WHERE {tenant('wi')} wi.status = 'done'{sprint_clause} GROUP BY wi.resolution",
+        "SELECT wi.resolution AS resolution, wi.legacy AS legacy, COUNT(*) AS n "
+        f"FROM work_item wi WHERE {tenant('wi')} wi.status = 'done'{sprint_clause} "
+        "GROUP BY wi.resolution, wi.legacy",
         params,
     )
     return {
@@ -157,19 +164,20 @@ def _item_row(row: dict) -> dict:
 
 
 def resolution_totals(rows: list[dict]) -> dict[str, int]:
-    """Fold ``(resolution, n)`` rows of done items into resolution counts.
+    """Fold ``(resolution, legacy, n)`` rows of done items into resolution counts.
 
     Same shape as :func:`sprintctl.calc.resolution_counts`: a done item with
     no resolution is legacy done (the terminal guards admit no other kind).
     """
-    from .calc import RESOLUTION_METRIC_KEYS
-
     counts = {key: 0 for key in RESOLUTION_METRIC_KEYS}
     legacy_done = 0
+    legacy_remarked = 0
     for row in rows:
         n = int(row["n"])
         if row.get("resolution") in counts:
             counts[row["resolution"]] += n
+            if row.get("legacy"):
+                legacy_remarked += n
         else:
             legacy_done += n
     decided = sum(counts.values())
@@ -177,5 +185,6 @@ def resolution_totals(rows: list[dict]) -> dict[str, int]:
         **counts,
         "decided_done": decided,
         "legacy_done": legacy_done,
+        "legacy_remarked": legacy_remarked,
         "done": decided + legacy_done,
     }

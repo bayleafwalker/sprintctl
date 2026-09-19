@@ -49,6 +49,13 @@ class WorkOperationContract:
 _object_schema = object_schema
 
 _UNBOUND_CATEGORIES = _unbound.CATEGORIES
+_RESOLUTION_METRICS = (
+    *_unbound.RESOLUTION_METRIC_KEYS,
+    "decided_done",
+    "legacy_done",
+    "legacy_remarked",
+    "done",
+)
 _UNBOUND_CATEGORY_RESULT: dict[str, Any] = {
     "type": "object",
     "required": ["count", "items"],
@@ -895,7 +902,12 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
                 },
                 "resolutions": {
                     "type": "object",
-                    "additionalProperties": {"type": "integer", "minimum": 0},
+                    "required": list(_RESOLUTION_METRICS),
+                    "properties": {
+                        name: {"type": "integer", "minimum": 0}
+                        for name in _RESOLUTION_METRICS
+                    },
+                    "additionalProperties": False,
                 },
             },
         ),

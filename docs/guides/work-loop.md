@@ -218,9 +218,10 @@ sprintctl item decide --id 7 --kind revise --rationale "Review asked for an API 
 - `sprintctl item unbound [--sprint-id N] [--category C] [--json]` lists
   what is not bound to a decision: `legacy_done` (legacy done items with no
   decision -- re-mark candidates), `decided_unreleased` (closed by a decision
-  that names no release) and `released_undecided` (open items whose frozen
-  current release still awaits a decision), and counts done items by
-  resolution with legacy done kept apart. Served operation:
+  that names no release; legacy rows excluded) and `released_undecided`
+  (open items whose frozen current release still awaits a decision), and
+  counts done items by resolution with legacy done kept apart and re-marked
+  legacy items counted as `legacy_remarked`. Served operation:
   `work.read.unbound`.
 - A generic event or note cannot pose as a decision: `event add` and
   `item note` refuse decision-like types (`item.done`, `item-decided`,

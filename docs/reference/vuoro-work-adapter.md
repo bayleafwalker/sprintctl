@@ -95,7 +95,9 @@ trigger.
 total `count` and up to `limit` (default 100, at most 1000) `items`,
 optionally for one `sprint_id` or one `category`, and `resolutions`: done
 items counted as `accepted`, `rejected`, `withdrawn`, `superseded`,
-`decided_done`, `legacy_done` and `done`.
+`decided_done`, `legacy_done`, `legacy_remarked` and `done`. A re-marked
+legacy item is in no category; it counts under its resolution and in
+`legacy_remarked`.
 `work.event.add` and `work.item.note` refuse decision-like event types with
 `decision-like-event-type` (422), so a note cannot pose as a decision.
 `work.read.release` returns a release and its `release_commit` rows, by

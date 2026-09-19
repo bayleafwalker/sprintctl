@@ -291,20 +291,29 @@ class DecisionOperationContract:
         }
         assert result["resolutions"] == {
             "accepted": 1, "rejected": 0, "withdrawn": 1, "superseded": 0,
-            "decided_done": 2, "legacy_done": 1, "done": 3,
+            "decided_done": 2, "legacy_done": 1, "legacy_remarked": 0, "done": 3,
         }
 
-        # A re-mark moves the legacy item out of legacy_done; its decision
-        # has no release to bind, so it is reported as decided unreleased.
+        # A re-mark takes the legacy item out of every unbound category: it
+        # has no release to bind, and the re-mark is its repair.  It is
+        # counted as legacy_remarked instead.
         env.decide(legacy, "reject")
-        after = env.invoke(
+        after = env.invoke("work.read.unbound", {"sprint_id": sprint_id})
+        assert after["categories"]["legacy_done"] == {"count": 0, "items": []}
+        assert [i["id"] for i in after["categories"]["decided_unreleased"]["items"]] == [
+            unreleased
+        ]
+        assert after["resolutions"] == {
+            "accepted": 1, "rejected": 1, "withdrawn": 1, "superseded": 0,
+            "decided_done": 3, "legacy_done": 0, "legacy_remarked": 1, "done": 3,
+        }
+        only = env.invoke(
             "work.read.unbound", {"sprint_id": sprint_id, "category": "legacy_done"}
         )
-        assert list(after["categories"]) == ["legacy_done"]
-        assert after["categories"]["legacy_done"] == {"count": 0, "items": []}
-        assert after["resolutions"]["legacy_done"] == 0
-        assert after["resolutions"]["rejected"] == 1
+        assert list(only["categories"]) == ["legacy_done"]
 
+        second = item_in_sprint("also closed without a release")
+        env.decide(second, "accept")
         limited = env.invoke("work.read.unbound", {"sprint_id": sprint_id, "limit": 1})
         assert limited["categories"]["decided_unreleased"]["count"] == 2
         assert len(limited["categories"]["decided_unreleased"]["items"]) == 1
