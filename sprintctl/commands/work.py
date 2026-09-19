@@ -1633,6 +1633,9 @@ _UNBOUND_CATEGORY_TITLES = {
     "legacy_done": "Legacy done (done before decisions; no decision -- re-mark with item decide)",
     "decided_unreleased": "Decided without a release (terminal decision names no release)",
     "released_undecided": "Picked up, undecided (open with a frozen current release)",
+    "accepted_without_evidence": (
+        "Accepted without evidence (review-required release, no evidence digests)"
+    ),
 }
 
 
@@ -1656,10 +1659,11 @@ _UNBOUND_CATEGORY_TITLES = {
 def item_unbound(obj, sprint_id, category, limit, as_json) -> None:
     """List items that are not bound to a decision.
 
-    Three categories: legacy done items with no decision, items closed by a
-    decision that names no release, and open items whose frozen release
-    still awaits a decision.  Also counts done items by resolution, with
-    legacy done kept apart from decided done.
+    Four categories: legacy done items with no decision, items closed by a
+    decision that names no release, open items whose frozen release still
+    awaits a decision, and accept decisions on a review-required release
+    that carry no evidence digests.  Also counts done items by resolution,
+    with legacy done kept apart from decided done.
     """
     if sprint_id is not None:
         sprint_id = _apply_scoped_id(obj, sprint_id, field="sprint")

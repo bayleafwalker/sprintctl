@@ -19,6 +19,18 @@ of that, each for a different reason and with a different remedy:
     Open, with a current Release frozen by an execution reservation, and no
     decision yet: picked-up work waiting for the decision that must bind that
     Release.
+``accepted_without_evidence``
+    An accept Decision, terminal on its item, whose Release required review
+    (``acceptance_contract.review_required``) and whose own
+    ``evidence_digests`` is empty.  TS-6/TS-12 want evidence measured before
+    an obligation is declared satisfied; an accept that names no evidence on
+    a review-required Release is reported, never blocked -- there is no gate
+    on the write.  The row is split by how the accept was recorded: the
+    ``item status --status done`` alias records no ``item-decided`` event
+    (TS-5's event/idempotency machinery lives only on the explicit ``item
+    decide`` path, :func:`sprintctl.decisions.decided_event_payload`), so a
+    decision with no matching event took the alias path; one with a matching
+    event was an explicit decide.
 
 A done item that is neither legacy nor bound to a matching decision is not a
 category: the database refuses to commit one (PostgreSQL schema 14 / SQLite
@@ -26,7 +38,13 @@ category: the database refuses to commit one (PostgreSQL schema 14 / SQLite
 
 The SQL here is shared by both backends; each passes its named-placeholder
 style and its tenant predicate.  ``legacy`` is a boolean on PostgreSQL and 0/1 on SQLite,
-and is used bare so that both read it the same way.
+and is used bare so that both read it the same way.  Booleans and array
+emptiness buried in a JSON/jsonb column (``acceptance_contract`` and
+``evidence_digests``) are instead read with the ``->`` / ``->>`` operators
+both engines share (SQLite gained them in 3.38) and compared as ``CAST(...
+AS TEXT)``, since PostgreSQL's ``->>`` yields text while SQLite's yields a
+native SQL value (e.g. the integer ``1`` for JSON ``true``) that compares
+unequal to a text literal without the cast.
 """
 
 from __future__ import annotations
@@ -34,8 +52,14 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from .calc import RESOLUTION_METRIC_KEYS
+from .decisions import ITEM_DECIDED_EVENT_TYPE
 
-CATEGORIES = ("legacy_done", "decided_unreleased", "released_undecided")
+CATEGORIES = (
+    "legacy_done",
+    "decided_unreleased",
+    "released_undecided",
+    "accepted_without_evidence",
+)
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 1000
 
@@ -81,6 +105,17 @@ def _queries(tenant: Callable[[str], str]) -> dict[str, tuple[str, str, str]]:
     decision_join = "d.id = wi.terminal_decision_id"
     if tenant("d"):
         decision_join += " AND d.repo_id = wi.repo_id"
+    release_join = "wr.release_digest = d.release_digest"
+    if tenant("wr"):
+        release_join += " AND wr.repo_id = wi.repo_id"
+    event_predicate = (
+        f"{tenant('e')} e.event_type = '{ITEM_DECIDED_EVENT_TYPE}' "
+        "AND CAST(e.payload ->> 'decision_id' AS TEXT) = CAST(d.id AS TEXT)"
+    )
+    accept_path = (
+        "CASE WHEN EXISTS (SELECT 1 FROM event e WHERE "
+        f"{event_predicate}) THEN 'explicit' ELSE 'alias' END"
+    )
     return {
         "legacy_done": (
             _ITEM_COLUMNS,
@@ -99,6 +134,15 @@ def _queries(tenant: Callable[[str], str]) -> dict[str, tuple[str, str, str]]:
             f"{_ITEM_COLUMNS}, {current_release} AS release_digest",
             "work_item wi",
             f"{tenant('wi')} wi.status <> 'done' AND {current_release} IS NOT NULL",
+        ),
+        "accepted_without_evidence": (
+            f"{_ITEM_COLUMNS}, d.id AS decision_id, wr.release_digest AS release_digest, "
+            f"{accept_path} AS accept_path",
+            f"work_item wi JOIN work_decision d ON {decision_join} "
+            f"JOIN work_release wr ON {release_join}",
+            f"{tenant('wi')} wi.status = 'done' AND d.kind = 'accept' AND "
+            "CAST(wr.acceptance_contract ->> 'review_required' AS TEXT) IN ('1', 'true') "
+            "AND CAST(d.evidence_digests AS TEXT) = '[]'",
         ),
     }
 
