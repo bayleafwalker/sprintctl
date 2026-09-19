@@ -366,9 +366,11 @@ class WorkApplication:
         except Exception as exc:
             if _is_postgres_data_error(exc):
                 # A value PostgreSQL cannot store (a NUL character in text, for
-                # example) is the caller's input, not a server fault.
+                # example) is the caller's input, not a server fault. Only the
+                # first line goes back: psycopg appends context and the query.
+                first_line = str(exc).strip().partition("\n")[0]
                 raise ApplicationRejection(
-                    "invalid-value", f"PostgreSQL refused a value: {exc}", 422
+                    "invalid-value", f"PostgreSQL refused a value: {first_line}", 422
                 ) from exc
             if not self._is_postgres_admin_shutdown(exc):
                 raise

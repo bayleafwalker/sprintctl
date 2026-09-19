@@ -106,5 +106,7 @@ def test_a_value_postgres_cannot_store_is_a_422_not_a_500(store):
             _context(),
         )
     assert (rejected.value.code, rejected.value.http_status) == ("invalid-value", 422)
+    # Only psycopg's first line is echoed, never its appended context.
+    assert "\n" not in rejected.value.message
     # The connection is usable afterwards.
     assert app.invoke("work.read.item", {"item_id": item_id}, _context())["item"]["id"] == item_id

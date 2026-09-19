@@ -10,6 +10,7 @@ decision lines of ``item show``) is covered at the end of this module.
 from __future__ import annotations
 
 import json
+import sys
 import uuid
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -26,6 +27,10 @@ from tests.test_decisions import _legacy_item as _sqlite_legacy_item
 from tests.test_served_result_schema_conformance import _validate
 from tests.test_served_routes import _configure_served_repo
 from tests.test_work_application import _application
+
+_requires_312 = pytest.mark.skipif(
+    sys.version_info < (3, 12), reason="served mode requires Python 3.12+"
+)
 
 EVIDENCE = "ab" * 32
 
@@ -422,6 +427,7 @@ def _served_config(tmp_path, monkeypatch):
     )
 
 
+@_requires_312
 def test_served_item_decide_sends_no_actor(runner, tmp_path, monkeypatch):
     _served_config(tmp_path, monkeypatch)
     calls = []
@@ -455,6 +461,7 @@ def test_served_item_decide_sends_no_actor(runner, tmp_path, monkeypatch):
     assert kwargs["release_digest"] is None
 
 
+@_requires_312
 def test_served_item_show_reads_the_terminal_decision(runner, tmp_path, monkeypatch):
     _served_config(tmp_path, monkeypatch)
     item = {
