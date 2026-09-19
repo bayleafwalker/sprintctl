@@ -294,6 +294,9 @@ class DecisionOperationContract:
             "accepted": 1, "rejected": 0, "withdrawn": 1, "superseded": 0,
             "decided_done": 2, "legacy_done": 1, "legacy_remarked": 0, "done": 3,
         }
+        # #2451: unmet_obligations is carried by the served operation too,
+        # alongside (not one of) the four categories above.
+        assert result["unmet_obligations"] == {"count": 0, "items": []}
 
         # A re-mark takes the legacy item out of every unbound category: it
         # has no release to bind, and the re-mark is its repair.  It is
@@ -375,6 +378,9 @@ class DecisionOperationContract:
         # items normally.
         for item_id in (alias_item, explicit_item, evidenced_item):
             assert env.backend.get_work_item(env.store, item_id)["status"] == "done"
+        # #2451: unmet_obligations is a separate report, not gated by
+        # --category and unrelated to the evidence_digests matching above.
+        assert result["unmet_obligations"] == {"count": 0, "items": []}
 
     def test_one_alias_accept_and_one_evidenced_explicit_accept_is_one_row(self, env):
         anchor = env.new_item()
@@ -397,6 +403,33 @@ class DecisionOperationContract:
         assert section["count"] == 1
         [row] = section["items"]
         assert (row["id"], row["accept_path"]) == (alias_item, "alias")
+        assert result["unmet_obligations"] == {"count": 0, "items": []}
+
+    def test_unmet_obligations_report_arrives_over_the_served_operation(self, env):
+        """#2451: the served operation carries the same report as the local one."""
+        anchor = env.new_item()
+        item = env.backend.get_work_item(env.store, anchor)
+        sprint_id, track_id = item["sprint_id"], item["track_id"]
+
+        unmet_item = self._item_in_sprint(env, sprint_id, track_id, "unmet obligation")
+        digest = env.backend.reserve(
+            env.store, unmet_item, actor="agent", session_id="s-unmet", role="execution",
+            acceptance_contract={"evidence_obligations": ["test-run", "review"]},
+        )["release_digest"]
+        decision = env.decide(unmet_item, "accept", evidence_digests=[])["decision"]
+
+        result = env.invoke("work.read.unbound", {"sprint_id": sprint_id})
+        assert result["unmet_obligations"] == {
+            "count": 1,
+            "items": [
+                {
+                    "item_id": unmet_item,
+                    "decision_id": decision["id"],
+                    "release_digest": digest,
+                    "unmet": ["test-run", "review"],
+                }
+            ],
+        }
 
     def test_notes_cannot_pose_as_decisions(self, env):
         item_id = env.new_item()

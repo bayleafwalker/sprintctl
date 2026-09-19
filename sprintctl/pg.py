@@ -3203,7 +3203,7 @@ def list_unbound(
             cur.execute(sql, params)
             return [_norm(row) for row in cur.fetchall()]
 
-    return _unbound.list_unbound(
+    result = _unbound.list_unbound(
         query_all,
         param=lambda name: f"%({name})s",
         tenant=lambda alias: f"{alias}.repo_id = %(repo_id)s AND",
@@ -3212,6 +3212,10 @@ def list_unbound(
         category=category,
         limit=limit,
     )
+    # #2446: reported alongside the categories, not one of them and not
+    # filtered by --category.  Report-only -- see list_unmet_obligations.
+    result["unmet_obligations"] = list_unmet_obligations(store, sprint_id=sprint_id, limit=limit)
+    return result
 
 
 # ---------------------------------------------------------------------------

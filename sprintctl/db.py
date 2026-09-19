@@ -2464,7 +2464,7 @@ def list_unbound(
     def query_all(sql: str, params: dict) -> list[dict]:
         return [dict(row) for row in conn.execute(sql, params).fetchall()]
 
-    return _unbound.list_unbound(
+    result = _unbound.list_unbound(
         query_all,
         param=lambda name: f":{name}",
         tenant=lambda alias: "",
@@ -2473,6 +2473,10 @@ def list_unbound(
         category=category,
         limit=limit,
     )
+    # #2446: reported alongside the categories, not one of them and not
+    # filtered by --category.  Report-only -- see list_unmet_obligations.
+    result["unmet_obligations"] = list_unmet_obligations(conn, sprint_id=sprint_id, limit=limit)
+    return result
 
 
 # --- Releases (S3 PR2) ---

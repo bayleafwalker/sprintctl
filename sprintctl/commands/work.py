@@ -1669,9 +1669,8 @@ def item_unbound(obj, sprint_id, category, limit, as_json) -> None:
     every accept Decision on a release that declared
     ``acceptance_contract.evidence_obligations`` labels and carries no
     matching evidence.  It is not one of the four categories and is not
-    filtered by ``--category``; it only reports and never blocks.  It is
-    available for local (non-served) backends only -- there is no
-    ``work.read.unbound`` served operation for it yet.
+    filtered by ``--category``; it only reports and never blocks.  Both the
+    local and served backends carry it (#2451).
     """
     if sprint_id is not None:
         sprint_id = _apply_scoped_id(obj, sprint_id, field="sprint")
@@ -1693,11 +1692,6 @@ def item_unbound(obj, sprint_id, category, limit, as_json) -> None:
             click.echo(f"Sprint #{sprint_id} not found.", err=True)
             sys.exit(1)
         result = m.list_unbound(store, sprint_id=sprint_id, category=category, limit=limit)
-        # #2446: reported alongside the categories, not one of them and not
-        # filtered by --category; local backends only (no served operation).
-        result["unmet_obligations"] = m.list_unmet_obligations(
-            store, sprint_id=sprint_id, limit=limit
-        )
     if as_json:
         click.echo(json.dumps(result, indent=2, default=str))
         return
