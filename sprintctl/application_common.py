@@ -325,6 +325,116 @@ def _command_step_kind(command: str) -> str:
     return "other"
 
 
+# S6 ledger checkpoint (agentops #2450,
+# docs/plans/2450-s6-ledger-checkpoint.md, "Ack rule" / "Query" sections):
+# an item's newest ``lane.checkpoint`` note is unacknowledged unless a later
+# note (by created_at) either is itself a ``lane.checkpoint.ack``, or is a
+# ``lane.review``/``lane.dispatch`` note that cites the checkpoint note's own
+# event id -- either via the note's ``evidence_event_id`` payload field, or
+# by that id appearing as a whole token in the note's ``detail``/``tags``.
+CHECKPOINT_NOTE_TYPE = "lane.checkpoint"
+CHECKPOINT_ACK_NOTE_TYPE = "lane.checkpoint.ack"
+CHECKPOINT_CITING_NOTE_TYPES = frozenset({"lane.review", "lane.dispatch"})
+
+# Design note "Staleness" section: >24h / sha-not-on-branch / branch-gone is
+# a read-time signal computed from a live ``git fetch`` plus ``created_at``.
+# This module has no git access and must not gain one for this item, so it
+# surfaces only the age-based half: whether the newest unacked checkpoint is
+# older than 24h. That is advisory (it does not remove the item from the
+# bucket -- an unacked checkpoint still needs a pickup decision, stale or
+# not), not the full staleness determination the design note describes.
+CHECKPOINT_STALE_AFTER_HOURS = 24
+
+
+def _cites_checkpoint_note(payload: Mapping[str, Any], checkpoint_note_id: int) -> bool:
+    if payload.get("evidence_event_id") == checkpoint_note_id:
+        return True
+    needle = re.compile(rf"(?<!\d){re.escape(str(checkpoint_note_id))}(?!\d)")
+    detail = payload.get("detail")
+    if isinstance(detail, str) and needle.search(detail):
+        return True
+    tags = payload.get("tags")
+    if isinstance(tags, list):
+        for tag in tags:
+            if isinstance(tag, str) and needle.search(tag):
+                return True
+    return False
+
+
+def _decode_note_payload(event: Mapping[str, Any]) -> dict:
+    payload = event.get("payload") or "{}"
+    if isinstance(payload, dict):
+        return payload
+    return json.loads(payload)
+
+
+def _checkpointed_unacked_items(backend: Any, store: Any, sprint_id: int, now: datetime) -> list[dict]:
+    """Per item, the newest unacknowledged ``lane.checkpoint`` note, if any.
+
+    Scoped to ``sprint_id`` the same way ``_dependency_waiting_items`` scopes
+    to a sprint: through the sprint-scoped event/item reads the backend
+    already exposes, not a new query surface.
+    """
+    events = backend.list_events(store, sprint_id)
+    by_item: dict[int, list[dict]] = {}
+    for event in events:
+        item_id = event.get("work_item_id")
+        if item_id is None:
+            continue
+        created_at = _parse_utc_timestamp(event.get("created_at"))
+        if created_at is None:
+            continue
+        by_item.setdefault(item_id, []).append({
+            "id": event["id"], "event_type": event.get("event_type"),
+            "created_at": created_at, "created_at_text": event.get("created_at"),
+            "payload": _decode_note_payload(event),
+        })
+
+    item_lookup = {
+        item["id"]: item for item in backend.list_work_items(store, sprint_id=sprint_id)
+    }
+
+    result: list[dict] = []
+    for item_id, item_events in by_item.items():
+        item = item_lookup.get(item_id)
+        if item is None:
+            continue
+        checkpoints = [e for e in item_events if e["event_type"] == CHECKPOINT_NOTE_TYPE]
+        if not checkpoints:
+            continue
+        checkpoint = max(checkpoints, key=lambda e: (e["created_at"], e["id"]))
+        later = [
+            e for e in item_events
+            if (e["created_at"], e["id"]) > (checkpoint["created_at"], checkpoint["id"])
+        ]
+        acked = any(
+            e["event_type"] == CHECKPOINT_ACK_NOTE_TYPE
+            or (
+                e["event_type"] in CHECKPOINT_CITING_NOTE_TYPES
+                and _cites_checkpoint_note(e["payload"], checkpoint["id"])
+            )
+            for e in later
+        )
+        if acked:
+            continue
+        payload = checkpoint["payload"]
+        age_hours = (now - checkpoint["created_at"]).total_seconds() / 3600
+        result.append({
+            "item_id": item_id, "title": item.get("title"), "track": item.get("track_name"),
+            "checkpoint_note_id": checkpoint["id"], "created_at": checkpoint["created_at_text"],
+            "age_hours": round(age_hours, 2), "stale": age_hours > CHECKPOINT_STALE_AFTER_HOURS,
+            "summary": payload.get("summary"), "detail": payload.get("detail"),
+            "branch": payload.get("git_branch"), "sha": payload.get("git_sha"),
+            "worktree": payload.get("git_worktree"), "worktree_host": payload.get("worktree_host"),
+            "release_digest": payload.get("release_digest"),
+            "predecessor_session": payload.get("predecessor_session"),
+            "reason_code": "checkpoint-unacked",
+            "reason": "Newest lane.checkpoint note has no later ack, lane.review, or lane.dispatch citing it.",
+        })
+    result.sort(key=lambda entry: (entry["created_at"], entry["checkpoint_note_id"]))
+    return result
+
+
 def _next_work_explain_contract(backend: Any, store: Any, sprint: dict, *, repo_id: str | None, now: datetime) -> dict:
     ready = backend.get_ready_items(store, sprint["id"])
     waiting = _dependency_waiting_items(backend, store, sprint["id"])
@@ -336,7 +446,8 @@ def _next_work_explain_contract(backend: Any, store: Any, sprint: dict, *, repo_
     action = _next_work_action(active_reservations, active_unreserved, conflicts, ready, waiting)
     commands = _next_work_commands(sprint["id"], action, repo_id)
     refs = backend.list_refs_for_items(store, [item["id"] for item in ready])
-    return {"contract_version": "2", "sprint": {key: sprint[key] for key in ("id", "name", "status")}, "summary": {"pending_total": len(ready) + len(waiting), "ready": len(ready), "waiting_on_dependencies": len(waiting), "active_reservations": len(active_reservations), "active_unreserved": len(active_unreserved)}, "ready_items": [{**item, "reason_code": "ready-unblocked", "reason": "No unresolved blocking dependencies.", "refs": refs.get(item["id"], [])} for item in ready], "dependency_waiting_items": [{**item, "reason_code": "waiting-on-dependencies", "reason": "One or more blocking dependencies are not done."} for item in waiting], "active_reservations": active_reservations, "active_unreserved_items": active_unreserved, "conflicts": conflicts, "next_action": action, "recommended_commands": commands, "recommended_command_bundle": {"bundle_version": "1", "next_action_kind": action.get("kind"), "steps": [{"step": index, "kind": _command_step_kind(command), "command": command, "placeholders": re.findall(r"<[^>\n]+>", command), "requires_input": bool(re.findall(r"<[^>\n]+>", command)), "is_executable": not bool(re.findall(r"<[^>\n]+>", command))} for index, command in enumerate(commands, 1)]}}
+    checkpointed_unacked = _checkpointed_unacked_items(backend, store, sprint["id"], now)
+    return {"contract_version": "2", "sprint": {key: sprint[key] for key in ("id", "name", "status")}, "summary": {"pending_total": len(ready) + len(waiting), "ready": len(ready), "waiting_on_dependencies": len(waiting), "active_reservations": len(active_reservations), "active_unreserved": len(active_unreserved), "checkpointed_unacked": len(checkpointed_unacked)}, "ready_items": [{**item, "reason_code": "ready-unblocked", "reason": "No unresolved blocking dependencies.", "refs": refs.get(item["id"], [])} for item in ready], "dependency_waiting_items": [{**item, "reason_code": "waiting-on-dependencies", "reason": "One or more blocking dependencies are not done."} for item in waiting], "active_reservations": active_reservations, "active_unreserved_items": active_unreserved, "checkpointed_unacked": checkpointed_unacked, "conflicts": conflicts, "next_action": action, "recommended_commands": commands, "recommended_command_bundle": {"bundle_version": "1", "next_action_kind": action.get("kind"), "steps": [{"step": index, "kind": _command_step_kind(command), "command": command, "placeholders": re.findall(r"<[^>\n]+>", command), "requires_input": bool(re.findall(r"<[^>\n]+>", command)), "is_executable": not bool(re.findall(r"<[^>\n]+>", command))} for index, command in enumerate(commands, 1)]}}
 
 def _positive_int(value: Any, field: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
