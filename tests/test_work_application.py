@@ -1328,6 +1328,72 @@ def test_item_note_rejects_a_missing_item_before_any_write(conn):
     assert rejected.value.code == "item-not-found"
 
 
+def test_lane_checkpoint_note_carries_the_s6_ledger_payload_fields(conn, active_sprint):
+    """agentops#2473: a lane.checkpoint note carries release_digest,
+    worktree_host, predecessor_session, and acked_by as payload keys (see
+    docs/plans/2450-s6-ledger-checkpoint.md's field table)."""
+
+    track = db.get_or_create_track(conn, active_sprint["id"], "checkpoints")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Checkpoint target")
+    app = _application(store=conn, backend=db)
+
+    result = app.invoke(
+        "work.item.note",
+        {
+            "item_id": item_id,
+            "note_type": "lane.checkpoint",
+            "summary": "Interrupted mid-slice",
+            "detail": "validated: helper wired; rejected: none; next_action: add tests",
+            "git_branch": "wt/2473-checkpoint-fields",
+            "git_sha": "a" * 40,
+            "git_worktree": "/projects/dev/_wt/sprintctl-2473-checkpoint-fields",
+            "release_digest": "b" * 64,
+            "worktree_host": "devbox:/projects/dev/_wt/sprintctl-2473-checkpoint-fields",
+            "predecessor_session": "session-2473",
+            "acked_by": None,
+        },
+        _context(actor="authenticated-actor"),
+    )
+
+    events = db.list_events(conn, active_sprint["id"])
+    recorded = next(e for e in events if e["id"] == result["event_id"])
+    payload = json.loads(recorded["payload"])
+    assert payload["release_digest"] == "b" * 64
+    assert payload["worktree_host"] == "devbox:/projects/dev/_wt/sprintctl-2473-checkpoint-fields"
+    assert payload["predecessor_session"] == "session-2473"
+    assert "acked_by" not in payload  # unset (None) stays absent, not null
+
+
+def test_lane_checkpoint_note_without_the_new_fields_still_parses(conn, active_sprint):
+    """Backwards compatibility: a lane.checkpoint note written before S6 (no
+    release_digest/worktree_host/predecessor_session/acked_by keys) is still
+    a valid note -- the new fields are optional/absent, not required."""
+
+    track = db.get_or_create_track(conn, active_sprint["id"], "checkpoints")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Old-shape checkpoint")
+    app = _application(store=conn, backend=db)
+
+    result = app.invoke(
+        "work.item.note",
+        {
+            "item_id": item_id,
+            "note_type": "lane.checkpoint",
+            "summary": "Old-shape checkpoint",
+            "git_branch": "wt/old",
+            "git_sha": "c" * 40,
+            "git_worktree": "/projects/dev/_wt/old",
+        },
+        _context(actor="authenticated-actor"),
+    )
+
+    events = db.list_events(conn, active_sprint["id"])
+    recorded = next(e for e in events if e["id"] == result["event_id"])
+    payload = json.loads(recorded["payload"])
+    assert payload["git_branch"] == "wt/old"
+    for field in ("release_digest", "worktree_host", "predecessor_session", "acked_by"):
+        assert payload.get(field) is None
+
+
 def test_item_edit_is_cas_protected_and_appends_authenticated_audit(conn, active_sprint):
     track = db.get_or_create_track(conn, active_sprint["id"], "edit")
     item_id = db.create_work_item(

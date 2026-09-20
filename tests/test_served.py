@@ -335,6 +335,10 @@ def test_item_note_sends_full_shape_and_never_an_actor_field(fake_vuoro_client):
         "git_branch",
         "git_sha",
         "git_worktree",
+        "release_digest",
+        "worktree_host",
+        "predecessor_session",
+        "acked_by",
     }
     assert "actor" not in args
     assert args["item_id"] == 7

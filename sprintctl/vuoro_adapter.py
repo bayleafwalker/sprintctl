@@ -796,6 +796,13 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
                 "git_branch": {"type": ["string", "null"]},
                 "git_sha": {"type": ["string", "null"]},
                 "git_worktree": {"type": ["string", "null"]},
+                # S6 ledger-checkpoint fields (agentops #2450,
+                # docs/plans/2450-s6-ledger-checkpoint.md): optional,
+                # meaningful for ``lane.checkpoint`` notes only.
+                "release_digest": {"type": ["string", "null"]},
+                "worktree_host": {"type": ["string", "null"]},
+                "predecessor_session": {"type": ["string", "null"]},
+                "acked_by": {"type": ["string", "null"]},
             },
             required=("item_id", "note_type", "summary"),
         ),
