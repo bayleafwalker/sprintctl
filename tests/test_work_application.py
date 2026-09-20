@@ -1031,6 +1031,121 @@ def test_next_work_explain_is_one_application_aggregate(conn, active_sprint):
     assert payload["recommended_command_bundle"]["bundle_version"] == "1"
 
 
+def _checkpoint_note(conn, sprint_id, item_id, *, detail="checkpoint", **payload_extra):
+    payload = {"summary": "checkpoint", "detail": detail, **payload_extra}
+    return db.create_event(
+        conn, sprint_id, "predecessor-session", "lane.checkpoint",
+        work_item_id=item_id, payload=payload,
+    )
+
+
+def _backdate_event(conn, event_id, created_at):
+    conn.execute("UPDATE event SET created_at = ? WHERE id = ?", (created_at, event_id))
+    conn.commit()
+
+
+class TestCheckpointedUnackedBucket:
+    """Ack-join computation (agentops #2450 / #2474): docs/plans/2450-s6-ledger-checkpoint.md."""
+
+    def test_unacked_checkpoint_is_included(self, conn, active_sprint):
+        track = db.get_or_create_track(conn, active_sprint["id"], "served")
+        item_id = db.create_work_item(conn, active_sprint["id"], track, "Interrupted")
+        note_id = _checkpoint_note(conn, active_sprint["id"], item_id, detail="validated: x")
+
+        payload = _application(store=conn, backend=db).invoke(
+            "work.read.next-work-explain", {"sprint_id": active_sprint["id"]}, _context()
+        )
+
+        assert payload["summary"]["checkpointed_unacked"] == 1
+        [entry] = payload["checkpointed_unacked"]
+        assert entry["item_id"] == item_id
+        assert entry["checkpoint_note_id"] == note_id
+        assert entry["stale"] is False
+
+    def test_acked_by_dispatch_citing_note_id_is_excluded(self, conn, active_sprint):
+        track = db.get_or_create_track(conn, active_sprint["id"], "served")
+        item_id = db.create_work_item(conn, active_sprint["id"], track, "Picked up")
+        note_id = _checkpoint_note(conn, active_sprint["id"], item_id)
+        db.create_event(
+            conn, active_sprint["id"], "successor-session", "lane.dispatch",
+            work_item_id=item_id,
+            payload={"summary": "pickup", "detail": f"resuming checkpoint note #{note_id}"},
+        )
+
+        payload = _application(store=conn, backend=db).invoke(
+            "work.read.next-work-explain", {"sprint_id": active_sprint["id"]}, _context()
+        )
+
+        assert payload["summary"]["checkpointed_unacked"] == 0
+        assert payload["checkpointed_unacked"] == []
+
+    def test_acked_by_explicit_ack_note_is_excluded(self, conn, active_sprint):
+        track = db.get_or_create_track(conn, active_sprint["id"], "served")
+        item_id = db.create_work_item(conn, active_sprint["id"], track, "Picked up")
+        _checkpoint_note(conn, active_sprint["id"], item_id)
+        db.create_event(
+            conn, active_sprint["id"], "successor-session", "lane.checkpoint.ack",
+            work_item_id=item_id, payload={"summary": "ack"},
+        )
+
+        payload = _application(store=conn, backend=db).invoke(
+            "work.read.next-work-explain", {"sprint_id": active_sprint["id"]}, _context()
+        )
+
+        assert payload["summary"]["checkpointed_unacked"] == 0
+        assert payload["checkpointed_unacked"] == []
+
+    def test_stale_by_24h_checkpoint_still_reported_unacked_but_flagged_stale(self, conn, active_sprint):
+        track = db.get_or_create_track(conn, active_sprint["id"], "served")
+        item_id = db.create_work_item(conn, active_sprint["id"], track, "Stale")
+        note_id = _checkpoint_note(conn, active_sprint["id"], item_id)
+        _backdate_event(conn, note_id, "2020-01-01T00:00:00Z")
+
+        payload = _application(store=conn, backend=db).invoke(
+            "work.read.next-work-explain", {"sprint_id": active_sprint["id"]}, _context()
+        )
+
+        assert payload["summary"]["checkpointed_unacked"] == 1
+        [entry] = payload["checkpointed_unacked"]
+        assert entry["checkpoint_note_id"] == note_id
+        assert entry["stale"] is True
+        assert entry["age_hours"] > 24
+
+    def test_ack_evidence_event_id_also_satisfies_the_join(self, conn, active_sprint):
+        track = db.get_or_create_track(conn, active_sprint["id"], "served")
+        item_id = db.create_work_item(conn, active_sprint["id"], track, "Picked up by field")
+        note_id = _checkpoint_note(conn, active_sprint["id"], item_id)
+        db.create_event(
+            conn, active_sprint["id"], "successor-session", "lane.review",
+            work_item_id=item_id,
+            payload={"summary": "review", "evidence_event_id": note_id},
+        )
+
+        payload = _application(store=conn, backend=db).invoke(
+            "work.read.next-work-explain", {"sprint_id": active_sprint["id"]}, _context()
+        )
+
+        assert payload["checkpointed_unacked"] == []
+
+    def test_only_the_newest_checkpoint_per_item_is_considered(self, conn, active_sprint):
+        track = db.get_or_create_track(conn, active_sprint["id"], "served")
+        item_id = db.create_work_item(conn, active_sprint["id"], track, "Re-checkpointed")
+        first_note_id = _checkpoint_note(conn, active_sprint["id"], item_id, detail="first")
+        db.create_event(
+            conn, active_sprint["id"], "successor-session", "lane.dispatch",
+            work_item_id=item_id,
+            payload={"summary": "pickup", "detail": f"resuming checkpoint note #{first_note_id}"},
+        )
+        second_note_id = _checkpoint_note(conn, active_sprint["id"], item_id, detail="second")
+
+        payload = _application(store=conn, backend=db).invoke(
+            "work.read.next-work-explain", {"sprint_id": active_sprint["id"]}, _context()
+        )
+
+        assert payload["summary"]["checkpointed_unacked"] == 1
+        assert payload["checkpointed_unacked"][0]["checkpoint_note_id"] == second_note_id
+
+
 def test_item_projection_and_status_precheck_are_owner_reads(conn, active_sprint):
     track = db.get_or_create_track(conn, active_sprint["id"], "context")
     item_id = db.create_work_item(conn, active_sprint["id"], track, "Context item")

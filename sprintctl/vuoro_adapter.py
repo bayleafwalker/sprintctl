@@ -546,7 +546,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work.read.next-work-explain",
         _object_schema({"sprint_id": {"type": ["integer", "null"], "minimum": 1}}),
         _result_schema(
-            ("contract_version", "sprint", "summary", "ready_items", "dependency_waiting_items", "active_reservations", "active_unreserved_items", "conflicts", "next_action", "recommended_commands", "recommended_command_bundle"),
+            ("contract_version", "sprint", "summary", "ready_items", "dependency_waiting_items", "active_reservations", "active_unreserved_items", "checkpointed_unacked", "conflicts", "next_action", "recommended_commands", "recommended_command_bundle"),
             {
                 # The served aggregate has emitted "2" since the
                 # reservation-derived explanation landed (2026-08-14); this
@@ -558,6 +558,10 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
                 "dependency_waiting_items": {"type": "array", "items": {"type": "object"}},
                 "active_reservations": {"type": "array", "items": {"type": "object"}},
                 "active_unreserved_items": {"type": "array", "items": {"type": "object"}},
+                # S6 ledger checkpoint (agentops #2450, slice 2450-2 /
+                # #2474): newest-per-item unacked lane.checkpoint notes,
+                # scoped to this sprint the same way ready/waiting are.
+                "checkpointed_unacked": {"type": "array", "items": {"type": "object"}},
                 "conflicts": {"type": "array", "items": {"type": "object"}}, "next_action": {"type": "object"},
                 "recommended_commands": {"type": "array", "items": {"type": "string"}},
                 "recommended_command_bundle": {"type": "object"},
