@@ -626,11 +626,22 @@ def item_note(
     git_branch: str | None = None,
     git_sha: str | None = None,
     git_worktree: str | None = None,
+    release_digest: str | None = None,
+    worktree_host: str | None = None,
+    predecessor_session: str | None = None,
+    acked_by: str | None = None,
 ) -> dict[str, Any]:
     """Invoke ``work.item.note`` (``sprintctl item note``).
 
     The recording actor is always the authenticated identity the server
     resolves from the credential, not a caller-supplied argument.
+
+    ``release_digest``, ``worktree_host``, ``predecessor_session`` and
+    ``acked_by`` are the S6 ledger-checkpoint fields (agentops #2450,
+    docs/plans/2450-s6-ledger-checkpoint.md); they ride through as ordinary
+    optional payload keys the same way ``git_branch``/``git_sha``/
+    ``git_worktree`` already do, and are only meaningful for
+    ``lane.checkpoint`` notes.
     """
 
     arguments = {
@@ -644,6 +655,10 @@ def item_note(
         "git_branch": git_branch,
         "git_sha": git_sha,
         "git_worktree": git_worktree,
+        "release_digest": release_digest,
+        "worktree_host": worktree_host,
+        "predecessor_session": predecessor_session,
+        "acked_by": acked_by,
     }
     return asyncio.run(
         _invoke_operation(served_profile, "work.item.note", arguments, repo_id=repo_id)

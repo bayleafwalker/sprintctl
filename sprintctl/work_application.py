@@ -1368,7 +1368,14 @@ class WorkApplication:
         )
         if evidence_event_id is not None:
             payload["evidence_event_id"] = evidence_event_id
-        for field in ("git_branch", "git_sha", "git_worktree"):
+        for field in (
+            "git_branch", "git_sha", "git_worktree",
+            # S6 ledger-checkpoint fields (agentops #2450,
+            # docs/plans/2450-s6-ledger-checkpoint.md): optional payload keys
+            # meaningful for ``lane.checkpoint`` notes; absent on notes that
+            # predate this, which is a safe "unknown"/"not yet acked" default.
+            "release_digest", "worktree_host", "predecessor_session", "acked_by",
+        ):
             value = _optional_text(arguments.get(field), field)
             if value:
                 payload[field] = value

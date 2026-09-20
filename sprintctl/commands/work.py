@@ -1253,6 +1253,7 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, project_path, as_json)
 def _served_item_note(
     config, item_id, note_type, summary, detail, tags, actor,
     evidence_item_id, evidence_event_id, git_branch, git_sha, git_worktree,
+    release_digest, worktree_host, predecessor_session, acked_by,
 ) -> None:
     """Served-mode ``item note``: routes to ``work.item.note``.
 
@@ -1281,6 +1282,10 @@ def _served_item_note(
         git_branch=git_branch,
         git_sha=git_sha,
         git_worktree=git_worktree,
+        release_digest=release_digest,
+        worktree_host=worktree_host,
+        predecessor_session=predecessor_session,
+        acked_by=acked_by,
         resolved_context=context,
     )
     click.echo(
@@ -1302,11 +1307,28 @@ def _served_item_note(
 @click.option("--git-branch", default=None, help="Git branch name at time of note")
 @click.option("--git-sha", default=None, help="Git commit SHA at time of note")
 @click.option("--git-worktree", default=None, help="Git worktree path at time of note")
+@click.option(
+    "--release-digest", default=None,
+    help="sha256 digest of the item's current Release at write time (lane.checkpoint)",
+)
+@click.option(
+    "--worktree-host", default=None,
+    help="host:path of the worktree the note was written from (lane.checkpoint)",
+)
+@click.option(
+    "--predecessor-session", default=None,
+    help="Actor/session identifier of the session that wrote the checkpoint (lane.checkpoint)",
+)
+@click.option(
+    "--acked-by", default=None,
+    help="Actor/session identifier that acknowledged the checkpoint, if any (lane.checkpoint)",
+)
 @click.pass_obj
 def item_note(
     obj, item_id: str, note_type, summary, detail, tags, actor,
     evidence_item_id, evidence_event_id,
     git_branch, git_sha, git_worktree,
+    release_digest, worktree_host, predecessor_session, acked_by,
 ) -> None:
     """Record a structured note event on a work item."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
@@ -1317,6 +1339,7 @@ def item_note(
         _served_item_note(
             config, item_id, note_type, summary, detail, tags, actor,
             evidence_item_id, evidence_event_id, git_branch, git_sha, git_worktree,
+            release_digest, worktree_host, predecessor_session, acked_by,
         )
         return
     store, m = _get_store(obj)
@@ -1339,6 +1362,14 @@ def item_note(
         payload["git_sha"] = git_sha
     if git_worktree is not None:
         payload["git_worktree"] = git_worktree
+    if release_digest is not None:
+        payload["release_digest"] = release_digest
+    if worktree_host is not None:
+        payload["worktree_host"] = worktree_host
+    if predecessor_session is not None:
+        payload["predecessor_session"] = predecessor_session
+    if acked_by is not None:
+        payload["acked_by"] = acked_by
     eid = m.create_event(
         store,
         it["sprint_id"],
