@@ -20,6 +20,23 @@ import pytest
 from sprintctl import db, maintain
 from sprintctl.cli import cli
 
+# item #2506: this file's `elapsed < N ms` assertions are wall-clock budgets
+# on shared/contended hardware, not bounds on the code (CI PR #89 failed at
+# 130.1 ms vs. a 100 ms budget while a same-sha 3.11 job passed; devbox
+# isolation runs of the same test measured 1053, 1166, 3669 ms). Two
+# treatments are applied, class by class, so the same flake can't resurface
+# from a sibling test:
+#   - TestSweepAtScale (the class with the measured, reproducible flake)
+#     restates its wall-clock assertions as SQL-statement-count assertions —
+#     the thing the ms budget actually meant to bound — via _StatementCounter
+#     below. sweep_stale_reservations() and maintain.sweep() are unchanged.
+#   - The remaining wall-clock classes (TestQueryTiming, TestWriteThroughput,
+#     TestUsageContextAtScale) are marked `perf`: a marker registered in
+#     pyproject.toml and deselected by default in ci.yml and
+#     release-sprintctl.yaml (`-m "not perf"`), still runnable on demand via
+#     `uv run pytest -q -m perf`. TestDbSizeGrowth is untouched — it asserts
+#     byte size and table counts, not time.
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -53,6 +70,29 @@ def _now():
 
 def _ms(start: float) -> float:
     return (time.monotonic() - start) * 1000
+
+
+class _StatementCounter:
+    """Count SQL statements executed on ``conn`` via sqlite3's own trace hook.
+
+    Used in place of a wall-clock budget (item #2506) to bound *work done*
+    rather than time taken — no production instrumentation required, sqlite3
+    already exposes this via ``set_trace_callback``.
+    """
+
+    def __init__(self, conn):
+        self._conn = conn
+        self.count = 0
+
+    def __enter__(self):
+        self._conn.set_trace_callback(self._on_statement)
+        return self
+
+    def __exit__(self, *exc_info):
+        self._conn.set_trace_callback(None)
+
+    def _on_statement(self, _statement):
+        self.count += 1
 
 
 def _build_large_sprint(conn) -> dict:
@@ -154,6 +194,8 @@ class TestDbSizeGrowth:
 # ---------------------------------------------------------------------------
 
 class TestQueryTiming:
+    pytestmark = pytest.mark.perf
+
     def test_list_work_items_large_sprint_under_50ms(self, conn):
         sprint = _build_large_sprint(conn)
         start = time.monotonic()
@@ -213,6 +255,8 @@ class TestQueryTiming:
 # ---------------------------------------------------------------------------
 
 class TestWriteThroughput:
+    pytestmark = pytest.mark.perf
+
     def test_bulk_item_creation_under_500ms(self, memory_conn):
         """Creating 200 items sequentially must complete in under 2000 ms."""
         conn = memory_conn
@@ -258,8 +302,19 @@ class TestWriteThroughput:
 # ---------------------------------------------------------------------------
 
 class TestSweepAtScale:
-    def test_sweep_200_items_under_200ms(self, memory_conn):
-        """sweep over 200 active items (all stale) must finish in under 2500 ms."""
+    # item #2506: these two tests are the ones with a measured, reproducible
+    # flake (see module docstring/comment above), so their ms budgets are
+    # restated as SQL-statement-count budgets rather than merely deselected.
+    # sweep_stale_reservations() and maintain.sweep() are unchanged — both do
+    # roughly constant SQL work per row (a row refetch + an event insert per
+    # swept item, on top of the batch SELECT/UPDATE), which is genuinely
+    # linear, not the O(N^2) these tests exist to catch. Baselines measured
+    # on this build (2026-09-21, uv run --extra dev python, in-memory
+    # sqlite): 200-item sweep() = 2405 statements, 100-row
+    # sweep_stale_reservations() = 704 statements. Thresholds below give
+    # ~50% headroom over those baselines.
+    def test_sweep_200_items_statement_count(self, memory_conn):
+        """sweep over 200 active items (all stale) must do ~linear SQL work."""
         conn = memory_conn
         sprint = _build_large_sprint(conn)
         items = db.list_work_items(conn, sprint_id=sprint["id"])
@@ -271,14 +326,17 @@ class TestSweepAtScale:
             (sprint["id"],),
         )
         conn.commit()
-        start = time.monotonic()
-        result = maintain.sweep(conn, sprint["id"], _now(), threshold=timedelta(hours=1))
-        elapsed = _ms(start)
+        with _StatementCounter(conn) as counter:
+            result = maintain.sweep(conn, sprint["id"], _now(), threshold=timedelta(hours=1))
         assert len(result["blocked_items"]) == LARGE_SPRINT_ITEMS
-        assert elapsed < 2500, f"sweep took {elapsed:.1f} ms"
+        assert counter.count <= 3600, (
+            f"sweep executed {counter.count} SQL statements for "
+            f"{LARGE_SPRINT_ITEMS} items — expected roughly linear (measured "
+            "baseline: 2405)"
+        )
 
-    def test_sweep_stale_reservations_at_scale_under_100ms(self, conn):
-        """Sweeping 100 stale reservations must complete in under 100 ms."""
+    def test_sweep_stale_reservations_at_scale_statement_count(self, conn):
+        """Sweeping 100 stale reservations must do ~linear SQL work, not O(N^2)."""
         sprint = _build_large_sprint(conn)
         items = db.list_work_items(conn, sprint_id=sprint["id"])
         for item in items[:100]:
@@ -287,11 +345,14 @@ class TestSweepAtScale:
             "UPDATE reservation SET last_activity_at = '2000-01-01T00:00:00Z'"
         )
         conn.commit()
-        start = time.monotonic()
-        swept = db.sweep_stale_reservations(conn, now="2030-01-01T00:00:00Z")
-        elapsed = _ms(start)
+        with _StatementCounter(conn) as counter:
+            swept = db.sweep_stale_reservations(conn, now="2030-01-01T00:00:00Z")
         assert len(swept) == 100
-        assert elapsed < 100, f"sweep_stale_reservations took {elapsed:.1f} ms"
+        assert counter.count <= 1050, (
+            f"sweep_stale_reservations executed {counter.count} SQL "
+            "statements for 100 rows — expected roughly linear (measured "
+            "baseline: 704)"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +360,8 @@ class TestSweepAtScale:
 # ---------------------------------------------------------------------------
 
 class TestUsageContextAtScale:
+    pytestmark = pytest.mark.perf
+
     def test_usage_context_large_sprint_under_200ms(self, db_path):
         """usage --context on a 200-item sprint must complete in under 200 ms."""
         from click.testing import CliRunner
