@@ -614,6 +614,18 @@ def test_work_item_edit_contract_requires_revision_and_is_repo_scoped_write():
     }
 
 
+def test_work_item_priority_contract_allows_null_and_is_repo_scoped_write():
+    contract = next(
+        c for c in WORK_OPERATION_CONTRACTS if c.name == "work.item.priority"
+    )
+    assert contract.required_authority == "work:lifecycle"
+    assert contract.execution_semantics == "write"
+    assert contract.idempotency == "not-allowed"
+    assert contract.input_schema["required"] == ["item_id", "priority"]
+    assert set(contract.input_schema["properties"]) == {"item_id", "priority"}
+    assert contract.input_schema["properties"]["priority"]["type"] == ["integer", "null"]
+
+
 def test_maintenance_catalog_is_closed_and_least_authority():
     contracts_by_name = {contract.name: contract for contract in WORK_OPERATION_CONTRACTS}
     assert {
@@ -1641,6 +1653,53 @@ def test_item_edit_distinguishes_missing_item_and_required_revision(
         )
     assert malformed.value.code == "invalid-arguments"
     assert malformed.value.http_status == 422
+
+
+def test_item_priority_sets_and_clears(conn, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "priority")
+    item_id = db.create_work_item(
+        conn, active_sprint["id"], track, "Prioritizable", "Scope"
+    )
+    app = _application(store=conn, backend=db)
+
+    set_result = app.invoke(
+        "work.item.priority", {"item_id": item_id, "priority": 5}, _context()
+    )
+    assert set_result["item"]["id"] == item_id
+    assert set_result["item"]["priority"] == 5
+    assert db.get_work_item(conn, item_id)["priority"] == 5
+
+    cleared_result = app.invoke(
+        "work.item.priority", {"item_id": item_id, "priority": None}, _context()
+    )
+    assert cleared_result["item"]["priority"] is None
+    assert db.get_work_item(conn, item_id)["priority"] is None
+
+
+def test_item_priority_rejects_out_of_range_value(conn, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "priority")
+    item_id = db.create_work_item(
+        conn, active_sprint["id"], track, "Prioritizable", "Scope"
+    )
+    app = _application(store=conn, backend=db)
+
+    with pytest.raises(ApplicationRejection) as invalid:
+        app.invoke(
+            "work.item.priority", {"item_id": item_id, "priority": 10}, _context()
+        )
+    assert invalid.value.code == "invalid-arguments"
+    assert invalid.value.http_status == 422
+    assert db.get_work_item(conn, item_id)["priority"] is None
+
+
+def test_item_priority_missing_item_rejected(conn, active_sprint):
+    app = _application(store=conn, backend=db)
+    with pytest.raises(ApplicationRejection) as missing:
+        app.invoke(
+            "work.item.priority", {"item_id": 999999, "priority": 3}, _context()
+        )
+    assert missing.value.code == "item-not-found"
+    assert missing.value.http_status == 404
 
 
 def test_generic_event_add_cannot_forge_an_item_edit_audit(conn, active_sprint):

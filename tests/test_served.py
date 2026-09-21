@@ -263,6 +263,23 @@ def test_item_edit_sends_required_revision_and_never_a_client_actor(fake_vuoro_c
     assert "actor" not in result["arguments"]
 
 
+def test_item_priority_sends_item_id_and_priority(fake_vuoro_client):
+    result = served.item_priority(
+        _profile(), repo_id="repo-x", item_id=7, priority=5,
+    )
+    assert result["operation"] == "work.item.priority"
+    assert result["arguments"] == {"item_id": 7, "priority": 5}
+    assert "actor" not in result["arguments"]
+
+
+def test_item_priority_clear_sends_null_priority(fake_vuoro_client):
+    result = served.item_priority(
+        _profile(), repo_id="repo-x", item_id=7, priority=None,
+    )
+    assert result["operation"] == "work.item.priority"
+    assert result["arguments"] == {"item_id": 7, "priority": None}
+
+
 def test_read_sprint_detail_sends_only_optional_sprint_id(fake_vuoro_client):
     result = served.read_sprint_detail(_profile(), repo_id="repo-x", sprint_id=7)
     assert result["operation"] == "work.read.sprint-detail"

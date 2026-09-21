@@ -338,6 +338,7 @@ class WorkApplication:
             "work.handoff.record": target._handoff_record,
             "work.item.create": target._item_create,
             "work.item.edit": target._item_edit,
+            "work.item.priority": target._item_priority,
             "work.item.ref.add": target._item_ref_add,
             "work.item.ref.remove": target._item_ref_remove,
             "work.item.dep.add": target._item_dep_add,
@@ -1071,6 +1072,31 @@ class WorkApplication:
             "actor": context.identity.actor,
             **result,
         }
+
+    def _item_priority(
+        self, arguments: dict[str, Any], _context: InvocationContext
+    ) -> dict[str, Any]:
+        """Set or clear an item's native priority."""
+        item_id = _positive_int(arguments.get("item_id"), "item_id")
+        priority = arguments.get("priority")
+        try:
+            priority = db.validate_priority(priority)
+        except ValueError as exc:
+            raise ApplicationRejection("invalid-arguments", str(exc), 422) from exc
+        if self.backend.get_work_item(self.store, item_id) is None:
+            raise ApplicationRejection(
+                "item-not-found", f"Item #{item_id} not found", 404
+            )
+        try:
+            self.backend.set_work_item_priority(self.store, item_id, priority)
+        except ValueError as exc:
+            raise ApplicationRejection("item-priority-rejected", str(exc), 422) from exc
+        item = self.backend.get_work_item(self.store, item_id)
+        if item is None:  # pragma: no cover - backend postcondition
+            raise ApplicationRejection(
+                "item-priority-failed", "updated item could not be read back", 500
+            )
+        return {"item": item}
 
     def _resolve_sprint(
         self, requested: Any, *, prefer_backlog: bool = False
