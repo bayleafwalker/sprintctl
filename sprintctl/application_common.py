@@ -241,9 +241,19 @@ def _ingest_result(value: Any) -> dict[str, Any]:
 
 
 def _parse_utc_timestamp(value: str | None) -> datetime | None:
+    """Parse an ISO-8601 UTC timestamp, with or without fractional seconds.
+
+    ``created_at`` values read back from the served PostgreSQL backend
+    deliberately preserve fractional seconds (see ``rows.iso_timestamp``),
+    so this must accept both "%Y-%m-%dT%H:%M:%SZ" and
+    "%Y-%m-%dT%H:%M:%S.ffffffZ" and return an aware UTC datetime either way.
+    """
     if not value:
         return None
-    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _dependency_waiting_items(backend: Any, store: Any, sprint_id: int) -> list[dict]:
