@@ -352,15 +352,62 @@ def test_item_note_sends_full_shape_and_never_an_actor_field(fake_vuoro_client):
         "git_branch",
         "git_sha",
         "git_worktree",
-        "release_digest",
-        "worktree_host",
-        "predecessor_session",
-        "acked_by",
     }
     assert "actor" not in args
     assert args["item_id"] == 7
     assert args["note_type"] == "decision"
     assert args["tags"] == ["a", "b"]
+
+
+def test_item_note_omits_unset_s6_checkpoint_keys(fake_vuoro_client):
+    """No S6 ledger-checkpoint value supplied -> arguments carry exactly the
+    pre-0.7.1 key set, so a client ahead of an authority that predates #2450
+    (agentops #2450) can still write notes (agentops #2508)."""
+    profile = _profile()
+    result = served.item_note(
+        profile,
+        repo_id="repo-x",
+        item_id=7,
+        note_type="update",
+        summary="s",
+    )
+    args = result["arguments"]
+    assert set(args) == {
+        "item_id",
+        "note_type",
+        "summary",
+        "detail",
+        "tags",
+        "evidence_item_id",
+        "evidence_event_id",
+        "git_branch",
+        "git_sha",
+        "git_worktree",
+    }
+    assert "release_digest" not in args
+    assert "worktree_host" not in args
+    assert "predecessor_session" not in args
+    assert "acked_by" not in args
+
+
+def test_item_note_sends_acked_by_when_set(fake_vuoro_client):
+    """A lane.checkpoint note that sets ``acked_by`` still sends it -- an
+    authority that predates #2450 then rejects the call loudly with a schema
+    error, which is the correct outcome for that case (agentops #2508)."""
+    profile = _profile()
+    result = served.item_note(
+        profile,
+        repo_id="repo-x",
+        item_id=7,
+        note_type="lane.checkpoint",
+        summary="s",
+        acked_by="agent-1",
+    )
+    args = result["arguments"]
+    assert args["acked_by"] == "agent-1"
+    assert "release_digest" not in args
+    assert "worktree_host" not in args
+    assert "predecessor_session" not in args
 
 
 def test_item_note_never_sends_an_idempotency_key_or_retries(fake_vuoro_client):
