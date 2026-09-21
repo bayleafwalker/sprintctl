@@ -673,11 +673,23 @@ def item_note(
         "git_branch": git_branch,
         "git_sha": git_sha,
         "git_worktree": git_worktree,
-        "release_digest": release_digest,
-        "worktree_host": worktree_host,
-        "predecessor_session": predecessor_session,
-        "acked_by": acked_by,
     }
+    # The S6 ledger-checkpoint keys are only sent when set. The served
+    # work.item.note schema is additionalProperties false, so a client
+    # newer than the authority that always sends these four keys (even as
+    # None) is rejected outright -- not just for lane.checkpoint notes, for
+    # every note type (agentops #2508). Omitting them when unset keeps
+    # compatibility with authorities that predate #2450; a caller that sets
+    # one of these against such an authority still gets a loud schema
+    # error, which is the correct behavior for a lane.checkpoint note.
+    for key, value in (
+        ("release_digest", release_digest),
+        ("worktree_host", worktree_host),
+        ("predecessor_session", predecessor_session),
+        ("acked_by", acked_by),
+    ):
+        if value is not None:
+            arguments[key] = value
     return asyncio.run(
         _invoke_operation(served_profile, "work.item.note", arguments, repo_id=repo_id)
     )
