@@ -220,28 +220,50 @@ class TestReplay2431CheckpointedUnackedBucket:
 
 
 class TestBucketRejectsRealMicrosecondPrecisionTimestamps:
-    """Field-gap finding from the #2431 replay (agentops#2476).
+    """Field-gap finding from the #2431 replay (agentops#2476), now fixed.
 
     The real note #3134's `created_at`, verbatim, is
     "2026-09-19T17:07:01.250294Z" -- and `rows.py:iso_timestamp` documents
     that the served backend deliberately keeps fractional seconds on every
-    read. `_parse_utc_timestamp` (application_common.py) parses with
-    `"%Y-%m-%dT%H:%M:%SZ"`, which has no `%f` component, so it raises
-    unhandled on this real shape. This is not a fixture artifact: it
-    reproduces with the exact, unmodified timestamp string from note #3134.
+    read. `_parse_utc_timestamp` (application_common.py) used to parse with
+    `"%Y-%m-%dT%H:%M:%SZ"`, which has no `%f` component, so it raised
+    unhandled on this real shape. That was not a fixture artifact: it
+    reproduced with the exact, unmodified timestamp string from note #3134.
 
-    This test pins a defect, not desired behaviour. The fix is tracked as
-    agentops#2499; when it lands, invert this test to assert the bucket
-    renders the checkpoint from the real timestamp rather than deleting it.
+    This class originally pinned that defect (`TestBucketRejectsRealMicrosecondPrecisionTimestamps`
+    ::test_bucket_crashes_on_a_real_microsecond_precision_timestamp asserted a
+    non-zero exit and an uncaught `ValueError`). agentops#2499 fixed
+    `_parse_utc_timestamp` to accept both whole-second and fractional-second
+    timestamps, so this class is inverted to assert the bucket renders the
+    checkpoint from the real, unmodified microsecond-precision timestamp
+    instead of crashing on it.
     """
 
-    def test_bucket_crashes_on_a_real_microsecond_precision_timestamp(self, runner, conn, active_sprint):
-        _seed_2431_checkpoint(conn, active_sprint["id"], created_at=REAL_CHECKPOINT_CREATED_AT)
+    def test_bucket_renders_a_real_microsecond_precision_timestamp(self, monkeypatch, runner, conn, active_sprint):
+        item_id, checkpoint_note_id = _seed_2431_checkpoint(
+            conn, active_sprint["id"], created_at=REAL_CHECKPOINT_CREATED_AT
+        )
+        _freeze_now(monkeypatch, REAL_PICKUP_CREATED_AT)
 
         result = runner.invoke(
             cli, ["next-work", "--sprint-id", str(active_sprint["id"]), "--include-checkpoints"]
         )
 
-        assert result.exit_code != 0
-        assert isinstance(result.exception, ValueError)
-        assert "does not match format" in str(result.exception)
+        assert result.exit_code == 0, result.output
+        assert result.exception is None
+        assert "Checkpointed unacked items (1):" in result.output
+        assert f"#{item_id}" in result.output
+        assert "lane/2431-item-release-to-pending" in result.output
+        assert "89dc1d5" in result.output
+
+        payload = _application(store=conn, backend=db).invoke(
+            "work.read.next-work-explain", {"sprint_id": active_sprint["id"]}, _context()
+        )
+        assert payload["summary"]["checkpointed_unacked"] == 1
+        [entry] = payload["checkpointed_unacked"]
+        assert entry["item_id"] == item_id
+        assert entry["checkpoint_note_id"] == checkpoint_note_id
+        assert entry["reason_code"] == "checkpoint-unacked"
+        # Same recorded gap as the whole-second replay above (4h56m35.9s),
+        # now derived from the real microsecond-precision instants.
+        assert entry["age_hours"] == 4.94
