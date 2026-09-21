@@ -34,6 +34,7 @@ PUBLISHED_OPERATIONS = (
         "work.item.dep.remove",
         "work.item.edit",
         "work.item.note",
+        "work.item.priority",
         "work.item.ref.add",
         "work.item.ref.remove",
         "work.lifecycle.arbitrate",

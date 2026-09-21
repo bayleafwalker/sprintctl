@@ -178,6 +178,57 @@ def test_catalog_classified_command_still_never_opens_store_in_served_mode(
     sys.version_info < (3, 12),
     reason="served mode requires Python 3.12+",
 )
+def test_item_priority_set_routes_through_served_facade_never_opening_a_store(
+    runner, tmp_path, monkeypatch
+):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module, "_get_store", lambda _obj: pytest.fail("served command opened a store")
+    )
+    calls = []
+
+    def fake_item_priority(*args, **kwargs):
+        calls.append(kwargs)
+        return {"item": {"id": 7, "priority": 5}}
+
+    monkeypatch.setattr(cli_module._served, "item_priority", fake_item_priority)
+
+    result = runner.invoke(cli, ["item", "priority", "--id", "7", "--set", "5", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert calls[-1]["item_id"] == 7
+    assert calls[-1]["priority"] == 5
+    assert '"priority": 5' in result.output
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 12),
+    reason="served mode requires Python 3.12+",
+)
+def test_item_priority_clear_sends_null_through_served_facade(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli_module, "_get_store", lambda _obj: pytest.fail("served command opened a store")
+    )
+    calls = []
+
+    def fake_item_priority(*args, **kwargs):
+        calls.append(kwargs)
+        return {"item": {"id": 7, "priority": None}}
+
+    monkeypatch.setattr(cli_module._served, "item_priority", fake_item_priority)
+
+    result = runner.invoke(cli, ["item", "priority", "--id", "7", "--clear", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert calls[-1]["item_id"] == 7
+    assert calls[-1]["priority"] is None
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 12),
+    reason="served mode requires Python 3.12+",
+)
 def test_authority_mode_is_a_local_served_consumer_command(runner, tmp_path, monkeypatch):
     """A non-sprintctl manifest can enable its named local rollout pilot."""
     _configure_served_repo(tmp_path, monkeypatch)

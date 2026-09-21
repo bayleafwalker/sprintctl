@@ -512,6 +512,24 @@ def item_edit(
     )
 
 
+def item_priority(
+    served_profile: ServedProfile,
+    *,
+    repo_id: str,
+    item_id: int,
+    priority: int | None,
+) -> dict[str, Any]:
+    """Invoke ``work.item.priority`` to set or clear an item's native priority."""
+    return asyncio.run(
+        _invoke_operation(
+            served_profile,
+            "work.item.priority",
+            {"item_id": item_id, "priority": priority},
+            repo_id=repo_id,
+        )
+    )
+
+
 def project_next_work(
     served_profile: ServedProfile, *, sprint_id: int | None = None
 ) -> dict[str, Any]:

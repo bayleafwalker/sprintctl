@@ -755,6 +755,20 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "write",
         "not-allowed",
     ),
+    WorkOperationContract(
+        "work.item.priority",
+        _object_schema(
+            {
+                "item_id": {"type": "integer", "minimum": 1},
+                "priority": {"type": ["integer", "null"], "minimum": 1, "maximum": 9},
+            },
+            required=("item_id", "priority"),
+        ),
+        _result_schema(("item",), {"item": {"type": "object"}}),
+        "work:lifecycle",
+        "write",
+        "not-allowed",
+    ),
     *(
         WorkOperationContract(name, _object_schema(properties, required=required), _result_schema(("repo_id", "item_id", result_id), {"repo_id": {"type": "string"}, "item_id": {"type": "integer", "minimum": 1}, result_id: {"type": "integer", "minimum": 1}}), "work:lifecycle", "write", "not-allowed")
         for name, properties, required, result_id in (
@@ -1278,6 +1292,7 @@ LEGACY_REMOTE_COMMAND_PARITY: tuple[dict[str, str], ...] = (
     {"legacy": "sprintctl event observation add", "operation": "work.evidence.ingest"},
     {"legacy": "sprintctl item note", "operation": "work.item.note"},
     {"legacy": "sprintctl item edit", "operation": "work.item.edit"},
+    {"legacy": "sprintctl item priority", "operation": "work.item.priority"},
     {"legacy": "sprintctl reservation reserve", "operation": "work.reservation.reserve"},
     {"legacy": "sprintctl reservation touch", "operation": "work.reservation.touch"},
     {"legacy": "sprintctl reservation reassign", "operation": "work.reservation.reassign"},

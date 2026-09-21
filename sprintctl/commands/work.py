@@ -757,6 +757,26 @@ def item_priority(obj, item_id: str, priority, clear, as_json) -> None:
         except ValueError as exc:
             raise click.BadParameter(str(exc), param_hint="--set") from exc
 
+    config = _served_config_or_none(obj)
+    if config is not None:
+        result = _run_served(
+            "item priority",
+            _served.item_priority,
+            config.served_profile,
+            repo_id=config.repo_id,
+            item_id=item_id,
+            priority=None if clear else priority,
+        )
+        updated = result["item"]
+        if as_json:
+            click.echo(json.dumps(updated, indent=2))
+            return
+        if clear:
+            click.echo(f"Cleared priority on item #{item_id}.")
+        else:
+            click.echo(f"Set item #{item_id} priority to p{priority}.")
+        return
+
     store, m = _get_store(obj)
     try:
         m.set_work_item_priority(store, item_id, None if clear else priority)
