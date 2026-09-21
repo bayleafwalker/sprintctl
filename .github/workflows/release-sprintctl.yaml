@@ -32,7 +32,12 @@ jobs:
       - name: Synchronize frozen development dependencies
         run: uv sync --frozen --extra dev
       - name: Run the full test suite
-        run: uv run pytest -q
+        # item #2506: wall-clock timing assertions in tests/test_perf.py are
+        # marked `perf` and deselected here — a tag cut must not fail the
+        # release gate for reasons unrelated to the release (contended
+        # runner timing, not a code regression). Run them on demand with
+        # `uv run pytest -q -m perf`.
+        run: uv run pytest -q -m "not perf"
 
   publish:
     name: Build, attest, and publish the Sprintctl wheel

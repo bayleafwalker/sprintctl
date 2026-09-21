@@ -40,7 +40,12 @@ jobs:
         run: uv sync --extra dev
 
       - name: Run full test suite
-        run: uv run pytest -q
+        # item #2506: wall-clock timing assertions in tests/test_perf.py are
+        # marked `perf` and deselected here — they measured absolute ms
+        # budgets on shared CI runners and flaked by up to 3 orders of
+        # magnitude under contention. Run them on demand with
+        # `uv run pytest -q -m perf`.
+        run: uv run pytest -q -m "not perf"
 
   kctl-contract:
     name: Kctl Producer Contract

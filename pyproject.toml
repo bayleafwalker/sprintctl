@@ -47,4 +47,5 @@ remote-schema-version = 16
 testpaths = ["tests"]
 markers = [
     "pg: requires an explicitly disposable PostgreSQL integration-test database",
+    "perf: wall-clock timing assertion, sensitive to shared/contended hardware (item #2506) — deselected in ci.yml and release-sprintctl.yaml, run explicitly with `-m perf`",
 ]
