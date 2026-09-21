@@ -235,6 +235,81 @@ def agent_protocol_cmd(as_json) -> None:
         click.echo(f"  {var}: {desc}")
 
 
+def _extract_next_action(detail: str | None) -> str | None:
+    """Pull a visible ``next_action: ...`` segment out of a checkpoint detail.
+
+    Checkpoint details are free-text and often long; next_action is the one
+    piece a successor session must not have to hunt for mid-paragraph, so it
+    is surfaced separately (agentops#2475).
+    """
+    if not detail:
+        return None
+    marker = "next_action:"
+    idx = detail.find(marker)
+    if idx == -1:
+        return None
+    tail = detail[idx:]
+    end_candidates = [i for i in (tail.find("\n"), tail.find(";")) if i != -1]
+    if end_candidates:
+        tail = tail[: min(end_candidates)]
+    return tail.strip()
+
+
+def _echo_checkpointed_unacked_section(checkpoints: list[dict]) -> None:
+    """Render the checkpointed_unacked bucket the same way ready items render.
+
+    2450-S6c (agentops#2475): the branch/sha/next_action a successor needs to
+    pick up an interrupted item, so a plain `next-work` read carries the same
+    pickup evidence as the runbook's "Interrupted items" step already
+    documents for the --explain --json path.
+
+    The table only ever carries the short fields (ID/TITLE/BRANCH/SHA);
+    checkpoint ``detail`` text is free-form, often 1000+ characters and
+    multi-line, so it is rendered as indented continuation lines beneath the
+    table instead of a table column -- the same convention
+    `_render_next_work_explained_text` uses for per-item ``refs`` text.
+    """
+    click.echo(f"Checkpointed unacked items ({len(checkpoints)}):")
+    rows: list[list[str]] = []
+    for checkpoint in checkpoints:
+        rows.append(
+            [
+                f"#{checkpoint['item_id']}",
+                checkpoint.get("title") or "-",
+                checkpoint.get("branch") or "-",
+                checkpoint.get("sha") or "-",
+            ]
+        )
+    for line in _render_table(["ID", "TITLE", "BRANCH", "SHA"], rows):
+        click.echo(f"  {line}")
+
+    click.echo("  Next action:")
+    has_next_action = False
+    without_next_action: list[dict] = []
+    for checkpoint in checkpoints:
+        next_action = _extract_next_action(checkpoint.get("detail"))
+        if next_action:
+            has_next_action = True
+            click.echo(f"    #{checkpoint['item_id']}  {next_action}")
+        else:
+            without_next_action.append(checkpoint)
+    if without_next_action:
+        ids = ", ".join(f"#{checkpoint['item_id']}" for checkpoint in without_next_action)
+        if has_next_action:
+            click.echo(f"    (no next_action: {ids})")
+        else:
+            click.echo(f"    (none — no checkpoint detail names a next_action: {ids})")
+
+    click.echo("  Detail:")
+    for checkpoint in checkpoints:
+        detail = checkpoint.get("detail")
+        if not detail:
+            click.echo(f"    #{checkpoint['item_id']}  (none)")
+            continue
+        for detail_line in detail.splitlines():
+            click.echo(f"    #{checkpoint['item_id']}  {detail_line}")
+
+
 @click.command("next-work")
 @click.option("--sprint-id", type=str, default=None, help="Sprint ID or repo#id (defaults to active)")
 @click.option(
@@ -252,8 +327,16 @@ def agent_protocol_cmd(as_json) -> None:
     default=False,
     help="Include exclusion reasons, conflicts, and next_action (detailed in --json mode).",
 )
+@click.option(
+    "--include-checkpoints/--no-include-checkpoints",
+    default=True,
+    help=(
+        "Include the checkpointed_unacked bucket: items with an unacknowledged "
+        "lane.checkpoint note (branch, sha, next_action) that a session should pick up."
+    ),
+)
 @click.pass_obj
-def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
+def next_work_cmd(obj, sprint_id, project_path, as_json, explain, include_checkpoints) -> None:
     """Suggest pending items that are ready to start (no unresolved blocking deps).
 
     Items are listed in creation order. Items blocked by incomplete predecessors
@@ -387,6 +470,15 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
                 ),
             )
             payload["projection"] = projection_status
+        # Interrupted items surface here too (2450-S6c, agentops#2475): a plain
+        # `next-work` read is the same audience as --explain --json for a
+        # session picking its next item, so it must not require the explain
+        # path just to see an unacked lane.checkpoint note.
+        checkpoints: list[dict] = []
+        if include_checkpoints and not explain:
+            checkpoints = _application._checkpointed_unacked_items(
+                m, store, s["id"], datetime.now(timezone.utc)
+            )
         if as_json:
             if explain:
                 click.echo(json.dumps(payload, indent=2))
@@ -405,16 +497,19 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain) -> None:
             click.echo(status_line)
         if not ready:
             click.echo(f"No pending items ready to start in sprint #{s['id']} ({s['name']}).")
-            return
-        click.echo(f"Ready to start in sprint #{s['id']} ({s['name']}):")
-        rows: list[list[str]] = []
-        for it in ready:
-            assignee = it.get("assignee") or "-"
-            rows.append(
-                [f"#{it['id']}", _format_priority(it), it["track_name"], assignee, it["title"]]
-            )
-        for line in _render_table(["ID", "PRI", "TRACK", "ASSIGNEE", "TITLE"], rows):
-            click.echo(f"  {line}")
+        else:
+            click.echo(f"Ready to start in sprint #{s['id']} ({s['name']}):")
+            rows: list[list[str]] = []
+            for it in ready:
+                assignee = it.get("assignee") or "-"
+                rows.append(
+                    [f"#{it['id']}", _format_priority(it), it["track_name"], assignee, it["title"]]
+                )
+            for line in _render_table(["ID", "PRI", "TRACK", "ASSIGNEE", "TITLE"], rows):
+                click.echo(f"  {line}")
+        if checkpoints:
+            click.echo("")
+            _echo_checkpointed_unacked_section(checkpoints)
         return
 
     project, scopes = _get_project_stores(obj, project_path)
