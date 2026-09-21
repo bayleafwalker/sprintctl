@@ -22,6 +22,7 @@ import click
 
 from .. import __version__
 from .. import application as _application
+from .. import application_common as _application_common
 from .. import backend as _backend
 from .. import authority as _authority
 from .. import authority_config as _authority_config
@@ -137,8 +138,12 @@ def _render_takeup_rows(rows: list[dict], *, released: bool = False) -> None:
         click.echo(f"  {line}")
 
 
-def _parse_utc_timestamp(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+# agentops#2503: re-export the shared parser instead of keeping a private
+# copy. agentops#2499 made application_common._parse_utc_timestamp lenient
+# (accepts whole- and fractional-second ISO-8601 UTC timestamps) and always
+# aware-UTC, matching what this module needs, so there is no reason left to
+# duplicate it here.
+_parse_utc_timestamp = _application_common._parse_utc_timestamp
 
 
 def _load_active_actionq_session_ids(actionctl_bin: str) -> set[str]:
@@ -604,12 +609,6 @@ def _parse_threshold(threshold_str: str | None) -> timedelta | None:
     except ValueError:
         click.echo(f"Invalid threshold '{threshold_str}' — use format like '4h'.", err=True)
         sys.exit(1)
-
-
-def _parse_utc_timestamp(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
 
 def _event_payload(event: dict) -> dict:

@@ -1,5 +1,6 @@
 import json
 import subprocess
+from pathlib import Path
 
 from sprintctl import db
 from sprintctl.cli import cli
@@ -476,6 +477,70 @@ def test_takeup_sweep_stale_after_releases_old_takeup_without_runtime_session(
     data = json.loads(result.output)
     assert data["released_takeups"][0]["reason"] == "no-session-stale"
     assert db.list_active_takeups(conn, active_sprint["id"]) == []
+
+
+def test_takeup_sweep_stale_after_handles_fractional_second_taken_up_at(
+    runner,
+    conn,
+    active_sprint,
+    db_path,
+    monkeypatch,
+):
+    # Regression for agentops#2503: served-backend timestamps (pg.py's
+    # iso_timestamp) preserve microseconds, unlike local SQLite's whole-second
+    # strftime default. A strict %Y-%m-%dT%H:%M:%SZ parser raises ValueError
+    # on this shape instead of computing age_seconds.
+    event_id = _takeup(conn, active_sprint["id"], "agent-a", "inst-a")
+    conn.execute(
+        "UPDATE event SET created_at = ? WHERE id = ?",
+        ("2026-01-01T00:00:00.250294Z", event_id),
+    )
+    conn.commit()
+    _fake_actionctl_sessions(monkeypatch, [])
+
+    result = runner.invoke(
+        cli,
+        ["takeup", "sweep", "--sprint-id", str(active_sprint["id"]), "--stale-after", "1", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["released_takeups"][0]["reason"] == "no-session-stale"
+    assert db.list_active_takeups(conn, active_sprint["id"]) == []
+
+
+def test_parse_utc_timestamp_round_trips_fractional_and_whole_seconds():
+    # agentops#2503: lifecycle._parse_utc_timestamp must accept both shapes
+    # and always return an aware UTC datetime, matching
+    # application_common._parse_utc_timestamp's contract.
+    from datetime import timezone
+
+    from sprintctl.commands import lifecycle
+
+    fractional = lifecycle._parse_utc_timestamp("2026-09-19T17:07:01.250294Z")
+    whole = lifecycle._parse_utc_timestamp("2026-09-19T17:07:01Z")
+
+    assert fractional.tzinfo is not None
+    assert fractional.astimezone(timezone.utc) == fractional
+    assert fractional.microsecond == 250294
+
+    assert whole.tzinfo is not None
+    assert whole.astimezone(timezone.utc) == whole
+    assert whole.microsecond == 0
+
+    assert lifecycle._parse_utc_timestamp(None) is None
+    assert lifecycle._parse_utc_timestamp("") is None
+
+
+def test_parse_utc_timestamp_has_exactly_one_definition_in_lifecycle_module():
+    # agentops#2503: the strict duplicate at the old lifecycle.py:609 must
+    # stay gone; a source-level check pins that down even though the
+    # surviving name is now an import alias rather than a `def`.
+    from sprintctl.commands import lifecycle
+
+    source = Path(lifecycle.__file__).read_text()
+    assert source.count("def _parse_utc_timestamp") == 0
+    assert source.count("_parse_utc_timestamp = ") == 1
 
 
 def test_render_includes_active_takeup_section(runner, conn, active_sprint, db_path):
