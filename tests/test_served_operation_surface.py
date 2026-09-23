@@ -51,6 +51,8 @@ PUBLISHED_OPERATIONS = (
         "work.project.next-work",
         "work.project.next-work-explain",
         "work.project.sprints",
+        "work.public.item-v1",
+        "work.public.list-v1",
         "work.read.context",
         "work.read.context-candidates",
         "work.read.decisions",

@@ -805,3 +805,31 @@ def canonicalize_event_for_archive_import(
 
 
 from .handoff_contract import ContextContract, HandoffBundle
+
+
+# --------------------------------------------------------------------------
+# work.public.* -- the workspace-scoped public-work contract (agentops#2514).
+# Constants live here, a leaf module, because both the adapter catalog and the
+# work application need them and the two import each other only through
+# ``application``.
+# --------------------------------------------------------------------------
+PUBLIC_WORK_TITLE_MAX_LENGTH = 160
+PUBLIC_WORK_STATUSES = ("pending", "active", "done", "blocked")
+# Fields on the served work item record that must never leave the perimeter
+# through work.public.*.  Named here so the must-be-absent test enumerates
+# the decided list rather than whatever the record happens to carry.
+PUBLIC_WORK_NEVER_EMIT_FIELDS = (
+    "description",
+    "assignee",
+    "repo_id",
+    "sprint_id",
+    "track_id",
+    "aggregate_uuid",
+    "legacy",
+    "terminal_decision_id",
+    "edit_revision",
+    "status_revision",
+    "provenance",
+    "tier",
+    "prior_attempts",
+)
