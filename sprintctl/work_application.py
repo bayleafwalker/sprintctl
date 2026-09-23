@@ -311,6 +311,8 @@ class WorkApplication:
             "work.read.sprints": target._read_sprints,
             "work.read.item": target._read_item,
             "work.read.item-projection": target._read_item_projection,
+            "work.public.list-v1": target._public_list,
+            "work.public.item-v1": target._public_item,
             "work.validate.item-status-mutation": target._validate_item_status_mutation,
             "work.read.items": target._read_items,
             "work.read.reservations": target._read_reservations,
@@ -480,6 +482,106 @@ class WorkApplication:
                 "item-not-found", f"Item #{item_id} not found", 404
             )
         return {"repo_id": self.repo_id, "projection": projection}
+
+    # -- work.public.* -----------------------------------------------------
+    # The workspace-scoped public-work contract (agentops#2514).  These two
+    # reads are the only thing the E1 edge surface may call, and their result
+    # schemas are the emission boundary: every object is
+    # additionalProperties:false, so a field the handler leaks fails the
+    # served result gate.  The handler builds each public record from an
+    # explicit field list -- never ``**item`` -- and derives ``blocked`` /
+    # ``blocked_by`` from the structured dep rows, never from description
+    # text, which the disclosure audit found carries internal hostnames,
+    # paths, command lines and an unremediated finding.  Workspace scope
+    # comes from the resolver (context.repo_id -> _scoped_for), never from
+    # the request body.
+
+    def _public_envelope(self) -> dict[str, Any]:
+        return {
+            "authority": "sprintctl",
+            "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            "state": "ok",
+        }
+
+    def _public_unresolved_blockers(self, item_id: int) -> list[int]:
+        """Work ids of dependencies not yet done, from the dep rows only.
+
+        Same rule as :func:`get_ready_items`: a blocker counts until its
+        status is ``done``.
+        """
+        return [
+            int(dep["item_id"])
+            for dep in self.backend.list_deps_blocking(self.store, item_id)
+            if dep["blocker_status"] != "done"
+        ]
+
+    @staticmethod
+    def _public_list_fields(item: Mapping[str, Any], blocked: bool) -> dict[str, Any]:
+        title = str(item["title"])
+        if len(title) > _contracts.PUBLIC_WORK_TITLE_MAX_LENGTH:
+            title = title[: _contracts.PUBLIC_WORK_TITLE_MAX_LENGTH]
+        return {
+            "work_id": int(item["id"]),
+            "title": title,
+            "priority": item.get("priority"),
+            "status": item["status"],
+            "blocked": blocked,
+            "updated_at": item["updated_at"],
+        }
+
+    def _public_list(
+        self, _arguments: dict[str, Any], _context: InvocationContext
+    ) -> dict[str, Any]:
+        """``work.public.list-v1``: every open item in the workspace.
+
+        Open means status is not ``done``; a consumer that wants only ready
+        work filters on ``blocked``.  Ordering is native priority first
+        (unset last), then creation order, the same order next-work uses.
+        """
+        items = [
+            item
+            for item in self.backend.list_work_items(self.store)
+            if item["status"] != "done"
+        ]
+        items.sort(
+            key=lambda item: (
+                item.get("priority") is None,
+                item.get("priority") or 0,
+                item["created_at"],
+                int(item["id"]),
+            )
+        )
+        return {
+            **self._public_envelope(),
+            "items": [
+                self._public_list_fields(
+                    item, bool(self._public_unresolved_blockers(int(item["id"])))
+                )
+                for item in items
+            ],
+        }
+
+    def _public_item(
+        self, arguments: dict[str, Any], _context: InvocationContext
+    ) -> dict[str, Any]:
+        """``work.public.item-v1``: one item, any status, by work_id."""
+        work_id = _positive_int(arguments.get("work_id"), "work_id")
+        current = self.backend.get_work_item_with_edit_revision(self.store, work_id)
+        if current is None:
+            raise ApplicationRejection(
+                "item-not-found", f"Item #{work_id} not found", 404
+            )
+        item, _edit_revision = current
+        blocked_by = self._public_unresolved_blockers(work_id)
+        return {
+            **self._public_envelope(),
+            "item": {
+                **self._public_list_fields(item, bool(blocked_by)),
+                "created_at": item["created_at"],
+                "resolution": item.get("resolution"),
+                "blocked_by": blocked_by,
+            },
+        }
 
     def _validate_item_status_mutation(
         self, arguments: dict[str, Any], _context: InvocationContext

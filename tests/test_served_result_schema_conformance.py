@@ -41,6 +41,7 @@ ARGUMENT_FREE_READS = (
     "work.read.items",
     "work.read.reservations",
     "work.identity.current",
+    "work.public.list-v1",
 )
 
 _TYPES = {
@@ -76,6 +77,9 @@ def _validate(value, schema, path: str, failures: list[str]) -> None:
         return
     if "type" in schema and not _matches_type(value, schema["type"]):
         failures.append(f"{path}: expected type {schema['type']!r}, got {type(value).__name__}")
+        return
+    if "maxLength" in schema and isinstance(value, str) and len(value) > schema["maxLength"]:
+        failures.append(f"{path}: length {len(value)} exceeds maxLength {schema['maxLength']}")
         return
     if isinstance(value, dict):
         for name in schema.get("required", ()):
@@ -151,3 +155,11 @@ def test_validator_rejects_an_undeclared_field():
     failures: list[str] = []
     _validate({"declared": "ok", "undeclared": 1}, schema, "sample", failures)
     assert failures == ["sample.undeclared: not permitted by the result schema"]
+
+
+def test_validator_rejects_an_over_long_string():
+    # work.public.* caps title at 160; the validator must see a cap, not skip it.
+    schema = {"type": "string", "maxLength": 3}
+    failures: list[str] = []
+    _validate("abcd", schema, "sample", failures)
+    assert failures == ["sample: length 4 exceeds maxLength 3"]

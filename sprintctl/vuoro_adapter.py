@@ -318,6 +318,74 @@ _RESOURCE_CHANGES_RESULT = _result_schema(
 )
 
 
+
+# --------------------------------------------------------------------------
+# work.public.* -- the workspace-scoped public-work contract (agentops#2514,
+# design e1-stronger-baseline-design-2026-09-22 section 5).  These are the
+# ``work.public.list/v1`` and ``work.public.item/v1`` contracts of that design;
+# the adapter kit forbids ``/`` in an operation name, so the version rides as
+# a ``-v1`` suffix and a future v2 (objective, acceptance as authored columns)
+# registers beside it rather than replacing it.
+#
+# Every object is ``additionalProperties: false``.  The strict schema is the
+# emission boundary: a handler that leaks a field the contract does not name
+# fails the served result gate (adapter-result-invalid), and the tests force
+# that failure for ``description`` and for every never-emit field by name.
+# --------------------------------------------------------------------------
+from .contracts import (
+    PUBLIC_WORK_NEVER_EMIT_FIELDS,
+    PUBLIC_WORK_STATUSES,
+    PUBLIC_WORK_TITLE_MAX_LENGTH,
+)
+
+_PUBLIC_WORK_ID: dict[str, Any] = {"type": "integer", "minimum": 1}
+_PUBLIC_WORK_LIST_ITEM_PROPERTIES: dict[str, Any] = {
+    "work_id": _PUBLIC_WORK_ID,
+    "title": {"type": "string", "minLength": 1, "maxLength": PUBLIC_WORK_TITLE_MAX_LENGTH},
+    "priority": {"type": ["integer", "null"], "minimum": 1, "maximum": 9},
+    "status": {"enum": list(PUBLIC_WORK_STATUSES)},
+    "blocked": {"type": "boolean"},
+    "updated_at": {"type": "string"},
+}
+_PUBLIC_WORK_LIST_ITEM_REQUIRED = (
+    "work_id", "title", "priority", "status", "blocked", "updated_at",
+)
+_PUBLIC_WORK_ITEM_PROPERTIES: dict[str, Any] = {
+    **_PUBLIC_WORK_LIST_ITEM_PROPERTIES,
+    "created_at": {"type": "string"},
+    "resolution": {"type": ["string", "null"]},
+    "blocked_by": {"type": "array", "items": _PUBLIC_WORK_ID},
+}
+_PUBLIC_WORK_ITEM_REQUIRED = (
+    *_PUBLIC_WORK_LIST_ITEM_REQUIRED, "created_at", "resolution", "blocked_by",
+)
+_PUBLIC_WORK_LIST_ITEM_SCHEMA = _object_schema(
+    _PUBLIC_WORK_LIST_ITEM_PROPERTIES, required=_PUBLIC_WORK_LIST_ITEM_REQUIRED
+)
+_PUBLIC_WORK_ITEM_SCHEMA = _object_schema(
+    _PUBLIC_WORK_ITEM_PROPERTIES, required=_PUBLIC_WORK_ITEM_REQUIRED
+)
+# The envelope names its authority and its state.  ``unavailable`` is in the
+# enum so the contract states the vocabulary a consumer must handle, but the
+# sprintctl handler never emits it with a payload: an unavailable authority is
+# a rejection (postgres-runtime-unavailable, 503), never an empty list.
+_PUBLIC_WORK_ENVELOPE: dict[str, Any] = {
+    "authority": {"const": "sprintctl"},
+    "as_of": {"type": "string"},
+    "state": {"enum": ["ok", "unavailable"]},
+}
+_PUBLIC_WORK_LIST_RESULT = _result_schema(
+    ("authority", "as_of", "state", "items"),
+    {
+        **_PUBLIC_WORK_ENVELOPE,
+        "items": {"type": "array", "items": _PUBLIC_WORK_LIST_ITEM_SCHEMA},
+    },
+)
+_PUBLIC_WORK_ITEM_RESULT = _result_schema(
+    ("authority", "as_of", "state", "item"),
+    {**_PUBLIC_WORK_ENVELOPE, "item": _PUBLIC_WORK_ITEM_SCHEMA},
+)
+
 WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
     WorkOperationContract(
         "work.identity.current",
@@ -366,6 +434,22 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
                 "deps": {"type": "object"},
             },
         ),
+        "work:read",
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.public.list-v1",
+        _object_schema({}),
+        _PUBLIC_WORK_LIST_RESULT,
+        "work:read",
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.public.item-v1",
+        _object_schema({"work_id": _PUBLIC_WORK_ID}, required=("work_id",)),
+        _PUBLIC_WORK_ITEM_RESULT,
         "work:read",
         "read",
         "not-allowed",
@@ -1442,6 +1526,9 @@ def register_work_catalog(
 
 __all__ = [
     "LEGACY_REMOTE_COMMAND_PARITY",
+    "PUBLIC_WORK_NEVER_EMIT_FIELDS",
+    "PUBLIC_WORK_STATUSES",
+    "PUBLIC_WORK_TITLE_MAX_LENGTH",
     "SCHEMA_DIALECT",
     "SCHEMA_FEATURES",
     "WORK_API_VERSION",
