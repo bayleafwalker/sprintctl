@@ -301,6 +301,62 @@ class TestEvidenceChain:
         )
         assert retried["item"]["chain_seq"] == 1
 
+    def test_a_successful_append_replays_cleanly_even_if_the_chain_moved_since(
+        self, store
+    ):
+        """A retry of an already-committed append must not be judged against
+        chain_seq/chain_prev_digest: those are computed by the edge from the
+        tail it observed, not supplied by the original tool caller, and an
+        unrelated concurrent append moves the tail between the original call
+        and a client-side retry. The retry recomputes a *different*
+        chain_seq/chain_prev_digest (as the real edge would) but must still
+        replay the original stored item, not conflict and not double-append.
+        """
+        app = _app(store)
+        run_id = _new_run(app, "evidence-replay-despite-move")
+        key = "evidence-replay-key-1"
+        first = app.invoke(
+            "work.evidence.append-v1",
+            {
+                "run_id": run_id, "item_id": "evidence_first", "kind": "test",
+                "ref": "ref-first", "digest": "sha256:" + "6" * 64, "collector": "tester",
+                "validity": _validity(), "claims": [], "provenance": {},
+                "chain_seq": 0, "chain_prev_digest": None, "idempotency_key": key,
+            },
+            _context(),
+        )
+        # An unrelated append (different key, different item) moves the tail.
+        app.invoke(
+            "work.evidence.append-v1",
+            {
+                "run_id": run_id, "item_id": "evidence_other", "kind": "test",
+                "ref": "ref-other", "digest": "sha256:" + "7" * 64, "collector": "tester",
+                "validity": _validity(), "claims": [], "provenance": {},
+                "chain_seq": 1, "chain_prev_digest": "sha256:" + "8" * 64,
+                "idempotency_key": "evidence-replay-key-unrelated",
+            },
+            _context(),
+        )
+        # The retry: same item_id and key as the first call (as the edge
+        # would resend for the same logical request), but a freshly
+        # recomputed chain_seq/chain_prev_digest against the now-moved tail.
+        retried = app.invoke(
+            "work.evidence.append-v1",
+            {
+                "run_id": run_id, "item_id": "evidence_first", "kind": "test",
+                "ref": "ref-first", "digest": "sha256:" + "6" * 64, "collector": "tester",
+                "validity": _validity(), "claims": [], "provenance": {},
+                "chain_seq": 2, "chain_prev_digest": "sha256:" + "9" * 64,
+                "idempotency_key": key,
+            },
+            _context(),
+        )
+        assert retried == first
+        assert retried["item"]["chain_seq"] == 0
+        tail = app.invoke("work.evidence.tail-v1", {"run_id": run_id}, _context())
+        # No third row: the replay performed no second effect.
+        assert tail["item"]["item_id"] == "evidence_other"
+
     def test_appending_to_a_run_owned_by_another_caller_is_run_not_found(self, store):
         app = _app(store)
         run_id = _new_run(app, "evidence-owner-1")

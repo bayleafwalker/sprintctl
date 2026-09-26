@@ -40,7 +40,7 @@ def _identity_binding(context: InvocationContext) -> tuple[str, str]:
     return principal_id, workspace_id
 
 
-def _request_digest(tool: str, arguments: dict) -> str:
+def _request_digest(tool: str, arguments: dict, *, exclude: frozenset[str] = frozenset()) -> str:
     """sha256 of the tool name and canonical JSON of the non-key arguments.
 
     Independent of, but deliberately the same shape as,
@@ -48,8 +48,18 @@ def _request_digest(tool: str, arguments: dict) -> str:
     on that package, and the two only need to agree on *behaviour*
     (replay/conflict), never on byte-identical digest values, since each
     lives entirely on its own side of the invoke boundary.
+
+    ``exclude`` additionally drops fields that are not part of the caller's
+    request identity even though they travel in ``arguments`` -- e.g.
+    ``append_evidence``'s ``chain_seq``/``chain_prev_digest``, which the edge
+    computes from the tail it observed before calling, not from anything the
+    original tool caller supplied. Digesting them would make a retry's digest
+    depend on how far a concurrent, unrelated append has since moved the same
+    run's chain, turning an ordinary idempotent replay into a spurious
+    ``idempotency-conflict``.
     """
-    body = {key: value for key, value in arguments.items() if key != "idempotency_key"}
+    excluded = {"idempotency_key"} | exclude
+    body = {key: value for key, value in arguments.items() if key not in excluded}
     canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(f"{tool}\n{canonical}".encode()).hexdigest()
 
@@ -1409,6 +1419,8 @@ class WorkApplication:
         tool: str,
         arguments: dict[str, Any],
         effect: Callable[[], dict[str, Any]],
+        *,
+        digest_exclude: frozenset[str] = frozenset(),
     ) -> dict[str, Any]:
         """Replay a stored result, refuse a conflicting one, or perform ``effect``.
 
@@ -1420,10 +1432,14 @@ class WorkApplication:
         idempotency_key with corrected arguments after a non-idempotency
         rejection (e.g. ``evidence-chain-conflict``) instead of being
         permanently stuck on a key that never got as far as a stored result.
+
+        ``digest_exclude`` is passed to ``_request_digest`` (see its
+        docstring) for arguments that vary with server-observed state rather
+        than caller intent.
         """
         principal_id, workspace_id = _identity_binding(context)
         key = _required_text(arguments.get("idempotency_key"), "idempotency_key")
-        digest = _request_digest(tool, arguments)
+        digest = _request_digest(tool, arguments, exclude=digest_exclude)
         stored = self.backend.idempotency_lookup(
             self.store, workspace_id=workspace_id, principal_id=principal_id, tool=tool, key=key
         )
@@ -1511,7 +1527,13 @@ class WorkApplication:
                 raise ApplicationRejection("evidence-chain-conflict", str(exc), 409) from exc
             return {"repo_id": self.repo_id, "run_id": run_id, "item": item}
 
-        return self._idempotent_write(context, "append_evidence", arguments, effect)
+        return self._idempotent_write(
+            context,
+            "append_evidence",
+            arguments,
+            effect,
+            digest_exclude=frozenset({"chain_seq", "chain_prev_digest"}),
+        )
 
     def _session_note_write(
         self, arguments: dict[str, Any], context: InvocationContext
