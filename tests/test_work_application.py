@@ -7,6 +7,7 @@ import json
 import re
 from types import SimpleNamespace
 
+import jsonschema
 import pytest
 
 from sprintctl import application, authority, contracts, db, outbox
@@ -545,7 +546,6 @@ def test_served_maintain_check_without_an_active_sprint_is_clean(conn):
     contract = next(
         c for c in WORK_OPERATION_CONTRACTS if c.name == "work.maintain.check"
     )
-    jsonschema = pytest.importorskip("jsonschema")
     jsonschema.validate(result, contract.result_schema)
 
 
@@ -852,7 +852,6 @@ def test_read_events_every_event_has_iso_created_at_satisfying_contract(
     every event. SQLite stores it as ``YYYY-MM-DDTHH:MM:SSZ`` text; the result
     must pass the published result schema, which the Vuoro service and client
     both validate with Draft 2020-12 (nested ``items`` included)."""
-    jsonschema = pytest.importorskip("jsonschema")
     track = db.get_or_create_track(conn, active_sprint["id"], "served")
     item_id = db.create_work_item(conn, active_sprint["id"], track, "Item")
     db.create_event(
