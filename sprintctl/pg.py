@@ -2482,20 +2482,24 @@ _SCHEMA_17_TABLES: dict[str, tuple[tuple[tuple[str, str, bool], ...], frozenset[
         (
             ("repo_id", _TEXT, True), ("run_id", _TEXT, True),
             ("principal_id", _TEXT, True), ("workspace_id", _TEXT, True),
-            ("idempotency_key", _TEXT, True), ("harness_id", _TEXT, True),
+            ("client_id", _TEXT, False), ("grant_id", _TEXT, False),
+            ("idempotency_key", _TEXT, True), ("request_digest", _TEXT, True),
+            ("harness_id", _TEXT, True),
             ("harness_build", _TEXT, True), ("model_id", _TEXT, True),
             ("recipe_id", _TEXT, True), ("observed_profile", _JSONB, True),
             ("grant_ids", _JSONB, True), ("claim_ids", _JSONB, True),
             ("created_at", _TS, True),
         ),
         frozenset({
-            ("c", "idempotency_key"), ("c", "run_id"), ("p", "repo_id,run_id"),
+            ("c", "idempotency_key"), ("c", "request_digest"), ("c", "run_id"),
+            ("p", "repo_id,run_id"),
             ("u", "repo_id,workspace_id,principal_id,idempotency_key"),
         }),
     ),
     "evidence_item": (
         (
             ("repo_id", _TEXT, True), ("run_id", _TEXT, True), ("item_id", _TEXT, True),
+            ("idempotency_key", _TEXT, True), ("request_digest", _TEXT, True),
             ("chain_seq", "integer", True), ("chain_prev_digest", _TEXT, False),
             ("kind", _TEXT, True), ("ref", _TEXT, True), ("digest", _TEXT, True),
             ("collector", _TEXT, True), ("validity", _JSONB, True),
@@ -2503,17 +2507,20 @@ _SCHEMA_17_TABLES: dict[str, tuple[tuple[tuple[str, str, bool], ...], frozenset[
             ("created_at", _TS, True),
         ),
         frozenset({
-            ("c", "chain_seq"), ("f", "repo_id,run_id"), ("p", "repo_id,run_id,item_id"),
-            ("u", "repo_id,run_id,chain_seq"),
+            ("c", "chain_seq"), ("c", "idempotency_key"), ("c", "request_digest"),
+            ("f", "repo_id,run_id"), ("p", "repo_id,run_id,item_id"),
+            ("u", "repo_id,run_id,chain_seq"), ("u", "repo_id,run_id,idempotency_key"),
         }),
     ),
     "session_note": (
         (
             ("repo_id", _TEXT, True), ("run_id", _TEXT, True), ("note_id", "bigint", True),
-            ("idempotency_key", _TEXT, True), ("note", _TEXT, True), ("created_at", _TS, True),
+            ("idempotency_key", _TEXT, True), ("request_digest", _TEXT, True),
+            ("note", _TEXT, True), ("created_at", _TS, True),
         ),
         frozenset({
-            ("c", "idempotency_key"), ("f", "repo_id,run_id"), ("p", "repo_id,note_id"),
+            ("c", "idempotency_key"), ("c", "request_digest"),
+            ("f", "repo_id,run_id"), ("p", "repo_id,note_id"),
             ("u", "repo_id,run_id,idempotency_key"),
         }),
     ),
@@ -2594,7 +2601,9 @@ def _apply_schema_version_17(cur: Any) -> None:
     ledger (agentops#2466, E2: vuoro-mcp-edge record bucket).
 
     ``run`` binds a Vuoro run handle to the caller that minted it (principal,
-    workspace, repository); ``register_run`` is idempotent per
+    workspace, repository, and the OAuth client/grant when the identity
+    asserts them -- nullable, since a non-OAuth caller has neither);
+    ``register_run`` is idempotent per
     (repo_id, workspace_id, principal_id, idempotency_key), enforced by the
     unique constraint below rather than application-level locking, so a
     concurrent duplicate mint is resolved by PostgreSQL itself.
@@ -2609,6 +2618,12 @@ def _apply_schema_version_17(cur: Any) -> None:
     order or on a forked predecessor.
 
     ``session_note`` is an unchained, run-scoped note.
+
+    ``run``, ``evidence_item`` and ``session_note`` each store the
+    ``idempotency_key`` and ``request_digest`` of the request that wrote the
+    row, in the same statement as the row, unique per key.  A same-key retry
+    therefore replays the row only for the same request and is refused
+    otherwise, at the storage layer as well as in the ledger.
 
     ``work_idempotency_ledger`` is the durable ledger the E2/E3 shared
     contract requires of every write tool (docs/plans/2026-09-26-e2-e3-shared-
@@ -2649,7 +2664,10 @@ def _apply_schema_version_17(cur: Any) -> None:
             run_id text NOT NULL CHECK (run_id ~ '^run_[0-9A-HJKMNP-TV-Z]{26}$'),
             principal_id text NOT NULL,
             workspace_id text NOT NULL,
+            client_id text,
+            grant_id text,
             idempotency_key text NOT NULL CHECK (idempotency_key ~ '^[A-Za-z0-9._:-]{8,128}$'),
+            request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
             harness_id text NOT NULL,
             harness_build text NOT NULL,
             model_id text NOT NULL,
@@ -2668,6 +2686,8 @@ def _apply_schema_version_17(cur: Any) -> None:
             repo_id text NOT NULL,
             run_id text NOT NULL,
             item_id text NOT NULL,
+            idempotency_key text NOT NULL CHECK (idempotency_key ~ '^[A-Za-z0-9._:-]{8,128}$'),
+            request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
             chain_seq integer NOT NULL CHECK (chain_seq >= 0),
             chain_prev_digest text,
             kind text NOT NULL,
@@ -2680,6 +2700,7 @@ def _apply_schema_version_17(cur: Any) -> None:
             created_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (repo_id, run_id, item_id),
             UNIQUE (repo_id, run_id, chain_seq),
+            UNIQUE (repo_id, run_id, idempotency_key),
             FOREIGN KEY (repo_id, run_id) REFERENCES run(repo_id, run_id) ON DELETE CASCADE
         );
 
@@ -2688,6 +2709,7 @@ def _apply_schema_version_17(cur: Any) -> None:
             run_id text NOT NULL,
             note_id bigint GENERATED BY DEFAULT AS IDENTITY,
             idempotency_key text NOT NULL CHECK (idempotency_key ~ '^[A-Za-z0-9._:-]{8,128}$'),
+            request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
             note text NOT NULL,
             created_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (repo_id, note_id),
@@ -4900,6 +4922,8 @@ def _run_row(row: dict) -> dict:
         "run_id": row["run_id"],
         "principal_id": row["principal_id"],
         "workspace_id": row["workspace_id"],
+        "client_id": row["client_id"],
+        "grant_id": row["grant_id"],
         "harness_id": row["harness_id"],
         "harness_build": row["harness_build"],
         "model_id": row["model_id"],
@@ -4911,12 +4935,26 @@ def _run_row(row: dict) -> dict:
     }
 
 
+def _replay_or_conflict(stored_digest: str, request_digest: str, what: str) -> None:
+    """A row already stored under this idempotency key replays only for the
+    same request.  Checked at the storage layer too, not only in
+    :func:`idempotent_write`'s ledger, so the rule holds for any row that
+    exists without its ledger entry."""
+    if stored_digest != request_digest:
+        raise IdempotencyConflict(
+            f"this idempotency_key already recorded a different {what}"
+        )
+
+
 def register_run(
     store: PgStore,
     *,
     principal_id: str,
     workspace_id: str,
+    client_id: str | None,
+    grant_id: str | None,
     idempotency_key: str,
+    request_digest: str,
     harness_id: str,
     harness_build: str,
     model_id: str,
@@ -4928,23 +4966,30 @@ def register_run(
 
     Idempotent per (repo_id, workspace_id, principal_id, idempotency_key): a
     retry -- including two genuinely concurrent callers -- resolves to the
-    same row via the unique constraint below, never two rows for one key.
-    ``run_id`` is minted here (not supplied by the caller) so a retry that
-    mints a fresh candidate id never collides with, or is compared against,
-    the id an earlier attempt already committed.  ``cur``: see
+    same row via the unique constraint below, never two rows for one key,
+    and replays it only when its ``request_digest`` matches
+    (:class:`IdempotencyConflict` otherwise).  The run binds the caller's
+    OAuth ``client_id``/``grant_id`` as well (None without a grant); the
+    request digest covers them, so the same key under a different grant is a
+    conflict rather than a replay of another grant's run.  ``run_id`` is
+    minted here (not supplied by the caller) so a retry that mints a fresh
+    candidate id never collides with, or is compared against, the id an
+    earlier attempt already committed.  ``cur``: see
     :func:`_in_write_transaction`.
     """
     run_id = _mint_run_id()
 
     def body(cur: Any) -> dict:
         cur.execute(
-            "INSERT INTO run(repo_id, run_id, principal_id, workspace_id, "
-            "idempotency_key, harness_id, harness_build, model_id, recipe_id, "
-            "observed_profile) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb) "
+            "INSERT INTO run(repo_id, run_id, principal_id, workspace_id, client_id, "
+            "grant_id, idempotency_key, request_digest, harness_id, harness_build, "
+            "model_id, recipe_id, observed_profile) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb) "
             "ON CONFLICT (repo_id, workspace_id, principal_id, idempotency_key) DO NOTHING",
             (
-                store.repo_id, run_id, principal_id, workspace_id, idempotency_key,
-                harness_id, harness_build, model_id, recipe_id, json.dumps(observed_profile),
+                store.repo_id, run_id, principal_id, workspace_id, client_id, grant_id,
+                idempotency_key, request_digest, harness_id, harness_build, model_id,
+                recipe_id, json.dumps(observed_profile),
             ),
         )
         cur.execute(
@@ -4954,6 +4999,7 @@ def register_run(
         )
         row = cur.fetchone()
         assert row is not None
+        _replay_or_conflict(row["request_digest"], request_digest, "run")
         return _run_row(row)
 
     return _in_write_transaction(store, cur, body)
@@ -4969,16 +5015,29 @@ def get_run(store: PgStore, run_id: str) -> dict | None:
     return _run_row(row) if row is not None else None
 
 
-def resolve_run(store: PgStore, run_id: str, *, principal_id: str, workspace_id: str) -> dict:
-    """The run row if it belongs to (principal_id, workspace_id) in this repo.
+def resolve_run(
+    store: PgStore,
+    run_id: str,
+    *,
+    principal_id: str,
+    workspace_id: str,
+    client_id: str | None,
+    grant_id: str | None,
+) -> dict:
+    """The run row if its whole binding matches the caller in this repo.
 
-    Raises :class:`RunNotFound` for an unknown run id AND for a run bound to
-    a different principal or workspace -- one exception, one message, for
-    both, so a caller cannot use this to probe which run ids exist (mirrors
-    vuoro_mcp_edge.runs.RunRegistry.resolve's contract).
+    The binding is (principal_id, workspace_id, client_id, grant_id) -- the
+    repository is this store's own scope -- so a different OAuth grant of
+    the same principal cannot use the run (E2/E3 shared contract section 4;
+    vuoro_mcp_edge.runs.RunBinding).  Raises :class:`RunNotFound` for an
+    unknown run id AND for a run bound to anyone else -- one exception, one
+    message, so a caller cannot use this to probe which run ids exist.
     """
     row = get_run(store, run_id)
-    if row is None or row["principal_id"] != principal_id or row["workspace_id"] != workspace_id:
+    binding = (principal_id, workspace_id, client_id, grant_id)
+    if row is None or (
+        row["principal_id"], row["workspace_id"], row["client_id"], row["grant_id"]
+    ) != binding:
         raise RunNotFound(f"no run {run_id!r} belongs to the caller")
     return row
 
@@ -5034,6 +5093,8 @@ def append_evidence(
     store: PgStore,
     run_id: str,
     *,
+    idempotency_key: str,
+    request_digest: str,
     item_id: str,
     kind: str,
     ref: str,
@@ -5048,33 +5109,28 @@ def append_evidence(
 ) -> dict:
     """Append one evidence item, enforcing the run's stored chain tail.
 
-    ``chain_seq``/``chain_prev_digest`` are computed by the caller (the Vuoro
-    MCP edge, via ``vuoro_evidence.core.chain.link``) from the tail it
-    fetched before calling this.  Under a per-run lock held to the end of the
-    transaction, this refuses with :class:`EvidenceChainConflict` unless
-    ``chain_seq`` is exactly one past the stored tail (0 for the first item),
-    ``chain_prev_digest`` is the tail's :func:`evidence_entry_digest` (None
-    for the first item).
-    A stale or racing append -- including one that lost a race after
-    computing against a tail a concurrent append has since superseded --
-    is therefore refused rather than landing out of order or on a forked
-    predecessor, and never surfaces as a raw constraint violation.
+    Under a per-run lock held to the end of the transaction:
 
-    ``item_id`` is checked first, under the same lock.  The Vuoro MCP edge
-    derives it deterministically from (run_id, idempotency_key), so an
-    existing row with identical content is a retry of this very request
-    (reaching storage directly, not through :func:`idempotent_write`'s
-    ledger): it is replayed as stored, before the recomputed
-    ``chain_seq``/``chain_prev_digest`` -- which now point past it -- are
-    judged.  An existing row with different content is a different item
-    reusing the id, and is refused.  ``cur``: see
+    1. A row already stored under this run's ``idempotency_key`` is a retry:
+       it replays as stored when its ``request_digest`` matches and raises
+       :class:`IdempotencyConflict` when it does not.  This comes before the
+       chain checks, because a retry's recomputed ``chain_seq`` and
+       ``chain_prev_digest`` point past the row it is retrying.
+    2. An ``item_id`` already stored under a different key is a different
+       item reusing the id: :class:`EvidenceChainConflict`.  (The Vuoro MCP
+       edge derives item_id from (run_id, idempotency_key), so this means
+       the id was not minted the way the edge mints it.)
+    3. ``chain_seq`` must be exactly one past the stored tail (0 for the
+       first item), and ``chain_prev_digest`` must be the tail's
+       :func:`evidence_entry_digest` (None for the first item); otherwise
+       :class:`EvidenceChainConflict`.  The caller (the edge, via
+       ``vuoro_evidence.core.chain.link``) computes both from the tail it
+       fetched, so a stale or racing append is refused rather than landing
+       out of order or on a forked predecessor.
+
+    None of these ever surfaces as a raw constraint violation.  ``cur``: see
     :func:`_in_write_transaction`.
     """
-    submitted = {
-        "item_id": item_id, "kind": kind, "ref": ref, "digest": digest,
-        "collector": collector, "validity": validity, "claims": claims,
-        "provenance": provenance,
-    }
 
     def body(cur: Any) -> dict:
         cur.execute(
@@ -5083,17 +5139,23 @@ def append_evidence(
         )
         cur.execute(
             "SELECT * FROM evidence_item WHERE repo_id = %s AND run_id = %s "
+            "AND idempotency_key = %s",
+            (store.repo_id, run_id, idempotency_key),
+        )
+        retried = cur.fetchone()
+        if retried is not None:
+            _replay_or_conflict(retried["request_digest"], request_digest, "evidence item")
+            return _evidence_row(retried)
+        cur.execute(
+            "SELECT chain_seq FROM evidence_item WHERE repo_id = %s AND run_id = %s "
             "AND item_id = %s",
             (store.repo_id, run_id, item_id),
         )
-        existing = cur.fetchone()
-        if existing is not None:
-            stored = _evidence_row(existing)
-            if {name: stored[name] for name in submitted} == submitted:
-                return stored
+        reused = cur.fetchone()
+        if reused is not None:
             raise EvidenceChainConflict(
                 f"item_id {item_id!r} is already recorded in run {run_id!r}'s chain "
-                f"at chain_seq {stored['chain_seq']} with different content"
+                f"at chain_seq {int(reused['chain_seq'])} under a different idempotency_key"
             )
         cur.execute(
             "SELECT * FROM evidence_item WHERE repo_id = %s AND run_id = %s "
@@ -5115,13 +5177,13 @@ def append_evidence(
             )
         try:
             cur.execute(
-                "INSERT INTO evidence_item(repo_id, run_id, item_id, chain_seq, "
-                "chain_prev_digest, kind, ref, digest, collector, validity, claims, "
-                "provenance) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, "
-                "%s::jsonb, %s::jsonb) RETURNING *",
+                "INSERT INTO evidence_item(repo_id, run_id, item_id, idempotency_key, "
+                "request_digest, chain_seq, chain_prev_digest, kind, ref, digest, "
+                "collector, validity, claims, provenance) VALUES (%s, %s, %s, %s, %s, "
+                "%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb) RETURNING *",
                 (
-                    store.repo_id, run_id, item_id, chain_seq, chain_prev_digest,
-                    kind, ref, digest, collector,
+                    store.repo_id, run_id, item_id, idempotency_key, request_digest,
+                    chain_seq, chain_prev_digest, kind, ref, digest, collector,
                     json.dumps(validity), json.dumps(claims), json.dumps(provenance),
                 ),
             )
@@ -5137,30 +5199,39 @@ def append_evidence(
 
 
 def write_session_note(
-    store: PgStore, run_id: str, *, note: str, idempotency_key: str, cur: Any | None = None
+    store: PgStore,
+    run_id: str,
+    *,
+    note: str,
+    idempotency_key: str,
+    request_digest: str,
+    cur: Any | None = None,
 ) -> dict:
     """Write one session note, idempotent per (repo_id, run_id, idempotency_key).
 
     Mirrors ``register_run``'s ``ON CONFLICT DO NOTHING`` + re-select
     pattern, so the note table converges on one row per key on its own,
     beneath :func:`idempotent_write`'s ledger rather than only because of
-    it.  ``cur``: see :func:`_in_write_transaction`.
+    it; the stored ``request_digest`` makes a same-key retry with a
+    different note an :class:`IdempotencyConflict`, not a replay of the
+    other note.  ``cur``: see :func:`_in_write_transaction`.
     """
 
     def body(cur: Any) -> dict:
         cur.execute(
-            "INSERT INTO session_note(repo_id, run_id, idempotency_key, note) "
-            "VALUES (%s, %s, %s, %s) "
+            "INSERT INTO session_note(repo_id, run_id, idempotency_key, request_digest, note) "
+            "VALUES (%s, %s, %s, %s, %s) "
             "ON CONFLICT (repo_id, run_id, idempotency_key) DO NOTHING",
-            (store.repo_id, run_id, idempotency_key, note),
+            (store.repo_id, run_id, idempotency_key, request_digest, note),
         )
         cur.execute(
-            "SELECT note_id, note, created_at FROM session_note "
+            "SELECT note_id, note, request_digest, created_at FROM session_note "
             "WHERE repo_id = %s AND run_id = %s AND idempotency_key = %s",
             (store.repo_id, run_id, idempotency_key),
         )
         row = cur.fetchone()
         assert row is not None
+        _replay_or_conflict(row["request_digest"], request_digest, "session note")
         return {
             "note_id": int(row["note_id"]),
             "note": row["note"],

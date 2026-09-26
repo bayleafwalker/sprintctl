@@ -35,6 +35,8 @@ def _context(
     *,
     principal_id: str | None = "github:1:0",
     workspace_id: str | None = "ws-1",
+    client_id: str | None = None,
+    grant_id: str | None = None,
     actor: str = "e2-test",
     request_id: str = "request-1",
 ):
@@ -44,6 +46,8 @@ def _context(
         authorities=frozenset({"work:evidence"}),
         principal_id=principal_id,
         workspace_id=workspace_id,
+        client_id=client_id,
+        grant_id=grant_id,
     )
     return SimpleNamespace(
         identity=identity,
@@ -183,6 +187,79 @@ class TestRunResolve:
         with pytest.raises(ApplicationRejection) as excinfo:
             app.invoke("work.run.resolve-v1", {"run_id": run_id}, other)
         assert excinfo.value.code == "run-not-found"
+
+
+class TestRunGrantBinding:
+    """A run binds the caller's OAuth client and grant too (E2/E3 shared
+    contract section 4; vuoro_mcp_edge.runs.RunBinding), and resolve echoes
+    them so the edge's own binding comparison is not inert."""
+
+    GRANT_A = {"client_id": "client-1", "grant_id": "grant-a"}
+    GRANT_B = {"client_id": "client-1", "grant_id": "grant-b"}
+
+    def test_register_persists_client_and_grant_and_resolve_echoes_them(self, store):
+        app = _app(store)
+        context = _context(**self.GRANT_A)
+        run = _register(app, idempotency_key="grant-register-1", context=context)["run"]
+        assert (run["client_id"], run["grant_id"]) == ("client-1", "grant-a")
+        resolved = app.invoke("work.run.resolve-v1", {"run_id": run["run_id"]}, context)
+        assert resolved == {
+            "repo_id": store.repo_id, "run_id": run["run_id"],
+            "principal_id": "github:1:0", "workspace_id": "ws-1",
+            "client_id": "client-1", "grant_id": "grant-a",
+        }
+
+    def test_a_run_without_a_grant_echoes_null_client_and_grant(self, store):
+        app = _app(store)
+        run_id = _new_run(app, "grant-none-1")
+        resolved = app.invoke("work.run.resolve-v1", {"run_id": run_id}, _context())
+        assert (resolved["client_id"], resolved["grant_id"]) == (None, None)
+
+    @pytest.mark.parametrize(
+        "other",
+        [
+            {"client_id": "client-1", "grant_id": "grant-b"},
+            {"client_id": "client-2", "grant_id": "grant-a"},
+            {"client_id": None, "grant_id": None},
+        ],
+        ids=["other-grant", "other-client", "no-grant"],
+    )
+    def test_a_different_grant_of_the_same_principal_is_run_not_found(self, store, other):
+        app = _app(store)
+        run_id = _register(
+            app, idempotency_key="grant-resolve-" + (other["grant_id"] or "none"),
+            context=_context(**self.GRANT_A),
+        )["run"]["run_id"]
+        for operation, arguments in (
+            ("work.run.resolve-v1", {"run_id": run_id}),
+            ("work.evidence.tail-v1", {"run_id": run_id}),
+            ("work.session-note.write-v1",
+             {"run_id": run_id, "note": "not yours", "idempotency_key": "grant-note-key-1"}),
+        ):
+            with pytest.raises(ApplicationRejection) as excinfo:
+                app.invoke(operation, arguments, _context(**other))
+            assert excinfo.value.code == "run-not-found", operation
+        assert _notes(store, run_id) == 0
+
+    def test_a_run_minted_without_a_grant_is_not_an_oauth_caller_s(self, store):
+        app = _app(store)
+        run_id = _new_run(app, "grant-none-2")
+        with pytest.raises(ApplicationRejection) as excinfo:
+            app.invoke("work.run.resolve-v1", {"run_id": run_id}, _context(**self.GRANT_A))
+        assert excinfo.value.code == "run-not-found"
+
+    def test_the_same_key_under_a_different_grant_is_a_conflict_not_a_replay(self, store):
+        """Replaying grant A's run to grant B would hand B a run it cannot
+        resolve; the binding is part of the request, so it conflicts."""
+        app = _app(store)
+        key = "grant-register-shared-1"
+        _register(app, idempotency_key=key, context=_context(**self.GRANT_A))
+        with pytest.raises(ApplicationRejection) as excinfo:
+            _register(app, idempotency_key=key, context=_context(**self.GRANT_B))
+        assert excinfo.value.code == "idempotency-conflict"
+        assert _register(app, idempotency_key=key, context=_context(**self.GRANT_A))["run"][
+            "grant_id"
+        ] == "grant-a"
 
 
 class TestEvidenceChain:
@@ -450,57 +527,113 @@ class TestSessionNote:
 
 
 class TestStorageLevelIdempotency:
-    """The ``append_evidence``/``write_session_note`` backend functions must
-    converge on one row even when called twice with identical arguments
-    *outside* ``work_application``'s ledger -- simulating both a genuinely
-    concurrent second caller and a retry after a crash between this write and
-    the ledger recording it (found by an independent review of this PR)."""
+    """The backend writes converge on one row per idempotency key even when
+    called *outside* ``work_application``'s ledger (a row left without its
+    ledger entry by any path), and replay that row only for the same request
+    digest: a same-key retry with different arguments is an
+    ``IdempotencyConflict`` at storage, never the other request's row."""
 
-    def test_append_evidence_with_an_existing_item_id_replays_instead_of_crashing(
+    @staticmethod
+    def _append(store, run_id, *, key, request_digest, item_id, digest, seq, prev):
+        return pg.append_evidence(
+            store, run_id, idempotency_key=key, request_digest=request_digest,
+            item_id=item_id, kind="test", ref=f"ref-{item_id}", digest=digest,
+            collector="tester", validity=_validity(), claims=[], provenance={},
+            chain_seq=seq, chain_prev_digest=prev,
+        )
+
+    def test_append_evidence_replays_the_same_request_even_after_the_chain_moved(
         self, store
     ):
         run_id = _new_run(_app(store), "storage-idempotency-evidence-1")
-        first = pg.append_evidence(
-            store, run_id, item_id="evi_storage_1", kind="test", ref="ref-1",
-            digest="sha256:" + "a" * 64, collector="tester", validity=_validity(),
-            claims=[], provenance={}, chain_seq=0, chain_prev_digest=None,
+        first = self._append(
+            store, run_id, key="storage-evidence-key-1", request_digest="1" * 64,
+            item_id="evi_storage_1", digest="sha256:" + "a" * 64, seq=0, prev=None,
         )
-        # A second, unrelated item advances the tail in between -- as a
-        # concurrent caller, or the edge's own retry after re-fetching the
-        # tail, would recompute a *different* chain_seq than the first call.
-        other = pg.append_evidence(
-            store, run_id, item_id="evi_storage_other", kind="test", ref="ref-other",
-            digest="sha256:" + "b" * 64, collector="tester", validity=_validity(),
-            claims=[], provenance={}, chain_seq=1,
-            chain_prev_digest=pg.evidence_entry_digest(first),
+        # A second, unrelated item advances the tail in between, so the retry
+        # recomputes a *different* chain_seq/chain_prev_digest.
+        other = self._append(
+            store, run_id, key="storage-evidence-key-2", request_digest="2" * 64,
+            item_id="evi_storage_other", digest="sha256:" + "b" * 64, seq=1,
+            prev=pg.evidence_entry_digest(first),
         )
-        replay = pg.append_evidence(
-            store, run_id, item_id="evi_storage_1", kind="test", ref="ref-1",
-            digest="sha256:" + "a" * 64, collector="tester", validity=_validity(),
-            claims=[], provenance={}, chain_seq=2,
-            chain_prev_digest=pg.evidence_entry_digest(other),
+        replay = self._append(
+            store, run_id, key="storage-evidence-key-1", request_digest="1" * 64,
+            item_id="evi_storage_1", digest="sha256:" + "a" * 64, seq=2,
+            prev=pg.evidence_entry_digest(other),
         )
         assert replay == first
         assert replay["chain_seq"] == 0
+
+    def test_append_evidence_same_key_different_request_is_a_conflict(self, store):
+        """The reviewer's repro: an item with digest aaa is committed; a
+        same-key retry carrying digest eee must not come back ok with aaa."""
+        run_id = _new_run(_app(store), "storage-idempotency-evidence-2")
+        first = self._append(
+            store, run_id, key="storage-evidence-key-3", request_digest="3" * 64,
+            item_id="evi_storage_3", digest="sha256:" + "a" * 64, seq=0, prev=None,
+        )
+        with pytest.raises(pg.IdempotencyConflict):
+            self._append(
+                store, run_id, key="storage-evidence-key-3", request_digest="4" * 64,
+                item_id="evi_storage_3", digest="sha256:" + "e" * 64, seq=1,
+                prev=pg.evidence_entry_digest(first),
+            )
+        assert _items(store, run_id) == 1
 
     def test_write_session_note_with_the_same_key_replays_without_a_second_row(
         self, store
     ):
         run_id = _new_run(_app(store), "storage-idempotency-note-1")
         first = pg.write_session_note(
-            store, run_id, note="same note", idempotency_key="storage-note-key-1"
+            store, run_id, note="same note", idempotency_key="storage-note-key-1",
+            request_digest="5" * 64,
         )
         second = pg.write_session_note(
-            store, run_id, note="same note", idempotency_key="storage-note-key-1"
+            store, run_id, note="same note", idempotency_key="storage-note-key-1",
+            request_digest="5" * 64,
         )
         assert second == first
-        with store.conn.cursor() as cur:
-            cur.execute(
-                "SELECT count(*) AS n FROM session_note WHERE repo_id = %s AND run_id = %s "
-                "AND idempotency_key = %s",
-                (store.repo_id, run_id, "storage-note-key-1"),
+        assert _notes(store, run_id) == 1
+
+    def test_write_session_note_same_key_different_request_is_a_conflict(self, store):
+        run_id = _new_run(_app(store), "storage-idempotency-note-2")
+        pg.write_session_note(
+            store, run_id, note="first note", idempotency_key="storage-note-key-2",
+            request_digest="6" * 64,
+        )
+        with pytest.raises(pg.IdempotencyConflict):
+            pg.write_session_note(
+                store, run_id, note="other note", idempotency_key="storage-note-key-2",
+                request_digest="7" * 64,
             )
-            assert cur.fetchone()["n"] == 1
+        assert _notes(store, run_id) == 1
+
+    def test_a_storage_row_without_its_ledger_entry_still_refuses_different_arguments(
+        self, store
+    ):
+        """Crash-then-different-args: a note committed under a key with no
+        ledger row (as a crash in any earlier design could leave) is not
+        replayed for a different request through the served operation."""
+        app = _app(store)
+        run_id = _new_run(app, "storage-idempotency-note-3")
+        key = "storage-note-key-3"
+        residue_digest = _served_digest("write_session_note", {
+            "run_id": run_id, "note": "crashed note", "idempotency_key": key,
+        })
+        pg.write_session_note(
+            store, run_id, note="crashed note", idempotency_key=key,
+            request_digest=residue_digest,
+        )
+        with pytest.raises(ApplicationRejection) as excinfo:
+            _note_call(run_id, key, "a different note")(app)
+        assert excinfo.value.code == "idempotency-conflict"
+        assert _ledger_rows(store, "write_session_note", key) == 0
+        # The same request as the residue replays it and records the ledger.
+        replay = _note_call(run_id, key, "crashed note")(app)
+        assert replay["note"] == "crashed note"
+        assert _notes(store, run_id) == 1
+        assert _ledger_rows(store, "write_session_note", key) == 1
 
 
 class TestIdempotencyLedgerCrossTool:
@@ -609,6 +742,12 @@ def _race(monkeypatch, store, backend_function: str, first, second) -> dict:
             s.conn.close()
     assert not any(thread.is_alive() for thread in threads.values())
     return outcomes
+
+
+def _served_digest(tool: str, arguments: dict) -> str:
+    from sprintctl.work_application import _request_digest
+
+    return _request_digest(tool, arguments)
 
 
 def _count(store, sql: str, params: tuple) -> int:
@@ -730,9 +869,9 @@ class TestIdempotencyRaces:
     def test_concurrent_same_key_different_evidence_never_reaches_the_chain(
         self, store, monkeypatch
     ):
-        """The loser is refused by the ledger claim itself (idempotency-conflict),
-        not by running its own append and losing the chain (which is what a
-        ledger that only records after the effect would produce)."""
+        """The loser is refused as idempotency-conflict -- by the ledger claim,
+        or by the request digest stored on the item beneath it -- never by
+        running its own append and losing the chain."""
         app = _app(store)
         run_id = _new_run(app, "race-conflict-2")
         key = "race-conflict-key-2"
@@ -766,6 +905,139 @@ class TestIdempotencyRaces:
         assert "(expected 1)" in out["second"].message
         assert _items(store, run_id) == 1
         assert _ledger_rows(store, "append_evidence", "race-tail-key-b") == 0
+
+
+N_RACERS = 8
+
+
+def _stampede(store, calls) -> list:
+    """Run each ``app -> result`` call on its own thread and connection,
+    released together by a barrier; returns each result or exception."""
+    stores = [_sibling_store(store) for _ in calls]
+    barrier = threading.Barrier(len(calls))
+    outcomes: list = [None] * len(calls)
+
+    def run(index, call):
+        app = _app(stores[index])
+        try:
+            barrier.wait(timeout=10)
+            outcomes[index] = call(app)
+        except BaseException as exc:  # noqa: BLE001 - the outcome under test
+            outcomes[index] = exc
+
+    threads = [
+        threading.Thread(target=run, args=(index, call)) for index, call in enumerate(calls)
+    ]
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+    finally:
+        for s in stores:
+            s.conn.close()
+    assert not any(thread.is_alive() for thread in threads)
+    return outcomes
+
+
+def _split(outcomes):
+    ok = [o for o in outcomes if isinstance(o, dict)]
+    refused = [o for o in outcomes if isinstance(o, ApplicationRejection)]
+    other = [o for o in outcomes if not isinstance(o, (dict, ApplicationRejection))]
+    assert not other, [repr(o) for o in other]
+    return ok, sorted(r.code for r in refused)
+
+
+class TestStampedes:
+    """N threads, N connections, one barrier."""
+
+    def test_same_args_note_gives_one_row_and_every_caller_the_same_ok(self, store):
+        app = _app(store)
+        run_id = _new_run(app, "stampede-note-1")
+        key = "stampede-note-key-1"
+        ok, refused = _split(_stampede(store, [_note_call(run_id, key)] * N_RACERS))
+        assert refused == []
+        assert len(ok) == N_RACERS and all(o == ok[0] for o in ok)
+        assert _notes(store, run_id) == 1
+        assert _ledger_rows(store, "write_session_note", key) == 1
+
+    def test_same_args_evidence_gives_one_item_and_every_caller_the_same_ok(self, store):
+        app = _app(store)
+        run_id = _new_run(app, "stampede-append-1")
+        key = "stampede-append-key-1"
+        ok, refused = _split(_stampede(store, [_append_call(run_id, key)] * N_RACERS))
+        assert refused == []
+        assert len(ok) == N_RACERS and all(o == ok[0] for o in ok)
+        assert _items(store, run_id) == 1
+        assert _orphan_items(store, run_id) == 0
+
+    def test_same_args_register_gives_one_run(self, store):
+        app = _app(store)
+        key = "stampede-register-1"
+        ok, refused = _split(_stampede(
+            store, [lambda a: _register(a, idempotency_key=key)] * N_RACERS
+        ))
+        assert refused == []
+        assert len({o["run"]["run_id"] for o in ok}) == 1
+        assert _count(
+            store, "SELECT count(*) AS n FROM run WHERE repo_id = %s AND idempotency_key = %s",
+            (store.repo_id, key),
+        ) == 1
+
+    def test_different_args_note_gives_one_ok_and_the_rest_conflict(self, store):
+        app = _app(store)
+        run_id = _new_run(app, "stampede-note-2")
+        key = "stampede-note-key-2"
+        calls = [_note_call(run_id, key, f"note {i}") for i in range(N_RACERS)]
+        ok, refused = _split(_stampede(store, calls))
+        assert len(ok) == 1
+        assert refused == ["idempotency-conflict"] * (N_RACERS - 1)
+        assert _notes(store, run_id) == 1
+        assert _ledger_rows(store, "write_session_note", key) == 1
+
+    def test_different_args_evidence_gives_one_ok_and_the_rest_conflict(self, store):
+        app = _app(store)
+        run_id = _new_run(app, "stampede-append-2")
+        key = "stampede-append-key-2"
+        calls = [
+            _append_call(run_id, key, digest="sha256:" + f"{i:x}" * 64) for i in range(N_RACERS)
+        ]
+        ok, refused = _split(_stampede(store, calls))
+        assert len(ok) == 1
+        assert refused == ["idempotency-conflict"] * (N_RACERS - 1)
+        assert _items(store, run_id) == 1
+        assert _orphan_items(store, run_id) == 0
+
+    def test_crash_then_different_args_gives_conflicts_and_no_second_row(self, store):
+        """A note row committed without its ledger entry (a crash residue):
+        N racers each sending a different note under its key all conflict."""
+        app = _app(store)
+        run_id = _new_run(app, "stampede-crash-1")
+        key = "stampede-crash-key-1"
+        pg.write_session_note(
+            store, run_id, note="residue", idempotency_key=key,
+            request_digest=_served_digest("write_session_note", {
+                "run_id": run_id, "note": "residue", "idempotency_key": key,
+            }),
+        )
+        calls = [_note_call(run_id, key, f"retry {i}") for i in range(N_RACERS)]
+        ok, refused = _split(_stampede(store, calls))
+        assert ok == []
+        assert refused == ["idempotency-conflict"] * N_RACERS
+        assert _notes(store, run_id) == 1
+        assert _ledger_rows(store, "write_session_note", key) == 0
+
+    def test_chain_tail_race_gives_one_ok_and_the_rest_chain_conflict(self, store):
+        app = _app(store)
+        run_id = _new_run(app, "stampede-tail-1")
+        calls = [
+            _append_call(run_id, f"stampede-tail-key-{i}", item_id=f"evidence_{i}")
+            for i in range(N_RACERS)
+        ]
+        ok, refused = _split(_stampede(store, calls))
+        assert len(ok) == 1
+        assert refused == ["evidence-chain-conflict"] * (N_RACERS - 1)
+        assert _items(store, run_id) == 1
 
 
 class TestCrashBetweenEffectAndLedger:
@@ -844,37 +1116,69 @@ class TestChainOwnerChecks:
         assert excinfo.value.code == "evidence-chain-conflict"
         assert _items(store, run_id) == 0
 
-    def test_reusing_an_item_id_with_different_content_is_a_chain_conflict(self, store):
-        """The deterministic item_id primary key is refused as a domain
-        conflict, not leaked as a raw UniqueViolation."""
+    def test_reusing_an_item_id_under_a_different_key_is_a_chain_conflict(self, store):
+        """item_id is tied to the idempotency key that stored it: the same id
+        under another key is refused as a domain conflict (whatever its
+        content), never leaked as a raw UniqueViolation on the primary key."""
         app = _app(store)
         run_id = _new_run(app, "dup-item-1")
         first = _append_call(run_id, "dup-item-key-1", item_id="evidence_dup")(app)
-        with pytest.raises(ApplicationRejection) as excinfo:
-            _append_call(
-                run_id, "dup-item-key-2", item_id="evidence_dup", seq=1,
-                prev=pg.evidence_entry_digest(first["item"]), digest="sha256:" + "f" * 64,
-            )(app)
-        assert excinfo.value.code == "evidence-chain-conflict"
-        assert "evidence_dup" in excinfo.value.message
-        assert _items(store, run_id) == 1
-
-    def test_reusing_an_item_id_with_identical_content_replays_the_stored_item(self, store):
-        """item_id is derived from (run_id, idempotency_key) by the edge, so
-        identical content under the same id is the same evidence: storage
-        replays it rather than refusing or duplicating it."""
-        app = _app(store)
-        run_id = _new_run(app, "dup-item-2")
-        first = _append_call(run_id, "dup-item-key-3", item_id="evidence_same")(app)
-        again = _append_call(
-            run_id, "dup-item-key-4", item_id="evidence_same", seq=1,
-            prev=pg.evidence_entry_digest(first["item"]),
-        )(app)
-        assert again["item"] == first["item"]
+        for digest in ("sha256:" + "e" * 64, "sha256:" + "f" * 64):
+            with pytest.raises(ApplicationRejection) as excinfo:
+                _append_call(
+                    run_id, "dup-item-key-2", item_id="evidence_dup", seq=1,
+                    prev=pg.evidence_entry_digest(first["item"]), digest=digest,
+                )(app)
+            assert excinfo.value.code == "evidence-chain-conflict"
+            assert "evidence_dup" in excinfo.value.message
         assert _items(store, run_id) == 1
 
 
 class TestSchema17Migration:
+    @staticmethod
+    def _migrate_with(store, label: str, foreign_ddl: str):
+        """Build a schema at version 2 holding ``foreign_ddl``, migrate it,
+        and return the raised error (the schema is dropped afterwards)."""
+        schema = f"migration_{label}_" + uuid.uuid4().hex
+        with store.conn.cursor() as cur:
+            cur.execute(f'CREATE SCHEMA "{schema}"')
+            cur.execute(f'SET search_path TO "{schema}"')
+            cur.execute(pg.PG_DDL)
+            cur.execute("UPDATE schema_version SET version = 2")
+            cur.execute(foreign_ddl)
+        store.conn.commit()
+        conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+        try:
+            assert_disposable_connection(conn)
+            with conn.cursor() as cur:
+                cur.execute(f'SET search_path TO "{schema}"')
+            conn.commit()
+            with pytest.raises(pg_migrations.RemoteSchemaMigrationError) as excinfo:
+                pg_migrations.migrate_schema(pg.PgStore(conn, f"migration-{label}"))
+            with conn.cursor() as cur:
+                cur.execute("SELECT version FROM schema_version")
+                assert cur.fetchone()["version"] == 2
+            conn.rollback()
+            return excinfo.value
+        finally:
+            conn.close()
+            with store.conn.cursor() as cur:
+                cur.execute("SET search_path TO public")
+                cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            store.conn.commit()
+
+    @pytest.mark.parametrize("table", sorted(pg._SCHEMA_17_TABLES))
+    def test_a_foreign_table_with_matching_columns_is_refused(self, store, table):
+        """Same column names, types and nullability as schema 17's table, but
+        none of its keys or checks: IF NOT EXISTS would have kept it."""
+        columns, _constraints = pg._SCHEMA_17_TABLES[table]
+        ddl = ", ".join(
+            f"{name} {type_} {'NOT NULL' if not_null else ''}"
+            for name, type_, not_null in columns
+        )
+        error = self._migrate_with(store, "matching_" + table, f"CREATE TABLE {table} ({ddl})")
+        assert table in str(error)
+
     def test_a_foreign_pre_existing_run_table_is_refused(self, store):
         schema = "migration_foreign_run_" + uuid.uuid4().hex
         with store.conn.cursor() as cur:

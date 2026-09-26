@@ -40,6 +40,18 @@ def _identity_binding(context: InvocationContext) -> tuple[str, str]:
     return principal_id, workspace_id
 
 
+def _grant_binding(context: InvocationContext) -> tuple[str | None, str | None]:
+    """The caller's OAuth (client_id, grant_id), None where the identity
+    asserts none.  Part of a run's binding (vuoro_mcp_edge.runs.RunBinding):
+    a run minted under one grant is not another grant's, even for the same
+    principal (E2/E3 shared contract section 4)."""
+    identity = context.identity
+    return (
+        getattr(identity, "client_id", None) or None,
+        getattr(identity, "grant_id", None) or None,
+    )
+
+
 def _request_digest(tool: str, arguments: dict, *, exclude: frozenset[str] = frozenset()) -> str:
     """sha256 of the tool name and canonical JSON of the non-key arguments.
 
@@ -1389,7 +1401,8 @@ class WorkApplication:
     # agentops#2466 (E2): run handles, the evidence chain and session notes
     # the vuoro-mcp-edge record bucket serves (vuoro:evidence.record ->
     # work:evidence). Every operation binds to the authenticated identity's
-    # principal_id/workspace_id, never to a client-supplied value -- the same
+    # principal_id/workspace_id and OAuth client_id/grant_id, never to a
+    # client-supplied value -- the same
     # rule work.identity.current applies to actor. Each write operation is
     # its own idempotent unit (see the module comment on
     # WORK_OPERATION_CONTRACTS in vuoro_adapter.py for why the ledger is
@@ -1399,16 +1412,18 @@ class WorkApplication:
         """The run row if it belongs to the caller; ``run-not-found`` otherwise.
 
         One rejection code for an unknown run id and for a run bound to a
-        different principal or workspace, so a caller cannot use this to
-        probe which run ids exist (mirrors
+        different principal, workspace, client or grant, so a caller cannot
+        use this to probe which run ids exist (mirrors
         vuoro_mcp_edge.runs.RunRegistry.resolve's contract).
         """
         principal_id, workspace_id = _identity_binding(context)
+        client_id, grant_id = _grant_binding(context)
         from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
 
         try:
             return self.backend.resolve_run(
-                self.store, run_id, principal_id=principal_id, workspace_id=workspace_id
+                self.store, run_id, principal_id=principal_id, workspace_id=workspace_id,
+                client_id=client_id, grant_id=grant_id,
             )
         except _pg.RunNotFound as exc:
             raise ApplicationRejection("run-not-found", str(exc), 404) from exc
@@ -1418,9 +1433,10 @@ class WorkApplication:
         context: InvocationContext,
         tool: str,
         arguments: dict[str, Any],
-        effect: Callable[[Any], dict[str, Any]],
+        effect: Callable[[Any, str], dict[str, Any]],
         *,
         digest_exclude: frozenset[str] = frozenset(),
+        digest_binding: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Replay a stored result, refuse a conflicting one, or perform ``effect``.
 
@@ -1435,13 +1451,18 @@ class WorkApplication:
         non-idempotency rejection (e.g. ``evidence-chain-conflict``) instead
         of being permanently stuck on a key that never stored a result.
 
-        ``effect`` receives the transaction's cursor and must do all of its
-        writes through it -- a write that commits on its own would escape
-        the rollback.
+        ``effect(cur, request_digest)`` receives the transaction's cursor and
+        must do all of its writes through it -- a write that commits on its
+        own would escape the rollback.  It stores ``request_digest`` on the
+        row it writes, so the storage layer refuses a same-key retry with
+        different arguments on its own as well (``pg.IdempotencyConflict``),
+        whatever order the ledger and the row were written in.
 
         ``digest_exclude`` is passed to ``_request_digest`` (see its
         docstring) for arguments that vary with server-observed state rather
-        than caller intent.
+        than caller intent.  ``digest_binding`` adds identity-derived values
+        that are part of the request (a run's client/grant binding) without
+        making them wire arguments.
 
         PostgreSQL only: these operations are served solely by
         ``WorkApplication.postgres``; the local SQLite backend has no run,
@@ -1450,26 +1471,32 @@ class WorkApplication:
         """
         principal_id, workspace_id = _identity_binding(context)
         key = _required_text(arguments.get("idempotency_key"), "idempotency_key")
-        digest = _request_digest(tool, arguments, exclude=digest_exclude)
+        digest = _request_digest(
+            tool, {**arguments, **(digest_binding or {})}, exclude=digest_exclude
+        )
         from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
 
         try:
             return self.backend.idempotent_write(
                 self.store, workspace_id=workspace_id, principal_id=principal_id, tool=tool,
-                key=key, request_digest=digest, effect=effect,
+                key=key, request_digest=digest, effect=lambda cur: effect(cur, digest),
             )
         except _pg.IdempotencyConflict as exc:
             raise ApplicationRejection("idempotency-conflict", str(exc), 409) from exc
 
     def _run_register(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         principal_id, workspace_id = _identity_binding(context)
+        client_id, grant_id = _grant_binding(context)
 
-        def effect(cur: Any) -> dict[str, Any]:
+        def effect(cur: Any, request_digest: str) -> dict[str, Any]:
             row = self.backend.register_run(
                 self.store,
                 principal_id=principal_id,
                 workspace_id=workspace_id,
+                client_id=client_id,
+                grant_id=grant_id,
                 idempotency_key=arguments["idempotency_key"],
+                request_digest=request_digest,
                 harness_id=arguments["harness_id"],
                 harness_build=arguments["harness_build"],
                 model_id=arguments["model_id"],
@@ -1479,7 +1506,12 @@ class WorkApplication:
             )
             return {"repo_id": self.repo_id, "run": row}
 
-        return self._idempotent_write(context, "register_run", arguments, effect)
+        # The binding is part of the request: the same key under another
+        # grant is a conflict, never a replay of that grant's run.
+        return self._idempotent_write(
+            context, "register_run", arguments, effect,
+            digest_binding={"client_id": client_id, "grant_id": grant_id},
+        )
 
     def _run_resolve(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         row = self._require_owned_run(arguments["run_id"], context)
@@ -1488,6 +1520,8 @@ class WorkApplication:
             "run_id": row["run_id"],
             "principal_id": row["principal_id"],
             "workspace_id": row["workspace_id"],
+            "client_id": row["client_id"],
+            "grant_id": row["grant_id"],
         }
 
     def _evidence_tail(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
@@ -1501,11 +1535,13 @@ class WorkApplication:
         self._require_owned_run(run_id, context)
         from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
 
-        def effect(cur: Any) -> dict[str, Any]:
+        def effect(cur: Any, request_digest: str) -> dict[str, Any]:
             try:
                 item = self.backend.append_evidence(
                     self.store,
                     run_id,
+                    idempotency_key=arguments["idempotency_key"],
+                    request_digest=request_digest,
                     item_id=arguments["item_id"],
                     kind=arguments["kind"],
                     ref=arguments["ref"],
@@ -1536,12 +1572,13 @@ class WorkApplication:
         run_id = arguments["run_id"]
         self._require_owned_run(run_id, context)
 
-        def effect(cur: Any) -> dict[str, Any]:
+        def effect(cur: Any, request_digest: str) -> dict[str, Any]:
             note = self.backend.write_session_note(
                 self.store,
                 run_id,
                 note=arguments["note"],
                 idempotency_key=arguments["idempotency_key"],
+                request_digest=request_digest,
                 cur=cur,
             )
             return {"repo_id": self.repo_id, "run_id": run_id, **note}

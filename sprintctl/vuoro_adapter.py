@@ -415,7 +415,14 @@ _PUBLIC_WORK_ITEM_RESULT = _result_schema(
 # write-tool idempotency ledger row the shared contract requires
 # (docs/plans/2026-09-26-e2-e3-shared-contract.md section 5), performs its
 # effect and records the result in ONE transaction, internally, rather than
-# exposing the ledger as separate wire operations. The ledger is keyed by (repo_id, workspace_id, principal_id,
+# exposing the ledger as separate wire operations.  The row the effect
+# writes (run, evidence item, session note) also stores the request digest,
+# so a same-key retry with different arguments is refused by storage as
+# well, not only by the ledger.
+#
+# A run binds the caller's principal, workspace and repository plus, when
+# the identity asserts them, its OAuth client_id and grant_id; resolve
+# refuses any other binding with run-not-found and echoes all of them. The ledger is keyed by (repo_id, workspace_id, principal_id,
 # tool, idempotency_key) -- one dimension more specific than the shared
 # contract's own words ("(workspace, tool, key)"), because that literal
 # scoping lets a second principal in the same workspace replay a first
@@ -440,6 +447,11 @@ _IDEMPOTENCY_KEY_SCHEMA: dict[str, Any] = {
     "type": "string",
     "pattern": "^[A-Za-z0-9._:-]{8,128}$",
 }
+#: A run's OAuth client/grant binding: absent (null) only for a run minted
+#: by an identity that asserts no grant.
+_NULLABLE_BINDING_ID_SCHEMA: dict[str, Any] = {
+    "anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]
+}
 _SKILL_DIGEST_SCHEMA = _object_schema(
     {
         "skill_id": {"type": "string", "minLength": 1},
@@ -459,6 +471,8 @@ _RUN_RESULT_OBJECT = _object_schema(
         "run_id": _RUN_ID_SCHEMA,
         "principal_id": {"type": "string", "minLength": 1},
         "workspace_id": {"type": "string", "minLength": 1},
+        "client_id": _NULLABLE_BINDING_ID_SCHEMA,
+        "grant_id": _NULLABLE_BINDING_ID_SCHEMA,
         "harness_id": {"type": "string", "minLength": 1},
         "harness_build": {"type": "string", "minLength": 1},
         "model_id": {"type": "string", "minLength": 1},
@@ -469,7 +483,8 @@ _RUN_RESULT_OBJECT = _object_schema(
         "created_at": {"type": "string"},
     },
     required=(
-        "run_id", "principal_id", "workspace_id", "harness_id", "harness_build",
+        "run_id", "principal_id", "workspace_id", "client_id", "grant_id",
+        "harness_id", "harness_build",
         "model_id", "recipe_id", "observed_profile", "grant_ids", "claim_ids",
         "created_at",
     ),
@@ -621,13 +636,17 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
     WorkOperationContract(
         "work.run.resolve-v1",
         _object_schema({"run_id": _RUN_ID_SCHEMA}, required=("run_id",)),
+        # The run's full binding, echoed so the edge can compare it with the
+        # caller's own (vuoro_mcp_edge.record_tools.SprintctlRecordStore).
         _result_schema(
-            ("repo_id", "run_id", "principal_id", "workspace_id"),
+            ("repo_id", "run_id", "principal_id", "workspace_id", "client_id", "grant_id"),
             {
                 "repo_id": {"type": "string"},
                 "run_id": _RUN_ID_SCHEMA,
                 "principal_id": {"type": "string", "minLength": 1},
                 "workspace_id": {"type": "string", "minLength": 1},
+                "client_id": _NULLABLE_BINDING_ID_SCHEMA,
+                "grant_id": _NULLABLE_BINDING_ID_SCHEMA,
             },
         ),
         # No authority requirement: this only ever echoes the caller's own
