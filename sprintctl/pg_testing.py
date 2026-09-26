@@ -20,6 +20,13 @@ TEST_ROLE_PREFIX = "sprintctl_test_"
 TEST_DATABASE_PREFIX = "sprintctl_test_"
 DISPOSABLE_DATABASE_COMMENT = "sprintctl:disposable-integration-test"
 REPO_TABLES = (
+    # E2 (agentops#2466): the ledger carries no FK to run, session_note and
+    # evidence_item cascade from run (ON DELETE CASCADE), but are listed
+    # explicitly first so scope cleanup does not depend on the cascade.
+    "work_idempotency_ledger",
+    "session_note",
+    "evidence_item",
+    "run",
     "maintenance_resource_event",
     "maintenance_resource",
     "maintenance_capability_recovery",
