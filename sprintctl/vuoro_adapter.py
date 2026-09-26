@@ -386,6 +386,161 @@ _PUBLIC_WORK_ITEM_RESULT = _result_schema(
     {**_PUBLIC_WORK_ENVELOPE, "item": _PUBLIC_WORK_ITEM_SCHEMA},
 )
 
+
+# --------------------------------------------------------------------------
+# work.run.* / work.evidence.* / work.session-note.* / work.idempotency.*
+# (agentops#2466, E2: the vuoro-mcp-edge record bucket, vuoro:evidence.record
+# -> work:evidence).  See docs/reference/work-public-contract.md's sibling
+# note in this repo's own docs and the E2/E3 shared contract
+# (vuoro docs/plans/2026-09-26-e2-e3-shared-contract.md sections 4-5) for the
+# run-handle and idempotency-ledger semantics these operations back.
+#
+# The run record is the addressable composition object the shared contract
+# names (vuoro_evidence.run.RunManifest): harness, model, recipe and the
+# profile observed at session start, plus the grant/claim ids active when it
+# was minted.  sprintctl stores exactly those fields; it does not construct a
+# RunManifest object itself (that type lives in the vuoro_evidence package,
+# which this repo does not depend on), it only holds the same named fields.
+#
+# The evidence chain's hash math (entry_digest/link) is computed by the
+# caller (the Vuoro MCP edge, from vuoro_evidence.core.chain) from the tail
+# it observes via work.evidence.tail-v1; work.evidence.append-v1 stores the
+# already-linked item and, under a per-run lock, guards that chain_seq and
+# chain_prev_digest extend the tail it actually holds (the prev digest is
+# checked against entry_digest of the stored tail, not recomputed as a
+# second chain), so a stale or racing append is refused
+# (evidence-chain-conflict) rather than silently reordered or forked.
+#
+# Each write operation below is its own idempotent unit: it claims the
+# write-tool idempotency ledger row the shared contract requires
+# (docs/plans/2026-09-26-e2-e3-shared-contract.md section 5), performs its
+# effect and records the result in ONE transaction, internally, rather than
+# exposing the ledger as separate wire operations.  The row the effect
+# writes (run, evidence item, session note) also stores the request digest,
+# so a same-key retry with different arguments is refused by storage as
+# well, not only by the ledger.
+#
+# A run binds the caller's principal, workspace and repository plus, when
+# the identity asserts them, its OAuth client_id and grant_id; resolve
+# refuses any other binding with run-not-found and echoes all of them. The ledger is keyed by (repo_id, workspace_id, principal_id,
+# tool, idempotency_key) -- one dimension more specific than the shared
+# contract's own words ("(workspace, tool, key)"), because that literal
+# scoping lets a second principal in the same workspace replay a first
+# principal's stored result by reusing its idempotency_key with identical
+# arguments; see pg.py's work_idempotency_ledger docstring and the E2 final
+# report -- and stores the first request's digest and result, so a retry
+# with the same key and arguments replays it in one round trip with no
+# second effect, and a retry with the same key and different arguments is
+# refused (idempotency-conflict) -- the same behaviour
+# vuoro_mcp_edge.idempotency.InMemoryIdempotencyLedger gives as a reference,
+# reached here by a different (but behaviourally equivalent) path: sprintctl
+# has no dependency on that package, so it keeps its own digest function
+# (work_application._request_digest) rather than importing one. The
+# workspace scope is always the caller's own identity, never a client-
+# supplied argument.
+# --------------------------------------------------------------------------
+_RUN_ID_SCHEMA: dict[str, Any] = {
+    "type": "string",
+    "pattern": "^run_[0-9A-HJKMNP-TV-Z]{26}$",
+}
+_IDEMPOTENCY_KEY_SCHEMA: dict[str, Any] = {
+    "type": "string",
+    "pattern": "^[A-Za-z0-9._:-]{8,128}$",
+}
+#: A run's OAuth client/grant binding: absent (null) only for a run minted
+#: by an identity that asserts no grant.
+_NULLABLE_BINDING_ID_SCHEMA: dict[str, Any] = {
+    "anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]
+}
+_SKILL_DIGEST_SCHEMA = _object_schema(
+    {
+        "skill_id": {"type": "string", "minLength": 1},
+        "digest": {"type": "string", "minLength": 1},
+    },
+    required=("skill_id", "digest"),
+)
+_OBSERVED_PROFILE_SCHEMA = _object_schema(
+    {
+        "instruction_digest": {"type": "string", "minLength": 1},
+        "skill_digests": {"type": "array", "items": _SKILL_DIGEST_SCHEMA},
+    },
+    required=("instruction_digest", "skill_digests"),
+)
+_RUN_RESULT_OBJECT = _object_schema(
+    {
+        "run_id": _RUN_ID_SCHEMA,
+        "principal_id": {"type": "string", "minLength": 1},
+        "workspace_id": {"type": "string", "minLength": 1},
+        "client_id": _NULLABLE_BINDING_ID_SCHEMA,
+        "grant_id": _NULLABLE_BINDING_ID_SCHEMA,
+        "harness_id": {"type": "string", "minLength": 1},
+        "harness_build": {"type": "string", "minLength": 1},
+        "model_id": {"type": "string", "minLength": 1},
+        "recipe_id": {"type": "string", "minLength": 1},
+        "observed_profile": _OBSERVED_PROFILE_SCHEMA,
+        "grant_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "claim_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "created_at": {"type": "string"},
+    },
+    required=(
+        "run_id", "principal_id", "workspace_id", "client_id", "grant_id",
+        "harness_id", "harness_build",
+        "model_id", "recipe_id", "observed_profile", "grant_ids", "claim_ids",
+        "created_at",
+    ),
+)
+_VALIDITY_WINDOW_SCHEMA = _object_schema(
+    {
+        "basis": {"enum": ["indefinite", "bounded", "until_inputs_change"]},
+        "valid_from": {"type": "string", "minLength": 1},
+        "valid_until": {"type": ["string", "null"]},
+        "component_digests": {"type": "object"},
+    },
+    required=("basis", "valid_from", "valid_until", "component_digests"),
+)
+_CLAIM_SCHEMA = _object_schema(
+    {
+        "claim_type": {
+            "enum": [
+                "target_stale", "precondition_refused", "capability_unavailable",
+                "evidence_persisted", "effect_completed", "effect_failed",
+                "effect_uncertain", "effect_not_invoked", "observation",
+            ]
+        },
+        "subject": {"type": "string", "minLength": 1},
+        "grant_id": {"type": ["string", "null"]},
+        "freshness": {
+            "anyOf": [
+                _object_schema(
+                    {"scope": {"type": "string", "minLength": 1}, "position": {"type": "integer"}},
+                    required=("scope", "position"),
+                ),
+                {"type": "null"},
+            ]
+        },
+        "confirms": {"type": ["boolean", "null"]},
+        "detail": {"type": "object"},
+    },
+    required=("claim_type", "subject", "grant_id", "freshness", "confirms", "detail"),
+)
+_EVIDENCE_ITEM_SCHEMA = _object_schema(
+    {
+        "item_id": {"type": "string", "minLength": 1},
+        "kind": {"type": "string", "minLength": 1},
+        "ref": {"type": "string", "minLength": 1},
+        "digest": {"type": "string", "minLength": 1},
+        "collector": {"type": "string", "minLength": 1},
+        "validity": _VALIDITY_WINDOW_SCHEMA,
+        "claims": {"type": "array", "items": _CLAIM_SCHEMA},
+        "provenance": {"type": "object"},
+        "chain_seq": {"type": "integer", "minimum": 0},
+        "chain_prev_digest": {"type": ["string", "null"]},
+    },
+    required=(
+        "item_id", "kind", "ref", "digest", "collector", "validity", "claims",
+        "provenance", "chain_seq", "chain_prev_digest",
+    ),
+)
 WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
     WorkOperationContract(
         "work.identity.current",
@@ -452,6 +607,130 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         _PUBLIC_WORK_ITEM_RESULT,
         "work:read",
         "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.run.register-v1",
+        _object_schema(
+            {
+                "harness_id": {"type": "string", "minLength": 1},
+                "harness_build": {"type": "string", "minLength": 1},
+                "model_id": {"type": "string", "minLength": 1},
+                "recipe_id": {"type": "string", "minLength": 1},
+                "observed_profile": _OBSERVED_PROFILE_SCHEMA,
+                "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
+            },
+            required=(
+                "harness_id", "harness_build", "model_id", "recipe_id",
+                "observed_profile", "idempotency_key",
+            ),
+        ),
+        _result_schema(
+            ("repo_id", "run"),
+            {"repo_id": {"type": "string"}, "run": _RUN_RESULT_OBJECT},
+        ),
+        "work:evidence",
+        "write",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.run.resolve-v1",
+        _object_schema({"run_id": _RUN_ID_SCHEMA}, required=("run_id",)),
+        # The run's full binding, echoed so the edge can compare it with the
+        # caller's own (vuoro_mcp_edge.record_tools.SprintctlRecordStore).
+        _result_schema(
+            ("repo_id", "run_id", "principal_id", "workspace_id", "client_id", "grant_id"),
+            {
+                "repo_id": {"type": "string"},
+                "run_id": _RUN_ID_SCHEMA,
+                "principal_id": {"type": "string", "minLength": 1},
+                "workspace_id": {"type": "string", "minLength": 1},
+                "client_id": _NULLABLE_BINDING_ID_SCHEMA,
+                "grant_id": _NULLABLE_BINDING_ID_SCHEMA,
+            },
+        ),
+        # No authority requirement: this only ever echoes the caller's own
+        # binding back to them (run-not-found otherwise, one code for both
+        # an unknown run and someone else's), so it cannot disclose anything
+        # a caller could not already state about itself.  Any bucket that
+        # carries a run_id (record, coordinate or propose) needs to resolve
+        # it, and gating this on one bucket's authority would refuse the
+        # others -- see the E2 final report for why this is not "work:read".
+        None,
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.evidence.tail-v1",
+        _object_schema({"run_id": _RUN_ID_SCHEMA}, required=("run_id",)),
+        _result_schema(
+            ("repo_id", "run_id", "item"),
+            {
+                "repo_id": {"type": "string"},
+                "run_id": _RUN_ID_SCHEMA,
+                "item": {"anyOf": [_EVIDENCE_ITEM_SCHEMA, {"type": "null"}]},
+            },
+        ),
+        "work:evidence",
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.evidence.append-v1",
+        _object_schema(
+            {
+                "run_id": _RUN_ID_SCHEMA,
+                "item_id": {"type": "string", "minLength": 1},
+                "kind": {"type": "string", "minLength": 1},
+                "ref": {"type": "string", "minLength": 1},
+                "digest": {"type": "string", "minLength": 1},
+                "collector": {"type": "string", "minLength": 1},
+                "validity": _VALIDITY_WINDOW_SCHEMA,
+                "claims": {"type": "array", "items": _CLAIM_SCHEMA, "default": []},
+                "provenance": {"type": "object", "default": {}},
+                "chain_seq": {"type": "integer", "minimum": 0},
+                "chain_prev_digest": {"type": ["string", "null"]},
+                "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
+            },
+            required=(
+                "run_id", "item_id", "kind", "ref", "digest", "collector",
+                "validity", "chain_seq", "chain_prev_digest", "idempotency_key",
+            ),
+        ),
+        _result_schema(
+            ("repo_id", "run_id", "item"),
+            {
+                "repo_id": {"type": "string"},
+                "run_id": _RUN_ID_SCHEMA,
+                "item": _EVIDENCE_ITEM_SCHEMA,
+            },
+        ),
+        "work:evidence",
+        "write",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.session-note.write-v1",
+        _object_schema(
+            {
+                "run_id": _RUN_ID_SCHEMA,
+                "note": {"type": "string", "minLength": 1},
+                "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
+            },
+            required=("run_id", "note", "idempotency_key"),
+        ),
+        _result_schema(
+            ("repo_id", "run_id", "note_id", "note", "created_at"),
+            {
+                "repo_id": {"type": "string"},
+                "run_id": _RUN_ID_SCHEMA,
+                "note_id": {"type": "integer", "minimum": 1},
+                "note": {"type": "string"},
+                "created_at": {"type": "string"},
+            },
+        ),
+        "work:evidence",
+        "write",
         "not-allowed",
     ),
     WorkOperationContract(

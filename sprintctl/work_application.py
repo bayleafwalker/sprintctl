@@ -6,12 +6,74 @@ owns the single-repository service implementation.
 
 from __future__ import annotations
 
+import hashlib
+import json
+
 from .application_common import *
 from . import contracts as _contracts
 from . import decisions as _decisions
 from . import reservation as _reservation
 from . import releases as _releases
 from . import volatile_context as _volatile_context
+
+
+#: MCP tools this repo's E2 record bucket serves (agentops#2466), and the
+#: only ``tool`` values ``work.idempotency.*`` accepts -- a whitelist, not a
+#: free-form string, so one caller's tool name cannot collide with another's
+#: ledger partition by typo or by construction.
+_IDEMPOTENT_RECORD_TOOLS = frozenset({"register_run", "append_evidence", "write_session_note"})
+
+
+def _identity_binding(context: InvocationContext) -> tuple[str, str]:
+    """The (principal_id, workspace_id) a run/evidence/session-note operation
+    binds to.  Always the authenticated identity, never a client-supplied
+    argument -- mirrors how ``work.identity.current`` treats ``actor``."""
+    identity = context.identity
+    principal_id = getattr(identity, "principal_id", None)
+    workspace_id = getattr(identity, "workspace_id", None)
+    if not principal_id or not workspace_id:
+        raise ApplicationRejection(
+            "identity-unbound",
+            "the caller's identity carries no principal_id or workspace_id to bind a run to",
+            403,
+        )
+    return principal_id, workspace_id
+
+
+def _grant_binding(context: InvocationContext) -> tuple[str | None, str | None]:
+    """The caller's OAuth (client_id, grant_id), None where the identity
+    asserts none.  Part of a run's binding (vuoro_mcp_edge.runs.RunBinding):
+    a run minted under one grant is not another grant's, even for the same
+    principal (E2/E3 shared contract section 4)."""
+    identity = context.identity
+    return (
+        getattr(identity, "client_id", None) or None,
+        getattr(identity, "grant_id", None) or None,
+    )
+
+
+def _request_digest(tool: str, arguments: dict, *, exclude: frozenset[str] = frozenset()) -> str:
+    """sha256 of the tool name and canonical JSON of the non-key arguments.
+
+    Independent of, but deliberately the same shape as,
+    ``vuoro_mcp_edge.idempotency.request_digest``: this repo does not depend
+    on that package, and the two only need to agree on *behaviour*
+    (replay/conflict), never on byte-identical digest values, since each
+    lives entirely on its own side of the invoke boundary.
+
+    ``exclude`` additionally drops fields that are not part of the caller's
+    request identity even though they travel in ``arguments`` -- e.g.
+    ``append_evidence``'s ``chain_seq``/``chain_prev_digest``, which the edge
+    computes from the tail it observed before calling, not from anything the
+    original tool caller supplied. Digesting them would make a retry's digest
+    depend on how far a concurrent, unrelated append has since moved the same
+    run's chain, turning an ordinary idempotent replay into a spurious
+    ``idempotency-conflict``.
+    """
+    excluded = {"idempotency_key"} | exclude
+    body = {key: value for key, value in arguments.items() if key not in excluded}
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(f"{tool}\n{canonical}".encode()).hexdigest()
 
 
 def _reservation_actor_mismatch(given: object, authenticated: object) -> ApplicationRejection:
@@ -357,6 +419,11 @@ class WorkApplication:
             "work.read.item-decisions": target._read_item_decisions,
             "work.read.release": target._read_release,
             "work.read.unbound": target._read_unbound,
+            "work.run.register-v1": target._run_register,
+            "work.run.resolve-v1": target._run_resolve,
+            "work.evidence.tail-v1": target._evidence_tail,
+            "work.evidence.append-v1": target._evidence_append,
+            "work.session-note.write-v1": target._session_note_write,
         }
         try:
             handler = handlers[operation]
@@ -1329,6 +1396,194 @@ class WorkApplication:
             raise _reservation_actor_mismatch(actor, authenticated_actor)
         row = self.backend.release_reservation(self.store, _positive_int(arguments.get("reservation_id"), "reservation_id"), actor=actor or authenticated_actor)
         return {"repo_id": self.repo_id, "reservation": row}
+
+    # -- work.run.* / work.evidence.* / work.session-note.* ----------------
+    # agentops#2466 (E2): run handles, the evidence chain and session notes
+    # the vuoro-mcp-edge record bucket serves (vuoro:evidence.record ->
+    # work:evidence). Every operation binds to the authenticated identity's
+    # principal_id/workspace_id and OAuth client_id/grant_id, never to a
+    # client-supplied value -- the same
+    # rule work.identity.current applies to actor. Each write operation is
+    # its own idempotent unit (see the module comment on
+    # WORK_OPERATION_CONTRACTS in vuoro_adapter.py for why the ledger is
+    # embedded rather than exposed as its own operations).
+
+    def _require_owned_run(self, run_id: str, context: InvocationContext) -> dict[str, Any]:
+        """The run row if it belongs to the caller; ``run-not-found`` otherwise.
+
+        One rejection code for an unknown run id and for a run bound to a
+        different principal, workspace, client or grant, so a caller cannot
+        use this to probe which run ids exist (mirrors
+        vuoro_mcp_edge.runs.RunRegistry.resolve's contract).
+        """
+        principal_id, workspace_id = _identity_binding(context)
+        client_id, grant_id = _grant_binding(context)
+        from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
+
+        try:
+            return self.backend.resolve_run(
+                self.store, run_id, principal_id=principal_id, workspace_id=workspace_id,
+                client_id=client_id, grant_id=grant_id,
+            )
+        except _pg.RunNotFound as exc:
+            raise ApplicationRejection("run-not-found", str(exc), 404) from exc
+
+    def _idempotent_write(
+        self,
+        context: InvocationContext,
+        tool: str,
+        arguments: dict[str, Any],
+        effect: Callable[[Any, str], dict[str, Any]],
+        *,
+        digest_exclude: frozenset[str] = frozenset(),
+        digest_binding: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Replay a stored result, refuse a conflicting one, or perform ``effect``.
+
+        Mirrors ``vuoro_mcp_edge.idempotency.replay_or_conflict``'s contract:
+        same key, same digest -> the stored result and no second effect; same
+        key, different digest -> ``idempotency-conflict``.  The ledger claim,
+        ``effect(cur)`` and the stored result commit in one transaction (see
+        ``pg.idempotent_write``), so concurrent same-key callers run the
+        effect at most once and a failed effect leaves nothing committed.
+        ``effect``'s own exceptions propagate after that rollback, so a caller
+        can retry the same idempotency_key with corrected arguments after a
+        non-idempotency rejection (e.g. ``evidence-chain-conflict``) instead
+        of being permanently stuck on a key that never stored a result.
+
+        ``effect(cur, request_digest)`` receives the transaction's cursor and
+        must do all of its writes through it -- a write that commits on its
+        own would escape the rollback.  It stores ``request_digest`` on the
+        row it writes, so the storage layer refuses a same-key retry with
+        different arguments on its own as well (``pg.IdempotencyConflict``),
+        whatever order the ledger and the row were written in.
+
+        ``digest_exclude`` is passed to ``_request_digest`` (see its
+        docstring) for arguments that vary with server-observed state rather
+        than caller intent.  ``digest_binding`` adds identity-derived values
+        that are part of the request (a run's client/grant binding) without
+        making them wire arguments.
+
+        PostgreSQL only: these operations are served solely by
+        ``WorkApplication.postgres``; the local SQLite backend has no run,
+        evidence or ledger storage, so it has no second ledger to keep
+        consistent.
+        """
+        principal_id, workspace_id = _identity_binding(context)
+        key = _required_text(arguments.get("idempotency_key"), "idempotency_key")
+        digest = _request_digest(
+            tool, {**arguments, **(digest_binding or {})}, exclude=digest_exclude
+        )
+        from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
+
+        try:
+            return self.backend.idempotent_write(
+                self.store, workspace_id=workspace_id, principal_id=principal_id, tool=tool,
+                key=key, request_digest=digest, effect=lambda cur: effect(cur, digest),
+            )
+        except _pg.IdempotencyConflict as exc:
+            raise ApplicationRejection("idempotency-conflict", str(exc), 409) from exc
+
+    def _run_register(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        principal_id, workspace_id = _identity_binding(context)
+        client_id, grant_id = _grant_binding(context)
+
+        def effect(cur: Any, request_digest: str) -> dict[str, Any]:
+            row = self.backend.register_run(
+                self.store,
+                principal_id=principal_id,
+                workspace_id=workspace_id,
+                client_id=client_id,
+                grant_id=grant_id,
+                idempotency_key=arguments["idempotency_key"],
+                request_digest=request_digest,
+                harness_id=arguments["harness_id"],
+                harness_build=arguments["harness_build"],
+                model_id=arguments["model_id"],
+                recipe_id=arguments["recipe_id"],
+                observed_profile=arguments["observed_profile"],
+                cur=cur,
+            )
+            return {"repo_id": self.repo_id, "run": row}
+
+        # The binding is part of the request: the same key under another
+        # grant is a conflict, never a replay of that grant's run.
+        return self._idempotent_write(
+            context, "register_run", arguments, effect,
+            digest_binding={"client_id": client_id, "grant_id": grant_id},
+        )
+
+    def _run_resolve(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        row = self._require_owned_run(arguments["run_id"], context)
+        return {
+            "repo_id": self.repo_id,
+            "run_id": row["run_id"],
+            "principal_id": row["principal_id"],
+            "workspace_id": row["workspace_id"],
+            "client_id": row["client_id"],
+            "grant_id": row["grant_id"],
+        }
+
+    def _evidence_tail(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        run_id = arguments["run_id"]
+        self._require_owned_run(run_id, context)
+        item = self.backend.evidence_tail(self.store, run_id)
+        return {"repo_id": self.repo_id, "run_id": run_id, "item": item}
+
+    def _evidence_append(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        run_id = arguments["run_id"]
+        self._require_owned_run(run_id, context)
+        from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
+
+        def effect(cur: Any, request_digest: str) -> dict[str, Any]:
+            try:
+                item = self.backend.append_evidence(
+                    self.store,
+                    run_id,
+                    idempotency_key=arguments["idempotency_key"],
+                    request_digest=request_digest,
+                    item_id=arguments["item_id"],
+                    kind=arguments["kind"],
+                    ref=arguments["ref"],
+                    digest=arguments["digest"],
+                    collector=arguments["collector"],
+                    validity=arguments["validity"],
+                    claims=arguments.get("claims") or [],
+                    provenance=arguments.get("provenance") or {},
+                    chain_seq=arguments["chain_seq"],
+                    chain_prev_digest=arguments["chain_prev_digest"],
+                    cur=cur,
+                )
+            except _pg.EvidenceChainConflict as exc:
+                raise ApplicationRejection("evidence-chain-conflict", str(exc), 409) from exc
+            return {"repo_id": self.repo_id, "run_id": run_id, "item": item}
+
+        return self._idempotent_write(
+            context,
+            "append_evidence",
+            arguments,
+            effect,
+            digest_exclude=frozenset({"chain_seq", "chain_prev_digest"}),
+        )
+
+    def _session_note_write(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        run_id = arguments["run_id"]
+        self._require_owned_run(run_id, context)
+
+        def effect(cur: Any, request_digest: str) -> dict[str, Any]:
+            note = self.backend.write_session_note(
+                self.store,
+                run_id,
+                note=arguments["note"],
+                idempotency_key=arguments["idempotency_key"],
+                request_digest=request_digest,
+                cur=cur,
+            )
+            return {"repo_id": self.repo_id, "run_id": run_id, **note}
+
+        return self._idempotent_write(context, "write_session_note", arguments, effect)
 
     def _read_next_work_explain(
         self, arguments: dict[str, Any], _context: InvocationContext

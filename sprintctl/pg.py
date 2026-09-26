@@ -18,10 +18,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import secrets
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 from uuid import uuid4
 from urllib.parse import urlparse
 
@@ -2472,6 +2473,266 @@ def _apply_schema_version_16(cur: Any) -> None:
     )
 
 
+_TEXT, _JSONB, _TS = "text", "jsonb", "timestamp with time zone"
+# The exact catalog shape _apply_schema_version_17 creates: per table, its
+# columns in order as (name, type, NOT NULL) and its constraints as
+# (kind, columns); per index, the table it belongs to.
+_SCHEMA_17_TABLES: dict[str, tuple[tuple[tuple[str, str, bool], ...], frozenset[tuple[str, str]]]] = {
+    "run": (
+        (
+            ("repo_id", _TEXT, True), ("run_id", _TEXT, True),
+            ("principal_id", _TEXT, True), ("workspace_id", _TEXT, True),
+            ("client_id", _TEXT, False), ("grant_id", _TEXT, False),
+            ("idempotency_key", _TEXT, True), ("request_digest", _TEXT, True),
+            ("harness_id", _TEXT, True),
+            ("harness_build", _TEXT, True), ("model_id", _TEXT, True),
+            ("recipe_id", _TEXT, True), ("observed_profile", _JSONB, True),
+            ("grant_ids", _JSONB, True), ("claim_ids", _JSONB, True),
+            ("created_at", _TS, True),
+        ),
+        frozenset({
+            ("c", "idempotency_key"), ("c", "request_digest"), ("c", "run_id"),
+            ("p", "repo_id,run_id"),
+            ("u", "repo_id,workspace_id,principal_id,idempotency_key"),
+        }),
+    ),
+    "evidence_item": (
+        (
+            ("repo_id", _TEXT, True), ("run_id", _TEXT, True), ("item_id", _TEXT, True),
+            ("idempotency_key", _TEXT, True), ("request_digest", _TEXT, True),
+            ("chain_seq", "integer", True), ("chain_prev_digest", _TEXT, False),
+            ("kind", _TEXT, True), ("ref", _TEXT, True), ("digest", _TEXT, True),
+            ("collector", _TEXT, True), ("validity", _JSONB, True),
+            ("claims", _JSONB, True), ("provenance", _JSONB, True),
+            ("created_at", _TS, True),
+        ),
+        frozenset({
+            ("c", "chain_seq"), ("c", "idempotency_key"), ("c", "request_digest"),
+            ("f", "repo_id,run_id"), ("p", "repo_id,run_id,item_id"),
+            ("u", "repo_id,run_id,chain_seq"), ("u", "repo_id,run_id,idempotency_key"),
+        }),
+    ),
+    "session_note": (
+        (
+            ("repo_id", _TEXT, True), ("run_id", _TEXT, True), ("note_id", "bigint", True),
+            ("idempotency_key", _TEXT, True), ("request_digest", _TEXT, True),
+            ("note", _TEXT, True), ("created_at", _TS, True),
+        ),
+        frozenset({
+            ("c", "idempotency_key"), ("c", "request_digest"),
+            ("f", "repo_id,run_id"), ("p", "repo_id,note_id"),
+            ("u", "repo_id,run_id,idempotency_key"),
+        }),
+    ),
+    "work_idempotency_ledger": (
+        (
+            ("repo_id", _TEXT, True), ("workspace_id", _TEXT, True),
+            ("principal_id", _TEXT, True), ("tool", _TEXT, True),
+            ("idempotency_key", _TEXT, True), ("request_digest", _TEXT, True),
+            ("result", _JSONB, True), ("created_at", _TS, True),
+        ),
+        frozenset({
+            ("c", "idempotency_key"), ("c", "request_digest"),
+            ("p", "repo_id,workspace_id,principal_id,tool,idempotency_key"),
+        }),
+    ),
+}
+_SCHEMA_17_INDEXES = {
+    "idx_run_repo_workspace_principal": "run",
+    "idx_session_note_repo_run": "session_note",
+}
+
+
+def _schema_17_foreign_relations(cur: Any) -> list[str]:
+    """Relations already holding a schema-17 name without schema 17's shape."""
+
+    def col(row: Any, key: str, index: int) -> Any:
+        return row[key] if isinstance(row, dict) else row[index]
+
+    names = [*_SCHEMA_17_TABLES, *_SCHEMA_17_INDEXES]
+    cur.execute(
+        "SELECT c.relname, c.relkind, ic.relname AS index_table FROM pg_class c "
+        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "LEFT JOIN pg_index i ON i.indexrelid = c.oid "
+        "LEFT JOIN pg_class ic ON ic.oid = i.indrelid "
+        "WHERE n.nspname = current_schema() AND c.relname = ANY(%s) ORDER BY c.relname",
+        (names,),
+    )
+    existing = [
+        (col(row, "relname", 0), col(row, "relkind", 1), col(row, "index_table", 2))
+        for row in cur.fetchall()
+    ]
+    foreign: list[str] = []
+    for name, kind, index_table in existing:
+        if name in _SCHEMA_17_INDEXES:
+            if kind != "i" or index_table != _SCHEMA_17_INDEXES[name]:
+                foreign.append(name)
+            continue
+        if kind != "r":
+            foreign.append(name)
+            continue
+        cur.execute(
+            "SELECT a.attname, format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull "
+            "FROM pg_attribute a WHERE a.attrelid = to_regclass(%s) "
+            "AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum",
+            (name,),
+        )
+        columns = tuple(
+            (col(r, "attname", 0), col(r, "type", 1), bool(col(r, "attnotnull", 2)))
+            for r in cur.fetchall()
+        )
+        cur.execute(
+            "SELECT con.contype, (SELECT string_agg(a.attname, ',' ORDER BY k.ord) "
+            "FROM unnest(con.conkey) WITH ORDINALITY AS k(attnum, ord) "
+            "JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum) AS cols "
+            "FROM pg_constraint con WHERE con.conrelid = to_regclass(%s)",
+            (name,),
+        )
+        constraints = frozenset(
+            (str(col(r, "contype", 0)), col(r, "cols", 1)) for r in cur.fetchall()
+        )
+        if (columns, constraints) != _SCHEMA_17_TABLES[name]:
+            foreign.append(name)
+    return foreign
+
+
+def _apply_schema_version_17(cur: Any) -> None:
+    """Install run/evidence/session-note storage and the write-tool idempotency
+    ledger (agentops#2466, E2: vuoro-mcp-edge record bucket).
+
+    ``run`` binds a Vuoro run handle to the caller that minted it (principal,
+    workspace, repository, and the OAuth client/grant when the identity
+    asserts them -- nullable, since a non-OAuth caller has neither);
+    ``register_run`` is idempotent per
+    (repo_id, workspace_id, principal_id, idempotency_key), enforced by the
+    unique constraint below rather than application-level locking, so a
+    concurrent duplicate mint is resolved by PostgreSQL itself.
+
+    ``evidence_item`` extends ``vuoro_evidence.core.chain``'s hash chain for
+    one run.  The chain math (``entry_digest``/``link``) is computed by the
+    Vuoro MCP edge, which owns that dependency; this table only enforces that
+    ``chain_seq`` is contiguous per run (the unique constraint), and
+    :func:`append_evidence` additionally checks ``chain_seq`` and
+    ``chain_prev_digest`` against the stored tail before inserting, so a
+    stale or racing append is refused rather than silently accepted out of
+    order or on a forked predecessor.
+
+    ``session_note`` is an unchained, run-scoped note.
+
+    ``run``, ``evidence_item`` and ``session_note`` each store the
+    ``idempotency_key`` and ``request_digest`` of the request that wrote the
+    row, in the same statement as the row, unique per key.  A same-key retry
+    therefore replays the row only for the same request and is refused
+    otherwise, at the storage layer as well as in the ledger.
+
+    ``work_idempotency_ledger`` is the durable ledger the E2/E3 shared
+    contract requires of every write tool (docs/plans/2026-09-26-e2-e3-shared-
+    contract.md section 5): storing the first request's digest and result so
+    a retry with the same key and arguments replays it, and a retry with the
+    same key and different arguments is refused. The shared contract's own
+    words key this "by (workspace, tool, key)"; this table additionally
+    scopes by principal_id. A workspace-only key lets a second principal in
+    the same workspace who happens to reuse an idempotency_key with
+    byte-identical arguments replay the first principal's stored result --
+    for register_run specifically, that result names a run_id and its
+    harness/model/profile, none of which is the second principal's to see.
+    Scoping by principal_id closes that without weakening anything the
+    contract asks for (workspace and tool are still both part of the key).
+    See the E2 final report for the forced-failure test that found this.
+
+    The ledger row, the effect and the stored result commit in one
+    transaction (:func:`idempotent_write`), so no row is ever committed
+    without its result.
+
+    ``CREATE TABLE IF NOT EXISTS`` would silently keep a pre-existing
+    relation of the same name whatever its shape, and let a 17 runtime serve
+    against it.  A relation that already has exactly the shape below (e.g.
+    a ladder re-run after the version row was wound back) is kept; any other
+    is refused, naming what is in the way.
+    """
+    foreign = _schema_17_foreign_relations(cur)
+    if foreign:
+        raise _pg_migrations.RemoteSchemaMigrationError(
+            "schema 17 cannot install run/evidence storage: relation(s) "
+            f"{', '.join(foreign)} already exist with a shape schema 17 did not "
+            "create; rename or drop them and re-run the migration"
+        )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS run (
+            repo_id text NOT NULL,
+            run_id text NOT NULL CHECK (run_id ~ '^run_[0-9A-HJKMNP-TV-Z]{26}$'),
+            principal_id text NOT NULL,
+            workspace_id text NOT NULL,
+            client_id text,
+            grant_id text,
+            idempotency_key text NOT NULL CHECK (idempotency_key ~ '^[A-Za-z0-9._:-]{8,128}$'),
+            request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
+            harness_id text NOT NULL,
+            harness_build text NOT NULL,
+            model_id text NOT NULL,
+            recipe_id text NOT NULL,
+            observed_profile jsonb NOT NULL,
+            grant_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+            claim_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (repo_id, run_id),
+            UNIQUE (repo_id, workspace_id, principal_id, idempotency_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_run_repo_workspace_principal
+            ON run(repo_id, workspace_id, principal_id);
+
+        CREATE TABLE IF NOT EXISTS evidence_item (
+            repo_id text NOT NULL,
+            run_id text NOT NULL,
+            item_id text NOT NULL,
+            idempotency_key text NOT NULL CHECK (idempotency_key ~ '^[A-Za-z0-9._:-]{8,128}$'),
+            request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
+            chain_seq integer NOT NULL CHECK (chain_seq >= 0),
+            chain_prev_digest text,
+            kind text NOT NULL,
+            ref text NOT NULL,
+            digest text NOT NULL,
+            collector text NOT NULL,
+            validity jsonb NOT NULL,
+            claims jsonb NOT NULL DEFAULT '[]'::jsonb,
+            provenance jsonb NOT NULL DEFAULT '{}'::jsonb,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (repo_id, run_id, item_id),
+            UNIQUE (repo_id, run_id, chain_seq),
+            UNIQUE (repo_id, run_id, idempotency_key),
+            FOREIGN KEY (repo_id, run_id) REFERENCES run(repo_id, run_id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS session_note (
+            repo_id text NOT NULL,
+            run_id text NOT NULL,
+            note_id bigint GENERATED BY DEFAULT AS IDENTITY,
+            idempotency_key text NOT NULL CHECK (idempotency_key ~ '^[A-Za-z0-9._:-]{8,128}$'),
+            request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
+            note text NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (repo_id, note_id),
+            UNIQUE (repo_id, run_id, idempotency_key),
+            FOREIGN KEY (repo_id, run_id) REFERENCES run(repo_id, run_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_note_repo_run ON session_note(repo_id, run_id);
+
+        CREATE TABLE IF NOT EXISTS work_idempotency_ledger (
+            repo_id text NOT NULL,
+            workspace_id text NOT NULL,
+            principal_id text NOT NULL,
+            tool text NOT NULL,
+            idempotency_key text NOT NULL CHECK (idempotency_key ~ '^[A-Za-z0-9._:-]{8,128}$'),
+            request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
+            result jsonb NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (repo_id, workspace_id, principal_id, tool, idempotency_key)
+        );
+        """
+    )
+
+
 def compatibility_handshake(store: PgStore) -> dict[str, Any]:
     """Return the public read-only work API/schema handshake."""
     return _pg_migrations.compatibility_handshake(store)
@@ -4609,3 +4870,476 @@ def check_integrity(store: PgStore) -> dict:
         "foreign_key_violations": violations,
         "table_counts": table_counts,
     }
+
+
+# ---------------------------------------------------------------------------
+# work.run.* / work.evidence.* / work.session-note.* / work.idempotency.*
+# (agentops#2466, E2: vuoro-mcp-edge record bucket -- schema version 17)
+# ---------------------------------------------------------------------------
+
+_RUN_ID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"  # Crockford base32, matches vuoro_mcp_edge.runs.RUN_ID
+
+
+class RunNotFound(ValueError):
+    """No run row in this repo belongs to the given (principal_id, workspace_id)."""
+
+
+class EvidenceChainConflict(ValueError):
+    """The submitted item does not extend the run's stored tail: a stale or
+    racing ``chain_seq``, a ``chain_prev_digest`` that is not the tail's
+    entry digest, or an ``item_id`` the run's chain already holds."""
+
+
+class IdempotencyConflict(ValueError):
+    """This idempotency key was already committed with a different request digest."""
+
+
+def _mint_run_id() -> str:
+    return "run_" + "".join(secrets.choice(_RUN_ID_ALPHABET) for _ in range(26))
+
+
+def _in_write_transaction(store: PgStore, cur: Any | None, body: Callable[[Any], Any]) -> Any:
+    """Run ``body`` on the caller's cursor, or in a transaction of its own.
+
+    With ``cur`` the caller owns the transaction (see :func:`idempotent_write`,
+    which must commit the effect and its ledger row together), so nothing
+    here commits or rolls back.  Without it this is a standalone write.
+    """
+    if cur is not None:
+        return body(cur)
+    try:
+        with store.conn.cursor() as own:
+            result = body(own)
+        store.conn.commit()
+    except Exception:
+        store.conn.rollback()
+        raise
+    return result
+
+
+def _run_row(row: dict) -> dict:
+    return {
+        "run_id": row["run_id"],
+        "principal_id": row["principal_id"],
+        "workspace_id": row["workspace_id"],
+        "client_id": row["client_id"],
+        "grant_id": row["grant_id"],
+        "harness_id": row["harness_id"],
+        "harness_build": row["harness_build"],
+        "model_id": row["model_id"],
+        "recipe_id": row["recipe_id"],
+        "observed_profile": row["observed_profile"],
+        "grant_ids": row["grant_ids"],
+        "claim_ids": row["claim_ids"],
+        "created_at": _iso(row["created_at"]) or str(row["created_at"]),
+    }
+
+
+def _replay_or_conflict(stored_digest: str, request_digest: str, what: str) -> None:
+    """A row already stored under this idempotency key replays only for the
+    same request.  Checked at the storage layer too, not only in
+    :func:`idempotent_write`'s ledger, so the rule holds for any row that
+    exists without its ledger entry."""
+    if stored_digest != request_digest:
+        raise IdempotencyConflict(
+            f"this idempotency_key already recorded a different {what}"
+        )
+
+
+def register_run(
+    store: PgStore,
+    *,
+    principal_id: str,
+    workspace_id: str,
+    client_id: str | None,
+    grant_id: str | None,
+    idempotency_key: str,
+    request_digest: str,
+    harness_id: str,
+    harness_build: str,
+    model_id: str,
+    recipe_id: str,
+    observed_profile: dict,
+    cur: Any | None = None,
+) -> dict:
+    """Mint (or return the existing) run for this binding and idempotency key.
+
+    Idempotent per (repo_id, workspace_id, principal_id, idempotency_key): a
+    retry -- including two genuinely concurrent callers -- resolves to the
+    same row via the unique constraint below, never two rows for one key,
+    and replays it only when its ``request_digest`` matches
+    (:class:`IdempotencyConflict` otherwise).  The run binds the caller's
+    OAuth ``client_id``/``grant_id`` as well (None without a grant); the
+    request digest covers them, so the same key under a different grant is a
+    conflict rather than a replay of another grant's run.  ``run_id`` is
+    minted here (not supplied by the caller) so a retry that mints a fresh
+    candidate id never collides with, or is compared against, the id an
+    earlier attempt already committed.  ``cur``: see
+    :func:`_in_write_transaction`.
+    """
+    run_id = _mint_run_id()
+
+    def body(cur: Any) -> dict:
+        cur.execute(
+            "INSERT INTO run(repo_id, run_id, principal_id, workspace_id, client_id, "
+            "grant_id, idempotency_key, request_digest, harness_id, harness_build, "
+            "model_id, recipe_id, observed_profile) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb) "
+            "ON CONFLICT (repo_id, workspace_id, principal_id, idempotency_key) DO NOTHING",
+            (
+                store.repo_id, run_id, principal_id, workspace_id, client_id, grant_id,
+                idempotency_key, request_digest, harness_id, harness_build, model_id,
+                recipe_id, json.dumps(observed_profile),
+            ),
+        )
+        cur.execute(
+            "SELECT * FROM run WHERE repo_id = %s AND workspace_id = %s "
+            "AND principal_id = %s AND idempotency_key = %s",
+            (store.repo_id, workspace_id, principal_id, idempotency_key),
+        )
+        row = cur.fetchone()
+        assert row is not None
+        _replay_or_conflict(row["request_digest"], request_digest, "run")
+        return _run_row(row)
+
+    return _in_write_transaction(store, cur, body)
+
+
+def get_run(store: PgStore, run_id: str) -> dict | None:
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM run WHERE repo_id = %s AND run_id = %s",
+            (store.repo_id, run_id),
+        )
+        row = cur.fetchone()
+    return _run_row(row) if row is not None else None
+
+
+def resolve_run(
+    store: PgStore,
+    run_id: str,
+    *,
+    principal_id: str,
+    workspace_id: str,
+    client_id: str | None,
+    grant_id: str | None,
+) -> dict:
+    """The run row if its whole binding matches the caller in this repo.
+
+    The binding is (principal_id, workspace_id, client_id, grant_id) -- the
+    repository is this store's own scope -- so a different OAuth grant of
+    the same principal cannot use the run (E2/E3 shared contract section 4;
+    vuoro_mcp_edge.runs.RunBinding).  Raises :class:`RunNotFound` for an
+    unknown run id AND for a run bound to anyone else -- one exception, one
+    message, so a caller cannot use this to probe which run ids exist.
+    """
+    row = get_run(store, run_id)
+    binding = (principal_id, workspace_id, client_id, grant_id)
+    if row is None or (
+        row["principal_id"], row["workspace_id"], row["client_id"], row["grant_id"]
+    ) != binding:
+        raise RunNotFound(f"no run {run_id!r} belongs to the caller")
+    return row
+
+
+def _evidence_row(row: dict) -> dict:
+    return {
+        "item_id": row["item_id"],
+        "kind": row["kind"],
+        "ref": row["ref"],
+        "digest": row["digest"],
+        "collector": row["collector"],
+        "validity": row["validity"],
+        "claims": row["claims"],
+        "provenance": row["provenance"],
+        "chain_seq": int(row["chain_seq"]),
+        "chain_prev_digest": row["chain_prev_digest"],
+    }
+
+
+def evidence_entry_digest(item: Mapping[str, Any]) -> str:
+    """The digest the next item in a run's chain must carry as ``chain_prev_digest``.
+
+    Byte-for-byte the payload ``vuoro_evidence.core.chain.entry_digest``
+    hashes (item_id, digest, chain_seq, chain_prev_digest; sorted keys,
+    compact separators).  This is a check against that definition, not a
+    second chain: the edge still links items, and ``verify_chain`` there
+    stays authoritative.  A test pins a vector computed by vuoro's own
+    function so the two cannot drift silently.
+    """
+    payload = {
+        "item_id": item["item_id"],
+        "digest": item["digest"],
+        "chain_seq": item["chain_seq"],
+        "chain_prev_digest": item["chain_prev_digest"],
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def evidence_tail(store: PgStore, run_id: str) -> dict | None:
+    """The highest chain_seq evidence item recorded for this run, or None."""
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM evidence_item WHERE repo_id = %s AND run_id = %s "
+            "ORDER BY chain_seq DESC LIMIT 1",
+            (store.repo_id, run_id),
+        )
+        row = cur.fetchone()
+    return _evidence_row(row) if row is not None else None
+
+
+def append_evidence(
+    store: PgStore,
+    run_id: str,
+    *,
+    idempotency_key: str,
+    request_digest: str,
+    item_id: str,
+    kind: str,
+    ref: str,
+    digest: str,
+    collector: str,
+    validity: dict,
+    claims: list,
+    provenance: dict,
+    chain_seq: int,
+    chain_prev_digest: str | None,
+    cur: Any | None = None,
+) -> dict:
+    """Append one evidence item, enforcing the run's stored chain tail.
+
+    Under a per-run lock held to the end of the transaction:
+
+    1. A row already stored under this run's ``idempotency_key`` is a retry:
+       it replays as stored when its ``request_digest`` matches and raises
+       :class:`IdempotencyConflict` when it does not.  This comes before the
+       chain checks, because a retry's recomputed ``chain_seq`` and
+       ``chain_prev_digest`` point past the row it is retrying.
+    2. An ``item_id`` already stored under a different key is a different
+       item reusing the id: :class:`EvidenceChainConflict`.  (The Vuoro MCP
+       edge derives item_id from (run_id, idempotency_key), so this means
+       the id was not minted the way the edge mints it.)
+    3. ``chain_seq`` must be exactly one past the stored tail (0 for the
+       first item), and ``chain_prev_digest`` must be the tail's
+       :func:`evidence_entry_digest` (None for the first item); otherwise
+       :class:`EvidenceChainConflict`.  The caller (the edge, via
+       ``vuoro_evidence.core.chain.link``) computes both from the tail it
+       fetched, so a stale or racing append is refused rather than landing
+       out of order or on a forked predecessor.
+
+    None of these ever surfaces as a raw constraint violation.  ``cur``: see
+    :func:`_in_write_transaction`.
+    """
+
+    def body(cur: Any) -> dict:
+        cur.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (f"evidence-chain:{store.repo_id}:{run_id}",),
+        )
+        cur.execute(
+            "SELECT * FROM evidence_item WHERE repo_id = %s AND run_id = %s "
+            "AND idempotency_key = %s",
+            (store.repo_id, run_id, idempotency_key),
+        )
+        retried = cur.fetchone()
+        if retried is not None:
+            _replay_or_conflict(retried["request_digest"], request_digest, "evidence item")
+            return _evidence_row(retried)
+        cur.execute(
+            "SELECT chain_seq FROM evidence_item WHERE repo_id = %s AND run_id = %s "
+            "AND item_id = %s",
+            (store.repo_id, run_id, item_id),
+        )
+        reused = cur.fetchone()
+        if reused is not None:
+            raise EvidenceChainConflict(
+                f"item_id {item_id!r} is already recorded in run {run_id!r}'s chain "
+                f"at chain_seq {int(reused['chain_seq'])} under a different idempotency_key"
+            )
+        cur.execute(
+            "SELECT * FROM evidence_item WHERE repo_id = %s AND run_id = %s "
+            "ORDER BY chain_seq DESC LIMIT 1",
+            (store.repo_id, run_id),
+        )
+        tail = cur.fetchone()
+        expected_seq = 0 if tail is None else int(tail["chain_seq"]) + 1
+        expected_prev = None if tail is None else evidence_entry_digest(_evidence_row(tail))
+        if chain_seq != expected_seq:
+            raise EvidenceChainConflict(
+                f"chain_seq {chain_seq} does not extend run {run_id!r}'s stored "
+                f"tail (expected {expected_seq}); re-fetch the tail and retry"
+            )
+        if chain_prev_digest != expected_prev:
+            raise EvidenceChainConflict(
+                f"chain_prev_digest does not match run {run_id!r}'s stored tail "
+                f"(expected {expected_prev!r}); re-fetch the tail and retry"
+            )
+        try:
+            cur.execute(
+                "INSERT INTO evidence_item(repo_id, run_id, item_id, idempotency_key, "
+                "request_digest, chain_seq, chain_prev_digest, kind, ref, digest, "
+                "collector, validity, claims, provenance) VALUES (%s, %s, %s, %s, %s, "
+                "%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb) RETURNING *",
+                (
+                    store.repo_id, run_id, item_id, idempotency_key, request_digest,
+                    chain_seq, chain_prev_digest, kind, ref, digest, collector,
+                    json.dumps(validity), json.dumps(claims), json.dumps(provenance),
+                ),
+            )
+        except UniqueViolation as exc:
+            # Unreachable while the advisory lock serializes appends; kept so
+            # a writer that bypasses it still gets the domain refusal.
+            raise EvidenceChainConflict(
+                f"run {run_id!r}'s chain moved under this append; re-fetch the tail and retry"
+            ) from exc
+        return _evidence_row(cur.fetchone())
+
+    return _in_write_transaction(store, cur, body)
+
+
+def write_session_note(
+    store: PgStore,
+    run_id: str,
+    *,
+    note: str,
+    idempotency_key: str,
+    request_digest: str,
+    cur: Any | None = None,
+) -> dict:
+    """Write one session note, idempotent per (repo_id, run_id, idempotency_key).
+
+    Mirrors ``register_run``'s ``ON CONFLICT DO NOTHING`` + re-select
+    pattern, so the note table converges on one row per key on its own,
+    beneath :func:`idempotent_write`'s ledger rather than only because of
+    it; the stored ``request_digest`` makes a same-key retry with a
+    different note an :class:`IdempotencyConflict`, not a replay of the
+    other note.  ``cur``: see :func:`_in_write_transaction`.
+    """
+
+    def body(cur: Any) -> dict:
+        cur.execute(
+            "INSERT INTO session_note(repo_id, run_id, idempotency_key, request_digest, note) "
+            "VALUES (%s, %s, %s, %s, %s) "
+            "ON CONFLICT (repo_id, run_id, idempotency_key) DO NOTHING",
+            (store.repo_id, run_id, idempotency_key, request_digest, note),
+        )
+        cur.execute(
+            "SELECT note_id, note, request_digest, created_at FROM session_note "
+            "WHERE repo_id = %s AND run_id = %s AND idempotency_key = %s",
+            (store.repo_id, run_id, idempotency_key),
+        )
+        row = cur.fetchone()
+        assert row is not None
+        _replay_or_conflict(row["request_digest"], request_digest, "session note")
+        return {
+            "note_id": int(row["note_id"]),
+            "note": row["note"],
+            "created_at": _iso(row["created_at"]) or str(row["created_at"]),
+        }
+
+    return _in_write_transaction(store, cur, body)
+
+
+def idempotency_lookup(
+    store: PgStore, *, workspace_id: str, principal_id: str, tool: str, key: str
+) -> dict | None:
+    """The committed (request_digest, result) for this key, if any."""
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT request_digest, result FROM work_idempotency_ledger "
+            "WHERE repo_id = %s AND workspace_id = %s AND principal_id = %s "
+            "AND tool = %s AND idempotency_key = %s",
+            (store.repo_id, workspace_id, principal_id, tool, key),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    return {"request_digest": row["request_digest"], "result": row["result"]}
+
+
+def _record_idempotent_result(
+    cur: Any,
+    store: PgStore,
+    *,
+    workspace_id: str,
+    principal_id: str,
+    tool: str,
+    key: str,
+    result: dict,
+) -> Any:
+    """Fill the claimed ledger row with the effect's result, in the claim's transaction."""
+    cur.execute(
+        "UPDATE work_idempotency_ledger SET result = %s::jsonb "
+        "WHERE repo_id = %s AND workspace_id = %s AND principal_id = %s "
+        "AND tool = %s AND idempotency_key = %s RETURNING result",
+        (json.dumps(result), store.repo_id, workspace_id, principal_id, tool, key),
+    )
+    row = cur.fetchone()
+    assert row is not None
+    return row["result"]
+
+
+def idempotent_write(
+    store: PgStore,
+    *,
+    workspace_id: str,
+    principal_id: str,
+    tool: str,
+    key: str,
+    request_digest: str,
+    effect: Callable[[Any], dict],
+) -> Any:
+    """Claim the ledger row, perform ``effect`` and record its result in ONE transaction.
+
+    The E2/E3 shared contract section 5: the first write wins atomically,
+    and a racing writer gets the stored row back.
+
+    1. ``INSERT ... ON CONFLICT DO NOTHING RETURNING`` claims the key.  A
+       concurrent claimant of the same key blocks on this insert until the
+       holder's transaction ends, so at most one caller ever runs the effect.
+    2. The claimant runs ``effect(cur)`` on the same cursor, then records
+       the result in the claimed row, then commits.  A failure anywhere --
+       a domain refusal from the effect, a crash before the result is
+       recorded -- rolls back the claim with the effect, so nothing is
+       committed and the same key can be retried.  No row is ever committed
+       without its result, so the claim needs no pending state.
+    3. A caller whose insert found a committed row reads it back: the same
+       digest replays the stored result, a different one raises
+       :class:`IdempotencyConflict`.
+    """
+    ledger_key = (store.repo_id, workspace_id, principal_id, tool, key)
+    try:
+        with store.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO work_idempotency_ledger(repo_id, workspace_id, principal_id, "
+                "tool, idempotency_key, request_digest, result) "
+                "VALUES (%s, %s, %s, %s, %s, %s, 'null'::jsonb) "
+                "ON CONFLICT (repo_id, workspace_id, principal_id, tool, idempotency_key) "
+                "DO NOTHING RETURNING request_digest",
+                (*ledger_key, request_digest),
+            )
+            if cur.fetchone() is not None:
+                stored = {
+                    "request_digest": request_digest,
+                    "result": _record_idempotent_result(
+                        cur, store, workspace_id=workspace_id, principal_id=principal_id,
+                        tool=tool, key=key, result=effect(cur),
+                    ),
+                }
+            else:
+                cur.execute(
+                    "SELECT request_digest, result FROM work_idempotency_ledger "
+                    "WHERE repo_id = %s AND workspace_id = %s AND principal_id = %s "
+                    "AND tool = %s AND idempotency_key = %s",
+                    ledger_key,
+                )
+                stored = cur.fetchone()
+                assert stored is not None
+        store.conn.commit()
+    except Exception:
+        store.conn.rollback()
+        raise
+    if stored["request_digest"] != request_digest:
+        raise IdempotencyConflict("this idempotency_key was already used with different arguments")
+    return stored["result"]

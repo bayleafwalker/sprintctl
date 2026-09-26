@@ -324,7 +324,7 @@ class TestSchema15Migration:
                 )
             conn.commit()
 
-            assert pg_migrations.migrate_schema(store)["applied_versions"] == [15, 16]
+            assert pg_migrations.migrate_schema(store)["applied_versions"] == [15, 16, 17]
             with conn.cursor() as cur:
                 pg._apply_schema_version_15(cur)
             conn.commit()

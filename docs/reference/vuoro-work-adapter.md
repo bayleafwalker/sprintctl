@@ -32,6 +32,8 @@ no migration or DDL.
 | Maintenance capability | `work.read.maintenance-capability`, `work.maintenance.prepare`, `work.maintenance.transition` | read forbids a key; mutations require the invocation key to equal the immutable request ID |
 | Maintenance recovery evidence | `work.maintenance.recovery-record` | key equals the immutable recovery record ID; the result always declares `authority=none` |
 | Cutover evidence | `work.pilot.cutover-evidence` | key forbidden |
+| Runs (0.8.0, schema 17) | `work.run.register-v1`, `work.run.resolve-v1` | register requires an `idempotency_key` argument (write-tool ledger); resolve forbids one |
+| Run evidence and notes (0.8.0, schema 17) | `work.evidence.tail-v1`, `work.evidence.append-v1`, `work.session-note.write-v1` | tail forbids a key; append and note writes require an `idempotency_key` argument (write-tool ledger) |
 
 Every operation declares JSON Schema 2020-12 input and result contracts,
 authority, execution semantics, idempotency behavior and required client
@@ -103,6 +105,37 @@ legacy item is in no category; it counts under its resolution and in
 `work.read.release` returns a release and its `release_commit` rows, by
 `release_digest` or for an `item_id`'s current release. `work.read.decisions`
 is the authority-decision journal read and is unrelated.
+
+## Runs, evidence and session notes
+
+Added in sprintctl 0.8.0 with remote schema 17 (agentops#2466, E2). These
+operations back the Vuoro MCP edge's record bucket (`work:evidence`) and are
+served only by the PostgreSQL authority; the local SQLite backend has no run,
+evidence or ledger storage.
+
+- `work.run.register-v1` mints a `run_<ULID>` bound to the caller: principal,
+  workspace and repository, plus the OAuth `client_id` and `grant_id` when the
+  identity asserts them (null otherwise). None of these come from arguments.
+- `work.run.resolve-v1` echoes that whole binding. A run bound to any other
+  principal, workspace, client or grant, including another grant of the same
+  principal, is `run-not-found` (404), with the same code and message as an
+  unknown id. The evidence and note operations resolve the run the same way
+  first.
+- `work.evidence.append-v1` extends the run's chain under a per-run lock.
+  `chain_seq` must be one past the stored tail. `chain_prev_digest` must be
+  the tail's `entry_digest` as `vuoro_evidence.core.chain` defines it, or null
+  for the first item. An `item_id` may not already be stored under another
+  key. Any violation, including a lost race for the tail, is
+  `evidence-chain-conflict` (409).
+- Write-tool idempotency (E2/E3 shared contract section 5): the ledger is
+  keyed by (workspace, principal, tool, key). One transaction claims the
+  ledger row, performs the write and records its result. The same key with
+  the same arguments replays the stored result. The same key with different
+  arguments is `idempotency-conflict` (409), and the loser never performs
+  its write. For `register_run` the grant binding counts as part of the
+  arguments. The run, evidence item or note also stores the request digest,
+  so storage enforces the same rule on its own. A failed write commits
+  nothing, so the key can be retried.
 
 ## Authority and retry semantics
 

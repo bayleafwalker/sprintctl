@@ -57,6 +57,9 @@ class _SchemaCursor:
         # Schema 14 folds retired capability receipts; this fake holds none.
         if "FROM authority_decision ad" in self._query or "FROM event e" in self._query:
             return []
+        # Schema 17 refuses relations already holding its names; none here.
+        if "c.relname = ANY(%s)" in self._query:
+            return []
         raise AssertionError(f"unexpected fetchall for query: {self._query}")
 
     def fetchone(self):

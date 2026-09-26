@@ -140,8 +140,8 @@ class TestSchema16Migration:
             conn.rollback()
 
             migrated = pg_migrations.migrate_schema(store)
-            assert migrated["applied_versions"] == [16]
-            assert migrated["to_version"] == 16
+            assert migrated["applied_versions"] == [16, 17]
+            assert migrated["to_version"] == 17
             assert pg_migrations.migrate_schema(store)["applied_versions"] == []
             decision_id = _remark_sql(store, item_id)
             assert pg.get_work_item(store, item_id)["terminal_decision_id"] == decision_id
