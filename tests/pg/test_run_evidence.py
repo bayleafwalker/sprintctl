@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from sprintctl import pg
 from sprintctl.application import ApplicationRejection, WorkApplication
 
 from tests.pg._shared import PG_MARKS
@@ -436,6 +437,58 @@ class TestSessionNote:
                 _context(principal_id="github:9:0"),
             )
         assert excinfo.value.code == "run-not-found"
+
+
+class TestStorageLevelIdempotency:
+    """The ``append_evidence``/``write_session_note`` backend functions must
+    converge on one row even when called twice with identical arguments
+    *outside* ``work_application``'s ledger -- simulating both a genuinely
+    concurrent second caller and a retry after a crash between this write and
+    the ledger recording it (found by an independent review of this PR)."""
+
+    def test_append_evidence_with_an_existing_item_id_replays_instead_of_crashing(
+        self, store
+    ):
+        run_id = _new_run(_app(store), "storage-idempotency-evidence-1")
+        first = pg.append_evidence(
+            store, run_id, item_id="evi_storage_1", kind="test", ref="ref-1",
+            digest="sha256:" + "a" * 64, collector="tester", validity=_validity(),
+            claims=[], provenance={}, chain_seq=0, chain_prev_digest=None,
+        )
+        # A second, unrelated item advances the tail in between -- as a
+        # concurrent caller, or the edge's own retry after re-fetching the
+        # tail, would recompute a *different* chain_seq than the first call.
+        pg.append_evidence(
+            store, run_id, item_id="evi_storage_other", kind="test", ref="ref-other",
+            digest="sha256:" + "b" * 64, collector="tester", validity=_validity(),
+            claims=[], provenance={}, chain_seq=1, chain_prev_digest="sha256:" + "c" * 64,
+        )
+        replay = pg.append_evidence(
+            store, run_id, item_id="evi_storage_1", kind="test", ref="ref-1",
+            digest="sha256:" + "a" * 64, collector="tester", validity=_validity(),
+            claims=[], provenance={}, chain_seq=2, chain_prev_digest="sha256:" + "d" * 64,
+        )
+        assert replay == first
+        assert replay["chain_seq"] == 0
+
+    def test_write_session_note_with_the_same_key_replays_without_a_second_row(
+        self, store
+    ):
+        run_id = _new_run(_app(store), "storage-idempotency-note-1")
+        first = pg.write_session_note(
+            store, run_id, note="same note", idempotency_key="storage-note-key-1"
+        )
+        second = pg.write_session_note(
+            store, run_id, note="same note", idempotency_key="storage-note-key-1"
+        )
+        assert second == first
+        with store.conn.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) AS n FROM session_note WHERE repo_id = %s AND run_id = %s "
+                "AND idempotency_key = %s",
+                (store.repo_id, run_id, "storage-note-key-1"),
+            )
+            assert cur.fetchone()["n"] == 1
 
 
 class TestIdempotencyLedgerCrossTool:

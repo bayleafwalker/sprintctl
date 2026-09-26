@@ -1542,7 +1542,12 @@ class WorkApplication:
         self._require_owned_run(run_id, context)
 
         def effect() -> dict[str, Any]:
-            note = self.backend.write_session_note(self.store, run_id, note=arguments["note"])
+            note = self.backend.write_session_note(
+                self.store,
+                run_id,
+                note=arguments["note"],
+                idempotency_key=arguments["idempotency_key"],
+            )
             return {"repo_id": self.repo_id, "run_id": run_id, **note}
 
         return self._idempotent_write(context, "write_session_note", arguments, effect)
