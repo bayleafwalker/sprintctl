@@ -1418,7 +1418,7 @@ class WorkApplication:
         context: InvocationContext,
         tool: str,
         arguments: dict[str, Any],
-        effect: Callable[[], dict[str, Any]],
+        effect: Callable[[Any], dict[str, Any]],
         *,
         digest_exclude: frozenset[str] = frozenset(),
     ) -> dict[str, Any]:
@@ -1426,52 +1426,45 @@ class WorkApplication:
 
         Mirrors ``vuoro_mcp_edge.idempotency.replay_or_conflict``'s contract:
         same key, same digest -> the stored result and no second effect; same
-        key, different digest -> ``idempotency-conflict``. ``effect`` runs at
-        most once per distinct (key, digest); its own exceptions propagate
-        without being recorded, so a caller can retry the same
-        idempotency_key with corrected arguments after a non-idempotency
-        rejection (e.g. ``evidence-chain-conflict``) instead of being
-        permanently stuck on a key that never got as far as a stored result.
+        key, different digest -> ``idempotency-conflict``.  The ledger claim,
+        ``effect(cur)`` and the stored result commit in one transaction (see
+        ``pg.idempotent_write``), so concurrent same-key callers run the
+        effect at most once and a failed effect leaves nothing committed.
+        ``effect``'s own exceptions propagate after that rollback, so a caller
+        can retry the same idempotency_key with corrected arguments after a
+        non-idempotency rejection (e.g. ``evidence-chain-conflict``) instead
+        of being permanently stuck on a key that never stored a result.
+
+        ``effect`` receives the transaction's cursor and must do all of its
+        writes through it -- a write that commits on its own would escape
+        the rollback.
 
         ``digest_exclude`` is passed to ``_request_digest`` (see its
         docstring) for arguments that vary with server-observed state rather
         than caller intent.
+
+        PostgreSQL only: these operations are served solely by
+        ``WorkApplication.postgres``; the local SQLite backend has no run,
+        evidence or ledger storage, so it has no second ledger to keep
+        consistent.
         """
         principal_id, workspace_id = _identity_binding(context)
         key = _required_text(arguments.get("idempotency_key"), "idempotency_key")
         digest = _request_digest(tool, arguments, exclude=digest_exclude)
-        stored = self.backend.idempotency_lookup(
-            self.store, workspace_id=workspace_id, principal_id=principal_id, tool=tool, key=key
-        )
-        if stored is not None:
-            if stored["request_digest"] != digest:
-                raise ApplicationRejection(
-                    "idempotency-conflict",
-                    "this idempotency_key was already used with different arguments",
-                    409,
-                )
-            return stored["result"]
-        result = effect()
-        stored = self.backend.idempotency_store(
-            self.store, workspace_id=workspace_id, principal_id=principal_id, tool=tool, key=key,
-            request_digest=digest, result=result,
-        )
-        if stored["request_digest"] != digest:
-            # This effect's own result already committed (e.g. a run was
-            # minted, an evidence item appended); a racing writer's row won
-            # the ledger instead. The winning row is authoritative -- return
-            # it, not this call's own now-orphaned result.
-            raise ApplicationRejection(
-                "idempotency-conflict",
-                "this idempotency_key was already used with different arguments",
-                409,
+        from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
+
+        try:
+            return self.backend.idempotent_write(
+                self.store, workspace_id=workspace_id, principal_id=principal_id, tool=tool,
+                key=key, request_digest=digest, effect=effect,
             )
-        return stored["result"]
+        except _pg.IdempotencyConflict as exc:
+            raise ApplicationRejection("idempotency-conflict", str(exc), 409) from exc
 
     def _run_register(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         principal_id, workspace_id = _identity_binding(context)
 
-        def effect() -> dict[str, Any]:
+        def effect(cur: Any) -> dict[str, Any]:
             row = self.backend.register_run(
                 self.store,
                 principal_id=principal_id,
@@ -1482,6 +1475,7 @@ class WorkApplication:
                 model_id=arguments["model_id"],
                 recipe_id=arguments["recipe_id"],
                 observed_profile=arguments["observed_profile"],
+                cur=cur,
             )
             return {"repo_id": self.repo_id, "run": row}
 
@@ -1507,7 +1501,7 @@ class WorkApplication:
         self._require_owned_run(run_id, context)
         from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
 
-        def effect() -> dict[str, Any]:
+        def effect(cur: Any) -> dict[str, Any]:
             try:
                 item = self.backend.append_evidence(
                     self.store,
@@ -1522,6 +1516,7 @@ class WorkApplication:
                     provenance=arguments.get("provenance") or {},
                     chain_seq=arguments["chain_seq"],
                     chain_prev_digest=arguments["chain_prev_digest"],
+                    cur=cur,
                 )
             except _pg.EvidenceChainConflict as exc:
                 raise ApplicationRejection("evidence-chain-conflict", str(exc), 409) from exc
@@ -1541,12 +1536,13 @@ class WorkApplication:
         run_id = arguments["run_id"]
         self._require_owned_run(run_id, context)
 
-        def effect() -> dict[str, Any]:
+        def effect(cur: Any) -> dict[str, Any]:
             note = self.backend.write_session_note(
                 self.store,
                 run_id,
                 note=arguments["note"],
                 idempotency_key=arguments["idempotency_key"],
+                cur=cur,
             )
             return {"repo_id": self.repo_id, "run_id": run_id, **note}
 

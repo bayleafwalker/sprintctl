@@ -405,15 +405,17 @@ _PUBLIC_WORK_ITEM_RESULT = _result_schema(
 # The evidence chain's hash math (entry_digest/link) is computed by the
 # caller (the Vuoro MCP edge, from vuoro_evidence.core.chain) from the tail
 # it observes via work.evidence.tail-v1; work.evidence.append-v1 stores the
-# already-linked item and only guards that chain_seq extends the tail it
-# actually holds, under a per-run lock, so a stale or racing append is
-# refused rather than silently reordered.
+# already-linked item and, under a per-run lock, guards that chain_seq and
+# chain_prev_digest extend the tail it actually holds (the prev digest is
+# checked against entry_digest of the stored tail, not recomputed as a
+# second chain), so a stale or racing append is refused
+# (evidence-chain-conflict) rather than silently reordered or forked.
 #
-# Each write operation below is its own idempotent unit: it looks up and
-# stores the write-tool idempotency ledger the shared contract requires
-# (docs/plans/2026-09-26-e2-e3-shared-contract.md section 5) internally, in
-# the same call, rather than exposing the ledger as separate wire
-# operations. The ledger is keyed by (repo_id, workspace_id, principal_id,
+# Each write operation below is its own idempotent unit: it claims the
+# write-tool idempotency ledger row the shared contract requires
+# (docs/plans/2026-09-26-e2-e3-shared-contract.md section 5), performs its
+# effect and records the result in ONE transaction, internally, rather than
+# exposing the ledger as separate wire operations. The ledger is keyed by (repo_id, workspace_id, principal_id,
 # tool, idempotency_key) -- one dimension more specific than the shared
 # contract's own words ("(workspace, tool, key)"), because that literal
 # scoping lets a second principal in the same workspace replay a first
