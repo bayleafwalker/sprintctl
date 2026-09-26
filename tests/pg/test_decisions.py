@@ -338,7 +338,7 @@ class TestSchema14Fold:
             conn.commit()
 
             migrated = pg_migrations.migrate_schema(store)
-            assert migrated["applied_versions"] == [14, 15, 16]
+            assert migrated["applied_versions"] == [14, 15, 16, 17]
 
             with conn.cursor() as cur:
                 decisions, evidence, items = _fold_counts(cur, repo_id)
