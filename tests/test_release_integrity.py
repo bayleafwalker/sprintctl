@@ -28,8 +28,8 @@ class TestReleaseIntegrity:
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
         requirement, = pyproject["project"]["optional-dependencies"]["served"]
-        assert "vuoro-client-v0.1.0/vuoro_client-0.1.0-py3-none-any.whl" in requirement
-        assert "sha256=d94c35002d94dec2ac86c75a2693934c67d2c72c8d27b2048836ed4e1d1c71db" in requirement
+        assert "vuoro-client-v0.1.1/vuoro_client-0.1.1-py3-none-any.whl" in requirement
+        assert "sha256=b5fb6bad174abd00d67504398690bcfb8c3cc3be891e5465983827e5a1740f6d" in requirement
         assert "git+" not in requirement
 
     def test_pyproject_doctor_capabilities_match_runtime(self):
