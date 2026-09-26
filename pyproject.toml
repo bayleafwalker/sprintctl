@@ -16,7 +16,7 @@ sprintctl = "sprintctl.cli:cli"
 sprintctl-volatile-hook = "sprintctl.volatile_hook:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "jsonschema>=4.23,<5"]
 remote = [
     "psycopg[binary]>=3.1",
 ]

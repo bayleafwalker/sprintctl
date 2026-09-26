@@ -6,6 +6,7 @@ skip machinery, and helpers.
 """
 from __future__ import annotations
 
+import jsonschema
 import pytest
 
 from tests.pg._shared import (
@@ -125,5 +126,4 @@ class TestServedEventsCreatedAt:
         contract = next(
             c for c in WORK_OPERATION_CONTRACTS if c.name == "work.read.events"
         )
-        jsonschema = pytest.importorskip("jsonschema")
         jsonschema.Draft202012Validator(contract.result_schema).validate(result)
