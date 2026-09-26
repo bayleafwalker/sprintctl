@@ -32,6 +32,17 @@ class TestReleaseIntegrity:
         assert "sha256=b5fb6bad174abd00d67504398690bcfb8c3cc3be891e5465983827e5a1740f6d" in requirement
         assert "git+" not in requirement
 
+    def test_remote_schema_cutover_is_a_minor_release_past_0_7(self):
+        """0.7.4 is tagged against remote schema 16; a runtime whose minimum
+        is 17 cannot serve a schema-16 authority, so it is 0.8.0 or later."""
+        from sprintctl import pg_migrations
+
+        with (ROOT / "pyproject.toml").open("rb") as fh:
+            pyproject = tomllib.load(fh)
+        assert pyproject["project"]["version"] == __version__ == "0.8.0"
+        assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 17
+        assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 17
+
     def test_pyproject_doctor_capabilities_match_runtime(self):
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)

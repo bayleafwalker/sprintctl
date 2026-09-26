@@ -42,6 +42,15 @@ package once released). An install missing those extras cannot use
 `SPRINTCTL_BACKEND=served` or `remote` at all and fails with
 `invalid SPRINTCTL_BACKEND=...` before any schema check runs.
 
+Schema 17 (sprintctl 0.8.0) is a coordinated cutover. A 0.8.0 runtime
+admits only schema 17, and a 0.7.x runtime refuses it. Run the deployment
+migration before, or together with, the 0.8.0 rollout. Schema 17 adds the
+`run`, `evidence_item`, `session_note` and `work_idempotency_ledger` tables
+behind the `work.run.*`, `work.evidence.*-v1` and `work.session-note.*`
+operations. If a relation already uses one of those names without schema
+17's exact columns and constraints, the migration refuses instead of keeping
+it.
+
 The handshake also publishes
 `sprintctl-repository-ingest-cursor/v1` with `scope=repository` and
 `contiguous=true`. Numeric `ingest_offset` values are meaningful only together
