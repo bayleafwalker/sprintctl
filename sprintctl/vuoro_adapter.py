@@ -1893,7 +1893,8 @@ def _operation_rejected(error_type: type[Exception], error: ApplicationRejection
     (e.g. ``claim-superseded``'s generations, agentops#2540) when the
     service's error type carries them.  Released vuoro-service (0.1.77)
     does not; there the details stay readable in the message instead of
-    failing the call."""
+    failing the call.  Only an explicit ``details`` parameter counts: a
+    type taking ``**kwargs`` gets none, conservatively."""
     if error.details is not None and "details" in inspect.signature(error_type.__init__).parameters:
         return error_type(
             error.code, error.message, http_status=error.http_status, details=dict(error.details),

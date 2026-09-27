@@ -561,6 +561,23 @@ class TestTakeoverAndStaleCompletion:
         assert (result["settled"], result["settlement_effect"]) == (True, "settled")
         assert _status(store, item) == "done" and _reports(store, item) == 2
 
+    def test_after_reactivation_the_refused_reports_key_still_replays_its_refusal(self, store):
+        """The refused report kept its key: retrying it replays
+        lease-expired, even on the reactivated lease, and the message says
+        to report under a new key."""
+        (item,) = _items(store)
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, "expired-replay-a")["lease"]
+        _backdate(store, lease["lease_id"], 601)
+        first = _refused(lambda: _complete(store, A, lease["lease_id"], run, "expired-replay-c"))
+        assert first.code == "lease-expired" and "new idempotency key" in first.message
+        _claim(store, A, item, run, "expired-replay-a")
+        assert _refused(lambda: _complete(store, A, lease["lease_id"], run, "expired-replay-c")).code == (
+            "lease-expired"
+        )
+        assert _reports(store, item) == 1 and _status(store, item) == "active"
+        assert _complete(store, A, lease["lease_id"], run, "expired-replay-c2")["settled"] is True
+
     def test_a_strangers_completion_is_not_found_and_leaves_no_evidence(self, store):
         (item,) = _items(store)
         lease = _claim(store, A, item, _run(store, A), "stranger-a")["lease"]

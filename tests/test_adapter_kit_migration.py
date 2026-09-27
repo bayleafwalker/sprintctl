@@ -124,3 +124,39 @@ def test_installed_distribution_metadata_preserves_adapter_url_and_digest() -> N
         and ADAPTER_DIGEST in requirement
         for requirement in requirements
     )
+
+
+def test_operation_rejected_hands_details_only_to_a_type_that_takes_them() -> None:
+    """agentops#2540: claim-superseded's generations reach a service error
+    type with an explicit ``details`` parameter; released vuoro-service
+    (0.1.77) has none, and ``**kwargs`` alone is not taken as consent."""
+    from sprintctl.application_common import ApplicationRejection
+    from sprintctl.vuoro_adapter import _operation_rejected
+
+    class WithDetails(Exception):
+        def __init__(self, code, message, *, http_status=409, details=None):
+            super().__init__(message)
+            self.code, self.http_status, self.details = code, http_status, details
+
+    class Released(Exception):
+        def __init__(self, code, message, *, http_status=409):
+            super().__init__(message)
+            self.code, self.http_status = code, http_status
+
+    class Kwargs(Exception):
+        def __init__(self, code, message, **kwargs):
+            super().__init__(message)
+            self.code, self.kwargs = code, kwargs
+
+    details = {"claim_id": "lease_x", "current_generation": 2, "reported_generation": 1}
+    error = ApplicationRejection("claim-superseded", "taken over", 409, details=details)
+    with_details = _operation_rejected(WithDetails, error)
+    assert (with_details.code, with_details.http_status, with_details.details) == (
+        "claim-superseded", 409, details,
+    )
+    assert with_details.details is not details
+    released = _operation_rejected(Released, error)
+    assert (released.code, str(released)) == ("claim-superseded", "taken over")
+    assert _operation_rejected(Kwargs, error).kwargs == {"http_status": 409}
+    plain = ApplicationRejection("lease-held", "held", 409)
+    assert _operation_rejected(WithDetails, plain).details is None

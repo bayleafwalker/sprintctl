@@ -34,7 +34,7 @@ no migration or DDL.
 | Cutover evidence | `work.pilot.cutover-evidence` | key forbidden |
 | Runs (0.8.0, schema 17) | `work.run.register-v1`, `work.run.resolve-v1` | register requires an `idempotency_key` argument (write-tool ledger); resolve forbids one |
 | Run evidence and notes (0.8.0, schema 17) | `work.evidence.tail-v1`, `work.evidence.append-v1`, `work.session-note.write-v1` | tail forbids a key; append and note writes require an `idempotency_key` argument (write-tool ledger) |
-| Work leases (0.9.0, schema 18) | `work.lease.acquire-v1`, `work.lease.heartbeat-v1`, `work.lease.report-outcome-v1` (and its deprecated alias `work.lease.complete-v1`), `work.lease.read-v1` | acquire and report-outcome require an `idempotency_key` argument (write-tool ledger); heartbeat and read forbid one |
+| Work leases (0.9.0, schema 18; report-outcome from 0.10.0) | `work.lease.acquire-v1`, `work.lease.heartbeat-v1`, `work.lease.report-outcome-v1` (and its deprecated alias `work.lease.complete-v1`), `work.lease.read-v1` | acquire and report-outcome require an `idempotency_key` argument (write-tool ledger); heartbeat and read forbid one |
 
 Every operation declares JSON Schema 2020-12 input and result contracts,
 authority, execution semantics, idempotency behavior and required client
@@ -178,6 +178,20 @@ digest changes with them.
 Contract names and the wire codes: the contract's `CLAIM_SUPERSEDED` is
 published as `claim-superseded`, in the kebab-case every other code uses
 (as the contract's `IDEMPOTENCY_KEY_REUSED` is `idempotency-conflict`).
+The same holds for the other contract names:
+
+| Contract | Published |
+|---|---|
+| `CLAIM_SUPERSEDED` | code `claim-superseded` (409), `details: {claim_id, current_generation, reported_generation}` |
+| event `work.claim.taken_over`, `reason = stale_lease` | event `work.claim.taken-over`, `reason: stale-lease` |
+| `outcome.reported` with `disposition = stale`, `settlement_effect = none` | event `lease.outcome-reported`; the report is `disposition: rejected` with a `reason_code` (`claim-superseded`, `lease-expired`, ...), and nothing settles |
+| `report_outcome` | `work.lease.report-outcome-v1`, result `settlement_effect` |
+| `ttl` 10 min, `heartbeat_interval` 2 min | `ttl_seconds` 600, `heartbeat_interval_seconds` derived as TTL/5 (not configured separately) |
+
+A reactivated lease keeps the `ttl_seconds` it was acquired with.
+A 0.9.0 `complete_work` ledger key retried under `report_outcome` is
+`idempotency-conflict`, not a replay: the ledger digest includes the tool
+name. No client used it.
 A **claim** is a lease: `claim_id` is the `lease_id`. Its **generation**
 is the lease's position among the item's leases in acquisition order
 (1 for the first); it is derived, not stored, so it needs no migration.
@@ -245,7 +259,9 @@ default). A claim naming `ttl_seconds` is `invalid-arguments` (422).
   - `rejected`: the lease was taken over (`claim-superseded`), is stale
     (`lease-expired`; a result submitted under a stale or superseded lease
     is kept as evidence but never settles work, INV-L1, and the holder of a
-    stale lease nobody took over reactivates it and reports again) or
+    stale lease nobody took over reactivates it and reports again, under
+    a **new** idempotency key: the refused report keeps its key, so
+    retrying that key replays `lease-expired`) or
     ended, the item is no
     longer active (`work-not-active`), a succeeded outcome arrives while the
     item waits on an unsettled blocker (`work-blocked`; blockers are

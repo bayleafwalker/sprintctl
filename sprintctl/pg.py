@@ -6138,7 +6138,8 @@ def _dead_lease_reason(
         return (
             "lease-expired",
             f"lease {lease_id} expired: no heartbeat within {int(lease['ttl_seconds'])}s; "
-            "re-present the claim to reactivate it if nobody took it over",
+            "re-present the claim to reactivate it if nobody took it over, then "
+            "report again under a new idempotency key (this key keeps this answer)",
         )
     return None
 
@@ -6409,6 +6410,9 @@ def complete_lease(
             _replay_or_conflict(retried["request_digest"], request_digest, "outcome report")
             replayed = _report_row(retried)
             if retried["reason_code"] == "claim-superseded":
+                # A direct (non-ledger) caller replaying its key: the
+                # details as of now.  Through the served operation the
+                # write-tool ledger answers first, with the first answer.
                 replayed["details"] = _superseded_details(cur, store, lease)
             return replayed
         now = _lease_now(cur)
