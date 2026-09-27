@@ -30,11 +30,39 @@ import re
 from typing import Any, Iterable, Mapping
 
 DEFAULT_ACCEPTANCE_CONTRACT: dict[str, Any] = {"review_required": True}
-#: Verification profiles a work lease settles under (agentops#2520; vuoro-cloud
-#: 19-PRODUCT-POSITIONING-AND-PROOF.md), weakest first.  An acceptance
-#: contract may name one as ``verification_profile``; none means ``checked``.
+#: The verification profiles the owner knows by name (agentops#2520;
+#: vuoro-cloud 19-PRODUCT-POSITIONING-AND-PROOF.md).  An acceptance contract
+#: may name one as ``verification_profile``; none means ``checked``.
 VERIFICATION_PROFILES = (
     "self-reported", "checked", "role-separated", "identity-separated", "human-authorized",
+)
+#: What each profile requires, as a set of capabilities rather than a rank
+#: (agentops#2539; operator decision D2 on agentops#253): profiles combine by
+#: the union of their requirements, because a stronger-looking profile need
+#: not include a weaker one's (``human-authorized`` says nothing about checks,
+#: and ``identity-separated`` nothing about a verifier role).
+#:
+#: - ``checks``: deterministic checks were reported, all passed;
+#: - ``verifier-role``: the checks were evaluated by a principal in a
+#:   verifier role;
+#: - ``verifier-identity``: the verifier principal is not the worker;
+#: - ``human-authorization``: a named human authorized the outcome.
+VERIFICATION_REQUIREMENTS: dict[str, frozenset[str]] = {
+    "self-reported": frozenset(),
+    "checked": frozenset({"checks"}),
+    "role-separated": frozenset({"checks", "verifier-role"}),
+    "identity-separated": frozenset({"checks", "verifier-identity"}),
+    "human-authorized": frozenset({"human-authorization"}),
+}
+#: The requirements the owner can evaluate itself today.  A profile needing
+#: anything else is refused when a contract is written (agentops#2539): no
+#: verifier-role, verifier-identity or human-authorization check exists in
+#: the decision path yet, and accepting the name would promise a bar nothing
+#: enforces.
+ENFORCED_REQUIREMENTS = frozenset({"checks"})
+SUPPORTED_VERIFICATION_PROFILES = tuple(
+    profile for profile in VERIFICATION_PROFILES
+    if VERIFICATION_REQUIREMENTS[profile] <= ENFORCED_REQUIREMENTS
 )
 
 _EDIT_REVISION = r"item:[0-9a-fA-F-]{36}@description:v[0-9]+@sha256:[0-9a-f]{64}"
@@ -119,11 +147,29 @@ def normalize_acceptance_contract(contract: Mapping[str, Any] | None) -> dict[st
                 "acceptance_contract.evidence_obligations must be a list of "
                 "non-empty strings"
             )
-    if "verification_profile" in contract and contract["verification_profile"] not in VERIFICATION_PROFILES:
-        raise ValueError(
-            "acceptance_contract.verification_profile must be one of "
-            + ", ".join(VERIFICATION_PROFILES)
-        )
+    if "verification_profile" in contract:
+        profile = contract["verification_profile"]
+        if profile not in SUPPORTED_VERIFICATION_PROFILES:
+            unenforced = (
+                isinstance(profile, str) and profile in VERIFICATION_PROFILES
+            )
+            raise ValueError(
+                "acceptance_contract.verification_profile "
+                + (
+                    f"{profile!r} is not enforced yet (it needs "
+                    + ", ".join(sorted(VERIFICATION_REQUIREMENTS[profile] - ENFORCED_REQUIREMENTS))
+                    + "); "
+                    if unenforced else ""
+                )
+                + "must be one of " + ", ".join(SUPPORTED_VERIFICATION_PROFILES)
+            )
+        if profile == "self-reported" and contract.get("evidence_obligations"):
+            # A holder's word alone cannot discharge an evidence obligation
+            # (agentops#2529 n2): name ``checked`` to require the evidence.
+            raise ValueError(
+                "acceptance_contract.verification_profile 'self-reported' cannot "
+                "be combined with evidence_obligations; use 'checked'"
+            )
     normalized = json.loads(canonical_json(dict(contract)))
     if not isinstance(normalized, dict):
         raise ValueError("acceptance_contract must be an object")

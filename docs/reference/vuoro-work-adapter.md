@@ -163,8 +163,11 @@ or the claim names its own, from 30 to 3600.
 - `work.lease.acquire-v1` claims an item: missing work is `work-not-found`
   (404); settled work is `work-settled`; a `blocked` item or one waiting on
   an unsettled blocker is `work-blocked`; any claim while a maintenance
-  capability is active is `maintenance-active`; an item whose current lease
-  is still fresh is `lease-held` (all 409). A stale lease is superseded:
+  capability is active is `maintenance-active`; an item with an outcome
+  report awaiting its verifier's decision is `work-awaiting-verification`,
+  whoever asks and however stale the lease; an item whose stored bar needs
+  a verifier this authority cannot check yet is `verification-unsupported`;
+  an item whose current lease is still fresh is `lease-held` (all 409). A stale lease is superseded:
   by anyone else it is a takeover, recorded on both leases
   (`superseded_by`, `takeover_of`) and as a `lease.taken-over` event with
   the previous holder, run and last heartbeat. A pending item becomes
@@ -192,27 +195,54 @@ or the claim names its own, from 30 to 3600.
     not satisfy the verification profile (`verification-unsatisfied`, 422). The operation fails with that code
     after the report is committed, so the late payload stays as evidence
     and the item does not change.
-  - `settled`: a succeeded outcome under `self-reported`, or under
-    `checked` with every reported check passed and every required check
-    present. The authority records an `accept` decision attributed to
+  - `settled`: a succeeded outcome whose bar needs nothing beyond
+    `checks`: no reported check failed, every required check was reported
+    passed, and, if the bar includes `checks`, at least one check was
+    reported. A failed check or a missing required check rejects the
+    report under every profile, `self-reported` included. The authority records an `accept` decision attributed to
     `sprintctl:lease-settlement`, with the rationale "accepted under
     verification profile <profile>" and the report's `payload_digest` as
     evidence; the item becomes done and its dependents can become ready.
-  - `awaiting-verification`: the profile is `role-separated`,
-    `identity-separated` or `human-authorized`; the report waits for that
-    verifier's `work.decision.record`, and the lease stays.
+  - `awaiting-verification`: the bar needs a verifier role, a separate
+    verifier identity or a human (only a contract stored before 0.10.0, or
+    a lease pinned under 0.9.0, can still ask for one); the report waits
+    for a `work.decision.record`, the lease stays, and nobody can claim the
+    item meanwhile. The decision is stamped on every waiting report of the
+    item: `accept` makes it `settled` with that `decision_id`; any other
+    kind makes it `rejected` with reason `decision-<kind>` (schema 18 ties
+    a `decision_id` to a settled report only, so the item's decision event
+    is the link). The report and its payload stay either way.
   - `recorded`: a failed outcome; the lease is released and the item stays
     active for the next claim.
 - The verification bar comes from the acceptance contracts of every release
   frozen at the item's current revision (`verification_profile`, default
-  `checked`; `evidence_obligations` as the required check names), combined
-  strictest-wins, so a later reservation can raise the bar but never lower
-  it. The lease pins the bar it was acquired under, and settlement uses the
-  stricter of the pinned and the current bar. `verification_profile` must be
-  one of the five names when a contract is written; a stored value that is
-  not (written before 0.9.0) counts as `human-authorized`, so it fails
-  closed. In 0.9.0 only the Python `reserve(acceptance_contract=...)` path
-  can write a non-default contract; without one, every item is `checked`. There is no `parked` lease state: a worker that is denied
+  `checked`; `evidence_obligations` as the required check names). A profile
+  is a set of requirements, not a rank (agentops#2539):
+
+  | Profile | Requirements |
+  |---|---|
+  | `self-reported` | none |
+  | `checked` | `checks` |
+  | `role-separated` | `checks`, `verifier-role` |
+  | `identity-separated` | `checks`, `verifier-identity` |
+  | `human-authorized` | `human-authorization` |
+
+  Bars combine by the union of their requirements and required checks, so
+  a later reservation can add to the bar but never lower it. A combined bar
+  that no single profile names is reported as the named profiles joined by
+  `+` (for example `checked+human-authorized`), with its `requirements`
+  listed. The lease pins the bar it was acquired under, and settlement uses
+  the union of the pinned and the current bar. Only `checks` can be met by
+  the holder's own report, so a contract may name only `self-reported` or
+  `checked` when it is written; `role-separated`, `identity-separated` and
+  `human-authorized` are refused until verifier enforcement exists, and so
+  is `self-reported` together with `evidence_obligations`. A stored contract
+  naming one of the three (written by 0.9.0), or a stored value that is not
+  a profile name at all (which counts as `human-authorized`), fails closed:
+  the item cannot be leased (`verification-unsupported`), and a lease
+  already pinned under it never settles from the holder's report. Only the
+  Python `reserve(acceptance_contract=...)` path can write a non-default
+  contract; without one, every item is `checked`. There is no `parked` lease state: a worker that is denied
   records that as evidence on its run and stops heartbeating.
 - `work.lease.read-v1` returns the item's current lease (with `stale` as of
   now), every lease (each with its pinned verification) and every outcome
