@@ -9,6 +9,7 @@ without the service distribution.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import inspect
 from typing import Any, Literal
 
 from vuoro_adapter_kit import (
@@ -44,6 +45,9 @@ class WorkOperationContract:
     idempotency: Literal["not-allowed", "optional", "required"]
     required_client_schema_features: tuple[str, ...] = SCHEMA_FEATURES
     result_contract_resource_kind: str | None = None
+    #: The catalog's deprecation record, ``{deprecated, replacement,
+    #: sunset_at}``; None publishes the operation as current.
+    deprecation: dict[str, Any] | None = None
 
 
 _object_schema = object_schema
@@ -586,12 +590,16 @@ _VERIFICATION_SCHEMA = _object_schema(
 )
 _LEASE_PROPERTIES: dict[str, Any] = {
     "lease_id": _LEASE_ID_SCHEMA,
+    # The claim generation on the item (agentops#2540): derived, 1 for the
+    # item's first lease, the same across the holder's own reactivation.
+    "generation": {"type": "integer", "minimum": 1},
     "item_id": {"type": "integer", "minimum": 1},
     "run_id": _RUN_ID_SCHEMA,
     "principal_id": {"type": "string", "minLength": 1},
     "workspace_id": {"type": "string", "minLength": 1},
     "state": _LEASE_STATE_SCHEMA,
     "ttl_seconds": {"type": "integer", "minimum": 30, "maximum": 3600},
+    "heartbeat_interval_seconds": {"type": "integer", "minimum": 1},
     "acquired_at": {"type": "string"},
     "heartbeat_at": {"type": "string"},
     "expires_at": {"type": "string"},
@@ -633,6 +641,7 @@ _OUTCOME_REPORT_SCHEMA = _object_schema(
         "decision_id": {"type": ["integer", "null"]},
         "created_at": {"type": "string"},
         "detail": {"type": "string"},
+        "details": {"type": "object"},
     },
     required=(
         "report_id", "item_id", "lease_id", "run_id", "principal_id", "outcome",
@@ -647,6 +656,33 @@ _CLAIM_RESULT = _result_schema(
         "lease": _LEASE_SCHEMA,
         "resumed": {"type": "boolean"},
         "took_over": _NULLABLE_LEASE_ID_SCHEMA,
+    },
+)
+# work.lease.report-outcome-v1 (agentops#2540): the worker reports an
+# outcome and the authority settles (agentops#253 decision 4); the answer
+# says what the report did (settlement_effect).  complete-v1 is its
+# deprecated alias: the same input, result, handler and ledger tool.
+_REPORT_OUTCOME_INPUT = _object_schema(
+    {
+        "lease_id": _LEASE_ID_SCHEMA,
+        "run_id": _RUN_ID_SCHEMA,
+        "outcome": {"enum": ["succeeded", "failed"]},
+        "summary": {"type": "string", "maxLength": 4000},
+        "payload": {"type": "object"},
+        "checks": {"type": "array", "items": _OUTCOME_CHECK_SCHEMA, "maxItems": 64},
+        "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
+    },
+    required=("lease_id", "run_id", "outcome", "idempotency_key"),
+)
+_REPORT_OUTCOME_RESULT = _result_schema(
+    ("repo_id", "report", "settled", "settlement_effect"),
+    {
+        "repo_id": {"type": "string"},
+        "report": _OUTCOME_REPORT_SCHEMA,
+        "settled": {"type": "boolean"},
+        "settlement_effect": {
+            "enum": ["settled", "lease-released", "awaiting-verification", "none"],
+        },
     },
 )
 WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
@@ -847,7 +883,6 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
             {
                 "item_id": {"type": "integer", "minimum": 1},
                 "run_id": _RUN_ID_SCHEMA,
-                "ttl_seconds": {"type": "integer", "minimum": 30, "maximum": 3600},
                 "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
             },
             required=("item_id", "run_id", "idempotency_key"),
@@ -871,30 +906,25 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "not-allowed",
     ),
     WorkOperationContract(
-        "work.lease.complete-v1",
-        _object_schema(
-            {
-                "lease_id": _LEASE_ID_SCHEMA,
-                "run_id": _RUN_ID_SCHEMA,
-                "outcome": {"enum": ["succeeded", "failed"]},
-                "summary": {"type": "string", "maxLength": 4000},
-                "payload": {"type": "object"},
-                "checks": {"type": "array", "items": _OUTCOME_CHECK_SCHEMA, "maxItems": 64},
-                "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
-            },
-            required=("lease_id", "run_id", "outcome", "idempotency_key"),
-        ),
-        _result_schema(
-            ("repo_id", "report", "settled"),
-            {
-                "repo_id": {"type": "string"},
-                "report": _OUTCOME_REPORT_SCHEMA,
-                "settled": {"type": "boolean"},
-            },
-        ),
+        "work.lease.report-outcome-v1",
+        _REPORT_OUTCOME_INPUT,
+        _REPORT_OUTCOME_RESULT,
         "work:claim",
         "write",
         "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.lease.complete-v1",
+        _REPORT_OUTCOME_INPUT,
+        _REPORT_OUTCOME_RESULT,
+        "work:claim",
+        "write",
+        "not-allowed",
+        deprecation={
+            "deprecated": True,
+            "replacement": "work.lease.report-outcome-v1",
+            "sunset_at": None,
+        },
     ),
     WorkOperationContract(
         "work.lease.read-v1",
@@ -1858,6 +1888,19 @@ _RESOURCE_OPERATIONS = frozenset(
 )
 
 
+def _operation_rejected(error_type: type[Exception], error: ApplicationRejection) -> Exception:
+    """The service's rejection for ``error``, with its structured details
+    (e.g. ``claim-superseded``'s generations, agentops#2540) when the
+    service's error type carries them.  Released vuoro-service (0.1.77)
+    does not; there the details stay readable in the message instead of
+    failing the call."""
+    if error.details is not None and "details" in inspect.signature(error_type.__init__).parameters:
+        return error_type(
+            error.code, error.message, http_status=error.http_status, details=dict(error.details),
+        )
+    return error_type(error.code, error.message, http_status=error.http_status)
+
+
 def catalog_operation_specs(
     *, resource_schema_available: bool
 ) -> tuple[dict[str, Any], ...]:
@@ -1882,6 +1925,7 @@ def catalog_operation_specs(
                 if contract.result_contract_resource_kind
                 else None
             ),
+            deprecation=contract.deprecation,
         )
         for contract in WORK_OPERATION_CONTRACTS
         if resource_schema_available or contract.name not in _RESOURCE_OPERATIONS
@@ -1970,9 +2014,7 @@ def register_work_catalog(
                     return project_application.invoke(operation, arguments, context)
                 return application.invoke(operation, arguments, context)
             except ApplicationRejection as error:
-                raise OperationRejectedError(
-                    error.code, error.message, http_status=error.http_status
-                ) from error
+                raise _operation_rejected(OperationRejectedError, error) from error
 
         registry.register(
             definition,

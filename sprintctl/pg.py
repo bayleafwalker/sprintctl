@@ -3571,7 +3571,7 @@ def _stamp_awaiting_reports(cur: Any, repo_id: str, item_id: int, decision: Mapp
     decision makes of it:
 
     - a report filed under a lease that was since superseded is
-      ``rejected`` with ``lease-superseded`` whatever the decision (INV-L1:
+      ``rejected`` with ``claim-superseded`` whatever the decision (INV-L1:
       a result submitted under a superseded lease never settles work;
       0.9.0 let such a lease be taken over while its report waited);
     - ``accept`` settles a report whose bar the owner can evaluate
@@ -3598,7 +3598,7 @@ def _stamp_awaiting_reports(cur: Any, repo_id: str, item_id: int, decision: Mapp
     )
     for row in cur.fetchall():
         if row["lease_state"] == "superseded":
-            reason = "lease-superseded"
+            reason = "claim-superseded"
         elif decision["kind"] != "accept":
             reason = f"decided-{decision['kind']}"
         elif set(_verification(row["verification_profile"], [])["requirements"]) - (
@@ -5604,6 +5604,10 @@ def idempotent_write(
 
 LEASE_TTL_MIN_SECONDS = 30
 LEASE_TTL_MAX_SECONDS = 3600
+#: A holder should heartbeat at a fifth of the TTL (agentops#253 decision 1:
+#: ttl 10 min, heartbeat 2 min at work_application.DEFAULT_LEASE_TTL_SECONDS),
+#: advertised on every lease as ``heartbeat_interval_seconds``.
+HEARTBEAT_INTERVAL_DIVISOR = 5
 #: The verification profiles the owner knows by name (vuoro-cloud
 #: 19-PRODUCT-POSITIONING-AND-PROOF.md "Verification profiles"), each a set
 #: of requirements (releases.VERIFICATION_REQUIREMENTS).  Only requirements
@@ -5617,17 +5621,21 @@ SETTLEMENT_ACTOR = "sprintctl:lease-settlement"
 class LeaseRefused(ValueError):
     """A claim, heartbeat or completion the lease owner refuses.
 
-    ``code`` is the caller-visible reason: ``lease-held``, ``lease-superseded``,
-    ``lease-expired``, ``lease-ended``, ``lease-not-found``, ``work-not-found``,
-    ``work-settled``, ``work-blocked``, ``work-not-active``,
-    ``work-awaiting-verification``, ``verification-unsupported`` or
-    ``maintenance-active``.  A completion never raises these for a lease
-    that is the caller's: it stores the report and returns it ``rejected``.
+    ``code`` is the caller-visible reason: ``lease-held``,
+    ``claim-superseded``, ``lease-expired``, ``lease-ended``,
+    ``lease-not-found``, ``work-not-found``, ``work-settled``,
+    ``work-blocked``, ``work-not-active``, ``work-awaiting-verification``,
+    ``verification-unsupported`` or ``maintenance-active``.  ``details`` is
+    structured context for the caller: for ``claim-superseded``,
+    ``{claim_id, current_generation, reported_generation}``.  An outcome
+    report never raises these for a lease that is the caller's: it stores
+    the report and returns it ``rejected``.
     """
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, details: dict | None = None) -> None:
         super().__init__(message)
         self.code = code
+        self.details = details
 
 
 def _mint_prefixed_id(prefix: str) -> str:
@@ -5649,16 +5657,63 @@ def _lease_is_stale(lease: Mapping[str, Any], now: Any) -> bool:
     return lease["heartbeat_at"] + timedelta(seconds=int(lease["ttl_seconds"])) <= now
 
 
-def _lease_row(row: Mapping[str, Any]) -> dict:
+def _lease_generation(cur: Any, store: PgStore, lease: Mapping[str, Any]) -> int:
+    """The lease's claim generation on its item, derived, never stored: its
+    position among the item's leases in acquisition order (1 for the first).
+    Reactivating one's own stale lease keeps its generation (agentops#253
+    decision 5, Case B); a takeover, or any new lease, is the next one."""
+    cur.execute(
+        "SELECT count(*) AS generation FROM work_lease WHERE repo_id = %s "
+        "AND work_item_id = %s AND (acquired_at, lease_id) <= (%s, %s)",
+        (store.repo_id, lease["work_item_id"], lease["acquired_at"], lease["lease_id"]),
+    )
+    return int(cur.fetchone()["generation"])
+
+
+def _current_generation(cur: Any, store: PgStore, work_item_id: int) -> int:
+    """The item's current claim generation: its newest lease's."""
+    cur.execute(
+        "SELECT count(*) AS generation FROM work_lease WHERE repo_id = %s AND work_item_id = %s",
+        (store.repo_id, work_item_id),
+    )
+    return int(cur.fetchone()["generation"])
+
+
+def _superseded_details(cur: Any, store: PgStore, lease: Mapping[str, Any]) -> dict:
+    """``claim-superseded`` details (agentops#253 decision 3): the caller's
+    claim, its generation and the item's generation now.  ``claim_id`` is
+    the lease id."""
+    return {
+        "claim_id": lease["lease_id"],
+        "current_generation": _current_generation(cur, store, int(lease["work_item_id"])),
+        "reported_generation": _lease_generation(cur, store, lease),
+    }
+
+
+def _superseded_message(lease: Mapping[str, Any], details: Mapping[str, Any]) -> str:
+    return (
+        f"claim {lease['lease_id']} (generation {details['reported_generation']}) was "
+        f"taken over by lease {lease['superseded_by']}; the item's claim generation is "
+        f"now {details['current_generation']}"
+    )
+
+
+def heartbeat_interval_seconds(ttl_seconds: int) -> int:
+    return max(1, int(ttl_seconds) // HEARTBEAT_INTERVAL_DIVISOR)
+
+
+def _lease_row(row: Mapping[str, Any], generation: int) -> dict:
     expires_at = row["heartbeat_at"] + timedelta(seconds=int(row["ttl_seconds"]))
     return {
         "lease_id": row["lease_id"],
+        "generation": generation,
         "item_id": int(row["work_item_id"]),
         "run_id": row["run_id"],
         "principal_id": row["principal_id"],
         "workspace_id": row["workspace_id"],
         "state": row["state"],
         "ttl_seconds": int(row["ttl_seconds"]),
+        "heartbeat_interval_seconds": heartbeat_interval_seconds(row["ttl_seconds"]),
         "acquired_at": _iso(row["acquired_at"]),
         "heartbeat_at": _iso(row["heartbeat_at"]),
         "expires_at": _iso(expires_at),
@@ -5796,9 +5851,13 @@ def _acquire_locked(
     """Acquire the item's lease with the item row already locked.
 
     A current lease that is still fresh is ``lease-held``.  A stale one is
-    superseded in the same transaction: by another binding it is a takeover;
-    by the same binding and claim key it is the holder reclaiming its own
-    expired lease (the resume path).
+    ended in the same transaction.  By another binding that is a takeover
+    (agentops#253 decision 2): the old lease is ``superseded`` and a
+    ``work.claim.taken-over`` event records it.  By the same binding under
+    another claim key, it is the holder replacing its own claim: the old
+    lease is ``released`` (``replaced-by-holder``), not superseded, since
+    nobody displaced it.  (The same binding and key reactivates the stale
+    lease in place instead: :func:`resume_lease`.)
     """
     work_item_id = int(item["id"])
     _refuse_awaiting_verification(cur, store, work_item_id)
@@ -5819,14 +5878,11 @@ def _acquire_locked(
                 f"item #{work_item_id} is leased; its lease becomes stale at "
                 f"{_iso(expires)} unless its holder heartbeats",
             )
-        own = _lease_binding(current) == binding
-        reason = "reclaimed-by-holder" if own else "taken-over"
-        cur.execute(
-            "UPDATE work_lease SET state = 'superseded', ended_at = %s, end_reason = %s, "
-            "superseded_by = %s WHERE repo_id = %s AND lease_id = %s",
-            (now, reason, lease_id, store.repo_id, current["lease_id"]),
-        )
-        previous = {**dict(current), "reason": reason}
+        previous = {
+            **dict(current),
+            "own": _lease_binding(current) == binding,
+            "generation": _lease_generation(cur, store, current),
+        }
     principal_id, workspace_id, client_id, grant_id = binding
     # The bar is pinned when the lease is taken: what the holder was asked
     # for cannot be lowered while it works.
@@ -5842,6 +5898,21 @@ def _acquire_locked(
             f"({', '.join(unenforced)}), which this authority does not enforce yet; "
             "it cannot be leased",
         )
+    if previous is not None:
+        if previous["own"]:
+            cur.execute(
+                "UPDATE work_lease SET state = 'released', ended_at = %s, "
+                "end_reason = 'replaced-by-holder' WHERE repo_id = %s AND lease_id = %s",
+                (now, store.repo_id, previous["lease_id"]),
+            )
+        else:
+            cur.execute(
+                "UPDATE work_lease SET state = 'superseded', ended_at = %s, "
+                "end_reason = 'taken-over', superseded_by = %s "
+                "WHERE repo_id = %s AND lease_id = %s",
+                (now, lease_id, store.repo_id, previous["lease_id"]),
+            )
+    took_over = previous is not None and not previous["own"]
     cur.execute(
         "INSERT INTO work_lease(repo_id, lease_id, work_item_id, run_id, principal_id, "
         "workspace_id, client_id, grant_id, claim_key, state, ttl_seconds, acquired_at, "
@@ -5851,11 +5922,12 @@ def _acquire_locked(
         (
             store.repo_id, lease_id, work_item_id, run_id, principal_id, workspace_id,
             client_id, grant_id, claim_key, ttl_seconds, now, now,
-            previous["lease_id"] if previous else None,
+            previous["lease_id"] if took_over else None,
             pinned["profile"], json.dumps(pinned["required_checks"]),
         ),
     )
     lease = cur.fetchone()
+    generation = _lease_generation(cur, store, lease)
     previous_status = item["status"]
     if previous_status == "pending":
         cur.execute(
@@ -5863,30 +5935,33 @@ def _acquire_locked(
             "WHERE repo_id = %s AND id = %s",
             (store.repo_id, work_item_id),
         )
-    if previous is not None:
-        _lease_event(store, item, "lease.taken-over", actor, {
-            "lease_id": lease_id,
-            "previous_lease_id": previous["lease_id"],
-            "previous_principal_id": previous["principal_id"],
-            "previous_run_id": previous["run_id"],
-            "previous_heartbeat_at": _iso(previous["heartbeat_at"]),
-            "previous_ttl_seconds": int(previous["ttl_seconds"]),
-            "reason": previous["reason"],
+    if took_over:
+        # Only a real takeover: the stale holder was displaced by another
+        # binding (agentops#253 decision 2).  Holder reactivation or
+        # replacement is not a takeover and records no such event.
+        _lease_event(store, item, "work.claim.taken-over", actor, {
+            "previous_claim_id": previous["lease_id"],
+            "previous_principal": previous["principal_id"],
+            "previous_generation": previous["generation"],
+            "previous_last_heartbeat": _iso(previous["heartbeat_at"]),
+            "new_claim_id": lease_id,
+            "new_principal": principal_id,
+            "reason": "stale-lease",
         })
     _lease_event(store, item, "lease.acquired", actor, {
         "lease_id": lease_id,
+        "generation": generation,
         "run_id": run_id,
         "principal_id": principal_id,
         "ttl_seconds": ttl_seconds,
         "previous_status": previous_status,
-        "takeover_of": previous["lease_id"] if previous else None,
+        "takeover_of": previous["lease_id"] if took_over else None,
+        "replaces": previous["lease_id"] if previous is not None and previous["own"] else None,
     })
     return {
-        "lease": _lease_row(lease),
+        "lease": _lease_row(lease, generation),
         "resumed": False,
-        "took_over": (
-            previous["lease_id"] if previous and previous["reason"] == "taken-over" else None
-        ),
+        "took_over": previous["lease_id"] if took_over else None,
     }
 
 
@@ -5908,8 +5983,9 @@ def acquire_lease(
 
     Refuses (:class:`LeaseRefused`) work that is missing, settled or blocked,
     any claim while maintenance is active, and an item whose current lease
-    is still fresh (``lease-held``).  A stale lease is superseded and the
-    takeover is recorded on both leases and as a ``lease.taken-over`` event.
+    is still fresh (``lease-held``).  Another binding's stale lease is
+    superseded and the takeover is recorded on both leases and as a
+    ``work.claim.taken-over`` event (see :func:`_acquire_locked`).
     A pending item becomes active.  ``cur``: see :func:`_in_write_transaction`.
     """
     binding = (principal_id, workspace_id, client_id, grant_id)
@@ -5934,19 +6010,22 @@ def resume_lease(
     client_id: str | None,
     grant_id: str | None,
     claim_key: str,
-    ttl_seconds: int,
     actor: str,
 ) -> dict:
     """Re-present a claim the caller already made under ``claim_key``.
 
-    The resume path of a restarted worker (same binding, same key):
+    The resume path of a restarted worker (same binding, same key;
+    agentops#253 decision 5).  Idempotency restores identity, never
+    superseded authority (INV-L2):
 
-    - its lease is still current and fresh: the same lease, heartbeat
+    - Case A, its lease is current and fresh: the same lease, heartbeat
       refreshed;
-    - its lease is current but stale (nobody took it over): the holder
-      reclaims it -- a new lease id superseding the expired one, since an
-      expired lease id is never revived (``vuoro_service.lease``);
-    - its lease was taken over: ``lease-superseded``;
+    - Case B, its lease is current but stale and nobody took it over: the
+      same lease is reactivated in place -- same lease id, same generation,
+      heartbeat refreshed -- since nothing contested ownership.  It is
+      refused as a fresh claim would be (``maintenance-active``,
+      ``work-blocked``, ``work-awaiting-verification``);
+    - Case C, its lease was taken over: ``claim-superseded``, with details;
     - its lease was settled or released: that lease, unchanged.
     """
     binding = (principal_id, workspace_id, client_id, grant_id)
@@ -5961,8 +6040,7 @@ def resume_lease(
             _lock_repo_for_claims(cur, store)
             item = _lock_item(cur, store, work_item_id)
             # Read the newest lease of this claim only once the item is
-            # locked: a concurrent resume of the same claim may just have
-            # reclaimed it, and its successor is what this caller resumes.
+            # locked, so a concurrent resume or takeover has committed.
             cur.execute(latest_sql + " FOR UPDATE", latest_params)
             latest = cur.fetchone()
             if (
@@ -5974,31 +6052,45 @@ def resume_lease(
             ):
                 raise LeaseRefused("lease-not-found", "no lease of the caller's matches this claim")
             if latest["state"] == "superseded":
+                details = _superseded_details(cur, store, latest)
                 raise LeaseRefused(
-                    "lease-superseded",
-                    f"lease {latest['lease_id']} was taken over by lease {latest['superseded_by']}",
+                    "claim-superseded",
+                    _superseded_message(latest, details)
+                    + "; an idempotency key restores the claim's identity, not its authority",
+                    details,
                 )
             if latest["state"] != "active":
-                result = {"lease": _lease_row(latest), "resumed": True, "took_over": None}
+                result = {
+                    "lease": _lease_row(latest, _lease_generation(cur, store, latest)),
+                    "resumed": True, "took_over": None,
+                }
             else:
                 now = _lease_now(cur)
-                dead = _dead_lease_reason(latest, item, now)
+                dead = _dead_lease_reason(cur, store, latest, item, now)
                 if dead is not None and dead[0] != "lease-expired":
                     raise LeaseRefused(*dead)
-                if _lease_is_stale(latest, now):
+                stale = _lease_is_stale(latest, now)
+                if stale:
+                    # Reactivation is refused as a fresh claim would be,
+                    # a report awaiting its verifier included (agentops#2528).
                     _refuse_unclaimable(cur, store, item, work_item_id)
-                    result = _acquire_locked(
-                        cur, store, item, run_id=run_id, binding=binding,
-                        claim_key=claim_key, ttl_seconds=ttl_seconds, actor=actor,
-                    )
-                    result["resumed"] = True
-                else:
-                    cur.execute(
-                        "UPDATE work_lease SET heartbeat_at = %s WHERE repo_id = %s "
-                        "AND lease_id = %s RETURNING *",
-                        (now, store.repo_id, latest["lease_id"]),
-                    )
-                    result = {"lease": _lease_row(cur.fetchone()), "resumed": True, "took_over": None}
+                    _refuse_awaiting_verification(cur, store, work_item_id)
+                cur.execute(
+                    "UPDATE work_lease SET heartbeat_at = %s WHERE repo_id = %s "
+                    "AND lease_id = %s RETURNING *",
+                    (now, store.repo_id, latest["lease_id"]),
+                )
+                lease = cur.fetchone()
+                generation = _lease_generation(cur, store, lease)
+                if stale:
+                    _lease_event(store, item, "lease.reactivated", actor, {
+                        "lease_id": lease["lease_id"],
+                        "generation": generation,
+                        "run_id": run_id,
+                        "principal_id": principal_id,
+                        "previous_heartbeat_at": _iso(latest["heartbeat_at"]),
+                    })
+                result = {"lease": _lease_row(lease, generation), "resumed": True, "took_over": None}
         store.conn.commit()
     except Exception:
         store.conn.rollback()
@@ -6022,14 +6114,20 @@ def _owned_lease(
     return dict(row)
 
 
-def _dead_lease_reason(lease: Mapping[str, Any], item: Mapping[str, Any], now: Any) -> tuple[str, str] | None:
-    """Why a lease can no longer act, as (code, message), or None if current."""
+def _dead_lease_reason(
+    cur: Any, store: PgStore, lease: Mapping[str, Any], item: Mapping[str, Any], now: Any
+) -> tuple[str, str] | tuple[str, str, dict] | None:
+    """Why a lease can no longer act, as (code, message[, details]), or
+    None if current.  ``lease-expired`` is not fatal to the claim
+    (agentops#253 decision 3): its holder may reactivate the same claim by
+    re-presenting it, as long as nobody took over.  It is fatal to the
+    call, though: a report or heartbeat under a stale lease is refused, and
+    a report is retained without settling (INV-L1: results submitted under
+    a stale or superseded lease cannot settle work)."""
     lease_id = lease["lease_id"]
     if lease["state"] == "superseded":
-        return (
-            "lease-superseded",
-            f"lease {lease_id} was taken over by lease {lease['superseded_by']}",
-        )
+        details = _superseded_details(cur, store, lease)
+        return ("claim-superseded", _superseded_message(lease, details), details)
     if lease["state"] != "active":
         return ("lease-ended", f"lease {lease_id} already ended ({lease['state']})")
     if item["status"] == "done":
@@ -6040,7 +6138,7 @@ def _dead_lease_reason(lease: Mapping[str, Any], item: Mapping[str, Any], now: A
         return (
             "lease-expired",
             f"lease {lease_id} expired: no heartbeat within {int(lease['ttl_seconds'])}s; "
-            "re-present the claim to reclaim it if nobody took it over",
+            "re-present the claim to reactivate it if nobody took it over",
         )
     return None
 
@@ -6057,9 +6155,12 @@ def heartbeat_lease(
 ) -> dict:
     """Refresh the caller's current lease.
 
-    Refused for a lease that is superseded, ended or already expired: expiry
-    is checked before the heartbeat lands, so a heartbeat racing a takeover
-    can never revive a lease someone else now holds.
+    Refused for a lease that is superseded (``claim-superseded``), ended or
+    already expired: expiry is checked before the heartbeat lands, so a
+    heartbeat racing a takeover can never revive a lease someone else now
+    holds.  A holder whose lease went stale re-presents its claim instead,
+    which reactivates the same lease if nobody took it over
+    (:func:`resume_lease`) and is refused during maintenance.
     """
     binding = (principal_id, workspace_id, client_id, grant_id)
     try:
@@ -6076,7 +6177,7 @@ def heartbeat_lease(
             )
             lease = cur.fetchone()
             now = _lease_now(cur)
-            dead = _dead_lease_reason(lease, item, now)
+            dead = _dead_lease_reason(cur, store, lease, item, now)
             if dead is not None:
                 raise LeaseRefused(*dead)
             cur.execute(
@@ -6085,11 +6186,12 @@ def heartbeat_lease(
                 (now, store.repo_id, lease_id),
             )
             row = cur.fetchone()
+            result = _lease_row(row, _lease_generation(cur, store, row))
         store.conn.commit()
     except Exception:
         store.conn.rollback()
         raise
-    return _lease_row(row)
+    return result
 
 
 def outcome_payload_digest(
@@ -6263,13 +6365,15 @@ def complete_lease(
     ``disposition`` says what the owner made of it, evaluated here against
     the current lease and the configured verification:
 
-    - ``rejected`` (with ``reason_code``): the lease is superseded
-      (``lease-superseded``), ended, expired, or the item was settled or is
-      no longer active, or a succeeded outcome does not satisfy the profile
-      (``verification-unsatisfied``).  The payload is kept on the item; the
-      item does not change.
-    - ``settled``: a succeeded outcome satisfying ``self-reported`` or
-      ``checked`` -- the owner records an ``accept`` decision naming the
+    - ``rejected`` (with ``reason_code``): the lease was taken over
+      (``claim-superseded``, with ``details``), is stale
+      (``lease-expired``) or ended, or the item was
+      settled or is no longer active, or a succeeded outcome does not
+      satisfy the bar (``verification-unsatisfied``).  The payload is kept
+      on the item; the item does not change (INV-L1: a lease grants
+      authority, not ownership of the result).
+    - ``settled``: a succeeded outcome meeting a bar the holder's report
+      can meet -- the owner records an ``accept`` decision naming the
       profile, the item becomes done and the lease ``settled``.
     - ``awaiting-verification``: the profile needs a separate verifier or a
       human; the report waits for their decision and the lease stays.
@@ -6303,12 +6407,15 @@ def complete_lease(
         retried = cur.fetchone()
         if retried is not None:
             _replay_or_conflict(retried["request_digest"], request_digest, "outcome report")
-            return _report_row(retried)
+            replayed = _report_row(retried)
+            if retried["reason_code"] == "claim-superseded":
+                replayed["details"] = _superseded_details(cur, store, lease)
+            return replayed
         now = _lease_now(cur)
         # The lease first, so no configuration problem can cost a late
-        # report its place as evidence; then the bar: the stricter of what
-        # the lease was acquired under and what the item asks for now.
-        dead = _dead_lease_reason(lease, item, now)
+        # report its place as evidence; then the bar: the union of what the
+        # lease was acquired under and what the item asks for now.
+        dead = _dead_lease_reason(cur, store, lease, item, now)
         config = _combined(
             _verification(lease["verification_profile"], lease["required_checks"]),
             verification_config(cur, store, int(item["id"])),
@@ -6322,8 +6429,10 @@ def complete_lease(
             ]
             if unresolved:
                 dead = ("work-blocked", f"item #{int(item['id'])} waits on unsettled blockers {unresolved}")
+        details = None
         if dead is not None:
             disposition, reason_code, detail = "rejected", dead[0], dead[1]
+            details = dead[2] if len(dead) > 2 else None
         elif outcome == "failed":
             disposition, reason_code = "recorded", None
         else:
@@ -6389,6 +6498,8 @@ def complete_lease(
         })
         if detail is not None:
             report["detail"] = detail
+        if details is not None:
+            report["details"] = details
         return report
 
     return _in_write_transaction(store, cur, body)
@@ -6412,13 +6523,18 @@ def claim_state(store: PgStore, work_item_id: int) -> dict:
         reports = cur.fetchall()
         config = verification_config(cur, store, work_item_id)
     store.conn.rollback()
+    # Generations are positions in acquisition order, which is this order.
+    generations = {row["lease_id"]: index for index, row in enumerate(leases, start=1)}
     current = next((row for row in leases if row["state"] == "active"), None)
     return {
         "current_lease": (
-            {**_lease_row(current), "stale": _lease_is_stale(current, now)}
+            {
+                **_lease_row(current, generations[current["lease_id"]]),
+                "stale": _lease_is_stale(current, now),
+            }
             if current is not None else None
         ),
-        "leases": [_lease_row(row) for row in leases],
+        "leases": [_lease_row(row, generations[row["lease_id"]]) for row in leases],
         "outcome_reports": [_report_row(row) for row in reports],
         "verification": config,
         "evaluated_at": _iso(now),
