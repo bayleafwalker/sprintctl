@@ -128,7 +128,7 @@ def _idempotency_key(value: Any) -> str:
 def _outcome_summary(value: Any) -> str:
     if value is None:
         return ""
-    if not isinstance(value, str) or len(value) > _MAX_OUTCOME_SUMMARY or "\x00" in value:
+    if not isinstance(value, str) or len(value) > _MAX_OUTCOME_SUMMARY or not _json_text_ok(value):
         raise ApplicationRejection(
             "invalid-arguments",
             f"summary must be a string of at most {_MAX_OUTCOME_SUMMARY} characters",
@@ -137,19 +137,43 @@ def _outcome_summary(value: Any) -> str:
     return value
 
 
+def _json_text_ok(value: Any) -> bool:
+    """No NUL and no lone surrogate in any string, key or value (PostgreSQL
+    jsonb refuses both, and they would surface as a raw storage error)."""
+    if isinstance(value, str):
+        if "\x00" in value:
+            return False
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            return False
+        return True
+    if isinstance(value, Mapping):
+        return all(_json_text_ok(k) and _json_text_ok(v) for k, v in value.items())
+    if isinstance(value, list):
+        return all(_json_text_ok(item) for item in value)
+    return True
+
+
 def _outcome_payload(value: Any) -> dict[str, Any]:
     if value is None:
         return {}
     if not isinstance(value, Mapping):
         raise ApplicationRejection("invalid-arguments", "payload must be an object", 422)
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    if len(encoded.encode()) > _MAX_OUTCOME_PAYLOAD_BYTES or "\\u0000" in encoded:
-        raise ApplicationRejection(
-            "invalid-arguments",
-            f"payload must serialize to at most {_MAX_OUTCOME_PAYLOAD_BYTES} bytes "
-            "and contain no NUL characters",
-            422,
-        )
+    invalid = ApplicationRejection(
+        "invalid-arguments",
+        f"payload must be JSON of at most {_MAX_OUTCOME_PAYLOAD_BYTES} bytes with no NaN, "
+        "Infinity, NUL characters or unpaired surrogates",
+        422,
+    )
+    if not _json_text_ok(value):
+        raise invalid
+    try:
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise invalid from exc
+    if len(encoded.encode()) > _MAX_OUTCOME_PAYLOAD_BYTES:
+        raise invalid
     return json.loads(encoded)
 
 

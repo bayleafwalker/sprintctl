@@ -35,7 +35,7 @@ CURRENT_SCHEMA_VERSION = 18
 # ledger (agentops#2466, E2): a 16 runtime has no work.run.*/work.evidence.*/
 # work.session-note.*/work.idempotency.* tables to serve those operations.
 # 18 adds the exclusive durable work lease and its outcome reports
-# (agentops#2520, E2b): a 17 runtime has no work.claim.* tables, and an 18
+# (agentops#2520, E2b): a 17 authority has no work.lease.* tables, and an 18
 # runtime cannot serve claims from a 17 authority.
 MINIMUM_SCHEMA_VERSION = 18
 MAXIMUM_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION

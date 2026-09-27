@@ -178,15 +178,18 @@ or the claim names its own, from 30 to 3600.
   or anyone else's, is `lease-not-found` (404, one code for both). A
   superseded lease is `lease-superseded`, an ended one `lease-ended`, an
   expired one `lease-expired` even if nobody took it over, and a lease on
-  an item settled some other way `work-settled` (409). An expired lease id
-  never comes back; re-present the claim instead.
+  an item moved off `active` `work-not-active` (409). An expired lease id
+  never comes back; re-present the claim instead. Any terminal decision on
+  the item, whoever records it, ends its active lease (`state=settled`,
+  `end_reason=item-<resolution>`).
 - `work.lease.complete-v1` is an outcome report, not a settlement. The
   report (outcome, summary, payload up to 64 KiB, checks) is always stored
   on the item, and this authority decides what it means:
-  - `rejected`: the lease is superseded, ended or expired, the item was
-    settled some other way or is no longer active (`work-not-active`), or a
-    succeeded outcome does not satisfy the verification profile
-    (`verification-unsatisfied`, 422). The operation fails with that code
+  - `rejected`: the lease is superseded, ended or expired, the item is no
+    longer active (`work-not-active`), a succeeded outcome arrives while the
+    item waits on an unsettled blocker (`work-blocked`; blockers are
+    evaluated at claim and again at settlement), or a succeeded outcome does
+    not satisfy the verification profile (`verification-unsatisfied`, 422). The operation fails with that code
     after the report is committed, so the late payload stays as evidence
     and the item does not change.
   - `settled`: a succeeded outcome under `self-reported`, or under
@@ -200,14 +203,22 @@ or the claim names its own, from 30 to 3600.
     verifier's `work.decision.record`, and the lease stays.
   - `recorded`: a failed outcome; the lease is released and the item stays
     active for the next claim.
-- The verification profile and the required checks come from the item's
-  current release acceptance contract (`verification_profile`, default
-  `checked`; `evidence_obligations` as the required check names), never
-  from the caller. There is no `parked` lease state: a worker that is denied
+- The verification bar comes from the acceptance contracts of every release
+  frozen at the item's current revision (`verification_profile`, default
+  `checked`; `evidence_obligations` as the required check names), combined
+  strictest-wins, so a later reservation can raise the bar but never lower
+  it. The lease pins the bar it was acquired under, and settlement uses the
+  stricter of the pinned and the current bar. `verification_profile` must be
+  one of the five names when a contract is written; a stored value that is
+  not (written before 0.9.0) counts as `human-authorized`, so it fails
+  closed. In 0.9.0 only the Python `reserve(acceptance_contract=...)` path
+  can write a non-default contract; without one, every item is `checked`. There is no `parked` lease state: a worker that is denied
   records that as evidence on its run and stops heartbeating.
 - `work.lease.read-v1` returns the item's current lease (with `stale` as of
-  now), every lease and every outcome report, and the configured
-  verification.
+  now), every lease (each with its pinned verification) and every outcome
+  report, and the item's current verification bar. Any `work:read` caller
+  of the repository sees them, holders and payloads included; a repository
+  belongs to one workspace.
 
 ## Authority and retry semantics
 

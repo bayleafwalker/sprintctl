@@ -565,7 +565,16 @@ _LEASE_ID_SCHEMA: dict[str, Any] = {
 _NULLABLE_LEASE_ID_SCHEMA: dict[str, Any] = {"anyOf": [_LEASE_ID_SCHEMA, {"type": "null"}]}
 _NULLABLE_TEXT_SCHEMA: dict[str, Any] = {"type": ["string", "null"]}
 _LEASE_STATE_SCHEMA: dict[str, Any] = {"enum": ["active", "superseded", "settled", "released"]}
-_VERIFICATION_PROFILE_SCHEMA: dict[str, Any] = {"type": "string", "minLength": 1}
+_VERIFICATION_PROFILE_SCHEMA: dict[str, Any] = {
+    "enum": ["self-reported", "checked", "role-separated", "identity-separated", "human-authorized"],
+}
+_VERIFICATION_SCHEMA = _object_schema(
+    {
+        "profile": _VERIFICATION_PROFILE_SCHEMA,
+        "required_checks": {"type": "array", "items": {"type": "string"}},
+    },
+    required=("profile", "required_checks"),
+)
 _LEASE_PROPERTIES: dict[str, Any] = {
     "lease_id": _LEASE_ID_SCHEMA,
     "item_id": {"type": "integer", "minimum": 1},
@@ -581,6 +590,7 @@ _LEASE_PROPERTIES: dict[str, Any] = {
     "end_reason": _NULLABLE_TEXT_SCHEMA,
     "takeover_of": _NULLABLE_LEASE_ID_SCHEMA,
     "superseded_by": _NULLABLE_LEASE_ID_SCHEMA,
+    "verification": _VERIFICATION_SCHEMA,
 }
 _LEASE_REQUIRED = tuple(_LEASE_PROPERTIES)
 _LEASE_SCHEMA = _object_schema(_LEASE_PROPERTIES, required=_LEASE_REQUIRED)
@@ -891,13 +901,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
                 "current_lease": {"anyOf": [_CURRENT_LEASE_SCHEMA, {"type": "null"}]},
                 "leases": {"type": "array", "items": _LEASE_SCHEMA},
                 "outcome_reports": {"type": "array", "items": _OUTCOME_REPORT_SCHEMA},
-                "verification": _object_schema(
-                    {
-                        "profile": _VERIFICATION_PROFILE_SCHEMA,
-                        "required_checks": {"type": "array", "items": {"type": "string"}},
-                    },
-                    required=("profile", "required_checks"),
-                ),
+                "verification": _VERIFICATION_SCHEMA,
                 "evaluated_at": {"type": "string"},
             },
         ),

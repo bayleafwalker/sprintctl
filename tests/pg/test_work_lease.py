@@ -505,13 +505,14 @@ class TestTakeoverAndStaleCompletion:
         assert _refused(lambda: _complete(store, A, lease["lease_id"], run, "ended-c2")).code == "lease-ended"
         assert len(pg.list_decisions(store, item)) == 1
 
-    def test_an_item_settled_by_someone_else_refuses_the_holder_with_work_settled(self, store):
+    def test_an_item_settled_by_someone_else_ends_the_holders_lease(self, store):
         (item,) = _items(store)
         run = _run(store, A)
         lease = _claim(store, A, item, run, "operator-settled-a")["lease"]
         pg.record_decision(store, item, "accept", actor="operator")
-        assert _refused(lambda: _complete(store, A, lease["lease_id"], run, "operator-settled-c")).code == "work-settled"
-        assert _refused(lambda: _heartbeat(store, A, lease["lease_id"], run)).code == "work-settled"
+        assert _refused(lambda: _complete(store, A, lease["lease_id"], run, "operator-settled-c")).code == "lease-ended"
+        assert _refused(lambda: _heartbeat(store, A, lease["lease_id"], run)).code == "lease-ended"
+        assert _reports(store, item) == 1
         assert len(pg.list_decisions(store, item)) == 1
 
     def test_an_item_moved_off_active_refuses_settlement(self, store):
@@ -624,7 +625,7 @@ class TestVerification:
         run = _run(store, A)
         lease = _claim(store, A, item, run, "verify-release-a")["lease"]["lease_id"]
         assert _read(store, item)["verification"] == {
-            "profile": "checked", "required_checks": ["tests", "review"],
+            "profile": "checked", "required_checks": ["review", "tests"],
         }
         refused = _refused(lambda: _complete(store, A, lease, run, "verify-release-c1"))
         assert refused.code == "verification-unsatisfied" and "review" in refused.message
@@ -876,8 +877,177 @@ class TestSchema18Migration:
             with store.conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO work_lease(repo_id, lease_id, work_item_id, run_id, principal_id, "
-                    "workspace_id, claim_key, state, ttl_seconds, acquired_at, heartbeat_at) "
-                    "VALUES (%s, %s, %s, %s, 'p', 'ws-1', 'index-backstop-2', 'active', 300, now(), now())",
+                    "workspace_id, claim_key, state, ttl_seconds, acquired_at, heartbeat_at, "
+                    "verification_profile, required_checks) VALUES (%s, %s, %s, %s, 'p', 'ws-1', "
+                    "'index-backstop-2', 'active', 300, now(), now(), 'checked', '[]'::jsonb)",
                     (store.repo_id, "lease_" + "1" * 26, item, run),
                 )
         store.conn.rollback()
+
+
+class TestReviewFindings:
+    """Regression tests for the independent review of sprintctl#98."""
+
+    @staticmethod
+    def _freeze(store, item, contract, session):
+        reservation = pg.reserve(
+            store, item, actor="operator", session_id=session, role="execution",
+            acceptance_contract=contract,
+        )
+        pg.release_reservation(store, reservation["id"])
+        return reservation
+
+    def test_a_later_default_reservation_cannot_lower_the_bar(self, store):
+        (item,) = _items(store)
+        self._freeze(store, item, {
+            "verification_profile": "human-authorized", "evidence_obligations": ["security-review"],
+        }, "strict-session")
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, "bar-lower-a")["lease"]
+        assert lease["verification"] == {"profile": "human-authorized", "required_checks": ["security-review"]}
+        # Anyone with work:write freezes a default contract mid-lease.
+        self._freeze(store, item, None, "downgrade-session")
+        assert _read(store, item)["verification"]["profile"] == "human-authorized"
+        result = _complete(store, A, lease["lease_id"], run, "bar-lower-c",
+                           checks=[{"name": "security-review", "status": "passed"}])
+        assert result["report"]["disposition"] == "awaiting-verification"
+        assert _status(store, item) == "active"
+
+    def test_the_bar_pinned_at_claim_holds_even_if_releases_change_later(self, store):
+        (item,) = _items(store)
+        self._freeze(store, item, {"evidence_obligations": ["tests", "review"]}, "pin-session")
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, "bar-pinned-a")["lease"]
+        # A revise decision leaves the item with no current release, so its
+        # present bar is the default; the lease keeps the one it was given.
+        pg.record_decision(store, item, "revise", actor="operator")
+        assert _read(store, item)["verification"] == {"profile": "checked", "required_checks": []}
+        refused = _refused(lambda: _complete(store, A, lease["lease_id"], run, "bar-pinned-c"))
+        assert refused.code == "verification-unsatisfied" and "review" in refused.message
+
+    def test_an_unknown_profile_is_refused_when_the_contract_is_written(self, store):
+        (item,) = _items(store)
+        with pytest.raises(ValueError, match="verification_profile"):
+            pg.reserve(store, item, actor="operator", session_id="bad-profile", role="execution",
+                       acceptance_contract={"verification_profile": "Checked"})
+
+    def test_a_malformed_stored_profile_fails_closed(self):
+        """Rows written before validation existed never raise."""
+        config = pg._contract_verification({"verification_profile": ["checked"], "evidence_obligations": "x"})
+        assert config == {"profile": "human-authorized", "required_checks": []}
+        assert pg._contract_verification('{"verification_profile": "Checked"}')["profile"] == "human-authorized"
+        assert pg._contract_verification("not json")["profile"] == "checked"
+
+    def test_a_late_report_is_kept_whatever_the_stored_profile(self, store):
+        (item,) = _items(store)
+        self._freeze(store, item, None, "malformed-session")
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, "malformed-a")["lease"]
+        with store.conn.cursor() as cur:
+            cur.execute("ALTER TABLE work_release DISABLE TRIGGER USER")
+            cur.execute(
+                "UPDATE work_release SET acceptance_contract = '{\"verification_profile\": [1]}'::jsonb "
+                "WHERE repo_id = %s AND work_item_id = %s", (store.repo_id, item),
+            )
+            cur.execute("ALTER TABLE work_release ENABLE TRIGGER USER")
+        store.conn.commit()
+        _backdate(store, lease["lease_id"], 301)
+        _claim(store, B, item, _run(store, B), "malformed-b")
+        assert _refused(lambda: _complete(store, A, lease["lease_id"], run, "malformed-c")).code == "lease-superseded"
+        assert _reports(store, item) == 1
+
+    def test_a_decision_made_elsewhere_ends_the_lease(self, store):
+        (item,) = _items(store)
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, "elsewhere-a")["lease"]
+        pg.record_decision(store, item, "withdraw", actor="operator")
+        state = _read(store, item)
+        assert state["current_lease"] is None
+        (ended,) = state["leases"]
+        assert (ended["state"], ended["end_reason"]) == ("settled", "item-withdrawn")
+        assert _refused(lambda: _heartbeat(store, A, lease["lease_id"], run)).code == "lease-ended"
+
+    def test_a_verifier_decision_on_an_awaiting_report_ends_the_lease(self, store):
+        (item,) = _items(store)
+        self._freeze(store, item, {"verification_profile": "human-authorized"}, "verifier-session")
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, "verifier-a")["lease"]
+        _complete(store, A, lease["lease_id"], run, "verifier-c")
+        pg.record_decision(store, item, "accept", actor="human-verifier")
+        assert _read(store, item)["current_lease"] is None
+        assert _status(store, item) == "done"
+
+    def test_a_holder_cannot_heartbeat_an_item_moved_off_active(self, store):
+        (item,) = _items(store)
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, "moved-hb-a")["lease"]
+        pg.set_work_item_status(store, item, "blocked")
+        assert _refused(lambda: _heartbeat(store, A, lease["lease_id"], run)).code == "work-not-active"
+        assert _refused(lambda: _claim(store, A, item, run, "moved-hb-a")).code == "work-not-active"
+
+    def test_a_blocker_added_after_the_claim_stops_settlement_and_keeps_the_report(self, store):
+        item, blocker = _items(store, 2)
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, "late-blocker-a")["lease"]
+        pg.add_dep(store, blocker, item)
+        assert _refused(lambda: _complete(store, A, lease["lease_id"], run, "late-blocker-c")).code == "work-blocked"
+        assert _read(store, item)["outcome_reports"][0]["reason_code"] == "work-blocked"
+        assert _status(store, item) == "active"
+
+    def test_a_holder_retaking_its_own_stale_lease_with_a_new_key_is_not_a_takeover(self, store):
+        (item,) = _items(store)
+        run = _run(store, A)
+        first = _claim(store, A, item, run, "self-retake-1")["lease"]
+        _backdate(store, first["lease_id"], 301)
+        again = _claim(store, A, item, run, "self-retake-2")
+        assert again["took_over"] is None
+        old = next(l for l in _read(store, item)["leases"] if l["lease_id"] == first["lease_id"])
+        assert old["end_reason"] == "reclaimed-by-holder"
+
+    @pytest.mark.parametrize("payload,ok", [
+        ({"text": "literal \\u0000 text"}, True),
+        ({"n": float("nan")}, False),
+        ({"n": float("inf")}, False),
+        ({"s": "\ud800"}, False),
+        ({"s": "nul\x00"}, False),
+        ({"nul\x00key": 1}, False),
+    ])
+    def test_payload_edge_cases(self, store, payload, ok):
+        (item,) = _items(store)
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, f"payload-edge-{uuid.uuid4().hex[:8]}")["lease"]
+        call = lambda: _complete(store, A, lease["lease_id"], run, "payload-edge-c", payload=payload)
+        if ok:
+            assert call()["report"]["payload"] == payload
+        else:
+            assert _refused(call).code == "invalid-arguments"
+            assert _reports(store, item) == 0
+
+    def test_a_plain_index_under_the_exclusive_index_name_is_foreign(self, store):
+        schema = "migration_18_index_" + uuid.uuid4().hex
+        with store.conn.cursor() as cur:
+            cur.execute(f'CREATE SCHEMA "{schema}"')
+            cur.execute(f'SET search_path TO "{schema}"')
+            cur.execute(pg.PG_DDL)
+            cur.execute("UPDATE schema_version SET version = 2")
+        store.conn.commit()
+        conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+        try:
+            assert_disposable_connection(conn)
+            with conn.cursor() as cur:
+                cur.execute(f'SET search_path TO "{schema}"')
+            conn.commit()
+            pg_migrations.migrate_schema(pg.PgStore(conn, "migration-18-index"))
+            with conn.cursor() as cur:
+                cur.execute(f'SET search_path TO "{schema}"')
+                cur.execute("DROP INDEX uq_work_lease_active_item")
+                cur.execute("CREATE INDEX uq_work_lease_active_item ON work_lease(repo_id, work_item_id)")
+                with pytest.raises(pg_migrations.RemoteSchemaMigrationError, match="uq_work_lease_active_item"):
+                    pg._apply_schema_version_18(cur)
+            conn.rollback()
+        finally:
+            conn.close()
+            with store.conn.cursor() as cur:
+                cur.execute("SET search_path TO public")
+                cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            store.conn.commit()

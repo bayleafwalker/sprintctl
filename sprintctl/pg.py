@@ -2552,6 +2552,7 @@ def _foreign_relations(
     cur: Any,
     tables: Mapping[str, tuple[tuple[tuple[str, str, bool], ...], frozenset[tuple[str, str]]]],
     indexes: Mapping[str, str],
+    index_shapes: Mapping[str, tuple[bool, str | None]] | None = None,
 ) -> list[str]:
     """Relations already holding one of ``tables``/``indexes``' names without
     exactly the catalog shape recorded for it (see ``_SCHEMA_17_TABLES``)."""
@@ -2561,7 +2562,8 @@ def _foreign_relations(
 
     names = [*tables, *indexes]
     cur.execute(
-        "SELECT c.relname, c.relkind, ic.relname AS index_table FROM pg_class c "
+        "SELECT c.relname, c.relkind, ic.relname AS index_table, i.indisunique, "
+        "pg_get_expr(i.indpred, i.indrelid) AS predicate FROM pg_class c "
         "JOIN pg_namespace n ON n.oid = c.relnamespace "
         "LEFT JOIN pg_index i ON i.indexrelid = c.oid "
         "LEFT JOIN pg_class ic ON ic.oid = i.indrelid "
@@ -2569,13 +2571,18 @@ def _foreign_relations(
         (names,),
     )
     existing = [
-        (col(row, "relname", 0), col(row, "relkind", 1), col(row, "index_table", 2))
+        (
+            col(row, "relname", 0), col(row, "relkind", 1), col(row, "index_table", 2),
+            (bool(col(row, "indisunique", 3)), col(row, "predicate", 4)),
+        )
         for row in cur.fetchall()
     ]
     foreign: list[str] = []
-    for name, kind, index_table in existing:
+    for name, kind, index_table, shape in existing:
         if name in indexes:
             if kind != "i" or index_table != indexes[name]:
+                foreign.append(name)
+            elif index_shapes and name in index_shapes and shape != index_shapes[name]:
                 foreign.append(name)
             continue
         if kind != "r":
@@ -2757,7 +2764,8 @@ _SCHEMA_18_TABLES: dict[str, tuple[tuple[tuple[str, str, bool], ...], frozenset[
             ("ttl_seconds", "integer", True), ("acquired_at", _TS, True),
             ("heartbeat_at", _TS, True), ("ended_at", _TS, False),
             ("end_reason", _TEXT, False), ("takeover_of", _TEXT, False),
-            ("superseded_by", _TEXT, False),
+            ("superseded_by", _TEXT, False), ("verification_profile", _TEXT, True),
+            ("required_checks", _JSONB, True),
         ),
         frozenset({
             ("c", "claim_key"), ("c", "lease_id"), ("c", "state"),
@@ -2793,6 +2801,13 @@ _SCHEMA_18_INDEXES = {
     "idx_work_lease_claim_key": "work_lease",
     "idx_work_outcome_report_item": "work_outcome_report",
 }
+#: (unique, partial predicate) per index: the active-lease index is what
+#: makes exclusivity hold in storage, so a plain index of that name is foreign.
+_SCHEMA_18_INDEX_SHAPES = {
+    "uq_work_lease_active_item": (True, "(state = 'active'::text)"),
+    "idx_work_lease_claim_key": (False, None),
+    "idx_work_outcome_report_item": (False, None),
+}
 
 
 def _apply_schema_version_18(cur: Any) -> None:
@@ -2824,7 +2839,7 @@ def _apply_schema_version_18(cur: Any) -> None:
     with exactly this shape is kept (a ladder re-run); any other is refused,
     as schema 17 refuses.
     """
-    foreign = _foreign_relations(cur, _SCHEMA_18_TABLES, _SCHEMA_18_INDEXES)
+    foreign = _foreign_relations(cur, _SCHEMA_18_TABLES, _SCHEMA_18_INDEXES, _SCHEMA_18_INDEX_SHAPES)
     if foreign:
         raise _pg_migrations.RemoteSchemaMigrationError(
             "schema 18 cannot install work lease storage: relation(s) "
@@ -2851,6 +2866,8 @@ def _apply_schema_version_18(cur: Any) -> None:
             end_reason text,
             takeover_of text,
             superseded_by text,
+            verification_profile text NOT NULL,
+            required_checks jsonb NOT NULL,
             PRIMARY KEY (repo_id, lease_id),
             CHECK ((state = 'active') = (ended_at IS NULL)),
             CHECK ((state = 'superseded') = (superseded_by IS NOT NULL)),
@@ -3536,6 +3553,13 @@ def _decide_locked(cur: Any, repo_id: str, item: Any, decision: dict) -> dict:
             "terminal_decision_id = %s, updated_at = now() "
             "WHERE repo_id = %s AND id = %s",
             (resolution, recorded["id"], repo_id, item_id),
+        )
+        # A terminal item holds no live lease (agentops#2520), whoever
+        # decided it; lease settlement overwrites the reason with its own.
+        cur.execute(
+            "UPDATE work_lease SET state = 'settled', ended_at = clock_timestamp(), "
+            "end_reason = %s WHERE repo_id = %s AND work_item_id = %s AND state = 'active'",
+            (f"item-{resolution}", repo_id, item_id),
         )
     return recorded
 
@@ -5522,9 +5546,7 @@ LEASE_TTL_MAX_SECONDS = 3600
 #: 19-PRODUCT-POSITIONING-AND-PROOF.md "Verification profiles").  Only the
 #: first two can be satisfied by the holder's own outcome report; the others
 #: need a separate verifier or a human, who settles with work.decision.record.
-VERIFICATION_PROFILES = (
-    "self-reported", "checked", "role-separated", "identity-separated", "human-authorized",
-)
+VERIFICATION_PROFILES = _releases.VERIFICATION_PROFILES
 DEFAULT_VERIFICATION_PROFILE = "checked"
 #: Who records a settlement decision: the owner, never the reporting holder.
 SETTLEMENT_ACTOR = "sprintctl:lease-settlement"
@@ -5537,7 +5559,8 @@ class LeaseRefused(ValueError):
     ``code`` is the caller-visible reason: ``lease-held``, ``lease-superseded``,
     ``lease-expired``, ``lease-ended``, ``lease-not-found``, ``work-not-found``,
     ``work-settled``, ``work-blocked``, ``work-not-active`` or
-    ``maintenance-active``.
+    ``maintenance-active``.  A completion never raises these for a lease
+    that is the caller's: it stores the report and returns it ``rejected``.
     """
 
     def __init__(self, code: str, message: str) -> None:
@@ -5581,6 +5604,10 @@ def _lease_row(row: Mapping[str, Any]) -> dict:
         "end_reason": row["end_reason"],
         "takeover_of": row["takeover_of"],
         "superseded_by": row["superseded_by"],
+        "verification": {
+            "profile": row["verification_profile"],
+            "required_checks": list(row["required_checks"] or []),
+        },
     }
 
 
@@ -5712,7 +5739,7 @@ def _acquire_locked(
                 f"item #{work_item_id} is leased; its lease becomes stale at "
                 f"{_iso(expires)} unless its holder heartbeats",
             )
-        own = _lease_binding(current) == binding and current["claim_key"] == claim_key
+        own = _lease_binding(current) == binding
         reason = "reclaimed-by-holder" if own else "taken-over"
         cur.execute(
             "UPDATE work_lease SET state = 'superseded', ended_at = %s, end_reason = %s, "
@@ -5721,15 +5748,20 @@ def _acquire_locked(
         )
         previous = {**dict(current), "reason": reason}
     principal_id, workspace_id, client_id, grant_id = binding
+    # The bar is pinned when the lease is taken: what the holder was asked
+    # for cannot be lowered while it works.
+    pinned = verification_config(cur, store, work_item_id)
     cur.execute(
         "INSERT INTO work_lease(repo_id, lease_id, work_item_id, run_id, principal_id, "
         "workspace_id, client_id, grant_id, claim_key, state, ttl_seconds, acquired_at, "
-        "heartbeat_at, takeover_of) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', "
-        "%s, %s, %s, %s) RETURNING *",
+        "heartbeat_at, takeover_of, verification_profile, required_checks) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, %s, %s, %s, %s, %s::jsonb) "
+        "RETURNING *",
         (
             store.repo_id, lease_id, work_item_id, run_id, principal_id, workspace_id,
             client_id, grant_id, claim_key, ttl_seconds, now, now,
             previous["lease_id"] if previous else None,
+            pinned["profile"], json.dumps(pinned["required_checks"]),
         ),
     )
     lease = cur.fetchone()
@@ -5859,8 +5891,9 @@ def resume_lease(
                 result = {"lease": _lease_row(latest), "resumed": True, "took_over": None}
             else:
                 now = _lease_now(cur)
-                if item["status"] == "done":
-                    raise LeaseRefused("work-settled", f"item #{work_item_id} is already settled")
+                dead = _dead_lease_reason(latest, item, now)
+                if dead is not None and dead[0] != "lease-expired":
+                    raise LeaseRefused(*dead)
                 if _lease_is_stale(latest, now):
                     _refuse_unclaimable(cur, store, item, work_item_id)
                     result = _acquire_locked(
@@ -5910,6 +5943,8 @@ def _dead_lease_reason(lease: Mapping[str, Any], item: Mapping[str, Any], now: A
         return ("lease-ended", f"lease {lease_id} already ended ({lease['state']})")
     if item["status"] == "done":
         return ("work-settled", f"item #{int(item['id'])} is already settled")
+    if item["status"] != "active":
+        return ("work-not-active", f"item #{int(item['id'])} is {item['status']}, not active")
     if _lease_is_stale(lease, now):
         return (
             "lease-expired",
@@ -5976,19 +6011,64 @@ def outcome_payload_digest(
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
-def verification_config(cur: Any, store: PgStore, work_item_id: int) -> dict:
-    """The verification the owner configured for the item.
+_PROFILE_RANK = {profile: rank for rank, profile in enumerate(VERIFICATION_PROFILES)}
 
-    Read from the item's current release (its acceptance contract), so the
-    holder never chooses its own bar: ``verification_profile`` names the
-    profile (default ``checked``) and ``evidence_obligations`` the checks it
-    requires.
-    """
-    release = _current_release_locked(cur, store.repo_id, work_item_id)
-    contract = (release or {}).get("acceptance_contract") or {}
-    profile = contract.get("verification_profile") or DEFAULT_VERIFICATION_PROFILE
-    required = [str(label) for label in contract.get("evidence_obligations") or []]
+
+def _contract_verification(contract: Any) -> dict:
+    """One acceptance contract's verification bar.  Never raises: a
+    malformed or unknown profile (one written before validation existed)
+    counts as ``human-authorized``, the strictest, so it fails closed."""
+    if isinstance(contract, str):
+        try:
+            contract = json.loads(contract)
+        except ValueError:
+            contract = None
+    if not isinstance(contract, Mapping):
+        contract = {}
+    profile = contract.get("verification_profile", DEFAULT_VERIFICATION_PROFILE)
+    if not isinstance(profile, str) or profile not in _PROFILE_RANK:
+        profile = VERIFICATION_PROFILES[-1]
+    obligations = contract.get("evidence_obligations") or []
+    if not isinstance(obligations, list):
+        obligations = []
+    required = sorted({label for label in obligations if isinstance(label, str) and label.strip()})
     return {"profile": profile, "required_checks": required}
+
+
+def _stricter(*configs: Mapping[str, Any]) -> dict:
+    """The strictest profile and the union of required checks."""
+    profile = max((c["profile"] for c in configs), key=lambda p: _PROFILE_RANK[p])
+    required = sorted({check for c in configs for check in c["required_checks"]})
+    return {"profile": profile, "required_checks": required}
+
+
+def verification_config(cur: Any, store: PgStore, work_item_id: int) -> dict:
+    """The verification bar the owner holds the item to now.
+
+    Read from every release frozen at the item's current revision (their
+    acceptance contracts' ``verification_profile``, default ``checked``, and
+    ``evidence_obligations`` as required checks) and combined strictest-wins,
+    so a later reservation freezing a default contract can add to the bar
+    but never lower it, and the holder never chooses its own bar.  A lease
+    also pins the bar it was acquired under (:func:`_acquire_locked`), and
+    settlement uses the stricter of the two.
+    """
+    cur.execute(
+        """
+        SELECT wr.acceptance_contract FROM work_release wr
+        WHERE wr.repo_id = %s AND wr.work_item_id = %s
+          AND wr.revise_count = (
+              SELECT COUNT(*) FROM work_decision d
+              WHERE d.repo_id = wr.repo_id AND d.work_item_id = wr.work_item_id
+                AND d.kind = 'revise'
+          )
+        """,
+        (store.repo_id, work_item_id),
+    )
+    configs = [_contract_verification(row["acceptance_contract"]) for row in cur.fetchall()]
+    if not configs:
+        return _contract_verification({})
+    return _stricter(*configs)
 
 
 def _verification_verdict(config: Mapping[str, Any], checks: list) -> tuple[str, str | None]:
@@ -6076,12 +6156,26 @@ def complete_lease(
             _replay_or_conflict(retried["request_digest"], request_digest, "outcome report")
             return _report_row(retried)
         now = _lease_now(cur)
-        config = verification_config(cur, store, int(item["id"]))
+        # The lease first, so no configuration problem can cost a late
+        # report its place as evidence; then the bar: the stricter of what
+        # the lease was acquired under and what the item asks for now.
         dead = _dead_lease_reason(lease, item, now)
-        if dead is None and item["status"] != "active":
-            dead = ("work-not-active", f"item #{int(item['id'])} is {item['status']}, not active")
+        config = _stricter(
+            {
+                "profile": lease["verification_profile"],
+                "required_checks": list(lease["required_checks"] or []),
+            },
+            verification_config(cur, store, int(item["id"])),
+        )
         decision = None
         detail = None
+        if dead is None and outcome == "succeeded":
+            unresolved = [
+                b["item_id"] for b in list_deps_blocking(store, int(item["id"]))
+                if b["blocker_status"] != "done"
+            ]
+            if unresolved:
+                dead = ("work-blocked", f"item #{int(item['id'])} waits on unsettled blockers {unresolved}")
         if dead is not None:
             disposition, reason_code, detail = "rejected", dead[0], dead[1]
         elif outcome == "failed":
