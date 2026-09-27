@@ -1185,22 +1185,30 @@ class TestVerificationProfilesAsRequirementSets:
         assert state["current_lease"]["lease_id"] == lease["lease_id"]
         assert [r["disposition"] for r in state["outcome_reports"]] == ["awaiting-verification"]
 
-    def test_the_verifiers_accept_is_stamped_on_the_awaiting_report(self, store):
+    def test_an_accept_never_attests_a_verifier_nothing_checked(self, store):
+        """No decision path checks a verifier role, identity or human yet,
+        so an ``accept`` ends the wait without the report claiming it was
+        verified (review finding 2 on sprintctl#99)."""
         item, _run_id, _lease, report = self._awaiting(store, "await-accept")
-        decision = pg.record_decision(store, item, "accept", actor="human-verifier")
-        (stamped,) = _read(store, item)["outcome_reports"]
-        assert (stamped["report_id"], stamped["disposition"], stamped["decision_id"]) == (
-            report["report_id"], "settled", decision["id"],
-        )
-        assert stamped["reason_code"] is None
-
-    @pytest.mark.parametrize("kind", ["reject", "withdraw", "revise"])
-    def test_any_other_decision_ends_the_wait_and_keeps_the_report(self, store, kind):
-        item, _run_id, lease, report = self._awaiting(store, f"await-{kind}")
-        pg.record_decision(store, item, kind, actor="human-verifier")
+        pg.record_decision(store, item, "accept", actor="human-verifier")
         (stamped,) = _read(store, item)["outcome_reports"]
         assert (stamped["report_id"], stamped["disposition"], stamped["reason_code"]) == (
-            report["report_id"], "rejected", f"decision-{kind}",
+            report["report_id"], "rejected", "decided-accept-unverified",
+        )
+        assert stamped["decision_id"] is None and stamped["payload"] == {"result": "ok"}
+        assert _status(store, item) == "done"
+
+    @pytest.mark.parametrize("kind", ["reject", "withdraw", "revise", "supersede"])
+    def test_any_other_decision_ends_the_wait_and_keeps_the_report(self, store, kind):
+        item, _run_id, lease, report = self._awaiting(store, f"await-{kind}")
+        extra = {}
+        if kind == "supersede":
+            (replacement,) = _items(store)
+            extra = {"superseded_by_item_id": replacement}
+        pg.record_decision(store, item, kind, actor="human-verifier", **extra)
+        (stamped,) = _read(store, item)["outcome_reports"]
+        assert (stamped["report_id"], stamped["disposition"], stamped["reason_code"]) == (
+            report["report_id"], "rejected", f"decided-{kind}",
         )
         assert stamped["decision_id"] is None and stamped["payload"] == {"result": "ok"}
         if kind == "revise":
@@ -1209,3 +1217,164 @@ class TestVerificationProfilesAsRequirementSets:
             _backdate(store, lease["lease_id"], 3601)
             assert _claim(store, B, item, _run(store, B), "await-revise-b")["took_over"] == lease["lease_id"]
 
+
+def _served_context(actor: str, key: str):
+    identity = SimpleNamespace(
+        actor=actor, environment="vuoro-dev", authorities=frozenset(),
+        authorizes_repo=lambda repo_id: True,
+    )
+    return SimpleNamespace(
+        identity=identity, request_id="request-1", basis_revision=None,
+        catalog_revision="catalog-1", idempotency_requirement="required",
+        idempotency_key=key,
+    )
+
+
+def _outbox_decision(store, tmp_path, item_id: int, route: str, actor: str) -> None:
+    """Accept through an authority outbox command: ``item.done`` (the old
+    client's alias) or ``decision.record`` (authority.py's two paths)."""
+    from sprintctl import authority, outbox
+    from tests.pg._shared import _append_authority_command
+
+    item = pg.get_work_item(store, item_id)
+    producer = outbox.open_outbox(tmp_path / f"{route}-{uuid.uuid4().hex[:8]}.db")
+    try:
+        if route == "outbox-item-done":
+            command = _append_authority_command(
+                producer, store, record_type="item.done", aggregate_type="item",
+                aggregate_uuid=item["aggregate_uuid"],
+                basis_revision=authority.item_revision(item),
+                payload={"to_status": "done"}, actor=actor,
+            )
+        else:
+            command = _append_authority_command(
+                producer, store, record_type="decision.record", aggregate_type="item",
+                aggregate_uuid=item["aggregate_uuid"],
+                basis_revision=authority.item_revision(item),
+                payload={"kind": "accept", "rationale": "verified", "evidence_digests": ["a" * 64]},
+                actor=actor,
+            )
+        assert authority.arbitrate_command(store, command).accepted is True
+    finally:
+        producer.close()
+
+
+def _accept(store, tmp_path, item_id: int, route: str, actor: str) -> None:
+    if route == "record-decision":
+        pg.record_decision(store, item_id, "accept", actor=actor)
+    elif route == "set-status-done":
+        pg.set_work_item_status(store, item_id, "done", actor=actor)
+    elif route == "served-accept":
+        _app(store).invoke("work.decision.record", {
+            "item_id": item_id, "kind": "accept", "rationale": "verified",
+            "evidence_digests": ["ab" * 32],
+        }, _served_context(actor, uuid.uuid4().hex))
+    else:
+        _outbox_decision(store, tmp_path, item_id, route, actor)
+
+
+_ACCEPT_ROUTES = ["record-decision", "set-status-done", "served-accept", "outbox-item-done", "outbox-decision-record"]
+
+
+class TestAwaitingReportStamping:
+    """Review findings 1-4 on sprintctl#99: every decision path stamps an
+    awaiting report, and none of them lets a report settle work it had no
+    authority over (INV-L1) or attest a verification nobody performed."""
+
+    def _awaiting(self, store, key: str, profile: str = "human-authorized"):
+        (item,) = _items(store)
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, f"{key}-a")["lease"]
+        _legacy_bar(store, item, {"verification_profile": profile}, lease["lease_id"])
+        report = _complete(store, A, lease["lease_id"], run, f"{key}-c")["report"]
+        assert report["disposition"] == "awaiting-verification"
+        return item, run, lease, report
+
+    def _taken_over_under_090(self, store, monkeypatch, key: str):
+        """The legacy state 0.9.0 could leave: A's report awaits a verifier,
+        A's lease went stale and B took the item over anyway (0.9.0 had no
+        awaiting protection), with the item's contract back at ``checked``."""
+        item, _run_id, lease_a, report_a = self._awaiting(store, key)
+        _legacy_bar(store, item, {"verification_profile": "checked"})
+        _backdate(store, lease_a["lease_id"], 3601)
+        with monkeypatch.context() as patch:
+            patch.setattr(pg, "_refuse_awaiting_verification", lambda *args, **kwargs: None)
+            run_b = _run(store, B)
+            claimed = _claim(store, B, item, run_b, f"{key}-b")
+        assert claimed["took_over"] == lease_a["lease_id"]
+        return item, report_a, run_b, claimed["lease"]
+
+    def _report(self, store, item, report_id):
+        return next(r for r in _read(store, item)["outcome_reports"] if r["report_id"] == report_id)
+
+    def test_a_lease_settlement_never_settles_a_superseded_awaiting_report(self, store, monkeypatch):
+        item, report_a, run_b, lease_b = self._taken_over_under_090(store, monkeypatch, "sup-settle")
+        settled = _complete(store, B, lease_b["lease_id"], run_b, "sup-settle-bc")
+        assert settled["settled"] is True and settled["report"]["disposition"] == "settled"
+        stale = self._report(store, item, report_a["report_id"])
+        assert (stale["disposition"], stale["reason_code"], stale["decision_id"]) == (
+            "rejected", "lease-superseded", None,
+        )
+        assert stale["payload"] == {"result": "ok"}
+        (decision,) = pg.list_decisions(store, item)
+        assert settled["report"]["decision_id"] == decision["id"]
+
+    @pytest.mark.parametrize("route", _ACCEPT_ROUTES)
+    def test_an_accept_never_settles_a_superseded_awaiting_report(self, store, monkeypatch, tmp_path, route):
+        item, report_a, _run_b, _lease_b = self._taken_over_under_090(store, monkeypatch, f"sup-{route}")
+        _accept(store, tmp_path, item, route, "human-verifier")
+        assert _status(store, item) == "done"
+        stale = self._report(store, item, report_a["report_id"])
+        assert (stale["disposition"], stale["reason_code"], stale["decision_id"]) == (
+            "rejected", "lease-superseded", None,
+        )
+
+    @pytest.mark.parametrize("route", _ACCEPT_ROUTES)
+    @pytest.mark.parametrize("profile", ["role-separated", "identity-separated", "human-authorized"])
+    def test_every_accept_path_stamps_an_unverified_pin_without_attesting_it(
+        self, store, tmp_path, route, profile,
+    ):
+        """Including the worker's own ``done``: the report is kept as
+        evidence but never reads as a verification that passed."""
+        item, _run_id, _lease, report = self._awaiting(store, f"pin-{route}-{profile}", profile)
+        _accept(store, tmp_path, item, route, A.identity.actor)
+        assert _status(store, item) == "done"
+        stamped = self._report(store, item, report["report_id"])
+        assert (stamped["disposition"], stamped["reason_code"], stamped["decision_id"]) == (
+            "rejected", "decided-accept-unverified", None,
+        )
+        assert stamped["verification_profile"] == profile
+        assert _read(store, item)["current_lease"] is None
+
+    def test_the_holders_own_stale_resume_is_refused_while_its_report_waits(self, store):
+        item, run, lease, report = self._awaiting(store, "own-resume")
+        _backdate(store, lease["lease_id"], 3601)
+        refused = _refused(lambda: _claim(store, A, item, run, "own-resume-a"))
+        assert (refused.code, refused.http_status) == ("work-awaiting-verification", 409)
+        assert report["report_id"] in refused.message
+        refused_new_key = _refused(lambda: _claim(store, A, item, run, "own-resume-a2"))
+        assert refused_new_key.code == "work-awaiting-verification"
+        assert _lease_rows(store, item) == 1 and _lease_rows(store, item, "active") == 1
+
+    def test_a_fresh_lease_with_a_waiting_report_answers_awaiting_before_held(self, store):
+        item, _run_id, _lease, _report = self._awaiting(store, "check-order")
+        assert _refused(lambda: _claim(store, B, item, _run(store, B), "check-order-b")).code == (
+            "work-awaiting-verification"
+        )
+
+    @pytest.mark.parametrize("profile", ["role-separated", "identity-separated"])
+    def test_zero_checks_under_a_checks_bearing_pin_is_rejected_not_deferred(self, store, profile):
+        (item,) = _items(store)
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, f"zero-{profile}-a")["lease"]["lease_id"]
+        _legacy_bar(store, item, {"verification_profile": profile}, lease)
+        refused = _refused(lambda: _complete(store, A, lease, run, f"zero-{profile}-c", checks=[]))
+        assert (refused.code, refused.http_status) == ("verification-unsatisfied", 422)
+        (report,) = _read(store, item)["outcome_reports"]
+        assert (report["disposition"], report["reason_code"]) == ("rejected", "verification-unsatisfied")
+        # Nothing waits: a later claim meets the stored bar's own refusal,
+        # not work-awaiting-verification.
+        _backdate(store, lease, 3601)
+        assert _refused(lambda: _claim(store, B, item, _run(store, B), f"zero-{profile}-b")).code == (
+            "verification-unsupported"
+        )

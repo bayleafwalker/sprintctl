@@ -3567,25 +3567,58 @@ def _decide_locked(cur: Any, repo_id: str, item: Any, decision: dict) -> dict:
 
 def _stamp_awaiting_reports(cur: Any, repo_id: str, item_id: int, decision: Mapping[str, Any]) -> None:
     """Give outcome reports awaiting verification the decision that landed
-    (agentops#2528).  ``accept`` settles them and names the decision;
-    any other kind (``reject``, ``withdraw``, ``supersede``, ``revise``)
-    ends their wait as ``rejected`` with reason ``decision-<kind>``: the
-    report stays as evidence, and schema 18 ties a ``decision_id`` to a
-    ``settled`` report only, so the item's decision event is the link.
-    Any caller of :func:`_decide_locked` -- the served decision operation,
-    ``done`` as an alias, outbox commands -- stamps the same way."""
-    if decision["kind"] == "accept":
-        cur.execute(
-            "UPDATE work_outcome_report SET disposition = 'settled', decision_id = %s "
-            "WHERE repo_id = %s AND work_item_id = %s AND disposition = 'awaiting-verification'",
-            (int(decision["id"]), repo_id, item_id),
-        )
-    else:
-        cur.execute(
-            "UPDATE work_outcome_report SET disposition = 'rejected', reason_code = %s "
-            "WHERE repo_id = %s AND work_item_id = %s AND disposition = 'awaiting-verification'",
-            (f"decision-{decision['kind']}", repo_id, item_id),
-        )
+    (agentops#2528).  Every awaiting report stays as evidence; what the
+    decision makes of it:
+
+    - a report filed under a lease that was since superseded is
+      ``rejected`` with ``lease-superseded`` whatever the decision (INV-L1:
+      a result submitted under a superseded lease never settles work;
+      0.9.0 let such a lease be taken over while its report waited);
+    - ``accept`` settles a report whose bar the owner can evaluate
+      (``releases.ENFORCED_REQUIREMENTS``) and names the decision; a
+      report pinned to a verifier or human requirement nothing checked
+      (a 0.9.0 ``role-separated``, ``identity-separated`` or
+      ``human-authorized`` pin) is ``rejected`` with
+      ``decided-accept-unverified``, so the report never reads as a
+      verification that did not happen;
+    - any other kind (``reject``, ``withdraw``, ``supersede``, ``revise``)
+      ends the wait as ``rejected`` with ``decided-<kind>``.
+
+    Schema 18 ties a ``decision_id`` to a ``settled`` report only, so for
+    the others the decision event is the link.  Any caller of
+    :func:`_decide_locked` -- the served decision operation, ``done`` as an
+    alias, outbox commands -- stamps the same way."""
+    cur.execute(
+        "SELECT r.report_id, r.verification_profile, l.state AS lease_state "
+        "FROM work_outcome_report r JOIN work_lease l "
+        "ON l.repo_id = r.repo_id AND l.lease_id = r.lease_id "
+        "WHERE r.repo_id = %s AND r.work_item_id = %s "
+        "AND r.disposition = 'awaiting-verification' ORDER BY r.created_at, r.report_id",
+        (repo_id, item_id),
+    )
+    for row in cur.fetchall():
+        if row["lease_state"] == "superseded":
+            reason = "lease-superseded"
+        elif decision["kind"] != "accept":
+            reason = f"decided-{decision['kind']}"
+        elif set(_verification(row["verification_profile"], [])["requirements"]) - (
+            _releases.ENFORCED_REQUIREMENTS
+        ):
+            reason = "decided-accept-unverified"
+        else:
+            reason = None
+        if reason is None:
+            cur.execute(
+                "UPDATE work_outcome_report SET disposition = 'settled', decision_id = %s "
+                "WHERE repo_id = %s AND report_id = %s",
+                (int(decision["id"]), repo_id, row["report_id"]),
+            )
+        else:
+            cur.execute(
+                "UPDATE work_outcome_report SET disposition = 'rejected', reason_code = %s "
+                "WHERE repo_id = %s AND report_id = %s",
+                (reason, repo_id, row["report_id"]),
+            )
 
 
 def record_decision(
@@ -5581,7 +5614,8 @@ class LeaseRefused(ValueError):
 
     ``code`` is the caller-visible reason: ``lease-held``, ``lease-superseded``,
     ``lease-expired``, ``lease-ended``, ``lease-not-found``, ``work-not-found``,
-    ``work-settled``, ``work-blocked``, ``work-not-active`` or
+    ``work-settled``, ``work-blocked``, ``work-not-active``,
+    ``work-awaiting-verification``, ``verification-unsupported`` or
     ``maintenance-active``.  A completion never raises these for a lease
     that is the caller's: it stores the report and returns it ``rejected``.
     """
@@ -6181,7 +6215,9 @@ def _verification_verdict(config: Mapping[str, Any], checks: list) -> tuple[str,
     included (agentops#2529 n2).  A requirement the owner cannot evaluate
     from the holder's own report (a verifier role or identity, a human)
     leaves the report ``awaiting-verification`` for that verifier's
-    decision; ``checks`` needs at least one reported check.
+    decision, but only once every requirement the owner can evaluate is
+    met: ``checks`` needs at least one reported check first, so a report
+    with none is rejected rather than deferred.
     """
     requirements = set(config["requirements"])
     passed = {check["name"] for check in checks if check["status"] == "passed"}
@@ -6191,10 +6227,10 @@ def _verification_verdict(config: Mapping[str, Any], checks: list) -> tuple[str,
         return "rejected", f"checks not passed: {failed}"
     if missing:
         return "rejected", f"required checks not reported as passed: {missing}"
-    if requirements - _releases.ENFORCED_REQUIREMENTS:
-        return "awaiting-verification", None
     if "checks" in requirements and not checks:
         return "rejected", f"profile {config['profile']} needs at least one reported check"
+    if requirements - _releases.ENFORCED_REQUIREMENTS:
+        return "awaiting-verification", None
     return "settled", None
 
 

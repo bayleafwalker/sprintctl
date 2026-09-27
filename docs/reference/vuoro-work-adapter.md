@@ -153,6 +153,16 @@ and that run's whole binding: principal, workspace, OAuth client and grant.
 Advisory reservations are separate and stay advisory; a lease neither
 refuses nor is refused by them.
 
+Catalog change in the release after 0.9.0 (agentops#2539): the lease
+results' `verification` object changes `profile` from an enum to a pattern
+(a combined bar is named with `+`) and makes `requirements` required. The
+operation names and `-v1` versions stay, and a lenient consumer is
+unaffected, but the catalog metadata digest changes, so a pinned consumer
+(vuoro `scripts/validate_released_work_adapter.py`
+`_EXPECTED_WORK_METADATA_SHA256` and
+`scripts/validate_released_catalog_composition.py` `EXPECTED_REVISION`)
+must re-pin when it adopts that release.
+
 This authority evaluates a lease whenever someone calls, against its own
 clock. Nothing expires, sweeps, schedules or retries in the background
 (TS-1). A lease is stale once `heartbeat_at + ttl_seconds` has passed. The
@@ -165,9 +175,13 @@ or the claim names its own, from 30 to 3600.
   an unsettled blocker is `work-blocked`; any claim while a maintenance
   capability is active is `maintenance-active`; an item with an outcome
   report awaiting its verifier's decision is `work-awaiting-verification`,
-  whoever asks and however stale the lease; an item whose stored bar needs
+  whoever asks (its own holder resuming included) and however fresh or
+  stale the lease; an item whose stored bar needs
   a verifier this authority cannot check yet is `verification-unsupported`;
-  an item whose current lease is still fresh is `lease-held` (all 409). A stale lease is superseded:
+  an item whose current lease is still fresh is `lease-held` (all 409).
+  They are checked in that order, so a claim against a fresh lease on an
+  item with a waiting report answers `work-awaiting-verification`, not
+  `lease-held`. A stale lease is superseded:
   by anyone else it is a takeover, recorded on both leases
   (`superseded_by`, `takeover_of`) and as a `lease.taken-over` event with
   the previous holder, run and last heartbeat. A pending item becomes
@@ -205,13 +219,23 @@ or the claim names its own, from 30 to 3600.
     evidence; the item becomes done and its dependents can become ready.
   - `awaiting-verification`: the bar needs a verifier role, a separate
     verifier identity or a human (only a contract stored before 0.10.0, or
-    a lease pinned under 0.9.0, can still ask for one); the report waits
-    for a `work.decision.record`, the lease stays, and nobody can claim the
-    item meanwhile. The decision is stamped on every waiting report of the
-    item: `accept` makes it `settled` with that `decision_id`; any other
-    kind makes it `rejected` with reason `decision-<kind>` (schema 18 ties
-    a `decision_id` to a settled report only, so the item's decision event
-    is the link). The report and its payload stay either way.
+    a lease pinned under 0.9.0, can still ask for one), and every
+    requirement the authority can evaluate is met (a report with no checks
+    under a bar that includes `checks` is rejected, not deferred); the
+    report waits for a decision, the lease stays, and nobody can claim the
+    item meanwhile. Whatever decision next lands on the item -- a served
+    `work.decision.record`, `done` as an alias, or an authority outbox
+    command, whoever records it -- is stamped on every waiting report of
+    the item: a report whose lease was since superseded becomes `rejected`
+    with `lease-superseded` (a superseded lease never settles work); an
+    `accept` makes a report whose bar needs only `checks` `settled` with
+    that `decision_id`, but a report pinned to a verifier role, verifier
+    identity or human becomes `rejected` with `decided-accept-unverified`,
+    because no decision path checks that requirement yet and the report
+    must not read as a verification that happened; any other kind makes it
+    `rejected` with `decided-<kind>` (schema 18 ties a `decision_id` to a
+    settled report only, so the item's decision event is the link). The
+    report and its payload stay either way.
   - `recorded`: a failed outcome; the lease is released and the item stays
     active for the next claim.
 - The verification bar comes from the acceptance contracts of every release
@@ -240,7 +264,10 @@ or the claim names its own, from 30 to 3600.
   naming one of the three (written by 0.9.0), or a stored value that is not
   a profile name at all (which counts as `human-authorized`), fails closed:
   the item cannot be leased (`verification-unsupported`), and a lease
-  already pinned under it never settles from the holder's report. Only the
+  already pinned under it never settles from the holder's report: its
+  report waits, and the next decision on the item ends the wait (an
+  `accept` closes the item) while the report is stamped
+  `decided-accept-unverified` or `decided-<kind>`, never `settled`. Only the
   Python `reserve(acceptance_contract=...)` path can write a non-default
   contract; without one, every item is `checked`. There is no `parked` lease state: a worker that is denied
   records that as evidence on its run and stops heartbeating.
