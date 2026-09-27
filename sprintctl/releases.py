@@ -30,6 +30,12 @@ import re
 from typing import Any, Iterable, Mapping
 
 DEFAULT_ACCEPTANCE_CONTRACT: dict[str, Any] = {"review_required": True}
+#: Verification profiles a work lease settles under (agentops#2520; vuoro-cloud
+#: 19-PRODUCT-POSITIONING-AND-PROOF.md), weakest first.  An acceptance
+#: contract may name one as ``verification_profile``; none means ``checked``.
+VERIFICATION_PROFILES = (
+    "self-reported", "checked", "role-separated", "identity-separated", "human-authorized",
+)
 
 _EDIT_REVISION = r"item:[0-9a-fA-F-]{36}@description:v[0-9]+@sha256:[0-9a-f]{64}"
 _EDIT_REVISION_RE = re.compile(rf"^{_EDIT_REVISION}$")
@@ -113,6 +119,11 @@ def normalize_acceptance_contract(contract: Mapping[str, Any] | None) -> dict[st
                 "acceptance_contract.evidence_obligations must be a list of "
                 "non-empty strings"
             )
+    if "verification_profile" in contract and contract["verification_profile"] not in VERIFICATION_PROFILES:
+        raise ValueError(
+            "acceptance_contract.verification_profile must be one of "
+            + ", ".join(VERIFICATION_PROFILES)
+        )
     normalized = json.loads(canonical_json(dict(contract)))
     if not isinstance(normalized, dict):
         raise ValueError("acceptance_contract must be an object")
