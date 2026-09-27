@@ -176,12 +176,12 @@ or the claim names its own, from 30 to 3600.
   capability is active is `maintenance-active`; an item with an outcome
   report awaiting its verifier's decision is `work-awaiting-verification`,
   whoever asks (its own holder resuming included) and however fresh or
-  stale the lease; an item whose stored bar needs
-  a verifier this authority cannot check yet is `verification-unsupported`;
-  an item whose current lease is still fresh is `lease-held` (all 409).
-  They are checked in that order, so a claim against a fresh lease on an
-  item with a waiting report answers `work-awaiting-verification`, not
-  `lease-held`. A stale lease is superseded:
+  stale the lease; an item whose current lease is still fresh is
+  `lease-held`; an item whose stored bar needs a verifier this authority
+  cannot check yet is `verification-unsupported` (all 409). They are
+  checked in that order, so a claim against a fresh lease answers
+  `work-awaiting-verification` if a report waits and `lease-held` even if
+  the stored bar is unsupported. A stale lease is superseded:
   by anyone else it is a takeover, recorded on both leases
   (`superseded_by`, `takeover_of`) and as a `lease.taken-over` event with
   the previous holder, run and last heartbeat. A pending item becomes
@@ -227,10 +227,10 @@ or the claim names its own, from 30 to 3600.
     `work.decision.record`, `done` as an alias, or an authority outbox
     command, whoever records it -- is stamped on every waiting report of
     the item: a report whose lease was since superseded becomes `rejected`
-    with `lease-superseded` (a superseded lease never settles work); an
-    `accept` makes a report whose bar needs only `checks` `settled` with
-    that `decision_id`, but a report pinned to a verifier role, verifier
-    identity or human becomes `rejected` with `decided-accept-unverified`,
+    with `lease-superseded` (a superseded lease never settles work); on an
+    `accept`, a report pinned to a verifier role, verifier identity or
+    human (today every waiting report is) becomes `rejected` with
+    `decided-accept-unverified`,
     because no decision path checks that requirement yet and the report
     must not read as a verification that happened; any other kind makes it
     `rejected` with `decided-<kind>` (schema 18 ties a `decision_id` to a

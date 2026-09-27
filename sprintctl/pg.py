@@ -3606,6 +3606,11 @@ def _stamp_awaiting_reports(cur: Any, repo_id: str, item_id: int, decision: Mapp
         ):
             reason = "decided-accept-unverified"
         else:
+            # Unreachable today: a report waits only when its bar has a
+            # requirement outside ENFORCED_REQUIREMENTS.  Revisit before a
+            # verifier requirement joins that set -- an accept must then
+            # prove the verifier (role, identity, human) before it settles
+            # an old waiting report, not merely be an accept.
             reason = None
         if reason is None:
             cur.execute(
