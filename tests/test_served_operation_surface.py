@@ -43,6 +43,7 @@ PUBLISHED_OPERATIONS = (
         "work.lease.complete-v1",
         "work.lease.heartbeat-v1",
         "work.lease.read-v1",
+        "work.lease.report-outcome-v1",
         "work.lifecycle.arbitrate",
         "work.maintain.check",
         "work.maintenance.prepare",

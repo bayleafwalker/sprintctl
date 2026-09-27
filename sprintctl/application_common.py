@@ -108,6 +108,10 @@ class ApplicationRejection(Exception):
     code: str
     message: str
     http_status: int = 409
+    #: Structured, caller-visible context for the code, e.g. for
+    #: ``claim-superseded`` ``{claim_id, current_generation,
+    #: reported_generation}``.  None for most rejections.
+    details: Mapping[str, Any] | None = None
 
     def __str__(self) -> str:
         return self.message

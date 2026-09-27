@@ -253,7 +253,8 @@ class TestAcquire:
         lease = result["lease"]
         assert lease["lease_id"].startswith("lease_") and lease["state"] == "active"
         assert (lease["item_id"], lease["run_id"], lease["principal_id"]) == (item, run, "github:100:0")
-        assert lease["ttl_seconds"] == 300
+        assert (lease["ttl_seconds"], lease["heartbeat_interval_seconds"]) == (600, 120)
+        assert lease["generation"] == 1
         assert result["resumed"] is False and result["took_over"] is None
         assert _status(store, item) == "active"
         (event,) = _events(store, item, "lease.acquired")
@@ -273,7 +274,7 @@ class TestAcquire:
         first = _claim(store, A, item, _run(store, A), "claim-retry-a")["lease"]
         run_b = _run(store, B)
         assert _refused(lambda: _claim(store, B, item, run_b, "claim-retry-b")).code == "lease-held"
-        _backdate(store, first["lease_id"], 301)
+        _backdate(store, first["lease_id"], 601)
         taken = _claim(store, B, item, run_b, "claim-retry-b")
         assert taken["took_over"] == first["lease_id"]
 
@@ -310,17 +311,28 @@ class TestAcquire:
         assert _refused(lambda: _claim(store, other_grant, item, run_g1, "claim-other-grant")).code == "run-not-found"
         assert _lease_rows(store, item) == 0
 
-    @pytest.mark.parametrize("ttl", [29, 3601, "60", True, 1.5])
-    def test_ttl_outside_bounds_is_invalid(self, store, ttl):
+    @pytest.mark.parametrize("ttl", [45, 600, None])
+    def test_a_claim_cannot_name_its_ttl(self, store, ttl):
+        """agentops#2540: the TTL is the authority's; the v1 input no longer
+        has ttl_seconds, and the published schema refuses it too."""
         (item,) = _items(store)
-        refused = _refused(lambda: _claim(store, A, item, _run(store, A), "claim-ttl-bad", ttl_seconds=ttl))
+        refused = _refused(lambda: _claim(store, A, item, _run(store, A), f"claim-ttl-own-{ttl}", ttl_seconds=ttl))
         assert (refused.code, refused.http_status) == ("invalid-arguments", 422)
+        assert _lease_rows(store, item) == 0
+        schema = _CONTRACTS["work.lease.acquire-v1"].input_schema
+        assert "ttl_seconds" not in schema["properties"]
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({"item_id": item, "run_id": "r", "idempotency_key": "k" * 8, "ttl_seconds": 45}, schema)
 
-    def test_a_claim_may_name_its_ttl_and_the_default_comes_from_the_environment(self, store, monkeypatch):
-        one, two = _items(store, 2)
-        assert _claim(store, A, one, _run(store, A), "claim-ttl-own", ttl_seconds=45)["lease"]["ttl_seconds"] == 45
-        monkeypatch.setenv("SPRINTCTL_LEASE_TTL_SECONDS", "120")
-        assert _claim(store, A, two, _run(store, A), "claim-ttl-env")["lease"]["ttl_seconds"] == 120
+    @pytest.mark.parametrize("raw,ttl,interval", [(None, 600, 120), ("120", 120, 24), ("5", 30, 6), ("x", 600, 120)])
+    def test_the_ttl_is_authority_configuration(self, store, monkeypatch, raw, ttl, interval):
+        (item,) = _items(store)
+        if raw is None:
+            monkeypatch.delenv("SPRINTCTL_LEASE_TTL_SECONDS", raising=False)
+        else:
+            monkeypatch.setenv("SPRINTCTL_LEASE_TTL_SECONDS", raw)
+        lease = _claim(store, A, item, _run(store, A), f"claim-ttl-env-{uuid.uuid4().hex[:8]}")["lease"]
+        assert (lease["ttl_seconds"], lease["heartbeat_interval_seconds"]) == (ttl, interval)
 
     def test_a_malformed_idempotency_key_is_invalid(self, store):
         (item,) = _items(store)
@@ -352,7 +364,7 @@ class TestExclusivityRaces:
     def test_eight_racing_takeovers_of_a_stale_lease_leave_exactly_one_holder(self, store):
         (item,) = _items(store)
         stale = _claim(store, A, item, _run(store, A), "race-stale-a")["lease"]
-        _backdate(store, stale["lease_id"], 400)
+        _backdate(store, stale["lease_id"], 700)
         contexts = [_context(f"github:taker-{i}:0") for i in range(N_RACERS)]
         runs = [_run(store, ctx) for ctx in contexts]
         calls = [
@@ -378,27 +390,30 @@ class TestExclusivityRaces:
         (item,) = _items(store)
         run = _run(store, A)
         first = _claim(store, A, item, run, "race-resume-key")["lease"]
-        _backdate(store, first["lease_id"], 400)
+        _backdate(store, first["lease_id"], 700)
         calls = [(lambda s: _claim(s, A, item, run, "race-resume-key"))] * N_RACERS
         ok, refused = _split(_stampede(store, calls))
         assert refused == []
         assert len({o["lease"]["lease_id"] for o in ok}) == 1
         assert all(o["resumed"] for o in ok)
-        assert ok[0]["lease"]["takeover_of"] == first["lease_id"]
-        assert _lease_rows(store, item) == 2 and _lease_rows(store, item, "active") == 1
+        # Case B: the same lease, reactivated in place, same generation.
+        assert ok[0]["lease"]["lease_id"] == first["lease_id"]
+        assert ok[0]["lease"]["generation"] == 1 and ok[0]["lease"]["takeover_of"] is None
+        assert _lease_rows(store, item) == 1 and _lease_rows(store, item, "active") == 1
+        assert len(_events(store, item, "lease.reactivated")) == 1
 
     def test_a_heartbeat_racing_a_takeover_of_a_stale_lease_never_revives_it(self, store):
         (item,) = _items(store)
         run_a = _run(store, A)
         stale = _claim(store, A, item, run_a, "race-hb-a")["lease"]
-        _backdate(store, stale["lease_id"], 400)
+        _backdate(store, stale["lease_id"], 700)
         run_b = _run(store, B)
         outcomes = _stampede(store, [
             lambda s: _heartbeat(s, A, stale["lease_id"], run_a),
             lambda s: _claim(s, B, item, run_b, "race-hb-b"),
         ])
         assert isinstance(outcomes[0], ApplicationRejection)
-        assert outcomes[0].code in ("lease-expired", "lease-superseded")
+        assert outcomes[0].code in ("lease-expired", "claim-superseded")
         assert isinstance(outcomes[1], dict) and outcomes[1]["took_over"] == stale["lease_id"]
 
     def test_a_fresh_heartbeat_racing_a_claim_keeps_the_lease(self, store):
@@ -428,7 +443,7 @@ class TestHeartbeat:
         (item,) = _items(store)
         run = _run(store, A)
         lease = _claim(store, A, item, run, "hb-expired-1")["lease"]
-        _backdate(store, lease["lease_id"], 301)
+        _backdate(store, lease["lease_id"], 601)
         assert _refused(lambda: _heartbeat(store, A, lease["lease_id"], run)).code == "lease-expired"
 
     def test_someone_elses_or_an_unknown_lease_is_lease_not_found(self, store):
@@ -454,28 +469,39 @@ class TestTakeoverAndStaleCompletion:
         lease_a = _claim(store, A, item_x, run_a, "scenario-claim-a")["lease"]
         _heartbeat(store, A, lease_a["lease_id"], run_a)
         # A disappears; its heartbeat lapses.
-        _backdate(store, lease_a["lease_id"], 301)
+        _backdate(store, lease_a["lease_id"], 601)
         run_b = _run(store, B)
         taken = _claim(store, B, item_x, run_b, "scenario-claim-b")
         lease_b = taken["lease"]
         assert taken["took_over"] == lease_a["lease_id"]
-        (takeover,) = _events(store, item_x, "lease.taken-over")
-        assert takeover["previous_lease_id"] == lease_a["lease_id"]
-        assert takeover["previous_principal_id"] == "github:100:0"
-        assert takeover["reason"] == "taken-over"
+        assert (lease_a["generation"], lease_b["generation"]) == (1, 2)
+        (takeover,) = _events(store, item_x, "work.claim.taken-over")
+        assert takeover == {
+            "previous_claim_id": lease_a["lease_id"],
+            "previous_principal": "github:100:0",
+            "previous_generation": 1,
+            "previous_last_heartbeat": takeover["previous_last_heartbeat"],
+            "new_claim_id": lease_b["lease_id"],
+            "new_principal": "github:200:0",
+            "reason": "stale-lease",
+        }
+        assert takeover["previous_last_heartbeat"] is not None
 
         # A comes back and reports success: rejected, retained, nothing settled.
         late_payload = {"diff": "a's work", "commit": "a" * 40}
         refused = _refused(lambda: _complete(
             store, A, lease_a["lease_id"], run_a, "scenario-complete-a", payload=late_payload,
         ))
-        assert (refused.code, refused.http_status) == ("lease-superseded", 409)
+        assert (refused.code, refused.http_status) == ("claim-superseded", 409)
+        assert refused.details == {
+            "claim_id": lease_a["lease_id"], "current_generation": 2, "reported_generation": 1,
+        }
         assert "retained as evidence" in refused.message
         assert _status(store, item_x) == "active"
         state = _read(store, item_x)
         (report_a,) = state["outcome_reports"]
         assert report_a["disposition"] == "rejected"
-        assert report_a["reason_code"] == "lease-superseded"
+        assert report_a["reason_code"] == "claim-superseded"
         assert report_a["payload"] == late_payload and report_a["principal_id"] == "github:100:0"
         assert report_a["decision_id"] is None
         assert {l["lease_id"]: l["state"] for l in state["leases"]} == {
@@ -485,7 +511,7 @@ class TestTakeoverAndStaleCompletion:
 
         # B's result passes the configured profile (checked) and settles X.
         settled = _complete(store, B, lease_b["lease_id"], run_b, "scenario-complete-b")
-        assert settled["settled"] is True
+        assert settled["settled"] is True and settled["settlement_effect"] == "settled"
         report_b = settled["report"]
         assert report_b["disposition"] == "settled"
         assert report_b["verification_profile"] == "checked"
@@ -504,21 +530,53 @@ class TestTakeoverAndStaleCompletion:
         (item,) = _items(store)
         run_a = _run(store, A)
         lease_a = _claim(store, A, item, run_a, "replay-late-a")["lease"]
-        _backdate(store, lease_a["lease_id"], 301)
+        _backdate(store, lease_a["lease_id"], 601)
         _claim(store, B, item, _run(store, B), "replay-late-b")
         for _ in range(2):
-            assert _refused(lambda: _complete(store, A, lease_a["lease_id"], run_a, "replay-late-c")).code == "lease-superseded"
+            refused = _refused(lambda: _complete(store, A, lease_a["lease_id"], run_a, "replay-late-c"))
+            assert refused.code == "claim-superseded"
+            assert refused.details["reported_generation"] == 1
         assert _reports(store, item) == 1
-        assert _refused(lambda: _heartbeat(store, A, lease_a["lease_id"], run_a)).code == "lease-superseded"
+        refused = _refused(lambda: _heartbeat(store, A, lease_a["lease_id"], run_a))
+        assert (refused.code, refused.details["current_generation"]) == ("claim-superseded", 2)
 
-    def test_a_completion_on_an_expired_lease_is_refused_and_retained(self, store):
+    def test_a_report_on_a_stale_lease_is_retained_and_reactivation_restores_authority(self, store):
+        """INV-L1: a result submitted under a stale lease is kept as evidence
+        and cannot settle.  Expiry alone is not fatal to the claim
+        (agentops#253 decision 3): nobody took it over, so the holder
+        re-presents its claim, the same claim is reactivated (decision 5,
+        Case B), and its next report settles."""
         (item,) = _items(store)
         run = _run(store, A)
         lease = _claim(store, A, item, run, "expired-complete-a")["lease"]
-        _backdate(store, lease["lease_id"], 301)
-        assert _refused(lambda: _complete(store, A, lease["lease_id"], run, "expired-complete-c")).code == "lease-expired"
-        assert _read(store, item)["outcome_reports"][0]["reason_code"] == "lease-expired"
-        assert _status(store, item) == "active"
+        _backdate(store, lease["lease_id"], 601)
+        refused = _refused(lambda: _complete(store, A, lease["lease_id"], run, "expired-complete-c"))
+        assert (refused.code, refused.http_status) == ("lease-expired", 409)
+        (kept,) = _read(store, item)["outcome_reports"]
+        assert (kept["disposition"], kept["reason_code"], kept["decision_id"]) == ("rejected", "lease-expired", None)
+        assert _status(store, item) == "active" and pg.list_decisions(store, item) == []
+        resumed = _claim(store, A, item, run, "expired-complete-a")["lease"]
+        assert (resumed["lease_id"], resumed["generation"]) == (lease["lease_id"], 1)
+        result = _complete(store, A, lease["lease_id"], run, "expired-complete-c2")
+        assert (result["settled"], result["settlement_effect"]) == (True, "settled")
+        assert _status(store, item) == "done" and _reports(store, item) == 2
+
+    def test_after_reactivation_the_refused_reports_key_still_replays_its_refusal(self, store):
+        """The refused report kept its key: retrying it replays
+        lease-expired, even on the reactivated lease, and the message says
+        to report under a new key."""
+        (item,) = _items(store)
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, "expired-replay-a")["lease"]
+        _backdate(store, lease["lease_id"], 601)
+        first = _refused(lambda: _complete(store, A, lease["lease_id"], run, "expired-replay-c"))
+        assert first.code == "lease-expired" and "new idempotency key" in first.message
+        _claim(store, A, item, run, "expired-replay-a")
+        assert _refused(lambda: _complete(store, A, lease["lease_id"], run, "expired-replay-c")).code == (
+            "lease-expired"
+        )
+        assert _reports(store, item) == 1 and _status(store, item) == "active"
+        assert _complete(store, A, lease["lease_id"], run, "expired-replay-c2")["settled"] is True
 
     def test_a_strangers_completion_is_not_found_and_leaves_no_evidence(self, store):
         (item,) = _items(store)
@@ -583,28 +641,49 @@ class TestResume:
         assert len(pg.list_decisions(store, item)) == 1
         assert all(r["disposition"] != "rejected" for r in _read(store, item)["outcome_reports"])
 
-    def test_a_restarted_holder_reclaims_its_own_expired_lease(self, store):
+    def test_a_restarted_holder_reactivates_its_own_stale_lease_in_place(self, store):
+        """Case B (agentops#253 decision 5): nothing contested ownership, so
+        the same claim is reactivated -- same id, same generation -- and
+        nothing is superseded or taken over."""
         (item,) = _items(store)
         run = _run(store, A)
         first = _claim(store, A, item, run, "resume-expired-1")["lease"]
-        _backdate(store, first["lease_id"], 301)
+        _backdate(store, first["lease_id"], 601)
         resumed = _claim(store, A, item, run, "resume-expired-1")
         assert resumed["resumed"] is True and resumed["took_over"] is None
-        second = resumed["lease"]
-        assert second["lease_id"] != first["lease_id"] and second["takeover_of"] == first["lease_id"]
-        old = next(l for l in _read(store, item)["leases"] if l["lease_id"] == first["lease_id"])
-        assert (old["state"], old["end_reason"]) == ("superseded", "reclaimed-by-holder")
-        # The re-presented claim keeps resolving to the newest lease.
-        assert _claim(store, A, item, run, "resume-expired-1")["lease"]["lease_id"] == second["lease_id"]
-        assert _complete(store, A, second["lease_id"], run, "resume-expired-c")["settled"] is True
+        again = resumed["lease"]
+        assert (again["lease_id"], again["generation"], again["state"]) == (first["lease_id"], 1, "active")
+        assert again["takeover_of"] is None and again["acquired_at"] == first["acquired_at"]
+        assert again["heartbeat_at"] > first["heartbeat_at"]
+        state = _read(store, item)
+        assert len(state["leases"]) == 1 and state["current_lease"]["stale"] is False
+        assert _events(store, item, "work.claim.taken-over") == []
+        (event,) = _events(store, item, "lease.reactivated")
+        assert (event["lease_id"], event["generation"]) == (first["lease_id"], 1)
+        # A heartbeat on the reactivated lease works again.
+        assert _heartbeat(store, A, first["lease_id"], run)["lease"]["generation"] == 1
+        assert _complete(store, A, first["lease_id"], run, "resume-expired-c")["settled"] is True
+
+    def test_reactivation_is_refused_as_a_fresh_claim_would_be(self, store):
+        item, blocker = _items(store, 2)
+        run = _run(store, A)
+        first = _claim(store, A, item, run, "resume-blocked-1")["lease"]
+        _backdate(store, first["lease_id"], 601)
+        pg.add_dep(store, blocker, item)
+        assert _refused(lambda: _claim(store, A, item, run, "resume-blocked-1")).code == "work-blocked"
+        assert _read(store, item)["current_lease"]["stale"] is True
 
     def test_a_restarted_holder_whose_lease_was_taken_over_is_told_so(self, store):
         (item,) = _items(store)
         run = _run(store, A)
         first = _claim(store, A, item, run, "resume-lost-1")["lease"]
-        _backdate(store, first["lease_id"], 301)
+        _backdate(store, first["lease_id"], 601)
         _claim(store, B, item, _run(store, B), "resume-lost-b")
-        assert _refused(lambda: _claim(store, A, item, run, "resume-lost-1")).code == "lease-superseded"
+        refused = _refused(lambda: _claim(store, A, item, run, "resume-lost-1"))
+        assert (refused.code, refused.http_status) == ("claim-superseded", 409)
+        assert refused.details == {
+            "claim_id": first["lease_id"], "current_generation": 2, "reported_generation": 1,
+        }
 
     def test_resuming_after_settlement_returns_the_settled_lease(self, store):
         (item,) = _items(store)
@@ -833,7 +912,7 @@ class TestMaintenance:
         with pytest.raises(MaintenanceCapabilityError, match="live work leases"):
             self._activate(*attested)
         scoped.conn.rollback()
-        _backdate(scoped, lease["lease_id"], 301)
+        _backdate(scoped, lease["lease_id"], 601)
         self._activate(*attested)
 
 
@@ -976,11 +1055,11 @@ class TestReviewFindings:
         (item,) = _items(store)
         run = _run(store, A)
         lease = _claim(store, A, item, run, "malformed-a")["lease"]
-        _backdate(store, lease["lease_id"], 301)
+        _backdate(store, lease["lease_id"], 601)
         _claim(store, B, item, _run(store, B), "malformed-b")
         # The item's stored contract goes bad after the takeover.
         _legacy_bar(store, item, {"verification_profile": [1]})
-        assert _refused(lambda: _complete(store, A, lease["lease_id"], run, "malformed-c")).code == "lease-superseded"
+        assert _refused(lambda: _complete(store, A, lease["lease_id"], run, "malformed-c")).code == "claim-superseded"
         assert _reports(store, item) == 1
 
     def test_a_decision_made_elsewhere_ends_the_lease(self, store):
@@ -1022,14 +1101,23 @@ class TestReviewFindings:
         assert _status(store, item) == "active"
 
     def test_a_holder_retaking_its_own_stale_lease_with_a_new_key_is_not_a_takeover(self, store):
+        """A new claim key is a new claim: the old one is released, not
+        superseded (nobody displaced it), and no takeover is recorded."""
         (item,) = _items(store)
         run = _run(store, A)
         first = _claim(store, A, item, run, "self-retake-1")["lease"]
-        _backdate(store, first["lease_id"], 301)
+        _backdate(store, first["lease_id"], 601)
         again = _claim(store, A, item, run, "self-retake-2")
-        assert again["took_over"] is None
+        assert again["took_over"] is None and again["lease"]["takeover_of"] is None
+        assert again["lease"]["generation"] == 2
         old = next(l for l in _read(store, item)["leases"] if l["lease_id"] == first["lease_id"])
-        assert old["end_reason"] == "reclaimed-by-holder"
+        assert (old["state"], old["end_reason"], old["superseded_by"]) == ("released", "replaced-by-holder", None)
+        assert _events(store, item, "work.claim.taken-over") == []
+        (acquired,) = [e for e in _events(store, item, "lease.acquired") if e["lease_id"] == again["lease"]["lease_id"]]
+        assert acquired["replaces"] == first["lease_id"] and acquired["takeover_of"] is None
+        # The released claim's late report is kept and cannot settle.
+        refused = _refused(lambda: _complete(store, A, first["lease_id"], run, "self-retake-c"))
+        assert refused.code == "lease-ended" and _reports(store, item) == 1
 
     @pytest.mark.parametrize("payload,ok", [
         ({"text": "literal \\u0000 text"}, True),
@@ -1313,7 +1401,7 @@ class TestAwaitingReportStamping:
         assert settled["settled"] is True and settled["report"]["disposition"] == "settled"
         stale = self._report(store, item, report_a["report_id"])
         assert (stale["disposition"], stale["reason_code"], stale["decision_id"]) == (
-            "rejected", "lease-superseded", None,
+            "rejected", "claim-superseded", None,
         )
         assert stale["payload"] == {"result": "ok"}
         (decision,) = pg.list_decisions(store, item)
@@ -1326,7 +1414,7 @@ class TestAwaitingReportStamping:
         assert _status(store, item) == "done"
         stale = self._report(store, item, report_a["report_id"])
         assert (stale["disposition"], stale["reason_code"], stale["decision_id"]) == (
-            "rejected", "lease-superseded", None,
+            "rejected", "claim-superseded", None,
         )
 
     @pytest.mark.parametrize("route", _ACCEPT_ROUTES)
@@ -1378,3 +1466,157 @@ class TestAwaitingReportStamping:
         assert _refused(lambda: _claim(store, B, item, _run(store, B), f"zero-{profile}-b")).code == (
             "verification-unsupported"
         )
+
+
+def _report(store, context, lease_id: str, run_id: str, key: str, *, outcome="succeeded",
+            checks=None, payload=None, operation="work.lease.report-outcome-v1") -> dict:
+    return _invoke(store, operation, {
+        "lease_id": lease_id, "run_id": run_id, "outcome": outcome, "summary": "done",
+        "payload": payload if payload is not None else {"result": "ok"},
+        "checks": checks if checks is not None else [{"name": "tests", "status": "passed"}],
+        "idempotency_key": key,
+    }, context)
+
+
+class TestOperatorLeaseContract:
+    """agentops#2540: the shipped lease aligned with the operator's
+    normative contract on agentops#253, and its two invariants."""
+
+    def _taken_over(self, store, key: str):
+        (item,) = _items(store)
+        run_a = _run(store, A)
+        lease_a = _claim(store, A, item, run_a, f"{key}-a")["lease"]
+        _backdate(store, lease_a["lease_id"], 601)
+        run_b = _run(store, B)
+        lease_b = _claim(store, B, item, run_b, f"{key}-b")["lease"]
+        return item, run_a, lease_a, run_b, lease_b
+
+    @pytest.mark.parametrize("outcome", ["succeeded", "failed"])
+    def test_inv_l1_a_superseded_lease_keeps_its_result_but_not_its_authority(self, store, outcome):
+        """INV-L1: a lease grants authority, not ownership of the result."""
+        item, run_a, lease_a, _run_b, lease_b = self._taken_over(store, f"inv-l1-{outcome}")
+        late = {"diff": "a's work"}
+        refused = _refused(lambda: _report(store, A, lease_a["lease_id"], run_a, f"inv-l1-{outcome}-c",
+                                           outcome=outcome, payload=late))
+        assert refused.code == "claim-superseded"
+        (kept,) = _read(store, item)["outcome_reports"]
+        assert (kept["disposition"], kept["payload"], kept["decision_id"]) == ("rejected", late, None)
+        # Nothing settled or released: the item, its decisions and B's lease
+        # are exactly as they were.
+        assert _status(store, item) == "active" and pg.list_decisions(store, item) == []
+        current = _read(store, item)["current_lease"]
+        assert (current["lease_id"], current["state"]) == (lease_b["lease_id"], "active")
+
+    @pytest.mark.parametrize("outcome", ["succeeded", "failed"])
+    def test_inv_l1_a_stale_lease_nobody_took_keeps_its_result_but_cannot_settle(self, store, outcome):
+        """INV-L1 names stale leases too: a report under one is retained and
+        changes nothing, even though nobody took the claim over."""
+        (item,) = _items(store)
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, f"inv-l1-stale-{outcome}-a")["lease"]
+        _backdate(store, lease["lease_id"], 3600)
+        refused = _refused(lambda: _report(store, A, lease["lease_id"], run, f"inv-l1-stale-{outcome}-c",
+                                           outcome=outcome))
+        assert refused.code == "lease-expired" and refused.details is None
+        (kept,) = _read(store, item)["outcome_reports"]
+        assert (kept["disposition"], kept["reason_code"]) == ("rejected", "lease-expired")
+        assert _status(store, item) == "active" and pg.list_decisions(store, item) == []
+        current = _read(store, item)["current_lease"]
+        assert (current["lease_id"], current["state"], current["stale"]) == (lease["lease_id"], "active", True)
+
+    def test_inv_l2_the_same_key_restores_identity_never_superseded_authority(self, store):
+        """INV-L2: after a takeover, A's re-presented claim -- same key, same
+        arguments -- is refused, and stays refused even once B's lease is
+        stale in turn; it never revives A's lease."""
+        item, run_a, lease_a, _run_b, lease_b = self._taken_over(store, "inv-l2")
+        for _ in range(2):
+            refused = _refused(lambda: _claim(store, A, item, run_a, "inv-l2-a"))
+            assert refused.code == "claim-superseded" and refused.details["claim_id"] == lease_a["lease_id"]
+        _backdate(store, lease_b["lease_id"], 601)
+        assert _refused(lambda: _claim(store, A, item, run_a, "inv-l2-a")).code == "claim-superseded"
+        assert _refused(lambda: _heartbeat(store, A, lease_a["lease_id"], run_a)).code == "claim-superseded"
+        state = _read(store, item)
+        assert {l["lease_id"]: l["state"] for l in state["leases"]} == {
+            lease_a["lease_id"]: "superseded", lease_b["lease_id"]: "active",
+        }
+        # New authority comes only from asking again: a new claim, which is
+        # a takeover of B's stale lease in its own right (generation 3).
+        again = _claim(store, A, item, run_a, "inv-l2-a-new")
+        assert again["took_over"] == lease_b["lease_id"] and again["lease"]["generation"] == 3
+        assert len(_events(store, item, "work.claim.taken-over")) == 2
+
+    def test_report_outcome_and_its_deprecated_alias_are_one_operation(self, store):
+        """agentops#253 decision 4: the operation is report_outcome; the
+        shipped complete-v1 is a deprecated alias with the same input,
+        result and ledger, so one key is one report under either name."""
+        (item,) = _items(store)
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, "alias-claim-a")["lease"]["lease_id"]
+        first = _report(store, A, lease, run, "alias-report-c", outcome="failed")
+        assert (first["settled"], first["settlement_effect"]) == (False, "lease-released")
+        replayed = _report(store, A, lease, run, "alias-report-c", outcome="failed",
+                           operation="work.lease.complete-v1")
+        assert replayed["report"]["report_id"] == first["report"]["report_id"]
+        conflict = _refused(lambda: _report(store, A, lease, run, "alias-report-c", outcome="succeeded",
+                                            operation="work.lease.complete-v1"))
+        assert conflict.code == "idempotency-conflict"
+        assert _reports(store, item) == 1
+        new = _CONTRACTS["work.lease.report-outcome-v1"]
+        old = _CONTRACTS["work.lease.complete-v1"]
+        assert (old.input_schema, old.result_schema) == (new.input_schema, new.result_schema)
+        assert new.deprecation is None
+        assert old.deprecation == {
+            "deprecated": True, "replacement": "work.lease.report-outcome-v1", "sunset_at": None,
+        }
+
+    def test_the_catalog_publishes_the_alias_as_deprecated(self):
+        from sprintctl.vuoro_adapter import catalog_operation_specs
+
+        specs = {spec["name"]: spec for spec in catalog_operation_specs(resource_schema_available=True)}
+        assert specs["work.lease.complete-v1"]["deprecation"]["replacement"] == "work.lease.report-outcome-v1"
+        assert specs["work.lease.report-outcome-v1"]["deprecation"]["deprecated"] is False
+
+    @pytest.mark.parametrize("disposition,effect", [
+        ("settled", "settled"), ("recorded", "lease-released"), ("rejected", "none"),
+    ])
+    def test_every_report_says_what_it_did_to_the_work(self, store, disposition, effect):
+        (item,) = _items(store)
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, f"effect-{disposition}-a")["lease"]["lease_id"]
+        key = f"effect-{disposition}-c"
+        if disposition == "rejected":
+            refused = _refused(lambda: _report(store, A, lease, run, key, checks=[]))
+            assert refused.code == "verification-unsatisfied"
+            return
+        result = _report(store, A, lease, run, key, outcome="succeeded" if disposition == "settled" else "failed")
+        assert (result["report"]["disposition"], result["settlement_effect"]) == (disposition, effect)
+
+    def test_a_reactivation_is_refused_while_the_holders_report_waits(self, store):
+        """Case B does not bypass the awaiting protection (agentops#2528)."""
+        (item,) = _items(store)
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, "react-await-a")["lease"]
+        _legacy_bar(store, item, {"verification_profile": "human-authorized"}, lease["lease_id"])
+        assert _report(store, A, lease["lease_id"], run, "react-await-c")["report"]["disposition"] == (
+            "awaiting-verification"
+        )
+        # Case A (fresh) still just refreshes the holder's own heartbeat.
+        assert _claim(store, A, item, run, "react-await-a")["lease"]["lease_id"] == lease["lease_id"]
+        _backdate(store, lease["lease_id"], 601)
+        assert _refused(lambda: _claim(store, A, item, run, "react-await-a")).code == "work-awaiting-verification"
+        assert _events(store, item, "lease.reactivated") == []
+
+    def test_generations_count_claims_on_the_item(self, store):
+        """Generation 1, a takeover makes 2, the holder's own reactivation
+        keeps it, and ``work.lease.read-v1`` reports the same numbers."""
+        item, run_a, lease_a, run_b, lease_b = self._taken_over(store, "gen-count")
+        assert (lease_a["generation"], lease_b["generation"]) == (1, 2)
+        _backdate(store, lease_b["lease_id"], 601)
+        again = _claim(store, B, item, run_b, "gen-count-b")["lease"]
+        assert (again["lease_id"], again["generation"]) == (lease_b["lease_id"], 2)
+        state = _read(store, item)
+        assert {l["lease_id"]: l["generation"] for l in state["leases"]} == {
+            lease_a["lease_id"]: 1, lease_b["lease_id"]: 2,
+        }
+        assert state["current_lease"]["generation"] == 2
+

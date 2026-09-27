@@ -34,7 +34,7 @@ no migration or DDL.
 | Cutover evidence | `work.pilot.cutover-evidence` | key forbidden |
 | Runs (0.8.0, schema 17) | `work.run.register-v1`, `work.run.resolve-v1` | register requires an `idempotency_key` argument (write-tool ledger); resolve forbids one |
 | Run evidence and notes (0.8.0, schema 17) | `work.evidence.tail-v1`, `work.evidence.append-v1`, `work.session-note.write-v1` | tail forbids a key; append and note writes require an `idempotency_key` argument (write-tool ledger) |
-| Work leases (0.9.0, schema 18) | `work.lease.acquire-v1`, `work.lease.heartbeat-v1`, `work.lease.complete-v1`, `work.lease.read-v1` | acquire and complete require an `idempotency_key` argument (write-tool ledger); heartbeat and read forbid one |
+| Work leases (0.9.0, schema 18; report-outcome from 0.10.0) | `work.lease.acquire-v1`, `work.lease.heartbeat-v1`, `work.lease.report-outcome-v1` (and its deprecated alias `work.lease.complete-v1`), `work.lease.read-v1` | acquire and report-outcome require an `idempotency_key` argument (write-tool ledger); heartbeat and read forbid one |
 
 Every operation declares JSON Schema 2020-12 input and result contracts,
 authority, execution semantics, idempotency behavior and required client
@@ -142,7 +142,8 @@ evidence or ledger storage.
 
 Added in sprintctl 0.9.0 with remote schema 18 (agentops#2520, E2b). These
 operations back the Vuoro MCP edge's coordinate bucket (`work:claim`:
-`claim_work`, `heartbeat`, `complete_work`) and are served only by the
+`claim_work`, `heartbeat`, and `complete_work`, which becomes
+`report_outcome`) and are served only by the
 PostgreSQL authority. `work.lease.read-v1` needs `work:read`. The retired
 `work.claim.*` names stay retired; leases are a new surface, not their
 return.
@@ -163,52 +164,116 @@ unaffected, but the catalog metadata digest changes, so a pinned consumer
 `scripts/validate_released_catalog_composition.py` `EXPECTED_REVISION`)
 must re-pin when it adopts that release.
 
+The same release aligns the lease with the operator's lease contract
+(agentops#2540; semantics 1-5 in agentops
+`docs/plans/2026-09-27-backlog-ideation.md`, R4). No client consumed the
+lease operations yet, so this changes the `-v1` contracts in place rather
+than versioning them: `ttl_seconds` leaves the acquire input, leases gain
+`generation` and `heartbeat_interval_seconds`, `work.lease.report-outcome-v1`
+is added with `complete-v1` as its deprecated alias, report results gain
+`settlement_effect`, `lease-superseded` becomes `claim-superseded`, and
+the `lease.taken-over` event becomes `work.claim.taken-over`. The catalog
+digest changes with them.
+
+Contract names and the wire codes: the contract's `CLAIM_SUPERSEDED` is
+published as `claim-superseded`, in the kebab-case every other code uses
+(as the contract's `IDEMPOTENCY_KEY_REUSED` is `idempotency-conflict`).
+The same holds for the other contract names:
+
+| Contract | Published |
+|---|---|
+| `CLAIM_SUPERSEDED` | code `claim-superseded` (409), `details: {claim_id, current_generation, reported_generation}` |
+| event `work.claim.taken_over`, `reason = stale_lease` | event `work.claim.taken-over`, `reason: stale-lease` |
+| `outcome.reported` with `disposition = stale`, `settlement_effect = none` | event `lease.outcome-reported`; the report is `disposition: rejected` with a `reason_code` (`claim-superseded`, `lease-expired`, ...), and nothing settles |
+| `report_outcome` | `work.lease.report-outcome-v1`, result `settlement_effect` |
+| `ttl` 10 min, `heartbeat_interval` 2 min | `ttl_seconds` 600, `heartbeat_interval_seconds` derived as TTL/5 (not configured separately) |
+
+A reactivated lease keeps the `ttl_seconds` it was acquired with.
+A 0.9.0 `complete_work` ledger key retried under `report_outcome` is
+`idempotency-conflict`, not a replay: the ledger digest includes the tool
+name. No client used it.
+A **claim** is a lease: `claim_id` is the `lease_id`. Its **generation**
+is the lease's position among the item's leases in acquisition order
+(1 for the first); it is derived, not stored, so it needs no migration.
+
 This authority evaluates a lease whenever someone calls, against its own
 clock. Nothing expires, sweeps, schedules or retries in the background
-(TS-1). A lease is stale once `heartbeat_at + ttl_seconds` has passed. The
-TTL is 300 seconds unless the runtime sets `SPRINTCTL_LEASE_TTL_SECONDS` (a
-tenant runtime serves one workspace, so this is the per-workspace setting)
-or the claim names its own, from 30 to 3600.
+(TS-1). A lease is stale once `heartbeat_at + ttl_seconds` has passed.
+The TTL is authority configuration, never the caller's: 600 seconds
+unless the runtime sets `SPRINTCTL_LEASE_TTL_SECONDS` (clamped to 30-3600;
+a malformed value falls back to 600). A tenant runtime serves one
+workspace, so that is also the per-workspace setting. Every lease
+advertises `heartbeat_interval_seconds`, a fifth of its TTL (120 s by
+default). A claim naming `ttl_seconds` is `invalid-arguments` (422).
 
 - `work.lease.acquire-v1` claims an item: missing work is `work-not-found`
   (404); settled work is `work-settled`; a `blocked` item or one waiting on
   an unsettled blocker is `work-blocked`; any claim while a maintenance
   capability is active is `maintenance-active`; an item with an outcome
   report awaiting its verifier's decision is `work-awaiting-verification`,
-  whoever asks (its own holder resuming included) and however fresh or
-  stale the lease; an item whose current lease is still fresh is
+  whoever asks and however fresh or stale the lease (its holder
+  re-presenting its own claim included, except that a still-fresh lease
+  just has its heartbeat refreshed); an item whose current lease is still fresh is
   `lease-held`; an item whose stored bar needs a verifier this authority
   cannot check yet is `verification-unsupported` (all 409). They are
   checked in that order, so a claim against a fresh lease answers
   `work-awaiting-verification` if a report waits and `lease-held` even if
-  the stored bar is unsupported. A stale lease is superseded:
-  by anyone else it is a takeover, recorded on both leases
-  (`superseded_by`, `takeover_of`) and as a `lease.taken-over` event with
-  the previous holder, run and last heartbeat. A pending item becomes
-  active. The same key with the same arguments re-presents the claim and
-  is evaluated again, not replayed: a fresh lease is the same lease with
-  its heartbeat refreshed; the holder's own stale lease, if nobody took it
-  over, is reclaimed under a new lease id; a lease taken over is
-  `lease-superseded`; a settled or released lease is returned as it is.
-  This is how a restarted worker resumes (`resumed: true`).
+  the stored bar is unsupported. Another binding's stale lease is taken
+  over on demand, with
+  no operator reassignment: in one transaction it becomes `superseded`,
+  both leases record it (`superseded_by`, `takeover_of`), the new lease is
+  the next generation, and a `work.claim.taken-over` event names
+  `previous_claim_id`, `previous_principal`, `previous_generation`,
+  `previous_last_heartbeat`, `new_claim_id`, `new_principal` and
+  `reason: stale-lease`. The same binding claiming under a new key
+  replaces its own stale lease: the old one is `released`
+  (`replaced-by-holder`), not superseded, and no takeover is recorded. A
+  pending item becomes active. The same key with the same arguments
+  re-presents the claim and is evaluated again, not replayed; this is how
+  a restarted worker resumes (`resumed: true`), and idempotency restores
+  the claim's identity, never superseded authority (INV-L2):
+  - a fresh lease is the same lease with its heartbeat refreshed;
+  - the holder's own stale lease, if nobody took it over, is reactivated
+    in place: the same lease id and generation, heartbeat refreshed, and a
+    `lease.reactivated` event. It is refused as a fresh claim would be
+    (`maintenance-active`, `work-blocked`, `work-awaiting-verification`);
+  - a lease taken over is `claim-superseded`, however stale the new
+    holder's lease is by then;
+  - a settled or released lease is returned as it is.
 - `work.lease.heartbeat-v1` refreshes the caller's lease. An unknown lease,
   or anyone else's, is `lease-not-found` (404, one code for both). A
-  superseded lease is `lease-superseded`, an ended one `lease-ended`, an
+  superseded lease is `claim-superseded`, an ended one `lease-ended`, an
   expired one `lease-expired` even if nobody took it over, and a lease on
-  an item moved off `active` `work-not-active` (409). An expired lease id
-  never comes back; re-present the claim instead. Any terminal decision on
+  an item moved off `active` `work-not-active` (409). A holder whose lease
+  went stale re-presents its claim to reactivate it instead. Any terminal decision on
   the item, whoever records it, ends its active lease (`state=settled`,
   `end_reason=item-<resolution>`).
-- `work.lease.complete-v1` is an outcome report, not a settlement. The
-  report (outcome, summary, payload up to 64 KiB, checks) is always stored
-  on the item, and this authority decides what it means:
-  - `rejected`: the lease is superseded, ended or expired, the item is no
+- `work.lease.report-outcome-v1` is an outcome report, not a settlement:
+  the worker reports and the record owner settles. `work.lease.complete-v1`
+  is its deprecated alias (catalog `deprecation.replacement`), with the
+  same input, result and ledger, so one idempotency key is one report
+  under either name. The report (outcome, summary, payload up to 64 KiB,
+  checks) is always stored on the item, and this authority decides what it
+  means. The result's `settlement_effect` says what the report did to the
+  work: `settled`, `lease-released`, `awaiting-verification` or `none`.
+  - `rejected`: the lease was taken over (`claim-superseded`), is stale
+    (`lease-expired`; a result submitted under a stale or superseded lease
+    is kept as evidence but never settles work, INV-L1, and the holder of a
+    stale lease nobody took over reactivates it and reports again, under
+    a **new** idempotency key: the refused report keeps its key, so
+    retrying that key replays `lease-expired`) or
+    ended, the item is no
     longer active (`work-not-active`), a succeeded outcome arrives while the
     item waits on an unsettled blocker (`work-blocked`; blockers are
     evaluated at claim and again at settlement), or a succeeded outcome does
     not satisfy the verification profile (`verification-unsatisfied`, 422). The operation fails with that code
     after the report is committed, so the late payload stays as evidence
-    and the item does not change.
+    and the item does not change. A `claim-superseded` refusal, from any
+    lease operation, carries `details`: `{claim_id, current_generation,
+    reported_generation}`. The adapter hands `details` to the service's
+    rejection when the service's error type accepts them. Released
+    vuoro-service (0.1.77) does not yet, so there the generations are in
+    the message, and `work.lease.read-v1` lists every lease's `generation`.
   - `settled`: a succeeded outcome whose bar needs nothing beyond
     `checks`: no reported check failed, every required check was reported
     passed, and, if the bar includes `checks`, at least one check was
@@ -227,7 +292,7 @@ or the claim names its own, from 30 to 3600.
     `work.decision.record`, `done` as an alias, or an authority outbox
     command, whoever records it -- is stamped on every waiting report of
     the item: a report whose lease was since superseded becomes `rejected`
-    with `lease-superseded` (a superseded lease never settles work); on an
+    with `claim-superseded` (a superseded lease never settles work); on an
     `accept`, a report pinned to a verifier role, verifier identity or
     human (today every waiting report is) becomes `rejected` with
     `decided-accept-unverified`,

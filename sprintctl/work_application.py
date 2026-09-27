@@ -22,7 +22,7 @@ from . import volatile_context as _volatile_context
 #: free-form string, so one caller's tool name cannot collide with another's
 #: ledger partition by typo or by construction.
 _IDEMPOTENT_RECORD_TOOLS = frozenset({
-    "register_run", "append_evidence", "write_session_note", "claim_work", "complete_work",
+    "register_run", "append_evidence", "write_session_note", "claim_work", "report_outcome",
 })
 
 
@@ -78,38 +78,37 @@ def _request_digest(tool: str, arguments: dict, *, exclude: frozenset[str] = fro
     return hashlib.sha256(f"{tool}\n{canonical}".encode()).hexdigest()
 
 
-#: The lease TTL when a claim names none: SPRINTCTL_LEASE_TTL_SECONDS, else
-#: 300.  A tenant runtime serves one workspace, so the environment variable
-#: is the per-workspace setting; a claim may ask for its own within bounds.
-DEFAULT_LEASE_TTL_SECONDS = 300
+#: The lease TTL is authority configuration, never the caller's
+#: (agentops#253 decision 1): SPRINTCTL_LEASE_TTL_SECONDS, else 600 s.  A
+#: tenant runtime serves one workspace, so the environment variable is the
+#: per-workspace setting.
+DEFAULT_LEASE_TTL_SECONDS = 600
 _MAX_OUTCOME_SUMMARY = 4000
 _MAX_OUTCOME_PAYLOAD_BYTES = 64 * 1024
 _MAX_OUTCOME_CHECKS = 64
 
 
-def _lease_ttl(value: Any) -> int:
-    """The TTL a claim asked for, or the configured default, within bounds."""
+#: What an outcome report did to the work (agentops#253 decision 4): the
+#: worker reports, the authority settles, and says so.
+_SETTLEMENT_EFFECTS = {
+    "settled": "settled",
+    "recorded": "lease-released",
+    "awaiting-verification": "awaiting-verification",
+    "rejected": "none",
+}
+
+
+def _lease_ttl() -> int:
+    """The authority's lease TTL: the configured value within bounds, or
+    the default (a malformed value falls back to the default)."""
     from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
 
-    if value is None:
-        raw = os.environ.get("SPRINTCTL_LEASE_TTL_SECONDS")
-        try:
-            value = int(raw) if raw else DEFAULT_LEASE_TTL_SECONDS
-        except ValueError:
-            value = DEFAULT_LEASE_TTL_SECONDS
-        return min(max(value, _pg.LEASE_TTL_MIN_SECONDS), _pg.LEASE_TTL_MAX_SECONDS)
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, int)
-        or not _pg.LEASE_TTL_MIN_SECONDS <= value <= _pg.LEASE_TTL_MAX_SECONDS
-    ):
-        raise ApplicationRejection(
-            "invalid-arguments",
-            f"ttl_seconds must be an integer from {_pg.LEASE_TTL_MIN_SECONDS} "
-            f"to {_pg.LEASE_TTL_MAX_SECONDS}",
-            422,
-        )
-    return value
+    raw = os.environ.get("SPRINTCTL_LEASE_TTL_SECONDS")
+    try:
+        value = int(raw) if raw else DEFAULT_LEASE_TTL_SECONDS
+    except ValueError:
+        value = DEFAULT_LEASE_TTL_SECONDS
+    return min(max(value, _pg.LEASE_TTL_MIN_SECONDS), _pg.LEASE_TTL_MAX_SECONDS)
 
 
 _IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
@@ -559,6 +558,9 @@ class WorkApplication:
             "work.session-note.write-v1": target._session_note_write,
             "work.lease.acquire-v1": target._claim_acquire,
             "work.lease.heartbeat-v1": target._claim_heartbeat,
+            "work.lease.report-outcome-v1": target._claim_complete,
+            # Deprecated alias (agentops#2540): the same operation, ledger
+            # and digest, so a key used under either name is one report.
             "work.lease.complete-v1": target._claim_complete,
             "work.lease.read-v1": target._claim_read,
         }
@@ -1732,7 +1734,7 @@ class WorkApplication:
 
     def _lease_refused(self, exc: Any) -> ApplicationRejection:
         status = {"lease-not-found": 404, "work-not-found": 404}.get(exc.code, 409)
-        return ApplicationRejection(exc.code, str(exc), status)
+        return ApplicationRejection(exc.code, str(exc), status, details=exc.details)
 
     def _claim_binding(self, context: InvocationContext) -> dict[str, Any]:
         principal_id, workspace_id = _identity_binding(context)
@@ -1747,7 +1749,16 @@ class WorkApplication:
     def _claim_acquire(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         item_id = _positive_int(arguments.get("item_id"), "item_id")
         run_id = _required_text(arguments.get("run_id"), "run_id")
-        ttl_seconds = _lease_ttl(arguments.get("ttl_seconds"))
+        if "ttl_seconds" in arguments:
+            # Removed from the v1 input while v1 had no consumer
+            # (agentops#2540): the TTL is the authority's, not the caller's.
+            raise ApplicationRejection(
+                "invalid-arguments",
+                "ttl_seconds is not an argument: the authority sets the lease TTL "
+                "and advertises heartbeat_interval_seconds on the lease",
+                422,
+            )
+        ttl_seconds = _lease_ttl()
         key = _idempotency_key(arguments.get("idempotency_key"))
         self._require_owned_run(run_id, context)
         binding = self._claim_binding(context)
@@ -1767,7 +1778,7 @@ class WorkApplication:
                 raise self._lease_refused(exc) from exc
             return {"repo_id": self.repo_id, **claimed}
 
-        # The digest covers the item, the run, the TTL and the grant binding:
+        # The digest covers the item, the run and the grant binding:
         # the same key for another item, run or grant is a conflict, never a
         # resume of a different claim.
         result = self._idempotent_write(
@@ -1782,7 +1793,7 @@ class WorkApplication:
         try:
             resumed = self.backend.resume_lease(
                 self.store, work_item_id=item_id, run_id=run_id, claim_key=key,
-                ttl_seconds=ttl_seconds, actor=actor, **binding,
+                actor=actor, **binding,
             )
         except _pg.LeaseRefused as exc:
             raise self._lease_refused(exc) from exc
@@ -1833,10 +1844,13 @@ class WorkApplication:
                 "repo_id": self.repo_id,
                 "report": report,
                 "settled": report["disposition"] == "settled",
+                "settlement_effect": _SETTLEMENT_EFFECTS[report["disposition"]],
             }
 
+        # One ledger tool for report-outcome-v1 and its deprecated alias
+        # complete-v1: the operator-facing name is report_outcome.
         result = self._idempotent_write(
-            context, "complete_work",
+            context, "report_outcome",
             {**arguments, "summary": summary, "payload": payload, "checks": checks},
             effect,
             digest_binding={"client_id": binding["client_id"], "grant_id": binding["grant_id"]},
@@ -1851,6 +1865,7 @@ class WorkApplication:
                 f"{detail}; the outcome was retained as evidence "
                 f"(report {report['report_id']}) and nothing was settled",
                 422 if report["reason_code"] == "verification-unsatisfied" else 409,
+                details=report.get("details"),
             )
         return result
 
