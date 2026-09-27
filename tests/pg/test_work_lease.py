@@ -9,6 +9,7 @@ moved by backdating ``heartbeat_at`` in the database, never by sleeping.
 """
 from __future__ import annotations
 
+import json
 import threading
 import time
 import uuid
@@ -171,6 +172,36 @@ def _events(store, item_id: int, event_type: str) -> list[dict]:
 
 def _status(store, item_id: int) -> str:
     return pg.get_work_item(store, item_id)["status"]
+
+
+def _legacy_bar(store, item_id: int, contract: dict, lease_id: str | None = None) -> None:
+    """Store an acceptance contract the way a pre-agentops#2539 authority
+    could (write-time validation now refuses it), and optionally pin its
+    profile on a lease as 0.9.0 would have: the bar a live tenant may hold."""
+    reservation = pg.reserve(
+        store, item_id, actor="operator", session_id=f"legacy-{uuid.uuid4().hex[:8]}",
+        role="execution", acceptance_contract=None,
+    )
+    pg.release_reservation(store, reservation["id"])
+    with store.conn.cursor() as cur:
+        cur.execute("ALTER TABLE work_release DISABLE TRIGGER USER")
+        cur.execute(
+            "UPDATE work_release SET acceptance_contract = %s::jsonb "
+            "WHERE repo_id = %s AND work_item_id = %s",
+            (json.dumps(contract), store.repo_id, item_id),
+        )
+        cur.execute("ALTER TABLE work_release ENABLE TRIGGER USER")
+        if lease_id is not None:
+            cur.execute(
+                "UPDATE work_lease SET verification_profile = %s, required_checks = %s::jsonb "
+                "WHERE repo_id = %s AND lease_id = %s",
+                (
+                    contract.get("verification_profile", "checked"),
+                    json.dumps(sorted(contract.get("evidence_obligations", []))),
+                    store.repo_id, lease_id,
+                ),
+            )
+    store.conn.commit()
 
 
 def _sibling(store) -> pg.PgStore:
@@ -625,7 +656,7 @@ class TestVerification:
         run = _run(store, A)
         lease = _claim(store, A, item, run, "verify-release-a")["lease"]["lease_id"]
         assert _read(store, item)["verification"] == {
-            "profile": "checked", "required_checks": ["review", "tests"],
+            "profile": "checked", "requirements": ["checks"], "required_checks": ["review", "tests"],
         }
         refused = _refused(lambda: _complete(store, A, lease, run, "verify-release-c1"))
         assert refused.code == "verification-unsatisfied" and "review" in refused.message
@@ -653,17 +684,16 @@ class TestVerification:
 
     @pytest.mark.parametrize("profile", ["role-separated", "identity-separated", "human-authorized"])
     def test_a_profile_needing_a_verifier_waits_for_one(self, store, profile):
+        """Only a lease pinned before agentops#2539 (or a stored contract)
+        can carry such a profile now; its report waits and never settles."""
         (item,) = _items(store)
-        reservation = pg.reserve(
-            store, item, actor="operator", session_id=f"{profile}-session", role="execution",
-            acceptance_contract={"verification_profile": profile},
-        )
-        pg.release_reservation(store, reservation["id"])
         run = _run(store, A)
         lease = _claim(store, A, item, run, f"verify-{profile}-a")["lease"]["lease_id"]
+        _legacy_bar(store, item, {"verification_profile": profile}, lease)
         result = _complete(store, A, lease, run, f"verify-{profile}-c")
         assert result["settled"] is False
         assert result["report"]["disposition"] == "awaiting-verification"
+        assert result["report"]["verification_profile"] == profile
         assert _status(store, item) == "active" and pg.list_decisions(store, item) == []
         assert _lease_rows(store, item, "active") == 1
 
@@ -897,20 +927,20 @@ class TestReviewFindings:
         pg.release_reservation(store, reservation["id"])
         return reservation
 
-    def test_a_later_default_reservation_cannot_lower_the_bar(self, store):
+    def test_a_later_weaker_reservation_cannot_lower_the_bar(self, store):
         (item,) = _items(store)
-        self._freeze(store, item, {
-            "verification_profile": "human-authorized", "evidence_obligations": ["security-review"],
-        }, "strict-session")
+        self._freeze(store, item, {"evidence_obligations": ["security-review"]}, "strict-session")
         run = _run(store, A)
         lease = _claim(store, A, item, run, "bar-lower-a")["lease"]
-        assert lease["verification"] == {"profile": "human-authorized", "required_checks": ["security-review"]}
-        # Anyone with work:write freezes a default contract mid-lease.
-        self._freeze(store, item, None, "downgrade-session")
-        assert _read(store, item)["verification"]["profile"] == "human-authorized"
-        result = _complete(store, A, lease["lease_id"], run, "bar-lower-c",
-                           checks=[{"name": "security-review", "status": "passed"}])
-        assert result["report"]["disposition"] == "awaiting-verification"
+        assert lease["verification"] == {
+            "profile": "checked", "requirements": ["checks"], "required_checks": ["security-review"],
+        }
+        # Anyone with work:write freezes a weaker contract mid-lease; the
+        # bars combine by union, so it adds nothing and removes nothing.
+        self._freeze(store, item, {"verification_profile": "self-reported"}, "downgrade-session")
+        assert _read(store, item)["verification"] == lease["verification"]
+        refused = _refused(lambda: _complete(store, A, lease["lease_id"], run, "bar-lower-c", checks=[]))
+        assert refused.code == "verification-unsatisfied" and "security-review" in refused.message
         assert _status(store, item) == "active"
 
     def test_the_bar_pinned_at_claim_holds_even_if_releases_change_later(self, store):
@@ -921,7 +951,9 @@ class TestReviewFindings:
         # A revise decision leaves the item with no current release, so its
         # present bar is the default; the lease keeps the one it was given.
         pg.record_decision(store, item, "revise", actor="operator")
-        assert _read(store, item)["verification"] == {"profile": "checked", "required_checks": []}
+        assert _read(store, item)["verification"] == {
+            "profile": "checked", "requirements": ["checks"], "required_checks": [],
+        }
         refused = _refused(lambda: _complete(store, A, lease["lease_id"], run, "bar-pinned-c"))
         assert refused.code == "verification-unsatisfied" and "review" in refused.message
 
@@ -934,25 +966,20 @@ class TestReviewFindings:
     def test_a_malformed_stored_profile_fails_closed(self):
         """Rows written before validation existed never raise."""
         config = pg._contract_verification({"verification_profile": ["checked"], "evidence_obligations": "x"})
-        assert config == {"profile": "human-authorized", "required_checks": []}
+        assert config == {
+            "profile": "human-authorized", "requirements": ["human-authorization"], "required_checks": [],
+        }
         assert pg._contract_verification('{"verification_profile": "Checked"}')["profile"] == "human-authorized"
         assert pg._contract_verification("not json")["profile"] == "checked"
 
     def test_a_late_report_is_kept_whatever_the_stored_profile(self, store):
         (item,) = _items(store)
-        self._freeze(store, item, None, "malformed-session")
         run = _run(store, A)
         lease = _claim(store, A, item, run, "malformed-a")["lease"]
-        with store.conn.cursor() as cur:
-            cur.execute("ALTER TABLE work_release DISABLE TRIGGER USER")
-            cur.execute(
-                "UPDATE work_release SET acceptance_contract = '{\"verification_profile\": [1]}'::jsonb "
-                "WHERE repo_id = %s AND work_item_id = %s", (store.repo_id, item),
-            )
-            cur.execute("ALTER TABLE work_release ENABLE TRIGGER USER")
-        store.conn.commit()
         _backdate(store, lease["lease_id"], 301)
         _claim(store, B, item, _run(store, B), "malformed-b")
+        # The item's stored contract goes bad after the takeover.
+        _legacy_bar(store, item, {"verification_profile": [1]})
         assert _refused(lambda: _complete(store, A, lease["lease_id"], run, "malformed-c")).code == "lease-superseded"
         assert _reports(store, item) == 1
 
@@ -969,9 +996,9 @@ class TestReviewFindings:
 
     def test_a_verifier_decision_on_an_awaiting_report_ends_the_lease(self, store):
         (item,) = _items(store)
-        self._freeze(store, item, {"verification_profile": "human-authorized"}, "verifier-session")
         run = _run(store, A)
         lease = _claim(store, A, item, run, "verifier-a")["lease"]
+        _legacy_bar(store, item, {"verification_profile": "human-authorized"}, lease["lease_id"])
         _complete(store, A, lease["lease_id"], run, "verifier-c")
         pg.record_decision(store, item, "accept", actor="human-verifier")
         assert _read(store, item)["current_lease"] is None
@@ -1051,3 +1078,303 @@ class TestReviewFindings:
                 cur.execute("SET search_path TO public")
                 cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
             store.conn.commit()
+
+
+class TestVerificationProfilesAsRequirementSets:
+    """agentops#2539 (with #2528 and #2529 n2): profiles are sets of
+    requirements combined by union; the ones nothing enforces yet are
+    refused when a contract is written and fail closed when stored."""
+
+    @staticmethod
+    def _freeze(store, item, contract):
+        reservation = pg.reserve(
+            store, item, actor="operator", session_id=f"s-{uuid.uuid4().hex[:8]}",
+            role="execution", acceptance_contract=contract,
+        )
+        pg.release_reservation(store, reservation["id"])
+        return reservation
+
+    @pytest.mark.parametrize("profile", ["role-separated", "identity-separated", "human-authorized"])
+    def test_an_unenforced_profile_is_refused_when_the_contract_is_written(self, store, profile):
+        (item,) = _items(store)
+        with pytest.raises(ValueError, match="not enforced yet"):
+            self._freeze(store, item, {"verification_profile": profile})
+        assert pg.current_release(store, item) is None
+
+    def test_self_reported_cannot_carry_evidence_obligations(self, store):
+        (item,) = _items(store)
+        with pytest.raises(ValueError, match="self-reported"):
+            self._freeze(store, item, {"verification_profile": "self-reported", "evidence_obligations": ["tests"]})
+
+    def test_self_reported_does_not_settle_with_a_failed_check(self, store):
+        (item,) = _items(store)
+        self._freeze(store, item, {"verification_profile": "self-reported"})
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, "self-failed-a")["lease"]["lease_id"]
+        checks = [{"name": "tests", "status": "failed"}]
+        refused = _refused(lambda: _complete(store, A, lease, run, "self-failed-c", checks=checks))
+        assert (refused.code, refused.http_status) == ("verification-unsatisfied", 422)
+        assert _status(store, item) == "active" and pg.list_decisions(store, item) == []
+        assert _complete(store, A, lease, run, "self-failed-c2", checks=[])["settled"] is True
+
+    def test_a_stored_self_reported_contract_with_obligations_still_needs_them(self, store):
+        (item,) = _items(store)
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, "self-oblig-a")["lease"]["lease_id"]
+        _legacy_bar(store, item, {"verification_profile": "self-reported", "evidence_obligations": ["tests"]}, lease)
+        refused = _refused(lambda: _complete(store, A, lease, run, "self-oblig-c", checks=[]))
+        assert refused.code == "verification-unsatisfied" and "tests" in refused.message
+
+    def test_profiles_combine_by_union_not_by_rank(self):
+        def bar(*profiles):
+            return pg._combined(*(pg._verification(p, []) for p in profiles))
+
+        assert bar("self-reported", "checked") == {
+            "profile": "checked", "requirements": ["checks"], "required_checks": [],
+        }
+        # No ladder: a human's authorization does not imply checks, nor a
+        # verifier role a separate identity.
+        assert bar("checked", "human-authorized") == {
+            "profile": "checked+human-authorized",
+            "requirements": ["checks", "human-authorization"], "required_checks": [],
+        }
+        assert bar("role-separated", "identity-separated")["requirements"] == [
+            "checks", "verifier-identity", "verifier-role",
+        ]
+        assert bar("role-separated", "checked")["profile"] == "role-separated"
+        combined = bar("role-separated", "human-authorized")
+        assert combined["profile"] == "role-separated+human-authorized"
+        # A combined name read back from a lease row means the same bar.
+        assert pg._verification(combined["profile"], [])["requirements"] == combined["requirements"]
+        assert pg._verification("checked+bogus", [])["profile"] == "human-authorized"
+
+    def test_union_over_releases_keeps_every_required_check(self, store):
+        (item,) = _items(store)
+        self._freeze(store, item, {"verification_profile": "self-reported"})
+        self._freeze(store, item, {"evidence_obligations": ["lint"]})
+        self._freeze(store, item, {"evidence_obligations": ["tests"]})
+        assert _read(store, item)["verification"] == {
+            "profile": "checked", "requirements": ["checks"], "required_checks": ["lint", "tests"],
+        }
+
+    @pytest.mark.parametrize("profile", ["role-separated", "identity-separated", "human-authorized", "Checked", 7])
+    def test_a_stored_unenforced_or_malformed_profile_refuses_claims(self, store, profile):
+        """Fail closed: a contract stored before the refusal existed cannot
+        be leased, rather than being leased under a bar nothing checks."""
+        (item,) = _items(store)
+        _legacy_bar(store, item, {"verification_profile": profile})
+        refused = _refused(lambda: _claim(store, A, item, _run(store, A), "stored-unenforced-a"))
+        assert (refused.code, refused.http_status) == ("verification-unsupported", 409)
+        assert _lease_rows(store, item) == 0 and _status(store, item) == "pending"
+
+    def _awaiting(self, store, key: str):
+        (item,) = _items(store)
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, f"{key}-a")["lease"]
+        _legacy_bar(store, item, {"verification_profile": "human-authorized"}, lease["lease_id"])
+        report = _complete(store, A, lease["lease_id"], run, f"{key}-c")["report"]
+        assert report["disposition"] == "awaiting-verification"
+        return item, run, lease, report
+
+    def test_an_awaiting_report_protects_the_item_from_takeover(self, store):
+        item, _run_id, lease, report = self._awaiting(store, "await-protect")
+        _backdate(store, lease["lease_id"], 3601)
+        refused = _refused(lambda: _claim(store, B, item, _run(store, B), "await-protect-b"))
+        assert refused.code == "work-awaiting-verification" and report["report_id"] in refused.message
+        state = _read(store, item)
+        assert state["current_lease"]["lease_id"] == lease["lease_id"]
+        assert [r["disposition"] for r in state["outcome_reports"]] == ["awaiting-verification"]
+
+    def test_an_accept_never_attests_a_verifier_nothing_checked(self, store):
+        """No decision path checks a verifier role, identity or human yet,
+        so an ``accept`` ends the wait without the report claiming it was
+        verified (review finding 2 on sprintctl#99)."""
+        item, _run_id, _lease, report = self._awaiting(store, "await-accept")
+        pg.record_decision(store, item, "accept", actor="human-verifier")
+        (stamped,) = _read(store, item)["outcome_reports"]
+        assert (stamped["report_id"], stamped["disposition"], stamped["reason_code"]) == (
+            report["report_id"], "rejected", "decided-accept-unverified",
+        )
+        assert stamped["decision_id"] is None and stamped["payload"] == {"result": "ok"}
+        assert _status(store, item) == "done"
+
+    @pytest.mark.parametrize("kind", ["reject", "withdraw", "revise", "supersede"])
+    def test_any_other_decision_ends_the_wait_and_keeps_the_report(self, store, kind):
+        item, _run_id, lease, report = self._awaiting(store, f"await-{kind}")
+        extra = {}
+        if kind == "supersede":
+            (replacement,) = _items(store)
+            extra = {"superseded_by_item_id": replacement}
+        pg.record_decision(store, item, kind, actor="human-verifier", **extra)
+        (stamped,) = _read(store, item)["outcome_reports"]
+        assert (stamped["report_id"], stamped["disposition"], stamped["reason_code"]) == (
+            report["report_id"], "rejected", f"decided-{kind}",
+        )
+        assert stamped["decision_id"] is None and stamped["payload"] == {"result": "ok"}
+        if kind == "revise":
+            # Sent back, not closed: the wait is over, so the item can be
+            # claimed again once the holder's lease goes stale.
+            _backdate(store, lease["lease_id"], 3601)
+            assert _claim(store, B, item, _run(store, B), "await-revise-b")["took_over"] == lease["lease_id"]
+
+
+def _served_context(actor: str, key: str):
+    identity = SimpleNamespace(
+        actor=actor, environment="vuoro-dev", authorities=frozenset(),
+        authorizes_repo=lambda repo_id: True,
+    )
+    return SimpleNamespace(
+        identity=identity, request_id="request-1", basis_revision=None,
+        catalog_revision="catalog-1", idempotency_requirement="required",
+        idempotency_key=key,
+    )
+
+
+def _outbox_decision(store, tmp_path, item_id: int, route: str, actor: str) -> None:
+    """Accept through an authority outbox command: ``item.done`` (the old
+    client's alias) or ``decision.record`` (authority.py's two paths)."""
+    from sprintctl import authority, outbox
+    from tests.pg._shared import _append_authority_command
+
+    item = pg.get_work_item(store, item_id)
+    producer = outbox.open_outbox(tmp_path / f"{route}-{uuid.uuid4().hex[:8]}.db")
+    try:
+        if route == "outbox-item-done":
+            command = _append_authority_command(
+                producer, store, record_type="item.done", aggregate_type="item",
+                aggregate_uuid=item["aggregate_uuid"],
+                basis_revision=authority.item_revision(item),
+                payload={"to_status": "done"}, actor=actor,
+            )
+        else:
+            command = _append_authority_command(
+                producer, store, record_type="decision.record", aggregate_type="item",
+                aggregate_uuid=item["aggregate_uuid"],
+                basis_revision=authority.item_revision(item),
+                payload={"kind": "accept", "rationale": "verified", "evidence_digests": ["a" * 64]},
+                actor=actor,
+            )
+        assert authority.arbitrate_command(store, command).accepted is True
+    finally:
+        producer.close()
+
+
+def _accept(store, tmp_path, item_id: int, route: str, actor: str) -> None:
+    if route == "record-decision":
+        pg.record_decision(store, item_id, "accept", actor=actor)
+    elif route == "set-status-done":
+        pg.set_work_item_status(store, item_id, "done", actor=actor)
+    elif route == "served-accept":
+        _app(store).invoke("work.decision.record", {
+            "item_id": item_id, "kind": "accept", "rationale": "verified",
+            "evidence_digests": ["ab" * 32],
+        }, _served_context(actor, uuid.uuid4().hex))
+    else:
+        _outbox_decision(store, tmp_path, item_id, route, actor)
+
+
+_ACCEPT_ROUTES = ["record-decision", "set-status-done", "served-accept", "outbox-item-done", "outbox-decision-record"]
+
+
+class TestAwaitingReportStamping:
+    """Review findings 1-4 on sprintctl#99: every decision path stamps an
+    awaiting report, and none of them lets a report settle work it had no
+    authority over (INV-L1) or attest a verification nobody performed."""
+
+    def _awaiting(self, store, key: str, profile: str = "human-authorized"):
+        (item,) = _items(store)
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, f"{key}-a")["lease"]
+        _legacy_bar(store, item, {"verification_profile": profile}, lease["lease_id"])
+        report = _complete(store, A, lease["lease_id"], run, f"{key}-c")["report"]
+        assert report["disposition"] == "awaiting-verification"
+        return item, run, lease, report
+
+    def _taken_over_under_090(self, store, monkeypatch, key: str):
+        """The legacy state 0.9.0 could leave: A's report awaits a verifier,
+        A's lease went stale and B took the item over anyway (0.9.0 had no
+        awaiting protection), with the item's contract back at ``checked``."""
+        item, _run_id, lease_a, report_a = self._awaiting(store, key)
+        _legacy_bar(store, item, {"verification_profile": "checked"})
+        _backdate(store, lease_a["lease_id"], 3601)
+        with monkeypatch.context() as patch:
+            patch.setattr(pg, "_refuse_awaiting_verification", lambda *args, **kwargs: None)
+            run_b = _run(store, B)
+            claimed = _claim(store, B, item, run_b, f"{key}-b")
+        assert claimed["took_over"] == lease_a["lease_id"]
+        return item, report_a, run_b, claimed["lease"]
+
+    def _report(self, store, item, report_id):
+        return next(r for r in _read(store, item)["outcome_reports"] if r["report_id"] == report_id)
+
+    def test_a_lease_settlement_never_settles_a_superseded_awaiting_report(self, store, monkeypatch):
+        item, report_a, run_b, lease_b = self._taken_over_under_090(store, monkeypatch, "sup-settle")
+        settled = _complete(store, B, lease_b["lease_id"], run_b, "sup-settle-bc")
+        assert settled["settled"] is True and settled["report"]["disposition"] == "settled"
+        stale = self._report(store, item, report_a["report_id"])
+        assert (stale["disposition"], stale["reason_code"], stale["decision_id"]) == (
+            "rejected", "lease-superseded", None,
+        )
+        assert stale["payload"] == {"result": "ok"}
+        (decision,) = pg.list_decisions(store, item)
+        assert settled["report"]["decision_id"] == decision["id"]
+
+    @pytest.mark.parametrize("route", _ACCEPT_ROUTES)
+    def test_an_accept_never_settles_a_superseded_awaiting_report(self, store, monkeypatch, tmp_path, route):
+        item, report_a, _run_b, _lease_b = self._taken_over_under_090(store, monkeypatch, f"sup-{route}")
+        _accept(store, tmp_path, item, route, "human-verifier")
+        assert _status(store, item) == "done"
+        stale = self._report(store, item, report_a["report_id"])
+        assert (stale["disposition"], stale["reason_code"], stale["decision_id"]) == (
+            "rejected", "lease-superseded", None,
+        )
+
+    @pytest.mark.parametrize("route", _ACCEPT_ROUTES)
+    @pytest.mark.parametrize("profile", ["role-separated", "identity-separated", "human-authorized"])
+    def test_every_accept_path_stamps_an_unverified_pin_without_attesting_it(
+        self, store, tmp_path, route, profile,
+    ):
+        """Including the worker's own ``done``: the report is kept as
+        evidence but never reads as a verification that passed."""
+        item, _run_id, _lease, report = self._awaiting(store, f"pin-{route}-{profile}", profile)
+        _accept(store, tmp_path, item, route, A.identity.actor)
+        assert _status(store, item) == "done"
+        stamped = self._report(store, item, report["report_id"])
+        assert (stamped["disposition"], stamped["reason_code"], stamped["decision_id"]) == (
+            "rejected", "decided-accept-unverified", None,
+        )
+        assert stamped["verification_profile"] == profile
+        assert _read(store, item)["current_lease"] is None
+
+    def test_the_holders_own_stale_resume_is_refused_while_its_report_waits(self, store):
+        item, run, lease, report = self._awaiting(store, "own-resume")
+        _backdate(store, lease["lease_id"], 3601)
+        refused = _refused(lambda: _claim(store, A, item, run, "own-resume-a"))
+        assert (refused.code, refused.http_status) == ("work-awaiting-verification", 409)
+        assert report["report_id"] in refused.message
+        refused_new_key = _refused(lambda: _claim(store, A, item, run, "own-resume-a2"))
+        assert refused_new_key.code == "work-awaiting-verification"
+        assert _lease_rows(store, item) == 1 and _lease_rows(store, item, "active") == 1
+
+    def test_a_fresh_lease_with_a_waiting_report_answers_awaiting_before_held(self, store):
+        item, _run_id, _lease, _report = self._awaiting(store, "check-order")
+        assert _refused(lambda: _claim(store, B, item, _run(store, B), "check-order-b")).code == (
+            "work-awaiting-verification"
+        )
+
+    @pytest.mark.parametrize("profile", ["role-separated", "identity-separated"])
+    def test_zero_checks_under_a_checks_bearing_pin_is_rejected_not_deferred(self, store, profile):
+        (item,) = _items(store)
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, f"zero-{profile}-a")["lease"]["lease_id"]
+        _legacy_bar(store, item, {"verification_profile": profile}, lease)
+        refused = _refused(lambda: _complete(store, A, lease, run, f"zero-{profile}-c", checks=[]))
+        assert (refused.code, refused.http_status) == ("verification-unsatisfied", 422)
+        (report,) = _read(store, item)["outcome_reports"]
+        assert (report["disposition"], report["reason_code"]) == ("rejected", "verification-unsatisfied")
+        # Nothing waits: a later claim meets the stored bar's own refusal,
+        # not work-awaiting-verification.
+        _backdate(store, lease, 3601)
+        assert _refused(lambda: _claim(store, B, item, _run(store, B), f"zero-{profile}-b")).code == (
+            "verification-unsupported"
+        )

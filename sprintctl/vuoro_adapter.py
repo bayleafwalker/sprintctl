@@ -565,15 +565,24 @@ _LEASE_ID_SCHEMA: dict[str, Any] = {
 _NULLABLE_LEASE_ID_SCHEMA: dict[str, Any] = {"anyOf": [_LEASE_ID_SCHEMA, {"type": "null"}]}
 _NULLABLE_TEXT_SCHEMA: dict[str, Any] = {"type": ["string", "null"]}
 _LEASE_STATE_SCHEMA: dict[str, Any] = {"enum": ["active", "superseded", "settled", "released"]}
+# A profile is a set of requirements, and bars combine by their union
+# (agentops#2539): a combined bar that no single profile names is the named
+# profiles joined by "+", e.g. "role-separated+human-authorized".
+_PROFILE_NAMES = "self-reported|checked|role-separated|identity-separated|human-authorized"
 _VERIFICATION_PROFILE_SCHEMA: dict[str, Any] = {
-    "enum": ["self-reported", "checked", "role-separated", "identity-separated", "human-authorized"],
+    "type": "string",
+    "pattern": f"^({_PROFILE_NAMES})(\\+({_PROFILE_NAMES}))*$",
 }
 _VERIFICATION_SCHEMA = _object_schema(
     {
         "profile": _VERIFICATION_PROFILE_SCHEMA,
+        "requirements": {
+            "type": "array",
+            "items": {"enum": ["checks", "verifier-role", "verifier-identity", "human-authorization"]},
+        },
         "required_checks": {"type": "array", "items": {"type": "string"}},
     },
-    required=("profile", "required_checks"),
+    required=("profile", "requirements", "required_checks"),
 )
 _LEASE_PROPERTIES: dict[str, Any] = {
     "lease_id": _LEASE_ID_SCHEMA,

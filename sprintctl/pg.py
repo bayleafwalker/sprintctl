@@ -3539,6 +3539,7 @@ def _decide_locked(cur: Any, repo_id: str, item: Any, decision: dict) -> dict:
     )
     recorded = _decision_row(cur.fetchone())
     resolution = _decisions.resolution_for(decision["kind"])
+    _stamp_awaiting_reports(cur, repo_id, item_id, recorded)
     if remark:
         # A re-mark binds the closure that already happened: the item stays
         # done and keeps its updated_at, the only record of when it closed.
@@ -3562,6 +3563,67 @@ def _decide_locked(cur: Any, repo_id: str, item: Any, decision: dict) -> dict:
             (f"item-{resolution}", repo_id, item_id),
         )
     return recorded
+
+
+def _stamp_awaiting_reports(cur: Any, repo_id: str, item_id: int, decision: Mapping[str, Any]) -> None:
+    """Give outcome reports awaiting verification the decision that landed
+    (agentops#2528).  Every awaiting report stays as evidence; what the
+    decision makes of it:
+
+    - a report filed under a lease that was since superseded is
+      ``rejected`` with ``lease-superseded`` whatever the decision (INV-L1:
+      a result submitted under a superseded lease never settles work;
+      0.9.0 let such a lease be taken over while its report waited);
+    - ``accept`` settles a report whose bar the owner can evaluate
+      (``releases.ENFORCED_REQUIREMENTS``) and names the decision; a
+      report pinned to a verifier or human requirement nothing checked
+      (a 0.9.0 ``role-separated``, ``identity-separated`` or
+      ``human-authorized`` pin) is ``rejected`` with
+      ``decided-accept-unverified``, so the report never reads as a
+      verification that did not happen;
+    - any other kind (``reject``, ``withdraw``, ``supersede``, ``revise``)
+      ends the wait as ``rejected`` with ``decided-<kind>``.
+
+    Schema 18 ties a ``decision_id`` to a ``settled`` report only, so for
+    the others the decision event is the link.  Any caller of
+    :func:`_decide_locked` -- the served decision operation, ``done`` as an
+    alias, outbox commands -- stamps the same way."""
+    cur.execute(
+        "SELECT r.report_id, r.verification_profile, l.state AS lease_state "
+        "FROM work_outcome_report r JOIN work_lease l "
+        "ON l.repo_id = r.repo_id AND l.lease_id = r.lease_id "
+        "WHERE r.repo_id = %s AND r.work_item_id = %s "
+        "AND r.disposition = 'awaiting-verification' ORDER BY r.created_at, r.report_id",
+        (repo_id, item_id),
+    )
+    for row in cur.fetchall():
+        if row["lease_state"] == "superseded":
+            reason = "lease-superseded"
+        elif decision["kind"] != "accept":
+            reason = f"decided-{decision['kind']}"
+        elif set(_verification(row["verification_profile"], [])["requirements"]) - (
+            _releases.ENFORCED_REQUIREMENTS
+        ):
+            reason = "decided-accept-unverified"
+        else:
+            # Unreachable today: a report waits only when its bar has a
+            # requirement outside ENFORCED_REQUIREMENTS.  Revisit before a
+            # verifier requirement joins that set -- an accept must then
+            # prove the verifier (role, identity, human) before it settles
+            # an old waiting report, not merely be an accept.
+            reason = None
+        if reason is None:
+            cur.execute(
+                "UPDATE work_outcome_report SET disposition = 'settled', decision_id = %s "
+                "WHERE repo_id = %s AND report_id = %s",
+                (int(decision["id"]), repo_id, row["report_id"]),
+            )
+        else:
+            cur.execute(
+                "UPDATE work_outcome_report SET disposition = 'rejected', reason_code = %s "
+                "WHERE repo_id = %s AND report_id = %s",
+                (reason, repo_id, row["report_id"]),
+            )
 
 
 def record_decision(
@@ -5542,15 +5604,14 @@ def idempotent_write(
 
 LEASE_TTL_MIN_SECONDS = 30
 LEASE_TTL_MAX_SECONDS = 3600
-#: The verification profiles the owner recognises (vuoro-cloud
-#: 19-PRODUCT-POSITIONING-AND-PROOF.md "Verification profiles").  Only the
-#: first two can be satisfied by the holder's own outcome report; the others
-#: need a separate verifier or a human, who settles with work.decision.record.
+#: The verification profiles the owner knows by name (vuoro-cloud
+#: 19-PRODUCT-POSITIONING-AND-PROOF.md "Verification profiles"), each a set
+#: of requirements (releases.VERIFICATION_REQUIREMENTS).  Only requirements
+#: in releases.ENFORCED_REQUIREMENTS can be met by the holder's own report.
 VERIFICATION_PROFILES = _releases.VERIFICATION_PROFILES
 DEFAULT_VERIFICATION_PROFILE = "checked"
 #: Who records a settlement decision: the owner, never the reporting holder.
 SETTLEMENT_ACTOR = "sprintctl:lease-settlement"
-_SELF_SETTLING_PROFILES = frozenset({"self-reported", "checked"})
 
 
 class LeaseRefused(ValueError):
@@ -5558,7 +5619,8 @@ class LeaseRefused(ValueError):
 
     ``code`` is the caller-visible reason: ``lease-held``, ``lease-superseded``,
     ``lease-expired``, ``lease-ended``, ``lease-not-found``, ``work-not-found``,
-    ``work-settled``, ``work-blocked``, ``work-not-active`` or
+    ``work-settled``, ``work-blocked``, ``work-not-active``,
+    ``work-awaiting-verification``, ``verification-unsupported`` or
     ``maintenance-active``.  A completion never raises these for a lease
     that is the caller's: it stores the report and returns it ``rejected``.
     """
@@ -5604,10 +5666,7 @@ def _lease_row(row: Mapping[str, Any]) -> dict:
         "end_reason": row["end_reason"],
         "takeover_of": row["takeover_of"],
         "superseded_by": row["superseded_by"],
-        "verification": {
-            "profile": row["verification_profile"],
-            "required_checks": list(row["required_checks"] or []),
-        },
+        "verification": _verification(row["verification_profile"], row["required_checks"]),
     }
 
 
@@ -5685,6 +5744,26 @@ def _refuse_unclaimable(cur: Any, store: PgStore, item: Mapping[str, Any] | None
         )
 
 
+def _refuse_awaiting_verification(cur: Any, store: PgStore, work_item_id: int) -> None:
+    """Refuse a new lease while an outcome report on the item awaits its
+    verifier's decision (agentops#2528): that report is the work the
+    verifier is judging, and nobody may take the item over from under it.
+    The decision that lands stamps the report (:func:`_decide_locked`)."""
+    cur.execute(
+        "SELECT report_id FROM work_outcome_report WHERE repo_id = %s "
+        "AND work_item_id = %s AND disposition = 'awaiting-verification' "
+        "ORDER BY created_at, report_id LIMIT 1",
+        (store.repo_id, work_item_id),
+    )
+    row = cur.fetchone()
+    if row is not None:
+        raise LeaseRefused(
+            "work-awaiting-verification",
+            f"item #{work_item_id} has outcome report {row['report_id']} awaiting "
+            "its verifier's decision; it cannot be claimed until that decision is recorded",
+        )
+
+
 def _lock_item(cur: Any, store: PgStore, work_item_id: int) -> dict | None:
     cur.execute(
         "SELECT * FROM work_item WHERE repo_id = %s AND id = %s FOR UPDATE",
@@ -5722,6 +5801,7 @@ def _acquire_locked(
     expired lease (the resume path).
     """
     work_item_id = int(item["id"])
+    _refuse_awaiting_verification(cur, store, work_item_id)
     cur.execute(
         "SELECT * FROM work_lease WHERE repo_id = %s AND work_item_id = %s "
         "AND state = 'active' FOR UPDATE",
@@ -5751,6 +5831,17 @@ def _acquire_locked(
     # The bar is pinned when the lease is taken: what the holder was asked
     # for cannot be lowered while it works.
     pinned = verification_config(cur, store, work_item_id)
+    unenforced = sorted(set(pinned["requirements"]) - _releases.ENFORCED_REQUIREMENTS)
+    if unenforced:
+        # A contract stored before agentops#2539 may name a profile whose
+        # verifier the owner cannot check yet.  Leasing the item would
+        # promise a settlement bar nothing enforces: refuse, fail closed.
+        raise LeaseRefused(
+            "verification-unsupported",
+            f"item #{work_item_id} requires verification profile {pinned['profile']} "
+            f"({', '.join(unenforced)}), which this authority does not enforce yet; "
+            "it cannot be leased",
+        )
     cur.execute(
         "INSERT INTO work_lease(repo_id, lease_id, work_item_id, run_id, principal_id, "
         "workspace_id, client_id, grant_id, claim_key, state, ttl_seconds, acquired_at, "
@@ -6011,13 +6102,53 @@ def outcome_payload_digest(
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
-_PROFILE_RANK = {profile: rank for rank, profile in enumerate(VERIFICATION_PROFILES)}
+def _known_requirements(profile: Any) -> frozenset[str] | None:
+    """The requirements a stored profile name stands for, or None if it is
+    not a well-formed name: one of :data:`VERIFICATION_PROFILES`, or several
+    joined by ``+`` (a combined bar, :func:`_combined`)."""
+    parts = profile.split("+") if isinstance(profile, str) else [None]
+    if any(part not in _releases.VERIFICATION_REQUIREMENTS for part in parts):
+        return None
+    return frozenset().union(*(_releases.VERIFICATION_REQUIREMENTS[part] for part in parts))
+
+
+def _profile_name(requirements: frozenset[str], named: set[str]) -> str:
+    """Name a combined bar: the named profile whose requirements are exactly
+    ``requirements`` if there is one, else the ``+``-joined named profiles
+    that no other named profile implies, in canonical order."""
+    reqs = _releases.VERIFICATION_REQUIREMENTS
+    exact = [p for p in VERIFICATION_PROFILES if reqs[p] == requirements]
+    if exact:
+        return exact[0]
+    return "+".join(
+        p for p in VERIFICATION_PROFILES
+        if p in named and not any(reqs[p] < reqs[other] for other in named)
+    )
+
+
+def _verification(profile: Any, required_checks: Any) -> dict:
+    """A bar as the owner reports it.  A name that is not well formed (one
+    written before validation existed) counts as ``human-authorized``: a
+    requirement the holder's own report can never meet, so it fails closed."""
+    requirements = _known_requirements(profile)
+    if requirements is None:
+        profile = "human-authorized"
+        requirements = _releases.VERIFICATION_REQUIREMENTS[profile]
+    return {
+        "profile": profile,
+        "requirements": sorted(requirements),
+        "required_checks": sorted(set(required_checks or [])),
+    }
 
 
 def _contract_verification(contract: Any) -> dict:
     """One acceptance contract's verification bar.  Never raises: a
     malformed or unknown profile (one written before validation existed)
-    counts as ``human-authorized``, the strictest, so it fails closed."""
+    counts as ``human-authorized``, so it fails closed.  A known profile
+    that new contracts may no longer name (agentops#2539) keeps its own
+    requirements, which the holder's report cannot meet: such a stored
+    contract refuses claims (:func:`_acquire_locked`) and never lets a
+    report settle."""
     if isinstance(contract, str):
         try:
             contract = json.loads(contract)
@@ -6026,20 +6157,29 @@ def _contract_verification(contract: Any) -> dict:
     if not isinstance(contract, Mapping):
         contract = {}
     profile = contract.get("verification_profile", DEFAULT_VERIFICATION_PROFILE)
-    if not isinstance(profile, str) or profile not in _PROFILE_RANK:
-        profile = VERIFICATION_PROFILES[-1]
+    if not isinstance(profile, str) or profile not in _releases.VERIFICATION_REQUIREMENTS:
+        profile = None  # fails closed as human-authorized (_verification)
     obligations = contract.get("evidence_obligations") or []
     if not isinstance(obligations, list):
         obligations = []
-    required = sorted({label for label in obligations if isinstance(label, str) and label.strip()})
-    return {"profile": profile, "required_checks": required}
+    required = {label for label in obligations if isinstance(label, str) and label.strip()}
+    return _verification(profile, required)
 
 
-def _stricter(*configs: Mapping[str, Any]) -> dict:
-    """The strictest profile and the union of required checks."""
-    profile = max((c["profile"] for c in configs), key=lambda p: _PROFILE_RANK[p])
-    required = sorted({check for c in configs for check in c["required_checks"]})
-    return {"profile": profile, "required_checks": required}
+def _combined(*configs: Mapping[str, Any]) -> dict:
+    """Bars combine by union: every requirement of every profile, and every
+    required check.  Nothing is ranked, so no requirement can be traded for
+    a stronger-looking name (operator decision D2, agentops#253)."""
+    named: set[str] = set()
+    requirements: frozenset[str] = frozenset()
+    for config in configs:
+        named.update(config["profile"].split("+"))
+        requirements |= frozenset(config["requirements"])
+    return {
+        "profile": _profile_name(requirements, named),
+        "requirements": sorted(requirements),
+        "required_checks": sorted({check for c in configs for check in c["required_checks"]}),
+    }
 
 
 def verification_config(cur: Any, store: PgStore, work_item_id: int) -> dict:
@@ -6047,11 +6187,12 @@ def verification_config(cur: Any, store: PgStore, work_item_id: int) -> dict:
 
     Read from every release frozen at the item's current revision (their
     acceptance contracts' ``verification_profile``, default ``checked``, and
-    ``evidence_obligations`` as required checks) and combined strictest-wins,
-    so a later reservation freezing a default contract can add to the bar
-    but never lower it, and the holder never chooses its own bar.  A lease
-    also pins the bar it was acquired under (:func:`_acquire_locked`), and
-    settlement uses the stricter of the two.
+    ``evidence_obligations`` as required checks) and combined by the union
+    of their requirements (:func:`_combined`), so a later reservation
+    freezing a default contract can add to the bar but never lower it, and
+    the holder never chooses its own bar.  A lease also pins the bar it was
+    acquired under (:func:`_acquire_locked`), and settlement uses the union
+    of the two.
     """
     cur.execute(
         """
@@ -6068,25 +6209,33 @@ def verification_config(cur: Any, store: PgStore, work_item_id: int) -> dict:
     configs = [_contract_verification(row["acceptance_contract"]) for row in cur.fetchall()]
     if not configs:
         return _contract_verification({})
-    return _stricter(*configs)
+    return _combined(*configs)
 
 
 def _verification_verdict(config: Mapping[str, Any], checks: list) -> tuple[str, str | None]:
-    """(disposition, reason) for a succeeded outcome under ``config``."""
-    profile = config["profile"]
-    if profile not in _SELF_SETTLING_PROFILES:
-        return "awaiting-verification", None
-    if profile == "self-reported":
-        return "settled", None
+    """(disposition, detail) for a succeeded outcome under ``config``.
+
+    A reported check that did not pass, or a required check not reported as
+    passed, rejects the report under every profile, ``self-reported``
+    included (agentops#2529 n2).  A requirement the owner cannot evaluate
+    from the holder's own report (a verifier role or identity, a human)
+    leaves the report ``awaiting-verification`` for that verifier's
+    decision, but only once every requirement the owner can evaluate is
+    met: ``checks`` needs at least one reported check first, so a report
+    with none is rejected rather than deferred.
+    """
+    requirements = set(config["requirements"])
     passed = {check["name"] for check in checks if check["status"] == "passed"}
     failed = sorted(check["name"] for check in checks if check["status"] != "passed")
     missing = sorted(set(config["required_checks"]) - passed)
-    if not checks:
-        return "rejected", "profile checked needs at least one reported check"
     if failed:
         return "rejected", f"checks not passed: {failed}"
     if missing:
         return "rejected", f"required checks not reported as passed: {missing}"
+    if "checks" in requirements and not checks:
+        return "rejected", f"profile {config['profile']} needs at least one reported check"
+    if requirements - _releases.ENFORCED_REQUIREMENTS:
+        return "awaiting-verification", None
     return "settled", None
 
 
@@ -6160,11 +6309,8 @@ def complete_lease(
         # report its place as evidence; then the bar: the stricter of what
         # the lease was acquired under and what the item asks for now.
         dead = _dead_lease_reason(lease, item, now)
-        config = _stricter(
-            {
-                "profile": lease["verification_profile"],
-                "required_checks": list(lease["required_checks"] or []),
-            },
+        config = _combined(
+            _verification(lease["verification_profile"], lease["required_checks"]),
             verification_config(cur, store, int(item["id"])),
         )
         decision = None
