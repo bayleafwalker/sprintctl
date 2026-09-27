@@ -21,7 +21,9 @@ from . import volatile_context as _volatile_context
 #: only ``tool`` values ``work.idempotency.*`` accepts -- a whitelist, not a
 #: free-form string, so one caller's tool name cannot collide with another's
 #: ledger partition by typo or by construction.
-_IDEMPOTENT_RECORD_TOOLS = frozenset({"register_run", "append_evidence", "write_session_note"})
+_IDEMPOTENT_RECORD_TOOLS = frozenset({
+    "register_run", "append_evidence", "write_session_note", "claim_work", "complete_work",
+})
 
 
 def _identity_binding(context: InvocationContext) -> tuple[str, str]:
@@ -74,6 +76,113 @@ def _request_digest(tool: str, arguments: dict, *, exclude: frozenset[str] = fro
     body = {key: value for key, value in arguments.items() if key not in excluded}
     canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(f"{tool}\n{canonical}".encode()).hexdigest()
+
+
+#: The lease TTL when a claim names none: SPRINTCTL_LEASE_TTL_SECONDS, else
+#: 300.  A tenant runtime serves one workspace, so the environment variable
+#: is the per-workspace setting; a claim may ask for its own within bounds.
+DEFAULT_LEASE_TTL_SECONDS = 300
+_MAX_OUTCOME_SUMMARY = 4000
+_MAX_OUTCOME_PAYLOAD_BYTES = 64 * 1024
+_MAX_OUTCOME_CHECKS = 64
+
+
+def _lease_ttl(value: Any) -> int:
+    """The TTL a claim asked for, or the configured default, within bounds."""
+    from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
+
+    if value is None:
+        raw = os.environ.get("SPRINTCTL_LEASE_TTL_SECONDS")
+        try:
+            value = int(raw) if raw else DEFAULT_LEASE_TTL_SECONDS
+        except ValueError:
+            value = DEFAULT_LEASE_TTL_SECONDS
+        return min(max(value, _pg.LEASE_TTL_MIN_SECONDS), _pg.LEASE_TTL_MAX_SECONDS)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not _pg.LEASE_TTL_MIN_SECONDS <= value <= _pg.LEASE_TTL_MAX_SECONDS
+    ):
+        raise ApplicationRejection(
+            "invalid-arguments",
+            f"ttl_seconds must be an integer from {_pg.LEASE_TTL_MIN_SECONDS} "
+            f"to {_pg.LEASE_TTL_MAX_SECONDS}",
+            422,
+        )
+    return value
+
+
+_IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
+
+
+def _idempotency_key(value: Any) -> str:
+    if not isinstance(value, str) or not _IDEMPOTENCY_KEY_RE.fullmatch(value):
+        raise ApplicationRejection(
+            "invalid-arguments",
+            "idempotency_key must be 8-128 characters of A-Z a-z 0-9 . _ : -",
+            422,
+        )
+    return value
+
+
+def _outcome_summary(value: Any) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str) or len(value) > _MAX_OUTCOME_SUMMARY or "\x00" in value:
+        raise ApplicationRejection(
+            "invalid-arguments",
+            f"summary must be a string of at most {_MAX_OUTCOME_SUMMARY} characters",
+            422,
+        )
+    return value
+
+
+def _outcome_payload(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ApplicationRejection("invalid-arguments", "payload must be an object", 422)
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    if len(encoded.encode()) > _MAX_OUTCOME_PAYLOAD_BYTES or "\\u0000" in encoded:
+        raise ApplicationRejection(
+            "invalid-arguments",
+            f"payload must serialize to at most {_MAX_OUTCOME_PAYLOAD_BYTES} bytes "
+            "and contain no NUL characters",
+            422,
+        )
+    return json.loads(encoded)
+
+
+def _outcome_checks(value: Any) -> list[dict[str, Any]]:
+    """Reported checks: ``[{name, status: passed|failed, ref?}]``, names unique."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > _MAX_OUTCOME_CHECKS:
+        raise ApplicationRejection(
+            "invalid-arguments", f"checks must be an array of at most {_MAX_OUTCOME_CHECKS}", 422
+        )
+    checks: list[dict[str, Any]] = []
+    for check in value:
+        if (
+            not isinstance(check, Mapping)
+            or set(check) - {"name", "status", "ref"}
+            or not isinstance(check.get("name"), str)
+            or not 1 <= len(check["name"]) <= 128
+            or "\x00" in check["name"]
+            or check.get("status") not in ("passed", "failed")
+            or not isinstance(check.get("ref", ""), str)
+            or len(check.get("ref", "")) > 512
+            or "\x00" in check.get("ref", "")
+        ):
+            raise ApplicationRejection(
+                "invalid-arguments",
+                "each check is {name: 1-128 characters, status: passed|failed, ref?: string}",
+                422,
+            )
+        checks.append({key: check[key] for key in ("name", "status", "ref") if key in check})
+    if len({check["name"] for check in checks}) != len(checks):
+        raise ApplicationRejection("invalid-arguments", "check names must be unique", 422)
+    return sorted(checks, key=lambda check: check["name"])
 
 
 def _reservation_actor_mismatch(given: object, authenticated: object) -> ApplicationRejection:
@@ -424,6 +533,10 @@ class WorkApplication:
             "work.evidence.tail-v1": target._evidence_tail,
             "work.evidence.append-v1": target._evidence_append,
             "work.session-note.write-v1": target._session_note_write,
+            "work.lease.acquire-v1": target._claim_acquire,
+            "work.lease.heartbeat-v1": target._claim_heartbeat,
+            "work.lease.complete-v1": target._claim_complete,
+            "work.lease.read-v1": target._claim_read,
         }
         try:
             handler = handlers[operation]
@@ -1584,6 +1697,144 @@ class WorkApplication:
             return {"repo_id": self.repo_id, "run_id": run_id, **note}
 
         return self._idempotent_write(context, "write_session_note", arguments, effect)
+
+    # -- work.lease.* -----------------------------------------------------
+    # agentops#2520 (E2b): the exclusive durable lease behind the Vuoro MCP
+    # edge's coordinate bucket (vuoro:work.claim -> work:claim).  The lease
+    # holder is the caller's run and its whole binding, resolved first
+    # exactly as the record bucket resolves it.  This authority evaluates the
+    # lease at every call and settles outcome reports itself (TS-1: the edge
+    # never schedules, expires or retries).
+
+    def _lease_refused(self, exc: Any) -> ApplicationRejection:
+        status = {"lease-not-found": 404, "work-not-found": 404}.get(exc.code, 409)
+        return ApplicationRejection(exc.code, str(exc), status)
+
+    def _claim_binding(self, context: InvocationContext) -> dict[str, Any]:
+        principal_id, workspace_id = _identity_binding(context)
+        client_id, grant_id = _grant_binding(context)
+        return {
+            "principal_id": principal_id,
+            "workspace_id": workspace_id,
+            "client_id": client_id,
+            "grant_id": grant_id,
+        }
+
+    def _claim_acquire(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        item_id = _positive_int(arguments.get("item_id"), "item_id")
+        run_id = _required_text(arguments.get("run_id"), "run_id")
+        ttl_seconds = _lease_ttl(arguments.get("ttl_seconds"))
+        key = _idempotency_key(arguments.get("idempotency_key"))
+        self._require_owned_run(run_id, context)
+        binding = self._claim_binding(context)
+        actor = context.identity.actor
+        from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
+
+        ran: dict[str, bool] = {}
+
+        def effect(cur: Any, _request_digest: str) -> dict[str, Any]:
+            ran["effect"] = True
+            try:
+                claimed = self.backend.acquire_lease(
+                    self.store, work_item_id=item_id, run_id=run_id, claim_key=key,
+                    ttl_seconds=ttl_seconds, actor=actor, cur=cur, **binding,
+                )
+            except _pg.LeaseRefused as exc:
+                raise self._lease_refused(exc) from exc
+            return {"repo_id": self.repo_id, **claimed}
+
+        # The digest covers the item, the run, the TTL and the grant binding:
+        # the same key for another item, run or grant is a conflict, never a
+        # resume of a different claim.
+        result = self._idempotent_write(
+            context, "claim_work", arguments, effect,
+            digest_binding={"client_id": binding["client_id"], "grant_id": binding["grant_id"]},
+        )
+        if ran.get("effect"):
+            return result
+        # A replay of a committed claim: re-evaluate it now rather than
+        # repeating a stored answer that may no longer be true (the
+        # restarted-worker resume path).
+        try:
+            resumed = self.backend.resume_lease(
+                self.store, work_item_id=item_id, run_id=run_id, claim_key=key,
+                ttl_seconds=ttl_seconds, actor=actor, **binding,
+            )
+        except _pg.LeaseRefused as exc:
+            raise self._lease_refused(exc) from exc
+        return {"repo_id": self.repo_id, **resumed}
+
+    def _claim_heartbeat(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        lease_id = _required_text(arguments.get("lease_id"), "lease_id")
+        run_id = _required_text(arguments.get("run_id"), "run_id")
+        self._require_owned_run(run_id, context)
+        from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
+
+        try:
+            lease = self.backend.heartbeat_lease(
+                self.store, lease_id=lease_id, run_id=run_id, **self._claim_binding(context)
+            )
+        except _pg.LeaseRefused as exc:
+            raise self._lease_refused(exc) from exc
+        return {"repo_id": self.repo_id, "lease": lease}
+
+    def _claim_complete(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        lease_id = _required_text(arguments.get("lease_id"), "lease_id")
+        run_id = _required_text(arguments.get("run_id"), "run_id")
+        outcome = arguments.get("outcome")
+        if outcome not in ("succeeded", "failed"):
+            raise ApplicationRejection(
+                "invalid-arguments", "outcome must be 'succeeded' or 'failed'", 422
+            )
+        _idempotency_key(arguments.get("idempotency_key"))
+        summary = _outcome_summary(arguments.get("summary"))
+        payload = _outcome_payload(arguments.get("payload"))
+        checks = _outcome_checks(arguments.get("checks"))
+        self._require_owned_run(run_id, context)
+        binding = self._claim_binding(context)
+        actor = context.identity.actor
+        from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
+
+        def effect(cur: Any, request_digest: str) -> dict[str, Any]:
+            try:
+                report = self.backend.complete_lease(
+                    self.store, lease_id=lease_id, run_id=run_id,
+                    idempotency_key=arguments["idempotency_key"],
+                    request_digest=request_digest, outcome=outcome, summary=summary,
+                    payload=payload, checks=checks, actor=actor, cur=cur, **binding,
+                )
+            except _pg.LeaseRefused as exc:
+                raise self._lease_refused(exc) from exc
+            return {
+                "repo_id": self.repo_id,
+                "report": report,
+                "settled": report["disposition"] == "settled",
+            }
+
+        result = self._idempotent_write(
+            context, "complete_work",
+            {**arguments, "summary": summary, "payload": payload, "checks": checks},
+            effect,
+            digest_binding={"client_id": binding["client_id"], "grant_id": binding["grant_id"]},
+        )
+        report = result["report"]
+        if report["disposition"] == "rejected":
+            # Committed first, refused second: the report stays on the item
+            # as evidence (a replay of this key refuses the same way).
+            detail = report.get("detail") or report["reason_code"]
+            raise ApplicationRejection(
+                report["reason_code"],
+                f"{detail}; the outcome was retained as evidence "
+                f"(report {report['report_id']}) and nothing was settled",
+                422 if report["reason_code"] == "verification-unsatisfied" else 409,
+            )
+        return result
+
+    def _claim_read(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        item_id = _positive_int(arguments.get("item_id"), "item_id")
+        if self.backend.get_work_item(self.store, item_id) is None:
+            raise ApplicationRejection("work-not-found", f"item #{item_id} not found", 404)
+        return {"repo_id": self.repo_id, "item_id": item_id, **self.backend.claim_state(self.store, item_id)}
 
     def _read_next_work_explain(
         self, arguments: dict[str, Any], _context: InvocationContext

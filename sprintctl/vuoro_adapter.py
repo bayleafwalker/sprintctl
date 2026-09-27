@@ -541,6 +541,95 @@ _EVIDENCE_ITEM_SCHEMA = _object_schema(
         "provenance", "chain_seq", "chain_prev_digest",
     ),
 )
+# --------------------------------------------------------------------------
+# work.lease.* (agentops#2520, E2b: the Vuoro MCP edge's coordinate bucket,
+# vuoro:work.claim -> work:claim).  An exclusive durable lease on one work
+# item, held by the caller's run and its whole binding.  This authority
+# evaluates it at every call -- claim, heartbeat, complete -- against its own
+# clock (TS-1: nothing sweeps, schedules, expires or retries in the
+# background), and settles outcome reports itself: complete-v1 is an outcome
+# report, and the owner decides whether it settles the item under the
+# verification profile configured on the item's current release.
+#
+# acquire-v1 and complete-v1 are write tools with the section 5 ledger
+# (workspace, principal, tool, key).  A replayed acquire re-evaluates the
+# claim instead of repeating the stored answer: that is how a restarted
+# worker resumes its own lease.  A refused completion is committed before it
+# is refused, so the late payload stays on the item as evidence.
+# heartbeat-v1 takes no key: refreshing a lease is idempotent by nature.
+# --------------------------------------------------------------------------
+_LEASE_ID_SCHEMA: dict[str, Any] = {
+    "type": "string",
+    "pattern": "^lease_[0-9A-HJKMNP-TV-Z]{26}$",
+}
+_NULLABLE_LEASE_ID_SCHEMA: dict[str, Any] = {"anyOf": [_LEASE_ID_SCHEMA, {"type": "null"}]}
+_NULLABLE_TEXT_SCHEMA: dict[str, Any] = {"type": ["string", "null"]}
+_LEASE_STATE_SCHEMA: dict[str, Any] = {"enum": ["active", "superseded", "settled", "released"]}
+_VERIFICATION_PROFILE_SCHEMA: dict[str, Any] = {"type": "string", "minLength": 1}
+_LEASE_PROPERTIES: dict[str, Any] = {
+    "lease_id": _LEASE_ID_SCHEMA,
+    "item_id": {"type": "integer", "minimum": 1},
+    "run_id": _RUN_ID_SCHEMA,
+    "principal_id": {"type": "string", "minLength": 1},
+    "workspace_id": {"type": "string", "minLength": 1},
+    "state": _LEASE_STATE_SCHEMA,
+    "ttl_seconds": {"type": "integer", "minimum": 30, "maximum": 3600},
+    "acquired_at": {"type": "string"},
+    "heartbeat_at": {"type": "string"},
+    "expires_at": {"type": "string"},
+    "ended_at": _NULLABLE_TEXT_SCHEMA,
+    "end_reason": _NULLABLE_TEXT_SCHEMA,
+    "takeover_of": _NULLABLE_LEASE_ID_SCHEMA,
+    "superseded_by": _NULLABLE_LEASE_ID_SCHEMA,
+}
+_LEASE_REQUIRED = tuple(_LEASE_PROPERTIES)
+_LEASE_SCHEMA = _object_schema(_LEASE_PROPERTIES, required=_LEASE_REQUIRED)
+_CURRENT_LEASE_SCHEMA = _object_schema(
+    {**_LEASE_PROPERTIES, "stale": {"type": "boolean"}},
+    required=(*_LEASE_REQUIRED, "stale"),
+)
+_OUTCOME_CHECK_SCHEMA = _object_schema(
+    {
+        "name": {"type": "string", "minLength": 1, "maxLength": 128},
+        "status": {"enum": ["passed", "failed"]},
+        "ref": {"type": "string", "maxLength": 512},
+    },
+    required=("name", "status"),
+)
+_OUTCOME_REPORT_SCHEMA = _object_schema(
+    {
+        "report_id": {"type": "string", "pattern": "^outcome_[0-9A-HJKMNP-TV-Z]{26}$"},
+        "item_id": {"type": "integer", "minimum": 1},
+        "lease_id": _LEASE_ID_SCHEMA,
+        "run_id": _RUN_ID_SCHEMA,
+        "principal_id": {"type": "string", "minLength": 1},
+        "outcome": {"enum": ["succeeded", "failed"]},
+        "summary": {"type": "string"},
+        "payload": {"type": "object"},
+        "checks": {"type": "array", "items": _OUTCOME_CHECK_SCHEMA},
+        "payload_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "disposition": {"enum": ["settled", "recorded", "awaiting-verification", "rejected"]},
+        "reason_code": _NULLABLE_TEXT_SCHEMA,
+        "verification_profile": _VERIFICATION_PROFILE_SCHEMA,
+        "decision_id": {"type": ["integer", "null"]},
+        "created_at": {"type": "string"},
+        "detail": {"type": "string"},
+    },
+    required=(
+        "report_id", "item_id", "lease_id", "run_id", "principal_id", "outcome",
+        "summary", "payload", "checks", "payload_digest", "disposition", "reason_code",
+        "verification_profile", "decision_id", "created_at",
+    ),
+)
+_CLAIM_RESULT = _result_schema(
+    ("repo_id", "lease", "resumed", "took_over"),
+    {
+        "repo_id": {"type": "string"},
+        "lease": _LEASE_SCHEMA,
+        "resumed": {"type": "boolean"},
+        "took_over": _NULLABLE_LEASE_ID_SCHEMA,
+    },
+)
 WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
     WorkOperationContract(
         "work.identity.current",
@@ -731,6 +820,89 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         ),
         "work:evidence",
         "write",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.lease.acquire-v1",
+        _object_schema(
+            {
+                "item_id": {"type": "integer", "minimum": 1},
+                "run_id": _RUN_ID_SCHEMA,
+                "ttl_seconds": {"type": "integer", "minimum": 30, "maximum": 3600},
+                "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
+            },
+            required=("item_id", "run_id", "idempotency_key"),
+        ),
+        _CLAIM_RESULT,
+        "work:claim",
+        "write",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.lease.heartbeat-v1",
+        _object_schema(
+            {"lease_id": _LEASE_ID_SCHEMA, "run_id": _RUN_ID_SCHEMA},
+            required=("lease_id", "run_id"),
+        ),
+        _result_schema(
+            ("repo_id", "lease"), {"repo_id": {"type": "string"}, "lease": _LEASE_SCHEMA}
+        ),
+        "work:claim",
+        "write",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.lease.complete-v1",
+        _object_schema(
+            {
+                "lease_id": _LEASE_ID_SCHEMA,
+                "run_id": _RUN_ID_SCHEMA,
+                "outcome": {"enum": ["succeeded", "failed"]},
+                "summary": {"type": "string", "maxLength": 4000},
+                "payload": {"type": "object"},
+                "checks": {"type": "array", "items": _OUTCOME_CHECK_SCHEMA, "maxItems": 64},
+                "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
+            },
+            required=("lease_id", "run_id", "outcome", "idempotency_key"),
+        ),
+        _result_schema(
+            ("repo_id", "report", "settled"),
+            {
+                "repo_id": {"type": "string"},
+                "report": _OUTCOME_REPORT_SCHEMA,
+                "settled": {"type": "boolean"},
+            },
+        ),
+        "work:claim",
+        "write",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.lease.read-v1",
+        _object_schema({"item_id": {"type": "integer", "minimum": 1}}, required=("item_id",)),
+        _result_schema(
+            (
+                "repo_id", "item_id", "current_lease", "leases", "outcome_reports",
+                "verification", "evaluated_at",
+            ),
+            {
+                "repo_id": {"type": "string"},
+                "item_id": {"type": "integer", "minimum": 1},
+                "current_lease": {"anyOf": [_CURRENT_LEASE_SCHEMA, {"type": "null"}]},
+                "leases": {"type": "array", "items": _LEASE_SCHEMA},
+                "outcome_reports": {"type": "array", "items": _OUTCOME_REPORT_SCHEMA},
+                "verification": _object_schema(
+                    {
+                        "profile": _VERIFICATION_PROFILE_SCHEMA,
+                        "required_checks": {"type": "array", "items": {"type": "string"}},
+                    },
+                    required=("profile", "required_checks"),
+                ),
+                "evaluated_at": {"type": "string"},
+            },
+        ),
+        "work:read",
+        "read",
         "not-allowed",
     ),
     WorkOperationContract(

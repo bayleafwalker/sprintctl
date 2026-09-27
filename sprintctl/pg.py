@@ -2545,11 +2545,21 @@ _SCHEMA_17_INDEXES = {
 
 def _schema_17_foreign_relations(cur: Any) -> list[str]:
     """Relations already holding a schema-17 name without schema 17's shape."""
+    return _foreign_relations(cur, _SCHEMA_17_TABLES, _SCHEMA_17_INDEXES)
+
+
+def _foreign_relations(
+    cur: Any,
+    tables: Mapping[str, tuple[tuple[tuple[str, str, bool], ...], frozenset[tuple[str, str]]]],
+    indexes: Mapping[str, str],
+) -> list[str]:
+    """Relations already holding one of ``tables``/``indexes``' names without
+    exactly the catalog shape recorded for it (see ``_SCHEMA_17_TABLES``)."""
 
     def col(row: Any, key: str, index: int) -> Any:
         return row[key] if isinstance(row, dict) else row[index]
 
-    names = [*_SCHEMA_17_TABLES, *_SCHEMA_17_INDEXES]
+    names = [*tables, *indexes]
     cur.execute(
         "SELECT c.relname, c.relkind, ic.relname AS index_table FROM pg_class c "
         "JOIN pg_namespace n ON n.oid = c.relnamespace "
@@ -2564,8 +2574,8 @@ def _schema_17_foreign_relations(cur: Any) -> list[str]:
     ]
     foreign: list[str] = []
     for name, kind, index_table in existing:
-        if name in _SCHEMA_17_INDEXES:
-            if kind != "i" or index_table != _SCHEMA_17_INDEXES[name]:
+        if name in indexes:
+            if kind != "i" or index_table != indexes[name]:
                 foreign.append(name)
             continue
         if kind != "r":
@@ -2591,7 +2601,7 @@ def _schema_17_foreign_relations(cur: Any) -> list[str]:
         constraints = frozenset(
             (str(col(r, "contype", 0)), col(r, "cols", 1)) for r in cur.fetchall()
         )
-        if (columns, constraints) != _SCHEMA_17_TABLES[name]:
+        if (columns, constraints) != tables[name]:
             foreign.append(name)
     return foreign
 
@@ -2729,6 +2739,158 @@ def _apply_schema_version_17(cur: Any) -> None:
             created_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (repo_id, workspace_id, principal_id, tool, idempotency_key)
         );
+        """
+    )
+
+
+# The exact catalog shape _apply_schema_version_18 creates (same encoding as
+# _SCHEMA_17_TABLES).  A test migrates a fresh schema and asserts it is not
+# foreign, so this cannot drift from the DDL.
+_SCHEMA_18_TABLES: dict[str, tuple[tuple[tuple[str, str, bool], ...], frozenset[tuple[str, str]]]] = {
+    "work_lease": (
+        (
+            ("repo_id", _TEXT, True), ("lease_id", _TEXT, True),
+            ("work_item_id", "bigint", True), ("run_id", _TEXT, True),
+            ("principal_id", _TEXT, True), ("workspace_id", _TEXT, True),
+            ("client_id", _TEXT, False), ("grant_id", _TEXT, False),
+            ("claim_key", _TEXT, True), ("state", _TEXT, True),
+            ("ttl_seconds", "integer", True), ("acquired_at", _TS, True),
+            ("heartbeat_at", _TS, True), ("ended_at", _TS, False),
+            ("end_reason", _TEXT, False), ("takeover_of", _TEXT, False),
+            ("superseded_by", _TEXT, False),
+        ),
+        frozenset({
+            ("c", "claim_key"), ("c", "lease_id"), ("c", "state"),
+            ("c", "state,ended_at"), ("c", "state,superseded_by"), ("c", "ttl_seconds"),
+            ("f", "repo_id,run_id"), ("f", "repo_id,work_item_id"),
+            ("p", "repo_id,lease_id"),
+        }),
+    ),
+    "work_outcome_report": (
+        (
+            ("repo_id", _TEXT, True), ("report_id", _TEXT, True),
+            ("work_item_id", "bigint", True), ("lease_id", _TEXT, True),
+            ("run_id", _TEXT, True), ("principal_id", _TEXT, True),
+            ("workspace_id", _TEXT, True), ("idempotency_key", _TEXT, True),
+            ("request_digest", _TEXT, True), ("outcome", _TEXT, True),
+            ("summary", _TEXT, True), ("payload", _JSONB, True),
+            ("checks", _JSONB, True), ("payload_digest", _TEXT, True),
+            ("disposition", _TEXT, True), ("reason_code", _TEXT, False),
+            ("verification_profile", _TEXT, True), ("decision_id", "bigint", False),
+            ("created_at", _TS, True),
+        ),
+        frozenset({
+            ("c", "disposition"), ("c", "disposition,decision_id"),
+            ("c", "disposition,reason_code"), ("c", "idempotency_key"), ("c", "outcome"),
+            ("c", "payload_digest"), ("c", "report_id"), ("c", "request_digest"),
+            ("f", "repo_id,lease_id"), ("p", "repo_id,report_id"),
+            ("u", "repo_id,workspace_id,principal_id,idempotency_key"),
+        }),
+    ),
+}
+_SCHEMA_18_INDEXES = {
+    "uq_work_lease_active_item": "work_lease",
+    "idx_work_lease_claim_key": "work_lease",
+    "idx_work_outcome_report_item": "work_outcome_report",
+}
+
+
+def _apply_schema_version_18(cur: Any) -> None:
+    """Install the exclusive durable work lease and its outcome reports
+    (agentops#2520, E2b: vuoro-mcp-edge coordinate bucket, work:claim).
+
+    ``work_lease`` is the exclusive claim a hosted worker holds on one work
+    item.  At most one lease per item is ``active`` (the partial unique index
+    below, beneath the item-row lock :func:`acquire_lease` takes).  The lease
+    id, not the holder, is what is current: a lease taken over is
+    ``superseded`` for good and names its successor, so a heartbeat or a
+    completion replayed against it is refused even from its former holder
+    (vuoro_service.lease.LeaseStore is the behaviour spec).  The lease is
+    bound to the holder's run and that run's whole binding (principal,
+    workspace, OAuth client and grant).  Expiry is evaluated by this
+    authority when someone calls -- claim, heartbeat, complete -- from
+    ``heartbeat_at + ttl_seconds``; nothing sweeps or expires leases in the
+    background (TS-1).
+
+    ``work_outcome_report`` keeps every outcome a holder reported, including
+    the ones refused for settlement (a superseded or expired lease, an
+    unsatisfied verification profile): the late payload is retained as
+    evidence on the item, never discarded.  Rows are unique per
+    (workspace, principal, idempotency_key) and store the request digest, so
+    a same-key retry with different arguments is refused by storage as well
+    as by the write-tool ledger.
+
+    Additive and idempotent: a relation already holding one of these names
+    with exactly this shape is kept (a ladder re-run); any other is refused,
+    as schema 17 refuses.
+    """
+    foreign = _foreign_relations(cur, _SCHEMA_18_TABLES, _SCHEMA_18_INDEXES)
+    if foreign:
+        raise _pg_migrations.RemoteSchemaMigrationError(
+            "schema 18 cannot install work lease storage: relation(s) "
+            f"{', '.join(foreign)} already exist with a shape schema 18 did not "
+            "create; rename or drop them and re-run the migration"
+        )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS work_lease (
+            repo_id text NOT NULL,
+            lease_id text NOT NULL CHECK (lease_id ~ '^lease_[0-9A-HJKMNP-TV-Z]{26}$'),
+            work_item_id bigint NOT NULL,
+            run_id text NOT NULL,
+            principal_id text NOT NULL,
+            workspace_id text NOT NULL,
+            client_id text,
+            grant_id text,
+            claim_key text NOT NULL CHECK (claim_key ~ '^[A-Za-z0-9._:-]{8,128}$'),
+            state text NOT NULL CHECK (state IN ('active', 'superseded', 'settled', 'released')),
+            ttl_seconds integer NOT NULL CHECK (ttl_seconds BETWEEN 30 AND 3600),
+            acquired_at timestamptz NOT NULL,
+            heartbeat_at timestamptz NOT NULL,
+            ended_at timestamptz,
+            end_reason text,
+            takeover_of text,
+            superseded_by text,
+            PRIMARY KEY (repo_id, lease_id),
+            CHECK ((state = 'active') = (ended_at IS NULL)),
+            CHECK ((state = 'superseded') = (superseded_by IS NOT NULL)),
+            FOREIGN KEY (repo_id, work_item_id) REFERENCES work_item(repo_id, id) ON DELETE CASCADE,
+            FOREIGN KEY (repo_id, run_id) REFERENCES run(repo_id, run_id) ON DELETE CASCADE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_work_lease_active_item
+            ON work_lease(repo_id, work_item_id) WHERE state = 'active';
+        CREATE INDEX IF NOT EXISTS idx_work_lease_claim_key
+            ON work_lease(repo_id, workspace_id, principal_id, claim_key);
+
+        CREATE TABLE IF NOT EXISTS work_outcome_report (
+            repo_id text NOT NULL,
+            report_id text NOT NULL CHECK (report_id ~ '^outcome_[0-9A-HJKMNP-TV-Z]{26}$'),
+            work_item_id bigint NOT NULL,
+            lease_id text NOT NULL,
+            run_id text NOT NULL,
+            principal_id text NOT NULL,
+            workspace_id text NOT NULL,
+            idempotency_key text NOT NULL CHECK (idempotency_key ~ '^[A-Za-z0-9._:-]{8,128}$'),
+            request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
+            outcome text NOT NULL CHECK (outcome IN ('succeeded', 'failed')),
+            summary text NOT NULL,
+            payload jsonb NOT NULL,
+            checks jsonb NOT NULL,
+            payload_digest text NOT NULL CHECK (payload_digest ~ '^[0-9a-f]{64}$'),
+            disposition text NOT NULL
+                CHECK (disposition IN ('settled', 'recorded', 'awaiting-verification', 'rejected')),
+            reason_code text,
+            verification_profile text NOT NULL,
+            decision_id bigint,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (repo_id, report_id),
+            UNIQUE (repo_id, workspace_id, principal_id, idempotency_key),
+            CHECK ((disposition = 'rejected') = (reason_code IS NOT NULL)),
+            CHECK ((disposition = 'settled') = (decision_id IS NOT NULL)),
+            FOREIGN KEY (repo_id, lease_id) REFERENCES work_lease(repo_id, lease_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_work_outcome_report_item
+            ON work_outcome_report(repo_id, work_item_id);
         """
     )
 
@@ -5343,3 +5505,681 @@ def idempotent_write(
     if stored["request_digest"] != request_digest:
         raise IdempotencyConflict("this idempotency_key was already used with different arguments")
     return stored["result"]
+
+
+# ---------------------------------------------------------------------------
+# work.lease.* (agentops#2520, E2b: the exclusive durable work lease behind
+# vuoro-mcp-edge's coordinate bucket -- schema version 18)
+#
+# The work owner (this authority) evaluates a lease whenever someone calls:
+# at claim, heartbeat and completion, against its own clock.  Nothing here
+# runs in the background, schedules, retries or sweeps (TS-1).
+# ---------------------------------------------------------------------------
+
+LEASE_TTL_MIN_SECONDS = 30
+LEASE_TTL_MAX_SECONDS = 3600
+#: The verification profiles the owner recognises (vuoro-cloud
+#: 19-PRODUCT-POSITIONING-AND-PROOF.md "Verification profiles").  Only the
+#: first two can be satisfied by the holder's own outcome report; the others
+#: need a separate verifier or a human, who settles with work.decision.record.
+VERIFICATION_PROFILES = (
+    "self-reported", "checked", "role-separated", "identity-separated", "human-authorized",
+)
+DEFAULT_VERIFICATION_PROFILE = "checked"
+#: Who records a settlement decision: the owner, never the reporting holder.
+SETTLEMENT_ACTOR = "sprintctl:lease-settlement"
+_SELF_SETTLING_PROFILES = frozenset({"self-reported", "checked"})
+
+
+class LeaseRefused(ValueError):
+    """A claim, heartbeat or completion the lease owner refuses.
+
+    ``code`` is the caller-visible reason: ``lease-held``, ``lease-superseded``,
+    ``lease-expired``, ``lease-ended``, ``lease-not-found``, ``work-not-found``,
+    ``work-settled``, ``work-blocked``, ``work-not-active`` or
+    ``maintenance-active``.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def _mint_prefixed_id(prefix: str) -> str:
+    return prefix + "".join(secrets.choice(_RUN_ID_ALPHABET) for _ in range(26))
+
+
+def _lease_now(cur: Any) -> Any:
+    """The owner's clock, read after the caller's locks are held.
+
+    ``now()`` is the transaction's start, which for a caller that waited on
+    a lock is earlier than the moment it evaluates the lease; the wall clock
+    at evaluation is what expiry is judged against.
+    """
+    cur.execute("SELECT clock_timestamp() AS now")
+    return cur.fetchone()["now"]
+
+
+def _lease_is_stale(lease: Mapping[str, Any], now: Any) -> bool:
+    return lease["heartbeat_at"] + timedelta(seconds=int(lease["ttl_seconds"])) <= now
+
+
+def _lease_row(row: Mapping[str, Any]) -> dict:
+    expires_at = row["heartbeat_at"] + timedelta(seconds=int(row["ttl_seconds"]))
+    return {
+        "lease_id": row["lease_id"],
+        "item_id": int(row["work_item_id"]),
+        "run_id": row["run_id"],
+        "principal_id": row["principal_id"],
+        "workspace_id": row["workspace_id"],
+        "state": row["state"],
+        "ttl_seconds": int(row["ttl_seconds"]),
+        "acquired_at": _iso(row["acquired_at"]),
+        "heartbeat_at": _iso(row["heartbeat_at"]),
+        "expires_at": _iso(expires_at),
+        "ended_at": _iso(row["ended_at"]) if row["ended_at"] is not None else None,
+        "end_reason": row["end_reason"],
+        "takeover_of": row["takeover_of"],
+        "superseded_by": row["superseded_by"],
+    }
+
+
+def _report_row(row: Mapping[str, Any]) -> dict:
+    return {
+        "report_id": row["report_id"],
+        "item_id": int(row["work_item_id"]),
+        "lease_id": row["lease_id"],
+        "run_id": row["run_id"],
+        "principal_id": row["principal_id"],
+        "outcome": row["outcome"],
+        "summary": row["summary"],
+        "payload": row["payload"],
+        "checks": row["checks"],
+        "payload_digest": row["payload_digest"],
+        "disposition": row["disposition"],
+        "reason_code": row["reason_code"],
+        "verification_profile": row["verification_profile"],
+        "decision_id": int(row["decision_id"]) if row["decision_id"] is not None else None,
+        "created_at": _iso(row["created_at"]),
+    }
+
+
+def _lease_binding(row: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (row["principal_id"], row["workspace_id"], row["client_id"], row["grant_id"])
+
+
+def _lease_event(
+    store: PgStore, item: Mapping[str, Any], event_type: str, actor: str, payload: dict
+) -> None:
+    """Append a lease lifecycle event to the item, in the caller's transaction."""
+    _insert_event(
+        store, int(item["sprint_id"]), actor, event_type,
+        source_type="system", work_item_id=int(item["id"]), payload=payload,
+    )
+
+
+def _lock_repo_for_claims(cur: Any, store: PgStore) -> None:
+    """Take the repo-scoped lock reserve() and maintenance activation take.
+
+    Activation counts live leases as well as reservations, so a claim and an
+    activation cannot both commit.  Every path that can create a lease takes
+    this lock first, then the item row, then the lease row: one lock order,
+    so claims, resumes, heartbeats and completions cannot deadlock.
+    """
+    cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (store.repo_id,))
+
+
+def _refuse_unclaimable(cur: Any, store: PgStore, item: Mapping[str, Any] | None, work_item_id: int) -> None:
+    """Refuse work that cannot be claimed now (the item row already locked)."""
+    cur.execute(
+        "SELECT 1 FROM maintenance_capability WHERE repo_id = %s "
+        "AND state IN ('active','observing') AND expires_at > statement_timestamp() LIMIT 1",
+        (store.repo_id,),
+    )
+    if cur.fetchone() is not None:
+        raise LeaseRefused(
+            "maintenance-active",
+            "claims are refused while an exact-plan maintenance capability is active",
+        )
+    if item is None:
+        raise LeaseRefused("work-not-found", f"item #{work_item_id} not found")
+    if item["status"] == "done":
+        raise LeaseRefused("work-settled", f"item #{work_item_id} is already settled")
+    if item["status"] == "blocked":
+        raise LeaseRefused("work-blocked", f"item #{work_item_id} is blocked")
+    unresolved = [
+        b["item_id"] for b in list_deps_blocking(store, work_item_id)
+        if b["blocker_status"] != "done"
+    ]
+    if unresolved:
+        raise LeaseRefused(
+            "work-blocked",
+            f"item #{work_item_id} waits on unsettled blockers {unresolved}",
+        )
+
+
+def _lock_item(cur: Any, store: PgStore, work_item_id: int) -> dict | None:
+    cur.execute(
+        "SELECT * FROM work_item WHERE repo_id = %s AND id = %s FOR UPDATE",
+        (store.repo_id, work_item_id),
+    )
+    row = cur.fetchone()
+    return dict(row) if row is not None else None
+
+
+def _lock_claimable_item(cur: Any, store: PgStore, work_item_id: int) -> dict:
+    """Lock the repo for claims and the item; refuse work that cannot be claimed."""
+    _lock_repo_for_claims(cur, store)
+    item = _lock_item(cur, store, work_item_id)
+    _refuse_unclaimable(cur, store, item, work_item_id)
+    assert item is not None
+    return item
+
+
+def _acquire_locked(
+    cur: Any,
+    store: PgStore,
+    item: Mapping[str, Any],
+    *,
+    run_id: str,
+    binding: tuple[str, str, str | None, str | None],
+    claim_key: str,
+    ttl_seconds: int,
+    actor: str,
+) -> dict:
+    """Acquire the item's lease with the item row already locked.
+
+    A current lease that is still fresh is ``lease-held``.  A stale one is
+    superseded in the same transaction: by another binding it is a takeover;
+    by the same binding and claim key it is the holder reclaiming its own
+    expired lease (the resume path).
+    """
+    work_item_id = int(item["id"])
+    cur.execute(
+        "SELECT * FROM work_lease WHERE repo_id = %s AND work_item_id = %s "
+        "AND state = 'active' FOR UPDATE",
+        (store.repo_id, work_item_id),
+    )
+    current = cur.fetchone()
+    now = _lease_now(cur)
+    lease_id = _mint_prefixed_id("lease_")
+    previous = None
+    if current is not None:
+        if not _lease_is_stale(current, now):
+            expires = current["heartbeat_at"] + timedelta(seconds=int(current["ttl_seconds"]))
+            raise LeaseRefused(
+                "lease-held",
+                f"item #{work_item_id} is leased; its lease becomes stale at "
+                f"{_iso(expires)} unless its holder heartbeats",
+            )
+        own = _lease_binding(current) == binding and current["claim_key"] == claim_key
+        reason = "reclaimed-by-holder" if own else "taken-over"
+        cur.execute(
+            "UPDATE work_lease SET state = 'superseded', ended_at = %s, end_reason = %s, "
+            "superseded_by = %s WHERE repo_id = %s AND lease_id = %s",
+            (now, reason, lease_id, store.repo_id, current["lease_id"]),
+        )
+        previous = {**dict(current), "reason": reason}
+    principal_id, workspace_id, client_id, grant_id = binding
+    cur.execute(
+        "INSERT INTO work_lease(repo_id, lease_id, work_item_id, run_id, principal_id, "
+        "workspace_id, client_id, grant_id, claim_key, state, ttl_seconds, acquired_at, "
+        "heartbeat_at, takeover_of) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', "
+        "%s, %s, %s, %s) RETURNING *",
+        (
+            store.repo_id, lease_id, work_item_id, run_id, principal_id, workspace_id,
+            client_id, grant_id, claim_key, ttl_seconds, now, now,
+            previous["lease_id"] if previous else None,
+        ),
+    )
+    lease = cur.fetchone()
+    previous_status = item["status"]
+    if previous_status == "pending":
+        cur.execute(
+            "UPDATE work_item SET status = 'active', updated_at = now() "
+            "WHERE repo_id = %s AND id = %s",
+            (store.repo_id, work_item_id),
+        )
+    if previous is not None:
+        _lease_event(store, item, "lease.taken-over", actor, {
+            "lease_id": lease_id,
+            "previous_lease_id": previous["lease_id"],
+            "previous_principal_id": previous["principal_id"],
+            "previous_run_id": previous["run_id"],
+            "previous_heartbeat_at": _iso(previous["heartbeat_at"]),
+            "previous_ttl_seconds": int(previous["ttl_seconds"]),
+            "reason": previous["reason"],
+        })
+    _lease_event(store, item, "lease.acquired", actor, {
+        "lease_id": lease_id,
+        "run_id": run_id,
+        "principal_id": principal_id,
+        "ttl_seconds": ttl_seconds,
+        "previous_status": previous_status,
+        "takeover_of": previous["lease_id"] if previous else None,
+    })
+    return {
+        "lease": _lease_row(lease),
+        "resumed": False,
+        "took_over": (
+            previous["lease_id"] if previous and previous["reason"] == "taken-over" else None
+        ),
+    }
+
+
+def acquire_lease(
+    store: PgStore,
+    *,
+    work_item_id: int,
+    run_id: str,
+    principal_id: str,
+    workspace_id: str,
+    client_id: str | None,
+    grant_id: str | None,
+    claim_key: str,
+    ttl_seconds: int,
+    actor: str,
+    cur: Any | None = None,
+) -> dict:
+    """Claim ``work_item_id`` for the caller's run: an exclusive lease.
+
+    Refuses (:class:`LeaseRefused`) work that is missing, settled or blocked,
+    any claim while maintenance is active, and an item whose current lease
+    is still fresh (``lease-held``).  A stale lease is superseded and the
+    takeover is recorded on both leases and as a ``lease.taken-over`` event.
+    A pending item becomes active.  ``cur``: see :func:`_in_write_transaction`.
+    """
+    binding = (principal_id, workspace_id, client_id, grant_id)
+
+    def body(cur: Any) -> dict:
+        item = _lock_claimable_item(cur, store, work_item_id)
+        return _acquire_locked(
+            cur, store, item, run_id=run_id, binding=binding, claim_key=claim_key,
+            ttl_seconds=ttl_seconds, actor=actor,
+        )
+
+    return _in_write_transaction(store, cur, body)
+
+
+def resume_lease(
+    store: PgStore,
+    *,
+    work_item_id: int,
+    run_id: str,
+    principal_id: str,
+    workspace_id: str,
+    client_id: str | None,
+    grant_id: str | None,
+    claim_key: str,
+    ttl_seconds: int,
+    actor: str,
+) -> dict:
+    """Re-present a claim the caller already made under ``claim_key``.
+
+    The resume path of a restarted worker (same binding, same key):
+
+    - its lease is still current and fresh: the same lease, heartbeat
+      refreshed;
+    - its lease is current but stale (nobody took it over): the holder
+      reclaims it -- a new lease id superseding the expired one, since an
+      expired lease id is never revived (``vuoro_service.lease``);
+    - its lease was taken over: ``lease-superseded``;
+    - its lease was settled or released: that lease, unchanged.
+    """
+    binding = (principal_id, workspace_id, client_id, grant_id)
+    latest_sql = (
+        "SELECT * FROM work_lease WHERE repo_id = %s AND workspace_id = %s "
+        "AND principal_id = %s AND claim_key = %s "
+        "ORDER BY acquired_at DESC, lease_id DESC LIMIT 1"
+    )
+    latest_params = (store.repo_id, workspace_id, principal_id, claim_key)
+    try:
+        with store.conn.cursor() as cur:
+            _lock_repo_for_claims(cur, store)
+            item = _lock_item(cur, store, work_item_id)
+            # Read the newest lease of this claim only once the item is
+            # locked: a concurrent resume of the same claim may just have
+            # reclaimed it, and its successor is what this caller resumes.
+            cur.execute(latest_sql + " FOR UPDATE", latest_params)
+            latest = cur.fetchone()
+            if (
+                latest is None
+                or item is None
+                or _lease_binding(latest) != binding
+                or latest["run_id"] != run_id
+                or int(latest["work_item_id"]) != work_item_id
+            ):
+                raise LeaseRefused("lease-not-found", "no lease of the caller's matches this claim")
+            if latest["state"] == "superseded":
+                raise LeaseRefused(
+                    "lease-superseded",
+                    f"lease {latest['lease_id']} was taken over by lease {latest['superseded_by']}",
+                )
+            if latest["state"] != "active":
+                result = {"lease": _lease_row(latest), "resumed": True, "took_over": None}
+            else:
+                now = _lease_now(cur)
+                if item["status"] == "done":
+                    raise LeaseRefused("work-settled", f"item #{work_item_id} is already settled")
+                if _lease_is_stale(latest, now):
+                    _refuse_unclaimable(cur, store, item, work_item_id)
+                    result = _acquire_locked(
+                        cur, store, item, run_id=run_id, binding=binding,
+                        claim_key=claim_key, ttl_seconds=ttl_seconds, actor=actor,
+                    )
+                    result["resumed"] = True
+                else:
+                    cur.execute(
+                        "UPDATE work_lease SET heartbeat_at = %s WHERE repo_id = %s "
+                        "AND lease_id = %s RETURNING *",
+                        (now, store.repo_id, latest["lease_id"]),
+                    )
+                    result = {"lease": _lease_row(cur.fetchone()), "resumed": True, "took_over": None}
+        store.conn.commit()
+    except Exception:
+        store.conn.rollback()
+        raise
+    return result
+
+
+def _owned_lease(
+    cur: Any, store: PgStore, lease_id: str, run_id: str, binding: tuple[Any, ...]
+) -> dict:
+    """The lease if it is the caller's (its run and whole binding);
+    ``lease-not-found`` otherwise -- one code for an unknown lease and for
+    someone else's, so a caller cannot probe which lease ids exist."""
+    cur.execute(
+        "SELECT * FROM work_lease WHERE repo_id = %s AND lease_id = %s",
+        (store.repo_id, lease_id),
+    )
+    row = cur.fetchone()
+    if row is None or row["run_id"] != run_id or _lease_binding(row) != binding:
+        raise LeaseRefused("lease-not-found", f"no lease {lease_id!r} belongs to the caller")
+    return dict(row)
+
+
+def _dead_lease_reason(lease: Mapping[str, Any], item: Mapping[str, Any], now: Any) -> tuple[str, str] | None:
+    """Why a lease can no longer act, as (code, message), or None if current."""
+    lease_id = lease["lease_id"]
+    if lease["state"] == "superseded":
+        return (
+            "lease-superseded",
+            f"lease {lease_id} was taken over by lease {lease['superseded_by']}",
+        )
+    if lease["state"] != "active":
+        return ("lease-ended", f"lease {lease_id} already ended ({lease['state']})")
+    if item["status"] == "done":
+        return ("work-settled", f"item #{int(item['id'])} is already settled")
+    if _lease_is_stale(lease, now):
+        return (
+            "lease-expired",
+            f"lease {lease_id} expired: no heartbeat within {int(lease['ttl_seconds'])}s; "
+            "re-present the claim to reclaim it if nobody took it over",
+        )
+    return None
+
+
+def heartbeat_lease(
+    store: PgStore,
+    *,
+    lease_id: str,
+    run_id: str,
+    principal_id: str,
+    workspace_id: str,
+    client_id: str | None,
+    grant_id: str | None,
+) -> dict:
+    """Refresh the caller's current lease.
+
+    Refused for a lease that is superseded, ended or already expired: expiry
+    is checked before the heartbeat lands, so a heartbeat racing a takeover
+    can never revive a lease someone else now holds.
+    """
+    binding = (principal_id, workspace_id, client_id, grant_id)
+    try:
+        with store.conn.cursor() as cur:
+            lease = _owned_lease(cur, store, lease_id, run_id, binding)
+            cur.execute(
+                "SELECT * FROM work_item WHERE repo_id = %s AND id = %s FOR UPDATE",
+                (store.repo_id, lease["work_item_id"]),
+            )
+            item = cur.fetchone()
+            cur.execute(
+                "SELECT * FROM work_lease WHERE repo_id = %s AND lease_id = %s FOR UPDATE",
+                (store.repo_id, lease_id),
+            )
+            lease = cur.fetchone()
+            now = _lease_now(cur)
+            dead = _dead_lease_reason(lease, item, now)
+            if dead is not None:
+                raise LeaseRefused(*dead)
+            cur.execute(
+                "UPDATE work_lease SET heartbeat_at = %s WHERE repo_id = %s AND lease_id = %s "
+                "RETURNING *",
+                (now, store.repo_id, lease_id),
+            )
+            row = cur.fetchone()
+        store.conn.commit()
+    except Exception:
+        store.conn.rollback()
+        raise
+    return _lease_row(row)
+
+
+def outcome_payload_digest(
+    outcome: str, summary: str, payload: Mapping[str, Any], checks: list
+) -> str:
+    """sha256 over the canonical JSON of what the holder reported; the
+    settlement decision cites it as its evidence digest."""
+    body = {"outcome": outcome, "summary": summary, "payload": payload, "checks": checks}
+    encoded = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def verification_config(cur: Any, store: PgStore, work_item_id: int) -> dict:
+    """The verification the owner configured for the item.
+
+    Read from the item's current release (its acceptance contract), so the
+    holder never chooses its own bar: ``verification_profile`` names the
+    profile (default ``checked``) and ``evidence_obligations`` the checks it
+    requires.
+    """
+    release = _current_release_locked(cur, store.repo_id, work_item_id)
+    contract = (release or {}).get("acceptance_contract") or {}
+    profile = contract.get("verification_profile") or DEFAULT_VERIFICATION_PROFILE
+    required = [str(label) for label in contract.get("evidence_obligations") or []]
+    return {"profile": profile, "required_checks": required}
+
+
+def _verification_verdict(config: Mapping[str, Any], checks: list) -> tuple[str, str | None]:
+    """(disposition, reason) for a succeeded outcome under ``config``."""
+    profile = config["profile"]
+    if profile not in _SELF_SETTLING_PROFILES:
+        return "awaiting-verification", None
+    if profile == "self-reported":
+        return "settled", None
+    passed = {check["name"] for check in checks if check["status"] == "passed"}
+    failed = sorted(check["name"] for check in checks if check["status"] != "passed")
+    missing = sorted(set(config["required_checks"]) - passed)
+    if not checks:
+        return "rejected", "profile checked needs at least one reported check"
+    if failed:
+        return "rejected", f"checks not passed: {failed}"
+    if missing:
+        return "rejected", f"required checks not reported as passed: {missing}"
+    return "settled", None
+
+
+def complete_lease(
+    store: PgStore,
+    *,
+    lease_id: str,
+    run_id: str,
+    principal_id: str,
+    workspace_id: str,
+    client_id: str | None,
+    grant_id: str | None,
+    idempotency_key: str,
+    request_digest: str,
+    outcome: str,
+    summary: str,
+    payload: dict,
+    checks: list,
+    actor: str,
+    cur: Any | None = None,
+) -> dict:
+    """Record the holder's outcome report and let the owner settle it.
+
+    The report is always stored -- that is the evidence -- and its
+    ``disposition`` says what the owner made of it, evaluated here against
+    the current lease and the configured verification:
+
+    - ``rejected`` (with ``reason_code``): the lease is superseded
+      (``lease-superseded``), ended, expired, or the item was settled or is
+      no longer active, or a succeeded outcome does not satisfy the profile
+      (``verification-unsatisfied``).  The payload is kept on the item; the
+      item does not change.
+    - ``settled``: a succeeded outcome satisfying ``self-reported`` or
+      ``checked`` -- the owner records an ``accept`` decision naming the
+      profile, the item becomes done and the lease ``settled``.
+    - ``awaiting-verification``: the profile needs a separate verifier or a
+      human; the report waits for their decision and the lease stays.
+    - ``recorded``: a failed outcome; the lease is released and the item
+      stays active for someone else to claim.
+
+    Nothing raises for a refusal except ``lease-not-found`` (a stranger's
+    report is not evidence on the item) and a same-key conflict.  ``cur``:
+    see :func:`_in_write_transaction`.
+    """
+    binding = (principal_id, workspace_id, client_id, grant_id)
+    payload_digest = outcome_payload_digest(outcome, summary, payload, checks)
+
+    def body(cur: Any) -> dict:
+        found = _owned_lease(cur, store, lease_id, run_id, binding)
+        cur.execute(
+            "SELECT * FROM work_item WHERE repo_id = %s AND id = %s FOR UPDATE",
+            (store.repo_id, found["work_item_id"]),
+        )
+        item = cur.fetchone()
+        cur.execute(
+            "SELECT * FROM work_lease WHERE repo_id = %s AND lease_id = %s FOR UPDATE",
+            (store.repo_id, lease_id),
+        )
+        lease = cur.fetchone()
+        cur.execute(
+            "SELECT * FROM work_outcome_report WHERE repo_id = %s AND workspace_id = %s "
+            "AND principal_id = %s AND idempotency_key = %s",
+            (store.repo_id, workspace_id, principal_id, idempotency_key),
+        )
+        retried = cur.fetchone()
+        if retried is not None:
+            _replay_or_conflict(retried["request_digest"], request_digest, "outcome report")
+            return _report_row(retried)
+        now = _lease_now(cur)
+        config = verification_config(cur, store, int(item["id"]))
+        dead = _dead_lease_reason(lease, item, now)
+        if dead is None and item["status"] != "active":
+            dead = ("work-not-active", f"item #{int(item['id'])} is {item['status']}, not active")
+        decision = None
+        detail = None
+        if dead is not None:
+            disposition, reason_code, detail = "rejected", dead[0], dead[1]
+        elif outcome == "failed":
+            disposition, reason_code = "recorded", None
+        else:
+            disposition, detail = _verification_verdict(config, checks)
+            reason_code = "verification-unsatisfied" if disposition == "rejected" else None
+        if disposition == "settled":
+            rationale = (
+                f"accepted under verification profile {config['profile']}: "
+                f"lease {lease_id} held by {principal_id} (run {run_id}) reported success"
+            )
+            if checks:
+                rationale += "; checks passed: " + ", ".join(
+                    sorted(check["name"] for check in checks)
+                )
+            # The owner decides, not the holder: the decision is attributed
+            # to the settlement authority; the holder is named in the
+            # rationale and its report is the cited evidence.
+            normalized = _decisions.normalize_decision(
+                "accept", actor=SETTLEMENT_ACTOR, rationale=rationale[:4000],
+                evidence_digests=[payload_digest],
+            )
+            decision = _decide_locked(cur, store.repo_id, item, normalized)
+            _insert_event(
+                store, int(item["sprint_id"]), SETTLEMENT_ACTOR, _decisions.ITEM_DECIDED_EVENT_TYPE,
+                work_item_id=int(item["id"]),
+                payload=_decisions.decided_event_payload(decision, None),
+            )
+        if disposition in ("settled", "recorded"):
+            cur.execute(
+                "UPDATE work_lease SET state = %s, ended_at = %s, end_reason = %s "
+                "WHERE repo_id = %s AND lease_id = %s",
+                (
+                    "settled" if disposition == "settled" else "released", now,
+                    "settled" if disposition == "settled" else "reported-failed",
+                    store.repo_id, lease_id,
+                ),
+            )
+        report_id = _mint_prefixed_id("outcome_")
+        cur.execute(
+            "INSERT INTO work_outcome_report(repo_id, report_id, work_item_id, lease_id, "
+            "run_id, principal_id, workspace_id, idempotency_key, request_digest, outcome, "
+            "summary, payload, checks, payload_digest, disposition, reason_code, "
+            "verification_profile, decision_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, "
+            "%s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s, %s) RETURNING *",
+            (
+                store.repo_id, report_id, int(item["id"]), lease_id, run_id, principal_id,
+                workspace_id, idempotency_key, request_digest, outcome, summary,
+                json.dumps(payload), json.dumps(checks), payload_digest, disposition,
+                reason_code, config["profile"], decision["id"] if decision else None,
+            ),
+        )
+        report = _report_row(cur.fetchone())
+        _lease_event(store, item, "lease.outcome-reported", actor, {
+            "report_id": report_id,
+            "lease_id": lease_id,
+            "run_id": run_id,
+            "outcome": outcome,
+            "disposition": disposition,
+            "reason_code": reason_code,
+            "verification_profile": config["profile"],
+            "payload_digest": payload_digest,
+            "decision_id": report["decision_id"],
+        })
+        if detail is not None:
+            report["detail"] = detail
+        return report
+
+    return _in_write_transaction(store, cur, body)
+
+
+def claim_state(store: PgStore, work_item_id: int) -> dict:
+    """An item's leases and outcome reports, as the owner evaluates them now."""
+    with store.conn.cursor() as cur:
+        now = _lease_now(cur)
+        cur.execute(
+            "SELECT * FROM work_lease WHERE repo_id = %s AND work_item_id = %s "
+            "ORDER BY acquired_at, lease_id",
+            (store.repo_id, work_item_id),
+        )
+        leases = cur.fetchall()
+        cur.execute(
+            "SELECT * FROM work_outcome_report WHERE repo_id = %s AND work_item_id = %s "
+            "ORDER BY created_at, report_id",
+            (store.repo_id, work_item_id),
+        )
+        reports = cur.fetchall()
+        config = verification_config(cur, store, work_item_id)
+    store.conn.rollback()
+    current = next((row for row in leases if row["state"] == "active"), None)
+    return {
+        "current_lease": (
+            {**_lease_row(current), "stale": _lease_is_stale(current, now)}
+            if current is not None else None
+        ),
+        "leases": [_lease_row(row) for row in leases],
+        "outcome_reports": [_report_row(row) for row in reports],
+        "verification": config,
+        "evaluated_at": _iso(now),
+    }

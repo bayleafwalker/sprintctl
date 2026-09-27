@@ -689,6 +689,13 @@ class PostgresMaintenanceCapabilityStore:
                         cur.execute("SELECT COUNT(*) AS count FROM reservation WHERE repo_id = %s AND state = 'active'", (self.repo_id,))
                         if int(cur.fetchone()["count"]):
                             raise MaintenanceCapabilityError("activation requires zero active reservations")
+                        # A live (fresh) work lease is a hosted worker acting
+                        # now (agentops#2520).  A stale one is not: nobody
+                        # can heartbeat it, and a re-claim is refused while
+                        # the capability is active.
+                        cur.execute("SELECT COUNT(*) AS count FROM work_lease WHERE repo_id = %s AND state = 'active' AND heartbeat_at + ttl_seconds * interval '1 second' > clock_timestamp()", (self.repo_id,))
+                        if int(cur.fetchone()["count"]):
+                            raise MaintenanceCapabilityError("activation requires zero live work leases")
                         SQLiteMaintenanceCapabilityStore._require_fresh_start_gate(self, envelope, decided_at)
                 next_revision = current["revision"] + 1
                 cur.execute("UPDATE maintenance_capability SET state=%s, revision=%s, next_sequence=%s, updated_at=%s WHERE repo_id=%s AND capability_id=%s AND revision=%s", (target, next_revision, next_sequence, now, self.repo_id, capability_id, current["revision"]))

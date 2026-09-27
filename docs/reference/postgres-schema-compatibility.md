@@ -51,6 +51,13 @@ operations. If a relation already uses one of those names without schema
 17's exact columns and constraints, the migration refuses instead of keeping
 it.
 
+Schema 18 (sprintctl 0.9.0) is again a coordinated cutover: a 0.9.0
+runtime admits only schema 18, and a 0.8.x runtime refuses it. Run the
+deployment migration together with the 0.9.0 rollout. Schema 18 is
+additive: it adds the `work_lease` and `work_outcome_report` tables behind
+the `work.lease.*-v1` operations, and refuses, as schema 17 does, a relation
+already holding one of those names with another shape.
+
 The handshake also publishes
 `sprintctl-repository-ingest-cursor/v1` with `scope=repository` and
 `contiguous=true`. Numeric `ingest_offset` values are meaningful only together

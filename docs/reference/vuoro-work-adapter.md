@@ -34,6 +34,7 @@ no migration or DDL.
 | Cutover evidence | `work.pilot.cutover-evidence` | key forbidden |
 | Runs (0.8.0, schema 17) | `work.run.register-v1`, `work.run.resolve-v1` | register requires an `idempotency_key` argument (write-tool ledger); resolve forbids one |
 | Run evidence and notes (0.8.0, schema 17) | `work.evidence.tail-v1`, `work.evidence.append-v1`, `work.session-note.write-v1` | tail forbids a key; append and note writes require an `idempotency_key` argument (write-tool ledger) |
+| Work leases (0.9.0, schema 18) | `work.lease.acquire-v1`, `work.lease.heartbeat-v1`, `work.lease.complete-v1`, `work.lease.read-v1` | acquire and complete require an `idempotency_key` argument (write-tool ledger); heartbeat and read forbid one |
 
 Every operation declares JSON Schema 2020-12 input and result contracts,
 authority, execution semantics, idempotency behavior and required client
@@ -136,6 +137,77 @@ evidence or ledger storage.
   arguments. The run, evidence item or note also stores the request digest,
   so storage enforces the same rule on its own. A failed write commits
   nothing, so the key can be retried.
+
+## Work leases
+
+Added in sprintctl 0.9.0 with remote schema 18 (agentops#2520, E2b). These
+operations back the Vuoro MCP edge's coordinate bucket (`work:claim`:
+`claim_work`, `heartbeat`, `complete_work`) and are served only by the
+PostgreSQL authority. `work.lease.read-v1` needs `work:read`. The retired
+`work.claim.*` names stay retired; leases are a new surface, not their
+return.
+
+A lease is exclusive: at most one `active` lease per item. It is held by the
+caller's run (`run_id`, resolved first as the record operations resolve it)
+and that run's whole binding: principal, workspace, OAuth client and grant.
+Advisory reservations are separate and stay advisory; a lease neither
+refuses nor is refused by them.
+
+This authority evaluates a lease whenever someone calls, against its own
+clock. Nothing expires, sweeps, schedules or retries in the background
+(TS-1). A lease is stale once `heartbeat_at + ttl_seconds` has passed. The
+TTL is 300 seconds unless the runtime sets `SPRINTCTL_LEASE_TTL_SECONDS` (a
+tenant runtime serves one workspace, so this is the per-workspace setting)
+or the claim names its own, from 30 to 3600.
+
+- `work.lease.acquire-v1` claims an item: missing work is `work-not-found`
+  (404); settled work is `work-settled`; a `blocked` item or one waiting on
+  an unsettled blocker is `work-blocked`; any claim while a maintenance
+  capability is active is `maintenance-active`; an item whose current lease
+  is still fresh is `lease-held` (all 409). A stale lease is superseded:
+  by anyone else it is a takeover, recorded on both leases
+  (`superseded_by`, `takeover_of`) and as a `lease.taken-over` event with
+  the previous holder, run and last heartbeat. A pending item becomes
+  active. The same key with the same arguments re-presents the claim and
+  is evaluated again, not replayed: a fresh lease is the same lease with
+  its heartbeat refreshed; the holder's own stale lease, if nobody took it
+  over, is reclaimed under a new lease id; a lease taken over is
+  `lease-superseded`; a settled or released lease is returned as it is.
+  This is how a restarted worker resumes (`resumed: true`).
+- `work.lease.heartbeat-v1` refreshes the caller's lease. An unknown lease,
+  or anyone else's, is `lease-not-found` (404, one code for both). A
+  superseded lease is `lease-superseded`, an ended one `lease-ended`, an
+  expired one `lease-expired` even if nobody took it over, and a lease on
+  an item settled some other way `work-settled` (409). An expired lease id
+  never comes back; re-present the claim instead.
+- `work.lease.complete-v1` is an outcome report, not a settlement. The
+  report (outcome, summary, payload up to 64 KiB, checks) is always stored
+  on the item, and this authority decides what it means:
+  - `rejected`: the lease is superseded, ended or expired, the item was
+    settled some other way or is no longer active (`work-not-active`), or a
+    succeeded outcome does not satisfy the verification profile
+    (`verification-unsatisfied`, 422). The operation fails with that code
+    after the report is committed, so the late payload stays as evidence
+    and the item does not change.
+  - `settled`: a succeeded outcome under `self-reported`, or under
+    `checked` with every reported check passed and every required check
+    present. The authority records an `accept` decision attributed to
+    `sprintctl:lease-settlement`, with the rationale "accepted under
+    verification profile <profile>" and the report's `payload_digest` as
+    evidence; the item becomes done and its dependents can become ready.
+  - `awaiting-verification`: the profile is `role-separated`,
+    `identity-separated` or `human-authorized`; the report waits for that
+    verifier's `work.decision.record`, and the lease stays.
+  - `recorded`: a failed outcome; the lease is released and the item stays
+    active for the next claim.
+- The verification profile and the required checks come from the item's
+  current release acceptance contract (`verification_profile`, default
+  `checked`; `evidence_obligations` as the required check names), never
+  from the caller. There is no `parked` lease state: a worker that is denied
+  records that as evidence on its run and stops heartbeating.
+- `work.lease.read-v1` returns the item's current lease (with `stale` as of
+  now), every lease and every outcome report, and the configured
+  verification.
 
 ## Authority and retry semantics
 

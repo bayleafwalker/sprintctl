@@ -20,6 +20,10 @@ TEST_ROLE_PREFIX = "sprintctl_test_"
 TEST_DATABASE_PREFIX = "sprintctl_test_"
 DISPOSABLE_DATABASE_COMMENT = "sprintctl:disposable-integration-test"
 REPO_TABLES = (
+    # E2b (agentops#2520): outcome reports cascade from their lease and
+    # leases from their item and run; listed first for the same reason.
+    "work_outcome_report",
+    "work_lease",
     # E2 (agentops#2466): the ledger carries no FK to run, session_note and
     # evidence_item cascade from run (ON DELETE CASCADE), but are listed
     # explicitly first so scope cleanup does not depend on the cascade.
