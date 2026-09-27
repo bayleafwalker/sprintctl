@@ -154,7 +154,7 @@ and that run's whole binding: principal, workspace, OAuth client and grant.
 Advisory reservations are separate and stay advisory; a lease neither
 refuses nor is refused by them.
 
-Catalog change in the release after 0.9.0 (agentops#2539): the lease
+Catalog change in 0.10.0 (agentops#2539): the lease
 results' `verification` object changes `profile` from an enum to a pattern
 (a combined bar is named with `+`) and makes `requirements` required. The
 operation names and `-v1` versions stay, and a lenient consumer is
