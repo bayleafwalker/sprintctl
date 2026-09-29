@@ -14,8 +14,17 @@ if ! command -v initdb >/dev/null 2>&1 || ! command -v pg_ctl >/dev/null 2>&1; t
   exec nix shell nixpkgs#postgresql_16 -c "$0" "$@"
 fi
 
+# libpq reads every PG* variable (PGHOSTADDR, PGSERVICE, PGSERVICEFILE, PGPASSFILE,
+# PGSSL*, ...), and any of them could redirect a connection. Clear them all so
+# only the explicit host, port and URLs below are used.
+while IFS= read -r name; do unset "$name"; done < <(compgen -e | grep '^PG' || true)
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-work="$(mktemp -d "${TMPDIR:-/tmp}/sprintctl-pg.XXXXXX")"
+# The server socket path must stay under the unix-socket length limit (~107
+# bytes), so fall back to /tmp when TMPDIR is long.
+tmp_base="${TMPDIR:-/tmp}"
+[ "${#tmp_base}" -le 60 ] || tmp_base=/tmp
+work="$(mktemp -d "$tmp_base/sprintctl-pg.XXXXXX")"
 data="$work/data"
 sock="$work/sock"
 mkdir -p "$sock"
@@ -23,7 +32,13 @@ started=0
 
 cleanup() {
   local rc=$?
+  # A second signal must not abort cleanup halfway and leave the dir behind.
+  trap '' INT TERM
   set +e
+  if [ "$rc" != 0 ] && [ -s "$work/server.log" ]; then
+    echo "pg-disposable-tests: server log (exit $rc):" >&2
+    tail -n 40 "$work/server.log" >&2
+  fi
   if [ "$started" = 1 ]; then
     pg_ctl -D "$data" -m immediate -w stop >/dev/null 2>&1
   fi
@@ -46,7 +61,7 @@ pg_ctl -D "$data" -w -l "$work/server.log" \
   -o "-c listen_addresses=127.0.0.1 -c port=$port -c unix_socket_directories=$sock -c fsync=off" start >/dev/null
 started=1
 
-admin() { psql -X -v ON_ERROR_STOP=1 -h "$sock" -p "$port" -U pgadmin_disposable -d postgres "$@"; }
+admin() { psql -X -v ON_ERROR_STOP=1 -h "$sock" -p "$port" -U pgadmin_disposable -d postgres; }
 
 admin >/dev/null <<SQL
 CREATE ROLE sprintctl_test_local LOGIN PASSWORD '$test_pw'
