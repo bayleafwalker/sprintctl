@@ -36,12 +36,13 @@ class TestReleaseIntegrity:
         """0.8.0 is tagged against remote schema 17; a runtime whose minimum
         is 18 cannot serve a schema-17 authority, so it is 0.9.0 or later.
         0.10.0 keeps schema 18; it is a minor release because the adapter
-        catalog changed (agentops#2539, agentops#2540)."""
+        catalog changed (agentops#2539, agentops#2540). 0.10.1 is a patch:
+        served runtime connection recovery (#2110), no catalog or schema change."""
         from sprintctl import pg_migrations
 
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
-        assert pyproject["project"]["version"] == __version__ == "0.10.0"
+        assert pyproject["project"]["version"] == __version__ == "0.10.1"
         assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 18
         assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 18
 
