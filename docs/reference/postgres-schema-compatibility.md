@@ -166,8 +166,10 @@ without replaying a command whose outcome it cannot know.
 
 **Connection settings.** `get_connection` adds `connect_timeout=5` and TCP
 keepalives (`keepalives=1`, `keepalives_idle=30`, `keepalives_interval=10`,
-`keepalives_count=3`) to both the first connection and every replacement, each
-only when the DSN does not already set it; a value in the DSN always wins.
+`keepalives_count=3`) and `tcp_user_timeout=10000` (bounding a command sent to
+a peer that vanished mid-request, which keepalives do not cover) to both the
+first connection and every replacement, each only when the DSN does not
+already set it; a value in the DSN always wins.
 
 **Connection loss.** An error counts as connection loss when its SQLSTATE is in
 class `57P0x` (administrative or crash shutdown, cannot connect now, database

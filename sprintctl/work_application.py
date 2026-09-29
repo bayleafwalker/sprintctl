@@ -703,9 +703,16 @@ class WorkApplication:
                 _admin_shutdown_retry=True,
             )
         finally:
-            _end_transaction_opened_by_operation(
-                getattr(target.store, "conn", None), status_before
-            )
+            final_connection = getattr(target.store, "conn", None)
+            try:
+                _end_transaction_opened_by_operation(final_connection, status_before)
+            except Exception as exc:
+                # Ending a read's implicit transaction on a session that died
+                # afterwards discards nothing worth keeping: drop the session
+                # and let the operation's own result or error stand.
+                if not _is_postgres_connection_loss(exc, final_connection):
+                    raise
+                self._discard_runtime_connection(final_connection)
 
     def _identity_current(
         self, _arguments: dict[str, Any], context: InvocationContext

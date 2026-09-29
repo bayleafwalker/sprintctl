@@ -87,6 +87,14 @@ if psycopg is not None:
                 _terminate_backend(self)
                 self.execute("SELECT 1")  # raises: the session is gone
 
+        lose_before_next_rollback = False
+
+        def rollback(self) -> None:
+            if self.lose_before_next_rollback:
+                self.lose_before_next_rollback = False
+                _terminate_backend(self)
+            super().rollback()
+
 
 @pytest.fixture
 def runtime(pg_test_scope):
@@ -146,6 +154,19 @@ def test_a_read_after_termination_reconnects_and_is_replayed(runtime):
     assert runtime.store.conn is not runtime.original
     assert runtime.original.closed
     assert runtime.app.served_runtime_ready() is True
+
+
+def test_a_read_whose_session_dies_before_its_transaction_ends_keeps_its_result(runtime):
+    runtime.original.lose_before_next_rollback = True
+
+    result = runtime.app.invoke("work.read.sprints", {}, _context())
+
+    assert result == {"repo_id": runtime.store.repo_id, "sprints": []}
+    assert runtime.original.closed
+    assert runtime.store.conn is None
+    assert runtime.factory_calls == []
+    assert runtime.app.invoke("work.read.sprints", {}, _context()) == result
+    assert runtime.factory_calls == [True]
 
 
 def test_a_read_whose_socket_died_without_a_sqlstate_is_replayed(runtime):
@@ -336,6 +357,7 @@ def test_get_connection_adds_liveness_defaults_the_dsn_does_not_set(monkeypatch,
         params = store.conn.info.get_parameters()
         assert params["connect_timeout"] == "5"
         assert params["keepalives_idle"] == "30"
+        assert params["tcp_user_timeout"] == "10000"
         replacement = store.connection_factory()
         try:
             assert replacement.info.get_parameters()["keepalives_count"] == "3"
