@@ -101,7 +101,7 @@
     "enabled": true,
     "worker_routes": ["mechanical_bulk"],
     "commands": {
-      "sprintctl.served.catalog.tests": "uv run --extra dev --extra served pytest tests/test_served_operation_surface.py tests/test_adapter_kit_migration.py tests/test_vuoro_work_adapter_integration.py -q",
+      "sprintctl.served.catalog.tests": "uv run --extra dev --extra served pytest tests/test_served_lifecycle_routes.py tests/test_vuoro_work_adapter_integration.py -q",
       "sprintctl.suite": "uv run --extra dev --extra served pytest -q -m \"not perf\"",
       "sprintctl.pg.disposable": "timeout --foreground 900s scripts/pg-disposable-tests.sh"
     },
@@ -129,7 +129,7 @@
     "command_families": ["unit", "integration", "docs", "full-suite"],
     "targeted_first": true,
     "commands": [
-      "uv run --extra dev --extra served pytest <specific-test-files> -x --tb=short",
+      "uv run pytest <specific-test-files> -x --tb=short",
       "python /projects/dev/agentops/scripts/validate_verification_artifacts.py --root .",
       "timeout --foreground 900s scripts/pg-disposable-tests.sh"
     ]

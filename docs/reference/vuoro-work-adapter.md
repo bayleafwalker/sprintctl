@@ -288,17 +288,6 @@ default). A claim naming `ttl_seconds` is `invalid-arguments` (422).
     rejection when the service's error type accepts them. Released
     vuoro-service (0.1.77) does not yet, so there the generations are in
     the message, and `work.lease.read-v1` lists every lease's `generation`.
-  - Scope note (agentops#2540, part 2). The item text asked for a report on
-    a stale lease that nobody took over to be "evaluated, not rejected
-    `lease-expired`". That part is deliberately not implemented: INV-L1 says
-    results under a stale or superseded lease cannot settle, and evaluating
-    such a report for settlement would let an expired holder settle. The
-    report is retained as evidence and refused (`lease-expired`); the holder
-    reactivates (Case B) and reports again under a new key. The decision is
-    recorded in the vuoro E2/E3 shared contract, section 6. The vuoro-side
-    parts of the item (`lease.py` INV-L1 retention, contract section 6, edge
-    tool `report_outcome`) landed in the vuoro repository (vuoro-service
-    0.1.78, vuoro#147 and #148), not here.
   - `settled`: a succeeded outcome whose bar needs nothing beyond
     `checks`: no reported check failed, every required check was reported
     passed, and, if the bar includes `checks`, at least one check was
