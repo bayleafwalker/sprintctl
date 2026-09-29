@@ -53,6 +53,32 @@ uv run --extra remote pytest -m pg tests/pg/ -v
 The password is temporary test infrastructure state. Never commit it or reuse
 a production credential.
 
+## One-command disposable run
+
+`scripts/pg-disposable-tests.sh` builds the disposable instance above for you
+and is the suite dispatch verification runs (manifest check
+`sprintctl.pg.disposable`, also listed in `verification.commands`). It:
+
+- runs under `nix shell nixpkgs#postgresql_16` when `initdb` is not on `PATH`;
+- runs `initdb` in a `mktemp` directory and starts PostgreSQL on a unix socket
+  in that directory plus `127.0.0.1` on a free port; it never connects to any
+  other database;
+- creates `sprintctl_test_local` (owning the `sprintctl_test_local` database,
+  comment `sprintctl:disposable-integration-test`) and the
+  `sprintctl_production_probe` role behind
+  `SPRINTCTL_TEST_PG_PRODUCTION_GUARD_URL`, both `NOSUPERUSER NOCREATEDB
+  NOCREATEROLE NOREPLICATION NOBYPASSRLS`, with per-run generated passwords
+  that are never written to the repository;
+- clears ambient `SPRINTCTL_*` variables (for example a served-mode
+  `SPRINTCTL_BACKEND`) so the suite is hermetic;
+- runs `uv run --extra dev --extra remote pytest -m pg tests/pg/
+  tests/test_work_application_pg.py`, fails if any test is skipped, and fails
+  unless the `SPRINTCTL_TEST_PG_CLEANUP_REPORT` evidence shows
+  `cleanup_completed` with zero `remaining_rows`;
+- always stops the server and removes the directory on exit (trap).
+
+Extra arguments are passed to pytest. The cold run takes about 30 seconds.
+
 ## Cleanup evidence and interruption limits
 
 Every repository scope minted by the module is prefixed `itest-` and registered
