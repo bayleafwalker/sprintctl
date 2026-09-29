@@ -1121,15 +1121,44 @@ def get_ingest_high_water(store: PgStore) -> int:
 # Connection helpers
 # ---------------------------------------------------------------------------
 
+#: Connection-liveness defaults for a long-lived runtime connection.  A bounded
+#: connect keeps a reconnect (or readiness probe) from hanging on an
+#: unreachable server.  TCP keepalives surface a silently dropped peer on an
+#: idle connection, and ``tcp_user_timeout`` bounds a command already sent to
+#: one (unacknowledged data otherwise waits out the kernel's retransmissions),
+#: so both become a broken connection instead of a request that waits forever.
+_CONNECTION_LIVENESS_DEFAULTS = {
+    "connect_timeout": "5",
+    "keepalives": "1",
+    "keepalives_idle": "30",
+    "keepalives_interval": "10",
+    "keepalives_count": "3",
+    "tcp_user_timeout": "10000",
+}
+
+
+def _connection_liveness_options(url: str) -> dict[str, str]:
+    """The liveness defaults the DSN does not already set; the DSN wins."""
+    from psycopg.conninfo import conninfo_to_dict
+
+    configured = conninfo_to_dict(url)
+    return {
+        name: value
+        for name, value in _CONNECTION_LIVENESS_DEFAULTS.items()
+        if name not in configured
+    }
+
+
 def get_connection(url: str) -> PgStore:
     if not _PSYCOPG_AVAILABLE:  # pragma: no cover
         raise RuntimeError("psycopg is not installed. Install sprintctl[remote].")
     repo_id = _repo_id_from_cwd()
-    conn = psycopg.connect(url, row_factory=dict_row)
+    options = _connection_liveness_options(url)
+    conn = psycopg.connect(url, row_factory=dict_row, **options)
     return PgStore(
         conn=conn,
         repo_id=repo_id,
-        connection_factory=lambda: psycopg.connect(url, row_factory=dict_row),
+        connection_factory=lambda: psycopg.connect(url, row_factory=dict_row, **options),
     )
 
 
