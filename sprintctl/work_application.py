@@ -62,6 +62,62 @@ def _end_transaction_opened_by_operation(conn: Any, status_before: Any) -> None:
         conn.rollback()
 
 
+#: Upper bound for the readiness probe's ``SELECT 1``, in milliseconds.
+_READINESS_STATEMENT_TIMEOUT_MS = 2000
+
+
+def _connection_is_dead(conn: Any) -> bool:
+    """Whether a runtime connection can no longer carry a command."""
+    return (
+        conn is None
+        or bool(getattr(conn, "closed", False))
+        or bool(getattr(conn, "broken", False))
+    )
+
+
+def _is_postgres_connection_loss(error: BaseException, conn: Any) -> bool:
+    """Return whether ``error`` means the PostgreSQL session itself is gone.
+
+    Either the server said so with a connection-loss SQLSTATE (57P0x or class
+    08), or psycopg raised an ``OperationalError`` without one -- a socket
+    that died between requests, "consuming input failed" -- and left the
+    connection closed or broken.  Anything else is the operation's own
+    failure.  The SQLSTATE check needs no psycopg import, so the standalone
+    SQLite path never loads it.
+    """
+    sqlstate = getattr(error, "sqlstate", None)
+    if isinstance(sqlstate, str) and sqlstate.startswith(
+        _POSTGRES_CONNECTION_LOSS_SQLSTATE_PREFIXES
+    ):
+        return True
+    try:
+        from psycopg import OperationalError
+    except ImportError:  # standalone SQLite has no psycopg
+        return False
+    return isinstance(error, OperationalError) and _connection_is_dead(conn)
+
+
+def _probe_connection(conn: Any) -> None:
+    """Run a bounded ``SELECT 1`` in its own rolled-back transaction.
+
+    ``SET LOCAL`` confines the statement timeout to that transaction, and the
+    forced rollback leaves the session exactly as it was.  A connection with
+    a transaction already open belongs to a running operation; it is alive,
+    and probing would join that transaction, so it is left alone.
+    """
+    try:
+        from psycopg.pq import TransactionStatus
+
+        idle = TransactionStatus.IDLE
+    except ImportError:  # a test double without psycopg; IDLE is 0 there too
+        idle = 0
+    if _transaction_status(conn) != idle:
+        return
+    with conn.transaction(force_rollback=True):
+        conn.execute(f"SET LOCAL statement_timeout = {_READINESS_STATEMENT_TIMEOUT_MS}")
+        conn.execute("SELECT 1").fetchone()
+
+
 DECISION_LIKE_EVENT_REJECTION = "decision-like-event-type"
 
 
@@ -165,20 +221,14 @@ class WorkApplication:
         return replace(self, repo_id=repo_id)
 
     @staticmethod
-    def _is_postgres_admin_shutdown(error: BaseException) -> bool:
-        """Return whether psycopg reported PostgreSQL's AdminShutdown SQLSTATE.
-
-        Avoid importing psycopg into the standalone SQLite application path.
-        Psycopg exposes the SQLSTATE on both the concrete error and compatible
-        test/dialect exceptions, which is the stable recovery classification.
-        """
-        return getattr(error, "sqlstate", None) == _POSTGRES_ADMIN_SHUTDOWN_SQLSTATE
+    def _is_pure_read(operation: str) -> bool:
+        return operation.startswith("work.read.") or operation in _ADMIN_SHUTDOWN_READ_OPERATIONS
 
     @staticmethod
     def _can_retry_after_admin_shutdown(
         operation: str, context: InvocationContext
     ) -> bool:
-        if operation.startswith("work.read.") or operation in _ADMIN_SHUTDOWN_READ_OPERATIONS:
+        if WorkApplication._is_pure_read(operation):
             return True
         return (
             operation in _ADMIN_SHUTDOWN_IDEMPOTENT_OPERATIONS
@@ -186,49 +236,51 @@ class WorkApplication:
             and bool(getattr(context, "idempotency_key", None))
         )
 
-    def _replace_admin_shutdown_connection(self, failed_connection: Any) -> bool:
-        """Replace the shared runtime connection once, without exposing its DSN.
+    def _runtime_connection_factory(self) -> Callable[[], Any] | None:
+        factory = getattr(self.store, "connection_factory", None)
+        return factory if callable(factory) else None
+
+    def _replace_runtime_connection(self, failed_connection: Any) -> bool:
+        """Replace the shared runtime connection, without exposing its DSN.
 
         A request-scoped ``PgStore`` is a dataclass copy that shares the root
         application's connection.  Updating the root store means the retry and
         later invocations both use the same fresh connection.  If a concurrent
-        request already replaced it, the caller can retry without opening
-        another connection.
+        request already replaced it with a live one, the caller can proceed
+        without opening another connection.
         """
-        factory = getattr(self.store, "connection_factory", None)
-        if not callable(factory):
-            self._mark_postgres_runtime_unavailable(failed_connection)
+        factory = self._runtime_connection_factory()
+        if factory is None:
+            self._discard_runtime_connection(failed_connection)
             return False
         with self._connection_recovery_lock:
-            if getattr(self.store, "conn", None) is not failed_connection:
-                self._postgres_runtime_available = getattr(self.store, "conn", None) is not None
-                return self._postgres_runtime_available
+            current = getattr(self.store, "conn", None)
+            if current is not failed_connection and not _connection_is_dead(current):
+                self._postgres_runtime_available = True
+                return True
             try:
                 replacement = factory()
             except Exception:
-                self._mark_postgres_runtime_unavailable(failed_connection)
-                return False
+                replacement = None
             if replacement is None:
-                self._mark_postgres_runtime_unavailable(failed_connection)
+                self._discard_runtime_connection(current)
                 return False
-            previous = self.store.conn
             self.store.conn = replacement
             self._postgres_runtime_available = True
-            try:
-                previous.close()
-            except Exception:
-                pass
+            if current is not None:
+                try:
+                    current.close()
+                except Exception:
+                    pass
             return True
 
-    def _mark_postgres_runtime_unavailable(self, failed_connection: Any) -> None:
-        """Quarantine a terminated connection without replaying a command.
+    def _discard_runtime_connection(self, failed_connection: Any) -> None:
+        """Drop a lost connection so nothing more is sent through it.
 
-        A non-idempotent command has an unknown outcome after an administrative
-        shutdown, so it must return rather than reconnect-and-replay.  Closing
-        and clearing the shared connection prevents a later request from
-        issuing a new command through a known-dead socket.  A later eligible
-        read (or durable-idempotent command) can acquire a fresh connection
-        before its handler begins; an unsafe mutation cannot.
+        The next invocation, or the next readiness probe, replaces it through
+        the store's connection factory before anything is dispatched, so a
+        loss never latches the runtime unavailable.  The flag only matters to
+        an application without a factory, which has no way to recover.
         """
         with self._connection_recovery_lock:
             if getattr(self.store, "conn", None) is not failed_connection:
@@ -243,33 +295,69 @@ class WorkApplication:
                 pass
 
     def served_runtime_ready(self) -> bool:
-        """Whether the essential served PostgreSQL runtime is usable.
+        """Whether the essential served PostgreSQL runtime answers now.
 
-        Service composition can use this boolean for its readiness probe.  It
-        becomes false whenever the shared runtime connection is quarantined;
-        it becomes true only after a replacement was established successfully.
-        Local SQLite and test-only applications retain their initial true
-        state because they never enter PostgreSQL shutdown recovery.
+        Service composition uses this boolean for its readiness probe, so it
+        asks the database rather than remembering a past failure: it replaces
+        a lost connection, then runs a ``SELECT 1`` bounded by a short
+        statement timeout.  A connection that only turns out to be lost during
+        the probe is replaced and probed once more.  It never raises.  Local
+        SQLite and test-only applications have no connection factory and
+        report their passive state, which stays true.
         """
         with self._connection_recovery_lock:
-            return self._postgres_runtime_available
-
-    def _ensure_postgres_runtime_available(
-        self, operation: str, context: InvocationContext
-    ) -> bool:
-        """Acquire a replacement before an eligible handler sees ``conn=None``."""
-        if self.served_runtime_ready():
-            return True
-        if not self._can_retry_after_admin_shutdown(operation, context):
+            if self._runtime_connection_factory() is None:
+                return self._postgres_runtime_available
+            for _attempt in range(2):
+                conn = getattr(self.store, "conn", None)
+                if _connection_is_dead(conn):
+                    if not self._replace_runtime_connection(conn):
+                        return False
+                    conn = self.store.conn
+                try:
+                    _probe_connection(conn)
+                except Exception as exc:
+                    if not _is_postgres_connection_loss(exc, conn):
+                        return False
+                    self._discard_runtime_connection(conn)
+                    continue
+                return True
             return False
-        return self._replace_admin_shutdown_connection(None)
 
-    def _admin_shutdown_unavailable(self) -> ApplicationRejection:
+    def _ensure_postgres_runtime_available(self) -> bool:
+        """Replace a lost shared connection before any handler sees it.
+
+        Nothing has been sent on the replacement yet, so this is safe before
+        every operation, mutations included: there is no in-doubt write to
+        replay.  An application without a connection factory keeps its
+        passive state.
+        """
+        with self._connection_recovery_lock:
+            if self._runtime_connection_factory() is None:
+                return self._postgres_runtime_available
+            conn = getattr(self.store, "conn", None)
+            if not _connection_is_dead(conn):
+                return True
+            return self._replace_runtime_connection(conn)
+
+    def _runtime_unavailable(self) -> ApplicationRejection:
         return ApplicationRejection(
             "postgres-runtime-unavailable",
-            "served PostgreSQL runtime is unavailable after administrative shutdown; retry an eligible read or the exact idempotent command after readiness recovers",
+            "served PostgreSQL runtime is unavailable; nothing was sent, retry after readiness recovers",
             503,
         )
+
+    def _connection_lost(self, operation: str) -> ApplicationRejection:
+        """The rejection for an operation whose connection was lost mid-flight."""
+        if self._is_pure_read(operation):
+            message = "served PostgreSQL connection was lost during this read; retry it"
+        else:
+            message = (
+                "served PostgreSQL connection was lost while this command ran, so its "
+                "outcome is unknown: re-read the current state, or resend the same "
+                "request with the same idempotency key"
+            )
+        return ApplicationRejection("postgres-runtime-unavailable", message, 503)
 
     def invoke(
         self,
@@ -303,8 +391,8 @@ class WorkApplication:
             _contracts.reject_credential_shaped_values(dict(arguments), operation)
         except ValueError as exc:
             raise ApplicationRejection("credential-shaped-value", str(exc), 422) from exc
-        if not self._ensure_postgres_runtime_available(operation, context):
-            raise self._admin_shutdown_unavailable()
+        if not self._ensure_postgres_runtime_available():
+            raise self._runtime_unavailable()
         target = self._scoped_for(requested_repo_id)
         handlers = {
             "work.identity.current": target._identity_current,
@@ -390,19 +478,18 @@ class WorkApplication:
                 raise ApplicationRejection(
                     "invalid-value", f"PostgreSQL refused a value: {first_line}", 422
                 ) from exc
-            if not self._is_postgres_admin_shutdown(exc):
+            failed_connection = getattr(target.store, "conn", None)
+            if not _is_postgres_connection_loss(exc, failed_connection):
                 raise
+            # Nothing more may go through the lost session.  The next request
+            # (or readiness probe) reconnects before it dispatches anything.
+            self._discard_runtime_connection(failed_connection)
             if _admin_shutdown_retry or not self._can_retry_after_admin_shutdown(
                 operation, context
             ):
-                self._mark_postgres_runtime_unavailable(
-                    getattr(target.store, "conn", None)
-                )
-                raise self._admin_shutdown_unavailable() from exc
-            if not self._replace_admin_shutdown_connection(
-                getattr(target.store, "conn", None)
-            ):
-                raise self._admin_shutdown_unavailable() from exc
+                raise self._connection_lost(operation) from exc
+            if not self._ensure_postgres_runtime_available():
+                raise self._connection_lost(operation) from exc
             return self.invoke(
                 operation,
                 arguments,
@@ -410,9 +497,16 @@ class WorkApplication:
                 _admin_shutdown_retry=True,
             )
         finally:
-            _end_transaction_opened_by_operation(
-                getattr(target.store, "conn", None), status_before
-            )
+            final_connection = getattr(target.store, "conn", None)
+            try:
+                _end_transaction_opened_by_operation(final_connection, status_before)
+            except Exception as exc:
+                # Ending a read's implicit transaction on a session that died
+                # afterwards discards nothing worth keeping: drop the session
+                # and let the operation's own result or error stand.
+                if not _is_postgres_connection_loss(exc, final_connection):
+                    raise
+                self._discard_runtime_connection(final_connection)
 
     def _identity_current(
         self, _arguments: dict[str, Any], context: InvocationContext
