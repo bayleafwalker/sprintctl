@@ -245,9 +245,23 @@ default). A claim naming `ttl_seconds` is `invalid-arguments` (422).
   superseded lease is `claim-superseded`, an ended one `lease-ended`, an
   expired one `lease-expired` even if nobody took it over, and a lease on
   an item moved off `active` `work-not-active` (409). A holder whose lease
-  went stale re-presents its claim to reactivate it instead. Any terminal decision on
+  went stale re-presents its claim to reactivate it instead. The heartbeat
+  takes the repo claims lock first (then the item row, then the lease row),
+  the lock claims and maintenance activation take, so it cannot refresh a
+  lease into a maintenance capability that activated without counting it.
+  Any terminal decision on
   the item, whoever records it, ends its active lease (`state=settled`,
-  `end_reason=item-<resolution>`).
+  `end_reason=item-<resolution>`). Moving an item to `pending` (a release,
+  with reason `rework`, `partial` or `abandoned`, from `active` or
+  `blocked`) likewise ends its active lease, whoever holds it, in the same
+  transaction as the status change: `state=released`,
+  `end_reason=item-released-<reason>`. The item is claimable at once
+  (no `lease-held`, no takeover), the former holder's heartbeat is
+  `lease-ended`, and the lease no longer blocks maintenance activation. The
+  `item-released` event records the ended ids as `released_lease_ids` (an
+  empty list when the item held none). An outcome report awaiting
+  verification is untouched and still protects the item. Moving to
+  `blocked` is not a release: the lease is kept.
 - `work.lease.report-outcome-v1` is an outcome report, not a settlement:
   the worker reports and the record owner settles. `work.lease.complete-v1`
   is its deprecated alias (catalog `deprecation.replacement`), with the

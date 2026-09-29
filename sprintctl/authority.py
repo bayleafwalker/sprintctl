@@ -374,6 +374,9 @@ def _handle_item(
         released_reservation_ids = _release_actor_reservations_locked(
             cur, store, item, actor=envelope.actor
         )
+        released_lease_ids = pg._end_item_lease_on_release(
+            cur, store.repo_id, int(item["id"]), reason
+        )
         pg._insert_event(
             store, int(item["sprint_id"]), envelope.actor, "item-released",
             source_type="system", work_item_id=int(item["id"]),
@@ -381,6 +384,7 @@ def _handle_item(
                 "reason": reason,
                 "previous_status": current,
                 "released_reservation_ids": released_reservation_ids,
+                "released_lease_ids": released_lease_ids,
             },
         )
     effect = _item_effect(cur, store, item, current)
