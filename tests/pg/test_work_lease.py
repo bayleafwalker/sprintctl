@@ -31,6 +31,9 @@ from tests.pg._shared import (
     PG_MARKS,
     _PG_URL,
     _anchor_capability_window_to_db_clock,
+    _append_authority_command,
+    authority,
+    outbox,
     _uid,
     assert_disposable_connection,
     dict_row,
@@ -1620,3 +1623,293 @@ class TestOperatorLeaseContract:
         }
         assert state["current_lease"]["generation"] == 2
 
+
+# ---------------------------------------------------------------------------
+# agentops#2529: the remaining lease findings from the review of sprintctl#98.
+# m2: a release to pending ends the item's active lease in the same
+#     transaction (state=released, end_reason=item-released-<reason>).
+# m3: heartbeat_lease takes the repo claims lock (repo, then item, then lease).
+# n1: the schema-18 foreign check compares each named index's key columns.
+# ---------------------------------------------------------------------------
+
+_RELEASE_REASONS = ("rework", "partial", "abandoned")
+_RELEASE_SOURCES = ("active", "blocked")
+_RELEASE_PATHS = ("pg", "authority")
+
+
+def _payload(value) -> dict:
+    return json.loads(value) if isinstance(value, str) else value
+
+
+def _release_to_pending(store, item_id: int, reason: str, path: str, tmp_path) -> None:
+    """Move an item to pending through one of the two writers: the local
+    pg.set_work_item_status or the authority (outbox command) path."""
+    if path == "pg":
+        pg.set_work_item_status(store, item_id, "pending", reason=reason, actor="releaser")
+        return
+    item = pg.get_work_item(store, item_id)
+    producer = outbox.open_outbox(tmp_path / f"release-{uuid.uuid4().hex[:8]}.db")
+    try:
+        command = _append_authority_command(
+            producer,
+            store,
+            record_type="item.transition",
+            aggregate_type="item",
+            aggregate_uuid=item["aggregate_uuid"],
+            basis_revision=authority.item_revision(item),
+            payload={"to_status": "pending", "reason": reason},
+            actor="releaser",
+        )
+        decision = authority.arbitrate_command(store, command)
+    finally:
+        producer.close()
+    assert decision.accepted is True, decision
+    # The authority effect/receipt shape does not change.
+    assert "released_lease_ids" not in decision.effect
+    assert decision.effect["status"] == "pending"
+
+
+def _lease_row_of(store, lease_id: str) -> dict:
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT state, ended_at, end_reason, superseded_by FROM work_lease "
+            "WHERE repo_id = %s AND lease_id = %s",
+            (store.repo_id, lease_id),
+        )
+        row = dict(cur.fetchone())
+    store.conn.rollback()
+    return row
+
+
+def _last_release_event(store, item_id: int) -> dict:
+    events = _events(store, item_id, "item-released")
+    assert events, "no item-released event was recorded"
+    return _payload(events[-1])
+
+
+def _claimed(store, source: str, key: str) -> tuple[int, str, dict]:
+    (item,) = _items(store)
+    run = _run(store, A)
+    lease = _claim(store, A, item, run, key)["lease"]
+    if source == "blocked":
+        pg.set_work_item_status(store, item, "blocked")
+    assert _status(store, item) == source
+    return item, run, lease
+
+
+def _authority_scoped(store, pg_test_scope, label: str) -> pg.PgStore:
+    repo_id = pg_test_scope(label)
+    return pg.PgStore(
+        conn=store.conn,
+        repo_id=repo_id,
+        authority_repo_uuid=str(uuid.uuid5(uuid.NAMESPACE_URL, f"sprintctl-repo:{repo_id}")),
+    )
+
+
+class TestReleaseToPendingEndsTheLease:
+    """m2: every transition to pending ends the item's active lease, whoever
+    holds it, in the same transaction as the status update."""
+
+    @pytest.mark.parametrize("path", _RELEASE_PATHS)
+    @pytest.mark.parametrize("source", _RELEASE_SOURCES)
+    @pytest.mark.parametrize("reason", _RELEASE_REASONS)
+    def test_a_release_ends_the_lease_and_frees_the_item_at_once(
+        self, store, tmp_path, reason, source, path
+    ):
+        key = f"rel-{reason}-{source}-{path}-{uuid.uuid4().hex[:6]}"
+        item, run_a, lease = _claimed(store, source, key + "-a")
+        _release_to_pending(store, item, reason, path, tmp_path)
+        assert _status(store, item) == "pending"
+
+        row = _lease_row_of(store, lease["lease_id"])
+        assert row["state"] == "released"
+        assert row["ended_at"] is not None
+        assert row["end_reason"] == f"item-released-{reason}"
+        assert row["superseded_by"] is None
+        assert _lease_rows(store, item, "active") == 0
+        read = _read(store, item)
+        assert read["current_lease"] is None
+        (ended,) = [l for l in read["leases"] if l["lease_id"] == lease["lease_id"]]
+        assert (ended["state"], ended["end_reason"]) == ("released", f"item-released-{reason}")
+        assert ended["ended_at"] is not None
+
+        released = _last_release_event(store, item)
+        assert released["reason"] == reason and released["previous_status"] == source
+        assert released["released_lease_ids"] == [lease["lease_id"]]
+
+        # The former holder's heartbeat is refused: its lease has ended.
+        refused = _refused(lambda: _heartbeat(store, A, lease["lease_id"], run_a))
+        assert refused.code == "lease-ended"
+
+        # Another principal claims immediately: no lease-held, no takeover.
+        taken = _claim(store, B, item, _run(store, B), key + "-b")
+        assert taken["took_over"] is None
+        assert taken["lease"]["takeover_of"] is None
+        assert taken["lease"]["state"] == "active"
+        assert _events(store, item, "work.claim.taken-over") == []
+        assert _lease_rows(store, item, "active") == 1
+        assert _status(store, item) == "active"
+
+    @pytest.mark.parametrize("path", _RELEASE_PATHS)
+    @pytest.mark.parametrize("source", _RELEASE_SOURCES)
+    @pytest.mark.parametrize("reason", _RELEASE_REASONS)
+    def test_maintenance_activates_right_after_a_release(
+        self, store, pg_test_scope, tmp_path, reason, source, path
+    ):
+        scoped = _authority_scoped(store, pg_test_scope, "lease-release-maint")
+        item, _run_a, lease = _claimed(scoped, source, f"rel-maint-{reason}-{source}-{path}")
+        _release_to_pending(scoped, item, reason, path, tmp_path)
+        assert _lease_row_of(scoped, lease["lease_id"])["state"] == "released"
+        # A released item's lease no longer counts as live work.
+        TestMaintenance._activate(*TestMaintenance._attested(scoped))
+
+    @pytest.mark.parametrize("path", _RELEASE_PATHS)
+    def test_a_failure_after_the_lease_update_rolls_everything_back(
+        self, store, tmp_path, monkeypatch, path
+    ):
+        item, _run_a, lease = _claimed(store, "active", f"rel-atomic-{path}-{uuid.uuid4().hex[:6]}")
+        original = pg._insert_event
+
+        def failing_insert_event(*args, **kwargs):
+            event_type = args[3] if len(args) > 3 else kwargs.get("event_type")
+            if event_type == "item-released":
+                raise RuntimeError("injected failure writing item-released")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(pg, "_insert_event", failing_insert_event)
+        with pytest.raises(RuntimeError, match="injected failure"):
+            _release_to_pending(store, item, "rework", path, tmp_path)
+        monkeypatch.setattr(pg, "_insert_event", original)
+        store.conn.rollback()
+
+        row = _lease_row_of(store, lease["lease_id"])
+        assert (row["state"], row["ended_at"], row["end_reason"]) == ("active", None, None)
+        assert _status(store, item) == "active"
+        assert _events(store, item, "item-released") == []
+
+        # The retry, with nothing failing, ends the lease.
+        _release_to_pending(store, item, "rework", path, tmp_path)
+        assert _lease_row_of(store, lease["lease_id"])["end_reason"] == "item-released-rework"
+        assert _last_release_event(store, item)["released_lease_ids"] == [lease["lease_id"]]
+
+    @pytest.mark.parametrize("path", _RELEASE_PATHS)
+    def test_a_release_with_no_lease_records_an_empty_list(self, store, tmp_path, path):
+        (item,) = _items(store)
+        pg.set_work_item_status(store, item, "active")
+        _release_to_pending(store, item, "partial", path, tmp_path)
+        assert _status(store, item) == "pending"
+        assert _lease_rows(store, item) == 0
+        assert _last_release_event(store, item)["released_lease_ids"] == []
+
+    def test_moving_to_blocked_keeps_the_lease(self, store):
+        """Non-scope guard: active -> blocked is not a release."""
+        item, _run_a, lease = _claimed(store, "blocked", f"rel-blocked-{uuid.uuid4().hex[:6]}")
+        assert _lease_row_of(store, lease["lease_id"])["state"] == "active"
+
+
+def _heartbeat_under_held_repo_lock(store, wait: float = 0.5) -> tuple[bool, object]:
+    """Hold the repo claims lock on an independent connection, heartbeat a
+    fresh lease on another, and report whether the heartbeat returned while
+    the lock was still held, plus its eventual outcome."""
+    (item,) = _items(store)
+    run = _run(store, A)
+    lease = _claim(store, A, item, run, f"hb-lock-{uuid.uuid4().hex[:8]}")["lease"]
+    holder = psycopg.connect(_PG_URL, row_factory=dict_row)
+    assert_disposable_connection(holder)
+    worker = _sibling(store)
+    outcome: dict = {}
+
+    def beat():
+        try:
+            outcome["value"] = _heartbeat(worker, A, lease["lease_id"], run)
+        except BaseException as exc:  # noqa: BLE001 - the outcome under test
+            outcome["value"] = exc
+
+    thread = threading.Thread(target=beat)
+    try:
+        with holder.cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (store.repo_id,))
+        thread.start()
+        thread.join(timeout=wait)
+        returned_while_held = not thread.is_alive()
+        holder.rollback()  # ends the transaction, releasing the xact lock
+        thread.join(timeout=30)
+        assert not thread.is_alive(), "heartbeat never returned after the repo lock was released"
+    finally:
+        try:
+            holder.rollback()
+        finally:
+            holder.close()
+            if thread.is_alive():
+                thread.join(timeout=30)
+            worker.conn.close()
+    result = outcome.get("value")
+    if isinstance(result, dict):
+        assert result["lease"]["lease_id"] == lease["lease_id"]
+    return returned_while_held, result
+
+
+class TestHeartbeatTakesTheRepoLock:
+    """m3: a heartbeat serializes with claims and maintenance activation on
+    the repo claims lock, so it cannot leave a live lease under an active
+    maintenance capability."""
+
+    def test_a_heartbeat_waits_for_the_repo_claims_lock(self, store):
+        started = time.monotonic()
+        returned_while_held, result = _heartbeat_under_held_repo_lock(store, wait=0.5)
+        assert returned_while_held is False, (
+            "heartbeat_lease returned while another transaction held the repo claims lock"
+        )
+        assert time.monotonic() - started > 0.5
+        assert isinstance(result, dict), repr(result)
+        assert result["lease"]["state"] == "active"
+
+    def test_without_the_repo_lock_the_heartbeat_does_not_wait(self, store, monkeypatch):
+        """Forced-failure check: with _lock_repo_for_claims removed from the
+        heartbeat, the probe above sees the heartbeat return under the lock."""
+        monkeypatch.setattr(pg, "_lock_repo_for_claims", lambda cur, store: None)
+        returned_while_held, result = _heartbeat_under_held_repo_lock(store, wait=0.5)
+        assert returned_while_held is True
+        assert isinstance(result, dict), repr(result)
+
+
+class TestSchema18IndexKeyColumns:
+    """n1: an exclusivity index whose key columns differ from the pinned
+    (repo_id, work_item_id) is foreign, even when unique and partial."""
+
+    @pytest.mark.parametrize("columns", [
+        "repo_id, work_item_id, lease_id",
+        "work_item_id, repo_id",
+        "repo_id, lease_id",
+    ])
+    def test_a_wrongly_keyed_unique_exclusivity_index_is_foreign(self, store, columns):
+        schema = "migration_18_keys_" + uuid.uuid4().hex
+        with store.conn.cursor() as cur:
+            cur.execute(f'CREATE SCHEMA "{schema}"')
+            cur.execute(f'SET search_path TO "{schema}"')
+            cur.execute(pg.PG_DDL)
+            cur.execute("UPDATE schema_version SET version = 2")
+        store.conn.commit()
+        conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+        try:
+            assert_disposable_connection(conn)
+            with conn.cursor() as cur:
+                cur.execute(f'SET search_path TO "{schema}"')
+            conn.commit()
+            pg_migrations.migrate_schema(pg.PgStore(conn, "migration-18-keys"))
+            with conn.cursor() as cur:
+                cur.execute(f'SET search_path TO "{schema}"')
+                cur.execute("DROP INDEX uq_work_lease_active_item")
+                cur.execute(
+                    f"CREATE UNIQUE INDEX uq_work_lease_active_item ON work_lease({columns}) "
+                    "WHERE state = 'active'"
+                )
+                with pytest.raises(pg_migrations.RemoteSchemaMigrationError, match="uq_work_lease_active_item"):
+                    pg._apply_schema_version_18(cur)
+            conn.rollback()
+        finally:
+            conn.close()
+            with store.conn.cursor() as cur:
+                cur.execute("SET search_path TO public")
+                cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            store.conn.commit()
