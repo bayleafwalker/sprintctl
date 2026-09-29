@@ -4645,8 +4645,13 @@ def remove_dep(store: PgStore, dep_id: int, item_id: int) -> None:
 
 def get_ready_items(store: PgStore, sprint_id: int) -> list[dict]:
     items = list_work_items(store, sprint_id=sprint_id, status="pending")
+    # Parked work is not ready (agentops#2543) even if it was left pending.
+    with store.conn.cursor() as cur:
+        parked = _parked_items(cur, store, [int(item["id"]) for item in items])
     ready = []
     for item in items:
+        if int(item["id"]) in parked:
+            continue
         blockers = list_deps_blocking(store, item["id"])
         unresolved = [b for b in blockers if b["blocker_status"] != "done"]
         if not unresolved:
@@ -5693,7 +5698,7 @@ class LeaseRefused(ValueError):
     ``claim-superseded``, ``lease-expired``, ``lease-ended``,
     ``lease-not-found``, ``work-not-found``, ``work-settled``,
     ``work-blocked``, ``work-not-active``, ``work-awaiting-verification``,
-    ``verification-unsupported`` or ``maintenance-active``.  ``details`` is
+    ``work-parked``, ``verification-unsupported`` or ``maintenance-active``.  ``details`` is
     structured context for the caller: for ``claim-superseded``,
     ``{claim_id, current_generation, reported_generation}``.  An outcome
     report never raises these for a lease that is the caller's: it stores
@@ -5864,6 +5869,62 @@ def _refuse_unclaimable(cur: Any, store: PgStore, item: Mapping[str, Any] | None
         raise LeaseRefused(
             "work-blocked",
             f"item #{work_item_id} waits on unsettled blockers {unresolved}",
+        )
+    _refuse_parked(cur, store, work_item_id)
+
+
+#: The item event a parked failure records (agentops#2543, agentops#253 lease
+#: point 7).  Parking is a property of the work, not of a lease: it survives
+#: the lease it was reported under, and only a release to pending (the
+#: ``item-released`` event, which needs a reason) lifts it.
+WORK_PARKED_EVENT_TYPE = _contracts.WORK_PARKED_EVENT_TYPE
+_PARKING_EVENT_TYPES = (WORK_PARKED_EVENT_TYPE, "item-released")
+
+
+def _parked_items(cur: Any, store: PgStore, item_ids: list[int]) -> dict[int, dict]:
+    """The parking of each of ``item_ids`` that is parked now, keyed by id.
+
+    An item is parked while the newest of its ``work.parked`` and
+    ``item-released`` events is a ``work.parked``: a release to pending
+    supersedes the parking, a later report parks it again.  Nothing is
+    stored on the item row, so no schema change is needed.
+    """
+    if not item_ids:
+        return {}
+    cur.execute(
+        "SELECT DISTINCT ON (work_item_id) id, work_item_id, event_type, actor, payload, "
+        "created_at FROM event WHERE repo_id = %s AND work_item_id = ANY(%s) "
+        "AND event_type = ANY(%s) ORDER BY work_item_id, id DESC",
+        (store.repo_id, list(item_ids), list(_PARKING_EVENT_TYPES)),
+    )
+    parked: dict[int, dict] = {}
+    for row in cur.fetchall():
+        if row["event_type"] != WORK_PARKED_EVENT_TYPE:
+            continue
+        payload = row["payload"]
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        parked[int(row["work_item_id"])] = {
+            "event_id": int(row["id"]),
+            "reason_ref": payload.get("reason_ref"),
+            "report_id": payload.get("report_id"),
+            "lease_id": payload.get("lease_id"),
+            "parked_at": _iso(row["created_at"]),
+        }
+    return parked
+
+
+def _refuse_parked(cur: Any, store: PgStore, work_item_id: int) -> None:
+    """Refuse a claim on work a holder parked (agentops#2543): a denial is
+    a fact about the work, so the next claimant does not walk into it."""
+    parking = _parked_items(cur, store, [work_item_id]).get(work_item_id)
+    if parking is not None:
+        raise LeaseRefused(
+            "work-parked",
+            f"item #{work_item_id} was parked at {parking['parked_at']} "
+            f"(reason_ref {parking['reason_ref']!r}); it cannot be claimed until it is "
+            "released to pending with a reason",
+            {"reason_ref": parking["reason_ref"], "report_id": parking["report_id"]},
         )
 
 
@@ -6415,6 +6476,23 @@ def _verification_verdict(config: Mapping[str, Any], checks: list) -> tuple[str,
     return "settled", None
 
 
+def _report_parking(cur: Any, store: PgStore, report_id: str) -> dict | None:
+    """The ``parked`` answer of a report that parked its item, else None
+    (a replay of the report's idempotency key answers as the first call did)."""
+    cur.execute(
+        "SELECT id, payload FROM event WHERE repo_id = %s AND event_type = %s "
+        "AND payload->>'report_id' = %s ORDER BY id LIMIT 1",
+        (store.repo_id, WORK_PARKED_EVENT_TYPE, report_id),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return None
+    payload = row["payload"]
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    return {"event_id": int(row["id"]), "reason_ref": payload.get("reason_ref")}
+
+
 def complete_lease(
     store: PgStore,
     *,
@@ -6431,6 +6509,8 @@ def complete_lease(
     payload: dict,
     checks: list,
     actor: str,
+    outcome_disposition: str | None = None,
+    reason_ref: str | None = None,
     cur: Any | None = None,
 ) -> dict:
     """Record the holder's outcome report and let the owner settle it.
@@ -6452,7 +6532,13 @@ def complete_lease(
     - ``awaiting-verification``: the profile needs a separate verifier or a
       human; the report waits for their decision and the lease stays.
     - ``recorded``: a failed outcome; the lease is released and the item
-      stays active for someone else to claim.
+      stays active for someone else to claim -- unless the holder reported
+      ``outcome_disposition="parked"`` with a ``reason_ref`` (agentops#2543): the
+      failure is then recorded as a denial of the work itself.  The lease
+      is released, a ``work.parked`` event is appended to the item and the
+      report carries ``parked``; the item is not claimable and not ready
+      until it is released to pending.  A report that is ``rejected``
+      parks nothing (INV-L1), whatever it asked for.
 
     Nothing raises for a refusal except ``lease-not-found`` (a stranger's
     report is not evidence on the item) and a same-key conflict.  ``cur``:
@@ -6460,6 +6546,18 @@ def complete_lease(
     """
     binding = (principal_id, workspace_id, client_id, grant_id)
     payload_digest = outcome_payload_digest(outcome, summary, payload, checks)
+    # ``outcome_disposition`` is what the holder asks for; the report's own
+    # ``disposition`` (below) is what the owner made of the report.
+    if outcome_disposition not in (None, "parked"):
+        raise ValueError(f"unknown outcome disposition {outcome_disposition!r}")
+    if outcome_disposition == "parked" and outcome != "failed":
+        raise ValueError("only a failed outcome can be parked")
+    if outcome_disposition == "parked" and not (
+        isinstance(reason_ref, str) and reason_ref.strip()
+    ):
+        raise ValueError("a parked outcome needs a reason_ref")
+    if outcome_disposition is None and reason_ref is not None:
+        raise ValueError("reason_ref is only accepted with disposition=parked")
 
     def body(cur: Any) -> dict:
         found = _owned_lease(cur, store, lease_id, run_id, binding)
@@ -6482,6 +6580,9 @@ def complete_lease(
         if retried is not None:
             _replay_or_conflict(retried["request_digest"], request_digest, "outcome report")
             replayed = _report_row(retried)
+            parking = _report_parking(cur, store, retried["report_id"])
+            if parking is not None:
+                replayed["parked"] = parking
             if retried["reason_code"] == "claim-superseded":
                 # A direct (non-ledger) caller replaying its key: the
                 # details as of now.  Through the served operation the
@@ -6537,13 +6638,16 @@ def complete_lease(
                 work_item_id=int(item["id"]),
                 payload=_decisions.decided_event_payload(decision, None),
             )
+        parking = disposition == "recorded" and outcome_disposition == "parked"
         if disposition in ("settled", "recorded"):
             cur.execute(
                 "UPDATE work_lease SET state = %s, ended_at = %s, end_reason = %s "
                 "WHERE repo_id = %s AND lease_id = %s",
                 (
                     "settled" if disposition == "settled" else "released", now,
-                    "settled" if disposition == "settled" else "reported-failed",
+                    "settled" if disposition == "settled" else (
+                        "reported-parked" if parking else "reported-failed"
+                    ),
                     store.repo_id, lease_id,
                 ),
             )
@@ -6573,6 +6677,19 @@ def complete_lease(
             "payload_digest": payload_digest,
             "decision_id": report["decision_id"],
         })
+        if parking:
+            event_id = _insert_event(
+                store, int(item["sprint_id"]), actor, WORK_PARKED_EVENT_TYPE,
+                source_type="system", work_item_id=int(item["id"]),
+                payload={
+                    "reason_ref": reason_ref,
+                    "report_id": report_id,
+                    "lease_id": lease_id,
+                    "run_id": run_id,
+                    "principal_id": principal_id,
+                },
+            )
+            report["parked"] = {"event_id": event_id, "reason_ref": reason_ref}
         if detail is not None:
             report["detail"] = detail
         if details is not None:
@@ -6599,6 +6716,7 @@ def claim_state(store: PgStore, work_item_id: int) -> dict:
         )
         reports = cur.fetchall()
         config = verification_config(cur, store, work_item_id)
+        parking = _parked_items(cur, store, [work_item_id]).get(work_item_id)
     store.conn.rollback()
     # Generations are positions in acquisition order, which is this order.
     generations = {row["lease_id"]: index for index, row in enumerate(leases, start=1)}
@@ -6614,5 +6732,6 @@ def claim_state(store: PgStore, work_item_id: int) -> dict:
         "leases": [_lease_row(row, generations[row["lease_id"]]) for row in leases],
         "outcome_reports": [_report_row(row) for row in reports],
         "verification": config,
+        "parked": parking,
         "evaluated_at": _iso(now),
     }

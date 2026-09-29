@@ -136,6 +136,42 @@ def _outcome_summary(value: Any) -> str:
     return value
 
 
+_MAX_REASON_REF = 512
+
+
+def _outcome_parking(outcome: str, arguments: dict[str, Any]) -> tuple[str | None, str | None]:
+    """(disposition, reason_ref) of a report that asks to park its work
+    (agentops#2543), or (None, None).  The two go together, and only with a
+    failed outcome: parking is a denial of the work, not a way to file a
+    success."""
+    disposition = arguments.get("disposition")
+    reason_ref = arguments.get("reason_ref")
+    if disposition is None and reason_ref is None:
+        return None, None
+    if disposition != "parked":
+        raise ApplicationRejection(
+            "invalid-arguments", "disposition, when given, must be 'parked'", 422
+        )
+    if outcome != "failed":
+        raise ApplicationRejection(
+            "invalid-arguments", "only a failed outcome can be parked", 422
+        )
+    if (
+        not isinstance(reason_ref, str)
+        or not reason_ref.strip()
+        or reason_ref != reason_ref.strip()
+        or len(reason_ref) > _MAX_REASON_REF
+        or not _json_text_ok(reason_ref)
+    ):
+        raise ApplicationRejection(
+            "invalid-arguments",
+            "a parked outcome needs a reason_ref: a non-empty string without "
+            f"surrounding whitespace, at most {_MAX_REASON_REF} characters",
+            422,
+        )
+    return "parked", reason_ref
+
+
 def _json_text_ok(value: Any) -> bool:
     """No NUL and no lone surrogate in any string, key or value (PostgreSQL
     jsonb refuses both, and they would surface as a raw storage error)."""
@@ -1916,6 +1952,7 @@ class WorkApplication:
                 "invalid-arguments", "outcome must be 'succeeded' or 'failed'", 422
             )
         _idempotency_key(arguments.get("idempotency_key"))
+        outcome_disposition, reason_ref = _outcome_parking(outcome, arguments)
         summary = _outcome_summary(arguments.get("summary"))
         payload = _outcome_payload(arguments.get("payload"))
         checks = _outcome_checks(arguments.get("checks"))
@@ -1930,7 +1967,9 @@ class WorkApplication:
                     self.store, lease_id=lease_id, run_id=run_id,
                     idempotency_key=arguments["idempotency_key"],
                     request_digest=request_digest, outcome=outcome, summary=summary,
-                    payload=payload, checks=checks, actor=actor, cur=cur, **binding,
+                    payload=payload, checks=checks, actor=actor, cur=cur,
+                    outcome_disposition=outcome_disposition, reason_ref=reason_ref,
+                    **binding,
                 )
             except _pg.LeaseRefused as exc:
                 raise self._lease_refused(exc) from exc
@@ -1938,7 +1977,9 @@ class WorkApplication:
                 "repo_id": self.repo_id,
                 "report": report,
                 "settled": report["disposition"] == "settled",
-                "settlement_effect": _SETTLEMENT_EFFECTS[report["disposition"]],
+                "settlement_effect": (
+                    "parked" if report.get("parked") else _SETTLEMENT_EFFECTS[report["disposition"]]
+                ),
             }
 
         # One ledger tool for report-outcome-v1 and its deprecated alias

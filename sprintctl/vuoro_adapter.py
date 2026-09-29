@@ -623,6 +623,22 @@ _OUTCOME_CHECK_SCHEMA = _object_schema(
     },
     required=("name", "status"),
 )
+_PARKED_REPORT_SCHEMA = _object_schema(
+    {"event_id": {"type": "integer", "minimum": 1}, "reason_ref": {"type": "string"}},
+    required=("event_id", "reason_ref"),
+)
+# The work-level parking a failed report recorded and no release has lifted
+# yet (agentops#2543): a property of the item, not of any lease.
+_PARKING_SCHEMA = _object_schema(
+    {
+        "event_id": {"type": "integer", "minimum": 1},
+        "reason_ref": {"type": ["string", "null"]},
+        "report_id": {"type": ["string", "null"]},
+        "lease_id": {"type": ["string", "null"]},
+        "parked_at": {"type": "string"},
+    },
+    required=("event_id", "reason_ref", "report_id", "lease_id", "parked_at"),
+)
 _OUTCOME_REPORT_SCHEMA = _object_schema(
     {
         "report_id": {"type": "string", "pattern": "^outcome_[0-9A-HJKMNP-TV-Z]{26}$"},
@@ -642,6 +658,8 @@ _OUTCOME_REPORT_SCHEMA = _object_schema(
         "created_at": {"type": "string"},
         "detail": {"type": "string"},
         "details": {"type": "object"},
+        # Present only on a report that parked its item (agentops#2543).
+        "parked": _PARKED_REPORT_SCHEMA,
     },
     required=(
         "report_id", "item_id", "lease_id", "run_id", "principal_id", "outcome",
@@ -670,6 +688,11 @@ _REPORT_OUTCOME_INPUT = _object_schema(
         "summary": {"type": "string", "maxLength": 4000},
         "payload": {"type": "object"},
         "checks": {"type": "array", "items": _OUTCOME_CHECK_SCHEMA, "maxItems": 64},
+        # agentops#2543: a failed outcome may park the work itself.  The
+        # holder names why with reason_ref (an issue, run or report it can
+        # cite); the two go together and only with outcome "failed".
+        "disposition": {"enum": ["parked"]},
+        "reason_ref": {"type": "string", "minLength": 1, "maxLength": 512},
         "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
     },
     required=("lease_id", "run_id", "outcome", "idempotency_key"),
@@ -681,7 +704,7 @@ _REPORT_OUTCOME_RESULT = _result_schema(
         "report": _OUTCOME_REPORT_SCHEMA,
         "settled": {"type": "boolean"},
         "settlement_effect": {
-            "enum": ["settled", "lease-released", "awaiting-verification", "none"],
+            "enum": ["settled", "lease-released", "parked", "awaiting-verification", "none"],
         },
     },
 )
@@ -941,6 +964,9 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
                 "leases": {"type": "array", "items": _LEASE_SCHEMA},
                 "outcome_reports": {"type": "array", "items": _OUTCOME_REPORT_SCHEMA},
                 "verification": _VERIFICATION_SCHEMA,
+                # Not required: an older authority does not send it.  null
+                # when the item is not parked (agentops#2543).
+                "parked": {"anyOf": [_PARKING_SCHEMA, {"type": "null"}]},
                 "evaluated_at": {"type": "string"},
             },
         ),

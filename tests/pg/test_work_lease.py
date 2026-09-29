@@ -1913,3 +1913,174 @@ class TestSchema18IndexKeyColumns:
                 cur.execute("SET search_path TO public")
                 cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
             store.conn.commit()
+
+
+class TestParkedDisposition:
+    """agentops#2543 (agentops#253 lease point 7): a denial is a fact about
+    the work, not a lease state.  ``report-outcome-v1`` with
+    ``outcome=failed, disposition=parked, reason_ref`` releases the lease and
+    appends a ``work.parked`` item event that claims and readiness respect,
+    until a release to pending lifts it."""
+
+    def _park(self, store, key: str, *, context=A, reason_ref="agentops#253:denied",
+              operation="work.lease.report-outcome-v1"):
+        (item,) = _items(store)
+        run = _run(store, context)
+        lease = _claim(store, context, item, run, f"{key}-a")["lease"]["lease_id"]
+        result = _invoke(store, operation, {
+            "lease_id": lease, "run_id": run, "outcome": "failed", "summary": "denied",
+            "disposition": "parked", "reason_ref": reason_ref, "idempotency_key": f"{key}-c",
+        }, context)
+        return item, run, lease, result
+
+    def test_a_parked_failure_releases_the_lease_and_records_work_parked(self, store):
+        item, _run_id, lease, result = self._park(store, "park-basic")
+        assert (result["settled"], result["settlement_effect"]) == (False, "parked")
+        report = result["report"]
+        assert (report["outcome"], report["disposition"]) == ("failed", "recorded")
+        assert report["parked"]["reason_ref"] == "agentops#253:denied"
+        assert _status(store, item) == "active"
+        row = _scalar(
+            store, "SELECT end_reason FROM work_lease WHERE repo_id = %s AND lease_id = %s",
+            (store.repo_id, lease),
+        )
+        assert row == "reported-parked"
+        (event,) = _events(store, item, "work.parked")
+        assert event["reason_ref"] == "agentops#253:denied"
+        assert event["report_id"] == report["report_id"] and event["lease_id"] == lease
+        state = _read(store, item)
+        assert state["current_lease"] is None
+        assert state["parked"]["reason_ref"] == "agentops#253:denied"
+        assert state["parked"]["event_id"] == report["parked"]["event_id"]
+
+    def test_a_parked_item_is_not_claimable(self, store):
+        item, *_ = self._park(store, "park-claim")
+        for who in (A, B):
+            refused = _refused(lambda: _claim(store, who, item, _run(store, who), f"park-claim-{who.identity.principal_id}"))
+            assert refused.code == "work-parked" and refused.http_status == 409
+        assert _lease_rows(store, item, "active") == 0
+
+    def test_a_plain_failure_is_still_claimable(self, store):
+        (item,) = _items(store)
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, "plain-fail-a")["lease"]["lease_id"]
+        result = _report(store, A, lease, run, "plain-fail-c", outcome="failed")
+        assert result["settlement_effect"] == "lease-released" and "parked" not in result["report"]
+        assert _events(store, item, "work.parked") == []
+        assert _read(store, item)["parked"] is None
+        assert _claim(store, B, item, _run(store, B), "plain-fail-b")["took_over"] is None
+
+    def test_a_parked_item_is_not_ready_even_when_left_pending(self, store):
+        item, *_ = self._park(store, "park-ready")
+        sprint_id = pg.get_work_item(store, item)["sprint_id"]
+        # Moved off active without the release event (a direct row change):
+        # the parking still holds it out of readiness.
+        with store.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE work_item SET status = 'pending' WHERE repo_id = %s AND id = %s",
+                (store.repo_id, item),
+            )
+        store.conn.commit()
+        assert item not in [ready["id"] for ready in pg.get_ready_items(store, sprint_id)]
+
+    def test_a_release_to_pending_lifts_the_parking(self, store):
+        item, *_ = self._park(store, "park-lift")
+        sprint_id = pg.get_work_item(store, item)["sprint_id"]
+        pg.set_work_item_status(store, item, "pending", "operator", reason="partial")
+        assert _read(store, item)["parked"] is None
+        assert item in [ready["id"] for ready in pg.get_ready_items(store, sprint_id)]
+        assert _claim(store, B, item, _run(store, B), "park-lift-b")["took_over"] is None
+
+    def test_a_later_report_parks_the_released_work_again(self, store):
+        item, *_ = self._park(store, "park-again")
+        pg.set_work_item_status(store, item, "pending", "operator", reason="rework")
+        run = _run(store, B)
+        lease = _claim(store, B, item, run, "park-again-b")["lease"]["lease_id"]
+        second = _invoke(store, "work.lease.report-outcome-v1", {
+            "lease_id": lease, "run_id": run, "outcome": "failed", "disposition": "parked",
+            "reason_ref": "run:2", "idempotency_key": "park-again-c2",
+        }, B)
+        assert second["settlement_effect"] == "parked"
+        assert len(_events(store, item, "work.parked")) == 2
+        assert _read(store, item)["parked"]["reason_ref"] == "run:2"
+        assert _refused(lambda: _claim(store, A, item, _run(store, A), "park-again-a3")).code == "work-parked"
+
+    def test_the_deprecated_alias_parks_too(self, store):
+        item, *_ = self._park(store, "park-alias", operation="work.lease.complete-v1")
+        assert _read(store, item)["parked"]["reason_ref"] == "agentops#253:denied"
+
+    def test_a_replayed_key_answers_as_the_first_call_did(self, store):
+        item, run, lease, first = self._park(store, "park-replay")
+        again = _invoke(store, "work.lease.report-outcome-v1", {
+            "lease_id": lease, "run_id": run, "outcome": "failed", "summary": "denied",
+            "disposition": "parked", "reason_ref": "agentops#253:denied",
+            "idempotency_key": "park-replay-c",
+        }, A)
+        assert again == first
+        assert len(_events(store, item, "work.parked")) == 1 and _reports(store, item) == 1
+        # Same key, different park request: a conflict, never a silent re-park.
+        changed = _refused(lambda: _invoke(store, "work.lease.report-outcome-v1", {
+            "lease_id": lease, "run_id": run, "outcome": "failed", "summary": "denied",
+            "idempotency_key": "park-replay-c",
+        }, A))
+        assert changed.code == "idempotency-conflict"
+
+    def test_the_direct_replay_reports_the_parking_too(self, store):
+        item, run, lease, first = self._park(store, "park-direct")
+        replayed = pg.complete_lease(
+            store, lease_id=lease, run_id=run, principal_id="github:100:0", workspace_id="ws-1",
+            client_id=None, grant_id=None, idempotency_key="park-direct-c",
+            request_digest=_scalar(
+                store, "SELECT request_digest FROM work_outcome_report WHERE repo_id = %s "
+                "AND report_id = %s", (store.repo_id, first["report"]["report_id"]),
+            ),
+            outcome="failed", summary="denied", payload={}, checks=[], actor="x",
+            outcome_disposition="parked", reason_ref="agentops#253:denied",
+        )
+        assert replayed["parked"]["reason_ref"] == "agentops#253:denied"
+
+    def test_a_superseded_holder_cannot_park_the_work(self, store):
+        """INV-L1: a rejected report is evidence, not an action on the work."""
+        (item,) = _items(store)
+        run_a = _run(store, A)
+        lease_a = _claim(store, A, item, run_a, "park-sup-a")["lease"]
+        _backdate(store, lease_a["lease_id"], 601)
+        run_b = _run(store, B)
+        lease_b = _claim(store, B, item, run_b, "park-sup-b")["lease"]
+        refused = _refused(lambda: _invoke(store, "work.lease.report-outcome-v1", {
+            "lease_id": lease_a["lease_id"], "run_id": run_a, "outcome": "failed",
+            "disposition": "parked", "reason_ref": "stale", "idempotency_key": "park-sup-c",
+        }, A))
+        assert refused.code == "claim-superseded"
+        assert _events(store, item, "work.parked") == []
+        assert _read(store, item)["parked"] is None
+        assert _read(store, item)["current_lease"]["lease_id"] == lease_b["lease_id"]
+
+    @pytest.mark.parametrize("bad", [
+        {"outcome": "succeeded", "disposition": "parked", "reason_ref": "r"},
+        {"outcome": "failed", "disposition": "parked"},
+        {"outcome": "failed", "disposition": "parked", "reason_ref": ""},
+        {"outcome": "failed", "disposition": "parked", "reason_ref": " padded "},
+        {"outcome": "failed", "disposition": "parked", "reason_ref": "x" * 513},
+        {"outcome": "failed", "reason_ref": "r"},
+        {"outcome": "failed", "disposition": "shelved", "reason_ref": "r"},
+    ])
+    def test_a_malformed_park_request_is_refused_and_changes_nothing(self, store, bad):
+        (item,) = _items(store)
+        run = _run(store, A)
+        tag = uuid.uuid4().hex[:12]
+        lease = _claim(store, A, item, run, f"park-bad-a-{tag}")["lease"]["lease_id"]
+        rejected = _refused(lambda: _app(store).invoke("work.lease.report-outcome-v1", {
+            "lease_id": lease, "run_id": run, "idempotency_key": f"park-bad-c-{tag}", **bad,
+        }, A))
+        assert rejected.code == "invalid-arguments"
+        assert _reports(store, item) == 0 and _events(store, item, "work.parked") == []
+        assert _lease_rows(store, item, "active") == 1
+
+    def test_the_generic_event_writer_cannot_forge_a_parking(self, store):
+        (item,) = _items(store)
+        sprint_id = pg.get_work_item(store, item)["sprint_id"]
+        with pytest.raises(ValueError, match="work.parked is reserved"):
+            pg.create_event(store, sprint_id, "anyone", "work.parked", work_item_id=item,
+                            payload={"reason_ref": "forged"})
+        assert _events(store, item, "work.parked") == []

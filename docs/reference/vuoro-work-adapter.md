@@ -208,7 +208,8 @@ default). A claim naming `ttl_seconds` is `invalid-arguments` (422).
 
 - `work.lease.acquire-v1` claims an item: missing work is `work-not-found`
   (404); settled work is `work-settled`; a `blocked` item or one waiting on
-  an unsettled blocker is `work-blocked`; any claim while a maintenance
+  an unsettled blocker is `work-blocked`; an item a holder parked (see
+  `work.lease.report-outcome-v1`) is `work-parked`; any claim while a maintenance
   capability is active is `maintenance-active`; an item with an outcome
   report awaiting its verifier's decision is `work-awaiting-verification`,
   whoever asks and however fresh or stale the lease (its holder
@@ -269,7 +270,26 @@ default). A claim naming `ttl_seconds` is `invalid-arguments` (422).
   under either name. The report (outcome, summary, payload up to 64 KiB,
   checks) is always stored on the item, and this authority decides what it
   means. The result's `settlement_effect` says what the report did to the
-  work: `settled`, `lease-released`, `awaiting-verification` or `none`.
+  work: `settled`, `lease-released`, `parked`, `awaiting-verification` or `none`.
+  - `recorded` with `disposition: "parked"` (agentops#2543, operator lease
+    point 7): a `failed` outcome may also carry `disposition: "parked"` and
+    a `reason_ref` (1-512 characters, no surrounding whitespace; an issue,
+    run or report the holder can cite). Both are required together and only
+    with `failed` (`invalid-arguments`, 422). A denial is then recorded as a
+    fact about the work, not a lease state: the lease is released
+    (`end_reason=reported-parked`) as for any failure, and a `work.parked`
+    item event names the `reason_ref`, `report_id`, `lease_id` and `run_id`.
+    The result's `settlement_effect` is `parked` and the report carries
+    `parked: {event_id, reason_ref}`. The item stays `active`, but it is
+    not claimable (`work-parked`, 409) and not ready (`get_ready_items`
+    skips it even if it was left `pending`) until it is released to
+    pending with a reason, which supersedes the newest `work.parked` event;
+    a later parked report parks it again. Nothing is stored on the item
+    row or in the lease and report tables, so there is no schema change.
+    `work.lease.read-v1` reports the current parking as `parked` (`null`
+    when not parked). A `rejected` report (superseded, stale or ended
+    lease) parks nothing (INV-L1), and `work.parked` cannot be written as
+    a generic event.
   - `rejected`: the lease was taken over (`claim-superseded`), is stale
     (`lease-expired`; a result submitted under a stale or superseded lease
     is kept as evidence but never settles work, INV-L1, and the holder of a
@@ -349,7 +369,8 @@ default). A claim naming `ttl_seconds` is `invalid-arguments` (422).
   `decided-accept-unverified` or `decided-<kind>`, never `settled`. Only the
   Python `reserve(acceptance_contract=...)` path can write a non-default
   contract; without one, every item is `checked`. There is no `parked` lease state: a worker that is denied
-  records that as evidence on its run and stops heartbeating.
+  reports `failed` with `disposition: "parked"`, which parks the work, not
+  the lease (`work.lease.report-outcome-v1`).
 - `work.lease.read-v1` returns the item's current lease (with `stale` as of
   now), every lease (each with its pinned verification) and every outcome
   report, and the item's current verification bar. Any `work:read` caller

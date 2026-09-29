@@ -14,6 +14,7 @@ CONTEXT_CONTRACT_VERSION = "1"
 HANDOFF_BUNDLE_TYPE = "handoff"
 HANDOFF_BUNDLE_VERSION = "1"
 ITEM_EDITED_EVENT_TYPE = "item-edited"
+WORK_PARKED_EVENT_TYPE = "work.parked"
 SPRINT_CLOSE_BOUNDARY_EVENT_TYPE = "sprint-close-boundary"
 SPRINT_CLOSE_BOUNDARY_IMPORTED_EVENT_TYPE = "sprint-close-boundary-imported"
 SESSION_CAPSULE_RECORDED_EVENT_TYPE = "session-capsule.recorded"
@@ -719,6 +720,11 @@ def require_generic_event_write_allowed(event_type: str) -> None:
     if event_type == SESSION_CAPSULE_RECORDED_EVENT_TYPE:
         raise ValueError(
             "session-capsule.recorded is reserved; use event observation add"
+        )
+    if event_type == WORK_PARKED_EVENT_TYPE:
+        raise ValueError(
+            "work.parked is reserved; it is recorded by a failed outcome report "
+            "with disposition=parked"
         )
     if event_type == SPRINT_CLOSE_BOUNDARY_EVENT_TYPE:
         raise ValueError(

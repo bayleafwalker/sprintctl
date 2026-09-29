@@ -56,3 +56,14 @@ def test_heartbeat_documents_the_repo_lock():
     assert any(re.search(r"\brepo", s) and re.search(r"\block\b", s) for s in sentences), (
         "the heartbeat bullet must say the heartbeat takes the repo (claims) lock"
     )
+
+
+def test_parked_disposition_is_documented_as_work_level_not_lease_state():
+    text = _flat(_text())
+    acquire = _flat(_bullet("work.lease.acquire-v1"))
+    report = _flat(_bullet("work.lease.report-outcome-v1"))
+    assert "work-parked" in acquire and "work-parked" in report
+    for needed in ('disposition: "parked"', "reason_ref", "work.parked", "reported-parked"):
+        assert needed in report, f"the report-outcome bullet must document {needed}"
+    assert "released to pending" in report, "the report bullet must say what lifts a parking"
+    assert "There is no `parked` lease state" in text
