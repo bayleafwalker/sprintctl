@@ -1,8 +1,8 @@
 # Sprintctl volatile-context native-hook pilot
 
-Status: draft. Implemented as a pilot (merged in #41: `sprintctl/volatile_context.py`,
+Status: ratified (operator, 2026-09-29). Implemented as a pilot (merged in #41: `sprintctl/volatile_context.py`,
 `sprintctl/volatile_hook.py`, entry point `sprintctl-volatile-hook`; not
-deployed); awaiting operator ratification.
+deployed); ratified by the operator on 2026-09-29.
 
 Governing mapping: Agentops
 `docs/plans/agentops/volatile-context-native-runtime-integration-mapping-2026-08-20.md`.
