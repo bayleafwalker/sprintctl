@@ -2581,7 +2581,7 @@ def _foreign_relations(
     cur: Any,
     tables: Mapping[str, tuple[tuple[tuple[str, str, bool], ...], frozenset[tuple[str, str]]]],
     indexes: Mapping[str, str],
-    index_shapes: Mapping[str, tuple[bool, str | None]] | None = None,
+    index_shapes: Mapping[str, tuple[bool, str | None, tuple[str, ...]]] | None = None,
 ) -> list[str]:
     """Relations already holding one of ``tables``/``indexes``' names without
     exactly the catalog shape recorded for it (see ``_SCHEMA_17_TABLES``)."""
@@ -2592,7 +2592,11 @@ def _foreign_relations(
     names = [*tables, *indexes]
     cur.execute(
         "SELECT c.relname, c.relkind, ic.relname AS index_table, i.indisunique, "
-        "pg_get_expr(i.indpred, i.indrelid) AS predicate FROM pg_class c "
+        "pg_get_expr(i.indpred, i.indrelid) AS predicate, "
+        "(SELECT string_agg(COALESCE(a.attname, ''), ',' ORDER BY k.ord) "
+        "FROM unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord) "
+        "LEFT JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum "
+        "WHERE k.ord <= i.indnkeyatts) AS key_columns FROM pg_class c "
         "JOIN pg_namespace n ON n.oid = c.relnamespace "
         "LEFT JOIN pg_index i ON i.indexrelid = c.oid "
         "LEFT JOIN pg_class ic ON ic.oid = i.indrelid "
@@ -2602,7 +2606,11 @@ def _foreign_relations(
     existing = [
         (
             col(row, "relname", 0), col(row, "relkind", 1), col(row, "index_table", 2),
-            (bool(col(row, "indisunique", 3)), col(row, "predicate", 4)),
+            (
+                bool(col(row, "indisunique", 3)),
+                col(row, "predicate", 4),
+                tuple((col(row, "key_columns", 5) or "").split(",")),
+            ),
         )
         for row in cur.fetchall()
     ]
@@ -2830,12 +2838,13 @@ _SCHEMA_18_INDEXES = {
     "idx_work_lease_claim_key": "work_lease",
     "idx_work_outcome_report_item": "work_outcome_report",
 }
-#: (unique, partial predicate) per index: the active-lease index is what
-#: makes exclusivity hold in storage, so a plain index of that name is foreign.
+#: (unique, partial predicate, ordered key columns) per index: the
+#: active-lease index is what makes exclusivity hold in storage, so a plain
+#: index of that name, or one keyed on other columns, is foreign.
 _SCHEMA_18_INDEX_SHAPES = {
-    "uq_work_lease_active_item": (True, "(state = 'active'::text)"),
-    "idx_work_lease_claim_key": (False, None),
-    "idx_work_outcome_report_item": (False, None),
+    "uq_work_lease_active_item": (True, "(state = 'active'::text)", ("repo_id", "work_item_id")),
+    "idx_work_lease_claim_key": (False, None, ("repo_id", "workspace_id", "principal_id", "claim_key")),
+    "idx_work_outcome_report_item": (False, None, ("repo_id", "work_item_id")),
 }
 
 
@@ -3427,6 +3436,31 @@ def _release_caller_reservations_locked(
     return [row["id"] for row in rows]
 
 
+def _end_item_lease_on_release(
+    cur: Any, repo_id: str, item_id: int, reason: str
+) -> list[str]:
+    """End the item's active lease, whoever holds it, on a release to pending
+    (agentops#2529, m2).
+
+    Called with the item row already locked FOR UPDATE, inside the status
+    transaction, so the lease and the status change commit or roll back
+    together (lock order: item, then lease -- the UPDATE locks the lease
+    row).  A released item must be claimable at once and must not keep
+    counting as live work for maintenance activation, so its lease is
+    ``released`` with ``end_reason`` ``item-released-<reason>`` instead of
+    staying active until its TTL.  Any outcome report awaiting verification
+    is left untouched and still protects the item.  Returns the ended lease
+    ids (empty when the item held none).
+    """
+    cur.execute(
+        "UPDATE work_lease SET state = 'released', ended_at = clock_timestamp(), "
+        "end_reason = %s WHERE repo_id = %s AND work_item_id = %s AND state = 'active' "
+        "RETURNING lease_id",
+        (f"item-released-{reason}", repo_id, item_id),
+    )
+    return sorted(str(row["lease_id"]) for row in cur.fetchall())
+
+
 def set_work_item_status(
     store: PgStore,
     item_id: int,
@@ -3495,6 +3529,10 @@ def set_work_item_status(
             released_ids = _release_caller_reservations_locked(
                 store, item, session_id=session_id, actor=actor_value
             )
+            with store.conn.cursor() as cur:
+                released_lease_ids = _end_item_lease_on_release(
+                    cur, store.repo_id, item_id, str(reason)
+                )
             _insert_event(
                 store, int(item["sprint_id"]), actor_value, "item-released",
                 source_type="system", work_item_id=item_id,
@@ -3502,6 +3540,7 @@ def set_work_item_status(
                     "reason": reason,
                     "previous_status": current,
                     "released_reservation_ids": released_ids,
+                    "released_lease_ids": released_lease_ids,
                 },
             )
         wi.commit()
@@ -6195,6 +6234,11 @@ def heartbeat_lease(
     binding = (principal_id, workspace_id, client_id, grant_id)
     try:
         with store.conn.cursor() as cur:
+            # Repo lock first (repo, item, lease): maintenance activation
+            # counts fresh leases under this lock, so a heartbeat cannot
+            # refresh a lease into an activation that already counted it out
+            # (agentops#2529, m3).
+            _lock_repo_for_claims(cur, store)
             lease = _owned_lease(cur, store, lease_id, run_id, binding)
             cur.execute(
                 "SELECT * FROM work_item WHERE repo_id = %s AND id = %s FOR UPDATE",
