@@ -131,8 +131,12 @@ or git-only stretches. Attribution is by session id, never by actor name, and
 it works the same in served mode: the client attaches its session to the
 invocation, since the server cannot see it.
 
-Touch bumps `last_activity_at`. There is no lease, no TTL, and no heartbeat
-contract to violate. Staleness is display-only.
+Touch bumps `last_activity_at`. A reservation has no lease, no TTL, and no
+heartbeat contract to violate; staleness is display-only. The exclusive
+durable work lease (default 600 s TTL, 120 s heartbeat interval) is a
+separate mechanism used only by the hosted Vuoro claim tools (`claim_work`,
+`heartbeat`, `report_outcome`); see `docs/protocols/reservation-model.md`, "The durable
+work lease is a separate mechanism".
 
 ### 3. Transition item status
 

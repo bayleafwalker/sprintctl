@@ -1,7 +1,8 @@
 # Served-Mode Gaps — Implementation Brief
 
-Status: partially implemented (source merged 2026-07-26; adapter release and
-deployment verification remain separately authorized)
+Status: draft. Implemented (the basis for #1982–#1985; source merged
+2026-07-26; adapter release and deployment verification remain separately
+authorized and tracked in sprintctl); awaiting operator ratification.
 Related items: #1982, #1983, #1984, #1985 (sprint #407, track `served-mode-gaps`);
 #1164 (split-backend retirement gate, whose dependency chain is now clear);
 #1195 (served-backend cutover this whole gap set traces back to)

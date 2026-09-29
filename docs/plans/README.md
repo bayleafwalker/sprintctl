@@ -14,8 +14,8 @@ Primary plan documents:
 - [UX Plan Pack](ux/00-index.md)
 - [Doc–backlog linking, Phase 0](doc-backlog-linking-phase0.md)
 
-Other plan and design documents (lifecycle is each file's frontmatter
-`status`; execution status lives in sprintctl):
+Other plan and design documents (lifecycle is each file's `status`, in
+frontmatter or a body `Status:` line; execution status lives in sprintctl):
 
 - [sprintctl pg backend and remote mode plan](pg-backend-remote-mode-plan.md)
 - [Sprintctl alignment with the Vuoro served authority](vuoro-served-authority-alignment.md)
