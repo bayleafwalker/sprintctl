@@ -78,13 +78,13 @@
     "provider_adapters": []
   },
   "scope": {
-    "allowed_path_roots": ["sprintctl/", "tests/", "docs/", "verification/", ".agents/", "pyproject.toml"],
+    "allowed_path_roots": ["sprintctl/", "scripts/", "tests/", "docs/", "verification/", ".agents/", "pyproject.toml"],
     "out_of_scope": ["shared sprint backends during concurrency or fault verification"]
   },
   "risk_surfaces": [
     {
       "id": "claim-ownership",
-      "paths": ["sprintctl/db.py", "sprintctl/pg.py", "tests/test_claims.py", "tests/pg/"],
+      "paths": ["sprintctl/db.py", "sprintctl/pg.py", "tests/test_claims.py", "tests/pg/", "scripts/pg-disposable-tests.sh"],
       "skills": ["verify-state-protocols", "reconcile-project-contracts"],
       "default_depth": 2,
       "required_on_change": true
@@ -102,7 +102,8 @@
     "worker_routes": ["mechanical_bulk"],
     "commands": {
       "sprintctl.served.catalog.tests": "uv run --extra dev --extra served pytest tests/test_served_lifecycle_routes.py tests/test_vuoro_work_adapter_integration.py -q",
-      "sprintctl.suite": "uv run --extra dev --extra served pytest -q -m \"not perf\""
+      "sprintctl.suite": "uv run --extra dev --extra served pytest -q -m \"not perf\"",
+      "sprintctl.pg.disposable": "timeout --foreground 900s scripts/pg-disposable-tests.sh"
     },
     "protected_paths": [
       "sprintctl.dispatch.json",
@@ -129,7 +130,8 @@
     "targeted_first": true,
     "commands": [
       "uv run pytest <specific-test-files> -x --tb=short",
-      "python /projects/dev/agentops/scripts/validate_verification_artifacts.py --root ."
+      "python /projects/dev/agentops/scripts/validate_verification_artifacts.py --root .",
+      "timeout --foreground 900s scripts/pg-disposable-tests.sh"
     ]
   },
   "hooks": {
