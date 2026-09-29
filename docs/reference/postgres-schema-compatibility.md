@@ -170,19 +170,67 @@ startup bootstrap encounters the restricted role.
 
 ## Served runtime connection recovery
 
-The long-lived served work application classifies PostgreSQL administrative
-shutdown only by SQLSTATE `57P01`. It reconnects and retries the request once
-only for read operations, or for the small set of domain operations that
-require a non-empty durable idempotency key. A direct mutation whose outcome is
-unknown is never replayed; it returns the stable
-`postgres-runtime-unavailable` response instead. If replacement connection
-creation fails, eligible operations receive that same unavailable response and
-the dead connection is removed from the shared store. The application exposes
-`WorkApplication.served_runtime_ready()` as false while that essential runtime
-dependency is unavailable and flips it to true only after a later eligible
-request establishes a fresh connection. The pinned Vuoro service shell must
-bind that signal into its HTTP readiness endpoint; its current static
-compatibility-only readiness handler does not yet provide an adapter hook.
+The long-lived served work application holds one shared PostgreSQL connection,
+created by `sprintctl.pg.get_connection` together with a connection factory.
+It is built to survive a database restart, failover, or idle-session kill
+without replaying a command whose outcome it cannot know.
+
+**Connection settings.** `get_connection` adds `connect_timeout=5` and TCP
+keepalives (`keepalives=1`, `keepalives_idle=30`, `keepalives_interval=10`,
+`keepalives_count=3`) and `tcp_user_timeout=10000` (bounding a command sent to
+a peer that vanished mid-request, which keepalives do not cover) to both the
+first connection and every replacement, each only when the DSN does not
+already set it; a value in the DSN always wins.
+
+**Connection loss.** An error counts as connection loss when its SQLSTATE is in
+class `57P0x` (administrative or crash shutdown, cannot connect now, database
+dropped, idle-session timeout) or class `08` (connection exception), or when
+psycopg raised an `OperationalError` and the connection is afterwards closed or
+broken (a socket that died with no SQLSTATE, such as "consuming input failed").
+Every other error keeps its ordinary mapping.
+
+**Before every operation.** If the shared connection is missing, closed or
+broken, it is replaced through the factory before the operation is dispatched.
+Nothing has been sent yet, so this is safe for every operation, mutations
+included. If the replacement cannot be made, the operation returns
+`postgres-runtime-unavailable` (HTTP 503) and nothing was sent.
+
+**During an operation.** On connection loss the dead connection is closed and
+dropped from the shared store, so the next request reconnects first. The
+operation is then replayed once on a fresh connection only if it is
+retry-eligible:
+
+- pure reads: every `work.read.*` operation, plus `work.identity.current`,
+  `work.maintain.check`, `work.maintenance.resource.get`,
+  `work.maintenance.resource.changes`, `work.public.list-v1`,
+  `work.public.item-v1`, `work.validate.item-status-mutation`,
+  `work.run.resolve-v1`, `work.evidence.tail-v1` and `work.lease.read-v1`;
+- commands keyed by a durable unique constraint, when the request carries a
+  required, non-empty idempotency key: `work.lifecycle.arbitrate`,
+  `work.decision.record`, `work.evidence.ingest`, `work.batch.apply`,
+  `work.maintenance.prepare`, `work.maintenance.transition`,
+  `work.maintenance.recovery-record` and `work.maintenance.resource.prepare`.
+
+Any other operation returns `postgres-runtime-unavailable` (HTTP 503) with a
+message that its outcome is unknown: the caller re-reads the current state, or
+resends the same request with the same idempotency key. Reservation operations
+(`work.reservation.*`) are not eligible, because `reserve` always inserts a new
+row. The `work_idempotency_ledger` operations (`work.run.register-v1`,
+`work.evidence.append-v1`, `work.session-note.write-v1`,
+`work.lease.acquire-v1`, `work.lease.report-outcome-v1` and its alias
+`work.lease.complete-v1`) are never replayed internally either: the caller's
+resend with the same key is answered from the ledger, so it has one effect.
+
+**Readiness.** `WorkApplication.served_runtime_ready()` checks the database
+each time it is called: it replaces a dead connection, then runs `SELECT 1`
+inside its own transaction with `SET LOCAL statement_timeout = 2000` and rolls
+that transaction back. A connection that only turns out to be lost during the
+probe is replaced and probed once more. It returns false on any failure and
+never raises, so readiness drops while PostgreSQL is unreachable and returns
+by itself once it is back, without waiting for a request. A connection that
+already has a transaction open belongs to a running operation and is not
+probed. The Vuoro service shell binds this method as its HTTP readiness check
+(`readiness_check=work_application.served_runtime_ready` in its composition).
 
 ## Rollout compatibility mode
 

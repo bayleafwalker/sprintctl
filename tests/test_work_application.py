@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
 from datetime import datetime
@@ -157,19 +158,36 @@ class _AdminShutdown(RuntimeError):
 
 
 class _RuntimeConnection:
-    def __init__(self, name: str):
+    """Enough of a psycopg connection for recovery and the readiness probe."""
+
+    def __init__(self, name: str, *, probe_error: Exception | None = None):
         self.name = name
         self.closed = False
+        self.broken = False
+        self.probe_error = probe_error
+        self.probes: list[str] = []
+        self.info = SimpleNamespace(transaction_status=0)  # TransactionStatus.IDLE
 
     def close(self) -> None:
         self.closed = True
+
+    @contextmanager
+    def transaction(self, *, force_rollback=False):
+        assert force_rollback is True
+        yield
+
+    def execute(self, sql):
+        if self.probe_error is not None:
+            raise self.probe_error
+        self.probes.append(sql)
+        return SimpleNamespace(fetchone=lambda: (1,))
 
 
 class _RuntimeBackend:
     def __init__(self, stale_connection: _RuntimeConnection):
         self.stale_connection = stale_connection
         self.read_calls: list[_RuntimeConnection] = []
-        self.write_calls = 0
+        self.write_calls: list[_RuntimeConnection] = []
 
     def list_sprints(self, store):
         self.read_calls.append(store.conn)
@@ -177,9 +195,14 @@ class _RuntimeBackend:
             raise _AdminShutdown("administrative shutdown")
         return [{"id": 1, "kind": "active_sprint"}]
 
-    def create_sprint(self, *_args, **_kwargs):
-        self.write_calls += 1
-        raise _AdminShutdown("administrative shutdown")
+    def create_sprint(self, store, *_args, **_kwargs):
+        self.write_calls.append(store.conn)
+        if store.conn is self.stale_connection:
+            raise _AdminShutdown("administrative shutdown")
+        return 2
+
+    def get_sprint(self, _store, sprint_id):
+        return {"id": sprint_id, "kind": "active_sprint"}
 
 
 def _runtime_application(backend: _RuntimeBackend, factory):
@@ -214,7 +237,9 @@ def test_admin_shutdown_reconnects_a_read_once_and_reuses_the_fresh_connection()
     assert stale.closed is True
 
 
-def test_admin_shutdown_never_retries_a_non_idempotent_mutation_but_a_later_read_recovers():
+def test_connection_loss_never_replays_a_mutation_and_does_not_latch_the_runtime():
+    """The command's outcome is unknown, so it is not replayed; the dead
+    connection is dropped and the very next request of any kind reconnects."""
     stale = _RuntimeConnection("stale")
     fresh = _RuntimeConnection("fresh")
     backend = _RuntimeBackend(stale)
@@ -229,26 +254,61 @@ def test_admin_shutdown_never_retries_a_non_idempotent_mutation_but_a_later_read
 
     assert rejected.value.code == "postgres-runtime-unavailable"
     assert rejected.value.http_status == 503
-    assert backend.write_calls == 1
+    assert "outcome is unknown" in rejected.value.message
+    assert "same idempotency key" in rejected.value.message
+    assert backend.write_calls == [stale]
     assert factory_calls == []
     assert stale.closed is True
     assert app.store.conn is None
-    assert app.served_runtime_ready() is False
 
-    recovered = app.invoke("work.read.sprints", {}, _context())
+    # A non-replayable mutation is itself enough to recover: the connection is
+    # replaced before dispatch, when nothing has been sent yet.
+    created = app.invoke("work.sprint.create", {"name": "Resent"}, _context())
 
-    assert recovered["sprints"] == [{"id": 1, "kind": "active_sprint"}]
-    assert backend.write_calls == 1
-    assert backend.read_calls == [fresh]
+    assert created["sprint"]["id"] == 2
+    assert backend.write_calls == [stale, fresh]
     assert factory_calls == [True]
     assert app.served_runtime_ready() is True
+    assert fresh.probes == ["SET LOCAL statement_timeout = 2000", "SELECT 1"]
 
 
-def test_admin_shutdown_factory_failure_is_not_ready_until_a_later_read_recovers():
+def test_readiness_reconnects_a_lost_connection_without_waiting_for_a_request():
     stale = _RuntimeConnection("stale")
     fresh = _RuntimeConnection("fresh")
     backend = _RuntimeBackend(stale)
-    factory_results = [RuntimeError("postgres is still restarting"), fresh]
+    app = _runtime_application(backend, lambda: fresh)
+
+    with pytest.raises(ApplicationRejection):
+        app.invoke("work.sprint.create", {"name": "No replay"}, _context())
+    assert app.store.conn is None
+
+    assert app.served_runtime_ready() is True
+    assert app.store.conn is fresh
+    assert backend.read_calls == [] and backend.write_calls == [stale]
+
+
+def test_readiness_replaces_a_connection_the_probe_finds_lost():
+    """An idle connection looks alive until used; one lost probe reconnects."""
+    lost = OSError("server closed the connection unexpectedly")
+    lost.sqlstate = "08006"
+    stale = _RuntimeConnection("stale", probe_error=lost)
+    fresh = _RuntimeConnection("fresh")
+    app = _runtime_application(_RuntimeBackend(stale), lambda: fresh)
+
+    assert app.served_runtime_ready() is True
+    assert stale.closed is True
+    assert app.store.conn is fresh
+
+
+def test_readiness_is_false_while_the_server_is_unreachable_and_never_raises():
+    stale = _RuntimeConnection("stale")
+    fresh = _RuntimeConnection("fresh")
+    backend = _RuntimeBackend(stale)
+    factory_results = [
+        RuntimeError("connection refused"),
+        RuntimeError("connection refused"),
+        fresh,
+    ]
 
     def factory():
         result = factory_results.pop(0)
@@ -261,6 +321,7 @@ def test_admin_shutdown_factory_failure_is_not_ready_until_a_later_read_recovers
     with pytest.raises(ApplicationRejection) as rejected:
         app.invoke("work.read.sprints", {}, _context())
 
+    # The read was eligible, but the reconnect for its retry failed.
     assert rejected.value.code == "postgres-runtime-unavailable"
     assert rejected.value.http_status == 503
     assert backend.read_calls == [stale]
@@ -274,6 +335,85 @@ def test_admin_shutdown_factory_failure_is_not_ready_until_a_later_read_recovers
     assert backend.read_calls == [stale, fresh]
     assert app.store.conn is fresh
     assert app.served_runtime_ready() is True
+
+
+def test_readiness_is_false_when_the_probe_fails_for_another_reason():
+    stale = _RuntimeConnection("stale", probe_error=RuntimeError("statement timeout"))
+    app = _runtime_application(_RuntimeBackend(stale), lambda: pytest.fail("no reconnect"))
+
+    assert app.served_runtime_ready() is False
+    assert app.store.conn is stale and stale.closed is False
+
+
+def test_readiness_does_not_probe_inside_an_open_transaction():
+    stale = _RuntimeConnection("stale")
+    stale.info.transaction_status = 2  # TransactionStatus.INTRANS
+    app = _runtime_application(_RuntimeBackend(stale), lambda: pytest.fail("no reconnect"))
+
+    assert app.served_runtime_ready() is True
+    assert stale.probes == []
+
+
+class _SQLStateError(Exception):
+    def __init__(self, sqlstate):
+        super().__init__(sqlstate)
+        self.sqlstate = sqlstate
+
+
+@pytest.mark.parametrize(
+    "sqlstate", ["57P01", "57P02", "57P03", "57P05", "08000", "08003", "08006"]
+)
+def test_connection_loss_sqlstates_are_classified_as_loss(sqlstate):
+    from sprintctl.work_application import _is_postgres_connection_loss
+
+    assert _is_postgres_connection_loss(_SQLStateError(sqlstate), _RuntimeConnection("open"))
+
+
+@pytest.mark.parametrize("sqlstate", [None, "57014", "40001", "23505", "22021", "42P01"])
+def test_other_sqlstates_keep_their_mapping(sqlstate):
+    from sprintctl.work_application import _is_postgres_connection_loss
+
+    assert not _is_postgres_connection_loss(_SQLStateError(sqlstate), _RuntimeConnection("open"))
+
+
+def test_an_operational_error_is_loss_only_when_it_left_the_connection_dead():
+    psycopg = pytest.importorskip("psycopg")
+    from sprintctl.work_application import _is_postgres_connection_loss
+
+    error = psycopg.OperationalError("consuming input failed")
+    assert error.sqlstate is None
+    connection = _RuntimeConnection("open")
+    assert not _is_postgres_connection_loss(error, connection)
+    connection.broken = True
+    assert _is_postgres_connection_loss(error, connection)
+    assert _is_postgres_connection_loss(error, SimpleNamespace(closed=True))
+    assert not _is_postgres_connection_loss(RuntimeError("x"), SimpleNamespace(closed=True))
+
+
+def test_retry_eligibility_excludes_reservations_and_ledger_operations():
+    keyed = _context(idempotency_key="key-1")
+    for operation in (
+        "work.reservation.reserve",
+        "work.reservation.touch",
+        "work.reservation.reassign",
+        "work.reservation.release",
+        "work.run.register-v1",
+        "work.evidence.append-v1",
+        "work.session-note.write-v1",
+        "work.lease.acquire-v1",
+        "work.lease.report-outcome-v1",
+        "work.lease.complete-v1",
+    ):
+        assert not WorkApplication._can_retry_after_admin_shutdown(operation, keyed), operation
+    for operation in (
+        "work.public.list-v1",
+        "work.public.item-v1",
+        "work.run.resolve-v1",
+        "work.evidence.tail-v1",
+        "work.lease.read-v1",
+        "work.validate.item-status-mutation",
+    ):
+        assert WorkApplication._can_retry_after_admin_shutdown(operation, _context()), operation
 
 
 def test_admin_shutdown_retry_requires_an_explicit_idempotency_key_for_writes():
