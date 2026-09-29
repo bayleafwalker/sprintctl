@@ -49,19 +49,21 @@ SUPPORTED_BATCH_TYPES = (
     LIFECYCLE_COMMAND_TYPES | OBSERVATION_TYPES
 )
 
-# A connection termination can arrive after PostgreSQL has accepted a command
-# but before the service receives its result.  Only this explicit subset has a
-# durable idempotency identity owned by the domain authority; ordinary writes
-# such as item edits, notes, and claim start must never be replayed here.
+# A connection loss can arrive after PostgreSQL has accepted a command but
+# before the service receives its result.  Only this explicit subset has a
+# durable idempotency identity owned by the domain authority (a unique
+# constraint that turns a second attempt into the first one's outcome), so
+# only it is replayed on a fresh connection.  Ordinary writes such as item
+# edits, notes, claim start, and reservations (which always INSERT) must never
+# be replayed here.  The work_idempotency_ledger operations (run, evidence,
+# session-note and lease ``*-v1``) are deliberately absent as well: their
+# caller resends with the same idempotency key and the ledger makes that one
+# effect, so the service never replays them on the caller's behalf.
 _ADMIN_SHUTDOWN_IDEMPOTENT_OPERATIONS = frozenset(
     {
         "work.lifecycle.arbitrate",
         # Keyed: a replay returns the decision the first attempt recorded.
         "work.decision.record",
-        "work.reservation.reserve",
-        "work.reservation.touch",
-        "work.reservation.reassign",
-        "work.reservation.release",
         "work.evidence.ingest",
         "work.batch.apply",
         "work.maintenance.prepare",
@@ -70,15 +72,25 @@ _ADMIN_SHUTDOWN_IDEMPOTENT_OPERATIONS = frozenset(
         "work.maintenance.resource.prepare",
     }
 )
+# Pure reads outside the ``work.read.`` prefix; each handler only selects.
 _ADMIN_SHUTDOWN_READ_OPERATIONS = frozenset(
     {
         "work.identity.current",
         "work.maintain.check",
         "work.maintenance.resource.get",
         "work.maintenance.resource.changes",
+        "work.public.list-v1",
+        "work.public.item-v1",
+        "work.validate.item-status-mutation",
+        "work.run.resolve-v1",
+        "work.evidence.tail-v1",
+        "work.lease.read-v1",
     }
 )
-_POSTGRES_ADMIN_SHUTDOWN_SQLSTATE = "57P01"
+# SQLSTATEs that mean the session itself is gone: 57P0x (admin or crash
+# shutdown, cannot connect now, database dropped, idle-session timeout) and
+# class 08 (connection exception).
+_POSTGRES_CONNECTION_LOSS_SQLSTATE_PREFIXES = ("57P0", "08")
 
 
 class InvocationIdentity(Protocol):
