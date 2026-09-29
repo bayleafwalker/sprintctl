@@ -1,6 +1,6 @@
 # #1219 Recovery Rehearsal — Missing-Capability Findings and Implementation Brief
 
-Status: planned (dispatch-plan output, 2026-07-24)
+Status: ratified (dispatch-plan output, 2026-07-24). Rationale: adopted and implemented — `sprintctl db recover-from-remote` shipped (#1233, `b38937e`) and the #1219 rehearsal is recorded as Done in row 9 of [1164-gate-evidence-ledger.md](1164-gate-evidence-ledger.md).
 Related items: #1219 (rehearsal, blocked), #1164 (split-backend retirement gate), #1220 (fail-closed verification)
 
 ## Problem

@@ -171,6 +171,57 @@ authority instance — pre-recovery reservations do not continue, and work must
 be re-reserved. This keeps recovered files free of usable credentials and
 prevents split-brain continuity when the source authority is still reachable.
 
+## The durable work lease is a separate mechanism
+
+Everything above describes advisory reservations, and it is unchanged. Since
+0.9.0 (commit `81f3824`, agentops#2520) the served authority also carries an
+**exclusive durable work lease**. It is a different mechanism with its own
+table and operations; it does not replace, create, or consult reservations.
+
+- **Who uses it.** The hosted claim tools of the Vuoro MCP edge
+  (`claim_work`, `heartbeat`, `report_outcome`, behind the `vuoro:work.claim`
+  scope) call the catalog operations `work.lease.acquire-v1`,
+  `work.lease.heartbeat-v1`, `work.lease.report-outcome-v1` (with the
+  deprecated alias `work.lease.complete-v1`) and `work.lease.read-v1`
+  (`sprintctl/vuoro_adapter.py`; handlers `WorkApplication._claim_acquire`,
+  `_claim_heartbeat`, `_claim_complete`, `_claim_read` in
+  `sprintctl/work_application.py`). No `sprintctl` CLI command takes a lease,
+  and `reservation reserve` behaves exactly as described above.
+- **Storage.** `work_lease` and `work_outcome_report`, installed by PostgreSQL
+  schema 18 (`_apply_schema_version_18` in `sprintctl/pg.py`). The lease
+  functions (`acquire_lease`, `resume_lease`, `heartbeat_lease`,
+  `complete_lease`) exist only in `sprintctl/pg.py`; SQLite has no lease.
+- **Exclusive.** A partial unique index (`uq_work_lease_active_item`) allows at
+  most one `active` lease per item. Claiming an item whose current lease is
+  still fresh is refused with `lease-held`.
+- **TTL and heartbeat.** The TTL is authority configuration, never a caller
+  argument: `SPRINTCTL_LEASE_TTL_SECONDS`, else `DEFAULT_LEASE_TTL_SECONDS` =
+  600 s, bounded to 30–3600 s (`_lease_ttl`). Every lease advertises
+  `heartbeat_interval_seconds` = TTL / 5 (`HEARTBEAT_INTERVAL_DIVISOR`), so
+  120 s at the default. A lease is stale once `heartbeat_at + ttl_seconds`
+  has passed (`_lease_is_stale`).
+- **No background expiry.** The authority evaluates a lease against its own
+  clock only when someone calls it (claim, heartbeat, report). Nothing sweeps
+  or expires leases in the background.
+- **Takeover and resume.** Another binding can claim an item whose lease is
+  stale: the old lease becomes `superseded` and a `work.claim.taken-over`
+  event is recorded (`_acquire_locked`). A superseded holder's heartbeat is
+  refused with `claim-superseded`, and its report is kept but `rejected`. The
+  same binding re-presenting the
+  same claim key resumes its own lease (`resume_lease`).
+- **Settlement.** An outcome report is always stored as evidence. The owner
+  then settles it under the item's verification profile or records it as
+  `rejected` (for example `lease-expired`, `claim-superseded`) without
+  changing the item (`complete_lease`).
+- **Shared locking only.** Leases and reservations share the repo-scoped
+  advisory lock (`_lock_repo_for_claims`) so that maintenance activation, which
+  counts both, cannot race a claim. A terminal item decision settles any
+  active lease on the item.
+
+The "no TTL, no heartbeat, no lease" statements in this document and in
+[reservation discipline](../advanced/reservation-discipline.md) apply to
+reservations only.
+
 ## Backend parity evidence
 
 Backend parity means equivalent accepted/rejected histories and public contract

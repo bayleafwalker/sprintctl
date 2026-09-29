@@ -1,6 +1,6 @@
 ---
 doc_id: 2450-s6-ledger-checkpoint
-status: accepted
+status: ratified
 supersedes: docs/runbooks/maintenance-lane.md "Interrupted items: checkpoint and pickup" (agentops) — S6 slice only; #2430 owns whatever of the interim rule remains after S6 lands
 ---
 

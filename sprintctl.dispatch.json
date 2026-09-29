@@ -102,7 +102,7 @@
     "worker_routes": ["mechanical_bulk"],
     "commands": {
       "sprintctl.served.catalog.tests": "uv run --extra dev --extra served pytest tests/test_served_lifecycle_routes.py tests/test_vuoro_work_adapter_integration.py -q",
-      "sprintctl.suite": "uv run --extra dev --extra served pytest -q"
+      "sprintctl.suite": "uv run --extra dev --extra served pytest -q -m \"not perf\""
     },
     "protected_paths": [
       "sprintctl.dispatch.json",

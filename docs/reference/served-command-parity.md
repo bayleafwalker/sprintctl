@@ -1,6 +1,7 @@
 # Served command parity matrix
 
-Status: current implementation inventory (2026-08-02).  This is the command
+Status: current implementation inventory (2026-08-02; `usage --context` row
+re-checked against `served_routes.py` 2026-09-29).  This is the command
 level companion to `docs/plans/vuoro-served-authority-alignment.md`.  A
 `served` command means it invokes the Vuoro catalog and never opens a direct
 store.  `Unavailable` likewise never opens a store: it exits with the stable
@@ -8,7 +9,7 @@ store.  `Unavailable` likewise never opens a store: it exits with the stable
 
 | Blind-agent loop command | Served status | Catalog operation / current guidance |
 | --- | --- | --- |
-| `usage --context` | Served | `work.read.context` returns the complete frozen ContextContract v1 from one server-side repeatable-read aggregate. `--project` uses `work.project.context` only with a canonical server binding and authorization for every member. |
+| `usage --context` | Served (bare `usage` is local static help) | `work.read.context` (`served.read_context`) returns ContextContract v1 (`context_contract.build_context_contract`) inside one repeatable-read transaction when the backend provides `repeatable_read_snapshot` (PostgreSQL); `WorkApplication._read_context`. `--project` uses `work.project.context` (`ProjectWorkApplication._context`): it requires the server's canonical project binding and authorization for every member, builds each member's contract in that member's own repeatable-read snapshot (no global snapshot), returns a `project-1` envelope, and reports unavailable members without dropping authorized peers. |
 | `context-candidates` | Served | `work.read.context-candidates` builds the bounded Tier-1 packet at the repository authority. Only a found, pending explicit target is reservation-eligible; this read never acquires a reservation. |
 | `item list` | Served | `work.read.items` returns filtered repository-scoped rows; `--project` uses `work.project.items`; `--fzf` remains unavailable. |
 | `item show` | Served | `work.read.item`, includes refs, dependencies, and active reservations. |

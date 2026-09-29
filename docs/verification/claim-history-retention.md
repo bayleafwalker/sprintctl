@@ -6,6 +6,16 @@ checked: 2026-07-19
 
 # Claim history retention completion note
 
+> **Superseded.** This note describes the live `claim` table as of 2026-07-19.
+> That table no longer exists: SQLite migrations 19–20 (`_migration_19`,
+> `_migration_20` in `sprintctl/db.py`) and PostgreSQL schema versions 9–10
+> (`_apply_schema_version_9`, `_apply_schema_version_10` in `sprintctl/pg.py`)
+> archived every row into the read-only `claim_history` table, dropped `claim`,
+> and nulled `claim_token` (commit `9e99625`, "drop the live claim relation").
+> Kept as historical verification evidence; see
+> [docs/protocols/reservation-model.md](../protocols/reservation-model.md) for
+> the current model.
+
 Remote claim expiry now supersedes rather than deletes history. PostgreSQL
 maintenance updates expired active rows to `status='expired'`; reacquisition
 also marks elapsed rows before inserting the replacement. SQLite carries the

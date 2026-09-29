@@ -61,8 +61,11 @@ note, ref, dep), attributed by session id rather than actor name. Reach for
 `touch` when the work is happening elsewhere — a long build, external review,
 git-only stretches.
 
-There is no TTL, no heartbeat contract, and no lease to violate. Staleness is
-display-only: an active reservation is marked `stale` after
+A reservation has no TTL, no heartbeat contract, and no lease to violate.
+(The hosted claim tools use a separate, exclusive durable work lease with a
+TTL and heartbeat; it does not affect reservations. See
+[reservation model: the durable work lease](../protocols/reservation-model.md#the-durable-work-lease-is-a-separate-mechanism).)
+Staleness is display-only: an active reservation is marked `stale` after
 `SPRINTCTL_RESERVATION_STALE_AFTER_HOURS` (default 4), and only an explicitly
 invoked `sprintctl maintain sweep` interrupts reservations idle longer than
 `SPRINTCTL_RESERVATION_INTERRUPT_AFTER_DAYS` (default 7). Nothing expires in

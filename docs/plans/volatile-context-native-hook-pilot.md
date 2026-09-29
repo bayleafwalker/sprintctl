@@ -1,6 +1,8 @@
 # Sprintctl volatile-context native-hook pilot
 
-Status: implementation pilot (not deployed)
+Status: ratified. Rationale: adopted and implemented as a pilot — merged in #41
+(`sprintctl/volatile_context.py`, `sprintctl/volatile_hook.py`, entry point
+`sprintctl-volatile-hook`); not deployed, and deployment is tracked in sprintctl.
 
 Governing mapping: Agentops
 `docs/plans/agentops/volatile-context-native-runtime-integration-mapping-2026-08-20.md`.

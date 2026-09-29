@@ -1,10 +1,14 @@
 ---
 doc_id: v3-reservation-model-plan
-status: planned
+status: superseded
 supersedes: null
 ---
 
 # v3 Clean-Sweep Plan: Claims as Advisory Reservations
+
+> **Superseded** by [docs/protocols/reservation-model.md](../protocols/reservation-model.md),
+> which is the current reservation contract. This plan is kept as execution
+> history; do not plan new work against it.
 
 Dispatch-plan output, 2026-07-24 (planning agent brief, assessed and placed
 into the backlog by the orchestrating session; backlog item IDs added at
