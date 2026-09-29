@@ -16,17 +16,25 @@ create, alter, or repair schema objects.
 work API as `sprintctl-work/v1`, reports the actual remote schema version, and
 reports the minimum and maximum versions this runtime supports.
 
-Schema versions 5 and 6 are supported only when the complete maintenance
-storage capability is present. During the pre-migration window, version 5 may
-carry that additive capability while retaining its primary ledger version.
+The current runtime (sprintctl 0.9.0 and later, including 0.10.0) admits
+exactly remote schema 18: `MINIMUM_SCHEMA_VERSION` and
+`MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 18, and
+`remote-schema-version` in `pyproject.toml` records the same value. Any other
+ledger version fails closed before a runtime command is served.
+
+Historical (schema-5 coexistence window, superseded by the exact-version
+policy above): schema versions 5 and 6 were supported only when the complete
+maintenance storage capability was present. During the pre-migration window,
+version 5 could carry that additive capability while retaining its primary
+ledger version.
 The read-only probe hashes a schema-qualified PostgreSQL catalog description
 covering every required column, type, nullability/default, primary/unique/
 foreign/check constraint, and each immutable trigger's exact table, function,
 events, and enabled state. It also requires the exact `maintenance-storage`
 capability marker. Same-named objects in another schema do not participate.
 Missing or partial storage, a missing trigger or marker, a missing/ambiguous
-ledger, versions below 5, and versions above 6 fail closed before a runtime
-command is served. The check executes only `SELECT` probes and never attempts
+ledger, versions below 5, and versions above 6 failed closed before a
+runtime command was served in that window. The check executes only `SELECT` probes and never attempts
 repair. Package version
 strings are not protocol compatibility evidence.
 
@@ -57,6 +65,9 @@ deployment migration together with the 0.9.0 rollout. Schema 18 is
 additive: it adds the `work_lease` and `work_outcome_report` tables behind
 the `work.lease.*-v1` operations, and refuses, as schema 17 does, a relation
 already holding one of those names with another shape.
+
+sprintctl 0.10.0 changes only the adapter catalog; the remote schema stays
+at 18, so a 0.9.x authority needs no migration for a 0.10.0 rollout.
 
 The handshake also publishes
 `sprintctl-repository-ingest-cursor/v1` with `scope=repository` and

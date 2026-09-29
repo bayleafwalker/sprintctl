@@ -59,8 +59,10 @@ Create and transition work items via CLI:
 
 ```sh
 sprintctl item add --sprint-id <id> --track <track> --title "<title>"
-sprintctl item status --id <id> --status active
-sprintctl item status --id <id> --status done
+REV=$(sprintctl item show --id <id> --json | jq -r '.item.status_revision')
+sprintctl item status --id <id> --status active --expected-revision "$REV"
+# close with a decision (accept sets done with a recorded rationale)
+sprintctl item decide --id <id> --kind accept --rationale "<why>" --actor <you>
 ```
 
 Check sprint health at any time (read-only):
@@ -72,8 +74,9 @@ sprintctl maintain check
 Commit a render snapshot at natural checkpoints — end of a work session, before a review, after a carryover:
 
 ```sh
+# with docs/examples/Makefile.sprintctl.mk included in your Makefile:
 make sprint-snapshot
-# or: sprintctl render > docs/sprint-current.txt && git add docs/sprint-current.txt && git commit -m "chore: update sprint snapshot"
+# or: sprintctl render > docs/sprint-snapshots/sprint-current.txt && git add docs/sprint-snapshots/sprint-current.txt && git commit -m "chore: update sprint snapshot"
 ```
 
 ## What not to do
@@ -84,5 +87,16 @@ make sprint-snapshot
 ## Running tests
 
 ```sh
-PYTHONPATH=. .venv/bin/python -m pytest tests/ -v
+uv sync --extra dev
+uv run pytest -q -m "not perf"
+```
+
+This matches CI (`.github/workflows/ci.yml`). Wall-clock `perf` tests are
+deselected there; run them on demand with `uv run pytest -q -m perf`.
+PostgreSQL integration tests need a disposable database; see
+[docs/guides/postgres-integration-tests.md](docs/guides/postgres-integration-tests.md).
+
+```sh
+# equivalent without uv
+PYTHONPATH=. .venv/bin/python -m pytest tests/ -q -m "not perf"
 ```

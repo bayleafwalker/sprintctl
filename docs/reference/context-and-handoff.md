@@ -79,7 +79,8 @@ Top-level shape:
   "conflicts": [],
   "next_action": {},
   "recommended_commands": [],
-  "recommended_command_bundle": {}
+  "recommended_command_bundle": {},
+  "projection": {}
 }
 ```
 
@@ -94,6 +95,7 @@ Field intent:
 - `next_action`: one concise recommendation based on the same conflict/priority rules used by context surfaces
 - `recommended_commands`: ordered command bundle aligned with `next_action`; some entries intentionally use placeholders like `<name>` where input is required
 - `recommended_command_bundle`: structured version of `recommended_commands` with ordered `steps`; each step includes `kind`, `command`, `placeholders`, and `is_executable`/`requires_input` flags for automation
+- `projection`: projection-read status (`enabled`, `source`, `fallback_reason`, watermark offset/age, `schema_version`) for how this payload was read
 
 Command bundle schema:
 
@@ -152,9 +154,14 @@ Contract version: `1`
   "candidates": [
     {
       "item_id": 123,
+      "title": "...",
+      "status": "pending",
+      "track": "...",
+      "priority": 0,
       "rank": 1,
-      "rank_reason": "Explicit item reference supplied by caller.",
-      "claim_eligible": true
+      "rank_reason": "explicit-target",
+      "reason_detail": "Explicit item reference supplied by caller.",
+      "reservation_admissible": true
     }
   ]
 }
@@ -162,7 +169,7 @@ Contract version: `1`
 
 Ranking order (first match wins, ties keep stable incoming order):
 
-1. `--item-id` explicit target (only rank ever `claim_eligible: true`)
+1. `--item-id` explicit target (the only rank that can be `reservation_admissible: true`, and only while the item is `pending`)
 2. `--path` (repeatable) overlap against item file/manifest/glob/doc scope refs
 3. items carrying other linked documentation
 4. `--query` deterministic lexical token overlap
@@ -304,9 +311,12 @@ Top-level shape:
   "freshness": {},
   "evidence": {},
   "git_context": {},
+  "last_checkpoint": null,
   "reservation_model": {},
   "resume_instructions": [],
-  "agent_shutdown_protocol": {}
+  "agent_shutdown_protocol": {},
+  "items": [],
+  "events": []
 }
 ```
 
