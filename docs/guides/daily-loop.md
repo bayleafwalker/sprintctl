@@ -50,7 +50,7 @@ Use notes for information the next session should not rediscover:
 sprintctl item note \
   --id 42 \
   --type decision \
-  --summary "Moved stale-reservation cleanup behind maintain sweep --force-close-overdue" \
+  --summary "Moved stale-reservation cleanup behind maintain sweep --auto-close" \
   --git-branch "$(git rev-parse --abbrev-ref HEAD)" \
   --git-sha "$(git rev-parse --short HEAD)" \
   --actor codex

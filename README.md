@@ -147,8 +147,8 @@ For local development:
 
 ```sh
 python -m venv .venv
-.venv/bin/pip install -e .
-.venv/bin/python -m pytest tests/ -v
+.venv/bin/pip install -e '.[dev]'
+.venv/bin/python -m pytest tests/ -q -m "not perf"
 ```
 
 Prefer invoking the CLI from the source tree while developing:
