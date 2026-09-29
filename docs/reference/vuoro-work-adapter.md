@@ -290,6 +290,13 @@ default). A claim naming `ttl_seconds` is `invalid-arguments` (422).
     when not parked). A `rejected` report (superseded, stale or ended
     lease) parks nothing (INV-L1), and `work.parked` cannot be written as
     a generic event.
+    Consumer contract (the M3-7 activity and denial report, and any vuoro
+    caller that meets a recorded denial): send `disposition: "parked"` with
+    the denial's `reason_ref` on the `failed` report, and treat `work-parked`
+    (409) from `work.lease.acquire-v1` as a non-claimable refusal, not a
+    retryable conflict. Read the current parking from `work.lease.read-v1`
+    `parked`. The consuming side lives in the vuoro repository, not in
+    sprintctl; this repository only provides the disposition.
   - `rejected`: the lease was taken over (`claim-superseded`), is stale
     (`lease-expired`; a result submitted under a stale or superseded lease
     is kept as evidence but never settles work, INV-L1, and the holder of a
