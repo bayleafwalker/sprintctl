@@ -56,10 +56,9 @@ from sprintctl.cli import cli
 from sprintctl.db import InvalidTransition, ReservationConflict
 from sprintctl.pg_testing import (
     assert_disposable_connection,
-    cleanup_test_repositories,
+    FixtureCleanup,
     new_test_repo_id,
     new_test_repo_uuid,
-    write_cleanup_report,
 )
 from sprintctl.maintenance_capability import (
     MaintenanceCapabilityError,
@@ -75,12 +74,13 @@ from tests.test_maintenance_capability import (
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def pg_test_scope():
+def pg_test_scope(request):
     """Register test scopes, then clean and report them from one finalizer."""
     if _SKIP:
         pytest.skip(_SKIP_REASON)
     conn = psycopg.connect(_PG_URL, row_factory=dict_row)
     assert_disposable_connection(conn)
+    evidence = FixtureCleanup("pg_test_scope", request.node.nodeid)
     repo_ids: set[str] = set()
 
     def register(label: str = "scope", *, canonical_uuid: bool = False) -> str:
@@ -91,24 +91,8 @@ def pg_test_scope():
     try:
         yield register
     finally:
-        report_path = os.environ.get("SPRINTCTL_TEST_PG_CLEANUP_REPORT")
         try:
-            report = cleanup_test_repositories(conn, repo_ids)
-        except Exception as exc:
-            if report_path:
-                write_cleanup_report(
-                    report_path,
-                    {
-                        "schema_version": "sprintctl-pg-cleanup/v1",
-                        "cleanup_completed": False,
-                        "error_type": type(exc).__name__,
-                        "repo_ids": sorted(repo_ids),
-                    },
-                )
-            raise
-        else:
-            if report_path:
-                write_cleanup_report(report_path, report)
+            evidence.cleanup(conn, repo_ids)
         finally:
             conn.close()
 

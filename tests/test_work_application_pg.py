@@ -41,10 +41,9 @@ from sprintctl.application import (
 from sprintctl.maintenance_resource import CursorExpired, MaintenanceResourceStore, NOT_FOUND_PAYLOAD
 from sprintctl.maintenance_capability import MaintenanceCapabilityError, PostgresMaintenanceCapabilityStore
 from sprintctl.pg_testing import (
+    FixtureCleanup,
     assert_disposable_connection,
-    cleanup_test_repositories,
     new_test_repo_id,
-    write_cleanup_report,
 )
 from tests.test_maintenance_capability import AT, CAPABILITY_ID, envelope
 from tests.test_maintenance_resource import (
@@ -95,11 +94,12 @@ def maintenance_resource_pg_factory():
 
 
 @pytest.fixture(scope="module")
-def store_factory():
+def store_factory(request):
     if not _PG_URL or not _PSYCOPG_AVAILABLE:
         pytest.skip("disposable SPRINTCTL_TEST_PG_URL and psycopg are required")
     administrative = psycopg.connect(_PG_URL, row_factory=dict_row)
     assert_disposable_connection(administrative)
+    evidence = FixtureCleanup("store_factory", request.node.nodeid)
     repo_ids = set()
 
     def create(label):
@@ -121,16 +121,17 @@ def store_factory():
     try:
         yield create
     finally:
-        report = cleanup_test_repositories(administrative, repo_ids)
-        if report_path := os.environ.get("SPRINTCTL_TEST_PG_CLEANUP_REPORT"):
-            write_cleanup_report(report_path, report)
-        administrative.close()
+        try:
+            evidence.cleanup(administrative, repo_ids)
+        finally:
+            administrative.close()
 
 
 @pytest.fixture
-def maintenance_resource_transactional_pg_factory():
+def maintenance_resource_transactional_pg_factory(request):
     administrative = psycopg.connect(_PG_URL, row_factory=dict_row)
     assert_disposable_connection(administrative)
+    evidence = FixtureCleanup("maintenance_resource_transactional_pg_factory", request.node.nodeid)
     with administrative.cursor() as cur:
         pg._apply_schema_version_6(cur); pg._apply_schema_version_7(cur)
     administrative.commit(); repo_ids = set()
@@ -138,9 +139,13 @@ def maintenance_resource_transactional_pg_factory():
         connection = psycopg.connect(_PG_URL, row_factory=dict_row)
         repo_id = new_test_repo_id(label); repo_ids.add(repo_id)
         return pg.PgStore(conn=connection, repo_id=repo_id, authority_repo_uuid=str(uuid.uuid4()), connection_factory=lambda: psycopg.connect(_PG_URL, row_factory=dict_row), remote_schema_version=7)
-    yield create
-    cleanup_test_repositories(administrative, repo_ids)
-    administrative.close()
+    try:
+        yield create
+    finally:
+        try:
+            evidence.cleanup(administrative, repo_ids)
+        finally:
+            administrative.close()
 
 
 def _reopen_pg_store(store):
@@ -260,7 +265,7 @@ def exercise_postgres_transactional_history(history, store):
         assert len(cases) == 4 and len(set(cases)) == 4
         assert all(outcome == (404, NOT_FOUND_PAYLOAD) for outcome in outcomes.values())
         assert local_resource.visible(local_reference, authorized=True) is True
-        cleanup_test_repositories(store.conn, {foreign_store.repo_id})
+        FixtureCleanup("foreign_scope_cleanup").cleanup(store.conn, {foreign_store.repo_id})
     else:
         raise AssertionError(f"missing PostgreSQL transactional falsifier: {history}")
 

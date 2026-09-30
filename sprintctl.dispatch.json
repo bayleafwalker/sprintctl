@@ -103,7 +103,7 @@
     "commands": {
       "sprintctl.served.catalog.tests": "uv run --extra dev --extra served pytest tests/test_served_operation_surface.py tests/test_adapter_kit_migration.py tests/test_vuoro_work_adapter_integration.py -q",
       "sprintctl.suite": "uv run --extra dev --extra served pytest -q -m \"not perf\"",
-      "sprintctl.pg.disposable": "timeout --foreground 900s scripts/pg-disposable-tests.sh"
+      "sprintctl.pg.disposable": "timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh"
     },
     "protected_paths": [
       "sprintctl.dispatch.json",
@@ -131,7 +131,7 @@
     "commands": [
       "uv run --extra dev --extra served pytest <specific-test-files> -x --tb=short",
       "python /projects/dev/agentops/scripts/validate_verification_artifacts.py --root .",
-      "timeout --foreground 900s scripts/pg-disposable-tests.sh"
+      "timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh"
     ]
   },
   "hooks": {

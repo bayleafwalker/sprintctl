@@ -6,12 +6,18 @@
 # creates its own cluster in a mktemp dir, listens on a unix socket in that dir
 # plus 127.0.0.1 on a free port, and never connects to any other database. The
 # role password is generated per run and never written to the repository.
-# Postgres binaries come from `nix shell nixpkgs#postgresql_16` when absent.
+# Postgres binaries come from the pinned nixpkgs rev below (PostgreSQL 16.15,
+# the rev gitops-nixos/flake.lock pins) when absent; the server must be major 16
+# either way. Run under `timeout --foreground -k 30s 900s` so a hung run is
+# killed; a hard kill leaves a stale cluster that the next run's sweep
+# (scripts/pg-disposable-sweep.sh, keyed by <dir>/owner) stops and removes.
 set -euo pipefail
+
+PG_NIX_REF="github:NixOS/nixpkgs/b4fd65b198c599cbe814fcb9f42d25d021595ec9#postgresql_16"
 
 if ! command -v initdb >/dev/null 2>&1 || ! command -v pg_ctl >/dev/null 2>&1; then
   command -v nix >/dev/null 2>&1 || { echo "pg-disposable-tests: need postgres binaries or nix" >&2; exit 2; }
-  exec nix shell nixpkgs#postgresql_16 -c "$0" "$@"
+  exec nix shell "$PG_NIX_REF" -c "$0" "$@"
 fi
 
 # libpq reads every PG* variable (PGHOSTADDR, PGSERVICE, PGSERVICEFILE, PGPASSFILE,
@@ -24,7 +30,20 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # bytes), so fall back to /tmp when TMPDIR is long.
 tmp_base="${TMPDIR:-/tmp}"
 [ "${#tmp_base}" -le 60 ] || tmp_base=/tmp
+# Stop and remove clusters orphaned by an earlier hard-killed run, before this
+# run's own dir exists. A failing sweep must not block the run.
+"$repo_root/scripts/pg-disposable-sweep.sh" || echo "pg-disposable-tests: warning: stale-cluster sweep failed" >&2
 work="$(mktemp -d "$tmp_base/sprintctl-pg.XXXXXX")"
+# Owner file for the sweep: this script's pid and its start time (field 22 of
+# /proc/<pid>/stat, counted after the last ")"), or "unknown" without /proc.
+owner_start=unknown
+if [ -r "/proc/$$/stat" ]; then
+  owner_stat="$(cat "/proc/$$/stat")"
+  read -ra owner_fields <<<"${owner_stat##*) }"
+  owner_start="${owner_fields[19]:-unknown}"
+fi
+echo "$$ $owner_start" >"$work/owner.tmp"
+mv "$work/owner.tmp" "$work/owner"
 data="$work/data"
 sock="$work/sock"
 mkdir -p "$sock"
@@ -61,7 +80,15 @@ pg_ctl -D "$data" -w -l "$work/server.log" \
   -o "-c listen_addresses=127.0.0.1 -c port=$port -c unix_socket_directories=$sock -c fsync=off" start >/dev/null
 started=1
 
-admin() { psql -X -v ON_ERROR_STOP=1 -h "$sock" -p "$port" -U pgadmin_disposable -d postgres; }
+admin() { psql -X -v ON_ERROR_STOP=1 -h "$sock" -p "$port" -U pgadmin_disposable -d postgres "$@"; }
+
+server_version_num="$(admin -tA -c 'SHOW server_version_num')"
+server_version="$(admin -tA -c 'SHOW server_version')"
+case "$server_version_num" in
+  16[0-9][0-9][0-9][0-9]) ;;
+  *) echo "pg-disposable-tests: FAIL: server_version_num $server_version_num is not PostgreSQL major 16" >&2; exit 1 ;;
+esac
+echo "pg-disposable-tests: PostgreSQL server version $server_version (server_version_num $server_version_num)"
 
 admin >/dev/null <<SQL
 CREATE ROLE sprintctl_test_local LOGIN PASSWORD '$test_pw'
@@ -72,7 +99,7 @@ CREATE DATABASE sprintctl_test_local OWNER sprintctl_test_local;
 COMMENT ON DATABASE sprintctl_test_local IS 'sprintctl:disposable-integration-test';
 SQL
 
-report="$work/pg-cleanup-report.json"
+report="$work/pg-cleanup-report.jsonl"
 export SPRINTCTL_TEST_PG_URL="postgresql://sprintctl_test_local:$test_pw@127.0.0.1:$port/sprintctl_test_local"
 export SPRINTCTL_TEST_PG_PRODUCTION_GUARD_URL="postgresql://sprintctl_production_probe:$probe_pw@127.0.0.1:$port/sprintctl_test_local"
 export SPRINTCTL_TEST_PG_CLEANUP_REPORT="$report"
@@ -89,23 +116,6 @@ uv run --extra dev --extra remote pytest -q -m pg -rs tests/pg/ tests/test_work_
 cat "$work/pytest.out"
 [ "$rc" = 0 ] || exit "$rc"
 
-if grep -Eq '[0-9]+ skipped' "$work/pytest.out"; then
-  echo "pg-disposable-tests: FAIL: pg tests were skipped" >&2
-  exit 1
-fi
-grep -Eq '[0-9]+ passed' "$work/pytest.out" || { echo "pg-disposable-tests: FAIL: no passing tests" >&2; exit 1; }
-
-python3 - "$report" <<'PY'
-import json, sys
-try:
-    data = json.load(open(sys.argv[1]))
-except (OSError, ValueError) as exc:
-    sys.exit(f"pg-disposable-tests: FAIL: cleanup report unreadable: {exc}")
-rows = data.get("remaining_rows")
-if data.get("cleanup_completed") is not True or not isinstance(rows, dict) or not rows:
-    sys.exit("pg-disposable-tests: FAIL: cleanup report incomplete")
-left = {k: v for k, v in rows.items() if v != 0}
-if left:
-    sys.exit(f"pg-disposable-tests: FAIL: cleanup residue {left}")
-print(f"pg-disposable-tests: cleanup report shows zero residue across {len(rows)} tables")
-PY
+# Shared with CI: report lines parse, every started fixture finished clean with
+# zero remaining rows, no skipped tests, at least one passed test.
+python3 "$repo_root/scripts/pg-cleanup-report-check.py" "$report" "$work/pytest.out"

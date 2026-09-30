@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import json
+import os
 from pathlib import Path
 import re
 from typing import Any, Iterable
@@ -248,11 +249,77 @@ def cleanup_test_repositories(conn: Any, repo_ids: Iterable[str]) -> dict[str, A
     }
 
 
-def write_cleanup_report(path: str | Path, report: dict[str, Any]) -> None:
-    """Persist non-secret cleanup evidence for CI artifact collection."""
+CLEANUP_REPORT_SCHEMA = "sprintctl-pg-cleanup/v2"
+CLEANUP_REPORT_ENV = "SPRINTCTL_TEST_PG_CLEANUP_REPORT"
+
+
+def append_cleanup_record(path: str | Path, record: dict[str, Any]) -> None:
+    """Append one JSON Lines evidence record to the cleanup report.
+
+    The report is cumulative: every fixture appends a ``started`` record at
+    setup and a ``finished`` record at teardown. Each record is one write to an
+    ``O_APPEND`` file and is fsynced so a hard kill keeps what was reported.
+    """
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    line = json.dumps(record, sort_keys=True) + "\n"
+    with destination.open("a", encoding="utf-8") as handle:
+        handle.write(line)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _current_test_nodeid() -> str:
+    """Nodeid of the running test, for cleanups that happen inside a test body."""
+    current = os.environ.get("PYTEST_CURRENT_TEST", "")
+    return current.rsplit(" (", 1)[0] or "unknown"
+
+
+class FixtureCleanup:
+    """One fixture's cleanup evidence: a ``started`` record now, a ``finished`` one later.
+
+    Every fixture cleanup goes through :meth:`cleanup`, which wraps
+    :func:`cleanup_test_repositories` and records its outcome, or
+    ``cleanup_completed: false`` plus ``error_type`` when it raises. Records are
+    keyed by (``nodeid``, ``fixture``). Nothing is written when the report
+    environment variable is unset.
+    """
+
+    def __init__(self, fixture: str, nodeid: str | None = None, report_path: str | Path | None = None):
+        self.fixture = fixture
+        self.nodeid = nodeid or _current_test_nodeid()
+        if report_path is None:
+            report_path = os.environ.get(CLEANUP_REPORT_ENV) or None
+        self.report_path = report_path
+        self._write("started", {})
+
+    def _write(self, event: str, fields: dict[str, Any]) -> None:
+        if self.report_path is None:
+            return
+        append_cleanup_record(
+            self.report_path,
+            {
+                **fields,
+                "schema_version": CLEANUP_REPORT_SCHEMA,
+                "event": event,
+                "nodeid": self.nodeid,
+                "fixture": self.fixture,
+            },
+        )
+
+    def cleanup(self, conn: Any, repo_ids: Iterable[str]) -> dict[str, Any]:
+        """Delete ``repo_ids``, record the outcome, and re-raise any failure."""
+        scopes = sorted(set(repo_ids))
+        try:
+            report = cleanup_test_repositories(conn, scopes)
+        except Exception as exc:
+            self._write(
+                "finished",
+                {"cleanup_completed": False, "error_type": type(exc).__name__, "repo_ids": scopes},
+            )
+            raise
+        self._write("finished", report)
+        return report
 
 
 def identity_as_dict(identity: PostgresTestIdentity) -> dict[str, Any]:
