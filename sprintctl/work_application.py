@@ -767,6 +767,7 @@ class WorkApplication:
             "work.read.unbound": target._read_unbound,
             "work.run.register-v1": target._run_register,
             "work.run.resolve-v1": target._run_resolve,
+            "work.run.predecessor-context-v1": target._run_predecessor_context,
             "work.evidence.tail-v1": target._evidence_tail,
             "work.evidence.append-v1": target._evidence_append,
             "work.session-note.write-v1": target._session_note_write,
@@ -1852,8 +1853,21 @@ class WorkApplication:
     def _run_register(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         principal_id, workspace_id = _identity_binding(context)
         client_id, grant_id = _grant_binding(context)
+        # agentops#2525: an absent (or null) predecessor is not an argument at
+        # all, so a register request without one keeps the digest it always
+        # had and replays across this release unchanged.
+        if arguments.get("predecessor_run_id") is None:
+            arguments = {k: v for k, v in arguments.items() if k != "predecessor_run_id"}
+        predecessor_run_id = arguments.get("predecessor_run_id")
+        from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
 
         def effect(cur: Any, request_digest: str) -> dict[str, Any]:
+            try:
+                return _register(cur, request_digest)
+            except _pg.PredecessorNotEligible as exc:
+                raise ApplicationRejection(exc.code, str(exc), 422) from exc
+
+        def _register(cur: Any, request_digest: str) -> dict[str, Any]:
             row = self.backend.register_run(
                 self.store,
                 principal_id=principal_id,
@@ -1867,6 +1881,7 @@ class WorkApplication:
                 model_id=arguments["model_id"],
                 recipe_id=arguments["recipe_id"],
                 observed_profile=arguments["observed_profile"],
+                predecessor_run_id=predecessor_run_id,
                 cur=cur,
             )
             return {"repo_id": self.repo_id, "run": row}
@@ -1888,6 +1903,19 @@ class WorkApplication:
             "client_id": row["client_id"],
             "grant_id": row["grant_id"],
         }
+
+    def _run_predecessor_context(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        """agentops#2525: the predecessor's notes and evidence, read through
+        the caller's own run.  ``run_id`` must resolve to the caller's exact
+        binding (``run-not-found`` otherwise, the same answer as for an
+        unknown id); the predecessor itself is never resolved to the caller.
+        """
+        run_id = arguments["run_id"]
+        self._require_owned_run(run_id, context)
+        continued = self.backend.predecessor_context(self.store, run_id)
+        return {"repo_id": self.repo_id, "run_id": run_id, **continued}
 
     def _evidence_tail(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         run_id = arguments["run_id"]

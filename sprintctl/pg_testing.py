@@ -31,6 +31,9 @@ REPO_TABLES = (
     # evidence_item cascade from run (ON DELETE CASCADE), but are listed
     # explicitly first so scope cleanup does not depend on the cascade.
     "work_idempotency_ledger",
+    # agentops#2525: continuation links cascade from both runs; listed
+    # before run for the same reason.
+    "run_predecessor",
     "session_note",
     "evidence_item",
     "run",

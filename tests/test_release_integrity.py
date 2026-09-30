@@ -40,14 +40,15 @@ class TestReleaseIntegrity:
         served runtime connection recovery (#2110), no catalog or schema change.
         Schema 19 (agentops#2541, the effect-intent store) raises the minimum
         the same way schema 18 did, so the next release is a coordinated
-        cutover and a minor release past 0.10.1."""
+        cutover and a minor release past 0.10.1.  Schema 20 (agentops#2525,
+        run continuation) raises it again; 19 and 20 ship in that one release."""
         from sprintctl import pg_migrations
 
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
         assert pyproject["project"]["version"] == __version__ == "0.10.1"
-        assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 19
-        assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 19
+        assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 20
+        assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 20
 
     def test_release_contract_names_this_version(self):
         """The tag workflow validates the wheel against RELEASE_VERSION; a

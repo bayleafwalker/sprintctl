@@ -83,6 +83,7 @@ _ADMIN_SHUTDOWN_READ_OPERATIONS = frozenset(
         "work.public.item-v1",
         "work.validate.item-status-mutation",
         "work.run.resolve-v1",
+        "work.run.predecessor-context-v1",
         "work.evidence.tail-v1",
         "work.lease.read-v1",
         # Reads: a replay on a fresh connection only selects.

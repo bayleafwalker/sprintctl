@@ -19,6 +19,7 @@ import dataclasses
 import hashlib
 import json
 import logging
+import re
 import secrets
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -3131,6 +3132,74 @@ def _apply_schema_version_19(cur: Any) -> None:
     )
 
 
+# The exact catalog shape _apply_schema_version_20 creates (same encoding as
+# _SCHEMA_17_TABLES).  A test migrates a fresh schema and asserts it is not
+# foreign, so this cannot drift from the DDL.
+_SCHEMA_20_TABLES: dict[str, tuple[tuple[tuple[str, str, bool], ...], frozenset[tuple[str, str]]]] = {
+    "run_predecessor": (
+        (
+            ("repo_id", _TEXT, True), ("run_id", _TEXT, True),
+            ("predecessor_run_id", _TEXT, True), ("created_at", _TS, True),
+        ),
+        frozenset({
+            ("c", "predecessor_run_id,run_id"),
+            ("f", "repo_id,predecessor_run_id"), ("f", "repo_id,run_id"),
+            ("p", "repo_id,run_id"),
+        }),
+    ),
+}
+_SCHEMA_20_INDEXES = {
+    "idx_run_predecessor_repo_predecessor": "run_predecessor",
+}
+_SCHEMA_20_INDEX_SHAPES = {
+    "idx_run_predecessor_repo_predecessor": (False, None, ("repo_id", "predecessor_run_id")),
+}
+
+
+def _apply_schema_version_20(cur: Any) -> None:
+    """Install run continuation storage (agentops#2525, M1-5; vuoro E2/E3
+    shared contract section 4, amendment 2026-09-27).
+
+    ``run_predecessor`` records the one run a run continues.  It is its own
+    table rather than a column on ``run`` so schema 17's exact-shape guard
+    for ``run`` keeps holding.  At most one predecessor per run (the primary
+    key); both ends are runs of the same repository (the two foreign keys
+    share ``repo_id``), so a cross-repository link cannot be stored at all.
+    A run never continues itself.  The workspace rule (the successor shares
+    the predecessor's ``workspace_id``) is checked by :func:`register_run`
+    in the transaction that writes the row; a run's workspace never changes.
+
+    The link transfers context, not authority: nothing here widens
+    :func:`resolve_run`, which still answers only the run's own binding.
+    """
+    foreign = _foreign_relations(
+        cur, _SCHEMA_20_TABLES, _SCHEMA_20_INDEXES, _SCHEMA_20_INDEX_SHAPES
+    )
+    if foreign:
+        raise _pg_migrations.RemoteSchemaMigrationError(
+            "schema 20 cannot install run continuation storage: relation(s) "
+            f"{', '.join(foreign)} already exist with a shape schema 20 did not "
+            "create; rename or drop them and re-run the migration"
+        )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS run_predecessor (
+            repo_id text NOT NULL,
+            run_id text NOT NULL,
+            predecessor_run_id text NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (repo_id, run_id),
+            CHECK (predecessor_run_id <> run_id),
+            FOREIGN KEY (repo_id, run_id) REFERENCES run(repo_id, run_id) ON DELETE CASCADE,
+            FOREIGN KEY (repo_id, predecessor_run_id)
+                REFERENCES run(repo_id, run_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_run_predecessor_repo_predecessor
+            ON run_predecessor(repo_id, predecessor_run_id);
+        """
+    )
+
+
 def compatibility_handshake(store: PgStore) -> dict[str, Any]:
     """Return the public read-only work API/schema handshake."""
     return _pg_migrations.compatibility_handshake(store)
@@ -5386,6 +5455,21 @@ class RunNotFound(ValueError):
     """No run row in this repo belongs to the given (principal_id, workspace_id)."""
 
 
+class PredecessorNotEligible(ValueError):
+    """The named predecessor is not a run this caller may continue.
+
+    One exception, one message for an unknown or malformed run id and for a
+    run in another workspace (another repository is unreachable from this
+    store's scope), so a caller cannot use it to probe which run ids exist
+    (vuoro E2/E3 shared contract section 4, ``predecessor-not-eligible``).
+    """
+
+    code = "predecessor-not-eligible"
+
+
+_RUN_ID_RE = re.compile(r"^run_[0-9A-HJKMNP-TV-Z]{26}$")
+
+
 class EvidenceChainConflict(ValueError):
     """The submitted item does not extend the run's stored tail: a stale or
     racing ``chain_seq``, a ``chain_prev_digest`` that is not the tail's
@@ -5473,6 +5557,7 @@ def register_run(
     model_id: str,
     recipe_id: str,
     observed_profile: dict,
+    predecessor_run_id: str | None = None,
     cur: Any | None = None,
 ) -> dict:
     """Mint (or return the existing) run for this binding and idempotency key.
@@ -5489,10 +5574,22 @@ def register_run(
     candidate id never collides with, or is compared against, the id an
     earlier attempt already committed.  ``cur``: see
     :func:`_in_write_transaction`.
+
+    ``predecessor_run_id`` (agentops#2525) names the run this one continues.
+    It must be a run of this repository in the caller's ``workspace_id``;
+    its principal, client and grant may differ.  Anything else -- unknown,
+    malformed or another workspace's run -- is :class:`PredecessorNotEligible`
+    and writes nothing.  The link is written with the run, in the same
+    transaction; the caller's request digest covers ``predecessor_run_id``,
+    so the same key naming another predecessor is an
+    :class:`IdempotencyConflict`, never a replay.  The returned row carries
+    ``predecessor_run_id`` (None when the run continues nothing).
     """
     run_id = _mint_run_id()
 
     def body(cur: Any) -> dict:
+        if predecessor_run_id is not None:
+            _require_eligible_predecessor(cur, store, predecessor_run_id, workspace_id)
         cur.execute(
             "INSERT INTO run(repo_id, run_id, principal_id, workspace_id, client_id, "
             "grant_id, idempotency_key, request_digest, harness_id, harness_build, "
@@ -5513,9 +5610,73 @@ def register_run(
         row = cur.fetchone()
         assert row is not None
         _replay_or_conflict(row["request_digest"], request_digest, "run")
-        return _run_row(row)
+        if predecessor_run_id is not None and row["run_id"] == run_id:
+            cur.execute(
+                "INSERT INTO run_predecessor(repo_id, run_id, predecessor_run_id) "
+                "VALUES (%s, %s, %s)",
+                (store.repo_id, run_id, predecessor_run_id),
+            )
+        return {**_run_row(row), "predecessor_run_id": _predecessor_of(cur, store, row["run_id"])}
 
     return _in_write_transaction(store, cur, body)
+
+
+def _require_eligible_predecessor(
+    cur: Any, store: PgStore, predecessor_run_id: str, workspace_id: str
+) -> None:
+    if _RUN_ID_RE.fullmatch(predecessor_run_id or "") is not None:
+        cur.execute(
+            "SELECT workspace_id FROM run WHERE repo_id = %s AND run_id = %s",
+            (store.repo_id, predecessor_run_id),
+        )
+        row = cur.fetchone()
+        if row is not None and row["workspace_id"] == workspace_id:
+            return
+    raise PredecessorNotEligible("that run cannot be continued by the caller")
+
+
+def _predecessor_of(cur: Any, store: PgStore, run_id: str) -> str | None:
+    cur.execute(
+        "SELECT predecessor_run_id FROM run_predecessor WHERE repo_id = %s AND run_id = %s",
+        (store.repo_id, run_id),
+    )
+    row = cur.fetchone()
+    return row["predecessor_run_id"] if row is not None else None
+
+
+def predecessor_context(store: PgStore, run_id: str) -> dict:
+    """The recorded predecessor of ``run_id`` and that predecessor's session
+    notes (``note_id`` order) and evidence items (``chain_seq`` order).
+
+    One hop only.  The caller must already have resolved ``run_id`` to its
+    own binding (:func:`resolve_run`); this reads the predecessor's rows
+    through the successor's link and never resolves the predecessor itself.
+    A run with no predecessor answers ``predecessor_run_id`` None and empty
+    lists.
+    """
+    with store.conn.cursor() as cur:
+        predecessor = _predecessor_of(cur, store, run_id)
+        if predecessor is None:
+            return {"predecessor_run_id": None, "session_notes": [], "evidence": []}
+        cur.execute(
+            "SELECT note_id, note, created_at FROM session_note "
+            "WHERE repo_id = %s AND run_id = %s ORDER BY note_id",
+            (store.repo_id, predecessor),
+        )
+        notes = [
+            {
+                "note_id": int(row["note_id"]),
+                "note": row["note"],
+                "created_at": _iso(row["created_at"]) or str(row["created_at"]),
+            }
+            for row in cur.fetchall()
+        ]
+        cur.execute(
+            "SELECT * FROM evidence_item WHERE repo_id = %s AND run_id = %s ORDER BY chain_seq",
+            (store.repo_id, predecessor),
+        )
+        evidence = [_evidence_row(row) for row in cur.fetchall()]
+    return {"predecessor_run_id": predecessor, "session_notes": notes, "evidence": evidence}
 
 
 def get_run(store: PgStore, run_id: str) -> dict | None:

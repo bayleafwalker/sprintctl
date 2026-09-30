@@ -33,6 +33,7 @@ no migration or DDL.
 | Maintenance recovery evidence | `work.maintenance.recovery-record` | key equals the immutable recovery record ID; the result always declares `authority=none` |
 | Cutover evidence | `work.pilot.cutover-evidence` | key forbidden |
 | Runs (0.8.0, schema 17) | `work.run.register-v1`, `work.run.resolve-v1` | register requires an `idempotency_key` argument (write-tool ledger); resolve forbids one |
+| Run continuation (schema 20, agentops#2525) | `work.run.predecessor-context-v1`; optional `predecessor_run_id` on `work.run.register-v1` | read, `work:read`, forbids a key; its presence in the catalog is the capability signal for both |
 | Run evidence and notes (0.8.0, schema 17) | `work.evidence.tail-v1`, `work.evidence.append-v1`, `work.session-note.write-v1` | tail forbids a key; append and note writes require an `idempotency_key` argument (write-tool ledger) |
 | Effect intents (schema 19) | `work.effect.propose-v1`, `work.effect.get-v1`, `work.effect.list-proposed-v1`, `work.effect.accept-v1`, `work.effect.reject-v1`, `work.effect.mark-applied-v1` | propose requires an `idempotency_key` argument (write-tool ledger); every other operation forbids one, and a transition is a compare-and-set on `revision` and `canonical_intent_digest` |
 | Work leases (0.9.0, schema 18; report-outcome from 0.10.0) | `work.lease.acquire-v1`, `work.lease.heartbeat-v1`, `work.lease.report-outcome-v1` (and its deprecated alias `work.lease.complete-v1`), `work.lease.read-v1` | acquire and report-outcome require an `idempotency_key` argument (write-tool ledger); heartbeat and read forbid one |
@@ -138,6 +139,22 @@ evidence or ledger storage.
   arguments. The run, evidence item or note also stores the request digest,
   so storage enforces the same rule on its own. A failed write commits
   nothing, so the key can be retried.
+- Continuation (schema 20, agentops#2525; vuoro E2/E3 shared contract
+  section 4). `work.run.register-v1` takes an optional `predecessor_run_id`:
+  a run of this repository in the caller's workspace, whose principal,
+  client and grant may differ. Anything else (unknown, malformed or another
+  workspace's run) is `predecessor-not-eligible` (422), one code and one
+  message for all, and writes nothing. The argument counts toward the
+  request digest only when present, so the same key naming another
+  predecessor (or none) is `idempotency-conflict`, and a request without
+  one keeps its earlier digest. The run result echoes `predecessor_run_id`.
+  `work.run.predecessor-context-v1` (`work:read`) takes the caller's own
+  `run_id`, resolved to its exact binding (`run-not-found` otherwise), and
+  returns `predecessor_run_id` with that predecessor's session notes
+  (`note_id` order) and evidence items (`chain_seq` order); a run without a
+  predecessor returns null and empty lists. One hop only. The predecessor's
+  run never resolves to the successor, so continuation transfers context,
+  not authority.
 
 ## Work leases
 
