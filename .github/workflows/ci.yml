@@ -122,8 +122,14 @@ jobs:
           COMMENT ON DATABASE sprintctl_test_ci IS 'sprintctl:disposable-integration-test';
           SQL
 
+      # Same test selection as scripts/pg-disposable-tests.sh; output is
+      # captured so the shared checker below can assert on it.
       - name: Run PostgreSQL integration suite
-        run: uv run pytest -q -m pg tests/pg/
+        shell: bash
+        run: uv run pytest -q -m pg -rs tests/pg/ tests/test_work_application_pg.py 2>&1 | tee pg-pytest.out
+
+      - name: Check cleanup evidence
+        run: python3 scripts/pg-cleanup-report-check.py "$SPRINTCTL_TEST_PG_CLEANUP_REPORT" pg-pytest.out
 
       - name: Upload cleanup evidence
         if: always()
