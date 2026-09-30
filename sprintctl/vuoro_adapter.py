@@ -20,6 +20,7 @@ from vuoro_adapter_kit import (
 )
 
 from . import decisions as _decisions
+from . import effect_intent as _effect
 from . import unbound as _unbound
 from .application import (
     SUPPORTED_BATCH_TYPES,
@@ -708,6 +709,113 @@ _REPORT_OUTCOME_RESULT = _result_schema(
         },
     },
 )
+# --------------------------------------------------------------------------
+# work.effect.* (agentops#2541, M2-1; operator Decision 1 (A) and INV-E1 on
+# agentops#253).  sprintctl owns the effect-intent lifecycle beside the work,
+# runs and leases it describes: a hosted worker proposes a change as a unified
+# diff, a trusted-side principal accepts or rejects exactly that proposal, and
+# a reconciler marks it applied.  Nothing here applies a diff.
+#
+# Each mutating operation requires its own capability (work.effect.propose,
+# .accept, .reject, .mark-applied), never work:claim / work:write, so a
+# principal that may change work state does not inherit acceptance authority;
+# the reads have theirs too (work.effect.get, .list-proposed).  An intent
+# carries a ``revision`` and a ``canonical_intent_digest`` the authority
+# computes from its content; accept, reject and mark-applied name both and are
+# refused unless they still match.  The proposer and the acceptor are the
+# authenticated principal, never a wire argument.  An accepted intent is
+# immutable; a change is a new proposal.  propose-v1 is a write tool with the
+# section 5 ledger (workspace, principal, tool, key); the transitions are
+# compare-and-set on (revision, digest) and need no key.
+# --------------------------------------------------------------------------
+_EFFECT_ID_SCHEMA: dict[str, Any] = {
+    "type": "string",
+    "pattern": "^intent_[0-9A-HJKMNP-TV-Z]{26}$",
+}
+# What a caller may name: any id a caller could have been handed, so that an
+# unknown one is ``effect-not-found`` rather than a schema error.
+_EFFECT_ID_ARGUMENT_SCHEMA: dict[str, Any] = {
+    "type": "string",
+    "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+}
+_EFFECT_DIGEST_SCHEMA: dict[str, Any] = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+_EFFECT_REVISION_SCHEMA: dict[str, Any] = {"type": "integer", "minimum": 1}
+_EFFECT_COMMIT_SCHEMA: dict[str, Any] = {
+    "type": "string",
+    "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+}
+_EFFECT_PR_URL_SCHEMA: dict[str, Any] = {
+    "type": "string",
+    "pattern": "^https?://\\S+$",
+    "maxLength": _effect.MAX_PR_URL,
+}
+_EFFECT_ACCEPTANCE_SCHEMA = _object_schema(
+    {
+        "intent_id": _EFFECT_ID_SCHEMA,
+        "intent_revision": _EFFECT_REVISION_SCHEMA,
+        "canonical_intent_digest": _EFFECT_DIGEST_SCHEMA,
+        "acceptor_principal": {"type": "string", "minLength": 1},
+        # null until a policy acceptor exists; an operator acceptance has none.
+        "acceptor_policy_version": {"type": ["string", "null"]},
+        "accepted_at": {"type": "string"},
+    },
+    required=(
+        "intent_id", "intent_revision", "canonical_intent_digest", "acceptor_principal",
+        "acceptor_policy_version", "accepted_at",
+    ),
+)
+_EFFECT_REJECTION_SCHEMA = _object_schema(
+    {
+        "rejector_principal": {"type": "string", "minLength": 1},
+        "reason": {"type": "string"},
+        "rejected_at": {"type": "string"},
+    },
+    required=("rejector_principal", "reason", "rejected_at"),
+)
+_EFFECT_APPLICATION_SCHEMA = _object_schema(
+    {
+        "applier_principal": {"type": "string", "minLength": 1},
+        "commit_sha": _EFFECT_COMMIT_SCHEMA,
+        "pr_url": {"type": "string"},
+        "applied_at": {"type": "string"},
+    },
+    required=("applier_principal", "commit_sha", "pr_url", "applied_at"),
+)
+_EFFECT_INTENT_SCHEMA = _object_schema(
+    {
+        "intent_id": _EFFECT_ID_SCHEMA,
+        "revision": _EFFECT_REVISION_SCHEMA,
+        "canonical_intent_digest": _EFFECT_DIGEST_SCHEMA,
+        "state": {"enum": list(_effect.EFFECT_STATES)},
+        "item_id": {"type": "integer", "minimum": 1},
+        "run_id": _RUN_ID_SCHEMA,
+        "proposer_principal": {"type": "string", "minLength": 1},
+        "repository": {"type": "string"},
+        "base_commit": _EFFECT_COMMIT_SCHEMA,
+        "title": {"type": "string"},
+        "rationale": {"type": "string"},
+        "unified_diff": {"type": "string"},
+        "created_at": {"type": "string"},
+        "acceptance": {"anyOf": [_EFFECT_ACCEPTANCE_SCHEMA, {"type": "null"}]},
+        "rejection": {"anyOf": [_EFFECT_REJECTION_SCHEMA, {"type": "null"}]},
+        "application": {"anyOf": [_EFFECT_APPLICATION_SCHEMA, {"type": "null"}]},
+    },
+    required=(
+        "intent_id", "revision", "canonical_intent_digest", "state", "item_id", "run_id",
+        "proposer_principal", "repository", "base_commit", "title", "rationale",
+        "unified_diff", "created_at", "acceptance", "rejection", "application",
+    ),
+)
+_EFFECT_RESULT = _result_schema(
+    ("repo_id", "intent"),
+    {"repo_id": {"type": "string"}, "intent": _EFFECT_INTENT_SCHEMA},
+)
+_EFFECT_BINDING_PROPERTIES: dict[str, Any] = {
+    "intent_id": _EFFECT_ID_ARGUMENT_SCHEMA,
+    "revision": _EFFECT_REVISION_SCHEMA,
+    "canonical_intent_digest": _EFFECT_DIGEST_SCHEMA,
+}
+_EFFECT_BINDING_REQUIRED = ("intent_id", "revision", "canonical_intent_digest")
 WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
     WorkOperationContract(
         "work.identity.current",
@@ -972,6 +1080,95 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         ),
         "work:read",
         "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        _effect.OPERATION_PROPOSE,
+        _object_schema(
+            {
+                "run_id": _RUN_ID_SCHEMA,
+                "item_id": {"type": "integer", "minimum": 1},
+                "repository": {"type": "string", "minLength": 1, "maxLength": _effect.MAX_REPOSITORY},
+                "base_commit": _EFFECT_COMMIT_SCHEMA,
+                "title": {"type": "string", "minLength": 1, "maxLength": _effect.MAX_TITLE},
+                "rationale": {"type": "string", "minLength": 1, "maxLength": _effect.MAX_RATIONALE},
+                "unified_diff": {
+                    "type": "string", "minLength": 1, "maxLength": _effect.MAX_UNIFIED_DIFF,
+                },
+                "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
+            },
+            required=(
+                "run_id", "item_id", "repository", "base_commit", "title", "rationale",
+                "unified_diff", "idempotency_key",
+            ),
+        ),
+        _EFFECT_RESULT,
+        _effect.AUTHORITY_PROPOSE,
+        "write",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        _effect.OPERATION_GET,
+        _object_schema({"intent_id": _EFFECT_ID_ARGUMENT_SCHEMA}, required=("intent_id",)),
+        _EFFECT_RESULT,
+        _effect.AUTHORITY_GET,
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        _effect.OPERATION_LIST_PROPOSED,
+        _object_schema(
+            {
+                "item_id": {"type": "integer", "minimum": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": _effect.LIST_MAX_LIMIT},
+            }
+        ),
+        _result_schema(
+            ("repo_id", "intents"),
+            {
+                "repo_id": {"type": "string"},
+                "intents": {"type": "array", "items": _EFFECT_INTENT_SCHEMA},
+            },
+        ),
+        _effect.AUTHORITY_LIST_PROPOSED,
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        _effect.OPERATION_ACCEPT,
+        _object_schema(_EFFECT_BINDING_PROPERTIES, required=_EFFECT_BINDING_REQUIRED),
+        _EFFECT_RESULT,
+        _effect.AUTHORITY_ACCEPT,
+        "write",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        _effect.OPERATION_REJECT,
+        _object_schema(
+            {
+                **_EFFECT_BINDING_PROPERTIES,
+                "reason": {"type": "string", "minLength": 1, "maxLength": _effect.MAX_REASON},
+            },
+            required=(*_EFFECT_BINDING_REQUIRED, "reason"),
+        ),
+        _EFFECT_RESULT,
+        _effect.AUTHORITY_REJECT,
+        "write",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        _effect.OPERATION_MARK_APPLIED,
+        _object_schema(
+            {
+                **_EFFECT_BINDING_PROPERTIES,
+                "commit_sha": _EFFECT_COMMIT_SCHEMA,
+                "pr_url": _EFFECT_PR_URL_SCHEMA,
+            },
+            required=(*_EFFECT_BINDING_REQUIRED, "commit_sha", "pr_url"),
+        ),
+        _EFFECT_RESULT,
+        _effect.AUTHORITY_MARK_APPLIED,
+        "write",
         "not-allowed",
     ),
     WorkOperationContract(

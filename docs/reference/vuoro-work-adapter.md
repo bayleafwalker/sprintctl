@@ -34,6 +34,7 @@ no migration or DDL.
 | Cutover evidence | `work.pilot.cutover-evidence` | key forbidden |
 | Runs (0.8.0, schema 17) | `work.run.register-v1`, `work.run.resolve-v1` | register requires an `idempotency_key` argument (write-tool ledger); resolve forbids one |
 | Run evidence and notes (0.8.0, schema 17) | `work.evidence.tail-v1`, `work.evidence.append-v1`, `work.session-note.write-v1` | tail forbids a key; append and note writes require an `idempotency_key` argument (write-tool ledger) |
+| Effect intents (schema 19) | `work.effect.propose-v1`, `work.effect.get-v1`, `work.effect.list-proposed-v1`, `work.effect.accept-v1`, `work.effect.reject-v1`, `work.effect.mark-applied-v1` | propose requires an `idempotency_key` argument (write-tool ledger); every other operation forbids one, and a transition is a compare-and-set on `revision` and `canonical_intent_digest` |
 | Work leases (0.9.0, schema 18; report-outcome from 0.10.0) | `work.lease.acquire-v1`, `work.lease.heartbeat-v1`, `work.lease.report-outcome-v1` (and its deprecated alias `work.lease.complete-v1`), `work.lease.read-v1` | acquire and report-outcome require an `idempotency_key` argument (write-tool ledger); heartbeat and read forbid one |
 
 Every operation declares JSON Schema 2020-12 input and result contracts,
@@ -383,6 +384,66 @@ default). A claim naming `ttl_seconds` is `invalid-arguments` (422).
   report, and the item's current verification bar. Any `work:read` caller
   of the repository sees them, holders and payloads included; a repository
   belongs to one workspace.
+
+## Effect intents
+
+Added with remote schema 19 (agentops#2541, M2-1; operator Decision 1 (A) and
+INV-E1 on agentops#253). sprintctl owns the effect-intent lifecycle beside the
+work, runs and leases it describes. A hosted worker proposes a change to a
+repository as a unified diff; a trusted-side principal accepts or rejects
+exactly that proposal; a reconciler records that it was applied. sprintctl
+applies nothing. The operations are served only by the PostgreSQL authority.
+
+| Operation | Capability (`required_authority`) | Effect |
+|---|---|---|
+| `work.effect.propose-v1` | `work.effect.propose` | record a proposal bound to the caller's own run and an existing item; idempotent per `idempotency_key` |
+| `work.effect.get-v1` | `work.effect.get` | read one intent |
+| `work.effect.list-proposed-v1` | `work.effect.list-proposed` | intents still `proposed`, oldest first; optional `item_id` and `limit` |
+| `work.effect.accept-v1` | `work.effect.accept` | `proposed` to `accepted` |
+| `work.effect.reject-v1` | `work.effect.reject` | `proposed` to `rejected`; requires a `reason` |
+| `work.effect.mark-applied-v1` | `work.effect.mark-applied` | `accepted` to `applied`; requires the `commit_sha` and `pr_url` |
+
+- **Separate capabilities.** Each operation has its own capability, none of
+  them `work:claim`, `work:write` or another ordinary work authority, so a
+  principal that may change work state does not inherit acceptance authority,
+  and a worker that may propose cannot accept. The Vuoro service refuses a call
+  whose identity lacks the operation's `required_authority`;
+  `WorkApplication.invoke` checks it again and answers `authority-required`
+  (403), failing closed for an identity that carries no authorities.
+- **Revision and digest.** An intent carries `revision` (1; a change is a new
+  proposal, never a new revision of an accepted one) and
+  `canonical_intent_digest`: the lowercase sha256 of the canonical JSON of the
+  item, repository, base commit, title, rationale and diff
+  (`sprintctl/effect_intent.py:canonical_intent_digest`). The authority
+  computes it. It does not cover the intent id, run, proposer or idempotency
+  key, so the same content proposed under two keys has one digest and is two
+  proposals. The proposer is the authenticated principal.
+- **Compare-and-set.** `accept`, `reject` and `mark-applied` name
+  `intent_id`, `revision` and `canonical_intent_digest`. Under the row lock the
+  authority checks the revision (`effect-revision-mismatch`, 409), then the
+  digest, which must equal the stored one and the digest of the stored content
+  (`effect-digest-mismatch`, 409), then the state (`effect-invalid-transition`,
+  409). A refused call changes nothing, and of several racing acceptances
+  exactly one wins. An unknown intent is `effect-not-found` (404).
+- **Acceptance record.** `intent.acceptance` is `{intent_id, intent_revision,
+  canonical_intent_digest, acceptor_principal, acceptor_policy_version,
+  accepted_at}`. The acceptor is the authenticated principal, never a wire
+  argument: naming `acceptor_principal` or any other field the operation does
+  not define is `invalid-arguments` (422). `acceptor_policy_version` is null
+  until a policy acceptor exists. `mark-applied` keeps the record unchanged.
+- **Immutable once accepted (INV-E1).** Storage refuses, by trigger, any update
+  that changes an intent's content or an accepted intent's acceptance record,
+  any update that is not a legal transition, and any move out of `rejected` or
+  `applied`. A change to an accepted proposal is a new proposal with a new
+  intent id; the accepted one stays as it was. Deleting the item or run an
+  intent belongs to cascades to it, as for leases.
+- **Not settlement.** Accepting an intent never changes the work item or its
+  lease, and settling the work never accepts an intent.
+- **Proposals.** `propose-v1` refuses a run that is not the caller's
+  (`run-not-found`, 404, the same code for an unknown run) and an item the
+  repository does not have (`work-not-found`, 404). A replay of the same key
+  and content answers with the intent as it is now, not as first proposed; the
+  same key with other content is `idempotency-conflict` (409).
 
 ## Authority and retry semantics
 

@@ -15,7 +15,7 @@ from typing import Any, Mapping
 
 
 WORK_API_VERSION = "sprintctl-work/v1"
-CURRENT_SCHEMA_VERSION = 18
+CURRENT_SCHEMA_VERSION = 19
 # The v0.3 release is a coordinated schema/runtime cutover, so the runtime
 # admits exactly the schema it was built against.  A wider window would be a
 # false promise: reservation storage only arrived in schema 8, the live
@@ -37,7 +37,10 @@ CURRENT_SCHEMA_VERSION = 18
 # 18 adds the exclusive durable work lease and its outcome reports
 # (agentops#2520, E2b): a 17 authority has no work.lease.* tables, and an 18
 # runtime cannot serve claims from a 17 authority.
-MINIMUM_SCHEMA_VERSION = 18
+# 19 adds the effect-intent store (agentops#2541, M2-1): an 18 authority has no
+# work_effect_intent table to serve work.effect.* from, so a 19 runtime refuses
+# it, and an 18 runtime refuses a 19 authority.
+MINIMUM_SCHEMA_VERSION = 19
 MAXIMUM_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION
 STARTUP_MODE_ENV = "SPRINTCTL_REMOTE_SCHEMA_MODE"
 MIGRATION_LOCK_TIMEOUT_ENV = "SPRINTCTL_MIGRATION_LOCK_TIMEOUT"
@@ -467,6 +470,10 @@ def migrate_schema(store: Any) -> dict[str, Any]:
                 _pg._apply_schema_version_18(cur)
                 cur.execute("UPDATE schema_version SET version = %s", (18,))
                 applied.append(18)
+            if state.version < 19:
+                _pg._apply_schema_version_19(cur)
+                cur.execute("UPDATE schema_version SET version = %s", (19,))
+                applied.append(19)
         store.conn.commit()
     except Exception:
         store.conn.rollback()

@@ -12,6 +12,7 @@ import json
 from .application_common import *
 from . import contracts as _contracts
 from . import decisions as _decisions
+from . import effect_intent as _effect
 from . import reservation as _reservation
 from . import releases as _releases
 from . import volatile_context as _volatile_context
@@ -242,6 +243,94 @@ def _outcome_checks(value: Any) -> list[dict[str, Any]]:
     if len({check["name"] for check in checks}) != len(checks):
         raise ApplicationRejection("invalid-arguments", "check names must be unique", 422)
     return sorted(checks, key=lambda check: check["name"])
+
+
+def _require_effect_authority(operation: str, context: InvocationContext) -> None:
+    """``authority-required`` unless the caller holds the operation's own
+    ``work.effect.*`` capability.
+
+    The Vuoro service already refuses a call whose identity lacks the
+    catalog's ``required_authority``; this is the application's own check, so
+    a caller that reaches ``invoke`` directly cannot skip it.  It fails closed:
+    an identity that carries no authorities holds none.  Effect capabilities
+    are separate from ``work:claim`` / ``work:write``, so ordinary work
+    authority never satisfies it.
+    """
+    required = _effect.EFFECT_OPERATION_AUTHORITIES.get(operation)
+    if required is None:
+        return
+    authorities = getattr(getattr(context, "identity", None), "authorities", None) or ()
+    if required not in authorities:
+        raise ApplicationRejection(
+            "authority-required",
+            f"{operation} requires the {required} capability",
+            403,
+        )
+
+
+def _effect_arguments(arguments: Mapping[str, Any], allowed: frozenset[str]) -> None:
+    """Refuse an argument the operation does not define.
+
+    The proposer, acceptor, digest of a proposal and state are not wire
+    arguments: the authenticated identity and the authority supply them, so a
+    caller that tries to name one is refused rather than ignored.
+    """
+    unknown = sorted(set(arguments) - allowed)
+    if unknown:
+        raise ApplicationRejection(
+            "invalid-arguments",
+            f"not an argument of this operation: {', '.join(unknown)}; the proposer, "
+            "acceptor and digest come from the authenticated identity and the authority",
+            422,
+        )
+
+
+def _effect_text(value: Any, field: str, limit: int) -> str:
+    """A non-empty string kept exactly as sent (a diff's whitespace matters)."""
+    if (
+        not isinstance(value, str) or not value or len(value) > limit
+        or not _json_text_ok(value)
+    ):
+        raise ApplicationRejection(
+            "invalid-arguments",
+            f"{field} must be a non-empty string of at most {limit} characters "
+            "without NUL or lone surrogates",
+            422,
+        )
+    return value
+
+
+_EFFECT_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+_EFFECT_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+_EFFECT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
+_EFFECT_PR_URL_RE = re.compile(r"^https?://\S+$")
+_EFFECT_PROPOSE_ARGUMENTS = frozenset({
+    "run_id", "item_id", "repository", "base_commit", "title", "rationale",
+    "unified_diff", "idempotency_key",
+})
+
+
+def _effect_intent_id(arguments: Mapping[str, Any]) -> str:
+    intent_id = arguments.get("intent_id")
+    if not isinstance(intent_id, str) or not _EFFECT_ID_RE.fullmatch(intent_id):
+        raise ApplicationRejection(
+            "invalid-arguments", "intent_id must be 1-128 characters of A-Z a-z 0-9 . _ : -", 422
+        )
+    return intent_id
+
+
+def _effect_binding(arguments: Mapping[str, Any]) -> tuple[str, int, str]:
+    """The (intent_id, revision, digest) a transition names."""
+    intent_id = _effect_intent_id(arguments)
+    revision = _positive_int(arguments.get("revision"), "revision")
+    digest = arguments.get("canonical_intent_digest")
+    if not isinstance(digest, str) or not _EFFECT_DIGEST_RE.fullmatch(digest):
+        raise ApplicationRejection(
+            "invalid-arguments",
+            "canonical_intent_digest must be 64 lowercase hexadecimal characters",
+            422,
+        )
+    return intent_id, revision, digest
 
 
 def _reservation_actor_mismatch(given: object, authenticated: object) -> ApplicationRejection:
@@ -621,6 +710,7 @@ class WorkApplication:
             _contracts.reject_credential_shaped_values(dict(arguments), operation)
         except ValueError as exc:
             raise ApplicationRejection("credential-shaped-value", str(exc), 422) from exc
+        _require_effect_authority(operation, context)
         if not self._ensure_postgres_runtime_available():
             raise self._runtime_unavailable()
         target = self._scoped_for(requested_repo_id)
@@ -687,6 +777,12 @@ class WorkApplication:
             # and digest, so a key used under either name is one report.
             "work.lease.complete-v1": target._claim_complete,
             "work.lease.read-v1": target._claim_read,
+            _effect.OPERATION_PROPOSE: target._effect_propose,
+            _effect.OPERATION_GET: target._effect_get,
+            _effect.OPERATION_LIST_PROPOSED: target._effect_list_proposed,
+            _effect.OPERATION_ACCEPT: target._effect_accept,
+            _effect.OPERATION_REJECT: target._effect_reject,
+            _effect.OPERATION_MARK_APPLIED: target._effect_mark_applied,
         }
         try:
             handler = handlers[operation]
@@ -2009,6 +2105,163 @@ class WorkApplication:
         if self.backend.get_work_item(self.store, item_id) is None:
             raise ApplicationRejection("work-not-found", f"item #{item_id} not found", 404)
         return {"repo_id": self.repo_id, "item_id": item_id, **self.backend.claim_state(self.store, item_id)}
+
+    # -- work.effect.* ----------------------------------------------------
+    # agentops#2541 (M2-1): the sprintctl-owned effect-intent lifecycle.  The
+    # proposer and acceptor are always the authenticated principal; the digest
+    # is the authority's computation; accept, reject and mark-applied are
+    # compare-and-set on the (revision, digest) the caller names.  The
+    # capability check is in invoke (_require_effect_authority).
+
+    def _effect_refused(self, exc: Any) -> ApplicationRejection:
+        status = {"effect-not-found": 404, "work-not-found": 404}.get(exc.code, 409)
+        return ApplicationRejection(exc.code, str(exc), status)
+
+    def _effect_intent_result(self, intent: dict[str, Any]) -> dict[str, Any]:
+        return {"repo_id": self.repo_id, "intent": intent}
+
+    def _effect_propose(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        _effect_arguments(arguments, _EFFECT_PROPOSE_ARGUMENTS)
+        run_id = _required_text(arguments.get("run_id"), "run_id")
+        item_id = _positive_int(arguments.get("item_id"), "item_id")
+        repository = _effect_text(arguments.get("repository"), "repository", _effect.MAX_REPOSITORY)
+        base_commit = arguments.get("base_commit")
+        if not isinstance(base_commit, str) or not _EFFECT_COMMIT_RE.fullmatch(base_commit):
+            raise ApplicationRejection(
+                "invalid-arguments",
+                "base_commit must be a 40 or 64 character lowercase hexadecimal commit id",
+                422,
+            )
+        title = _effect_text(arguments.get("title"), "title", _effect.MAX_TITLE)
+        rationale = _effect_text(arguments.get("rationale"), "rationale", _effect.MAX_RATIONALE)
+        unified_diff = _effect_text(
+            arguments.get("unified_diff"), "unified_diff", _effect.MAX_UNIFIED_DIFF
+        )
+        _idempotency_key(arguments.get("idempotency_key"))
+        # The run is the caller's own, resolved first as the record bucket
+        # resolves it: one code for an unknown run and for someone else's.
+        self._require_owned_run(run_id, context)
+        principal_id, workspace_id = _identity_binding(context)
+        from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
+
+        def effect(cur: Any, request_digest: str) -> dict[str, Any]:
+            try:
+                intent = self.backend.propose_effect_intent(
+                    self.store, run_id=run_id, work_item_id=item_id,
+                    principal_id=principal_id, workspace_id=workspace_id,
+                    idempotency_key=arguments["idempotency_key"],
+                    request_digest=request_digest, repository=repository,
+                    base_commit=base_commit, title=title, rationale=rationale,
+                    unified_diff=unified_diff, cur=cur,
+                )
+            except _pg.EffectRefused as exc:
+                raise self._effect_refused(exc) from exc
+            return self._effect_intent_result(intent)
+
+        result = self._idempotent_write(context, "propose_effect", arguments, effect)
+        # A replay answers with the intent as it is now, not as it was when
+        # first proposed: a retry after a lost response must not report an
+        # accepted intent as still waiting.
+        current = self.backend.get_effect_intent(self.store, result["intent"]["intent_id"])
+        return self._effect_intent_result(current if current is not None else result["intent"])
+
+    def _effect_get(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+        _effect_arguments(arguments, frozenset({"intent_id"}))
+        intent_id = _effect_intent_id(arguments)
+        intent = self.backend.get_effect_intent(self.store, intent_id)
+        if intent is None:
+            raise ApplicationRejection(
+                "effect-not-found", f"effect intent {intent_id!r} not found", 404
+            )
+        return self._effect_intent_result(intent)
+
+    def _effect_list_proposed(
+        self, arguments: dict[str, Any], _context: InvocationContext
+    ) -> dict[str, Any]:
+        _effect_arguments(arguments, frozenset({"item_id", "limit"}))
+        item_id = _optional_positive_int(arguments.get("item_id"), "item_id")
+        limit = _positive_int(
+            arguments.get("limit", _effect.LIST_DEFAULT_LIMIT), "limit"
+        )
+        if limit > _effect.LIST_MAX_LIMIT:
+            raise ApplicationRejection(
+                "invalid-arguments", f"limit must be at most {_effect.LIST_MAX_LIMIT}", 422
+            )
+        return {
+            "repo_id": self.repo_id,
+            "intents": self.backend.list_proposed_effect_intents(
+                self.store, item_id=item_id, limit=limit
+            ),
+        }
+
+    def _effect_accept(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        _effect_arguments(arguments, frozenset({"intent_id", "revision", "canonical_intent_digest"}))
+        intent_id, revision, digest = _effect_binding(arguments)
+        acceptor, _workspace = _identity_binding(context)
+        from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
+
+        try:
+            intent = self.backend.accept_effect_intent(
+                self.store, intent_id, revision=revision, canonical_intent_digest=digest,
+                acceptor_principal=acceptor,
+            )
+        except _pg.EffectRefused as exc:
+            raise self._effect_refused(exc) from exc
+        return self._effect_intent_result(intent)
+
+    def _effect_reject(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        _effect_arguments(
+            arguments, frozenset({"intent_id", "revision", "canonical_intent_digest", "reason"})
+        )
+        intent_id, revision, digest = _effect_binding(arguments)
+        reason = _effect_text(arguments.get("reason"), "reason", _effect.MAX_REASON)
+        rejector, _workspace = _identity_binding(context)
+        from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
+
+        try:
+            intent = self.backend.reject_effect_intent(
+                self.store, intent_id, revision=revision, canonical_intent_digest=digest,
+                rejector_principal=rejector, reason=reason,
+            )
+        except _pg.EffectRefused as exc:
+            raise self._effect_refused(exc) from exc
+        return self._effect_intent_result(intent)
+
+    def _effect_mark_applied(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        _effect_arguments(
+            arguments,
+            frozenset({"intent_id", "revision", "canonical_intent_digest", "commit_sha", "pr_url"}),
+        )
+        intent_id, revision, digest = _effect_binding(arguments)
+        commit_sha = arguments.get("commit_sha")
+        if not isinstance(commit_sha, str) or not _EFFECT_COMMIT_RE.fullmatch(commit_sha):
+            raise ApplicationRejection(
+                "invalid-arguments",
+                "commit_sha must be a 40 or 64 character lowercase hexadecimal commit id",
+                422,
+            )
+        pr_url = arguments.get("pr_url")
+        if (
+            not isinstance(pr_url, str) or len(pr_url) > _effect.MAX_PR_URL
+            or not _EFFECT_PR_URL_RE.fullmatch(pr_url) or not _json_text_ok(pr_url)
+        ):
+            raise ApplicationRejection(
+                "invalid-arguments", "pr_url must be an http(s) URL", 422
+            )
+        applier, _workspace = _identity_binding(context)
+        from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
+
+        try:
+            intent = self.backend.mark_effect_intent_applied(
+                self.store, intent_id, revision=revision, canonical_intent_digest=digest,
+                applier_principal=applier, commit_sha=commit_sha, pr_url=pr_url,
+            )
+        except _pg.EffectRefused as exc:
+            raise self._effect_refused(exc) from exc
+        return self._effect_intent_result(intent)
+
 
     def _read_next_work_explain(
         self, arguments: dict[str, Any], _context: InvocationContext

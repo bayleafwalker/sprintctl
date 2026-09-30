@@ -16,9 +16,9 @@ create, alter, or repair schema objects.
 work API as `sprintctl-work/v1`, reports the actual remote schema version, and
 reports the minimum and maximum versions this runtime supports.
 
-The current runtime (sprintctl 0.9.0 and later, including 0.10.0) admits
-exactly remote schema 18: `MINIMUM_SCHEMA_VERSION` and
-`MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 18, and
+The current source tree admits exactly remote schema 19 (schema 18 for
+sprintctl 0.9.0 through 0.10.x): `MINIMUM_SCHEMA_VERSION` and
+`MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 19, and
 `remote-schema-version` in `pyproject.toml` records the same value. Any other
 ledger version fails closed before a runtime command is served.
 
@@ -68,6 +68,16 @@ already holding one of those names with another shape.
 
 sprintctl 0.10.0 changes only the adapter catalog; the remote schema stays
 at 18, so a 0.9.x authority needs no migration for a 0.10.0 rollout.
+
+Schema 19 (agentops#2541, M2-1) is a coordinated cutover again: a runtime
+built with it admits only schema 19, and a 0.10.x runtime refuses it. Run the
+deployment migration together with the rollout of the first release that
+contains it. Schema 19 is additive: it adds the `work_effect_intent` table
+behind the `work.effect.*-v1` operations, and the
+`sprintctl_work_effect_intent_guard` trigger that keeps an intent's content
+and an accepted intent's acceptance record immutable in storage. Like
+schemas 17 and 18, the migration refuses a relation already holding one of
+its names with another shape.
 
 The handshake also publishes
 `sprintctl-repository-ingest-cursor/v1` with `scope=repository` and
@@ -204,7 +214,8 @@ retry-eligible:
   `work.maintain.check`, `work.maintenance.resource.get`,
   `work.maintenance.resource.changes`, `work.public.list-v1`,
   `work.public.item-v1`, `work.validate.item-status-mutation`,
-  `work.run.resolve-v1`, `work.evidence.tail-v1` and `work.lease.read-v1`;
+  `work.run.resolve-v1`, `work.evidence.tail-v1`, `work.lease.read-v1`,
+  `work.effect.get-v1` and `work.effect.list-proposed-v1`;
 - commands keyed by a durable unique constraint, when the request carries a
   required, non-empty idempotency key: `work.lifecycle.arbitrate`,
   `work.decision.record`, `work.evidence.ingest`, `work.batch.apply`,

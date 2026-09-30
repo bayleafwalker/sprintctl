@@ -20,6 +20,9 @@ TEST_ROLE_PREFIX = "sprintctl_test_"
 TEST_DATABASE_PREFIX = "sprintctl_test_"
 DISPOSABLE_DATABASE_COMMENT = "sprintctl:disposable-integration-test"
 REPO_TABLES = (
+    # M2-1 (agentops#2541): effect intents cascade from their item and run;
+    # listed first for the same reason.
+    "work_effect_intent",
     # E2b (agentops#2520): outcome reports cascade from their lease and
     # leases from their item and run; listed first for the same reason.
     "work_outcome_report",

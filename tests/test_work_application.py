@@ -403,6 +403,10 @@ def test_retry_eligibility_excludes_reservations_and_ledger_operations():
         "work.lease.acquire-v1",
         "work.lease.report-outcome-v1",
         "work.lease.complete-v1",
+        "work.effect.propose-v1",
+        "work.effect.accept-v1",
+        "work.effect.reject-v1",
+        "work.effect.mark-applied-v1",
     ):
         assert not WorkApplication._can_retry_after_admin_shutdown(operation, keyed), operation
     for operation in (
@@ -411,6 +415,8 @@ def test_retry_eligibility_excludes_reservations_and_ledger_operations():
         "work.run.resolve-v1",
         "work.evidence.tail-v1",
         "work.lease.read-v1",
+        "work.effect.get-v1",
+        "work.effect.list-proposed-v1",
         "work.validate.item-status-mutation",
     ):
         assert WorkApplication._can_retry_after_admin_shutdown(operation, _context()), operation

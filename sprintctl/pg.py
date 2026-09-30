@@ -42,6 +42,7 @@ from . import contracts as _contracts
 from . import decisions as _decisions
 from . import releases as _releases
 from . import depcore as _depcore
+from . import effect_intent as _effect_intent
 from . import eventcore as _eventcore
 from . import outbox
 from . import pg_migrations as _pg_migrations
@@ -2946,6 +2947,185 @@ def _apply_schema_version_18(cur: Any) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_work_outcome_report_item
             ON work_outcome_report(repo_id, work_item_id);
+        """
+    )
+
+
+# The exact catalog shape _apply_schema_version_19 creates (same encoding as
+# _SCHEMA_17_TABLES).  A test migrates a fresh schema and asserts it is not
+# foreign, so this cannot drift from the DDL.
+_SCHEMA_19_TABLES: dict[str, tuple[tuple[tuple[str, str, bool], ...], frozenset[tuple[str, str]]]] = {
+    "work_effect_intent": (
+        (
+            ("repo_id", _TEXT, True), ("intent_id", _TEXT, True),
+            ("revision", "integer", True), ("canonical_intent_digest", _TEXT, True),
+            ("state", _TEXT, True), ("work_item_id", "bigint", True),
+            ("run_id", _TEXT, True), ("proposer_principal", _TEXT, True),
+            ("workspace_id", _TEXT, True), ("idempotency_key", _TEXT, True),
+            ("request_digest", _TEXT, True), ("repository", _TEXT, True),
+            ("base_commit", _TEXT, True), ("title", _TEXT, True),
+            ("rationale", _TEXT, True), ("unified_diff", _TEXT, True),
+            ("created_at", _TS, True),
+            ("accepted_at", _TS, False), ("acceptor_principal", _TEXT, False),
+            ("acceptor_policy_version", _TEXT, False),
+            ("rejected_at", _TS, False), ("rejector_principal", _TEXT, False),
+            ("reject_reason", _TEXT, False),
+            ("applied_at", _TS, False), ("applier_principal", _TEXT, False),
+            ("applied_commit_sha", _TEXT, False), ("applied_pr_url", _TEXT, False),
+        ),
+        frozenset({
+            ("c", "base_commit"), ("c", "canonical_intent_digest"),
+            ("c", "idempotency_key"), ("c", "intent_id"), ("c", "request_digest"),
+            ("c", "revision"), ("c", "state"),
+            ("c", "state,accepted_at,acceptor_principal"),
+            ("c", "state,applied_at,applier_principal,applied_commit_sha,applied_pr_url"),
+            ("c", "state,rejected_at,rejector_principal,reject_reason"),
+            ("f", "repo_id,run_id"), ("f", "repo_id,work_item_id"),
+            ("p", "repo_id,intent_id"),
+            ("u", "repo_id,workspace_id,proposer_principal,idempotency_key"),
+        }),
+    ),
+}
+_SCHEMA_19_INDEXES = {
+    "idx_work_effect_intent_state": "work_effect_intent",
+    "idx_work_effect_intent_item": "work_effect_intent",
+}
+_SCHEMA_19_INDEX_SHAPES = {
+    "idx_work_effect_intent_state": (False, None, ("repo_id", "state", "created_at")),
+    "idx_work_effect_intent_item": (False, None, ("repo_id", "work_item_id")),
+}
+
+
+def _apply_schema_version_19(cur: Any) -> None:
+    """Install the effect-intent store (agentops#2541, M2-1; operator
+    Decision 1 (A) and INV-E1 on agentops#253).
+
+    ``work_effect_intent`` holds a hosted worker's proposal to change a
+    repository -- a unified diff -- beside the work item and run it belongs
+    to.  The row is bound to its content by ``canonical_intent_digest``,
+    which the authority computes (:func:`sprintctl.effect_intent
+    .canonical_intent_digest`), and carries a ``revision``.  The lifecycle is
+    ``proposed`` -> ``accepted`` | ``rejected``, then ``accepted`` ->
+    ``applied``; each transition is a compare-and-set on the revision and the
+    digest taken under the row lock in :func:`_effect_transition`.
+
+    INV-E1: an intent's content never changes, and a settled intent never
+    changes at all.  ``sprintctl_work_effect_intent_guard`` refuses, in
+    storage, any update that alters a content column or the acceptance
+    record, any update that is not a legal state transition, and any
+    transition out of ``rejected`` or ``applied``.  A change to an accepted
+    proposal is a new proposal with a new intent id.  The acceptance record
+    (revision, digest, acceptor principal, policy version, time) lives in the
+    row; ``acceptor_policy_version`` is null until a policy acceptor exists.
+
+    Rows are unique per (workspace, proposer, idempotency_key) and store the
+    request digest, so a same-key retry with different content is refused by
+    storage as well as by the write-tool ledger.
+
+    Additive and idempotent: a relation already holding one of these names
+    with exactly this shape is kept (a ladder re-run); any other is refused,
+    as schemas 17 and 18 refuse.
+    """
+    foreign = _foreign_relations(cur, _SCHEMA_19_TABLES, _SCHEMA_19_INDEXES, _SCHEMA_19_INDEX_SHAPES)
+    if foreign:
+        raise _pg_migrations.RemoteSchemaMigrationError(
+            "schema 19 cannot install effect-intent storage: relation(s) "
+            f"{', '.join(foreign)} already exist with a shape schema 19 did not "
+            "create; rename or drop them and re-run the migration"
+        )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS work_effect_intent (
+            repo_id text NOT NULL,
+            intent_id text NOT NULL CHECK (intent_id ~ '^intent_[0-9A-HJKMNP-TV-Z]{26}$'),
+            revision integer NOT NULL CHECK (revision >= 1),
+            canonical_intent_digest text NOT NULL CHECK (canonical_intent_digest ~ '^[0-9a-f]{64}$'),
+            state text NOT NULL CHECK (state IN ('proposed', 'accepted', 'rejected', 'applied')),
+            work_item_id bigint NOT NULL,
+            run_id text NOT NULL,
+            proposer_principal text NOT NULL,
+            workspace_id text NOT NULL,
+            idempotency_key text NOT NULL CHECK (idempotency_key ~ '^[A-Za-z0-9._:-]{8,128}$'),
+            request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
+            repository text NOT NULL,
+            base_commit text NOT NULL CHECK (base_commit ~ '^[0-9a-f]{40}([0-9a-f]{24})?$'),
+            title text NOT NULL,
+            rationale text NOT NULL,
+            unified_diff text NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            accepted_at timestamptz,
+            acceptor_principal text,
+            acceptor_policy_version text,
+            rejected_at timestamptz,
+            rejector_principal text,
+            reject_reason text,
+            applied_at timestamptz,
+            applier_principal text,
+            applied_commit_sha text,
+            applied_pr_url text,
+            PRIMARY KEY (repo_id, intent_id),
+            UNIQUE (repo_id, workspace_id, proposer_principal, idempotency_key),
+            CHECK ((state IN ('accepted', 'applied')) =
+                   (accepted_at IS NOT NULL AND acceptor_principal IS NOT NULL)),
+            CHECK ((state = 'rejected') =
+                   (rejected_at IS NOT NULL AND rejector_principal IS NOT NULL
+                    AND reject_reason IS NOT NULL)),
+            CHECK ((state = 'applied') =
+                   (applied_at IS NOT NULL AND applier_principal IS NOT NULL
+                    AND applied_commit_sha IS NOT NULL AND applied_pr_url IS NOT NULL)),
+            FOREIGN KEY (repo_id, work_item_id) REFERENCES work_item(repo_id, id) ON DELETE CASCADE,
+            FOREIGN KEY (repo_id, run_id) REFERENCES run(repo_id, run_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_work_effect_intent_state
+            ON work_effect_intent(repo_id, state, created_at);
+        CREATE INDEX IF NOT EXISTS idx_work_effect_intent_item
+            ON work_effect_intent(repo_id, work_item_id);
+
+        CREATE OR REPLACE FUNCTION sprintctl_work_effect_intent_guard()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            IF ROW(NEW.repo_id, NEW.intent_id, NEW.revision, NEW.canonical_intent_digest,
+                   NEW.work_item_id, NEW.run_id, NEW.proposer_principal, NEW.workspace_id,
+                   NEW.idempotency_key, NEW.request_digest, NEW.repository, NEW.base_commit,
+                   NEW.title, NEW.rationale, NEW.unified_diff, NEW.created_at)
+               IS DISTINCT FROM
+               ROW(OLD.repo_id, OLD.intent_id, OLD.revision, OLD.canonical_intent_digest,
+                   OLD.work_item_id, OLD.run_id, OLD.proposer_principal, OLD.workspace_id,
+                   OLD.idempotency_key, OLD.request_digest, OLD.repository, OLD.base_commit,
+                   OLD.title, OLD.rationale, OLD.unified_diff, OLD.created_at) THEN
+                RAISE EXCEPTION 'effect intent % is immutable: a change is a new proposal',
+                    OLD.intent_id
+                    USING ERRCODE = '23514';
+            END IF;
+            IF NEW.state = OLD.state THEN
+                IF NEW IS DISTINCT FROM OLD THEN
+                    RAISE EXCEPTION 'effect intent % changes only by a state transition',
+                        OLD.intent_id
+                        USING ERRCODE = '23514';
+                END IF;
+                RETURN NEW;
+            END IF;
+            IF NOT ((OLD.state = 'proposed' AND NEW.state IN ('accepted', 'rejected'))
+                    OR (OLD.state = 'accepted' AND NEW.state = 'applied')) THEN
+                RAISE EXCEPTION 'effect intent % cannot move from % to %',
+                    OLD.intent_id, OLD.state, NEW.state
+                    USING ERRCODE = '23514';
+            END IF;
+            IF OLD.state = 'accepted'
+               AND ROW(NEW.accepted_at, NEW.acceptor_principal, NEW.acceptor_policy_version)
+                   IS DISTINCT FROM
+                   ROW(OLD.accepted_at, OLD.acceptor_principal, OLD.acceptor_policy_version) THEN
+                RAISE EXCEPTION 'the acceptance record of effect intent % is immutable',
+                    OLD.intent_id
+                    USING ERRCODE = '23514';
+            END IF;
+            RETURN NEW;
+        END;
+        $$;
+        DROP TRIGGER IF EXISTS sprintctl_work_effect_intent_guard ON work_effect_intent;
+        CREATE TRIGGER sprintctl_work_effect_intent_guard
+            BEFORE UPDATE ON work_effect_intent
+            FOR EACH ROW EXECUTE FUNCTION sprintctl_work_effect_intent_guard();
         """
     )
 
@@ -6735,3 +6915,317 @@ def claim_state(store: PgStore, work_item_id: int) -> dict:
         "parked": parking,
         "evaluated_at": _iso(now),
     }
+
+
+# ---------------------------------------------------------------------------
+# work.effect.* (agentops#2541, M2-1: the sprintctl-owned effect-intent
+# lifecycle -- schema version 19)
+#
+# A proposal is a unified diff a hosted worker wants applied to a repository.
+# The authority computes its canonical_intent_digest; acceptance, rejection
+# and application are compare-and-set on the exact (revision, digest) the
+# caller saw, and an accepted intent never changes (INV-E1; the trigger in
+# _apply_schema_version_19 is the backstop).  Nothing here applies a diff.
+# ---------------------------------------------------------------------------
+
+
+class EffectRefused(ValueError):
+    """A proposal or transition the effect-intent owner refuses.
+
+    ``code`` is the caller-visible reason: ``work-not-found``,
+    ``effect-not-found``, ``effect-revision-mismatch``,
+    ``effect-digest-mismatch`` or ``effect-invalid-transition``.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def _effect_content(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "item_id": int(row["work_item_id"]),
+        "repository": row["repository"],
+        "base_commit": row["base_commit"],
+        "title": row["title"],
+        "rationale": row["rationale"],
+        "unified_diff": row["unified_diff"],
+    }
+
+
+def _effect_row(row: Mapping[str, Any]) -> dict:
+    """The public shape of an intent row (the ``work.effect.*`` result)."""
+    accepted = row["accepted_at"] is not None
+    rejected = row["rejected_at"] is not None
+    applied = row["applied_at"] is not None
+    return {
+        "intent_id": row["intent_id"],
+        "revision": int(row["revision"]),
+        "canonical_intent_digest": row["canonical_intent_digest"],
+        "state": row["state"],
+        "item_id": int(row["work_item_id"]),
+        "run_id": row["run_id"],
+        "proposer_principal": row["proposer_principal"],
+        "repository": row["repository"],
+        "base_commit": row["base_commit"],
+        "title": row["title"],
+        "rationale": row["rationale"],
+        "unified_diff": row["unified_diff"],
+        "created_at": _iso(row["created_at"]),
+        "acceptance": (
+            {
+                "intent_id": row["intent_id"],
+                "intent_revision": int(row["revision"]),
+                "canonical_intent_digest": row["canonical_intent_digest"],
+                "acceptor_principal": row["acceptor_principal"],
+                "acceptor_policy_version": row["acceptor_policy_version"],
+                "accepted_at": _iso(row["accepted_at"]),
+            }
+            if accepted else None
+        ),
+        "rejection": (
+            {
+                "rejector_principal": row["rejector_principal"],
+                "reason": row["reject_reason"],
+                "rejected_at": _iso(row["rejected_at"]),
+            }
+            if rejected else None
+        ),
+        "application": (
+            {
+                "applier_principal": row["applier_principal"],
+                "commit_sha": row["applied_commit_sha"],
+                "pr_url": row["applied_pr_url"],
+                "applied_at": _iso(row["applied_at"]),
+            }
+            if applied else None
+        ),
+    }
+
+
+def propose_effect_intent(
+    store: PgStore,
+    *,
+    run_id: str,
+    work_item_id: int,
+    principal_id: str,
+    workspace_id: str,
+    idempotency_key: str,
+    request_digest: str,
+    repository: str,
+    base_commit: str,
+    title: str,
+    rationale: str,
+    unified_diff: str,
+    cur: Any | None = None,
+) -> dict:
+    """Record a proposal for ``work_item_id`` by the caller's own run.
+
+    The proposer is the authenticated principal and the digest is computed
+    here from the content; neither is a caller claim.  Idempotent per
+    (repo_id, workspace_id, principal_id, idempotency_key): the same key
+    resolves to the same row through the unique constraint and replays it
+    only for the same ``request_digest`` (:class:`IdempotencyConflict`
+    otherwise).  The digest does not depend on the key, so two keys with
+    the same content are two proposals.  Raises :class:`EffectRefused`
+    (``work-not-found``) for an item this repository does not have.
+    ``cur``: see :func:`_in_write_transaction`.
+    """
+    content = {
+        "item_id": work_item_id, "repository": repository, "base_commit": base_commit,
+        "title": title, "rationale": rationale, "unified_diff": unified_diff,
+    }
+    digest = _effect_intent.canonical_intent_digest(content)
+    intent_id = _mint_prefixed_id("intent_")
+
+    def body(cur: Any) -> dict:
+        cur.execute(
+            "SELECT id FROM work_item WHERE repo_id = %s AND id = %s FOR SHARE",
+            (store.repo_id, work_item_id),
+        )
+        if cur.fetchone() is None:
+            raise EffectRefused("work-not-found", f"item #{work_item_id} not found")
+        cur.execute(
+            "INSERT INTO work_effect_intent(repo_id, intent_id, revision, "
+            "canonical_intent_digest, state, work_item_id, run_id, proposer_principal, "
+            "workspace_id, idempotency_key, request_digest, repository, base_commit, "
+            "title, rationale, unified_diff) "
+            "VALUES (%s, %s, 1, %s, 'proposed', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (repo_id, workspace_id, proposer_principal, idempotency_key) DO NOTHING",
+            (
+                store.repo_id, intent_id, digest, work_item_id, run_id, principal_id,
+                workspace_id, idempotency_key, request_digest, repository, base_commit,
+                title, rationale, unified_diff,
+            ),
+        )
+        cur.execute(
+            "SELECT * FROM work_effect_intent WHERE repo_id = %s AND workspace_id = %s "
+            "AND proposer_principal = %s AND idempotency_key = %s",
+            (store.repo_id, workspace_id, principal_id, idempotency_key),
+        )
+        row = cur.fetchone()
+        assert row is not None
+        _replay_or_conflict(row["request_digest"], request_digest, "effect proposal")
+        return _effect_row(row)
+
+    return _in_write_transaction(store, cur, body)
+
+
+def get_effect_intent(store: PgStore, intent_id: str) -> dict | None:
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM work_effect_intent WHERE repo_id = %s AND intent_id = %s",
+            (store.repo_id, intent_id),
+        )
+        row = cur.fetchone()
+    return _effect_row(row) if row is not None else None
+
+
+def list_proposed_effect_intents(
+    store: PgStore, *, item_id: int | None = None, limit: int = _effect_intent.LIST_DEFAULT_LIMIT
+) -> list[dict]:
+    """Intents still awaiting a decision, oldest first."""
+    sql = "SELECT * FROM work_effect_intent WHERE repo_id = %s AND state = 'proposed'"
+    params: list[Any] = [store.repo_id]
+    if item_id is not None:
+        sql += " AND work_item_id = %s"
+        params.append(item_id)
+    sql += " ORDER BY created_at, intent_id LIMIT %s"
+    params.append(limit)
+    with store.conn.cursor() as cur:
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+    return [_effect_row(row) for row in rows]
+
+
+def _effect_transition(
+    store: PgStore,
+    intent_id: str,
+    *,
+    revision: int,
+    canonical_intent_digest: str,
+    from_state: str,
+    timestamp_column: str,
+    assignments: Mapping[str, Any],
+    to_state: str,
+    cur: Any | None = None,
+) -> dict:
+    """Move one intent ``from_state`` -> ``to_state`` under its row lock.
+
+    The compare-and-set the contract turns on: the caller names the exact
+    revision and digest it saw, and the row must still be that revision with
+    that digest (checked in that order) and in ``from_state``; otherwise
+    nothing changes.  Concurrent callers serialize on the row lock, so one
+    of several racing acceptances wins and the rest find the settled state
+    (``effect-invalid-transition``).  The stored content is re-hashed before
+    a transition so a row whose content no longer matches its digest is
+    refused rather than accepted.
+    """
+
+    def body(cur: Any) -> dict:
+        cur.execute(
+            "SELECT * FROM work_effect_intent WHERE repo_id = %s AND intent_id = %s FOR UPDATE",
+            (store.repo_id, intent_id),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise EffectRefused("effect-not-found", f"effect intent {intent_id!r} not found")
+        if int(row["revision"]) != revision:
+            raise EffectRefused(
+                "effect-revision-mismatch",
+                f"effect intent {intent_id} is at revision {row['revision']}, not {revision}",
+            )
+        if (
+            row["canonical_intent_digest"] != canonical_intent_digest
+            or _effect_intent.canonical_intent_digest(_effect_content(row))
+            != row["canonical_intent_digest"]
+        ):
+            raise EffectRefused(
+                "effect-digest-mismatch",
+                f"the digest does not match the content of effect intent {intent_id} "
+                f"at revision {revision}",
+            )
+        if row["state"] != from_state:
+            raise EffectRefused(
+                "effect-invalid-transition",
+                f"effect intent {intent_id} is {row['state']}; only a {from_state} "
+                f"intent can become {to_state}",
+            )
+        columns = ", ".join(f"{name} = %s" for name in assignments)
+        cur.execute(
+            f"UPDATE work_effect_intent SET state = %s, {timestamp_column} = clock_timestamp(), "
+            f"{columns} WHERE repo_id = %s AND intent_id = %s RETURNING *",
+            (to_state, *assignments.values(), store.repo_id, intent_id),
+        )
+        updated = cur.fetchone()
+        assert updated is not None
+        return _effect_row(updated)
+
+    return _in_write_transaction(store, cur, body)
+
+
+def accept_effect_intent(
+    store: PgStore,
+    intent_id: str,
+    *,
+    revision: int,
+    canonical_intent_digest: str,
+    acceptor_principal: str,
+    acceptor_policy_version: str | None = None,
+) -> dict:
+    """``proposed`` -> ``accepted``, recording who accepted exactly what.
+
+    The acceptance record is (intent id, revision, digest, the authenticated
+    acceptor principal, the acceptor's policy version -- null for an
+    operator acceptance -- and the time).  ``acceptor_principal`` is always
+    the caller's identity, never a wire argument.
+    """
+    return _effect_transition(
+        store, intent_id, revision=revision, canonical_intent_digest=canonical_intent_digest,
+        from_state="proposed", to_state="accepted", timestamp_column="accepted_at",
+        assignments={
+            "acceptor_principal": acceptor_principal,
+            "acceptor_policy_version": acceptor_policy_version,
+        },
+    )
+
+
+def reject_effect_intent(
+    store: PgStore,
+    intent_id: str,
+    *,
+    revision: int,
+    canonical_intent_digest: str,
+    rejector_principal: str,
+    reason: str,
+) -> dict:
+    """``proposed`` -> ``rejected``."""
+    return _effect_transition(
+        store, intent_id, revision=revision, canonical_intent_digest=canonical_intent_digest,
+        from_state="proposed", to_state="rejected", timestamp_column="rejected_at",
+        assignments={
+            "rejector_principal": rejector_principal, "reject_reason": reason,
+        },
+    )
+
+
+def mark_effect_intent_applied(
+    store: PgStore,
+    intent_id: str,
+    *,
+    revision: int,
+    canonical_intent_digest: str,
+    applier_principal: str,
+    commit_sha: str,
+    pr_url: str,
+) -> dict:
+    """``accepted`` -> ``applied``, recording the commit and pull request that
+    carry the accepted diff.  The acceptance record is kept unchanged."""
+    return _effect_transition(
+        store, intent_id, revision=revision, canonical_intent_digest=canonical_intent_digest,
+        from_state="accepted", to_state="applied", timestamp_column="applied_at",
+        assignments={
+            "applier_principal": applier_principal,
+            "applied_commit_sha": commit_sha, "applied_pr_url": pr_url,
+        },
+    )

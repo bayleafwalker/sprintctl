@@ -41,7 +41,7 @@ capabilities = [
     "volatile-context-item-projection/v1",
 ]
 sqlite-schema-version = 25
-remote-schema-version = 18
+remote-schema-version = 19
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
