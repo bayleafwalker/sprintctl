@@ -16,8 +16,8 @@ create, alter, or repair schema objects.
 work API as `sprintctl-work/v1`, reports the actual remote schema version, and
 reports the minimum and maximum versions this runtime supports.
 
-The current source tree admits exactly remote schema 20 (schema 18 for
-sprintctl 0.9.0 through 0.10.x): `MINIMUM_SCHEMA_VERSION` and
+The current source tree (sprintctl 0.11.0) admits exactly remote schema 20
+(schema 18 for sprintctl 0.9.0 through 0.10.x): `MINIMUM_SCHEMA_VERSION` and
 `MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 20, and
 `remote-schema-version` in `pyproject.toml` records the same value. Any other
 ledger version fails closed before a runtime command is served.
@@ -69,10 +69,10 @@ already holding one of those names with another shape.
 sprintctl 0.10.0 changes only the adapter catalog; the remote schema stays
 at 18, so a 0.9.x authority needs no migration for a 0.10.0 rollout.
 
-Schema 19 (agentops#2541, M2-1) is a coordinated cutover again: a runtime
-built with it admits only schema 19, and a 0.10.x runtime refuses it. Run the
-deployment migration together with the rollout of the first release that
-contains it. Schema 19 is additive: it adds the `work_effect_intent` table
+Schema 19 (agentops#2541, M2-1) is a coordinated cutover again, released
+together with schema 20 in sprintctl 0.11.0: no release admits only schema 19,
+and a 0.10.x runtime refuses it. Run the deployment migration together with
+the 0.11.0 rollout. Schema 19 is additive: it adds the `work_effect_intent` table
 behind the `work.effect.*-v1` operations, and the
 `sprintctl_work_effect_intent_guard` trigger that keeps an intent's content
 and an accepted intent's acceptance record immutable in storage. Like
@@ -80,7 +80,7 @@ schemas 17 and 18, the migration refuses a relation already holding one of
 its names with another shape.
 
 Schema 20 (agentops#2525, run continuation) is another coordinated cutover
-and ships in the same release as 19, so one deployment migration takes an
+and ships in the same release as 19 (0.11.0), so one deployment migration takes an
 18 authority to 20. It is additive: it adds the `run_predecessor` table (one
 predecessor per run, both ends runs of the same repository, never the run
 itself) behind `work.run.register-v1`'s `predecessor_run_id` and
