@@ -316,6 +316,26 @@ default). A claim naming `ttl_seconds` is `invalid-arguments` (422).
     rejection when the service's error type accepts them. Released
     vuoro-service (0.1.77) does not yet, so there the generations are in
     the message, and `work.lease.read-v1` lists every lease's `generation`.
+
+    Scope note (agentops#2540 part 2, closed by decision, not built): a
+    report on a stale lease that nobody took over stays refused as
+    `lease-expired` and is kept as evidence (disposition `rejected`, nothing
+    settles). It is not evaluated for settlement, because INV-L1 names stale
+    leases: a result submitted under a stale or superseded lease never
+    settles work (semantics 3 and 5 in agentops
+    `docs/plans/2026-09-27-backlog-ideation.md`, R4; semantics 3 only needs
+    expiry alone to be non-fatal to the claim, and the holder gets that by
+    reactivating the same lease, Case B). The holder reactivates the same
+    lease and reports again under a new idempotency key; the refused report
+    keeps its own key and replays `lease-expired`. An implicit
+    reactivate-on-report path could be added later, additively. Where the
+    vuoro side landed: `lease.py` INV-L1 retention and the shared contract
+    section 6 amendment in vuoro#147, and the sprintctl 0.10.0 pin in
+    vuoro#148, both in vuoro-service 0.1.78. The edge tool `report_outcome`
+    landed in vuoro#150 (vuoro-service 0.1.79 / vuoro-mcp-edge 0.1.6).
+    `lease.py` Case B (the same holder reactivates its own unsuperseded
+    expired lease with the same `lease_id`) is not delivered in vuoro and is
+    carried by agentops#2570.
   - `settled`: a succeeded outcome whose bar needs nothing beyond
     `checks`: no reported check failed, every required check was reported
     passed, and, if the bar includes `checks`, at least one check was
