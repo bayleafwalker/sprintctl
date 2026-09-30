@@ -159,7 +159,10 @@ evidence or ledger storage.
   entries after `after_note_id` / `after_chain_seq`, with
   `next_after_note_id` / `next_after_chain_seq` set to the next cursor when
   more remain and null when the list is exhausted. A run without a
-  predecessor returns null and empty lists. One hop only. The predecessor's
+  predecessor returns null and empty lists. Notes of one run are written
+  one at a time (a per-run lock, like the evidence chain's), so `note_id`
+  order is commit order and a cursor never skips a note even while the
+  predecessor is still writing. One hop only. The predecessor's
   run never resolves to the successor, so continuation transfers context,
   not authority.
 - **Confidentiality boundary.** Through continuation, any principal in the

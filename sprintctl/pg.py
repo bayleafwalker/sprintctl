@@ -2585,9 +2585,15 @@ def _foreign_relations(
     tables: Mapping[str, tuple[tuple[tuple[str, str, bool], ...], frozenset[tuple[str, str]]]],
     indexes: Mapping[str, str],
     index_shapes: Mapping[str, tuple[bool, str | None, tuple[str, ...]]] | None = None,
+    fk_actions: Mapping[str, Mapping[str, str]] | None = None,
 ) -> list[str]:
     """Relations already holding one of ``tables``/``indexes``' names without
-    exactly the catalog shape recorded for it (see ``_SCHEMA_17_TABLES``)."""
+    exactly the catalog shape recorded for it (see ``_SCHEMA_17_TABLES``).
+
+    ``fk_actions`` (table -> FK columns -> ``pg_constraint.confdeltype``,
+    e.g. ``"c"`` CASCADE, ``"r"`` RESTRICT) additionally pins each foreign
+    key's ON DELETE action, for schemas whose FK action is part of the
+    contract (schema 20)."""
 
     def col(row: Any, key: str, index: int) -> Any:
         return row[key] if isinstance(row, dict) else row[index]
@@ -2641,15 +2647,26 @@ def _foreign_relations(
         cur.execute(
             "SELECT con.contype, (SELECT string_agg(a.attname, ',' ORDER BY k.ord) "
             "FROM unnest(con.conkey) WITH ORDINALITY AS k(attnum, ord) "
-            "JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum) AS cols "
+            "JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum) AS cols, "
+            "con.confdeltype "
             "FROM pg_constraint con WHERE con.conrelid = to_regclass(%s)",
             (name,),
         )
+        rows = cur.fetchall()
         constraints = frozenset(
-            (str(col(r, "contype", 0)), col(r, "cols", 1)) for r in cur.fetchall()
+            (str(col(r, "contype", 0)), col(r, "cols", 1)) for r in rows
         )
         if (columns, constraints) != tables[name]:
             foreign.append(name)
+            continue
+        if fk_actions and name in fk_actions:
+            actions = {
+                col(r, "cols", 1): str(col(r, "confdeltype", 2))
+                for r in rows
+                if str(col(r, "contype", 0)) == "f"
+            }
+            if actions != dict(fk_actions[name]):
+                foreign.append(name)
     return foreign
 
 
@@ -3150,9 +3167,16 @@ _SCHEMA_20_TABLES: dict[str, tuple[tuple[tuple[str, str, bool], ...], frozenset[
 }
 _SCHEMA_20_INDEXES = {
     "idx_run_predecessor_repo_predecessor": "run_predecessor",
+    "idx_session_note_repo_run_note": "session_note",
 }
 _SCHEMA_20_INDEX_SHAPES = {
     "idx_run_predecessor_repo_predecessor": (False, None, ("repo_id", "predecessor_run_id")),
+    "idx_session_note_repo_run_note": (False, None, ("repo_id", "run_id", "note_id")),
+}
+#: The ON DELETE action of each run_predecessor FK is part of schema 20:
+#: the successor's link cascades with it, a continued run is RESTRICTed.
+_SCHEMA_20_FK_ACTIONS = {
+    "run_predecessor": {"repo_id,run_id": "c", "repo_id,predecessor_run_id": "r"},
 }
 
 
@@ -3174,9 +3198,17 @@ def _apply_schema_version_20(cur: Any) -> None:
 
     The link transfers context, not authority: nothing here widens
     :func:`resolve_run`, which still answers only the run's own binding.
+
+    ``idx_session_note_repo_run_note`` serves the paged, cursor-ordered
+    note read (``note_id > cursor ORDER BY note_id``) and replaces schema
+    17's ``idx_session_note_repo_run``, whose (repo_id, run_id) prefix it
+    covers.  The shape guard also pins each FK's ON DELETE action, so a
+    database migrated by an earlier draft of this schema with a CASCADE
+    predecessor FK is refused, not kept.
     """
     foreign = _foreign_relations(
-        cur, _SCHEMA_20_TABLES, _SCHEMA_20_INDEXES, _SCHEMA_20_INDEX_SHAPES
+        cur, _SCHEMA_20_TABLES, _SCHEMA_20_INDEXES, _SCHEMA_20_INDEX_SHAPES,
+        _SCHEMA_20_FK_ACTIONS,
     )
     if foreign:
         raise _pg_migrations.RemoteSchemaMigrationError(
@@ -3199,6 +3231,9 @@ def _apply_schema_version_20(cur: Any) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_run_predecessor_repo_predecessor
             ON run_predecessor(repo_id, predecessor_run_id);
+        CREATE INDEX IF NOT EXISTS idx_session_note_repo_run_note
+            ON session_note(repo_id, run_id, note_id);
+        DROP INDEX IF EXISTS idx_session_note_repo_run;
         """
     )
 
@@ -5661,7 +5696,10 @@ def predecessor_context(
 
     ``next_after_note_id`` / ``next_after_chain_seq`` are the cursors for the
     next page of each list, None when that list is exhausted.  Both lists
-    are append-only, so a cursor never skips or repeats a row.
+    are append-only and their keys are assigned in commit order per run
+    (evidence under the chain lock, notes under the per-run note lock in
+    :func:`write_session_note`), so a cursor never skips or repeats a
+    committed row, even while the predecessor is still writing.
 
     One hop only.  The caller must already have resolved ``run_id`` to its
     own binding (:func:`resolve_run`); this reads the predecessor's rows
@@ -5920,6 +5958,15 @@ def write_session_note(
     """
 
     def body(cur: Any) -> dict:
+        # Notes of one run are written one at a time (agentops#2525): the
+        # identity note_id is assigned at INSERT, so without this two
+        # concurrent writers could commit out of note_id order and a paged
+        # reader holding a cursor past the later id would skip the earlier
+        # one.  Held to the end of the transaction, like the evidence chain's.
+        cur.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (f"session-note:{store.repo_id}:{run_id}",),
+        )
         cur.execute(
             "INSERT INTO session_note(repo_id, run_id, idempotency_key, request_digest, note) "
             "VALUES (%s, %s, %s, %s, %s) "

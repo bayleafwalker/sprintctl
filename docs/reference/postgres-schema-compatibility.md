@@ -86,8 +86,13 @@ predecessor per run, both ends runs of the same repository, never the run
 itself) behind `work.run.register-v1`'s `predecessor_run_id` and
 `work.run.predecessor-context-v1`. It is a table of its own, not a column on
 `run`, so schema 17's exact-shape check of `run` still holds. A run another
-run continues cannot be deleted (`ON DELETE RESTRICT`). Like 17 to 19, it
-refuses a relation already holding its name with another shape.
+run continues cannot be deleted (`ON DELETE RESTRICT`). It also replaces
+schema 17's `idx_session_note_repo_run` with `idx_session_note_repo_run_note`
+(repo_id, run_id, note_id) for the cursor-paged note read. Like 17 to 19, it
+refuses a relation already holding its name with another shape, and for
+`run_predecessor` that shape includes each foreign key's ON DELETE action, so
+a database migrated by an earlier draft with a cascading predecessor key is
+refused rather than kept.
 
 Rollback after the 18 -> 20 migration is a backup restore only. The
 migration has no down step, and a 0.10.x runtime (schema 18) refuses a

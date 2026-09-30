@@ -397,8 +397,12 @@ class TestSchema20Migration:
             with conn.cursor() as cur:
                 cur.execute(f'SET search_path TO "{schema}"')
                 assert pg._foreign_relations(
-                    cur, pg._SCHEMA_20_TABLES, pg._SCHEMA_20_INDEXES, pg._SCHEMA_20_INDEX_SHAPES
+                    cur, pg._SCHEMA_20_TABLES, pg._SCHEMA_20_INDEXES,
+                    pg._SCHEMA_20_INDEX_SHAPES, pg._SCHEMA_20_FK_ACTIONS,
                 ) == []
+                # The cursor index replaces schema 17's (repo_id, run_id) one.
+                cur.execute("SELECT to_regclass('idx_session_note_repo_run') AS old")
+                assert cur.fetchone()["old"] is None
                 # Schema 17's exact-shape guard for run still holds.
                 assert pg._schema_17_foreign_relations(cur) == []
                 # Additive and idempotent: re-applying over its own shape is a no-op.
@@ -437,3 +441,92 @@ class TestSchema20Migration:
                 cur.execute("SET search_path TO public")
                 cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
             store.conn.commit()
+
+    def test_a_cascading_predecessor_fk_from_an_earlier_draft_is_refused(self, store):
+        """Same columns, keys and index as schema 20, but the predecessor FK
+        cascades (sprintctl#114 at f4a4f87): refused, not silently kept."""
+        schema = "migration_20_cascade_" + uuid.uuid4().hex
+        conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+        try:
+            assert_disposable_connection(conn)
+            with conn.cursor() as cur:
+                cur.execute(f'CREATE SCHEMA "{schema}"')
+                cur.execute(f'SET search_path TO "{schema}"')
+                cur.execute(pg.PG_DDL)
+                cur.execute("UPDATE schema_version SET version = 2")
+            conn.commit()
+            pg_migrations.migrate_schema(pg.PgStore(conn, "migration-20-cascade"))
+            with conn.cursor() as cur:
+                cur.execute(f'SET search_path TO "{schema}"')
+                cur.execute("DROP TABLE run_predecessor")
+                cur.execute(
+                    """
+                    CREATE TABLE run_predecessor (
+                        repo_id text NOT NULL,
+                        run_id text NOT NULL,
+                        predecessor_run_id text NOT NULL,
+                        created_at timestamptz NOT NULL DEFAULT now(),
+                        PRIMARY KEY (repo_id, run_id),
+                        CHECK (predecessor_run_id <> run_id),
+                        FOREIGN KEY (repo_id, run_id) REFERENCES run(repo_id, run_id) ON DELETE CASCADE,
+                        FOREIGN KEY (repo_id, predecessor_run_id)
+                            REFERENCES run(repo_id, run_id) ON DELETE CASCADE
+                    );
+                    CREATE INDEX idx_run_predecessor_repo_predecessor
+                        ON run_predecessor(repo_id, predecessor_run_id);
+                    """
+                )
+                cur.execute("UPDATE schema_version SET version = 19")
+            conn.commit()
+            with pytest.raises(pg_migrations.RemoteSchemaMigrationError, match="run_predecessor"):
+                pg_migrations.migrate_schema(pg.PgStore(conn, "migration-20-cascade"))
+            conn.rollback()
+        finally:
+            conn.close()
+            with store.conn.cursor() as cur:
+                cur.execute("SET search_path TO public")
+                cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            store.conn.commit()
+
+
+class TestNoteOrdering:
+    def test_note_writes_of_one_run_are_serialized(self, store):
+        """A second writer waits for the first's commit, so note_id order is
+        commit order and a paged reader's cursor never skips a note."""
+        import threading
+        import time
+
+        app = _app(store)
+        run_id = _run(app, context=_context(**PREDECESSOR))["run_id"]
+        second_conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+        assert_disposable_connection(second_conn)
+        second_store = pg.PgStore(conn=second_conn, repo_id=store.repo_id)
+        result: dict = {}
+        try:
+            with store.conn.cursor() as cur:
+                first = pg.write_session_note(
+                    store, run_id, note="first", idempotency_key=_key(),
+                    request_digest="a" * 64, cur=cur,
+                )
+
+            def second() -> None:
+                result["note"] = pg.write_session_note(
+                    second_store, run_id, note="second", idempotency_key=_key(),
+                    request_digest="b" * 64,
+                )
+                result["at"] = time.monotonic()
+
+            thread = threading.Thread(target=second)
+            thread.start()
+            time.sleep(0.5)
+            assert thread.is_alive(), "the second writer did not wait for the first"
+            committed_at = time.monotonic()
+            store.conn.commit()
+            thread.join(10)
+            assert not thread.is_alive()
+            assert result["at"] >= committed_at
+            assert result["note"]["note_id"] > first["note_id"]
+        finally:
+            store.conn.rollback()
+            second_conn.close()
+
