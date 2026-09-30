@@ -39,13 +39,14 @@ the run's own binding, and the tail is one item).
 
 ## sprintctl
 
-- **Schema 20** (additive): `run.predecessor_run_id text NULL`,
-  `CHECK (predecessor_run_id IS NULL OR predecessor_run_id <> run_id)`,
-  `FOREIGN KEY (repo_id, predecessor_run_id) REFERENCES run(repo_id, run_id)`
-  (MATCH SIMPLE: NULL means "no predecessor"; the repo component makes
-  cross-repository links impossible at the storage layer). Partial index on
+- **Schema 20** (additive): a `run_predecessor(repo_id, run_id PK,
+  predecessor_run_id)` table -- not a column on `run`, so schema 17's
+  exact-shape guard for `run` holds. Both ends are FKs into `run` sharing
+  `repo_id` (cross-repository links cannot be stored); the successor FK
+  cascades, the predecessor FK is RESTRICT (a continued run cannot be
+  deleted); `CHECK (predecessor_run_id <> run_id)`; index on
   `(repo_id, predecessor_run_id)`. Idempotent; refuses a pre-existing
-  `run.predecessor_run_id` column of another shape. Minimum and maximum
+  `run_predecessor` of another shape. Minimum and maximum
   remote schema become 20 (the coordinated-cutover convention of 17/18/19).
 - **`work.run.register-v1`** gains optional `predecessor_run_id`. The
   argument is part of the request digest only when present, so every
@@ -55,8 +56,11 @@ the run's own binding, and the tail is one item).
   the insert): predecessor row in this repo with the caller's
   `workspace_id`, else `predecessor-not-eligible` (malformed ids too). The
   run result echoes `predecessor_run_id` (null when none).
-- **New `work.run.predecessor-context-v1`** `{run_id}` -> `{repo_id, run_id,
-  predecessor_run_id, session_notes[], evidence[]}`. Authority `work:read`,
+- **New `work.run.predecessor-context-v1`** `{run_id, limit?, after_note_id?,
+  after_chain_seq?}` -> `{repo_id, run_id, predecessor_run_id,
+  session_notes[], evidence[], next_after_note_id, next_after_chain_seq}`,
+  each list paged by its own cursor, at most `limit` (default 100, max 500)
+  per list (review of #114, F2). Authority `work:read`,
   read, idempotency not-allowed. Resolves `run_id` to the caller's exact
   binding (`run-not-found`), then reads the recorded predecessor's notes
   (`note_id`, `note`, `created_at`, in `note_id` order) and evidence items
@@ -118,6 +122,9 @@ the run's own binding, and the tail is one item).
    while the shared authority is at 18; cutting 0.11.0 after this PR makes
    18 -> 19 -> 20 one coordinated shared-schema migration instead of two
    cutovers. The authority migration job runs before the new runtime serves.
+   Release checklist: take and verify an authority backup first. Rollback
+   after 18 -> 20 is a restore of that backup plus the 0.10.x runtime,
+   because `MINIMUM_SCHEMA_VERSION` is 20 and there is no down migration.
 2. vuoro PR merged -> vuoro-service release (0.1.82): repin work adapter to
    sprintctl 0.11.0 in `adapter-pins.json`, relock, handshake test version.
 3. vuoro-cloud, ONE generation: `config/compatibility.json` tenant runtime

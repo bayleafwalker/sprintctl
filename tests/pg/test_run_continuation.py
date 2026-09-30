@@ -182,16 +182,66 @@ class TestRegisterWithPredecessor:
             )
             assert error.code == "idempotency-conflict"
 
-    def test_a_request_without_a_predecessor_keeps_its_digest(self, store):
-        """No predecessor is not an argument: an explicit null replays the
-        same run as omitting it (a key stored before this release too)."""
+    def test_callers_omit_the_predecessor_the_catalog_refuses_null(self, store):
+        """Omitting predecessor_run_id is "no predecessor"; the served
+        catalog admits only a string, so an explicit null never reaches the
+        handler (and the replay digest of a request without one is unchanged)."""
+        jsonschema = pytest.importorskip("jsonschema")
+        contract = next(c for c in WORK_OPERATION_CONTRACTS if c.name == "work.run.register-v1")
+        base = {
+            "harness_id": "h", "harness_build": "1", "model_id": "m", "recipe_id": "r",
+            "observed_profile": {"instruction_digest": "sha256:" + "a" * 64, "skill_digests": []},
+            "idempotency_key": "key-00000001",
+        }
+        jsonschema.validate(base, contract.input_schema)
+        jsonschema.validate({**base, "predecessor_run_id": "run_" + "0" * 26}, contract.input_schema)
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({**base, "predecessor_run_id": None}, contract.input_schema)
         app = _app(store)
         key = _key()
         first = _register(app, idempotency_key=key, context=_context(**PREDECESSOR))["run"]
-        again = _register(
-            app, idempotency_key=key, context=_context(**PREDECESSOR), predecessor_run_id=None
-        )["run"]
+        again = _register(app, idempotency_key=key, context=_context(**PREDECESSOR))["run"]
         assert again["run_id"] == first["run_id"]
+
+    def test_naming_a_predecessor_needs_work_read(self, store):
+        app = _app(store)
+        predecessor = _run(app, context=_context(**PREDECESSOR))["run_id"]
+        evidence_only = _context(**SUCCESSOR)
+        evidence_only.identity.authorities = frozenset({"work:evidence"})
+        key = _key()
+        error = _refused(
+            lambda: _register(
+                app, idempotency_key=key, context=evidence_only, predecessor_run_id=predecessor
+            )
+        )
+        assert error.code == "authority-required"
+        # Without a predecessor, work:evidence alone still registers a run.
+        assert _run(app, context=evidence_only)["predecessor_run_id"] is None
+
+    def test_a_continued_run_cannot_be_deleted_from_under_its_successor(self, store):
+        app = _app(store)
+        predecessor = _run(app, context=_context(**PREDECESSOR))["run_id"]
+        successor = _run(
+            app, context=_context(**SUCCESSOR), predecessor_run_id=predecessor
+        )["run_id"]
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            with store.conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM run WHERE repo_id = %s AND run_id = %s",
+                    (store.repo_id, predecessor),
+                )
+        store.conn.rollback()
+        # Deleting the successor drops its link and nothing else.
+        with store.conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM run WHERE repo_id = %s AND run_id = %s", (store.repo_id, successor)
+            )
+            cur.execute(
+                "SELECT count(*) AS n FROM run_predecessor WHERE repo_id = %s AND predecessor_run_id = %s",
+                (store.repo_id, predecessor),
+            )
+            assert cur.fetchone()["n"] == 0
+        store.conn.commit()
 
 
 class TestPredecessorContext:
@@ -223,7 +273,55 @@ class TestPredecessorContext:
         assert _read(app, run_id, context=ctx) == {
             "repo_id": store.repo_id, "run_id": run_id, "predecessor_run_id": None,
             "session_notes": [], "evidence": [],
+            "next_after_note_id": None, "next_after_chain_seq": None,
         }
+
+    def test_the_context_is_read_in_bounded_pages(self, store):
+        app = _app(store)
+        pred_ctx = _context(**PREDECESSOR)
+        predecessor = _run(app, context=pred_ctx)["run_id"]
+        for n in range(3):
+            _note(app, predecessor, f"note {n}", context=pred_ctx)
+        items = [_append(app, predecessor, context=pred_ctx) for _ in range(3)]
+        succ_ctx = _context(**SUCCESSOR)
+        successor = _run(app, context=succ_ctx, predecessor_run_id=predecessor)["run_id"]
+
+        def page(**cursor):
+            return app.invoke(CONTEXT_OPERATION, {"run_id": successor, "limit": 2, **cursor}, succ_ctx)
+
+        first = page()
+        assert [n["note"] for n in first["session_notes"]] == ["note 0", "note 1"]
+        assert first["evidence"] == items[:2]
+        assert first["next_after_note_id"] == first["session_notes"][-1]["note_id"]
+        assert first["next_after_chain_seq"] == 1
+        second = page(
+            after_note_id=first["next_after_note_id"],
+            after_chain_seq=first["next_after_chain_seq"],
+        )
+        assert [n["note"] for n in second["session_notes"]] == ["note 2"]
+        assert second["evidence"] == items[2:]
+        assert second["next_after_note_id"] is None and second["next_after_chain_seq"] is None
+        # A page exactly as long as what is left is not cut.
+        exact = app.invoke(CONTEXT_OPERATION, {"run_id": successor, "limit": 3}, succ_ctx)
+        assert exact["next_after_note_id"] is None and exact["next_after_chain_seq"] is None
+        # The default page holds everything here.
+        whole = _read(app, successor, context=succ_ctx)
+        assert len(whole["session_notes"]) == 3 and len(whole["evidence"]) == 3
+
+    @pytest.mark.parametrize("arguments", [
+        {"limit": 0}, {"limit": 501}, {"after_note_id": -1}, {"after_chain_seq": -1},
+    ])
+    def test_out_of_range_paging_is_refused(self, store, arguments):
+        from sprintctl.application_common import PREDECESSOR_CONTEXT_MAX_LIMIT
+
+        assert PREDECESSOR_CONTEXT_MAX_LIMIT == 500
+        app = _app(store)
+        ctx = _context(**PREDECESSOR)
+        run_id = _run(app, context=ctx)["run_id"]
+        error = _refused(
+            lambda: app.invoke(CONTEXT_OPERATION, {"run_id": run_id, **arguments}, ctx)
+        )
+        assert error.code == "invalid-arguments"
 
     def test_only_the_caller_s_own_run_can_be_read(self, store):
         app = _app(store)

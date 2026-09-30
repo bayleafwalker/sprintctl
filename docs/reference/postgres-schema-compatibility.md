@@ -85,8 +85,16 @@ and ships in the same release as 19, so one deployment migration takes an
 predecessor per run, both ends runs of the same repository, never the run
 itself) behind `work.run.register-v1`'s `predecessor_run_id` and
 `work.run.predecessor-context-v1`. It is a table of its own, not a column on
-`run`, so schema 17's exact-shape check of `run` still holds. Like 17 to 19,
-it refuses a relation already holding its name with another shape.
+`run`, so schema 17's exact-shape check of `run` still holds. A run another
+run continues cannot be deleted (`ON DELETE RESTRICT`). Like 17 to 19, it
+refuses a relation already holding its name with another shape.
+
+Rollback after the 18 -> 20 migration is a backup restore only. The
+migration has no down step, and a 0.10.x runtime (schema 18) refuses a
+schema-20 authority while a 0.11.0 runtime refuses anything below 20
+(`MINIMUM_SCHEMA_VERSION` is 20). Take and verify the authority backup
+before the migration job runs; to roll back, restore it and redeploy the
+0.10.x runtime together.
 
 The handshake also publishes
 `sprintctl-repository-ingest-cursor/v1` with `scope=repository` and

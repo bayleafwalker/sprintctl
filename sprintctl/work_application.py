@@ -1853,12 +1853,20 @@ class WorkApplication:
     def _run_register(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         principal_id, workspace_id = _identity_binding(context)
         client_id, grant_id = _grant_binding(context)
-        # agentops#2525: an absent (or null) predecessor is not an argument at
-        # all, so a register request without one keeps the digest it always
-        # had and replays across this release unchanged.
-        if arguments.get("predecessor_run_id") is None:
-            arguments = {k: v for k, v in arguments.items() if k != "predecessor_run_id"}
+        # agentops#2525: callers omit predecessor_run_id when there is none
+        # (the schema admits only a string), so a register request without
+        # one keeps the digest it always had and replays unchanged.
         predecessor_run_id = arguments.get("predecessor_run_id")
+        if predecessor_run_id is not None:
+            # Eligibility includes work:read (contract section 4); the edge
+            # checks it first, and the owner does not rely on that.
+            authorities = getattr(getattr(context, "identity", None), "authorities", None) or ()
+            if "work:read" not in authorities:
+                raise ApplicationRejection(
+                    "authority-required",
+                    "naming a predecessor run requires the work:read authority",
+                    403,
+                )
         from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
 
         def effect(cur: Any, request_digest: str) -> dict[str, Any]:
@@ -1913,8 +1921,26 @@ class WorkApplication:
         unknown id); the predecessor itself is never resolved to the caller.
         """
         run_id = arguments["run_id"]
+        limit = _positive_int(
+            arguments.get("limit", PREDECESSOR_CONTEXT_DEFAULT_LIMIT), "limit"
+        )
+        if limit > PREDECESSOR_CONTEXT_MAX_LIMIT:
+            raise ApplicationRejection(
+                "invalid-arguments",
+                f"limit must be at most {PREDECESSOR_CONTEXT_MAX_LIMIT}",
+                422,
+            )
+        after_note_id = arguments.get("after_note_id")
+        after_chain_seq = arguments.get("after_chain_seq")
+        if after_note_id is not None:
+            after_note_id = _non_negative_int(after_note_id, "after_note_id")
+        if after_chain_seq is not None:
+            after_chain_seq = _non_negative_int(after_chain_seq, "after_chain_seq")
         self._require_owned_run(run_id, context)
-        continued = self.backend.predecessor_context(self.store, run_id)
+        continued = self.backend.predecessor_context(
+            self.store, run_id, limit=limit,
+            after_note_id=after_note_id, after_chain_seq=after_chain_seq,
+        )
         return {"repo_id": self.repo_id, "run_id": run_id, **continued}
 
     def _evidence_tail(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:

@@ -3165,7 +3165,10 @@ def _apply_schema_version_20(cur: Any) -> None:
     for ``run`` keeps holding.  At most one predecessor per run (the primary
     key); both ends are runs of the same repository (the two foreign keys
     share ``repo_id``), so a cross-repository link cannot be stored at all.
-    A run never continues itself.  The workspace rule (the successor shares
+    A run never continues itself.  Deleting a successor drops its link
+    (CASCADE); deleting a run that another run continues is refused
+    (RESTRICT), so a successor's lineage is never erased from under it.
+    The workspace rule (the successor shares
     the predecessor's ``workspace_id``) is checked by :func:`register_run`
     in the transaction that writes the row; a run's workspace never changes.
 
@@ -3192,7 +3195,7 @@ def _apply_schema_version_20(cur: Any) -> None:
             CHECK (predecessor_run_id <> run_id),
             FOREIGN KEY (repo_id, run_id) REFERENCES run(repo_id, run_id) ON DELETE CASCADE,
             FOREIGN KEY (repo_id, predecessor_run_id)
-                REFERENCES run(repo_id, run_id) ON DELETE CASCADE
+                REFERENCES run(repo_id, run_id) ON DELETE RESTRICT
         );
         CREATE INDEX IF NOT EXISTS idx_run_predecessor_repo_predecessor
             ON run_predecessor(repo_id, predecessor_run_id);
@@ -5644,9 +5647,21 @@ def _predecessor_of(cur: Any, store: PgStore, run_id: str) -> str | None:
     return row["predecessor_run_id"] if row is not None else None
 
 
-def predecessor_context(store: PgStore, run_id: str) -> dict:
-    """The recorded predecessor of ``run_id`` and that predecessor's session
-    notes (``note_id`` order) and evidence items (``chain_seq`` order).
+def predecessor_context(
+    store: PgStore,
+    run_id: str,
+    *,
+    limit: int,
+    after_note_id: int | None = None,
+    after_chain_seq: int | None = None,
+) -> dict:
+    """One page of the recorded predecessor of ``run_id``: up to ``limit``
+    session notes after ``after_note_id`` (``note_id`` order) and up to
+    ``limit`` evidence items after ``after_chain_seq`` (``chain_seq`` order).
+
+    ``next_after_note_id`` / ``next_after_chain_seq`` are the cursors for the
+    next page of each list, None when that list is exhausted.  Both lists
+    are append-only, so a cursor never skips or repeats a row.
 
     One hop only.  The caller must already have resolved ``run_id`` to its
     own binding (:func:`resolve_run`); this reads the predecessor's rows
@@ -5654,29 +5669,42 @@ def predecessor_context(store: PgStore, run_id: str) -> dict:
     A run with no predecessor answers ``predecessor_run_id`` None and empty
     lists.
     """
+    empty = {
+        "session_notes": [], "evidence": [],
+        "next_after_note_id": None, "next_after_chain_seq": None,
+    }
     with store.conn.cursor() as cur:
         predecessor = _predecessor_of(cur, store, run_id)
         if predecessor is None:
-            return {"predecessor_run_id": None, "session_notes": [], "evidence": []}
+            return {"predecessor_run_id": None, **empty}
         cur.execute(
             "SELECT note_id, note, created_at FROM session_note "
-            "WHERE repo_id = %s AND run_id = %s ORDER BY note_id",
-            (store.repo_id, predecessor),
+            "WHERE repo_id = %s AND run_id = %s AND note_id > %s ORDER BY note_id LIMIT %s",
+            (store.repo_id, predecessor, -1 if after_note_id is None else after_note_id, limit + 1),
         )
+        rows = cur.fetchall()
         notes = [
             {
                 "note_id": int(row["note_id"]),
                 "note": row["note"],
                 "created_at": _iso(row["created_at"]) or str(row["created_at"]),
             }
-            for row in cur.fetchall()
+            for row in rows[:limit]
         ]
         cur.execute(
-            "SELECT * FROM evidence_item WHERE repo_id = %s AND run_id = %s ORDER BY chain_seq",
-            (store.repo_id, predecessor),
+            "SELECT * FROM evidence_item WHERE repo_id = %s AND run_id = %s AND chain_seq > %s "
+            "ORDER BY chain_seq LIMIT %s",
+            (store.repo_id, predecessor, -1 if after_chain_seq is None else after_chain_seq, limit + 1),
         )
-        evidence = [_evidence_row(row) for row in cur.fetchall()]
-    return {"predecessor_run_id": predecessor, "session_notes": notes, "evidence": evidence}
+        items = cur.fetchall()
+        evidence = [_evidence_row(row) for row in items[:limit]]
+    return {
+        "predecessor_run_id": predecessor,
+        "session_notes": notes,
+        "evidence": evidence,
+        "next_after_note_id": notes[-1]["note_id"] if len(rows) > limit else None,
+        "next_after_chain_seq": evidence[-1]["chain_seq"] if len(items) > limit else None,
+    }
 
 
 def get_run(store: PgStore, run_id: str) -> dict | None:
