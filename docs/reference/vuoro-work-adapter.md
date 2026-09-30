@@ -33,9 +33,9 @@ no migration or DDL.
 | Maintenance recovery evidence | `work.maintenance.recovery-record` | key equals the immutable recovery record ID; the result always declares `authority=none` |
 | Cutover evidence | `work.pilot.cutover-evidence` | key forbidden |
 | Runs (0.8.0, schema 17) | `work.run.register-v1`, `work.run.resolve-v1` | register requires an `idempotency_key` argument (write-tool ledger); resolve forbids one |
-| Run continuation (schema 20, agentops#2525) | `work.run.predecessor-context-v1`; optional `predecessor_run_id` on `work.run.register-v1` | read, `work:read`, forbids a key; its presence in the catalog is the capability signal for both |
+| Run continuation (0.11.0, schema 20, agentops#2525) | `work.run.predecessor-context-v1`; optional `predecessor_run_id` on `work.run.register-v1` | read, `work:read`, forbids a key; its presence in the catalog is the capability signal for both |
 | Run evidence and notes (0.8.0, schema 17) | `work.evidence.tail-v1`, `work.evidence.append-v1`, `work.session-note.write-v1` | tail forbids a key; append and note writes require an `idempotency_key` argument (write-tool ledger) |
-| Effect intents (schema 19) | `work.effect.propose-v1`, `work.effect.get-v1`, `work.effect.list-proposed-v1`, `work.effect.accept-v1`, `work.effect.reject-v1`, `work.effect.mark-applied-v1` | propose requires an `idempotency_key` argument (write-tool ledger); every other operation forbids one, and a transition is a compare-and-set on `revision` and `canonical_intent_digest` |
+| Effect intents (0.11.0, schema 19) | `work.effect.propose-v1`, `work.effect.get-v1`, `work.effect.list-proposed-v1`, `work.effect.accept-v1`, `work.effect.reject-v1`, `work.effect.mark-applied-v1` | propose requires an `idempotency_key` argument (write-tool ledger); every other operation forbids one, and a transition is a compare-and-set on `revision` and `canonical_intent_digest` |
 | Work leases (0.9.0, schema 18; report-outcome from 0.10.0) | `work.lease.acquire-v1`, `work.lease.heartbeat-v1`, `work.lease.report-outcome-v1` (and its deprecated alias `work.lease.complete-v1`), `work.lease.read-v1` | acquire and report-outcome require an `idempotency_key` argument (write-tool ledger); heartbeat and read forbid one |
 
 Every operation declares JSON Schema 2020-12 input and result contracts,
