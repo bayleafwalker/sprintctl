@@ -62,7 +62,9 @@ class TestSchema19Migration:
                 cur.execute(f'SET search_path TO "{schema}"')
             conn.commit()
             applied = pg_migrations.migrate_schema(pg.PgStore(conn, "migration-19"))
-            assert applied["applied_versions"][-1] == 19 and applied["to_version"] == 19
+            # Schema 20 (agentops#2525) follows 19 in the ladder.
+            assert 19 in applied["applied_versions"]
+            assert applied["to_version"] == pg_migrations.CURRENT_SCHEMA_VERSION
             with conn.cursor() as cur:
                 cur.execute(f'SET search_path TO "{schema}"')
                 assert pg._foreign_relations(

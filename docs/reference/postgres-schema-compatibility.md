@@ -16,9 +16,9 @@ create, alter, or repair schema objects.
 work API as `sprintctl-work/v1`, reports the actual remote schema version, and
 reports the minimum and maximum versions this runtime supports.
 
-The current source tree admits exactly remote schema 19 (schema 18 for
+The current source tree admits exactly remote schema 20 (schema 18 for
 sprintctl 0.9.0 through 0.10.x): `MINIMUM_SCHEMA_VERSION` and
-`MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 19, and
+`MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 20, and
 `remote-schema-version` in `pyproject.toml` records the same value. Any other
 ledger version fails closed before a runtime command is served.
 
@@ -78,6 +78,28 @@ behind the `work.effect.*-v1` operations, and the
 and an accepted intent's acceptance record immutable in storage. Like
 schemas 17 and 18, the migration refuses a relation already holding one of
 its names with another shape.
+
+Schema 20 (agentops#2525, run continuation) is another coordinated cutover
+and ships in the same release as 19, so one deployment migration takes an
+18 authority to 20. It is additive: it adds the `run_predecessor` table (one
+predecessor per run, both ends runs of the same repository, never the run
+itself) behind `work.run.register-v1`'s `predecessor_run_id` and
+`work.run.predecessor-context-v1`. It is a table of its own, not a column on
+`run`, so schema 17's exact-shape check of `run` still holds. A run another
+run continues cannot be deleted (`ON DELETE RESTRICT`). It also replaces
+schema 17's `idx_session_note_repo_run` with `idx_session_note_repo_run_note`
+(repo_id, run_id, note_id) for the cursor-paged note read. Like 17 to 19, it
+refuses a relation already holding its name with another shape, and for
+`run_predecessor` that shape includes each foreign key's ON DELETE action, so
+a database migrated by an earlier draft with a cascading predecessor key is
+refused rather than kept.
+
+Rollback after the 18 -> 20 migration is a backup restore only. The
+migration has no down step, and a 0.10.x runtime (schema 18) refuses a
+schema-20 authority while a 0.11.0 runtime refuses anything below 20
+(`MINIMUM_SCHEMA_VERSION` is 20). Take and verify the authority backup
+before the migration job runs; to roll back, restore it and redeploy the
+0.10.x runtime together.
 
 The handshake also publishes
 `sprintctl-repository-ingest-cursor/v1` with `scope=repository` and

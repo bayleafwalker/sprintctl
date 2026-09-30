@@ -767,6 +767,7 @@ class WorkApplication:
             "work.read.unbound": target._read_unbound,
             "work.run.register-v1": target._run_register,
             "work.run.resolve-v1": target._run_resolve,
+            "work.run.predecessor-context-v1": target._run_predecessor_context,
             "work.evidence.tail-v1": target._evidence_tail,
             "work.evidence.append-v1": target._evidence_append,
             "work.session-note.write-v1": target._session_note_write,
@@ -1852,8 +1853,29 @@ class WorkApplication:
     def _run_register(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         principal_id, workspace_id = _identity_binding(context)
         client_id, grant_id = _grant_binding(context)
+        # agentops#2525: callers omit predecessor_run_id when there is none
+        # (the schema admits only a string), so a register request without
+        # one keeps the digest it always had and replays unchanged.
+        predecessor_run_id = arguments.get("predecessor_run_id")
+        if predecessor_run_id is not None:
+            # Eligibility includes work:read (contract section 4); the edge
+            # checks it first, and the owner does not rely on that.
+            authorities = getattr(getattr(context, "identity", None), "authorities", None) or ()
+            if "work:read" not in authorities:
+                raise ApplicationRejection(
+                    "authority-required",
+                    "naming a predecessor run requires the work:read authority",
+                    403,
+                )
+        from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
 
         def effect(cur: Any, request_digest: str) -> dict[str, Any]:
+            try:
+                return _register(cur, request_digest)
+            except _pg.PredecessorNotEligible as exc:
+                raise ApplicationRejection(exc.code, str(exc), 422) from exc
+
+        def _register(cur: Any, request_digest: str) -> dict[str, Any]:
             row = self.backend.register_run(
                 self.store,
                 principal_id=principal_id,
@@ -1867,6 +1889,7 @@ class WorkApplication:
                 model_id=arguments["model_id"],
                 recipe_id=arguments["recipe_id"],
                 observed_profile=arguments["observed_profile"],
+                predecessor_run_id=predecessor_run_id,
                 cur=cur,
             )
             return {"repo_id": self.repo_id, "run": row}
@@ -1888,6 +1911,37 @@ class WorkApplication:
             "client_id": row["client_id"],
             "grant_id": row["grant_id"],
         }
+
+    def _run_predecessor_context(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        """agentops#2525: the predecessor's notes and evidence, read through
+        the caller's own run.  ``run_id`` must resolve to the caller's exact
+        binding (``run-not-found`` otherwise, the same answer as for an
+        unknown id); the predecessor itself is never resolved to the caller.
+        """
+        run_id = arguments["run_id"]
+        limit = _positive_int(
+            arguments.get("limit", PREDECESSOR_CONTEXT_DEFAULT_LIMIT), "limit"
+        )
+        if limit > PREDECESSOR_CONTEXT_MAX_LIMIT:
+            raise ApplicationRejection(
+                "invalid-arguments",
+                f"limit must be at most {PREDECESSOR_CONTEXT_MAX_LIMIT}",
+                422,
+            )
+        after_note_id = arguments.get("after_note_id")
+        after_chain_seq = arguments.get("after_chain_seq")
+        if after_note_id is not None:
+            after_note_id = _non_negative_int(after_note_id, "after_note_id")
+        if after_chain_seq is not None:
+            after_chain_seq = _non_negative_int(after_chain_seq, "after_chain_seq")
+        self._require_owned_run(run_id, context)
+        continued = self.backend.predecessor_context(
+            self.store, run_id, limit=limit,
+            after_note_id=after_note_id, after_chain_seq=after_chain_seq,
+        )
+        return {"repo_id": self.repo_id, "run_id": run_id, **continued}
 
     def _evidence_tail(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         run_id = arguments["run_id"]

@@ -90,6 +90,7 @@ PUBLISHED_OPERATIONS = (
         "work.reservation.release",
         "work.reservation.reserve",
         "work.reservation.touch",
+        "work.run.predecessor-context-v1",
         "work.run.register-v1",
         "work.run.resolve-v1",
         "work.session-note.write-v1",

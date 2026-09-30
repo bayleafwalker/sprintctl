@@ -28,6 +28,7 @@ frontmatter or a body `Status:` line; execution status lives in sprintctl):
 - [#1219 Recovery Rehearsal brief](1219-recovery-export-plan.md)
 - [S6 ledger checkpoint](2450-s6-ledger-checkpoint.md)
 - [Volatile-context native-hook pilot](volatile-context-native-hook-pilot.md)
+- [Run continuation: serving read_predecessor_context](2026-09-30-run-continuation.md)
 
 Historical phase snapshots remain in `docs/sprint-snapshots/` only as archived
 records. They are not the authoritative backlog source.

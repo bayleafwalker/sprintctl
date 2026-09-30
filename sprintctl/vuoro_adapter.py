@@ -20,6 +20,10 @@ from vuoro_adapter_kit import (
 )
 
 from . import decisions as _decisions
+from .application_common import (
+    PREDECESSOR_CONTEXT_DEFAULT_LIMIT,
+    PREDECESSOR_CONTEXT_MAX_LIMIT,
+)
 from . import effect_intent as _effect
 from . import unbound as _unbound
 from .application import (
@@ -494,6 +498,24 @@ _RUN_RESULT_OBJECT = _object_schema(
         "created_at",
     ),
 )
+_REGISTERED_RUN_RESULT_OBJECT = _object_schema(
+    {
+        **_RUN_RESULT_OBJECT["properties"],
+        # agentops#2525: the run this one continues, null for none.  Not
+        # required: a same-key replay returns the result the ledger stored,
+        # and a result stored before this field existed has no such key.
+        "predecessor_run_id": {"anyOf": [_RUN_ID_SCHEMA, {"type": "null"}]},
+    },
+    required=tuple(_RUN_RESULT_OBJECT["required"]),
+)
+_SESSION_NOTE_RESULT_OBJECT = _object_schema(
+    {
+        "note_id": {"type": "integer", "minimum": 1},
+        "note": {"type": "string"},
+        "created_at": {"type": "string"},
+    },
+    required=("note_id", "note", "created_at"),
+)
 _VALIDITY_WINDOW_SCHEMA = _object_schema(
     {
         "basis": {"enum": ["indefinite", "bounded", "until_inputs_change"]},
@@ -894,6 +916,16 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
                 "recipe_id": {"type": "string", "minLength": 1},
                 "observed_profile": _OBSERVED_PROFILE_SCHEMA,
                 "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
+                # agentops#2525: the run this one continues -- a run of this
+                # repository in the caller's workspace; its principal, client
+                # and grant may differ.  Any other id (unknown, malformed or
+                # another workspace's) is predecessor-not-eligible, one code
+                # for all, so the format is checked there rather than here.
+                # Served with work.run.predecessor-context-v1: a consumer
+                # detects both from that operation's presence in the catalog.
+                # A string or absent: callers omit it for "no predecessor".
+                # Needs work:read as well (authority-required otherwise).
+                "predecessor_run_id": {"type": "string", "minLength": 1},
             },
             required=(
                 "harness_id", "harness_build", "model_id", "recipe_id",
@@ -902,7 +934,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         ),
         _result_schema(
             ("repo_id", "run"),
-            {"repo_id": {"type": "string"}, "run": _RUN_RESULT_OBJECT},
+            {"repo_id": {"type": "string"}, "run": _REGISTERED_RUN_RESULT_OBJECT},
         ),
         "work:evidence",
         "write",
@@ -932,6 +964,49 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         # it, and gating this on one bucket's authority would refuse the
         # others -- see the E2 final report for why this is not "work:read".
         None,
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.run.predecessor-context-v1",
+        _object_schema(
+            {
+                "run_id": _RUN_ID_SCHEMA,
+                # Each list is paged by its own cursor; a page holds at most
+                # `limit` notes and `limit` evidence items.
+                "limit": {
+                    "type": "integer", "minimum": 1,
+                    "maximum": PREDECESSOR_CONTEXT_MAX_LIMIT,
+                    "default": PREDECESSOR_CONTEXT_DEFAULT_LIMIT,
+                },
+                "after_note_id": {"type": "integer", "minimum": 0},
+                "after_chain_seq": {"type": "integer", "minimum": 0},
+            },
+            required=("run_id",),
+        ),
+        # agentops#2525: the predecessor's session notes and evidence, read
+        # through the caller's own run (run-not-found otherwise, as for
+        # work.run.resolve-v1).  One hop; the predecessor's run is never
+        # resolved to the caller.  Continuation transfers context, not
+        # authority, so reading it needs work:read and nothing more.
+        _result_schema(
+            (
+                "repo_id", "run_id", "predecessor_run_id", "session_notes", "evidence",
+                "next_after_note_id", "next_after_chain_seq",
+            ),
+            {
+                "repo_id": {"type": "string"},
+                "run_id": _RUN_ID_SCHEMA,
+                "predecessor_run_id": {"anyOf": [_RUN_ID_SCHEMA, {"type": "null"}]},
+                "session_notes": {"type": "array", "items": _SESSION_NOTE_RESULT_OBJECT},
+                "evidence": {"type": "array", "items": _EVIDENCE_ITEM_SCHEMA},
+                # The cursor for the next page of that list; null when the
+                # list is exhausted (so non-null means this page was cut).
+                "next_after_note_id": {"type": ["integer", "null"], "minimum": 1},
+                "next_after_chain_seq": {"type": ["integer", "null"], "minimum": 0},
+            },
+        ),
+        "work:read",
         "read",
         "not-allowed",
     ),

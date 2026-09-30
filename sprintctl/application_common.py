@@ -59,6 +59,11 @@ SUPPORTED_BATCH_TYPES = (
 # session-note and lease ``*-v1``) are deliberately absent as well: their
 # caller resends with the same idempotency key and the ledger makes that one
 # effect, so the service never replays them on the caller's behalf.
+#: work.run.predecessor-context-v1 pages (agentops#2525): at most this many
+#: session notes and this many evidence items per read, each list paged by
+#: its own cursor (after_note_id, after_chain_seq).
+PREDECESSOR_CONTEXT_DEFAULT_LIMIT = 100
+PREDECESSOR_CONTEXT_MAX_LIMIT = 500
 _ADMIN_SHUTDOWN_IDEMPOTENT_OPERATIONS = frozenset(
     {
         "work.lifecycle.arbitrate",
@@ -83,6 +88,7 @@ _ADMIN_SHUTDOWN_READ_OPERATIONS = frozenset(
         "work.public.item-v1",
         "work.validate.item-status-mutation",
         "work.run.resolve-v1",
+        "work.run.predecessor-context-v1",
         "work.evidence.tail-v1",
         "work.lease.read-v1",
         # Reads: a replay on a fresh connection only selects.

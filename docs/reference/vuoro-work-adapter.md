@@ -33,6 +33,7 @@ no migration or DDL.
 | Maintenance recovery evidence | `work.maintenance.recovery-record` | key equals the immutable recovery record ID; the result always declares `authority=none` |
 | Cutover evidence | `work.pilot.cutover-evidence` | key forbidden |
 | Runs (0.8.0, schema 17) | `work.run.register-v1`, `work.run.resolve-v1` | register requires an `idempotency_key` argument (write-tool ledger); resolve forbids one |
+| Run continuation (schema 20, agentops#2525) | `work.run.predecessor-context-v1`; optional `predecessor_run_id` on `work.run.register-v1` | read, `work:read`, forbids a key; its presence in the catalog is the capability signal for both |
 | Run evidence and notes (0.8.0, schema 17) | `work.evidence.tail-v1`, `work.evidence.append-v1`, `work.session-note.write-v1` | tail forbids a key; append and note writes require an `idempotency_key` argument (write-tool ledger) |
 | Effect intents (schema 19) | `work.effect.propose-v1`, `work.effect.get-v1`, `work.effect.list-proposed-v1`, `work.effect.accept-v1`, `work.effect.reject-v1`, `work.effect.mark-applied-v1` | propose requires an `idempotency_key` argument (write-tool ledger); every other operation forbids one, and a transition is a compare-and-set on `revision` and `canonical_intent_digest` |
 | Work leases (0.9.0, schema 18; report-outcome from 0.10.0) | `work.lease.acquire-v1`, `work.lease.heartbeat-v1`, `work.lease.report-outcome-v1` (and its deprecated alias `work.lease.complete-v1`), `work.lease.read-v1` | acquire and report-outcome require an `idempotency_key` argument (write-tool ledger); heartbeat and read forbid one |
@@ -138,6 +139,41 @@ evidence or ledger storage.
   arguments. The run, evidence item or note also stores the request digest,
   so storage enforces the same rule on its own. A failed write commits
   nothing, so the key can be retried.
+- Continuation (schema 20, agentops#2525; vuoro E2/E3 shared contract
+  section 4). `work.run.register-v1` takes an optional `predecessor_run_id`:
+  a run of this repository in the caller's workspace, whose principal,
+  client and grant may differ. Callers omit it for "no predecessor"; the
+  schema admits only a string. Naming one needs `work:read` as well as
+  `work:evidence` (`authority-required`, 403). Anything else (unknown,
+  malformed or another workspace's run) is `predecessor-not-eligible` (422),
+  one code and one message for all, and writes nothing. The argument counts
+  toward the request digest only when present, so the same key naming
+  another predecessor (or none) is `idempotency-conflict`, and a request
+  without one keeps its earlier digest. The run result echoes
+  `predecessor_run_id`.
+- `work.run.predecessor-context-v1` (`work:read`) takes the caller's own
+  `run_id`, resolved to its exact binding (`run-not-found` otherwise), and
+  returns `predecessor_run_id` with one page of that predecessor's session
+  notes (`note_id` order) and evidence items (`chain_seq` order). Each list
+  is paged by its own cursor: at most `limit` (default 100, maximum 500)
+  entries after `after_note_id` / `after_chain_seq`, with
+  `next_after_note_id` / `next_after_chain_seq` set to the next cursor when
+  more remain and null when the list is exhausted. A run without a
+  predecessor returns null and empty lists. Notes of one run are written
+  one at a time (a per-run lock, like the evidence chain's), so `note_id`
+  order is commit order and a cursor never skips a note even while the
+  predecessor is still writing. One hop only. The predecessor's
+  run never resolves to the successor, so continuation transfers context,
+  not authority.
+- **Confidentiality boundary.** Through continuation, any principal in the
+  workspace holding `work:read` and `work:evidence` can register a run that
+  names another principal's run (run ids are visible to it, for example
+  through `work.lease.read-v1`) and read all of that run's session notes
+  and evidence. There is no opt-out. Session notes and evidence are
+  therefore readable workspace-wide within the repository and must not
+  hold secrets or anything the workspace's other members may not see.
+- A run that another run continues cannot be deleted (`ON DELETE
+  RESTRICT`); deleting the successor removes only its link.
 
 ## Work leases
 
