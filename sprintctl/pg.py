@@ -15,6 +15,7 @@ path is used for writes.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import logging
@@ -5391,8 +5392,19 @@ class EvidenceChainConflict(ValueError):
     entry digest, or an ``item_id`` the run's chain already holds."""
 
 
+#: The shared ledger contract's name for a key reused with another request
+#: (agentops#253 R4 lease semantics 6, ``IDEMPOTENCY_KEY_REUSED``), published
+#: on sprintctl's wire as ``idempotency-conflict`` (HTTP 409).
+IDEMPOTENCY_KEY_REUSED = "idempotency-conflict"
+
+
 class IdempotencyConflict(ValueError):
-    """This idempotency key was already committed with a different request digest."""
+    """This idempotency key was already committed with a different request digest.
+
+    ``code`` is the published wire code, :data:`IDEMPOTENCY_KEY_REUSED`.
+    """
+
+    code = IDEMPOTENCY_KEY_REUSED
 
 
 def _mint_run_id() -> str:
@@ -5781,6 +5793,129 @@ def _record_idempotent_result(
     return row["result"]
 
 
+def _claim_ledger_row(
+    cur: Any,
+    store: PgStore,
+    *,
+    workspace_id: str,
+    principal_id: str,
+    tool: str,
+    key: str,
+    request_digest: str,
+) -> tuple[bool, dict | None]:
+    """Claim the ledger key in the open transaction, or read what holds it.
+
+    Returns ``(True, None)`` when this transaction now holds the key (the row
+    carries a ``null`` result until :func:`_record_idempotent_result` fills it
+    in the same transaction).  ``INSERT ... ON CONFLICT DO NOTHING`` makes a
+    concurrent claimant of the same key block until the holder's transaction
+    ends, so after a rollback it claims the key itself and after a commit it
+    reads the committed row: ``(False, {"request_digest", "result"})``.
+    """
+    ledger_key = (store.repo_id, workspace_id, principal_id, tool, key)
+    cur.execute(
+        "INSERT INTO work_idempotency_ledger(repo_id, workspace_id, principal_id, "
+        "tool, idempotency_key, request_digest, result) "
+        "VALUES (%s, %s, %s, %s, %s, %s, 'null'::jsonb) "
+        "ON CONFLICT (repo_id, workspace_id, principal_id, tool, idempotency_key) "
+        "DO NOTHING RETURNING request_digest",
+        (*ledger_key, request_digest),
+    )
+    if cur.fetchone() is not None:
+        return True, None
+    cur.execute(
+        "SELECT request_digest, result FROM work_idempotency_ledger "
+        "WHERE repo_id = %s AND workspace_id = %s AND principal_id = %s "
+        "AND tool = %s AND idempotency_key = %s",
+        ledger_key,
+    )
+    stored = cur.fetchone()
+    assert stored is not None
+    return False, {"request_digest": stored["request_digest"], "result": stored["result"]}
+
+
+@dataclass(frozen=True)
+class LedgerEntry:
+    """One idempotency-ledger entry, as the shared protocol hands it back.
+
+    ``replayed`` is True when the entry was already committed (``result`` is
+    then the stored result); False when this ``begin`` claimed the key for its
+    own transaction (``result`` is None until ``complete``).  An immutable
+    value: a durable ledger returns a fresh object per read, so callers
+    compare entries by equality, never by identity.
+    """
+
+    workspace_id: str
+    principal_id: str
+    tool: str
+    key: str
+    request_digest: str
+    result: dict | None
+    replayed: bool
+
+
+class PgIdempotencyLedger:
+    """sprintctl's PostgreSQL ledger in the shared protocol's shape.
+
+    ``begin(workspace_id, principal_id, tool, key, request_digest)`` and
+    ``complete(entry, result)`` run in ``store.conn``'s current transaction and
+    never commit or roll it back: the caller owns the transaction, and a
+    rollback frees the key (no entry is ever committed without its result).
+    It is the same ledger :func:`idempotent_write` uses, so each replays what
+    the other committed.
+    """
+
+    def __init__(self, store: PgStore) -> None:
+        self.store = store
+
+    def begin(
+        self, workspace_id: str, principal_id: str, tool: str, key: str, request_digest: str
+    ) -> LedgerEntry:
+        """Claim the key for this transaction, or return the committed entry.
+
+        Raises :class:`IdempotencyConflict` (``code`` ``IDEMPOTENCY_KEY_REUSED``)
+        when the key is held with another request digest.
+        """
+        with self.store.conn.cursor() as cur:
+            claimed, stored = _claim_ledger_row(
+                cur, self.store, workspace_id=workspace_id, principal_id=principal_id,
+                tool=tool, key=key, request_digest=request_digest,
+            )
+        if not claimed:
+            assert stored is not None
+            if stored["request_digest"] != request_digest:
+                raise IdempotencyConflict(
+                    "this idempotency_key was already used with different arguments"
+                )
+            result = stored["result"]
+        else:
+            result = None
+        return LedgerEntry(
+            workspace_id=workspace_id, principal_id=principal_id, tool=tool, key=key,
+            request_digest=request_digest, result=result, replayed=result is not None,
+        )
+
+    def complete(self, entry: LedgerEntry, result: dict) -> LedgerEntry:
+        """Record ``result`` on the entry this transaction began; return it completed."""
+        if entry.replayed:
+            raise ValueError("a replayed ledger entry is already complete")
+        with self.store.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE work_idempotency_ledger SET result = %s::jsonb "
+                "WHERE repo_id = %s AND workspace_id = %s AND principal_id = %s "
+                "AND tool = %s AND idempotency_key = %s AND request_digest = %s "
+                "RETURNING result",
+                (
+                    json.dumps(result), self.store.repo_id, entry.workspace_id,
+                    entry.principal_id, entry.tool, entry.key, entry.request_digest,
+                ),
+            )
+            row = cur.fetchone()
+        if row is None:
+            raise ValueError("no ledger entry was begun in this transaction for that key")
+        return dataclasses.replace(entry, result=row["result"])
+
+
 def idempotent_write(
     store: PgStore,
     *,
@@ -5796,9 +5931,9 @@ def idempotent_write(
     The E2/E3 shared contract section 5: the first write wins atomically,
     and a racing writer gets the stored row back.
 
-    1. ``INSERT ... ON CONFLICT DO NOTHING RETURNING`` claims the key.  A
-       concurrent claimant of the same key blocks on this insert until the
-       holder's transaction ends, so at most one caller ever runs the effect.
+    1. :func:`_claim_ledger_row` claims the key.  A concurrent claimant of
+       the same key blocks on its insert until the holder's transaction
+       ends, so at most one caller ever runs the effect.
     2. The claimant runs ``effect(cur)`` on the same cursor, then records
        the result in the claimed row, then commits.  A failure anywhere --
        a domain refusal from the effect, a crash before the result is
@@ -5808,19 +5943,17 @@ def idempotent_write(
     3. A caller whose insert found a committed row reads it back: the same
        digest replays the stored result, a different one raises
        :class:`IdempotencyConflict`.
+
+    :class:`PgIdempotencyLedger` is the same ledger in the shared protocol's
+    ``begin``/``complete`` shape, for callers that own their transaction.
     """
-    ledger_key = (store.repo_id, workspace_id, principal_id, tool, key)
     try:
         with store.conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO work_idempotency_ledger(repo_id, workspace_id, principal_id, "
-                "tool, idempotency_key, request_digest, result) "
-                "VALUES (%s, %s, %s, %s, %s, %s, 'null'::jsonb) "
-                "ON CONFLICT (repo_id, workspace_id, principal_id, tool, idempotency_key) "
-                "DO NOTHING RETURNING request_digest",
-                (*ledger_key, request_digest),
+            claimed, stored = _claim_ledger_row(
+                cur, store, workspace_id=workspace_id, principal_id=principal_id,
+                tool=tool, key=key, request_digest=request_digest,
             )
-            if cur.fetchone() is not None:
+            if claimed:
                 stored = {
                     "request_digest": request_digest,
                     "result": _record_idempotent_result(
@@ -5828,19 +5961,11 @@ def idempotent_write(
                         tool=tool, key=key, result=effect(cur),
                     ),
                 }
-            else:
-                cur.execute(
-                    "SELECT request_digest, result FROM work_idempotency_ledger "
-                    "WHERE repo_id = %s AND workspace_id = %s AND principal_id = %s "
-                    "AND tool = %s AND idempotency_key = %s",
-                    ledger_key,
-                )
-                stored = cur.fetchone()
-                assert stored is not None
         store.conn.commit()
     except Exception:
         store.conn.rollback()
         raise
+    assert stored is not None
     if stored["request_digest"] != request_digest:
         raise IdempotencyConflict("this idempotency_key was already used with different arguments")
     return stored["result"]

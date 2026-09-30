@@ -1847,7 +1847,7 @@ class WorkApplication:
                 key=key, request_digest=digest, effect=lambda cur: effect(cur, digest),
             )
         except _pg.IdempotencyConflict as exc:
-            raise ApplicationRejection("idempotency-conflict", str(exc), 409) from exc
+            raise ApplicationRejection(exc.code, str(exc), 409) from exc
 
     def _run_register(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         principal_id, workspace_id = _identity_binding(context)
