@@ -7449,8 +7449,11 @@ def list_proposed_effect_intents(
     """Private state-selected read; served capabilities select the state."""
     if state not in {"proposed", "accepted"}:
         raise ValueError("effect listing supports only proposed or accepted")
-    sql = "SELECT * FROM work_effect_intent WHERE repo_id = %s AND state = %s"
-    params: list[Any] = [store.repo_id, state]
+    sql = {
+        "proposed": "SELECT * FROM work_effect_intent WHERE repo_id = %s AND state = 'proposed'",
+        "accepted": "SELECT * FROM work_effect_intent WHERE repo_id = %s AND state = 'accepted'",
+    }[state]
+    params: list[Any] = [store.repo_id]
     if item_id is not None:
         sql += " AND work_item_id = %s"
         params.append(item_id)

@@ -2231,7 +2231,7 @@ class WorkApplication:
         return self._effect_intent_result(intent)
 
     def _effect_list_proposed(
-        self, arguments: dict[str, Any], _context: InvocationContext, *, state="proposed"
+        self, arguments: dict[str, Any], _context: InvocationContext, *, state: str = "proposed"
     ) -> dict[str, Any]:
         _effect_arguments(arguments, frozenset({"item_id", "limit"}))
         item_id = _optional_positive_int(arguments.get("item_id"), "item_id")
@@ -2249,7 +2249,7 @@ class WorkApplication:
             ),
         }
 
-    def _effect_list_accepted(self, arguments, context):
+    def _effect_list_accepted(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         return self._effect_list_proposed(arguments, context, state="accepted")
 
     def _effect_accept(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
