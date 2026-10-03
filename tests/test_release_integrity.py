@@ -46,7 +46,7 @@ class TestReleaseIntegrity:
 
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
-        assert pyproject["project"]["version"] == __version__ == "0.11.0"
+        assert pyproject["project"]["version"] == __version__ == "0.12.0"
         assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 20
         assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 20
 
