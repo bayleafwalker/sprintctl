@@ -29,10 +29,12 @@ AUTHORITY_MARK_APPLIED = "work.effect.mark-applied"
 #: Reading an intent (its diff included) is its own capability too.
 AUTHORITY_GET = "work.effect.get"
 AUTHORITY_LIST_PROPOSED = "work.effect.list-proposed"
+AUTHORITY_LIST_ACCEPTED = "work.effect.list-accepted"
 
 OPERATION_PROPOSE = "work.effect.propose-v1"
 OPERATION_GET = "work.effect.get-v1"
 OPERATION_LIST_PROPOSED = "work.effect.list-proposed-v1"
+OPERATION_LIST_ACCEPTED = "work.effect.list-accepted-v1"
 OPERATION_ACCEPT = "work.effect.accept-v1"
 OPERATION_REJECT = "work.effect.reject-v1"
 OPERATION_MARK_APPLIED = "work.effect.mark-applied-v1"
@@ -45,6 +47,7 @@ EFFECT_OPERATION_AUTHORITIES: Mapping[str, str] = {
     OPERATION_PROPOSE: AUTHORITY_PROPOSE,
     OPERATION_GET: AUTHORITY_GET,
     OPERATION_LIST_PROPOSED: AUTHORITY_LIST_PROPOSED,
+    OPERATION_LIST_ACCEPTED: AUTHORITY_LIST_ACCEPTED,
     OPERATION_ACCEPT: AUTHORITY_ACCEPT,
     OPERATION_REJECT: AUTHORITY_REJECT,
     OPERATION_MARK_APPLIED: AUTHORITY_MARK_APPLIED,

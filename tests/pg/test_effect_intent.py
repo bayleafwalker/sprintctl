@@ -62,11 +62,12 @@ _CONTRACTS = {contract.name: contract for contract in WORK_OPERATION_CONTRACTS}
 PROPOSE = "work.effect.propose-v1"
 GET = "work.effect.get-v1"
 LIST_PROPOSED = "work.effect.list-proposed-v1"
+LIST_ACCEPTED = "work.effect.list-accepted-v1"
 ACCEPT = "work.effect.accept-v1"
 REJECT = "work.effect.reject-v1"
 MARK_APPLIED = "work.effect.mark-applied-v1"
 
-_READ_EFFECTS = {"work:read", "work.effect.get", "work.effect.list-proposed"}
+_READ_EFFECTS = {"work:read", "work.effect.get", "work.effect.list-proposed", "work.effect.list-accepted"}
 _ORDINARY_WORK = {"work:read", "work:write", "work:claim", "work:lifecycle", "work:evidence", "work:sprint"}
 
 
@@ -617,3 +618,38 @@ class TestSeparateFromSettlement:
         after = _get(store, intent["intent_id"])
         assert after["state"] == "proposed" and after["acceptance"] is None
         assert intent["intent_id"] in {i["intent_id"] for i in _list_proposed(store)}
+
+
+class TestAcceptedDiscovery:
+    def test_fresh_application_discovers_accepted_after_restart(self, store):
+        (item,) = _items(store)
+        run = _run(store, PROPOSER)
+        waiting = _propose(store, item, run)
+        accepted = _propose(store, item, run)
+        _accept(store, accepted)
+        # A new connection and application carry no session-held IDs.
+        sibling = _sibling(store)
+        try:
+            listed = _invoke(sibling, LIST_ACCEPTED, {"item_id": item}, ACCEPTOR)["intents"]
+            assert [row["intent_id"] for row in listed] == [accepted["intent_id"]]
+            assert all(row["state"] == "accepted" for row in listed)
+            assert [row["intent_id"] for row in _list_proposed(sibling) if row["item_id"] == item] == [waiting["intent_id"]]
+            _mark_applied(sibling, accepted)
+            assert _invoke(sibling, LIST_ACCEPTED, {"item_id": item}, ACCEPTOR)["intents"] == []
+        finally:
+            sibling.conn.close()
+
+    def test_proposed_read_capability_cannot_discover_accepted(self, store):
+        reader = _context("github:1000:0", {"work.effect.list-proposed"})
+        error = _refused(lambda: _invoke(store, LIST_ACCEPTED, {}, reader))
+        assert (error.code, error.http_status) == ("authority-required", 403)
+
+    def test_accepted_discovery_respects_item_filter_and_limit(self, store):
+        first, second = _items(store, count=2)
+        run = _run(store, PROPOSER)
+        a = _propose(store, first, run)
+        b = _propose(store, second, run)
+        _accept(store, a)
+        _accept(store, b)
+        listed = _invoke(store, LIST_ACCEPTED, {"item_id": second, "limit": 1}, ACCEPTOR)["intents"]
+        assert [row["intent_id"] for row in listed] == [b["intent_id"]]

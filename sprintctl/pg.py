@@ -7443,11 +7443,14 @@ def get_effect_intent(store: PgStore, intent_id: str) -> dict | None:
 
 
 def list_proposed_effect_intents(
-    store: PgStore, *, item_id: int | None = None, limit: int = _effect_intent.LIST_DEFAULT_LIMIT
+    store: PgStore, *, item_id: int | None = None, limit: int = _effect_intent.LIST_DEFAULT_LIMIT,
+    state: str = "proposed",
 ) -> list[dict]:
-    """Intents still awaiting a decision, oldest first."""
-    sql = "SELECT * FROM work_effect_intent WHERE repo_id = %s AND state = 'proposed'"
-    params: list[Any] = [store.repo_id]
+    """Private state-selected read; served capabilities select the state."""
+    if state not in {"proposed", "accepted"}:
+        raise ValueError("effect listing supports only proposed or accepted")
+    sql = "SELECT * FROM work_effect_intent WHERE repo_id = %s AND state = %s"
+    params: list[Any] = [store.repo_id, state]
     if item_id is not None:
         sql += " AND work_item_id = %s"
         params.append(item_id)

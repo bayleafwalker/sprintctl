@@ -454,6 +454,7 @@ applies nothing. The operations are served only by the PostgreSQL authority.
 |---|---|---|
 | `work.effect.propose-v1` | `work.effect.propose` | record a proposal bound to the caller's own run and an existing item; idempotent per `idempotency_key` |
 | `work.effect.get-v1` | `work.effect.get` | read one intent |
+| `work.effect.list-accepted-v1` | `work.effect.list-accepted` | accepted intents awaiting application, oldest first; optional `item_id` and `limit`; durable restart discovery |
 | `work.effect.list-proposed-v1` | `work.effect.list-proposed` | intents still `proposed`, oldest first; optional `item_id` and `limit` |
 | `work.effect.accept-v1` | `work.effect.accept` | `proposed` to `accepted` |
 | `work.effect.reject-v1` | `work.effect.reject` | `proposed` to `rejected`; requires a `reason` |
