@@ -1210,6 +1210,25 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "not-allowed",
     ),
     WorkOperationContract(
+        _effect.OPERATION_LIST_ACCEPTED,
+        _object_schema(
+            {
+                "item_id": {"type": "integer", "minimum": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": _effect.LIST_MAX_LIMIT},
+            }
+        ),
+        _result_schema(
+            ("repo_id", "intents"),
+            {
+                "repo_id": {"type": "string"},
+                "intents": {"type": "array", "items": _EFFECT_INTENT_SCHEMA},
+            },
+        ),
+        _effect.AUTHORITY_LIST_ACCEPTED,
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
         _effect.OPERATION_ACCEPT,
         _object_schema(_EFFECT_BINDING_PROPERTIES, required=_EFFECT_BINDING_REQUIRED),
         _EFFECT_RESULT,

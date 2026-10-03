@@ -27,6 +27,7 @@ PUBLISHED_OPERATIONS = (
         "work.decision.record",
         "work.effect.accept-v1",
         "work.effect.get-v1",
+        "work.effect.list-accepted-v1",
         "work.effect.list-proposed-v1",
         "work.effect.mark-applied-v1",
         "work.effect.propose-v1",

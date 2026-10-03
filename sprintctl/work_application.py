@@ -781,6 +781,7 @@ class WorkApplication:
             _effect.OPERATION_PROPOSE: target._effect_propose,
             _effect.OPERATION_GET: target._effect_get,
             _effect.OPERATION_LIST_PROPOSED: target._effect_list_proposed,
+            _effect.OPERATION_LIST_ACCEPTED: target._effect_list_accepted,
             _effect.OPERATION_ACCEPT: target._effect_accept,
             _effect.OPERATION_REJECT: target._effect_reject,
             _effect.OPERATION_MARK_APPLIED: target._effect_mark_applied,
@@ -2230,7 +2231,7 @@ class WorkApplication:
         return self._effect_intent_result(intent)
 
     def _effect_list_proposed(
-        self, arguments: dict[str, Any], _context: InvocationContext
+        self, arguments: dict[str, Any], _context: InvocationContext, *, state: str = "proposed"
     ) -> dict[str, Any]:
         _effect_arguments(arguments, frozenset({"item_id", "limit"}))
         item_id = _optional_positive_int(arguments.get("item_id"), "item_id")
@@ -2244,9 +2245,12 @@ class WorkApplication:
         return {
             "repo_id": self.repo_id,
             "intents": self.backend.list_proposed_effect_intents(
-                self.store, item_id=item_id, limit=limit
+                self.store, item_id=item_id, limit=limit, state=state
             ),
         }
+
+    def _effect_list_accepted(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        return self._effect_list_proposed(arguments, context, state="accepted")
 
     def _effect_accept(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         _effect_arguments(arguments, frozenset({"intent_id", "revision", "canonical_intent_digest"}))

@@ -62,11 +62,12 @@ _CONTRACTS = {contract.name: contract for contract in WORK_OPERATION_CONTRACTS}
 PROPOSE = "work.effect.propose-v1"
 GET = "work.effect.get-v1"
 LIST_PROPOSED = "work.effect.list-proposed-v1"
+LIST_ACCEPTED = "work.effect.list-accepted-v1"
 ACCEPT = "work.effect.accept-v1"
 REJECT = "work.effect.reject-v1"
 MARK_APPLIED = "work.effect.mark-applied-v1"
 
-_READ_EFFECTS = {"work:read", "work.effect.get", "work.effect.list-proposed"}
+_READ_EFFECTS = {"work:read", "work.effect.get", "work.effect.list-proposed", "work.effect.list-accepted"}
 _ORDINARY_WORK = {"work:read", "work:write", "work:claim", "work:lifecycle", "work:evidence", "work:sprint"}
 
 
@@ -617,3 +618,69 @@ class TestSeparateFromSettlement:
         after = _get(store, intent["intent_id"])
         assert after["state"] == "proposed" and after["acceptance"] is None
         assert intent["intent_id"] in {i["intent_id"] for i in _list_proposed(store)}
+
+
+class TestAcceptedDiscovery:
+    def test_fresh_application_discovers_accepted_after_restart(self, store):
+        (item,) = _items(store)
+        run = _run(store, PROPOSER)
+        waiting = _propose(store, item, run)
+        accepted = _propose(store, item, run)
+        _accept(store, accepted)
+        # A new connection and application carry no session-held IDs.
+        sibling = _sibling(store)
+        try:
+            listed = _invoke(sibling, LIST_ACCEPTED, {"item_id": item}, ACCEPTOR)["intents"]
+            assert [row["intent_id"] for row in listed] == [accepted["intent_id"]]
+            assert all(row["state"] == "accepted" for row in listed)
+            assert [row["intent_id"] for row in _list_proposed(sibling) if row["item_id"] == item] == [waiting["intent_id"]]
+            _mark_applied(sibling, listed[0])
+            assert _invoke(sibling, LIST_ACCEPTED, {"item_id": item}, ACCEPTOR)["intents"] == []
+        finally:
+            sibling.conn.close()
+
+    def test_proposed_read_capability_cannot_discover_accepted(self, store):
+        reader = _context("github:1000:0", {"work.effect.list-proposed"})
+        error = _refused(lambda: _invoke(store, LIST_ACCEPTED, {}, reader))
+        assert (error.code, error.http_status) == ("authority-required", 403)
+
+
+    def test_accepted_only_reader_does_not_inherit_proposed_read(self, store):
+        reader = _context("github:1001:0", {"work.effect.list-accepted"})
+        assert isinstance(_invoke(store, LIST_ACCEPTED, {}, reader)["intents"], list)
+        error = _refused(lambda: _invoke(store, LIST_PROPOSED, {}, reader))
+        assert (error.code, error.http_status) == ("authority-required", 403)
+
+    def test_accepted_discovery_respects_item_filter_limit_and_creation_order(self, store):
+        first, second = _items(store, count=2)
+        run = _run(store, PROPOSER)
+        other = _propose(store, first, run)
+        oldest = _propose(store, second, run)
+        newest = _propose(store, second, run)
+        # Acceptance order intentionally differs from proposal creation order.
+        _accept(store, newest)
+        _accept(store, other)
+        _accept(store, oldest)
+        listed = _invoke(store, LIST_ACCEPTED, {"item_id": second}, ACCEPTOR)["intents"]
+        assert [row["intent_id"] for row in listed] == [oldest["intent_id"], newest["intent_id"]]
+        limited = _invoke(store, LIST_ACCEPTED, {"item_id": second, "limit": 1}, ACCEPTOR)["intents"]
+        assert [row["intent_id"] for row in limited] == [oldest["intent_id"]]
+
+    @pytest.mark.parametrize("arguments", [{"limit": 0}, {"limit": 1001},
+                                          {"state": "proposed"}, {"state": "applied"}])
+    def test_discovery_rejects_bad_bounds_and_wire_state(self, store, arguments):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(arguments, _CONTRACTS[LIST_ACCEPTED].input_schema)
+        error = _refused(lambda: _app(store).invoke(LIST_ACCEPTED, arguments, ACCEPTOR))
+        assert (error.code, error.http_status) == ("invalid-arguments", 422)
+
+    def test_accepted_listing_is_repository_scoped_with_and_without_item_filter(self, store):
+        item, run, intent = _fresh(store)
+        _accept(store, intent)
+        other = _sibling(store)
+        other.repo_id = "accepted-other-" + uuid.uuid4().hex
+        try:
+            assert _invoke(other, LIST_ACCEPTED, {}, ACCEPTOR)["intents"] == []
+            assert _invoke(other, LIST_ACCEPTED, {"item_id": item}, ACCEPTOR)["intents"] == []
+        finally:
+            other.conn.close()
