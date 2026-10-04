@@ -174,6 +174,26 @@ not a revived hosted resource mutation; any successor reference requires ordinar
 source ownership. Implementers must cite and verify that outcome carrier before
 claiming recovery of already-applied effects; no such recovery is inferred here.
 
+## Joint source-plan amendment (2026-10-04)
+
+The later joint Vuoro source plan governs bounded source implementation details;
+it does not ratify this proposed design:
+`docs/plans/2026-10-04-resource-owner-source-plan.md` at merged
+`3b4c33d4a61c026412c91ec371bc491be58c3331` (Vuoro PR176). It explicitly
+supersedes any unconditional interpretation of replay in this document. Same-principal
+receipt replay requires current epoch/environment/repository membership and
+either currently retaining every mutation/read grant the original operation
+required, or currently holding explicit `work.resource.read-decisions`. If neither
+condition holds, the request receives a private transport denial that creates no
+ledger entry, replaces no binding and charges no quota. The original-operation path authorizes
+same-key replay only, not private decision get/enumeration. New unrecorded
+conflicts require currently held original operation grants; decision-read alone cannot create
+a command decision. Command digest class depends on bytes alone, never domain
+schema validity; exact request/response bytes remain owner-bound. See that plan
+for the ordered verifier, internal admission bridge, role fence and protected
+carrier gaps. This source-plan amendment is not ratification, implementation,
+full resource qualification, a grant or production deployment.
+
 ## Independent rejected-command decision ledger
 
 The first binding key is `(environment, repository, immutable principal,
