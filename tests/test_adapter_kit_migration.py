@@ -21,10 +21,10 @@ from vuoro_adapter_kit import (
 ROOT = Path(__file__).parents[1]
 ADAPTER_URL = (
     "https://github.com/bayleafwalker/vuoro/releases/download/"
-    "vuoro-adapter-kit-v0.1.0/"
-    "vuoro_adapter_kit-0.1.0-py3-none-any.whl"
+    "vuoro-adapter-kit-v0.2.0/"
+    "vuoro_adapter_kit-0.2.0-py3-none-any.whl"
 )
-ADAPTER_DIGEST = "0037898a4c9f01720a42302365b0172ecd203732070326ea2abdf549a44bf0c2"
+ADAPTER_DIGEST = "4bdf13bd09c8ea0c889f5cfb479327885163413a64ed690a9ba1b8d82dfaa163"
 
 
 def test_shared_schema_metadata_and_owner_contract_order_are_preserved() -> None:
