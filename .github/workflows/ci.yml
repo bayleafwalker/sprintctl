@@ -37,7 +37,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
 
       - name: Sync dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --extra served
 
       - name: Run full test suite
         # item #2506: wall-clock timing assertions in tests/test_perf.py are

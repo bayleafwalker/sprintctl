@@ -1,0 +1,99 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.s4.native-evidence-intake",
+  "contract_ref": {
+    "doc_id": "agentops-s4-evidence-home-preparation",
+    "revision": "git:49ac361481d185a2b0c3e18899d19756096473d1"
+  },
+  "implementation_sha": "f6936f410f41a7dfaf7e5a1390c552eb90954874",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary SQLite producer and disposable PostgreSQL16 authority",
+    "isolation": "producer file-lock; native transaction and advisory run-chain lock; no live profile/DB",
+    "tool_versions": {
+      "python": "3.12.14",
+      "postgresql": "16.15"
+    }
+  },
+  "execution": {
+    "histories": 11,
+    "bounds": {
+      "new_offline_cases": 19,
+      "full_pg_tests_passed": 690,
+      "focused_transport_tests_passed": 74,
+      "independent_connection_races": 1,
+      "full_unit_tests_passed": 1705,
+      "full_unit_skipped": 690,
+      "focused_route_tests_passed": 88,
+      "final_diagnostic_tests_passed": 40,
+      "final_review_fix_tests_passed": 97,
+      "final_native_carrier_tests_passed": 11
+    },
+    "faults_exercised": [
+      "commit-before-reply-loss",
+      "stale-tail",
+      "invalid-predecessor",
+      "wrong-grant",
+      "idempotency-conflict",
+      "unrelated-receipt",
+      "interrupted-attempt",
+      "two-producer-contention",
+      "unavailable-native-status-after-batch-commit",
+      "corrected-request-queue-order"
+    ]
+  },
+  "claims": [
+    {
+      "property": "offline intent has no effective evidence authority",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_native_evidence_intake.py",
+        "tests/test_native_evidence_intake.py"
+      ]
+    },
+    {
+      "property": "duplicate/lost-reply replay retains one native key effect",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/pg/test_native_evidence_intake.py",
+        "tests/test_native_evidence_intake.py"
+      ]
+    },
+    {
+      "property": "failed chain effect permits explicit tail-only correction with original bytes retained",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_native_evidence_intake.py",
+        "tests/test_native_evidence_intake.py"
+      ]
+    },
+    {
+      "property": "unrelated or mismatched receipt never confirms expected-tail intent",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_native_evidence_intake.py",
+        "tests/test_native_evidence_intake.py"
+      ]
+    },
+    {
+      "property": "complete S4 reserve/evidence/proposal absorb and canonical effective-state equivalence",
+      "result": "unknown",
+      "evidence": [
+        "docs/plans/s4-native-evidence-intake-2026-10-04.md"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Valid native key replay with different accepted tail remains conservatively unconfirmed by the producer, requiring explicit owner reconciliation."
+    }
+  ],
+  "notes": [
+    "implementation_sha pins the unchanged native owner baseline; the proposed carrier delta source fingerprints are {\".github/workflows/ci.yml\": \"16b7efdb9009c5737ba2bfc2d0db83e4185f29dcd442e9e0b6f2aa0bcdac05e3\", \"docs/plans/s4-native-evidence-intake-2026-10-04.md\": \"1f88bde4aeb485108a58158fb41b232993d7f3e59c8fe89343656b05c83cd682\", \"sprintctl/commands/operations.py\": \"e04b5c5860219f9589e175dd531eaa147ee379ee6aa0009e25bc4341217191de\", \"sprintctl/evidence_intake.py\": \"37700545502920d4e77c5507ae60a6473609b681d2c2ce7770734abdbd99c5f5\", \"sprintctl/served.py\": \"5e1bcc78366d7ea3a7d9383d4ec8b57ebaa8b8cc2a946e82aaa9fc90af5d7128\", \"sprintctl/served_routes.py\": \"70d4fbd9db8f3aad514caed9e6bc0599dd68d6f63459d0374630e98bf2a499e7\", \"tests/pg/test_native_evidence_intake.py\": \"06e6f6e8832b034832433a6504738bae35576cf050442d3a15f814d8d92c2926\", \"tests/test_native_evidence_intake.py\": \"8f104bacc804b0b0b2b3cfc17ac0c84ea22dacbfa8ba54245eba0b8d42c5b03c\", \"tests/test_served_authority_sync.py\": \"d51df511b1ba1dafb0468c00cea25a50ca5770bda8ffd69ac35b5cb4d8e86200\"}",
+    "No production import/cutover, credential read, full cross-stream ordering or S4 acceptance. HTTP transport authentication remains outside these application-boundary tests.",
+    "Full PG16 suite passed 690 tests and all 49 fixture cleanups left zero rows.",
+    "Full unit suite passed 1705 tests with 690 skips and 14 perf deselections; the final diagnostic-only status enhancement was separately verified by 40 focused tests. Published exact-head CI will verify the complete candidate.",
+    "After independent review fixes, 95 focused tests and the full 690-test PG16 gate passed; the final complete unit repeat and exact-head public CI are pending at commit creation.",
+    "After numeric receipt/facade/CI review nits, 97 focused tests and all11 native carrier PG16 histories passed. CI now installs the pinned served extra on Python3.12; real error mapping/propagation tests use plain imports under the version guard and cannot silently skip there."
+  ]
+}
