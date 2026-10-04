@@ -53,7 +53,7 @@ implementation, independent review and publication.
 | `work.resource.reference-v1` | `work.resource.relate` | Own source; typed external assurance, never a lease |
 | `work.resource.record-evidence-v1` | `work.resource.record-evidence` | Valid source state; repository-visible source and protected-owner byte-verification receipt |
 | `work.resource.record-acceptance-v1` | `work.resource.record-acceptance` | trusted-side authenticated transport; non-creator reviewer; exact reviewed binding |
-| `work.resource.record-rejection-v1` | `work.resource.record-rejection` | non-creator reviewer; exact revision/projection digest; cited evidence optional |
+| `work.resource.record-rejection-v1` | `work.resource.record-rejection` | trusted-side authenticated transport; non-creator reviewer; projection digest; evidence optional |
 | `work.resource.record-settlement-v1` | `work.resource.record-settlement` | Trusted reconciler; accepted/rejected state; local fact only |
 | `work.resource.supersede-v1` | `work.resource.supersede` | Own source; exact revision; terminal |
 | `work.resource.command-decision-v1` | `work.resource.read-decisions` | own authenticated principal's decision only |
@@ -89,7 +89,7 @@ instead become rejected; accepted/rejected may append a settlement fact without
 changing that state; any non-superseded state may be superseded. Relations and
 typed references may be added to any non-superseded state. All commands compare
 the current revision. Acceptance stores resource identity, reviewed revision,
-content digest and accepting immutable principal, and must verify the protected
+reviewed canonical resource-projection digest and accepting immutable principal, and must verify the protected
 owner's current evidence availability/verification binding. Evidence records have
 immutable binding IDs, byte digests (SHA-256 of the exact evidence bytes), typed
 owner references and a canonical binding-record digest. Multiple records may be
@@ -98,8 +98,10 @@ the reviewed resource revision. Rejection from registered or evidence-recorded
 binds the reviewed canonical resource-projection digest and revision; it may
 cite an exact evidence binding but does not require one to reject. The
 transport must synchronously establish byte availability/integrity at admission;
-a cached previous verification alone is insufficient. A changed or missing byte
-binding refuses the command without advancing the resource.
+a cached previous verification alone is insufficient. A changed or missing byte binding refuses evidence recording or acceptance
+without advancing the resource. Rejection cites binding ID/record digest only
+when present in the reviewed projection; it never requires byte reverification
+and never implies those bytes are available or verified.
 
 Evidence attachment deliberately permits any same-repository authenticated
 evidence-ingester with its separate grant; source ownership is not required.
@@ -190,7 +192,11 @@ conflict decision. No loser's projection or journal mutation survives.
 Storage admission is bounded per authenticated principal/repository by an
 explicit configured byte/record capacity, including conflict decisions, plus a
 repository/environment aggregate limit so epoch rotation or many members cannot
-reset the total bound. There
+reset the total bound. Capability-denial decisions count toward both limits.
+Consequently an admitted member without resource grants can consume its quota,
+and enough admitted members can exhaust the aggregate and deny new admissions
+for everyone until an operator raises capacity. This explicit availability tradeoff
+must be reviewed before implementation; it is not deployed by this proposal. There
 is no eviction of first bindings or refusals at all in this initial design: all admitted decisions remain permanently.
 A filled quota therefore remains unavailable for new admissions until an
 authorized operator explicitly raises its capacity; rotation is not a reset. Exhausted capacity makes the owner unavailable for new admissions:
@@ -279,10 +285,13 @@ No rescue/ownership-transfer operation is silently introduced.
 | Relations | Cross-repository targets refused; declared-isolation lock wait; relation versus source supersession and relation to superseded target; source-only revision; target unchanged; self/mixed cycles refused; independent reverse and disjoint mixed-edge races serialized without partial changes |
 | Decisions | Equal-key/equal-digest and equal-key/unequal-digest independent-connection races; accepted/rejected exact-byte replay after process restart; conflicting digest refusal cannot replace first binding; denied authority/invalid framing follow their documented integration contract |
 | Atomicity/recovery | Fault between projection/change/decision rolls back all accepted facts; rejection commits decision only; journal rebuild detects each distinct corruption and tail truncation against the projection anchor |
+| Reviewer/evidence workflow | Registered rejection without evidence succeeds; mismatched projection digest and absent cited binding fail; stale reviewed revision fails on both paths; rotated-epoch self-rejection and shared-service acting reviewer fail; non-creator ingester attachment succeeds but that grant cannot relate/supersede |
 | Evidence/acceptance | Missing/corrupt evidence before record or accept refused; exact identity/revision/digest verification; same-subject rotated-epoch self-review refused; shared service acting-reviewer input refused; exact evidence-binding ID and record/byte digests; post-acceptance revision is not accepted content; no hosted signer/apply grant implied |
 | Settlement/supersession | Late settlement after supersession is refused without fact loss in the separately cited protected outcome owner; accept/reject/local settlement never changes work-item status; state remains accepted/rejected on settlement; supersession terminal and creator unchanged |
+| Mutation read gate | Every mutation grant without resource.read receives the fixed non-disclosing denial, including create |
+| Minted identity | Caller resource ID refused; forced mint collision leaves original unchanged; equal-key replay after restart returns original minted ID |
 | Read privacy | Reader and decision access confined to repository/principal scope; forbidden and absent objects return the fixed non-disclosing surface; own decision reads never expose private refusal resource/revision fields; foreign denials never write victim-repository rows |
-| Capacity/mapping | No mutation or authoritative decision on admission exhaustion; original replay survives; every existing exact/prefix/wildcard mapping is checked to prove resource caps stay absent |
+| Capacity/mapping | Epoch rotation and multiple principals cannot reset/exceed aggregate capacity; capability-denial decisions count toward both quotas; no mutation or authoritative decision on admission exhaustion; original replay survives; every existing exact/prefix/wildcard mapping is checked to prove resource caps stay absent |
 | Derived ownership | Restarted authoritative projection yields immutable creator view; no grants/leases/assignees/acceptors confer ownership |
 
 Use temporary SQLite and disposable PostgreSQL only; each concurrent actor uses
