@@ -26,7 +26,11 @@ acceptance or settlement fact does not perform those actions or settle a work
 item. The proposed first implementation uses authenticated narrow trusted-side
 transport. A later signed-assertion alternative needs a separately versioned
 contract. The accepting/reconciling principal is the authenticated transport
-principal, never a caller-selected reviewer string.
+principal, never a caller-selected reviewer string. The transport authenticates
+each reviewer/reconciler end principal directly; a shared service principal with
+a caller-supplied acting reviewer is not an eligible review path. The protected
+owner's own service identity may authenticate byte-verification responses but is
+not substituted for the reviewing principal.
 
 This design deliberately does not use `work:write`, `work:lifecycle`, lease
 ownership, an assignee, an actor display name or a maintenance grant as resource
@@ -57,9 +61,14 @@ implementation, independent review and publication.
 `work.resource.audit-decisions` is a separate proposed operator-only capability,
 with a separately cataloged audit operation. It is not implied by read-decisions.
 
+Every mutation additionally requires `work.resource.read`, including create;
+mutation grants alone do not reveal resource existence or graph paths.
 Mutating operations require an explicit idempotency key and expected resource
-revision (zero only for creation). Create does not accept caller-selected creator
-identity. Read grants never imply mutation, and any mutation grant never implies
+revision (zero only for creation). Create accepts neither caller-selected creator identity nor a resource identity.
+The owner mints the opaque resource identity and atomically proves absence before
+revision one; expected revision is zero. A same-key replay recovers that original
+identity from the permanent first binding. A forced mint collision must never
+replace an existing resource. No future ledger-expiry behavior is included. Read grants never imply mutation, and any mutation grant never implies
 another. A trusted role is a bound identity plus a narrow grant, not a user field
 or the existence of a hosted session. New capabilities default to absent in all
 existing catalog/Cloud mappings. There is no deployment claim until the separate
@@ -95,8 +104,13 @@ binding refuses the command without advancing the resource.
 Evidence attachment deliberately permits any same-repository authenticated
 evidence-ingester with its separate grant; source ownership is not required.
 It changes the source revision through CAS, so concurrent review cannot accept
-the previously reviewed revision after a new attachment. Acceptance and
-rejection require a distinct non-creator authenticated principal; rejection is
+the previously reviewed revision after a new attachment. Acceptance and rejection use the same narrow reviewer-authenticating transport
+and require a non-creator reviewer under `issuer-subject-separated/v1`: compare
+the authenticated issuer and subject with the creator, excluding the epoch.
+Rotating one's own epoch therefore never enables self-review. This is a declared
+principal separation policy, not proof that two subjects represent different
+humans or organizations. Reviewed revision must equal the CAS expected revision;
+it cannot approve old content after a newer mutation. Rejection is
 terminal apart from supersession. An invalid/missing evidence binding cannot be accepted. A rejection never
 implies evidence verification or authorizes an effect; its reviewed projection
 digest must match even when no evidence is cited. Settlement is an
@@ -131,9 +145,13 @@ The proposed first boundary is one graph-admission lock per repository, shared
 by every parent/dependency relation admission. Targets must be in the same
 repository; cross-repository targets are refused. PostgreSQL uses READ COMMITTED,
 acquires a transaction-scoped advisory lock derived from the exact repository
-identity as its first statement, then performs source CAS and graph reads in
-later statements. Reads before this lock or a snapshot acquired before a lock
-wait are forbidden. SQLite uses BEGIN IMMEDIATE before any admission read.
+identity as its first statement, then performs source CAS and graph reads in later statements. Within a cycle-forming command's mutation
+transaction, even replay/capacity reads occur after that first graph-lock statement.
+The lock order is graph admission (when required), repository/principal quota,
+first binding, then source row. All resource commands follow the same applicable
+order; no source-first or binding-first path later acquires a graph lock.
+Credential/framing admission checks outside that transaction read no resource
+graph. Reads before this lock or a snapshot acquired before a lock wait are forbidden. SQLite uses BEGIN IMMEDIATE before any admission read.
 Lock-key collisions may serialize unrelated repositories but must never remove
 serialization within one repository. Backend tests assert the declared isolation
 and an independent-session blocked-lock history, not just serial calls.
@@ -147,6 +165,11 @@ resources' retained edges. Derived-from and supersedes relation cycles are
 permitted provenance structures; the supersedes relation does not perform the
 terminal supersede command. No edge is deleted by this initial contract.
 A later finer-grained admission algorithm requires new independent histories.
+Settlement after supersession is refused under the frozen terminal-state contract.
+Late native outcomes belong to the protected owner's append-only outcome evidence,
+not a revived hosted resource mutation; any successor reference requires ordinary
+source ownership. Implementers must cite and verify that outcome carrier before
+claiming recovery of already-applied effects; no such recovery is inferred here.
 
 ## Independent rejected-command decision ledger
 
@@ -165,9 +188,12 @@ resource CAS would now fail. Unequal-digest losers commit only their separate
 conflict decision. No loser's projection or journal mutation survives.
 
 Storage admission is bounded per authenticated principal/repository by an
-explicit configured byte/record capacity, including conflict decisions. There
-is no eviction of first bindings or refusals inside the declared retention
-interval. Exhausted capacity makes the owner unavailable for new admissions:
+explicit configured byte/record capacity, including conflict decisions, plus a
+repository/environment aggregate limit so epoch rotation or many members cannot
+reset the total bound. There
+is no eviction of first bindings or refusals at all in this initial design: all admitted decisions remain permanently.
+A filled quota therefore remains unavailable for new admissions until an
+authorized operator explicitly raises its capacity; rotation is not a reset. Exhausted capacity makes the owner unavailable for new admissions:
 return a transient service-unavailable transport result before making an
 authoritative accepted/rejected decision, and never execute a mutation. Exact
 existing replay remains available. This is a readiness/availability outcome,
@@ -193,8 +219,16 @@ shell returns its existing non-replayable transport refusal/audit; no target
 repository command decision or resource exists. These are not admitted resource
 commands, and must never be reported as durable command-decision support.
 
-After repository admission, a missing resource capability is journaled in the
-repository ledger, privately scoped to the authenticated principal. The proposed
+After repository admission, a missing resource capability on a mutating command
+is journaled in the repository ledger, privately scoped to the authenticated
+principal. Reads have no key and retain ordinary non-replayable transport denials;
+this is not advertised as a command-decision receipt for a read. Capability checks
+precede argument schema validation. The framing classifier is independent of that
+authority decision: canonical representable admitted bodies use canonical framing,
+noncanonical invalid arguments use bounded raw framing. No argument validation
+or resource lookup discloses an existence/revision before read authority.
+A first-binding capability refusal continues replaying after a new grant: the
+caller must use a new key for a new attempt. The proposed
 integration is a registered internal owner refusal recorder invoked by the shell
 with its own typed authenticated decision context before a denial response. It
 cannot dispatch a mutation or receive caller-authored refusal payloads. Failure
@@ -245,8 +279,8 @@ No rescue/ownership-transfer operation is silently introduced.
 | Relations | Cross-repository targets refused; declared-isolation lock wait; relation versus source supersession and relation to superseded target; source-only revision; target unchanged; self/mixed cycles refused; independent reverse and disjoint mixed-edge races serialized without partial changes |
 | Decisions | Equal-key/equal-digest and equal-key/unequal-digest independent-connection races; accepted/rejected exact-byte replay after process restart; conflicting digest refusal cannot replace first binding; denied authority/invalid framing follow their documented integration contract |
 | Atomicity/recovery | Fault between projection/change/decision rolls back all accepted facts; rejection commits decision only; journal rebuild detects each distinct corruption and tail truncation against the projection anchor |
-| Evidence/acceptance | Missing/corrupt evidence before record or accept refused; exact identity/revision/digest verification; self-review refused; exact evidence-binding ID and record/byte digests; post-acceptance revision is not accepted content; no hosted signer/apply grant implied |
-| Settlement/supersession | Accept/reject/local settlement never changes work-item status; state remains accepted/rejected on settlement; supersession terminal and creator unchanged |
+| Evidence/acceptance | Missing/corrupt evidence before record or accept refused; exact identity/revision/digest verification; same-subject rotated-epoch self-review refused; shared service acting-reviewer input refused; exact evidence-binding ID and record/byte digests; post-acceptance revision is not accepted content; no hosted signer/apply grant implied |
+| Settlement/supersession | Late settlement after supersession is refused without fact loss in the separately cited protected outcome owner; accept/reject/local settlement never changes work-item status; state remains accepted/rejected on settlement; supersession terminal and creator unchanged |
 | Read privacy | Reader and decision access confined to repository/principal scope; forbidden and absent objects return the fixed non-disclosing surface; own decision reads never expose private refusal resource/revision fields; foreign denials never write victim-repository rows |
 | Capacity/mapping | No mutation or authoritative decision on admission exhaustion; original replay survives; every existing exact/prefix/wildcard mapping is checked to prove resource caps stay absent |
 | Derived ownership | Restarted authoritative projection yields immutable creator view; no grants/leases/assignees/acceptors confer ownership |
