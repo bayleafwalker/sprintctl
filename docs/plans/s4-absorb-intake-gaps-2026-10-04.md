@@ -15,11 +15,13 @@ The active generic resource-authority design does not supply S4 intake.
 `tests/test_s4_absorb_intake_gaps.py` runs actual reservation CLI, closed
 outbox-contract construction, trailer harvest and served-sync orchestration
 against temporary producer SQLite/Git state and a synthetic in-process
-fake authority. No production profile, credential, network, live database or
+fake authority. The transport constructor is trapped, and inherited Git paths
+and external configuration/hooks are isolated. No deployed profile, credential, network, live database or
 source NDJSON is accessed. Existing test helpers supply a fake `.example`
 profile; identity and served batch transport are replaced before invocation.
 
-It exercises six bounded, example-tested histories:
+It exercises six bounded, example-tested histories plus a forced-failure
+transport isolation guard:
 
 - An unavailable authenticated identity causes served reserve to fail before
   any local reservation fallback or durable pending outbox request.
@@ -28,7 +30,7 @@ It exercises six bounded, example-tested histories:
   relabelled as an outbox AuthorityCommand; no request is appended.
 - The isolated offline sequence attempts reserve, commits a harmless exact
   synthetic `Vuoro-Release` trailer, attempts the missing carriers and retains
-  an ordinary authored observation. Restart/sync can upload the observation
+  an ordinary authored observation. Subsequent in-process restart/sync invocations can upload the observation
   and trailer, including repeated sync and commit-before-reply-loss replay,
   without creating an effective reservation, run-bound evidence or proposal.
 
@@ -54,7 +56,7 @@ uv run --extra dev --extra served pytest -q \
 1. Specify durable producer requests for reserve, run-bound evidence append and
    effect proposal through the existing outbox/sync owner. The request format
    must bind repository/workspace/principal, operation identity, original
-   payload digest, idempotency key, exact Release/item revision and dependency
+   payload digest, idempotency key, exact Release/item revision where the operation defines one, and dependency
    order. Do not place tokens/assertions or reusable authority in local rows.
 2. Preserve advisory reservation semantics. A pending reservation request is
    neither a shared reservation nor an execution lease. The current reservation

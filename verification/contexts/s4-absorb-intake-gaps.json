@@ -7,7 +7,7 @@
     "doc_id": "agentops-s4-evidence-home-preparation",
     "revision": "git:49ac361481d185a2b0c3e18899d19756096473d1"
   },
-  "source_of_truth": "served authority for effective state; local outbox only pending authored observations",
+  "source_of_truth": "served authority for effective state; for these S4 operations the fixture retains authored observations only, not pending native operation requests",
   "depth": 1,
   "backends": [
     "temporary-sqlite-producer",
@@ -48,7 +48,7 @@
       ]
     },
     {
-      "name": "restart-sync",
+      "name": "in-process-restart-sync",
       "actors": [
         "fixture-producer"
       ]
@@ -65,7 +65,7 @@
     "object": "no-pending-request-or-observation-is-effective-S4-authority"
   },
   "assumptions": {
-    "isolation": "temporary producer SQLite and in-process fake receipt plumbing; no domain backend",
+    "isolation": "temporary producer SQLite and in-process fake receipt plumbing; no domain backend; transport constructor trapped and inherited Git configuration/paths cleared",
     "clock": "no time-dependent domain semantics exercised"
   },
   "bounds": {

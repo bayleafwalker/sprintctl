@@ -17,7 +17,8 @@
   "execution": {
     "histories": 6,
     "bounds": {
-      "owner_related_tests_passed": 22
+      "owner_related_tests_passed": 23,
+      "transport_isolation_guard_tests": 1
     },
     "faults_exercised": [
       "authority-unavailable",
@@ -62,6 +63,6 @@
   ],
   "notes": [
     "Verification fixture only; no claim of domain authority, authenticated receipt validation, concurrency parity, real chain integrity or migration readiness.",
-    "22 related tests passed including six isolated prerequisite histories; no live authority was stopped."
+    "23 related tests passed including six isolated prerequisite histories and a forced-failure transport guard; no live authority was stopped."
   ]
 }

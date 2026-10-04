@@ -1,6 +1,8 @@
 """Example-tested S4 missing gate; never an operational absorption receipt."""
 
+import asyncio
 import json
+import os
 import subprocess
 import sys
 
@@ -28,16 +30,34 @@ S4_OPERATIONS = (
 )
 
 
+@pytest.fixture(autouse=True)
+def isolated_transport_and_git_environment(monkeypatch):
+    # A missing patch must fail before credential resolution or networking.
+    def forbidden_transport(*args, **kwargs):
+        pytest.fail("fixture attempted real served transport")
+
+    monkeypatch.setattr(cli_module._served, "_client", forbidden_transport)
+    # Git hooks may export repository/index paths. Every git operation,
+    # including production trailer-harvest code, must see only fixture state.
+    for name in list(os.environ):
+        if name.startswith("GIT_"):
+            monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+
 class FakeAuthority:
     """Only receipt plumbing is simulated; no domain acceptance is implemented."""
 
     def __init__(self):
         self.online = False
+        self.identity_calls = 0
         self.observations = {}
         self.lost_reply = False
         self.batch_keys = []
 
     def identity(self, *args, **kwargs):
+        self.identity_calls += 1
         if not self.online:
             raise ConnectionError("isolated fixture authority stopped")
         return {"actor": "fixture-producer"}
@@ -67,7 +87,9 @@ class FakeAuthority:
 
 
 def git(repo, *args):
-    return subprocess.check_output(["git", "-C", str(repo), *args], text=True).strip()
+    return subprocess.check_output(
+        ["git", "-c", "core.hooksPath=/dev/null", "-C", str(repo), *args], text=True
+    ).strip()
 
 
 def test_offline_reservation_is_not_a_durable_pending_request(
@@ -77,13 +99,30 @@ def test_offline_reservation_is_not_a_durable_pending_request(
     authority = FakeAuthority()
     monkeypatch.setattr(cli_module._served, "identity_current", authority.identity)
 
+    forbidden_calls = []
+
     def forbidden(*args, **kwargs):
+        forbidden_calls.append(True)
         pytest.fail("offline served request attempted local authority or mutation")
 
     monkeypatch.setattr(cli_module._served, "reservation_operation", forbidden)
     monkeypatch.setattr(cli_module._db, "reserve", forbidden)
-    result = runner.invoke(cli, ["reservation", "reserve", "--item-id", "7", "--json"])
-    assert result.exit_code != 0
+    result = runner.invoke(
+        cli,
+        [
+            "reservation",
+            "reserve",
+            "--item-id",
+            "7",
+            "--actor",
+            "fixture-producer",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "served reserve reservation failed" in result.output
+    assert authority.identity_calls == 1
+    assert forbidden_calls == []
     producer = _open_producer(tmp_path)
     try:
         assert outbox.list_records(producer) == []
@@ -109,6 +148,21 @@ def test_s4_native_operations_cannot_be_relabelled_as_outbox_commands(
         assert outbox.list_records(producer) == []
     finally:
         producer.close()
+    # Positive control: a classified existing command can be persisted here.
+    admitted = _mint_command(
+        tmp_path,
+        record_type="item.transition",
+        refs=_item_refs(7),
+        payload={"to_status": "active"},
+        actor="fixture-producer",
+    )
+    producer = _open_producer(tmp_path)
+    try:
+        assert [r.event_id for r in outbox.list_records(producer)] == [
+            admitted.event_id
+        ]
+    finally:
+        producer.close()
 
 
 @pytest.mark.parametrize("lose_reply", [False, True])
@@ -121,8 +175,21 @@ def test_restart_syncs_observations_but_cannot_complete_s4_gate(
     git(tmp_path, "config", "user.email", "fixture@example.invalid")
     authority = FakeAuthority()
     monkeypatch.setattr(cli_module._served, "identity_current", authority.identity)
-    reserve = runner.invoke(cli, ["reservation", "reserve", "--item-id", "7", "--json"])
-    assert reserve.exit_code != 0
+    reserve = runner.invoke(
+        cli,
+        [
+            "reservation",
+            "reserve",
+            "--item-id",
+            "7",
+            "--actor",
+            "fixture-producer",
+            "--json",
+        ],
+    )
+    assert reserve.exit_code == 1
+    assert "served reserve reservation failed" in reserve.output
+    assert authority.identity_calls == 1
     digest = "a" * 64
     git(
         tmp_path,
@@ -183,3 +250,12 @@ def test_restart_syncs_observations_but_cannot_complete_s4_gate(
         assert not any(r.event_type in S4_OPERATIONS for r in requests)
     finally:
         producer.close()
+
+
+def test_transport_isolation_trap_fails_before_real_client_construction():
+    with pytest.raises(
+        pytest.fail.Exception, match="fixture attempted real served transport"
+    ):
+        asyncio.run(
+            cli_module._served._invoke_operation(None, "work.identity.current", {})
+        )
