@@ -836,3 +836,10 @@ __all__ = [
     "read_sprints",
     "sprint_create",
 ]
+
+
+def native_evidence_invoke(served_profile: ServedProfile, operation: str, arguments: dict[str, Any]) -> Any:
+    """Invoke only the two operations used by the typed evidence carrier."""
+    if operation not in {"work.run.resolve-v1", "work.evidence.append-v1"}:
+        raise ValueError("unsupported native evidence intake operation")
+    return asyncio.run(_invoke_operation(served_profile, operation, arguments))

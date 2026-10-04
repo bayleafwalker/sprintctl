@@ -1,0 +1,112 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.s4.native-evidence-intake",
+  "owner_repo": "sprintctl",
+  "subject": "durable-native-evidence-request-replay",
+  "contract_ref": {
+    "doc_id": "agentops-s4-evidence-home-preparation",
+    "revision": "git:49ac361481d185a2b0c3e18899d19756096473d1"
+  },
+  "source_of_truth": "registered runs, idempotency ledger and evidence items in the native PostgreSQL owner; producer rows store intent and correlated receipts only",
+  "depth": 2,
+  "backends": [
+    "temporary-sqlite-producer",
+    "disposable-postgresql-16"
+  ],
+  "actors": [
+    "offline-producer",
+    "second-producer",
+    "native-work-authority"
+  ],
+  "initial_state": [
+    "registered-run",
+    "empty-producer-intake",
+    "empty-owner-evidence-chain"
+  ],
+  "operations": [
+    {
+      "name": "offline-capture",
+      "actors": [
+        "offline-producer",
+        "native-work-authority"
+      ]
+    },
+    {
+      "name": "run-resolution",
+      "actors": [
+        "offline-producer",
+        "native-work-authority"
+      ]
+    },
+    {
+      "name": "native-evidence-append",
+      "actors": [
+        "offline-producer",
+        "native-work-authority"
+      ]
+    },
+    {
+      "name": "exact-replay",
+      "actors": [
+        "offline-producer",
+        "native-work-authority"
+      ]
+    },
+    {
+      "name": "explicit-tail-correction",
+      "actors": [
+        "offline-producer",
+        "native-work-authority"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "native-evidence-key-and-producer-confirmation"
+  },
+  "assumptions": {
+    "isolation": "temporary SQLite with file-locked carrier; real disposable PG16 owner, independent race connections; no deployed HTTP authentication",
+    "clock": "no expiry-dependent lifecycle semantics exercised"
+  },
+  "bounds": {
+    "new_owner_histories": 11,
+    "new_offline_cases": 19,
+    "independent_connection_races": 1
+  },
+  "invariants": [
+    "offline intent has no effective evidence authority",
+    "duplicate/lost-reply replay retains one native key effect",
+    "failed chain effect permits explicit tail-only correction with original bytes retained",
+    "unrelated or mismatched receipt never confirms expected-tail intent"
+  ],
+  "faults": [
+    "commit-before-reply-loss",
+    "stale-tail",
+    "invalid-predecessor",
+    "wrong-grant",
+    "idempotency-conflict",
+    "unrelated-receipt",
+    "interrupted-attempt",
+    "two-producer-contention",
+    "unavailable-native-status-after-batch-commit",
+    "corrected-request-queue-order"
+  ],
+  "oracles": [
+    "native evidence row and idempotency ledger counts",
+    "append-only original-byte comparisons",
+    "actual lock-blocking race and matching owner receipts",
+    "pending identifiers and exact corrected-retry native result"
+  ],
+  "implementation_anchors": [
+    "sprintctl/evidence_intake.py::capture",
+    "sprintctl/evidence_intake.py::synchronize",
+    "sprintctl/work_application.py::_evidence_append",
+    "tests/pg/test_native_evidence_intake.py::test_two_durable_producers_race_through_native_ledger"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "stateful-test",
+    "concurrent-history",
+    "fault-scenario"
+  ]
+}
