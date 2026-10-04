@@ -53,7 +53,7 @@ implementation, independent review and publication.
 | `work.resource.reference-v1` | `work.resource.relate` | Own source; typed external assurance, never a lease |
 | `work.resource.record-evidence-v1` | `work.resource.record-evidence` | Valid source state; repository-visible source and protected-owner byte-verification receipt |
 | `work.resource.record-acceptance-v1` | `work.resource.record-acceptance` | trusted-side authenticated transport; non-creator reviewer; exact reviewed binding |
-| `work.resource.record-rejection-v1` | `work.resource.record-rejection` | trusted-side authenticated transport; non-creator reviewer; projection digest; evidence optional |
+| `work.resource.record-rejection-v1` | `work.resource.record-rejection` | trusted-side authenticated transport; non-creator reviewer; exact revision/projection digest; evidence optional |
 | `work.resource.record-settlement-v1` | `work.resource.record-settlement` | Trusted reconciler; accepted/rejected state; local fact only |
 | `work.resource.supersede-v1` | `work.resource.supersede` | Own source; exact revision; terminal |
 | `work.resource.command-decision-v1` | `work.resource.read-decisions` | own authenticated principal's decision only |
@@ -67,8 +67,9 @@ Mutating operations require an explicit idempotency key and expected resource
 revision (zero only for creation). Create accepts neither caller-selected creator identity nor a resource identity.
 The owner mints the opaque resource identity and atomically proves absence before
 revision one; expected revision is zero. A same-key replay recovers that original
-identity from the permanent first binding. A forced mint collision must never
-replace an existing resource. No future ledger-expiry behavior is included. Read grants never imply mutation, and any mutation grant never implies
+identity from the permanent first binding. A forced mint collision records a deterministic `resource-id-collision` refusal
+without replacing an existing resource; its public bytes disclose no existing
+identity. Same-key replay retains that refusal; a new attempt needs a new key. No future ledger-expiry behavior is included. Read grants never imply mutation, and any mutation grant never implies
 another. A trusted role is a bound identity plus a narrow grant, not a user field
 or the existence of a hosted session. New capabilities default to absent in all
 existing catalog/Cloud mappings. There is no deployment claim until the separate
@@ -219,10 +220,14 @@ A response is returned only after its decision is durable.
 Before any ledger schema is implemented, the proposed versioned admission
 contract must be reviewed jointly with the Vuoro shell owner. A resource command
 is admitted only after authentication, environment binding, repository
-membership, a known operation, a valid key and the framing/size checks. Outside
+membership, a known operation, a valid key and the framing/size checks. For acceptance,
+rejection and settlement the configured trusted-transport binding is also a
+pre-admission gate. Wrong transport/shared-service acting identity returns the
+fixed transport refusal before any command decision or mutation. Outside
 that boundary (unauthenticated, wrong environment or foreign repository), the
-shell returns its existing non-replayable transport refusal/audit; no target
-repository command decision or resource exists. These are not admitted resource
+shell returns its existing non-replayable transport refusal/audit; no target repository command decision or resource exists, and no resource
+ledger quota in any repository is charged. Such requests may meet independent
+shell transport rate limits; those are not resource decision quotas. These are not admitted resource
 commands, and must never be reported as durable command-decision support.
 
 After repository admission, a missing resource capability on a mutating command
@@ -285,7 +290,8 @@ No rescue/ownership-transfer operation is silently introduced.
 | Relations | Cross-repository targets refused; declared-isolation lock wait; relation versus source supersession and relation to superseded target; source-only revision; target unchanged; self/mixed cycles refused; independent reverse and disjoint mixed-edge races serialized without partial changes |
 | Decisions | Equal-key/equal-digest and equal-key/unequal-digest independent-connection races; accepted/rejected exact-byte replay after process restart; conflicting digest refusal cannot replace first binding; denied authority/invalid framing follow their documented integration contract |
 | Atomicity/recovery | Fault between projection/change/decision rolls back all accepted facts; rejection commits decision only; journal rebuild detects each distinct corruption and tail truncation against the projection anchor |
-| Reviewer/evidence workflow | Registered rejection without evidence succeeds; mismatched projection digest and absent cited binding fail; stale reviewed revision fails on both paths; rotated-epoch self-rejection and shared-service acting reviewer fail; non-creator ingester attachment succeeds but that grant cannot relate/supersede |
+| Reviewer/evidence workflow | Registered rejection without evidence succeeds; evidence-recorded rejection succeeds with or without a valid cited binding; wrong-resource/revision binding refused; mismatched projection digest and absent cited binding fail; stale reviewed revision fails on both paths; rotated-epoch self-rejection and shared-service acting reviewer fail; non-creator ingester attachment succeeds but that grant cannot relate/supersede |
+| Trusted transport | Accept/reject/settlement over an untrusted or unauthenticated transport, including shared-service acting-reviewer input, is refused before admission with no command decision or mutation; authenticated eligible end-principal paths succeed |
 | Evidence/acceptance | Missing/corrupt evidence before record or accept refused; exact identity/revision/digest verification; same-subject rotated-epoch self-review refused; shared service acting-reviewer input refused; exact evidence-binding ID and record/byte digests; post-acceptance revision is not accepted content; no hosted signer/apply grant implied |
 | Settlement/supersession | Late settlement after supersession is refused without fact loss in the separately cited protected outcome owner; accept/reject/local settlement never changes work-item status; state remains accepted/rejected on settlement; supersession terminal and creator unchanged |
 | Mutation read gate | Every mutation grant without resource.read receives the fixed non-disclosing denial, including create |
