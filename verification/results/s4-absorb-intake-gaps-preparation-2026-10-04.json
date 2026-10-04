@@ -1,0 +1,67 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.s4.absorb-intake-gaps",
+  "contract_ref": {
+    "doc_id": "agentops-s4-evidence-home-preparation",
+    "revision": "git:49ac361481d185a2b0c3e18899d19756096473d1"
+  },
+  "implementation_sha": "f6936f410f41a7dfaf7e5a1390c552eb90954874",
+  "depth": 1,
+  "environment": {
+    "backend": "temporary SQLite producer plus fake observation receipts",
+    "isolation": "no real shared authority; no external effects",
+    "tool_versions": {
+      "python": "3.12.14"
+    }
+  },
+  "execution": {
+    "histories": 6,
+    "bounds": {
+      "owner_related_tests_passed": 22
+    },
+    "faults_exercised": [
+      "authority-unavailable",
+      "unsupported-intake-carrier",
+      "observation-commit-before-reply-loss"
+    ]
+  },
+  "claims": [
+    {
+      "property": "offline served reserve has no SQLite authority fallback",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_s4_absorb_intake_gaps.py"
+      ]
+    },
+    {
+      "property": "unsupported native carrier cannot silently append an authority command",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_s4_absorb_intake_gaps.py"
+      ]
+    },
+    {
+      "property": "successful observation sync does not constitute S4 absorption",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_s4_absorb_intake_gaps.py"
+      ]
+    },
+    {
+      "property": "complete S4 canonical effective-state equivalence and derived effect_uncertain",
+      "result": "unknown",
+      "evidence": [
+        "docs/plans/s4-absorb-intake-gaps-2026-10-04.md"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Unavailable reserve exits before any durable pending request. Ordinary observations and a release trailer later sync successfully, but required reserve/run-evidence/proposal requests and receipts are absent. Full absorb gate remains unproven."
+    }
+  ],
+  "notes": [
+    "Verification fixture only; no claim of domain authority, authenticated receipt validation, concurrency parity, real chain integrity or migration readiness.",
+    "22 related tests passed including six isolated prerequisite histories; no live authority was stopped."
+  ]
+}
