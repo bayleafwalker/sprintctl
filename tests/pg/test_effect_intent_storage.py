@@ -47,7 +47,7 @@ pytestmark = PG_MARKS
 
 
 class TestSchema19Migration:
-    def test_migrating_from_schema_2_installs_exactly_the_recorded_shape(self, store):
+    def test_migrating_from_schema_2_installs_exactly_the_recorded_shape(self, store, monkeypatch):
         schema = "migration_19_" + uuid.uuid4().hex
         with store.conn.cursor() as cur:
             cur.execute(f'CREATE SCHEMA "{schema}"')
@@ -61,17 +61,22 @@ class TestSchema19Migration:
             with conn.cursor() as cur:
                 cur.execute(f'SET search_path TO "{schema}"')
             conn.commit()
-            applied = pg_migrations.migrate_schema(pg.PgStore(conn, "migration-19"))
-            # Schema 20 (agentops#2525) follows 19 in the ladder.
-            assert 19 in applied["applied_versions"]
-            assert applied["to_version"] == pg_migrations.CURRENT_SCHEMA_VERSION
-            with conn.cursor() as cur:
-                cur.execute(f'SET search_path TO "{schema}"')
+            # Check the historical shape at its actual boundary, before
+            # schema 21 extends it. Do not relax the schema 19 foreign guard.
+            real_21 = pg._apply_schema_version_21
+            observed = []
+            def verify_19_then_extend(cur):
                 assert pg._foreign_relations(
                     cur, pg._SCHEMA_19_TABLES, pg._SCHEMA_19_INDEXES, pg._SCHEMA_19_INDEX_SHAPES
                 ) == []
-                # Additive and idempotent: re-applying over its own shape is a no-op.
                 pg._apply_schema_version_19(cur)
+                observed.append(True)
+                real_21(cur)
+            monkeypatch.setattr(pg, "_apply_schema_version_21", verify_19_then_extend)
+            applied = pg_migrations.migrate_schema(pg.PgStore(conn, "migration-19"))
+            assert observed == [True]
+            assert 19 in applied["applied_versions"]
+            assert applied["to_version"] == pg_migrations.CURRENT_SCHEMA_VERSION
             conn.rollback()
         finally:
             conn.close()

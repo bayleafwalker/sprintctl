@@ -306,6 +306,8 @@ class TestSchema15Migration:
             store = pg.PgStore(conn, repo_id)
             with monkeypatch.context() as patch:
                 patch.setattr(pg, "_apply_schema_version_15", lambda cur: None)
+                # Schema 21 references the Release table withheld in this fixture.
+                patch.setattr(pg, "_apply_schema_version_21", lambda cur: None)
                 pg_migrations.migrate_schema(store)
             with conn.cursor() as cur:
                 cur.execute("UPDATE schema_version SET version = 14")
@@ -324,7 +326,7 @@ class TestSchema15Migration:
                 )
             conn.commit()
 
-            assert pg_migrations.migrate_schema(store)["applied_versions"] == [15, 16, 17, 18, 19, 20]
+            assert pg_migrations.migrate_schema(store)["applied_versions"] == list(range(15, pg_migrations.CURRENT_SCHEMA_VERSION + 1))
             with conn.cursor() as cur:
                 pg._apply_schema_version_15(cur)
             conn.commit()

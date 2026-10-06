@@ -482,3 +482,16 @@ class TestAcceptanceContractEvidenceObligations:
         ]
         assert met_digest not in {row["release_digest"] for row in report["items"]}
 
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "true", [], {}])
+def test_protected_effect_verification_requirement_is_a_strict_boolean(value):
+    with pytest.raises(ValueError, match="effect_verification_required must be a boolean"):
+        releases.normalize_acceptance_contract({"effect_verification_required": value})
+
+
+def test_protected_effect_verification_requirement_changes_the_frozen_release_digest():
+    revision = releases.release_revision(EDIT_REVISION, 0)
+    required = releases.normalize_acceptance_contract({"effect_verification_required": True})
+    optional = releases.normalize_acceptance_contract({"effect_verification_required": False})
+    assert releases.release_digest(UUID, revision, required, []) != releases.release_digest(UUID, revision, optional, [])

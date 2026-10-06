@@ -807,6 +807,11 @@ def test_schema_migration_gives_up_on_a_held_ddl_lock(store_factory, monkeypatch
     try:
         blocker.execute("SELECT * FROM work_item LIMIT 1")  # idle in transaction
         with store.conn.cursor() as cur:
+            # Recreate the pre-21 effect shape as well as backdating the
+            # ledger; otherwise schema 19 correctly refuses the new columns.
+            cur.execute("DROP TRIGGER sprintctl_effect_verification_guard ON work_effect_intent")
+            cur.execute("DROP FUNCTION sprintctl_effect_verification_guard()")
+            cur.execute("ALTER TABLE work_effect_intent DROP COLUMN release_digest, DROP COLUMN verification_binding")
             cur.execute("UPDATE schema_version SET version = 13")
         store.conn.commit()
         monkeypatch.setenv("SPRINTCTL_MIGRATION_LOCK_TIMEOUT", "300ms")

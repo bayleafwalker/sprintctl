@@ -63,6 +63,8 @@ class _SchemaCursor:
         raise AssertionError(f"unexpected fetchall for query: {self._query}")
 
     def fetchone(self):
+        if "SELECT data_type FROM information_schema.columns" in self._query:
+            return None  # This empty fake has no pre-existing binding columns.
         if "AS catalog_fingerprint" in self._query:
             if self._conn.maintenance_relations == 4 and self._conn.maintenance_triggers == 2:
                 fingerprint = pg_migrations.MAINTENANCE_CATALOG_FINGERPRINT

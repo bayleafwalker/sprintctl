@@ -147,6 +147,8 @@ def normalize_acceptance_contract(contract: Mapping[str, Any] | None) -> dict[st
                 "acceptance_contract.evidence_obligations must be a list of "
                 "non-empty strings"
             )
+    if "effect_verification_required" in contract and type(contract["effect_verification_required"]) is not bool:
+        raise ValueError("acceptance_contract.effect_verification_required must be a boolean")
     if "verification_profile" in contract:
         profile = contract["verification_profile"]
         if profile not in SUPPORTED_VERIFICATION_PROFILES:

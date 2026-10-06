@@ -45,6 +45,7 @@ from . import decisions as _decisions
 from . import releases as _releases
 from . import depcore as _depcore
 from . import effect_intent as _effect_intent
+from . import effect_verification as _effect_verification
 from . import eventcore as _eventcore
 from . import outbox
 from . import pg_migrations as _pg_migrations
@@ -3274,6 +3275,43 @@ def _advance_identity_sequences(cur: Any, tables: tuple[str, ...]) -> None:
                 """,
                 (seq_name,),
             )
+
+
+def _apply_schema_version_21(cur: Any) -> None:
+    """Add nullable bindings without rewriting any historical intent/digest."""
+    for name, expected_type in (("release_digest", "text"), ("verification_binding", "jsonb")):
+        cur.execute("SELECT data_type FROM information_schema.columns WHERE table_schema=current_schema() "
+                    "AND table_name='work_effect_intent' AND column_name=%s", (name,))
+        existing = cur.fetchone()
+        if existing is not None and existing["data_type"] != expected_type:
+            raise _pg_migrations.RemoteSchemaMigrationError("schema21 foreign effect binding column: " + name)
+        if existing is not None:
+            raise _pg_migrations.RemoteSchemaMigrationError("schema21 refuses pre-existing effect binding column: " + name)
+    cur.execute("ALTER TABLE work_effect_intent ADD COLUMN release_digest text, "
+                "ADD COLUMN verification_binding jsonb")
+    cur.execute("ALTER TABLE work_effect_intent "
+                "ADD CONSTRAINT effect_verification_object CHECK (verification_binding IS NULL OR "
+                "(jsonb_typeof(verification_binding)='object' AND state IN ('accepted','applied')))")
+    cur.execute("ALTER TABLE work_effect_intent "
+                "ADD CONSTRAINT effect_release_reference FOREIGN KEY (repo_id,release_digest) "
+                "REFERENCES work_release(repo_id,release_digest)")
+    # Keep the v19 content/state guard; install a separate guard for the new
+    # immutable metadata so replay never replaces the historical function.
+    cur.execute("""
+        CREATE FUNCTION sprintctl_effect_verification_guard()
+        RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+            IF NEW.release_digest IS DISTINCT FROM OLD.release_digest THEN
+                RAISE EXCEPTION 'effect proposal release is immutable' USING ERRCODE='23514';
+            END IF;
+            IF NEW.verification_binding IS DISTINCT FROM OLD.verification_binding
+               AND NOT (OLD.state='proposed' AND NEW.state='accepted' AND OLD.verification_binding IS NULL) THEN
+                RAISE EXCEPTION 'effect verification binding is immutable' USING ERRCODE='23514';
+            END IF;
+            RETURN NEW;
+        END; $$;
+        CREATE TRIGGER sprintctl_effect_verification_guard BEFORE UPDATE ON work_effect_intent
+        FOR EACH ROW EXECUTE FUNCTION sprintctl_effect_verification_guard();
+    """)
 
 
 # ---------------------------------------------------------------------------
@@ -7319,7 +7357,7 @@ def _effect_row(row: Mapping[str, Any]) -> dict:
     accepted = row["accepted_at"] is not None
     rejected = row["rejected_at"] is not None
     applied = row["applied_at"] is not None
-    return {
+    result = {
         "intent_id": row["intent_id"],
         "revision": int(row["revision"]),
         "canonical_intent_digest": row["canonical_intent_digest"],
@@ -7362,6 +7400,11 @@ def _effect_row(row: Mapping[str, Any]) -> dict:
             if applied else None
         ),
     }
+    if row.get("release_digest") is not None:
+        result["release_digest"] = row["release_digest"]
+    if accepted and row.get("verification_binding") is not None:
+        result["acceptance"]["verification"] = row["verification_binding"]
+    return result
 
 
 def propose_effect_intent(
@@ -7406,17 +7449,19 @@ def propose_effect_intent(
         )
         if cur.fetchone() is None:
             raise EffectRefused("work-not-found", f"item #{work_item_id} not found")
+        release = _current_release_locked(cur, store.repo_id, work_item_id)
+        release_digest = release["release_digest"] if release else None
         cur.execute(
             "INSERT INTO work_effect_intent(repo_id, intent_id, revision, "
             "canonical_intent_digest, state, work_item_id, run_id, proposer_principal, "
             "workspace_id, idempotency_key, request_digest, repository, base_commit, "
-            "title, rationale, unified_diff) "
-            "VALUES (%s, %s, 1, %s, 'proposed', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "title, rationale, unified_diff, release_digest) "
+            "VALUES (%s, %s, 1, %s, 'proposed', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (repo_id, workspace_id, proposer_principal, idempotency_key) DO NOTHING",
             (
                 store.repo_id, intent_id, digest, work_item_id, run_id, principal_id,
                 workspace_id, idempotency_key, request_digest, repository, base_commit,
-                title, rationale, unified_diff,
+                title, rationale, unified_diff, release_digest,
             ),
         )
         cur.execute(
@@ -7475,6 +7520,7 @@ def _effect_transition(
     timestamp_column: str,
     assignments: Mapping[str, Any],
     to_state: str,
+    guard: Callable[[Any, Mapping[str, Any]], Mapping[str, Any]] | None = None,
     cur: Any | None = None,
 ) -> dict:
     """Move one intent ``from_state`` -> ``to_state`` under its row lock.
@@ -7518,17 +7564,76 @@ def _effect_transition(
                 f"effect intent {intent_id} is {row['state']}; only a {from_state} "
                 f"intent can become {to_state}",
             )
-        columns = ", ".join(f"{name} = %s" for name in assignments)
+        bound_assignments = dict(assignments)
+        if guard is not None:
+            bound_assignments.update(guard(cur, row))
+        columns = ", ".join(f"{name} = %s" for name in bound_assignments)
         cur.execute(
             f"UPDATE work_effect_intent SET state = %s, {timestamp_column} = clock_timestamp(), "
             f"{columns} WHERE repo_id = %s AND intent_id = %s RETURNING *",
-            (to_state, *assignments.values(), store.repo_id, intent_id),
+            (to_state, *bound_assignments.values(), store.repo_id, intent_id),
         )
         updated = cur.fetchone()
         assert updated is not None
         return _effect_row(updated)
 
     return _in_write_transaction(store, cur, body)
+
+
+def _effect_release_locked(cur: Any, store: PgStore, row: Mapping[str, Any]) -> tuple[str | None, bool]:
+    # Intent row is already locked. Serialize the current release/revision
+    # with reservations, description edits and Decisions under the item lock.
+    _item, revision, _count = _release_basis_locked(cur, store.repo_id, int(row["work_item_id"]))
+    current = _current_release_locked(cur, store.repo_id, int(row["work_item_id"]))
+    proposed_digest = row.get("release_digest")
+
+    def requirement(release: Mapping[str, Any] | None) -> bool:
+        if release is None:
+            return False
+        value = release["acceptance_contract"].get("effect_verification_required", False)
+        if type(value) is not bool:
+            raise EffectRefused("effect-verification-refused", "invalid frozen verification requirement")
+        return value
+
+    required = requirement(current)
+    if proposed_digest is not None:
+        cur.execute("SELECT acceptance_contract FROM work_release WHERE repo_id=%s AND release_digest=%s",
+                    (store.repo_id, proposed_digest))
+        proposed = cur.fetchone()
+        proposed_required = requirement(proposed)
+        required = required or proposed_required
+        if (current is None or current["release_digest"] != proposed_digest or current["item_revision"] != revision):
+            raise EffectRefused("effect-release-mismatch", "the proposal Release is no longer the current work revision")
+    return proposed_digest, required
+
+
+def _effect_verification_locked(cur: Any, store: PgStore, row: Mapping[str, Any],
+                                verification_ref: Mapping[str, str] | None,
+                                binding: tuple[str, str, str | None, str | None]) -> Mapping[str, Any]:
+    proposed_digest, required = _effect_release_locked(cur, store, row)
+    if verification_ref is None:
+        if required:
+            raise EffectRefused("effect-verification-required", "this Release requires protected artifact verification")
+        return {}
+    if proposed_digest is None:
+        raise EffectRefused("effect-release-mismatch", "verified acceptance requires an explicitly released proposal")
+    principal, workspace, client, grant = binding
+    cur.execute("SELECT e.* FROM evidence_item e JOIN run r ON r.repo_id=e.repo_id AND r.run_id=e.run_id "
+                "WHERE e.repo_id=%s AND e.run_id=%s AND e.item_id=%s AND r.principal_id=%s AND r.workspace_id=%s "
+                "AND r.client_id IS NOT DISTINCT FROM %s AND r.grant_id IS NOT DISTINCT FROM %s",
+                (store.repo_id, verification_ref["run_id"], verification_ref["item_id"], principal, workspace, client, grant))
+    receipt = cur.fetchone()
+    if receipt is None:
+        raise EffectRefused("effect-verification-refused", "no eligible protected verification receipt")
+    try:
+        detail = _effect_verification.validate_receipt(_evidence_row(receipt), _effect_row(row), proposed_digest)
+    except ValueError as exc:
+        raise EffectRefused("effect-verification-refused", str(exc)) from exc
+    frozen = {"run_id": verification_ref["run_id"], "item_id": verification_ref["item_id"],
+              "evidence_digest": receipt["digest"], "entry_digest": evidence_entry_digest(receipt),
+              "verifier_principal": principal, "workspace_id": workspace, "client_id": client, "grant_id": grant,
+              "receipt": detail}
+    return {"verification_binding": psycopg.types.json.Jsonb(frozen)}
 
 
 def accept_effect_intent(
@@ -7539,6 +7644,8 @@ def accept_effect_intent(
     canonical_intent_digest: str,
     acceptor_principal: str,
     acceptor_policy_version: str | None = None,
+    verification_ref: Mapping[str, str] | None = None,
+    verification_identity: tuple[str, str, str | None, str | None] | None = None,
 ) -> dict:
     """``proposed`` -> ``accepted``, recording who accepted exactly what.
 
@@ -7554,6 +7661,8 @@ def accept_effect_intent(
             "acceptor_principal": acceptor_principal,
             "acceptor_policy_version": acceptor_policy_version,
         },
+        guard=lambda cur, row: _effect_verification_locked(cur, store, row, verification_ref,
+            verification_identity or (acceptor_principal, "", None, None)),
     )
 
 
@@ -7576,6 +7685,13 @@ def reject_effect_intent(
     )
 
 
+def _effect_application_guard(cur: Any, store: PgStore, row: Mapping[str, Any]) -> Mapping[str, Any]:
+    _release, required = _effect_release_locked(cur, store, row)
+    if required and row.get("verification_binding") is None:
+        raise EffectRefused("effect-verification-required", "application requires the frozen protected verification")
+    return {}
+
+
 def mark_effect_intent_applied(
     store: PgStore,
     intent_id: str,
@@ -7595,4 +7711,5 @@ def mark_effect_intent_applied(
             "applier_principal": applier_principal,
             "applied_commit_sha": commit_sha, "applied_pr_url": pr_url,
         },
+        guard=lambda cur, row: _effect_application_guard(cur, store, row),
     )
