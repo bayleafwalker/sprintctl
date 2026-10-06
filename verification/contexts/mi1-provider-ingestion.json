@@ -16,7 +16,8 @@
   "actors": [
     "public-proposer",
     "second-offline-producer",
-    "native-owner"
+    "native-owner",
+    "trusted-acceptor"
   ],
   "initial_state": [
     "registered-real-run",
@@ -66,6 +67,20 @@
         "public-proposer",
         "native-owner"
       ]
+    },
+    {
+      "name": "trusted-digest-substitution-refusal",
+      "actors": [
+        "trusted-acceptor",
+        "native-owner"
+      ]
+    },
+    {
+      "name": "read-with-provider-decoder-unavailable",
+      "actors": [
+        "public-proposer",
+        "native-owner"
+      ]
     }
   ],
   "consistency": {
@@ -77,28 +92,33 @@
     "clock": "fixed fixture collection instant; no TTL/expiry assertions"
   },
   "bounds": {
-    "histories": 4,
+    "histories": 6,
     "independent_connection_races": 1
   },
   "invariants": [
     "lost response plus exact retry retains one observation",
     "changed provider content under one delivery cannot replace first record",
     "provider verdict never grants public effect authority or settles work",
-    "removing decoder leaves admitted native records and authority unchanged"
+    "removing decoder leaves admitted native records and authority unchanged",
+    "provider artifact and observation digest cannot substitute for the canonical frozen intent digest"
   ],
   "faults": [
     "commit-before-reply-loss",
     "changed-artifact-conflicting-replay",
     "public-effect-accept-denial",
     "public-effect-apply-denial",
-    "two-producer-contention"
+    "two-producer-contention",
+    "provider-hash-used-as-intent-acceptance-binding",
+    "provider-decoder-unavailable"
   ],
   "oracles": [
     "one native evidence/ledger row",
     "first owner tail unchanged",
     "uncertain then confirmed durable request receipts",
     "authority-required/403 with unchanged work/intent",
-    "deterministic second-connection lock wait"
+    "deterministic second-connection lock wait",
+    "effect-digest-mismatch/409 with unchanged work/intent/tail and valid trusted-acceptance positive control",
+    "fresh owner facade reads and native duplicate replay with provider imports refused"
   ],
   "implementation_anchors": [
     "sprintctl/evidence_intake.py::capture",
