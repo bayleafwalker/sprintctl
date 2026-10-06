@@ -329,6 +329,8 @@ class TestSchema14Fold:
                 patch.setattr(pg, "_apply_schema_version_14", lambda cur: None)
                 # 15's guards name the decision table 14 creates.
                 patch.setattr(pg, "_apply_schema_version_15", lambda cur: None)
+                # Schema 21 references the Release table withheld in this fixture.
+                patch.setattr(pg, "_apply_schema_version_21", lambda cur: None)
                 pg_migrations.migrate_schema(store)
             with conn.cursor() as cur:
                 cur.execute("UPDATE schema_version SET version = 13")
@@ -338,7 +340,7 @@ class TestSchema14Fold:
             conn.commit()
 
             migrated = pg_migrations.migrate_schema(store)
-            assert migrated["applied_versions"] == [14, 15, 16, 17, 18, 19, 20]
+            assert migrated["applied_versions"] == list(range(14, pg_migrations.CURRENT_SCHEMA_VERSION + 1))
 
             with conn.cursor() as cur:
                 decisions, evidence, items = _fold_counts(cur, repo_id)

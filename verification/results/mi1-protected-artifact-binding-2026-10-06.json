@@ -1,0 +1,99 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.mi1.protected-artifact-binding",
+  "contract_ref": {
+    "doc_id": "vuoro-mi1-market-integration",
+    "revision": "git:f9cadd85b35cd28717c5ab3fc24409bcb0f7b98f"
+  },
+  "implementation_sha": "c51bee1f609678d28ede6af6a7adb3d0a9142271",
+  "depth": 2,
+  "environment": {
+    "backend": "disposable PostgreSQL16 actual native owner; no shared state fault injection",
+    "isolation": "READ COMMITTED with intent and work row locks; independent actor connections",
+    "tool_versions": {
+      "python": "3.12.14",
+      "postgresql": "16.15"
+    }
+  },
+  "execution": {
+    "histories": 27,
+    "bounds": {
+      "receipt_cases": 22,
+      "migration_cases": 5,
+      "independent_connection_races": 2,
+      "full_pg_passed": 724,
+      "cleanup_reports_zero_rows": 52,
+      "full_unit_passed": 1732,
+      "full_unit_skipped_pg_environment_or_existing_optional_checks": 722,
+      "full_unit_deselected_perf": 14,
+      "post_review_focused_unit_passed": 96,
+      "unit_without_remote_extra_passed": 1729,
+      "unit_without_remote_extra_skipped": 729,
+      "optional_driver_collection_cases_skipped_cleanly": 27
+    },
+    "faults_exercised": [
+      "missing required receipt",
+      "nine mismatched receipt cases",
+      "foreign principal/workspace/client/grant",
+      "work Release replaced or description edited",
+      "two acceptors before owner state write",
+      "work editor blocked until acceptance commit",
+      "immutable verification altered during otherwise legal application transition",
+      "foreign matching/wrong type binding columns",
+      "old schema runtime admission"
+    ]
+  },
+  "claims": [
+    {
+      "property": "required acceptance recomputes raw UTF8 diff hash and binds exact native receipt/intent/Release",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_protected_artifact_acceptance.py"
+      ]
+    },
+    {
+      "property": "two protected acceptors serialize and only one authoritative acceptance is recorded",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/pg/test_protected_artifact_acceptance.py::test_two_verified_acceptors_serialize_on_actual_owner_commit_boundary"
+      ]
+    },
+    {
+      "property": "work edits serialize with acceptance and subsequent stale application is refused",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/pg/test_protected_artifact_acceptance.py::test_work_edit_waits_for_acceptance_commit_then_invalidates_application"
+      ]
+    },
+    {
+      "property": "migration preserves legacy history and refuses foreign columns without advancing ledger",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_effect_verification_migration.py"
+      ]
+    },
+    {
+      "property": "protected verifier execution, reconciler external effect and deployed runtime use this binding end to end",
+      "result": "unknown",
+      "evidence": [
+        "docs/plans/mi1-protected-artifact-binding-2026-10-06.md"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "On unchanged baseline 1a664ea0fff3bbc15142554855c8a80fcc255ea2, required_receipt_cannot_be_omitted fails DID NOT RAISE: the authorized acceptor can accept without a required receipt."
+    },
+    {
+      "summary": "The initial race paused accept_effect_intent after its transaction committed, so the second actor did not block. The corrected experiment pauses _effect_verification_locked inside the transaction before state write; two independent connections now demonstrate actual lock contention."
+    }
+  ],
+  "notes": [
+    "Exact source/test SHA256 fingerprints: {\"sprintctl/effect_verification.py\": \"0717929e47586cecfc1ba745545ab9103798dfd4de59d92321ebfcf381d99531\", \"sprintctl/pg.py\": \"8312a3130ba27b7b8f30f6759a0871302774441c1e8bdea38201d35c1272b029\", \"sprintctl/pg_migrations.py\": \"359ea2a82f84ff154d5082a44e7406c9033fe97e0ad0ea2b0e43d8e3e7189fb1\", \"sprintctl/vuoro_adapter.py\": \"037f3d6b0a861f6820e182911ee2597f6a3e5b99404b6f9359d6870a2a03ca23\", \"sprintctl/work_application.py\": \"5e54059c66d212ecf2eb958e5589756ebd13a403e4618cc407d4b508e65cc315\", \"tests/pg/test_effect_verification_migration.py\": \"0e23dda9facaf393269290231c1833b6d29e8db32cd33c7128156808e6b1f8c3\", \"tests/pg/test_protected_artifact_acceptance.py\": \"544875380e23551c1bdf0044f2d7d8b743fd63d334733e683d6a13033f8c54f7\"}",
+    "Source 0.13.0/schema21 wheel built and release contract validated locally; no release asset publication, live migration or service rollout is asserted.",
+    "Full unit 1732 passed; final DDL-only review additionally passed 96 targeted unit tests and full PG724. CI on the PR head must pass before landing.",
+    "Native check outcomes are protected actor assertions, not cryptographic execution attestations. The declared boolean requirement adds no automatic verifier policy.",
+    "Legacy canonical v1 digests and missing links remain unchanged. Work settlement remains separate. P2 remains active; hosted Track B not qualified.",
+    "First PR-head CI37508795370 passed PostgreSQL724 and producer contract, but both unit jobs failed collection because the new test imported optional psycopg at module load time. Moving CheckViolation inside the database-only test fixes optional-driver collection; the explicit no-remote installation passes1729 with729 environment skips and14 perf exclusions. Final-head CI remains required."
+  ]
+}

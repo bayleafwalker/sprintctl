@@ -2253,15 +2253,22 @@ class WorkApplication:
         return self._effect_list_proposed(arguments, context, state="accepted")
 
     def _effect_accept(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
-        _effect_arguments(arguments, frozenset({"intent_id", "revision", "canonical_intent_digest"}))
+        _effect_arguments(arguments, frozenset({"intent_id", "revision", "canonical_intent_digest", "verification_ref"}))
         intent_id, revision, digest = _effect_binding(arguments)
         acceptor, _workspace = _identity_binding(context)
+        verification_ref = arguments.get("verification_ref")
+        if verification_ref is not None:
+            if (not isinstance(verification_ref, dict) or set(verification_ref) != {"run_id", "item_id"}
+                    or any(not isinstance(v, str) or not v for v in verification_ref.values())):
+                raise ApplicationRejection("invalid-arguments", "verification_ref must name one native run/item", 422)
+        client, grant = _grant_binding(context)
         from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
 
         try:
             intent = self.backend.accept_effect_intent(
                 self.store, intent_id, revision=revision, canonical_intent_digest=digest,
-                acceptor_principal=acceptor,
+                acceptor_principal=acceptor, verification_ref=verification_ref,
+                verification_identity=(acceptor, _workspace, client, grant),
             )
         except _pg.EffectRefused as exc:
             raise self._effect_refused(exc) from exc

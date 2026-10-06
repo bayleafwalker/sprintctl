@@ -771,6 +771,19 @@ _EFFECT_PR_URL_SCHEMA: dict[str, Any] = {
     "pattern": "^https?://\\S+$",
     "maxLength": _effect.MAX_PR_URL,
 }
+_EFFECT_VERIFICATION_REF_SCHEMA = _object_schema(
+    {"run_id": _RUN_ID_SCHEMA, "item_id": {"type": "string", "minLength": 1}},
+    required=("run_id", "item_id"),
+)
+_EFFECT_VERIFICATION_BINDING_SCHEMA = _object_schema(
+    {"run_id": _RUN_ID_SCHEMA, "item_id": {"type": "string"},
+     "evidence_digest": {"type": "string"}, "entry_digest": {"type": "string"},
+     "verifier_principal": {"type": "string"}, "workspace_id": {"type": "string"},
+     "client_id": {"type": ["string", "null"]}, "grant_id": {"type": ["string", "null"]},
+     "receipt": {"type": "object"}},
+    required=("run_id", "item_id", "evidence_digest", "entry_digest", "verifier_principal",
+              "workspace_id", "client_id", "grant_id", "receipt"),
+)
 _EFFECT_ACCEPTANCE_SCHEMA = _object_schema(
     {
         "intent_id": _EFFECT_ID_SCHEMA,
@@ -780,6 +793,7 @@ _EFFECT_ACCEPTANCE_SCHEMA = _object_schema(
         # null until a policy acceptor exists; an operator acceptance has none.
         "acceptor_policy_version": {"type": ["string", "null"]},
         "accepted_at": {"type": "string"},
+        "verification": _EFFECT_VERIFICATION_BINDING_SCHEMA,
     },
     required=(
         "intent_id", "intent_revision", "canonical_intent_digest", "acceptor_principal",
@@ -809,6 +823,7 @@ _EFFECT_INTENT_SCHEMA = _object_schema(
         "revision": _EFFECT_REVISION_SCHEMA,
         "canonical_intent_digest": _EFFECT_DIGEST_SCHEMA,
         "state": {"enum": list(_effect.EFFECT_STATES)},
+        "release_digest": _EFFECT_DIGEST_SCHEMA,
         "item_id": {"type": "integer", "minimum": 1},
         "run_id": _RUN_ID_SCHEMA,
         "proposer_principal": {"type": "string", "minLength": 1},
@@ -1230,7 +1245,8 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
     ),
     WorkOperationContract(
         _effect.OPERATION_ACCEPT,
-        _object_schema(_EFFECT_BINDING_PROPERTIES, required=_EFFECT_BINDING_REQUIRED),
+        _object_schema({**_EFFECT_BINDING_PROPERTIES, "verification_ref": _EFFECT_VERIFICATION_REF_SCHEMA},
+                       required=_EFFECT_BINDING_REQUIRED),
         _EFFECT_RESULT,
         _effect.AUTHORITY_ACCEPT,
         "write",

@@ -1,0 +1,113 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.mi1.protected-artifact-binding",
+  "owner_repo": "sprintctl",
+  "subject": "effect-acceptance-release-and-raw-artifact-binding",
+  "contract_ref": {
+    "doc_id": "vuoro-mi1-market-integration",
+    "revision": "git:f9cadd85b35cd28717c5ab3fc24409bcb0f7b98f"
+  },
+  "source_of_truth": "native PostgreSQL effect intents, immutable work Releases and native evidence",
+  "depth": 2,
+  "backends": [
+    "disposable-postgresql"
+  ],
+  "actors": [
+    "public-proposer",
+    "protected-acceptor-1",
+    "protected-acceptor-2",
+    "work-editor",
+    "protected-applier"
+  ],
+  "initial_state": [
+    "released work pending",
+    "proposed immutable effect",
+    "protected receipt recorded as observation"
+  ],
+  "operations": [
+    {
+      "name": "accept exact receipt",
+      "actors": [
+        "protected-acceptor-1",
+        "protected-acceptor-2"
+      ],
+      "synchronization": "intent FOR UPDATE, then work item FOR UPDATE, proof validation and state write in one transaction"
+    },
+    {
+      "name": "edit work during acceptance",
+      "actors": [
+        "work-editor"
+      ],
+      "synchronization": "independent connection blocks on work item lock before acceptance commit"
+    },
+    {
+      "name": "record application",
+      "actors": [
+        "protected-applier"
+      ],
+      "synchronization": "same intent/work locks; refuse changed Release or revision"
+    },
+    {
+      "name": "migrate owner schema",
+      "actors": [
+        "protected-applier"
+      ],
+      "synchronization": "deployment migrator advisory transaction lock; startup read-only"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one immutable exact acceptance under current Release"
+  },
+  "assumptions": {
+    "isolation": "PostgreSQL READ COMMITTED with explicit row locks",
+    "clock": "not used to grant receipt authority",
+    "fairness": "none"
+  },
+  "bounds": {
+    "competing_acceptors": 2,
+    "work_editors": 1,
+    "foreign_identity_fields": 4,
+    "receipt_mutations": 9
+  },
+  "invariants": [
+    "required proof cannot be omitted",
+    "raw UTF8 artifact and canonical intent hash are distinct",
+    "receipt matches exact intent ID/revision/current Release",
+    "native receipt binding matches authenticated protected acceptor",
+    "acceptance proof remains immutable during application",
+    "stale work Release cannot be applied",
+    "legacy digests and missing links remain unchanged",
+    "migration refuses foreign columns atomically"
+  ],
+  "faults": [
+    "wrong artifact or frozen binding",
+    "failed or unknown-revision check",
+    "provider observation masquerading as verifier",
+    "foreign principal/workspace/client/grant",
+    "competing acceptors before state write",
+    "work edit before application",
+    "metadata mutation during legal state transition",
+    "foreign migration columns"
+  ],
+  "oracles": [
+    "WorkApplication invoke/get/evidence tail",
+    "independent SHA256 of fixture raw diff and receipt JSON",
+    "independent-connection lock observer",
+    "historical acceptance equality after schema migration",
+    "old baseline accepts without required proof"
+  ],
+  "implementation_anchors": [
+    "sprintctl/effect_verification.py",
+    "sprintctl/pg.py:_effect_verification_locked",
+    "sprintctl/pg.py:_effect_application_guard",
+    "sprintctl/pg.py:_apply_schema_version_21",
+    "tests/pg/test_protected_artifact_acceptance.py",
+    "tests/pg/test_effect_verification_migration.py"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "concurrent-history",
+    "fault-scenario"
+  ]
+}

@@ -130,6 +130,8 @@ class TestSchema16Migration:
             # Build exactly schema 15: run the ladder with 16 withheld.
             with monkeypatch.context() as patch:
                 patch.setattr(pg, "_apply_schema_version_16", lambda cur: None)
+                # Keep the pre-21 effect shape when backdating this fixture.
+                patch.setattr(pg, "_apply_schema_version_21", lambda cur: None)
                 pg_migrations.migrate_schema(store)
             with conn.cursor() as cur:
                 cur.execute("UPDATE schema_version SET version = 15")
@@ -140,8 +142,8 @@ class TestSchema16Migration:
             conn.rollback()
 
             migrated = pg_migrations.migrate_schema(store)
-            assert migrated["applied_versions"] == [16, 17, 18, 19, 20]
-            assert migrated["to_version"] == 20
+            assert migrated["applied_versions"] == list(range(16, pg_migrations.CURRENT_SCHEMA_VERSION + 1))
+            assert migrated["to_version"] == pg_migrations.CURRENT_SCHEMA_VERSION
             assert pg_migrations.migrate_schema(store)["applied_versions"] == []
             decision_id = _remark_sql(store, item_id)
             assert pg.get_work_item(store, item_id)["terminal_decision_id"] == decision_id
