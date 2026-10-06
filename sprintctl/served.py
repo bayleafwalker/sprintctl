@@ -838,8 +838,10 @@ __all__ = [
 ]
 
 
-def native_evidence_invoke(served_profile: ServedProfile, operation: str, arguments: dict[str, Any]) -> Any:
+def native_evidence_invoke(
+    served_profile: ServedProfile, operation: str, arguments: dict[str, Any], *, repo_id: str
+) -> Any:
     """Invoke only the two operations used by the typed evidence carrier."""
     if operation not in {"work.run.resolve-v1", "work.evidence.append-v1"}:
         raise ValueError("unsupported native evidence intake operation")
-    return asyncio.run(_invoke_operation(served_profile, operation, arguments))
+    return asyncio.run(_invoke_operation(served_profile, operation, arguments, repo_id=repo_id))

@@ -429,6 +429,13 @@ def test_doctor_json_reports_served_mode_end_to_end(tmp_path, monkeypatch, runne
         lambda served_profile: set(doctor._SERVED_EXPECTED_OPERATIONS),
     )
 
+    # The doctor now probes authenticated identity as well as the catalog.
+    # Keep this unit fixture off the network, just like its catalog fixture.
+    monkeypatch.setattr(
+        doctor._served, "identity_current",
+        lambda profile, *, repo_id: {"actor": "doctor-fixture"},
+    )
+
     result = runner.invoke(cli, ["doctor", "--json"])
 
     assert result.exit_code == 0
@@ -436,6 +443,7 @@ def test_doctor_json_reports_served_mode_end_to_end(tmp_path, monkeypatch, runne
     assert payload["backend"]["resolved_mode"] == "served"
     assert payload["schema"]["backend"] == "served"
     assert payload["schema"]["status"] == "current"
+    assert payload["schema"]["authenticated_actor"] == "doctor-fixture"
     assert payload["extras"]["served"]["enabled"] is True
     assert payload["status"] == "ok"
 
