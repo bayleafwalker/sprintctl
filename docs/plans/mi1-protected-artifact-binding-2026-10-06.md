@@ -86,3 +86,14 @@ and service rollout, and reconstruct these links in P1. Owner application
 recording is not atomic with external Git effects; retain the existing
 reconciler's uncertainty/recovery handling. P2 stays active and Track B remains
 unqualified until the real runtime and commercial harness evidence is present.
+
+## Release gate correction
+
+The immutable 0.13.0 tag's release run passed Python 3.11 but failed Python
+3.12: two native served-refusal tests assumed the optional client was installed,
+while the release gate synchronized only development extras. No wheel was
+published. Patch 0.13.1 preserves schema 21 and all owner semantics, explicitly
+installs the served extra in release gates, and makes those transport tests skip
+when that optional client is absent. A development-only control passed 31 tests
+with the two expected skips; the served installation passed the full 1,729-test
+unit suite. The failed tag remains unchanged; the patch uses a new immutable tag.
