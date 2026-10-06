@@ -81,6 +81,10 @@ class _FakeProfile:
 
 @pytest.fixture
 def fake_vuoro_client(monkeypatch):
+    # Request-shape baselines must not inherit the executing harness's session.
+    # Attribution tests set their own explicit session after this fixture.
+    monkeypatch.delenv("SPRINTCTL_RUNTIME_SESSION_ID", raising=False)
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
     _FakeAsyncVuoroClient.instances = []
     module = types.ModuleType("vuoro_client")
     module.AsyncVuoroClient = _FakeAsyncVuoroClient
@@ -671,3 +675,11 @@ def test_reads_and_sessionless_clients_send_no_session(fake_vuoro_client, monkey
     served.item_note(profile, repo_id="repo-x", item_id=5, note_type="progress", summary="s")
     _operation, arguments, _kwargs = fake_vuoro_client.instances[-1].invocations[0]
     assert "session_id" not in arguments
+
+
+def test_item_note_attaches_codex_thread_when_explicit_session_is_absent(fake_vuoro_client, monkeypatch):
+    monkeypatch.setenv("CODEX_THREAD_ID", "codex-thread-example")
+    result = served.item_note(_profile(), repo_id="repo-x", item_id=7,
+                              note_type="update", summary="s")
+    assert result["arguments"]["session_id"] == "codex-thread-example"
+    assert "actor" not in result["arguments"]

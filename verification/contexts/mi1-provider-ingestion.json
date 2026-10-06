@@ -1,0 +1,113 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.mi1.provider-ingestion",
+  "owner_repo": "sprintctl",
+  "subject": "provider-observation-native-intake-and-effect-boundary",
+  "contract_ref": {
+    "doc_id": "vuoro-mi1-market-integration",
+    "revision": "git:f9cadd85b35cd28717c5ab3fc24409bcb0f7b98f"
+  },
+  "source_of_truth": "Native registered runs, evidence chain, idempotency ledger, work items and effect intents in PostgreSQL; producer SQLite retains intent/receipts only",
+  "depth": 2,
+  "backends": [
+    "temporary-sqlite-producer",
+    "disposable-postgresql-16"
+  ],
+  "actors": [
+    "public-proposer",
+    "second-offline-producer",
+    "native-owner"
+  ],
+  "initial_state": [
+    "registered-real-run",
+    "empty-chain",
+    "synthetic-provider-draft",
+    "proposed-effect"
+  ],
+  "operations": [
+    {
+      "name": "capture",
+      "actors": [
+        "public-proposer",
+        "native-owner"
+      ]
+    },
+    {
+      "name": "resolve-run",
+      "actors": [
+        "public-proposer",
+        "native-owner"
+      ]
+    },
+    {
+      "name": "append-evidence",
+      "actors": [
+        "public-proposer",
+        "native-owner"
+      ]
+    },
+    {
+      "name": "exact-retry",
+      "actors": [
+        "public-proposer",
+        "native-owner"
+      ]
+    },
+    {
+      "name": "accept-refusal",
+      "actors": [
+        "public-proposer",
+        "native-owner"
+      ]
+    },
+    {
+      "name": "mark-applied-refusal",
+      "actors": [
+        "public-proposer",
+        "native-owner"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "native-provider-evidence-key-and-effect-authority"
+  },
+  "assumptions": {
+    "isolation": "guarded disposable PostgreSQL16, native ledger/chain transaction, two independent connections and deterministic lock barrier; file-locked temporary SQLite producers",
+    "clock": "fixed fixture collection instant; no TTL/expiry assertions"
+  },
+  "bounds": {
+    "histories": 4,
+    "independent_connection_races": 1
+  },
+  "invariants": [
+    "lost response plus exact retry retains one observation",
+    "changed provider content under one delivery cannot replace first record",
+    "provider verdict never grants public effect authority or settles work",
+    "removing decoder leaves admitted native records and authority unchanged"
+  ],
+  "faults": [
+    "commit-before-reply-loss",
+    "changed-artifact-conflicting-replay",
+    "public-effect-accept-denial",
+    "public-effect-apply-denial",
+    "two-producer-contention"
+  ],
+  "oracles": [
+    "one native evidence/ledger row",
+    "first owner tail unchanged",
+    "uncertain then confirmed durable request receipts",
+    "authority-required/403 with unchanged work/intent",
+    "deterministic second-connection lock wait"
+  ],
+  "implementation_anchors": [
+    "sprintctl/evidence_intake.py::capture",
+    "sprintctl/evidence_intake.py::synchronize",
+    "sprintctl/work_application.py::_evidence_append",
+    "tests/pg/test_mi1_provider_ingestion.py::test_two_provider_producers_contend_on_real_native_key_without_duplicate_evidence"
+  ],
+  "expansions": [
+    "fault-scenario",
+    "concurrent-history"
+  ]
+}

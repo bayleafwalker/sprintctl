@@ -1,0 +1,244 @@
+{
+  "schema": "mi1-provider-draft-fixture/v1",
+  "synthetic": true,
+  "producer": {
+    "repo": "vuoro",
+    "revision": "git:165bb45c53a097575c6bd497dd352b2697ad190c",
+    "path": "packages/vuoro-evidence/src/vuoro_evidence/ingress/provider.py",
+    "sha256": "c9db8e5fd7c7d8cd7dfad59210384ae36c400ce150d6b79fbe0a1b09084b8a31"
+  },
+  "payload": {
+    "action": "completed",
+    "repository": {
+      "full_name": "example/project"
+    },
+    "check_run": {
+      "id": 42,
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "conclusion": "success",
+      "name": "checks"
+    }
+  },
+  "cases": {
+    "reply-loss": {
+      "item_id": "provider-observation:c12b184b61440deaa7a17ae3b53f0533552b8dc63cf4ff6700219369039d9c00",
+      "kind": "provider-observation",
+      "ref": "git:synthetic/mi1-provider-payload.json",
+      "digest": "sha256:96ac499c63ce2d67872a0e0e5f0d9d018d76f8ebd2b68442203733b5dfcbd0d4",
+      "collector": "vuoro-provider-observation/v1",
+      "idempotency_key": "provider-observation:c12b184b61440deaa7a17ae3b53f0533552b8dc63cf4ff6700219369039d9c00",
+      "validity": {
+        "basis": "indefinite",
+        "valid_from": "2026-10-06T15:00:00+00:00",
+        "valid_until": null,
+        "component_digests": {}
+      },
+      "claims": [
+        {
+          "claim_type": "observation",
+          "subject": "provider-observation:c12b184b61440deaa7a17ae3b53f0533552b8dc63cf4ff6700219369039d9c00",
+          "grant_id": null,
+          "freshness": null,
+          "confirms": null,
+          "detail": {
+            "schema": "vuoro-provider-observation/v1",
+            "provider": "github",
+            "repository": "example/project",
+            "event": "check_run",
+            "delivery_id": "synthetic-mi1-reply-loss",
+            "provider_build": "unknown",
+            "rubric_or_check_revision": "unknown",
+            "observed_instruction_digest": "unknown",
+            "artifact_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "session_reference": "unknown",
+            "event_reference": "42",
+            "provider_references": {
+              "run_attempt": "unknown",
+              "workflow_id": "unknown",
+              "check_name": "checks"
+            },
+            "commit_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "status": "completed",
+            "verdict": "success",
+            "explanation": "unknown",
+            "payload_digest": "sha256:c78c57ad22ccedba946e35ae3b6c4adbfd35f8a02589561270315d3fa82bb566",
+            "assurance": "unverified-supplied-payload",
+            "collector_observations": [
+              "artifact_digest"
+            ],
+            "idempotency_key": "provider-observation:c12b184b61440deaa7a17ae3b53f0533552b8dc63cf4ff6700219369039d9c00"
+          }
+        }
+      ],
+      "provenance": {
+        "payload_digest": "sha256:c78c57ad22ccedba946e35ae3b6c4adbfd35f8a02589561270315d3fa82bb566",
+        "assurance": "unverified-supplied-payload"
+      }
+    },
+    "conflicting-replay": {
+      "item_id": "provider-observation:398483194ed58d48c8be7ddb3e5880981b8310fd0a9ff1c6331787e59528aeb7",
+      "kind": "provider-observation",
+      "ref": "git:synthetic/mi1-provider-payload.json",
+      "digest": "sha256:de2f48554e6561003c58a6a986c8cad7611481be914fc9f9f7a12cd2d5a72606",
+      "collector": "vuoro-provider-observation/v1",
+      "idempotency_key": "provider-observation:398483194ed58d48c8be7ddb3e5880981b8310fd0a9ff1c6331787e59528aeb7",
+      "validity": {
+        "basis": "indefinite",
+        "valid_from": "2026-10-06T15:00:00+00:00",
+        "valid_until": null,
+        "component_digests": {}
+      },
+      "claims": [
+        {
+          "claim_type": "observation",
+          "subject": "provider-observation:398483194ed58d48c8be7ddb3e5880981b8310fd0a9ff1c6331787e59528aeb7",
+          "grant_id": null,
+          "freshness": null,
+          "confirms": null,
+          "detail": {
+            "schema": "vuoro-provider-observation/v1",
+            "provider": "github",
+            "repository": "example/project",
+            "event": "check_run",
+            "delivery_id": "synthetic-mi1-conflicting-replay",
+            "provider_build": "unknown",
+            "rubric_or_check_revision": "unknown",
+            "observed_instruction_digest": "unknown",
+            "artifact_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "session_reference": "unknown",
+            "event_reference": "42",
+            "provider_references": {
+              "run_attempt": "unknown",
+              "workflow_id": "unknown",
+              "check_name": "checks"
+            },
+            "commit_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "status": "completed",
+            "verdict": "success",
+            "explanation": "unknown",
+            "payload_digest": "sha256:c78c57ad22ccedba946e35ae3b6c4adbfd35f8a02589561270315d3fa82bb566",
+            "assurance": "unverified-supplied-payload",
+            "collector_observations": [
+              "artifact_digest"
+            ],
+            "idempotency_key": "provider-observation:398483194ed58d48c8be7ddb3e5880981b8310fd0a9ff1c6331787e59528aeb7"
+          }
+        }
+      ],
+      "provenance": {
+        "payload_digest": "sha256:c78c57ad22ccedba946e35ae3b6c4adbfd35f8a02589561270315d3fa82bb566",
+        "assurance": "unverified-supplied-payload"
+      }
+    },
+    "authority": {
+      "item_id": "provider-observation:d909274502402f2d6f99f863d762977e2c1efa67a1d5ca2b04e816061ea39901",
+      "kind": "provider-observation",
+      "ref": "git:synthetic/mi1-provider-payload.json",
+      "digest": "sha256:46816067d33191de19e150cd2d8e496209e9b3f23ec4eb938dae9e9442c126fc",
+      "collector": "vuoro-provider-observation/v1",
+      "idempotency_key": "provider-observation:d909274502402f2d6f99f863d762977e2c1efa67a1d5ca2b04e816061ea39901",
+      "validity": {
+        "basis": "indefinite",
+        "valid_from": "2026-10-06T15:00:00+00:00",
+        "valid_until": null,
+        "component_digests": {}
+      },
+      "claims": [
+        {
+          "claim_type": "observation",
+          "subject": "provider-observation:d909274502402f2d6f99f863d762977e2c1efa67a1d5ca2b04e816061ea39901",
+          "grant_id": null,
+          "freshness": null,
+          "confirms": null,
+          "detail": {
+            "schema": "vuoro-provider-observation/v1",
+            "provider": "github",
+            "repository": "example/project",
+            "event": "check_run",
+            "delivery_id": "synthetic-mi1-authority",
+            "provider_build": "unknown",
+            "rubric_or_check_revision": "unknown",
+            "observed_instruction_digest": "unknown",
+            "artifact_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "session_reference": "unknown",
+            "event_reference": "42",
+            "provider_references": {
+              "run_attempt": "unknown",
+              "workflow_id": "unknown",
+              "check_name": "checks"
+            },
+            "commit_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "status": "completed",
+            "verdict": "success",
+            "explanation": "unknown",
+            "payload_digest": "sha256:c78c57ad22ccedba946e35ae3b6c4adbfd35f8a02589561270315d3fa82bb566",
+            "assurance": "unverified-supplied-payload",
+            "collector_observations": [
+              "artifact_digest"
+            ],
+            "idempotency_key": "provider-observation:d909274502402f2d6f99f863d762977e2c1efa67a1d5ca2b04e816061ea39901"
+          }
+        }
+      ],
+      "provenance": {
+        "payload_digest": "sha256:c78c57ad22ccedba946e35ae3b6c4adbfd35f8a02589561270315d3fa82bb566",
+        "assurance": "unverified-supplied-payload"
+      }
+    },
+    "two-producers": {
+      "item_id": "provider-observation:69215b4affa8ae1581fe6cc5944b439c411b4c39df3b93aa9a9f7c7212da42d8",
+      "kind": "provider-observation",
+      "ref": "git:synthetic/mi1-provider-payload.json",
+      "digest": "sha256:a9a1b40d498ef5da5eb8d825b2476841ea1ed4f7603a10ba8028a3f18cef7ff0",
+      "collector": "vuoro-provider-observation/v1",
+      "idempotency_key": "provider-observation:69215b4affa8ae1581fe6cc5944b439c411b4c39df3b93aa9a9f7c7212da42d8",
+      "validity": {
+        "basis": "indefinite",
+        "valid_from": "2026-10-06T15:00:00+00:00",
+        "valid_until": null,
+        "component_digests": {}
+      },
+      "claims": [
+        {
+          "claim_type": "observation",
+          "subject": "provider-observation:69215b4affa8ae1581fe6cc5944b439c411b4c39df3b93aa9a9f7c7212da42d8",
+          "grant_id": null,
+          "freshness": null,
+          "confirms": null,
+          "detail": {
+            "schema": "vuoro-provider-observation/v1",
+            "provider": "github",
+            "repository": "example/project",
+            "event": "check_run",
+            "delivery_id": "synthetic-mi1-two-producers",
+            "provider_build": "unknown",
+            "rubric_or_check_revision": "unknown",
+            "observed_instruction_digest": "unknown",
+            "artifact_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "session_reference": "unknown",
+            "event_reference": "42",
+            "provider_references": {
+              "run_attempt": "unknown",
+              "workflow_id": "unknown",
+              "check_name": "checks"
+            },
+            "commit_reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "status": "completed",
+            "verdict": "success",
+            "explanation": "unknown",
+            "payload_digest": "sha256:c78c57ad22ccedba946e35ae3b6c4adbfd35f8a02589561270315d3fa82bb566",
+            "assurance": "unverified-supplied-payload",
+            "collector_observations": [
+              "artifact_digest"
+            ],
+            "idempotency_key": "provider-observation:69215b4affa8ae1581fe6cc5944b439c411b4c39df3b93aa9a9f7c7212da42d8"
+          }
+        }
+      ],
+      "provenance": {
+        "payload_digest": "sha256:c78c57ad22ccedba946e35ae3b6c4adbfd35f8a02589561270315d3fa82bb566",
+        "assurance": "unverified-supplied-payload"
+      }
+    }
+  }
+}

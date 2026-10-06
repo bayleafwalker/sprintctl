@@ -1,0 +1,85 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.mi1.provider-ingestion",
+  "contract_ref": {
+    "doc_id": "vuoro-mi1-market-integration",
+    "revision": "git:f9cadd85b35cd28717c5ab3fc24409bcb0f7b98f"
+  },
+  "implementation_sha": "264bd04cd8b38bc0ed3b5a48aa662c816158c6ae",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary SQLite producer and disposable PostgreSQL16 native owner",
+    "isolation": "real owner ledger/chain transaction; two independent race connections; no shared database",
+    "tool_versions": {
+      "python": "3.12.14",
+      "postgresql": "16.15"
+    }
+  },
+  "execution": {
+    "histories": 4,
+    "bounds": {
+      "focused_owner_passed": 4,
+      "full_pg_passed": 695,
+      "fixture_cleanups_zero_rows": 50,
+      "final_full_unit_passed": 1722,
+      "unit_pg_optional_skips": 697,
+      "perf_deselected": 14,
+      "focused_facade_passed": 46,
+      "independent_connection_races": 1
+    },
+    "faults_exercised": [
+      "commit-before-reply-loss",
+      "same-delivery-content-conflict",
+      "public-effect-accept-denial",
+      "public-effect-apply-denial",
+      "two-producer-contention"
+    ]
+  },
+  "claims": [
+    {
+      "property": "lost response plus exact retry retains one provider observation",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_mi1_provider_ingestion.py"
+      ]
+    },
+    {
+      "property": "changed content under one delivery preserves first owner history",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_mi1_provider_ingestion.py"
+      ]
+    },
+    {
+      "property": "provider success does not grant public accept/apply authority or settle work",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_mi1_provider_ingestion.py"
+      ]
+    },
+    {
+      "property": "two producers share one native effect under contention",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/pg/test_mi1_provider_ingestion.py"
+      ]
+    },
+    {
+      "property": "real signed/hosted provider capture and complete cross-harness receipt chain",
+      "result": "unknown",
+      "evidence": [
+        "tests/pg/test_mi1_provider_ingestion.py"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Ambient CODEX_THREAD_ID caused four unrelated facade baseline assertions to include session_id. Explicitly isolated fixture environment; added a positive Codex attribution case. Final unit suite passes without removing actual session attribution."
+    }
+  ],
+  "notes": [
+    "implementation_sha pins the unchanged native owner baseline. New verification-source fingerprints bind this candidate separately: {\"tests/fixtures/mi1/provider-drafts.json\": \"817ea8bcdba6ba3c2f55cd3c83e8f449e99f00e47e9b842038910a7b6b307363\", \"tests/pg/test_mi1_provider_ingestion.py\": \"52f3691e121fca130884ad4ccfa143a8e990c34bd6ca5e13922c47c985f987b0\", \"tests/test_served.py\": \"4e177d29fa6abc876bf07a79ef7efbc5fc3155ec8cd63856690e81205f8a9855\"}",
+    "Provider fixtures are synthetic drafts from Vuoro165bb45; no real webhook, HTTP authentication, role issuance or hosted continuation is proved.",
+    "A separately attempted live native run registration on vuoro-shared returned identity-unbound: existing workstation identity lacks principal/workspace binding. No run was minted, no evidence appended and no credential/grant was widened."
+  ]
+}
