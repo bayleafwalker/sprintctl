@@ -1,0 +1,67 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.mi1.native-transport-scope",
+  "contract_ref": {
+    "doc_id": "mi1-native-evidence-scope-repair",
+    "revision": "sha256:04d28fd8a7cb05d6afa2fe12f483e3e866bb5dfcf457d405674d91200cc99372"
+  },
+  "implementation_sha": "294b45dd79b63e5f4b94b305f5391dafb141e664",
+  "depth": 0,
+  "environment": {
+    "backend": "fake SDK boundary and temporary SQLite producer",
+    "isolation": "unit fixtures; no shared backend mutation or provider credential",
+    "tool_versions": {
+      "python": "3.12.14"
+    }
+  },
+  "execution": {
+    "histories": 2,
+    "bounds": {
+      "before_repair_failed_regressions": 2,
+      "focused_after_repair_passed": 92,
+      "full_suite_passed": 1723,
+      "full_suite_skipped": 697,
+      "perf_deselected": 14,
+      "environment_refused_yaml_contract": 1,
+      "escalated_yaml_contract_rerun_passed": 1
+    },
+    "faults_exercised": [
+      "missing-envelope-repository"
+    ]
+  },
+  "claims": [
+    {
+      "property": "run resolve and evidence append forward the explicit configured repository unchanged",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_native_evidence_intake.py::test_native_transport_preserves_explicit_repository_scope",
+        "tests/test_native_evidence_intake.py"
+      ]
+    },
+    {
+      "property": "unrelated operation stays refused before client use",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_native_evidence_intake.py::test_transport_refuses_unrelated_operation_before_client"
+      ]
+    },
+    {
+      "property": "live preserved request replay through repaired CLI",
+      "result": "unknown",
+      "evidence": [
+        "docs/plans/mi1-native-evidence-scope-repair-2026-10-06.md"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Live native producer rejected run resolve with repo-id-required before append because the CLI helper omitted envelope scope; both new transport regression cases fail before repair."
+    }
+  ],
+  "notes": [
+    "implementation_sha pins the before-repair baseline; candidate source fingerprints: {\"sprintctl/commands/operations.py\": \"42581ca68ca82304b85bad14ed5bed4fa0cbcc177527aff4db741f10b44940e0\", \"sprintctl/served.py\": \"f35e847d72f82b1bf868843db81bdde6d78a35f94bd8f130c5bf5b1b39a8dde4\", \"tests/test_doctor.py\": \"0eac6134f0f1e571969500e35d8f1d7c91e69759951f3078cb44bb01abfebd56\", \"tests/test_native_evidence_intake.py\": \"92a76dded54ca4efef39de64034f006dc5efe63901b4cd797f6a7893c4a83d69\"}",
+    "Doctor end-to-end unit fixture previously stubbed catalog only and attempted real identity transport. Added the missing identity fixture and displayed actor assertion; explicit identity/refusal tests remain independent.",
+    "Runtime retry and commissioning acceptance are separate work after reviewed source landing.",
+    "Full unit invocation: 1723 passed, 697 skipped, 14 deselected; sole refused YAML contract could not write uv cache under sandbox, then passed unchanged with escalation. No remaining failed test; exact-head CI is required before landing."
+  ]
+}

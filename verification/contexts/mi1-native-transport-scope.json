@@ -1,0 +1,59 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.mi1.native-transport-scope",
+  "owner_repo": "sprintctl",
+  "subject": "repository-bound-native-evidence-transport",
+  "contract_ref": {
+    "doc_id": "mi1-native-evidence-scope-repair",
+    "revision": "sha256:04d28fd8a7cb05d6afa2fe12f483e3e866bb5dfcf457d405674d91200cc99372"
+  },
+  "source_of_truth": "served backend repository identity; native owner owns run/evidence state",
+  "depth": 0,
+  "backends": [
+    "fake-sdk-boundary",
+    "temporary-sqlite-producer"
+  ],
+  "actors": [
+    "native-evidence-producer"
+  ],
+  "initial_state": [
+    "explicit-served-repository",
+    "registered-run-binding",
+    "retained-pending-request"
+  ],
+  "operations": [
+    {
+      "name": "run-resolve",
+      "actors": [
+        "native-evidence-producer"
+      ]
+    },
+    {
+      "name": "evidence-append",
+      "actors": [
+        "native-evidence-producer"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "configured-repository-to-sdk-envelope"
+  },
+  "invariants": [
+    "same-configured-repository-reaches-both-owner-operations",
+    "only-run-resolve-and-evidence-append-are-invocable",
+    "original-request-and-owner-retry-key-remain-unchanged"
+  ],
+  "faults": [
+    "missing-envelope-repository"
+  ],
+  "oracles": [
+    "SDK-observed-repo-id",
+    "CLI-forwarding-assertion",
+    "existing-durable-intake-refusal-and-retry-tests"
+  ],
+  "implementation_anchors": [
+    "sprintctl/served.py:native_evidence_invoke",
+    "sprintctl/commands/operations.py:evidence_sync"
+  ]
+}

@@ -1454,7 +1454,7 @@ def evidence_sync(obj):
     try:
         result = _evidence_intake.synchronize(
             paths.outbox_path, repo_id=config.repo_id,
-            invoke=lambda operation, arguments: _served.native_evidence_invoke(config.served_profile, operation, arguments),
+            invoke=lambda operation, arguments: _served.native_evidence_invoke(config.served_profile, operation, arguments, repo_id=config.repo_id),
             rejection_type=InvocationRejectedError,
         )
     except (ValueError, OSError, sqlite3.Error) as exc:

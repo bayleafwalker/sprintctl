@@ -163,7 +163,7 @@ def test_transport_refuses_unrelated_operation_before_client(tmp_path, monkeypat
         served, "_client", lambda *a: pytest.fail("unrelated native invocation")
     )
     with pytest.raises(ValueError, match="unsupported"):
-        served.native_evidence_invoke(None, "work.effect.propose-v1", {})
+        served.native_evidence_invoke(None, "work.effect.propose-v1", {}, repo_id="repo")
 
 
 def test_run_resolution_chain_code_does_not_authorize_correction(tmp_path):
@@ -232,7 +232,8 @@ def test_cli_native_sync_confirms_or_reports_pending(
     monkeypatch.setitem(sys.modules, "vuoro_client.errors", errors)
     calls = []
 
-    def invoke(profile, operation, values):
+    def invoke(profile, operation, values, *, repo_id):
+        assert repo_id == tmp_path.name
         calls.append((operation, values))
         if operation == "work.run.resolve-v1":
             return binding
@@ -374,7 +375,8 @@ def test_real_served_refusal_allows_cli_tail_correction_and_batch_reports_queue(
     assert batch.exit_code == 0, batch.output
     assert json.loads(batch.output)["pending_evidence_request_ids"] == [request_id]
 
-    def invoke(profile, operation, arguments):
+    def invoke(profile, operation, arguments, *, repo_id):
+        assert repo_id == tmp_path.name
         if operation == "work.run.resolve-v1":
             return json.loads(binding_source)
         raise errors.InvocationRejectedError(
@@ -431,7 +433,7 @@ def test_native_facade_preserves_real_served_refusal(monkeypatch):
 
     monkeypatch.setattr(served, "_client", lambda profile: Client())
     with pytest.raises(InvocationRejectedError) as excinfo:
-        served.native_evidence_invoke(None, intake.OPERATION, {})
+        served.native_evidence_invoke(None, intake.OPERATION, {}, repo_id="repo")
     assert excinfo.value is refusal
     assert excinfo.value.status_code == 409
 
@@ -440,3 +442,25 @@ def test_receipt_numeric_normalization_does_not_merge_booleans():
     assert intake._same_json({"value": [100.0, 1.5]}, {"value": [100, 1.5]})
     assert not intake._same_json({"value": [1]}, {"value": [True]})
     assert not intake._same_json({"value": [100.1]}, {"value": [100]})
+
+
+@pytest.mark.parametrize("operation", ["work.run.resolve-v1", intake.OPERATION])
+def test_native_transport_preserves_explicit_repository_scope(operation, monkeypatch):
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def invoke(self, invoked, arguments, **kwargs):
+            assert invoked == operation
+            assert kwargs["repo_id"] == "agentops"
+            assert arguments == {"run_id": "registered-run"}
+            return {"scope_observed": kwargs["repo_id"]}
+
+    monkeypatch.setattr(served, "_client", lambda profile: Client())
+    result = served.native_evidence_invoke(
+        None, operation, {"run_id": "registered-run"}, repo_id="agentops"
+    )
+    assert result == {"scope_observed": "agentops"}
