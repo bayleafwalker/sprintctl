@@ -8,7 +8,6 @@ import json
 import uuid
 
 import pytest
-from psycopg.errors import CheckViolation
 
 from sprintctl import pg
 from sprintctl.application import ApplicationRejection
@@ -148,6 +147,7 @@ def test_legacy_unreleased_proposal_keeps_digest_and_has_no_invented_verificatio
 
 
 def test_verified_acceptance_metadata_is_immutable_even_during_application_transition(store):
+    from psycopg.errors import CheckViolation
     _, release, intent = setup(store)
     ref, _, _ = receipt(store, intent, release)
     accepted = accept(_app(store), intent, ref)
