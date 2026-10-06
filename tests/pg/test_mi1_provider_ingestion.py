@@ -16,7 +16,7 @@ from sprintctl.application import ApplicationRejection
 from sprintctl.vuoro_adapter import WORK_OPERATION_CONTRACTS
 from tests.pg._shared import PG_MARKS
 from tests.pg.test_effect_intent import (
-    PROPOSER, _app, _run, _items as work_items, _propose, _get,
+    PROPOSER, ACCEPTOR, _app, _run, _items as work_items, _propose, _get,
     _accept, _mark_applied,
 )
 from tests.pg.test_run_evidence import _items, _ledger_rows, _race
@@ -130,3 +130,74 @@ def test_two_provider_producers_contend_on_real_native_key_without_duplicate_evi
     assert not result["second"]["pending_evidence_request_ids"]
     assert _items(store, args["run_id"]) == 1
     assert _ledger_rows(store, "append_evidence", args["idempotency_key"]) == 1
+
+
+def test_recorded_provider_hash_cannot_replace_frozen_intent_acceptance_binding(store, tmp_path):
+    app, binding, args = setup(store, "trusted-binding")
+    item_id = work_items(store)[0]
+    proposal = _propose(store, item_id, args["run_id"])
+    before_work = dict(pg.get_work_item(store, item_id))
+    path = tmp_path / "producer.db"
+    capture(path, args, binding)
+    assert not sync(app, path, binding)["pending_evidence_request_ids"]
+    before_tail = app.invoke("work.evidence.tail-v1", {"run_id": args["run_id"]}, PROPOSER)
+    claim = before_tail["item"]["claims"][0]
+    provider_hash = claim["detail"]["artifact_digest"].removeprefix("sha256:")
+    patch_hash = hashlib.sha256(proposal["unified_diff"].encode("utf-8")).hexdigest()
+    # Three domains: provider-reported artifact, observed patch bytes, and the
+    # owner's canonical digest of the entire frozen intent. Never equate them.
+    assert provider_hash != patch_hash
+    assert provider_hash != proposal["canonical_intent_digest"]
+    assert claim["detail"]["verdict"] == "success" and claim["confirms"] is None
+    for candidate in (provider_hash, before_tail["item"]["digest"].removeprefix("sha256:")):
+        with pytest.raises(ApplicationRejection) as refusal:
+            _accept(store, proposal, context=ACCEPTOR, canonical_intent_digest=candidate)
+        assert (refusal.value.code, refusal.value.http_status) == ("effect-digest-mismatch", 409)
+        assert _get(store, proposal["intent_id"]) == proposal
+        assert dict(pg.get_work_item(store, item_id)) == before_work
+        assert app.invoke("work.evidence.tail-v1", {"run_id": args["run_id"]}, PROPOSER) == before_tail
+    # Positive control: this is the trusted digest check, not public role denial.
+    # The trust-side actor can independently approve the actual frozen intent;
+    # this does not assert that the provider verdict verifies its patch.
+    accepted = _accept(store, proposal, context=ACCEPTOR)
+    assert accepted["acceptance"]["canonical_intent_digest"] == proposal["canonical_intent_digest"]
+    assert accepted["acceptance"]["acceptor_principal"] == ACCEPTOR.identity.principal_id
+    assert app.invoke("work.evidence.tail-v1", {"run_id": args["run_id"]}, PROPOSER) == before_tail
+    assert dict(pg.get_work_item(store, item_id)) == before_work
+
+
+def test_provider_decoder_unavailability_does_not_move_native_identity_history_or_authority(store, tmp_path, monkeypatch):
+    import builtins
+    import sys
+
+    app, binding, args = setup(store, "decoder-removal")
+    item_id = work_items(store)[0]
+    proposal = _propose(store, item_id, args["run_id"])
+    before_work = dict(pg.get_work_item(store, item_id))
+    path = tmp_path / "producer.db"
+    queued = capture(path, args, binding)
+    assert not sync(app, path, binding)["pending_evidence_request_ids"]
+    before_tail = app.invoke("work.evidence.tail-v1", {"run_id": args["run_id"]}, PROPOSER)
+    assert not any(name.startswith("vuoro_evidence.ingress") for name in sys.modules)
+    original_import = builtins.__import__
+
+    def without_provider(name, *positional, **keyword):
+        if name.startswith("vuoro_evidence"):
+            raise ModuleNotFoundError("provider decoder deliberately unavailable")
+        return original_import(name, *positional, **keyword)
+
+    monkeypatch.setattr(builtins, "__import__", without_provider)
+    with pytest.raises(ModuleNotFoundError, match="deliberately unavailable"):
+        __import__("vuoro_evidence.ingress.provider")
+    restarted = _app(store)
+    assert restarted.invoke("work.run.resolve-v1", {"run_id": args["run_id"]}, PROPOSER) == binding
+    assert restarted.invoke("work.evidence.tail-v1", {"run_id": args["run_id"]}, PROPOSER) == before_tail
+    assert _get(store, proposal["intent_id"]) == proposal
+    assert dict(pg.get_work_item(store, item_id)) == before_work
+    assert capture(path, args, binding)["request_id"] == queued["request_id"]
+    assert sync(restarted, path, binding)["evidence_attempts"] == []
+    assert _ledger_rows(store, "append_evidence", args["idempotency_key"]) == 1
+    with pytest.raises(ApplicationRejection) as refusal:
+        _accept(store, proposal, context=PROPOSER)
+    assert (refusal.value.code, refusal.value.http_status) == ("authority-required", 403)
+    assert _get(store, proposal["intent_id"]) == proposal

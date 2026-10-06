@@ -1,0 +1,85 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.mi1.provider-ingestion",
+  "contract_ref": {
+    "doc_id": "vuoro-mi1-market-integration",
+    "revision": "git:f9cadd85b35cd28717c5ab3fc24409bcb0f7b98f"
+  },
+  "implementation_sha": "a57db170042523b457618de4ef971551c79ca84d",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary SQLite producer and disposable PostgreSQL16 actual native owner",
+    "isolation": "native transaction/ledger and independent-connection race; provider import failure control; no shared database",
+    "tool_versions": {
+      "python": "3.12.14",
+      "postgresql": "16.15"
+    }
+  },
+  "execution": {
+    "histories": 6,
+    "bounds": {
+      "focused_provider_histories_passed": 6,
+      "full_pg_passed": 697,
+      "fixture_cleanups_zero_rows": 50,
+      "independent_connection_races": 1,
+      "trusted_wrong_digest_substitutions": 2
+    },
+    "faults_exercised": [
+      "commit-before-reply-loss",
+      "changed-artifact-conflicting-replay",
+      "public-effect-accept-denial",
+      "public-effect-apply-denial",
+      "two-producer-contention",
+      "provider-hash-used-as-intent-acceptance-binding",
+      "provider-decoder-unavailable"
+    ]
+  },
+  "claims": [
+    {
+      "property": "provider artifact and observation hash substitution cannot pass trusted canonical intent acceptance",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_mi1_provider_ingestion.py::test_recorded_provider_hash_cannot_replace_frozen_intent_acceptance_binding"
+      ]
+    },
+    {
+      "property": "decoder unavailability leaves admitted native identity/history/replay and public authority unchanged",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_mi1_provider_ingestion.py::test_provider_decoder_unavailability_does_not_move_native_identity_history_or_authority"
+      ]
+    },
+    {
+      "property": "lost response and conflicting content retain original native evidence",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_mi1_provider_ingestion.py"
+      ]
+    },
+    {
+      "property": "two independent producers share one native append effect under actual contention",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/pg/test_mi1_provider_ingestion.py::test_two_provider_producers_contend_on_real_native_key_without_duplicate_evidence"
+      ]
+    },
+    {
+      "property": "native protected verifier binds raw artifact and released work revision end to end",
+      "result": "unknown",
+      "evidence": [
+        "docs/plans/mi1-provider-acceptance-boundaries-2026-10-06.md"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Reusing the earlier synthetic authority delivery key for two new histories collided with the persistent owner ledger. Distinct real-decoder synthetic deliveries fixed the fixture; owner semantics were unchanged."
+    }
+  ],
+  "notes": [
+    "Unchanged owner baseline is implementation_sha. New candidate verification-source fingerprints: {\"tests/fixtures/mi1/provider-drafts.json\": \"3cbd3c60e9bcbebcf4484421f04b912969c6d2d40c1dd9788db79d860499a86f\", \"tests/pg/test_mi1_provider_ingestion.py\": \"2231b3434958924228d6b0920bf37bc9743e04279a4a458fdd26f293c1decba9\"}",
+    "Trusted positive control can independently accept the actual frozen intent even while a mismatched provider observation remains recorded. This is not proof of raw-artifact protected verification or full P1/P3/Track B acceptance.",
+    "Original four decoder fixtures/provenance retained; two additional synthetic delivery outputs are separately bound to Vuoro8c5b64f.",
+    "All 697 disposable PostgreSQL tests pass; no product implementation or release pin change. Unit source is unchanged and full exact-head CI remains required before landing."
+  ]
+}
