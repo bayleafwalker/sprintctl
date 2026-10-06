@@ -1,0 +1,101 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.s4.absorb-intake-gaps",
+  "owner_repo": "sprintctl",
+  "subject": "offline-s4-intake-prerequisite-refusal",
+  "contract_ref": {
+    "doc_id": "agentops-s4-evidence-home-preparation",
+    "revision": "git:49ac361481d185a2b0c3e18899d19756096473d1"
+  },
+  "source_of_truth": "served authority for effective state; for these S4 operations the fixture retains authored observations only, not pending native operation requests",
+  "depth": 1,
+  "backends": [
+    "temporary-sqlite-producer",
+    "fake-authority-no-domain-acceptance"
+  ],
+  "actors": [
+    "fixture-producer",
+    "fake-observation-receipt-authority"
+  ],
+  "initial_state": [
+    "isolated-authority-unavailable",
+    "empty-producer-outbox",
+    "synthetic-git-repository"
+  ],
+  "operations": [
+    {
+      "name": "offline-reserve",
+      "actors": [
+        "fixture-producer"
+      ]
+    },
+    {
+      "name": "attempt-typed-s4-carrier",
+      "actors": [
+        "fixture-producer"
+      ]
+    },
+    {
+      "name": "fixture-release-commit",
+      "actors": [
+        "fixture-producer"
+      ]
+    },
+    {
+      "name": "append-observation",
+      "actors": [
+        "fixture-producer"
+      ]
+    },
+    {
+      "name": "in-process-restart-sync",
+      "actors": [
+        "fixture-producer"
+      ]
+    },
+    {
+      "name": "replay-after-lost-response",
+      "actors": [
+        "fixture-producer"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "no-pending-request-or-observation-is-effective-S4-authority"
+  },
+  "assumptions": {
+    "isolation": "temporary producer SQLite and in-process fake receipt plumbing; no domain backend; transport constructor trapped and inherited Git configuration/paths cleared",
+    "clock": "no time-dependent domain semantics exercised"
+  },
+  "bounds": {
+    "example_histories": 6,
+    "lost_reply_histories": 1
+  },
+  "invariants": [
+    "offline served reserve has no SQLite authority fallback",
+    "unsupported native carrier cannot silently append an authority command",
+    "successful observation sync does not constitute S4 absorption"
+  ],
+  "faults": [
+    "authority-unavailable",
+    "unsupported-intake-carrier",
+    "observation-commit-before-reply-loss"
+  ],
+  "oracles": [
+    "real reservation CLI nonzero and outbox empty",
+    "closed owner matrix rejects native operation relabelling",
+    "observation/trailer replay leaves no required S4 request or owner decision"
+  ],
+  "implementation_anchors": [
+    "sprintctl/commands/reservation.py::_served_result",
+    "sprintctl/commands/operations.py::_served_authority_sync",
+    "sprintctl/contracts.py::record_class_for_type",
+    "tests/test_s4_absorb_intake_gaps.py::test_restart_syncs_observations_but_cannot_complete_s4_gate"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "stateful-test",
+    "fault-scenario"
+  ]
+}
