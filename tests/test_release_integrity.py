@@ -43,12 +43,12 @@ class TestReleaseIntegrity:
         cutover and a minor release past 0.10.1.  Schema 20 (agentops#2525,
         run continuation) raises it again; 19 and 20 ship together in 0.11.0.
         Schema 21 binds protected raw artifacts and work Releases; its strict
-        floor requires 0.13.0."""
+        floor requires 0.13.1."""
         from sprintctl import pg_migrations
 
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
-        assert pyproject["project"]["version"] == __version__ == "0.13.0"
+        assert pyproject["project"]["version"] == __version__ == "0.13.1"
         assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 21
         assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 21
 

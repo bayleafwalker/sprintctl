@@ -351,7 +351,7 @@ def test_batch_report_survives_unavailable_native_status(runner, tmp_path, monke
 def test_real_served_refusal_allows_cli_tail_correction_and_batch_reports_queue(
     runner, tmp_path, monkeypatch
 ):
-    from vuoro_client import errors
+    errors = pytest.importorskip("vuoro_client.errors")
 
     _configure_served_repo(tmp_path, monkeypatch)
     source, binding_source = payload(tmp_path.name)
@@ -414,7 +414,7 @@ def test_real_served_refusal_allows_cli_tail_correction_and_batch_reports_queue(
 
 @_requires_312
 def test_native_facade_preserves_real_served_refusal(monkeypatch):
-    from vuoro_client.errors import InvocationRejectedError
+    InvocationRejectedError = pytest.importorskip("vuoro_client.errors").InvocationRejectedError
 
     refusal = InvocationRejectedError(
         "evidence-chain-conflict", "owner", status_code=409
