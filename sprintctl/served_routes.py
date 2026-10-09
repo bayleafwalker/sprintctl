@@ -147,6 +147,9 @@ SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
     ServedRoute("authority.sync", "work.batch.apply"),
     ServedRoute("authority.evidence-sync.resolve", "work.run.resolve-v1", notes="Binding read before the native evidence-sync append."),
     ServedRoute("authority.evidence-sync", "work.evidence.append-v1"),
+    ServedRoute("authority.reserve-sync.resolve", "work.run.resolve-v1"),
+    ServedRoute("authority.reserve-sync", "work.reservation.reserve-v1"),
+    ServedRoute("authority.reserve-sync.release", "work.read.release"),
 )
 
 
@@ -201,6 +204,9 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     "authority evidence-queue": "local",
     "authority evidence-status": "local",
     "authority evidence-sync": "catalog",
+    "authority reserve-queue": "local",
+    "authority reserve-status": "local",
+    "authority reserve-sync": "catalog",
     # Reconciliation reads the served authority ledger through its dedicated
     # client and writes only local terminal receipts; it is not a catalog
     # operation and must not be rejected by the generic served guard.
@@ -331,6 +337,8 @@ def classified_click_paths() -> frozenset[str]:
 def _cli_path(route_path: str) -> str:
     if route_path == "authority.evidence-sync.resolve":
         return "authority evidence-sync"
+    if route_path in {"authority.reserve-sync.resolve", "authority.reserve-sync.release"}:
+        return "authority reserve-sync"
     return route_path.replace(".", " ")
 
 

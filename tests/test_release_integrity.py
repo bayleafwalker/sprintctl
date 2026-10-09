@@ -45,12 +45,13 @@ class TestReleaseIntegrity:
         Schema 21 binds protected raw artifacts and work Releases; its strict
         floor requires 0.13.1. Patch 0.13.2 exposes the existing explicit
         Release contract through the served API without changing schema 21.
-        Minor 0.14.0 adds typed native reservation replay, also on schema 21."""
+        Minor 0.14.0 adds typed native reservation replay, also on schema 21.
+        Patch 0.14.1 adds its offline producer carrier without catalog changes."""
         from sprintctl import pg_migrations
 
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
-        assert pyproject["project"]["version"] == __version__ == "0.14.0"
+        assert pyproject["project"]["version"] == __version__ == "0.14.1"
         assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 21
         assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 21
 

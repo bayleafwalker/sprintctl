@@ -43,7 +43,7 @@ def _client_profile(served_profile: ServedProfile) -> Any:
     )
 
 
-def _client(served_profile: ServedProfile) -> Any:
+def _client(served_profile: ServedProfile, *, credential_resolver=None) -> Any:
     """Construct one fresh ``AsyncVuoroClient``. Callers must use it as an
     ``async with`` block inside the coroutine passed to a single
     ``asyncio.run(...)`` call -- never store or reuse the instance it
@@ -51,17 +51,20 @@ def _client(served_profile: ServedProfile) -> Any:
 
     from vuoro_client import AsyncVuoroClient  # noqa: PLC0415 - optional extra, lazy import
 
-    return AsyncVuoroClient(_client_profile(served_profile), resolve_file_credential)
+    return AsyncVuoroClient(_client_profile(served_profile), credential_resolver or resolve_file_credential)
 
 
 async def _invoke_operation(
     served_profile: ServedProfile,
     operation: str,
     arguments: dict[str, Any],
+    _credential_resolver=None,
     **kwargs: Any,
 ) -> Any:
     arguments = _with_session_attribution(operation, arguments)
-    async with _client(served_profile) as client:
+    client = (_client(served_profile) if _credential_resolver is None else
+              _client(served_profile, credential_resolver=_credential_resolver))
+    async with client:
         return await client.invoke(operation, arguments, **kwargs)
 
 
@@ -846,3 +849,36 @@ def native_evidence_invoke(
     if operation not in {"work.run.resolve-v1", "work.evidence.append-v1"}:
         raise ValueError("unsupported native evidence intake operation")
     return asyncio.run(_invoke_operation(served_profile, operation, arguments, repo_id=repo_id))
+
+
+def native_reserve_invoker(served_profile: ServedProfile, *, repo_id: str):
+    """One sync pass uses one credential snapshot and fresh per-loop clients.
+
+    Resolve lazily so an empty queue does not need a credential. Keep the snapshot
+    only in this closure; an expired/revoked credential fails rather than switching
+    the replay namespace between run resolution and reserve admission.
+    """
+    unresolved = object()
+    snapshot = unresolved
+    credential_ref = served_profile.credential_ref
+
+    def pinned(ref):
+        nonlocal snapshot
+        if ref != credential_ref:
+            raise ValueError("reserve credential reference changed during sync")
+        if snapshot is unresolved:
+            snapshot = resolve_file_credential(ref)
+        return snapshot
+
+    def invoke(operation, arguments, key):
+        if operation not in {"work.run.resolve-v1", "work.reservation.reserve-v1", "work.read.release"}:
+            raise ValueError("unsupported native reserve intake operation")
+        if (operation == "work.reservation.reserve-v1") != (key is not None):
+            raise ValueError("only native reserve may carry the captured envelope key")
+        kwargs = {"repo_id": repo_id}
+        if key is not None:
+            kwargs["idempotency_key"] = key
+        return asyncio.run(_invoke_operation(served_profile, operation, arguments,
+            _credential_resolver=pinned, **kwargs))
+
+    return invoke
