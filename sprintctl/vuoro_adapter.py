@@ -25,6 +25,7 @@ from .application_common import (
     PREDECESSOR_CONTEXT_MAX_LIMIT,
 )
 from . import effect_intent as _effect
+from . import effect_attempt as _attempt
 from . import releases as _releases
 from . import unbound as _unbound
 from .application import (
@@ -2433,6 +2434,71 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "required",
     ),
 )
+
+
+def _attempt_operation_contracts() -> tuple[WorkOperationContract, ...]:
+    """Additive attempt descriptors; legacy operation bytes stay unchanged."""
+    attempt_id = {"type": "string", "pattern": "^attempt_[0-9A-HJKMNP-TV-Z]{26}$"}
+    branch = {"type": "string", "minLength": 1, "maxLength": 200}
+    revision = {"type": "string", "pattern": _releases._RELEASE_REVISION_RE.pattern}
+    common_target = {"branch": branch, "commit_sha": _EFFECT_COMMIT_SCHEMA}
+    wire_target = {"anyOf": [
+        _object_schema({**common_target, "operation": {"enum": ["push_branch"]}},
+                       required=("operation", "branch", "commit_sha")),
+        _object_schema({**common_target, "operation": {"enum": ["open_pull_request"]}, "base_branch": branch},
+                       required=("operation", "branch", "commit_sha", "base_branch")),
+    ]}
+    owned_target_fields = {**common_target, "operation": {"enum": ["push_branch", "open_pull_request"]},
+        "repository": {"type": "string"}, "base_commit": _EFFECT_COMMIT_SCHEMA,
+        "title_sha256": _EFFECT_DIGEST_SCHEMA, "body_sha256": _EFFECT_DIGEST_SCHEMA, "base_branch": branch}
+    owned_target = _object_schema(owned_target_fields,
+        required=tuple(k for k in owned_target_fields if k != "base_branch"))
+    authorization_fields = {"repo_id": {"type": "string"}, "attempt_id": attempt_id,
+        "principal_id": {"type": "string", "minLength": 1}, "workspace_id": {"type": "string", "minLength": 1},
+        "client_id": {"type": ["string", "null"]}, "grant_id": {"type": ["string", "null"]},
+        "intent_id": _EFFECT_ID_SCHEMA, "intent_revision": _EFFECT_REVISION_SCHEMA,
+        "canonical_intent_digest": _EFFECT_DIGEST_SCHEMA, "work_item_id": {"type": "integer", "minimum": 1},
+        "expected_revision": revision, "release_digest": _EFFECT_DIGEST_SCHEMA,
+        "target": owned_target, "target_digest": _EFFECT_DIGEST_SCHEMA, "acceptance": _EFFECT_ACCEPTANCE_SCHEMA,
+        "verification_binding": {"anyOf": [_EFFECT_VERIFICATION_BINDING_SCHEMA, {"type": "null"}]}}
+    authorization = _object_schema(authorization_fields, required=tuple(authorization_fields))
+    payload = {"anyOf": [
+        _object_schema({"authorization": authorization}, required=("authorization",)),
+        _object_schema({"target_digest": _EFFECT_DIGEST_SCHEMA}, required=("target_digest",)),
+        _object_schema({"commit_sha": _EFFECT_COMMIT_SCHEMA, "pr_url": _EFFECT_PR_URL_SCHEMA},
+                       required=("commit_sha", "pr_url")),
+    ]}
+    event_fields = {"repo_id": {"type": "string"}, "attempt_id": attempt_id,
+        "event_seq": {"type": "integer", "minimum": 0, "maximum": 2}, "event_kind": {"enum": list(_attempt.EVENT_KINDS)},
+        "authorization_digest": _EFFECT_DIGEST_SCHEMA, "previous_event_digest": {"type": ["string", "null"]},
+        "event_digest": _EFFECT_DIGEST_SCHEMA, "created_at": {"type": "string"}, "payload": payload}
+    event = _object_schema(event_fields, required=tuple(event_fields))
+    consume_fields = {"attempt_id": attempt_id, "authorization_digest": _EFFECT_DIGEST_SCHEMA,
+                      "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA}
+    receipt_fields = {"repo_id": {"type": "string"}, "attempt_id": attempt_id,
+        "authorization_digest": _EFFECT_DIGEST_SCHEMA, "receipt": event, "delivery": {"enum": ["fresh", "replay"]}}
+    open_fields = {"intent_id": _EFFECT_ID_SCHEMA, "revision": _EFFECT_REVISION_SCHEMA,
+        "canonical_intent_digest": _EFFECT_DIGEST_SCHEMA, "expected_revision": revision,
+        "release_digest": _EFFECT_DIGEST_SCHEMA, "target": wire_target, "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA}
+    open_result = {"repo_id": {"type": "string"}, "authorization": authorization,
+        "authorization_digest": _EFFECT_DIGEST_SCHEMA, "receipt": event, "delivery": {"enum": ["fresh", "replay"]}}
+    get_result = {"repo_id": {"type": "string"}, "authorization": authorization,
+        "authorization_digest": _EFFECT_DIGEST_SCHEMA, "state": {"enum": ["accepted", "redeemed", "sealed_unused"]},
+        "events": {"type": "array", "minItems": 1, "maxItems": 3, "items": event}}
+    definitions = (
+        (_attempt.OPERATION_OPEN, open_fields, open_result, "write"),
+        (_attempt.OPERATION_REDEEM, consume_fields, {**receipt_fields, "dispatch_permitted": {"type": "boolean"}}, "write"),
+        (_attempt.OPERATION_SEAL_UNUSED, consume_fields, receipt_fields, "write"),
+        (_attempt.OPERATION_REPORT, {**consume_fields, "commit_sha": _EFFECT_COMMIT_SCHEMA,
+                                   "pr_url": _EFFECT_PR_URL_SCHEMA}, receipt_fields, "write"),
+        (_attempt.OPERATION_GET, {"attempt_id": attempt_id}, get_result, "read"),
+    )
+    return tuple(WorkOperationContract(name, _object_schema(inputs, required=tuple(inputs)),
+        _object_schema(outputs, required=tuple(outputs)), _attempt.AUTHORITY, semantics, "not-allowed")
+        for name, inputs, outputs, semantics in definitions)
+
+
+WORK_OPERATION_CONTRACTS += _attempt_operation_contracts()
 
 
 LEGACY_REMOTE_COMMAND_PARITY: tuple[dict[str, str], ...] = (

@@ -37,6 +37,11 @@ def make_schema20(store):
     # The v19 guard and all v20 tables remain intact. Remove only v21's
     # additive metadata, then set the ledger to that exact historical shape.
     with store.conn.cursor() as cur:
+        # The fixture starts on the current schema. Remove schema22's owned
+        # additions before reconstructing the actual historical schema20.
+        cur.execute("DROP TABLE work_effect_attempt_event, work_effect_attempt")
+        cur.execute("DROP FUNCTION sprintctl_effect_attempt_guard(), "
+                    "sprintctl_effect_attempt_event_guard(), sprintctl_effect_attempt_consistency()")
         cur.execute("DROP TRIGGER sprintctl_effect_verification_guard ON work_effect_intent")
         cur.execute("DROP FUNCTION sprintctl_effect_verification_guard()")
         cur.execute("ALTER TABLE work_effect_intent DROP COLUMN release_digest, DROP COLUMN verification_binding")
@@ -59,13 +64,13 @@ def test_upgrade_preserves_legacy_acceptance_and_is_idempotent(migration_store):
         assert cur.fetchall() == []  # read-only startup has not migrated
     store.conn.rollback()
     result = pg_migrations.migrate_schema(store)
-    assert result["applied_versions"] == [21]
+    assert result["applied_versions"] == [21, 22]
     assert _get(store, intent["intent_id"]) == accepted
     assert pg_migrations.migrate_schema(store)["applied_versions"] == []
     assert _get(store, intent["intent_id"]) == accepted
     # The old schema-20 admission range cannot admit the upgraded database.
     actual = result["compatibility"]["remote_schema"]["actual"]
-    assert actual == 21 and not 20 <= actual <= 20
+    assert actual == 22 and not 20 <= actual <= 20
 
 
 @pytest.mark.parametrize("column, sql_type", [

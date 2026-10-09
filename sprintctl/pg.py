@@ -3314,6 +3314,11 @@ def _apply_schema_version_21(cur: Any) -> None:
     """)
 
 
+def _apply_schema_version_22(cur: Any) -> None:
+    from .effect_attempt_schema import install
+    install(cur)
+
+
 # ---------------------------------------------------------------------------
 # Row normalisation
 #

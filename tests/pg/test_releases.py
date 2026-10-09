@@ -308,6 +308,7 @@ class TestSchema15Migration:
                 patch.setattr(pg, "_apply_schema_version_15", lambda cur: None)
                 # Schema 21 references the Release table withheld in this fixture.
                 patch.setattr(pg, "_apply_schema_version_21", lambda cur: None)
+                patch.setattr(pg, "_apply_schema_version_22", lambda cur: None)
                 pg_migrations.migrate_schema(store)
             with conn.cursor() as cur:
                 cur.execute("UPDATE schema_version SET version = 14")

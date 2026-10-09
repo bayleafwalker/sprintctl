@@ -52,11 +52,13 @@ def test_a_field_boundary_cannot_be_shifted():
 
 
 def test_every_effect_operation_has_a_catalog_authority_that_matches():
+    from sprintctl.effect_attempt import OPERATION_AUTHORITIES
     contracts = {c.name: c for c in WORK_OPERATION_CONTRACTS}
-    assert set(effect.EFFECT_OPERATION_AUTHORITIES) == {
+    authorities = {**effect.EFFECT_OPERATION_AUTHORITIES, **OPERATION_AUTHORITIES}
+    assert set(authorities) == {
         name for name in contracts if name.startswith("work.effect.")
     }
-    for name, authority in effect.EFFECT_OPERATION_AUTHORITIES.items():
+    for name, authority in authorities.items():
         assert contracts[name].required_authority == authority
 
 

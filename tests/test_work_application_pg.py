@@ -805,8 +805,13 @@ def test_schema_migration_gives_up_on_a_held_ddl_lock(store_factory, monkeypatch
     store = store_factory("migration-lock-timeout")
     blocker = psycopg.connect(_PG_URL, row_factory=dict_row)
     try:
-        blocker.execute("SELECT * FROM work_item LIMIT 1")  # idle in transaction
         with store.conn.cursor() as cur:
+            # Remove the additive schema22 tables before creating the old
+            # schema13 fixture. Their restrictive parent FKs also require
+            # doing this before the deliberate work_item lock is held.
+            cur.execute("DROP TABLE work_effect_attempt_event, work_effect_attempt")
+            cur.execute("DROP FUNCTION sprintctl_effect_attempt_guard(), "
+                        "sprintctl_effect_attempt_event_guard(), sprintctl_effect_attempt_consistency()")
             # Recreate the pre-21 effect shape as well as backdating the
             # ledger; otherwise schema 19 correctly refuses the new columns.
             cur.execute("DROP TRIGGER sprintctl_effect_verification_guard ON work_effect_intent")
@@ -814,6 +819,7 @@ def test_schema_migration_gives_up_on_a_held_ddl_lock(store_factory, monkeypatch
             cur.execute("ALTER TABLE work_effect_intent DROP COLUMN release_digest, DROP COLUMN verification_binding")
             cur.execute("UPDATE schema_version SET version = 13")
         store.conn.commit()
+        blocker.execute("SELECT * FROM work_item LIMIT 1")  # idle in transaction
         monkeypatch.setenv("SPRINTCTL_MIGRATION_LOCK_TIMEOUT", "300ms")
         started = time.monotonic()
         with pytest.raises(psycopg.errors.LockNotAvailable):
