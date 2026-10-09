@@ -559,6 +559,7 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         "work.maintenance.recovery-record",
             "work.maintenance.resource.prepare",
             "work.reservation.reserve",
+            "work.reservation.reserve-v1",
             "work.reservation.touch",
             "work.reservation.reassign",
             "work.reservation.release",

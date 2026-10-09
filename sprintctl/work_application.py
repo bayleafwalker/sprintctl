@@ -754,6 +754,7 @@ class WorkApplication:
             "work.item.dep.add": target._item_dep_add,
             "work.item.dep.remove": target._item_dep_remove,
             "work.reservation.reserve": target._reservation_reserve,
+            "work.reservation.reserve-v1": target._reservation_reserve_v1,
             "work.reservation.touch": target._reservation_touch,
             "work.reservation.reassign": target._reservation_reassign,
             "work.reservation.release": target._reservation_release,
@@ -1744,6 +1745,82 @@ class WorkApplication:
             # moved on: the same stale-basis refusal authority commands get.
             raise ApplicationRejection(exc.reason_code, str(exc), 409) from exc
         return {"repo_id": self.repo_id, "reservation": row}
+
+    def _reservation_reserve_v1(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        """Bound native replay. Legacy reserve remains a separate operation."""
+        if "work:write" not in (getattr(context.identity, "authorities", None) or ()):
+            raise ApplicationRejection("authority-required", "reserve-v1 requires work:write", 403)
+        principal_id, workspace_id = _identity_binding(context)
+        participant = getattr(self.backend, "reserve_in_transaction", None)
+        if not callable(participant):
+            raise ApplicationRejection("reservation-replay-unavailable", "native reserve replay is unavailable", 422)
+        allowed = {"item_id", "actor", "session_id", "role", "correlation_ref", "interrupt_existing", "expected_revision", "acceptance_contract"}
+        if set(arguments) - allowed:
+            raise ApplicationRejection("invalid-arguments", "reserve-v1 arguments must match its closed schema", 422)
+        key = _idempotency_key(getattr(context, "idempotency_key", None))
+        actor = _required_text(arguments.get("actor"), "actor")
+        authenticated_actor = getattr(context.identity, "actor", None)
+        if authenticated_actor is not None and actor != authenticated_actor:
+            raise _reservation_actor_mismatch(actor, authenticated_actor)
+        role = arguments.get("role", _reservation.DEFAULT_ROLE)
+        interrupt = arguments.get("interrupt_existing", False)
+        if role not in _reservation.ROLES or not isinstance(interrupt, bool):
+            raise ApplicationRejection("invalid-arguments", "invalid reserve role or interruption flag", 422)
+        basis = arguments.get("expected_revision")
+        if basis is not None:
+            try:
+                basis = _releases.validate_basis(basis)
+            except ValueError as exc:
+                raise ApplicationRejection("invalid-arguments", str(exc), 422) from exc
+        correlation = arguments.get("correlation_ref")
+        if correlation is not None and not isinstance(correlation, str):
+            raise ApplicationRejection("invalid-arguments", "correlation_ref must be text or null", 422)
+        if "acceptance_contract" in arguments:
+            if not isinstance(arguments["acceptance_contract"], dict):
+                raise ApplicationRejection("invalid-arguments", "acceptance_contract must be an object", 422)
+            if basis is None or role != "execution":
+                raise ApplicationRejection("invalid-arguments",
+                    "an explicit acceptance contract requires an execution reservation and expected_revision", 422)
+        try:
+            contract = _releases.normalize_acceptance_contract(arguments.get("acceptance_contract"))
+        except ValueError as exc:
+            raise ApplicationRejection("invalid-arguments", str(exc), 422) from exc
+        normalized = {"item_id": _positive_int(arguments.get("item_id"), "item_id"),
+                      "actor": actor, "session_id": _required_text(arguments.get("session_id"), "session_id"),
+                      "role": role, "correlation_ref": correlation,
+                      "interrupt_existing": interrupt, "expected_revision": basis,
+                      "acceptance_contract": contract}
+        from . import pg as _pg
+
+        def effect(cur: Any) -> dict[str, Any]:
+            row = participant(cur, self.store, normalized["item_id"],
+                **{name: value for name, value in normalized.items() if name != "item_id"})
+            # Native ledger snapshots are JSON; direct compatibility callers
+            # retain their existing backend timestamp representations.
+            return {**_pg._norm(row), "conflicting_reservations": [
+                _pg._norm(conflict) for conflict in row["conflicting_reservations"]
+            ]}
+
+        try:
+            snapshot, replayed = self.backend.idempotent_write(
+                self.store, workspace_id=workspace_id, principal_id=principal_id,
+                tool="reservation.reserve-v1", key=key,
+                request_digest=_request_digest("reservation.reserve-v1", normalized),
+                effect=effect,
+                with_replay=True,
+            )
+        except _pg.IdempotencyConflict as exc:
+            raise ApplicationRejection(exc.code, str(exc), 409) from exc
+        except _releases.StaleReleaseBasis as exc:
+            raise ApplicationRejection(exc.reason_code, str(exc), 409) from exc
+        except _reservation.ReservationConflict as exc:
+            raise ApplicationRejection("reservations-disabled-maintenance", str(exc), 409) from exc
+        current = self.backend.current_reservation_with_conflicts(self.store, snapshot["id"])
+        if current is None:
+            raise ApplicationRejection("reservation-receipt-unavailable", "stored reservation is unavailable", 409)
+        return {"repo_id": self.repo_id, "reservation": {
+            **current, "admission_snapshot": snapshot, "replayed": replayed,
+        }}
 
     def _reservation_touch(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
         row = self.backend.touch_reservation(self.store, _positive_int(arguments.get("reservation_id"), "reservation_id"),

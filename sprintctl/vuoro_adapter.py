@@ -2006,6 +2006,12 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work:write", "write", "required",
     ),
     WorkOperationContract(
+        "work.reservation.reserve-v1",
+        _object_schema({"item_id": {"type": "integer", "minimum": 1}, "actor": {"type": "string", "minLength": 1}, "session_id": {"type": "string", "minLength": 1}, "role": {"enum": ["execution", "verification", "observation"]}, "correlation_ref": {"type": ["string", "null"]}, "interrupt_existing": {"type": "boolean", "default": False}, "expected_revision": {"type": ["string", "null"], "minLength": 1}, "acceptance_contract": {"type": "object"}}, required=("item_id", "actor", "session_id")),
+        _result_schema(("repo_id", "reservation"), {"repo_id": {"type": "string"}, "reservation": {"type": "object"}}),
+        "work:write", "write", "required",
+    ),
+    WorkOperationContract(
         "work.reservation.touch",
         _object_schema({"reservation_id": {"type": "integer", "minimum": 1}, "session_id": {"type": "string", "minLength": 1}, "correlation_ref": {"type": ["string", "null"]}}, required=("reservation_id", "session_id")),
         _result_schema(("repo_id", "reservation"), {"repo_id": {"type": "string"}, "reservation": {"type": "object"}}),

@@ -1,0 +1,96 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.s4.native-reserve-owner",
+  "contract_ref": {
+    "doc_id": "s4-reserve-owner-replay",
+    "revision": "git:f7e22258904bc6e04b591f6de01fd683a65ca8ab; October9 integration amendment"
+  },
+  "implementation_sha": "2512a1cddfebd4f2cda005ed559a205c98478dd1",
+  "depth": 2,
+  "environment": {
+    "backend": "disposable PostgreSQL16; temporary SQLite/unit fixtures",
+    "isolation": "independent PostgreSQL connections, native transaction, advisory admission and bounded fault hooks; no production fault tests",
+    "tool_versions": {
+      "python": "3.13.16",
+      "postgresql": "16.15",
+      "adapter-kit": "0.2.0"
+    }
+  },
+  "execution": {
+    "histories": 28,
+    "bounds": {
+      "full_pg_passed": 753,
+      "empty_cleanup_scopes": 53,
+      "full_unit_passed": 1743,
+      "full_unit_skipped": 755,
+      "perf_deselected": 14,
+      "focused_unit_passed": 109,
+      "release_checks_passed": 23,
+      "legacy_descriptors_unchanged": 74
+    },
+    "faults_exercised": [
+      "lost-reply-after-real-commit",
+      "commit-before-effect-rollback",
+      "interruption-event-failure",
+      "reserved-event-failure",
+      "stored-result-failure",
+      "stale-release-basis",
+      "missing-retained-row",
+      "non-utc-overlap-serialization",
+      "wrong-participant-connection",
+      "changed-protected-acceptance-contract-replay",
+      "invalid-protected-contract-before-ledger"
+    ]
+  },
+  "claims": [
+    {
+      "property": "same scoped key commits one reservation, Release and full lifecycle history; contention waits and replay is immutable",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/pg/test_native_reserve_owner.py"
+      ]
+    },
+    {
+      "property": "event/result or precommit failure rolls back all effects; postcommit loss exactly replays",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_native_reserve_owner.py"
+      ]
+    },
+    {
+      "property": "current state and overlap projection stay separate from immutable admission snapshot",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_native_reserve_owner.py"
+      ]
+    },
+    {
+      "property": "explicit protected acceptance contract is frozen and bound to native replay identity; invalid or changed contracts write nothing",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_native_reserve_owner.py::test_native_reserve_binds_explicit_protected_contract_and_refuses_changed_replay",
+        "tests/pg/test_native_reserve_owner.py::test_native_reserve_invalid_contract_never_claims_or_freezes"
+      ]
+    },
+    {
+      "property": "all published Sprintctl0.13.2 legacy catalog descriptor hashes preserved",
+      "result": "example-tested",
+      "evidence": [
+        "tests/fixtures/reserve-v1-base-catalog.json",
+        "tests/test_native_reserve_owner.py"
+      ]
+    },
+    {
+      "property": "full offline reserve/evidence/propose absorption, import, cutover and soak",
+      "result": "unknown"
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "implementation_sha is the staged Git implementation tree before this result packet; source base050a8181101473f312174871858f48e9c9f885c9. It is a tree object, not a deployment or commit receipt.",
+    "Initial full unit run stopped after1066passes because sandbox prevented uv cache access; rerun with required access completed1743passes.",
+    "Independent Astra source review approved bounded owner change subject to final tests and exact-head CI.",
+    "Deployed authorization/client enrollment, process kill/network faults, destructive import lock inversions, producer carriers and S4 operational gates are not established.",
+    "No direct Postgres production access, schema change, grant change or API-key inference used."
+  ]
+}
