@@ -46,12 +46,13 @@ class TestReleaseIntegrity:
         floor requires 0.13.1. Patch 0.13.2 exposes the existing explicit
         Release contract through the served API without changing schema 21.
         Minor 0.14.0 adds typed native reservation replay, also on schema 21.
-        Patch 0.14.2 adds proposal intake and pins evidence credentials without catalog changes."""
+        Patch 0.14.2 adds proposal intake and pins evidence credentials without catalog changes.
+        Minor 0.15.0 adds bound proposal causal admission on the same schema21."""
         from sprintctl import pg_migrations
 
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
-        assert pyproject["project"]["version"] == __version__ == "0.14.2"
+        assert pyproject["project"]["version"] == __version__ == "0.15.0"
         assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 21
         assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 21
 

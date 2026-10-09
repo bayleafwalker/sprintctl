@@ -780,6 +780,7 @@ class WorkApplication:
             "work.lease.complete-v1": target._claim_complete,
             "work.lease.read-v1": target._claim_read,
             _effect.OPERATION_PROPOSE: target._effect_propose,
+            _effect.OPERATION_BOUND_PROPOSE: target._effect_propose_bound,
             _effect.OPERATION_GET: target._effect_get,
             _effect.OPERATION_LIST_PROPOSED: target._effect_list_proposed,
             _effect.OPERATION_LIST_ACCEPTED: target._effect_list_accepted,
@@ -2264,7 +2265,23 @@ class WorkApplication:
         return {"repo_id": self.repo_id, "intent": intent}
 
     def _effect_propose(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
-        _effect_arguments(arguments, _EFFECT_PROPOSE_ARGUMENTS)
+        return self._effect_propose_impl(arguments, context, bound=False)
+
+    def _effect_propose_bound(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        return self._effect_propose_impl(arguments, context, bound=True)
+
+    def _effect_propose_impl(
+        self, arguments: dict[str, Any], context: InvocationContext, *, bound: bool,
+    ) -> dict[str, Any]:
+        allowed = _EFFECT_PROPOSE_ARGUMENTS | {"causal_basis"} if bound else _EFFECT_PROPOSE_ARGUMENTS
+        _effect_arguments(arguments, allowed)
+        causal_basis = None
+        if bound:
+            from .effect_causal import validate_basis
+            try:
+                causal_basis = validate_basis(arguments.get("causal_basis"))
+            except ValueError as exc:
+                raise ApplicationRejection("invalid-arguments", str(exc), 422) from exc
         run_id = _required_text(arguments.get("run_id"), "run_id")
         item_id = _positive_int(arguments.get("item_id"), "item_id")
         repository = _effect_text(arguments.get("repository"), "repository", _effect.MAX_REPOSITORY)
@@ -2283,12 +2300,22 @@ class WorkApplication:
         _idempotency_key(arguments.get("idempotency_key"))
         # The run is the caller's own, resolved first as the record bucket
         # resolves it: one code for an unknown run and for someone else's.
-        self._require_owned_run(run_id, context)
+        owned_run = self._require_owned_run(run_id, context)
         principal_id, workspace_id = _identity_binding(context)
         from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
 
+        run_binding = {"repo_id": self.repo_id, **{name: owned_run[name] for name in (
+            "run_id", "principal_id", "workspace_id", "client_id", "grant_id"
+        )}}
+
         def effect(cur: Any, request_digest: str) -> dict[str, Any]:
+            admission = None
             try:
+                if bound:
+                    admission = _pg.effect_causal_admission_in_transaction(
+                        cur, self.store, work_item_id=item_id, run_binding=run_binding,
+                        causal_basis=causal_basis,
+                    )
                 intent = self.backend.propose_effect_intent(
                     self.store, run_id=run_id, work_item_id=item_id,
                     principal_id=principal_id, workspace_id=workspace_id,
@@ -2299,14 +2326,28 @@ class WorkApplication:
                 )
             except _pg.EffectRefused as exc:
                 raise self._effect_refused(exc) from exc
-            return self._effect_intent_result(intent)
+            result = self._effect_intent_result(intent)
+            if bound:
+                result["admission"] = admission
+            return result
 
-        result = self._idempotent_write(context, "propose_effect", arguments, effect)
+        # One shared ledger namespace serializes legacy/bound key collisions
+        # before item locks. The fixed domain plus full arguments prevents a
+        # bound request from adopting an unguarded legacy proposal.
+        binding = {"proposal_operation": _effect.OPERATION_BOUND_PROPOSE,
+                   "client_id": run_binding["client_id"],
+                   "grant_id": run_binding["grant_id"]} if bound else None
+        result = self._idempotent_write(
+            context, "propose_effect", arguments, effect, digest_binding=binding,
+        )
         # A replay answers with the intent as it is now, not as it was when
         # first proposed: a retry after a lost response must not report an
         # accepted intent as still waiting.
         current = self.backend.get_effect_intent(self.store, result["intent"]["intent_id"])
-        return self._effect_intent_result(current if current is not None else result["intent"])
+        response = self._effect_intent_result(current if current is not None else result["intent"])
+        if bound:
+            response["admission"] = result["admission"]
+        return response
 
     def _effect_get(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
         _effect_arguments(arguments, frozenset({"intent_id"}))

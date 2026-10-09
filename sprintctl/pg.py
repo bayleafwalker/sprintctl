@@ -5914,6 +5914,14 @@ def evidence_tail(store: PgStore, run_id: str) -> dict | None:
     return _evidence_row(row) if row is not None else None
 
 
+def lock_evidence_chain_in_transaction(cur: Any, repo_id: str, run_id: str) -> None:
+    """Shared append/admission lock; caller owns the transaction."""
+    cur.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+        (f"evidence-chain:{repo_id}:{run_id}",),
+    )
+
+
 def append_evidence(
     store: PgStore,
     run_id: str,
@@ -5958,10 +5966,7 @@ def append_evidence(
     """
 
     def body(cur: Any) -> dict:
-        cur.execute(
-            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-            (f"evidence-chain:{store.repo_id}:{run_id}",),
-        )
+        lock_evidence_chain_in_transaction(cur, store.repo_id, run_id)
         cur.execute(
             "SELECT * FROM evidence_item WHERE repo_id = %s AND run_id = %s "
             "AND idempotency_key = %s",
@@ -7456,6 +7461,71 @@ def _effect_row(row: Mapping[str, Any]) -> dict:
     if accepted and row.get("verification_binding") is not None:
         result["acceptance"]["verification"] = row["verification_binding"]
     return result
+
+
+def effect_causal_admission_in_transaction(
+    cur: Any, store: PgStore, *, work_item_id: int, run_binding: Mapping[str, Any],
+    causal_basis: Mapping[str, Any],
+) -> dict:
+    """Check committed prerequisites under item then evidence-chain locks.
+
+    The proposal ledger key is already claimed. Never acquire reserve/ingest,
+    repository, or existing-intent locks here: those can point back to item.
+    """
+    from .effect_causal import ADMISSION_SCHEMA
+
+    if cur.connection is not store.conn:
+        raise RuntimeError("causal admission must share the proposal transaction")
+    try:
+        _item, revision, _revise_count = _release_basis_locked(cur, store.repo_id, work_item_id)
+    except ValueError as exc:
+        raise EffectRefused("work-not-found", "causal work item not found") from exc
+    if revision != causal_basis["expected_revision"]:
+        raise EffectRefused("effect-causal-stale-revision", "full work revision changed")
+    release = _current_release_locked(cur, store.repo_id, work_item_id)
+    if (release is None or release["release_digest"] != causal_basis["release_digest"]
+        or release["item_revision"] != revision):
+        raise EffectRefused("effect-causal-release-mismatch", "current Release does not bind the full revision")
+
+    run_id = run_binding["run_id"]
+    lock_evidence_chain_in_transaction(cur, store.repo_id, run_id)
+    # Plain committed reads. An in-flight prerequisite is absent, not a key
+    # to claim or wait for while holding the item's admission lock.
+    cur.execute(
+        "SELECT result FROM work_idempotency_ledger WHERE repo_id=%s "
+        "AND workspace_id=%s AND principal_id=%s AND tool='reservation.reserve-v1' "
+        "AND idempotency_key=%s",
+        (store.repo_id, run_binding["workspace_id"], run_binding["principal_id"],
+         causal_basis["reserve_idempotency_key"]),
+    )
+    row = cur.fetchone()
+    snapshot = row["result"] if row else None
+    if not isinstance(snapshot, dict):
+        raise EffectRefused("effect-causal-reserve-missing", "native reserve admission is not committed")
+    if (type(snapshot.get("id")) is not int or snapshot["id"] <= 0
+        or type(snapshot.get("work_item_id")) is not int
+        or snapshot["work_item_id"] != work_item_id or snapshot.get("repo_id") != store.repo_id
+        or snapshot.get("role") != "execution" or snapshot.get("state") != "active"
+        or snapshot.get("release_digest") != release["release_digest"]):
+        raise EffectRefused("effect-causal-reserve-mismatch", "original native reserve admission differs")
+    cur.execute(
+        "SELECT 1 FROM release_commit WHERE repo_id=%s AND release_digest=%s AND commit_sha=%s",
+        (store.repo_id, release["release_digest"], causal_basis["commit_sha"]),
+    )
+    if cur.fetchone() is None:
+        raise EffectRefused("effect-causal-commit-unbound", "trailer commit is not bound to the Release")
+    cur.execute(
+        "SELECT * FROM evidence_item WHERE repo_id=%s AND run_id=%s ORDER BY chain_seq DESC LIMIT 1",
+        (store.repo_id, run_id),
+    )
+    tail = cur.fetchone()
+    expected = causal_basis["evidence_tail"]
+    if (tail is None or tail["item_id"] != expected["item_id"]
+        or int(tail["chain_seq"]) != expected["chain_seq"]
+        or evidence_entry_digest(tail) != expected["entry_digest"]):
+        raise EffectRefused("effect-causal-evidence-head-mismatch", "current evidence entry tail differs")
+    return {"schema_version": ADMISSION_SCHEMA, "causal_basis": dict(causal_basis),
+            "run_binding": dict(run_binding), "reservation_id": snapshot["id"]}
 
 
 def propose_effect_intent(
