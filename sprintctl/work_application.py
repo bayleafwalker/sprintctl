@@ -13,6 +13,7 @@ from .application_common import *
 from . import contracts as _contracts
 from . import decisions as _decisions
 from . import effect_intent as _effect
+from . import effect_attempt as _attempt
 from . import reservation as _reservation
 from . import releases as _releases
 from . import volatile_context as _volatile_context
@@ -256,7 +257,7 @@ def _require_effect_authority(operation: str, context: InvocationContext) -> Non
     are separate from ``work:claim`` / ``work:write``, so ordinary work
     authority never satisfies it.
     """
-    required = _effect.EFFECT_OPERATION_AUTHORITIES.get(operation)
+    required = _effect.EFFECT_OPERATION_AUTHORITIES.get(operation) or _attempt.OPERATION_AUTHORITIES.get(operation)
     if required is None:
         return
     authorities = getattr(getattr(context, "identity", None), "authorities", None) or ()
@@ -788,6 +789,11 @@ class WorkApplication:
             _effect.OPERATION_ACCEPT: target._effect_accept,
             _effect.OPERATION_REJECT: target._effect_reject,
             _effect.OPERATION_MARK_APPLIED: target._effect_mark_applied,
+            _attempt.OPERATION_OPEN: target._effect_attempt_open,
+            _attempt.OPERATION_REDEEM: target._effect_attempt_redeem,
+            _attempt.OPERATION_SEAL_UNUSED: target._effect_attempt_seal_unused,
+            _attempt.OPERATION_REPORT: target._effect_attempt_report,
+            _attempt.OPERATION_GET: target._effect_attempt_get,
         }
         try:
             handler = handlers[operation]
@@ -2297,8 +2303,78 @@ class WorkApplication:
     # capability check is in invoke (_require_effect_authority).
 
     def _effect_refused(self, exc: Any) -> ApplicationRejection:
-        status = {"effect-not-found": 404, "work-not-found": 404}.get(exc.code, 409)
+        status = {"effect-not-found": 404, "work-not-found": 404, "effect-attempt-not-found": 404}.get(exc.code, 409)
         return ApplicationRejection(exc.code, str(exc), status)
+
+    def _effect_attempt_open(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        return self._effect_attempt_call(_attempt.OPERATION_OPEN, arguments, context)
+
+    def _effect_attempt_redeem(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        return self._effect_attempt_call(_attempt.OPERATION_REDEEM, arguments, context)
+
+    def _effect_attempt_seal_unused(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        return self._effect_attempt_call(_attempt.OPERATION_SEAL_UNUSED, arguments, context)
+
+    def _effect_attempt_report(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        return self._effect_attempt_call(_attempt.OPERATION_REPORT, arguments, context)
+
+    def _effect_attempt_get(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        return self._effect_attempt_call(_attempt.OPERATION_GET, arguments, context)
+
+    def _effect_attempt_call(self, operation: str, arguments: dict[str, Any],
+                             context: InvocationContext) -> dict[str, Any]:
+        from . import effect_attempt_pg as storage
+        from . import pg
+        if getattr(context, "idempotency_key", None) is not None:
+            raise ApplicationRejection("invalid-arguments", "attempt calls prohibit an outer envelope idempotency key", 422)
+        try:
+            arguments = _attempt.validate_arguments(operation, arguments)
+        except ValueError as exc:
+            raise ApplicationRejection("invalid-arguments", str(exc), 422) from exc
+        principal, workspace = _identity_binding(context)
+        client, grant = _grant_binding(context)
+        binding = {"principal_id": principal, "workspace_id": workspace, "client_id": client, "grant_id": grant}
+        if operation == _attempt.OPERATION_GET:
+            try:
+                with pg.repeatable_read_snapshot(self.store) as snapshot:
+                    with snapshot.conn.cursor() as cur:
+                        cur.execute("SET LOCAL statement_timeout='5s'")
+                        return {"repo_id": self.repo_id, **storage.get_in_transaction(
+                            cur, snapshot, arguments["attempt_id"], binding)}
+            except pg.EffectRefused as exc:
+                raise self._effect_refused(exc) from exc
+
+        request_digest = _request_digest(operation, {**arguments, **binding})
+
+        def effect(cur: Any) -> dict[str, Any]:
+            try:
+                if operation == _attempt.OPERATION_OPEN:
+                    result = storage.open_in_transaction(cur, self.store, arguments, binding, request_digest)
+                elif operation == _attempt.OPERATION_REPORT:
+                    result = storage.report_in_transaction(cur, self.store, arguments, binding)
+                else:
+                    result = storage.consume_in_transaction(cur, self.store, arguments, binding,
+                                                            redeem=operation == _attempt.OPERATION_REDEEM)
+            except pg.EffectRefused as exc:
+                raise self._effect_refused(exc) from exc
+            except ValueError as exc:
+                raise ApplicationRejection("invalid-arguments", str(exc), 422) from exc
+            return {"repo_id": self.repo_id, **result}
+
+        try:
+            result, replayed = self.backend.idempotent_write(
+                self.store, workspace_id=workspace, principal_id=principal, tool=operation,
+                key=arguments["idempotency_key"], request_digest=request_digest,
+                effect=effect, with_replay=True,
+            )
+        except pg.IdempotencyConflict as exc:
+            raise ApplicationRejection(exc.code, str(exc), 409) from exc
+        # The committed ledger contains only immutable historical facts.
+        # Delivery permission is computed here, after commit, on every reply.
+        response = {**result, "delivery": "replay" if replayed else "fresh"}
+        if operation == _attempt.OPERATION_REDEEM:
+            response["dispatch_permitted"] = not replayed
+        return response
 
     def _effect_intent_result(self, intent: dict[str, Any]) -> dict[str, Any]:
         return {"repo_id": self.repo_id, "intent": intent}

@@ -63,6 +63,8 @@ class _SchemaCursor:
         raise AssertionError(f"unexpected fetchall for query: {self._query}")
 
     def fetchone(self):
+        if "SELECT c.relname FROM pg_class" in self._query or "SELECT p.proname FROM pg_proc" in self._query:
+            return None  # No foreign attempt objects in this empty bootstrap fake.
         if "SELECT data_type FROM information_schema.columns" in self._query:
             return None  # This empty fake has no pre-existing binding columns.
         if "AS catalog_fingerprint" in self._query:

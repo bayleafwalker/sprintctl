@@ -52,5 +52,6 @@ def test_only_catalog_addition_and_every_existing_descriptor_byte_preserved():
     baseline = json.loads((Path(__file__).parent / 'fixtures/bound-proposal-v0142-base-catalog.json').read_text())
     actual = {entry['name']: hashlib.sha256(json.dumps(entry, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
               for entry in catalog_operation_specs(resource_schema_available=True)}
-    assert set(actual) - set(baseline['operation_sha256']) == {BOUND, "work.evidence.evaluate-v1"}
+    from sprintctl.effect_attempt import OPERATION_AUTHORITIES
+    assert set(actual) - set(baseline['operation_sha256']) == {BOUND, "work.evidence.evaluate-v1"} | set(OPERATION_AUTHORITIES)
     assert {k: actual[k] for k in baseline['operation_sha256']} == baseline['operation_sha256']

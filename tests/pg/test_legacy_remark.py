@@ -132,6 +132,7 @@ class TestSchema16Migration:
                 patch.setattr(pg, "_apply_schema_version_16", lambda cur: None)
                 # Keep the pre-21 effect shape when backdating this fixture.
                 patch.setattr(pg, "_apply_schema_version_21", lambda cur: None)
+                patch.setattr(pg, "_apply_schema_version_22", lambda cur: None)
                 pg_migrations.migrate_schema(store)
             with conn.cursor() as cur:
                 cur.execute("UPDATE schema_version SET version = 15")
