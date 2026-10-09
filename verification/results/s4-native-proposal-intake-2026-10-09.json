@@ -1,0 +1,77 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.s4.native-proposal-intake",
+  "contract_ref": {
+    "doc_id": "s4-native-proposal-intake",
+    "revision": "git:65ee3227d02787df5fc46bfa89de6e02829acecd; October9 proposal carrier slice"
+  },
+  "implementation_sha": "8e534c88a18d62c2ad50661cae9d24ab2a3c1377",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary SQLite producers and disposable actual PostgreSQL16 owner",
+    "isolation": "independent producer files and race connections; no production effects",
+    "tool_versions": {
+      "python": "3.13.16",
+      "postgresql": "16.15",
+      "adapter-kit": "0.2.0",
+      "owner-base": "Sprintctl0.14.1"
+    }
+  },
+  "execution": {
+    "histories": 12,
+    "bounds": {
+      "focused_passed": 102,
+      "full_unit_passed": 1810,
+      "full_unit_skipped": 788,
+      "perf_deselected": 14,
+      "full_pg_passed": 786,
+      "empty_cleanup_scopes": 55
+    },
+    "faults_exercised": [
+      "reply lost after real owner commit",
+      "local crash before confirmation",
+      "changed caller or registered binding",
+      "missing work item",
+      "wrong receipt content/principal/digest",
+      "damaged confirmation",
+      "two-producer admission contention",
+      "credential replacement after resolve"
+    ]
+  },
+  "claims": [
+    {
+      "property": "closed offline request preserves bytes, whitespace and exact run binding without authority",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_native_proposal_intake.py"
+      ]
+    },
+    {
+      "property": "actual postcommit reply loss/local confirmation crash reconcile one owner proposal with current immutable content",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_native_proposal_intake.py"
+      ]
+    },
+    {
+      "property": "independent producers sharing one scoped key retain one native proposal and idempotency key",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/pg/test_native_proposal_intake.py::test_independent_producers_reconcile_one_owner_proposal"
+      ]
+    },
+    {
+      "property": "full concurrent causal admission, authority-offline equivalence, import/cutover and soak",
+      "result": "unknown"
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "implementation_sha is staged implementation tree before packet, not source commit/deployment.",
+    "Public propose-v1 catalog and owner semantics unchanged; current owner Release on proposal is not a producer-observed causal basis.",
+    "First local append-only test attempted deletion from an empty attempt table; fixture now stores a started row before asserting row triggers.",
+    "First PG run780passed; new caller/crash/race histories added before final786passed run.",
+    "Initial full unit run found stale release-validator version and an existing additive sync-report expectation; both updated before the final full rerun.",
+    "Initial exact-head Python3.12 CI hit an existing maintenance replay fixture that generated a new timestamped envelope for replay. The fixture now reuses its original frozen envelope; product maintenance semantics unchanged. Updated-head CI required after this test-only correction."
+  ]
+}

@@ -905,3 +905,25 @@ def native_evidence_invoker(served_profile: ServedProfile, *, repo_id: str):
             repo_id=repo_id, _credential_resolver=pinned))
 
     return invoke
+
+def native_proposal_invoker(served_profile: ServedProfile, *, repo_id: str):
+    """Pin one credential for a complete native proposal synchronization pass."""
+    unresolved = object()
+    snapshot = unresolved
+    credential_ref = served_profile.credential_ref
+
+    def pinned(ref):
+        nonlocal snapshot
+        if ref != credential_ref:
+            raise ValueError("proposal credential reference changed during sync")
+        if snapshot is unresolved:
+            snapshot = resolve_file_credential(ref)
+        return snapshot
+
+    def invoke(operation, arguments):
+        if operation not in {"work.run.resolve-v1", "work.effect.propose-v1"}:
+            raise ValueError("unsupported native proposal intake operation")
+        return asyncio.run(_invoke_operation(served_profile, operation, arguments,
+            repo_id=repo_id, _credential_resolver=pinned))
+
+    return invoke

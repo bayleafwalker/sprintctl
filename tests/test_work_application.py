@@ -810,9 +810,10 @@ def test_maintenance_application_delegates_lifecycle_and_recovery_audit_only(
     prepare_context = _context(
         actor="operator", request_id=prepare_id, idempotency_key=prepare_id
     )
+    frozen_envelope = envelope()
     prepared = app.invoke(
         "work.maintenance.prepare",
-        {"capability_id": CAPABILITY_ID, "envelope": envelope()},
+        {"capability_id": CAPABILITY_ID, "envelope": frozen_envelope},
         prepare_context,
     )
     assert prepared["state"] == "prepared"
@@ -826,7 +827,7 @@ def test_maintenance_application_delegates_lifecycle_and_recovery_audit_only(
     )
     replay = app.invoke(
         "work.maintenance.prepare",
-        {"capability_id": CAPABILITY_ID, "envelope": envelope()},
+        {"capability_id": CAPABILITY_ID, "envelope": frozen_envelope},
         prepare_context,
     )
     assert replay["duplicate"] is True

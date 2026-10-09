@@ -147,6 +147,8 @@ SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
     ServedRoute("authority.sync", "work.batch.apply"),
     ServedRoute("authority.evidence-sync.resolve", "work.run.resolve-v1", notes="Binding read before the native evidence-sync append."),
     ServedRoute("authority.evidence-sync", "work.evidence.append-v1"),
+    ServedRoute("authority.proposal-sync.resolve", "work.run.resolve-v1"),
+    ServedRoute("authority.proposal-sync", "work.effect.propose-v1"),
     ServedRoute("authority.reserve-sync.resolve", "work.run.resolve-v1"),
     ServedRoute("authority.reserve-sync", "work.reservation.reserve-v1"),
     ServedRoute("authority.reserve-sync.release", "work.read.release"),
@@ -204,6 +206,9 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     "authority evidence-queue": "local",
     "authority evidence-status": "local",
     "authority evidence-sync": "catalog",
+    "authority proposal-queue": "local",
+    "authority proposal-status": "local",
+    "authority proposal-sync": "catalog",
     "authority reserve-queue": "local",
     "authority reserve-status": "local",
     "authority reserve-sync": "catalog",
@@ -335,6 +340,8 @@ def classified_click_paths() -> frozenset[str]:
 
 
 def _cli_path(route_path: str) -> str:
+    if route_path == "authority.proposal-sync.resolve":
+        return "authority proposal-sync"
     if route_path == "authority.evidence-sync.resolve":
         return "authority evidence-sync"
     if route_path in {"authority.reserve-sync.resolve", "authority.reserve-sync.release"}:

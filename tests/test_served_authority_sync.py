@@ -514,6 +514,7 @@ def test_served_authority_sync_does_not_require_enforce_mode(
         "unsupported_command_event_ids": [],
         "pending_evidence_request_ids": [],
         "pending_reserve_request_ids": [],
+        "pending_proposal_request_ids": [],
     }
 
 
