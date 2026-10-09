@@ -1,0 +1,114 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.s4.native-reserve-owner",
+  "owner_repo": "sprintctl",
+  "subject": "advisory-reservation-native-replay-and-atomic-events",
+  "contract_ref": {
+    "doc_id": "s4-reserve-owner-replay",
+    "revision": "git:f7e22258904bc6e04b591f6de01fd683a65ca8ab"
+  },
+  "source_of_truth": "native PostgreSQL reservation, Release, lifecycle events and authenticated scoped idempotency ledger; current state is a derived statement snapshot",
+  "depth": 2,
+  "backends": [
+    "disposable-postgresql-16"
+  ],
+  "actors": [
+    "bound-reserve-caller",
+    "second-reserve-caller",
+    "maintenance-owner"
+  ],
+  "initial_state": [
+    "disposable-repository",
+    "work-item",
+    "empty-native-reserve-key"
+  ],
+  "operations": [
+    {
+      "name": "typed-native-reserve",
+      "actors": [
+        "bound-reserve-caller",
+        "maintenance-owner"
+      ]
+    },
+    {
+      "name": "exact-replay",
+      "actors": [
+        "bound-reserve-caller",
+        "maintenance-owner"
+      ]
+    },
+    {
+      "name": "explicit-takeover",
+      "actors": [
+        "bound-reserve-caller",
+        "maintenance-owner"
+      ]
+    },
+    {
+      "name": "maintenance-activation",
+      "actors": [
+        "bound-reserve-caller",
+        "maintenance-owner"
+      ]
+    },
+    {
+      "name": "corrected-native-retry",
+      "actors": [
+        "bound-reserve-caller",
+        "maintenance-owner"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "reserve-key-effect-and-lifecycle-history"
+  },
+  "assumptions": {
+    "isolation": "real owner application in disposable PG16; independent connections and observed pg_locks waits; trusted context fixtures, not deployed HTTP proof",
+    "clock": "maintenance window anchored to actual database clock; reservation activity is advisory, not a lease"
+  },
+  "bounds": {
+    "new_native_pg_histories": 28,
+    "independent_connection_interleavings": 6,
+    "legacy_catalog_descriptors_hash_guarded": 74
+  },
+  "invariants": [
+    "same scoped key commits one reserve effect and full event history",
+    "failed native effect rolls back ledger, Release and interruption and allows corrected retry",
+    "replay exposes current row plus immutable admission snapshot without clock mutation",
+    "new maintenance admission and committed replay retain separate semantics",
+    "legacy wire descriptors and admission remain supported",
+    "normalized explicit Release contract is frozen and binds replay identity; invalid or changed contracts write nothing"
+  ],
+  "faults": [
+    "lost-reply-after-real-commit",
+    "commit-before-effect-rollback",
+    "interruption-event-failure",
+    "reserved-event-failure",
+    "stored-result-failure",
+    "stale-release-basis",
+    "missing-retained-row",
+    "non-utc-overlap-serialization",
+    "wrong-participant-connection",
+    "changed-protected-acceptance-contract-replay",
+    "invalid-protected-contract-before-ledger"
+  ],
+  "oracles": [
+    "native reservation/event/ledger counts and before-state Release comparisons",
+    "actual transactionid/advisory wait observation",
+    "same admission snapshot/current overlap field equality",
+    "all74 canonical base catalog SHA256 identities"
+  ],
+  "implementation_anchors": [
+    "sprintctl/pg.py::reserve_in_transaction",
+    "sprintctl/pg.py::current_reservation_with_conflicts",
+    "sprintctl/work_application.py::_reservation_reserve_v1",
+    "tests/pg/test_native_reserve_owner.py::test_native_reserve_maintenance_interleaves_at_each_lock_boundary"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "stateful-test",
+    "concurrent-history",
+    "fault-scenario"
+  ]
+}

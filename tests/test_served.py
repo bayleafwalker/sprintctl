@@ -25,6 +25,14 @@ from sprintctl.served_routes import routes_for
 from sprintctl.vuoro_credentials import resolve_file_credential
 
 
+@pytest.fixture(autouse=True)
+def _isolated_runtime_session_environment(monkeypatch):
+    # Wire-shape tests set session attribution explicitly when they exercise it.
+    # A coordinator's real session must not change an otherwise identical test.
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("SPRINTCTL_RUNTIME_SESSION_ID", raising=False)
+
+
 def _profile(**overrides) -> ServedProfile:
     defaults = dict(
         name="workstation-vuoro-shared",

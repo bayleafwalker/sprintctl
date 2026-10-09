@@ -374,8 +374,9 @@ def reservation_operation(
     reservation is a coordination signal, and ``touch`` in particular must be
     able to advance ``last_activity_at`` on every call, so the default key is
     unique per invocation (the same convention as the per-event key used by
-    ``publish_events``) rather than derived from the arguments. Callers that
-    retry a single logical call pass their own key to deduplicate. Reads
+    ``publish_events``) rather than derived from the arguments. An explicit key is forwarded, but legacy reserve/touch/reassign/release
+    do not implement native deduplication. The separate reserve-v1 owner operation provides that guarantee;
+    this helper does not silently migrate callers to it. Reads
     (``work.read.reservation``) are never keyed.
     """
     kwargs: dict[str, Any] = {"repo_id": repo_id}

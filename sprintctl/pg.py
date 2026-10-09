@@ -4634,98 +4634,145 @@ def list_reservations_by_sprint(store: PgStore, sprint_id: int, *, active_only: 
         return [_reservation.display(row) for row in cur.fetchall()]
 
 
-def reserve(store: PgStore, work_item_id: int, *, actor: str, session_id: str,
-            role: str = _reservation.DEFAULT_ROLE, correlation_ref: str | None = None,
-            interrupt_existing: bool = False, expected_revision: str | None = None,
-            acceptance_contract: dict | None = None) -> dict:
-    """Register a reservation, reporting -- never refusing -- overlap.
+def reserve_in_transaction(cur: Any, store: PgStore, work_item_id: int, *,
+                           actor: str, session_id: str, role: str = _reservation.DEFAULT_ROLE,
+                           correlation_ref: str | None = None, interrupt_existing: bool = False,
+                           expected_revision: str | None = None,
+                           acceptance_contract: dict | None = None) -> dict:
+    """Native reserve participant. No commit, rollback or independent connection.
 
-    Mirrors :func:`sprintctl.db.reserve`: overlapping reservations all commit
-    and are returned as the new row's conflict set, and ``interrupt_existing``
-    is the separate, deliberate takeover.
-
-    An ``execution`` reservation freezes the item's Release in the same
-    transaction (idempotently) and records its digest.  ``expected_revision``
-    is the item revision a queued request was made against; a request whose
-    basis moved on is refused with :class:`sprintctl.releases.StaleReleaseBasis`
-    rather than freezing a revision the requester never saw.
+    Order: owner replay claim (when hosted), repository admission, item basis,
+    ordered reservation rows, events. Independent keys remain advisory overlaps.
     """
+    if cur.connection is not store.conn:
+        raise RuntimeError("reserve participant must share its event connection")
     role = _reservation.normalize_role(role)
     if expected_revision is not None:
         expected_revision = _releases.validate_basis(expected_revision)
     contract = _releases.normalize_acceptance_contract(acceptance_contract)
-    if get_work_item(store, work_item_id) is None:
-        raise ValueError(f"Work item #{work_item_id} not found")
     now = _reservation.now_text()
     interrupted: list[dict] = []
+    # Serialize repo-wide reservation admission with maintenance
+    # activation.  Activation gates on "zero active reservations"
+    # (maintenance_capability), which is a COUNT, not a constraint the
+    # database can enforce: without a shared repo-scoped lock an
+    # activation that counts zero and a concurrent reserve() can both
+    # commit, leaving a live reservation under an active capability.
+    # This admission lock does not enforce reservation exclusivity.
+    # Item/Release locking below preserves the basis for all roles.
+    cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (store.repo_id,))
+    cur.execute(
+        "SELECT 1 FROM maintenance_capability WHERE repo_id = %s "
+        "AND state IN ('active','observing') "
+        "AND expires_at > statement_timestamp() LIMIT 1",
+        (store.repo_id,),
+    )
+    if cur.fetchone() is not None:
+        raise ReservationConflict(
+            "reservations are disabled while an exact-plan maintenance capability is active"
+        )
+    item, revision, revise_count = _release_basis_locked(cur, store.repo_id, work_item_id)
+    release_digest = None
+    if role == "execution" or expected_revision is not None:
+        if expected_revision is not None and not _releases.basis_matches(
+            expected_revision, revision
+        ):
+            raise _releases.StaleReleaseBasis(work_item_id, expected_revision, revision)
+        if role == "execution":
+            release_digest = _freeze_release_locked(
+                cur, store.repo_id, item, revision, revise_count,
+                actor=actor, acceptance_contract=contract,
+            )
+    cur.execute(
+        "SELECT * FROM reservation WHERE repo_id = %s AND work_item_id = %s "
+        "AND state = 'active' ORDER BY id FOR UPDATE",
+        (store.repo_id, work_item_id),
+    )
+    existing = [dict(row) for row in cur.fetchall()]
+    if interrupt_existing:
+        interrupted = [row for row in existing if row["role"] == "execution"]
+        if interrupted:
+            cur.execute(
+                "UPDATE reservation SET state = 'interrupted', released_at = %s, interruption_reason = %s "
+                "WHERE repo_id = %s AND id = ANY(%s)",
+                (now, f"interrupted by {actor} ({session_id})", store.repo_id, [old["id"] for old in interrupted]),
+            )
+    cur.execute("INSERT INTO reservation(repo_id, work_item_id, session_id, actor, role, state, created_at, last_activity_at, correlation_ref, release_digest) VALUES (%s, %s, %s, %s, %s, 'active', %s, %s, %s, %s) RETURNING id", (store.repo_id, work_item_id, session_id, actor, role, now, now, correlation_ref, release_digest))
+    reservation_id = cur.fetchone()["id"]
+    cur.execute("SELECT * FROM reservation WHERE repo_id = %s AND id = %s",
+                (store.repo_id, reservation_id))
+    row = dict(cur.fetchone())
+    interrupted_ids = {old["id"] for old in interrupted}
+    remaining = [old for old in existing if old["id"] not in interrupted_ids]
+    for previous in interrupted:
+        _reservation_event_in_transaction(store, item, previous, "reservation.interrupted", actor,
+            {"reservation_id": previous["id"], "reason": "explicit-takeover", "replacement_id": reservation_id})
+    _reservation_event_in_transaction(store, item, row, "reservation.reserved", actor,
+        {"reservation_id": reservation_id, "session_id": session_id, "role": role,
+         "correlation_ref": correlation_ref, "interrupt_existing": interrupt_existing,
+         "conflicting_reservation_ids": [previous["id"] for previous in remaining],
+         "release_digest": row["release_digest"]})
+    return _reservation.annotate_conflicts(_reservation.display(row), remaining)
+
+
+def _reservation_event_in_transaction(store: PgStore, item: dict, row: dict,
+                                      event_type: str, actor: str, payload: dict) -> None:
+    """Same connection, no commit; item was resolved and locked by participant."""
+    _contracts.require_generic_event_write_allowed(event_type)
+    _insert_event(store, int(item["sprint_id"]), actor, event_type,
+                  source_type="system", work_item_id=int(row["work_item_id"]), payload=payload)
+
+
+def reserve(store: PgStore, work_item_id: int, *, actor: str, session_id: str,
+            role: str = _reservation.DEFAULT_ROLE, correlation_ref: str | None = None,
+            interrupt_existing: bool = False, expected_revision: str | None = None,
+            acceptance_contract: dict | None = None) -> dict:
+    """Unkeyed advisory compatibility wrapper, now with atomic lifecycle events.
+
+    This wrapper owns and commits its transaction. Hosted reserve-v1 uses the same
+    participant inside the owner ledger transaction instead of calling here.
+    """
     try:
         with store.conn.cursor() as cur:
-            # Serialize repo-wide reservation admission with maintenance
-            # activation.  Activation gates on "zero active reservations"
-            # (maintenance_capability), which is a COUNT, not a constraint the
-            # database can enforce: without a shared repo-scoped lock an
-            # activation that counts zero and a concurrent reserve() can both
-            # commit, leaving a live reservation under an active capability.
-            # This lock is now the *only* thing reserve() serializes -- item
-            # exclusivity is deliberately not enforced.
-            cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (store.repo_id,))
-            cur.execute(
-                "SELECT 1 FROM maintenance_capability WHERE repo_id = %s "
-                "AND state IN ('active','observing') "
-                "AND expires_at > statement_timestamp() LIMIT 1",
-                (store.repo_id,),
-            )
-            if cur.fetchone() is not None:
-                raise ReservationConflict(
-                    "reservations are disabled while an exact-plan maintenance capability is active"
-                )
-            release_digest = None
-            if role == "execution" or expected_revision is not None:
-                item, revision, revise_count = _release_basis_locked(
-                    cur, store.repo_id, work_item_id
-                )
-                if expected_revision is not None and not _releases.basis_matches(
-                    expected_revision, revision
-                ):
-                    raise _releases.StaleReleaseBasis(work_item_id, expected_revision, revision)
-                if role == "execution":
-                    release_digest = _freeze_release_locked(
-                        cur, store.repo_id, item, revision, revise_count,
-                        actor=actor, acceptance_contract=contract,
-                    )
-            cur.execute(
-                "SELECT * FROM reservation WHERE repo_id = %s AND work_item_id = %s "
-                "AND state = 'active' ORDER BY id FOR UPDATE",
-                (store.repo_id, work_item_id),
-            )
-            existing = [dict(row) for row in cur.fetchall()]
-            if interrupt_existing:
-                interrupted = [row for row in existing if row["role"] == "execution"]
-                if interrupted:
-                    cur.execute(
-                        "UPDATE reservation SET state = 'interrupted', released_at = %s, interruption_reason = %s "
-                        "WHERE repo_id = %s AND work_item_id = %s AND state = 'active' AND role = 'execution'",
-                        (now, f"interrupted by {actor} ({session_id})", store.repo_id, work_item_id),
-                    )
-            cur.execute("INSERT INTO reservation(repo_id, work_item_id, session_id, actor, role, state, created_at, last_activity_at, correlation_ref, release_digest) VALUES (%s, %s, %s, %s, %s, 'active', %s, %s, %s, %s) RETURNING id", (store.repo_id, work_item_id, session_id, actor, role, now, now, correlation_ref, release_digest))
-            reservation_id = cur.fetchone()["id"]
+            result = reserve_in_transaction(cur, store, work_item_id, actor=actor,
+                session_id=session_id, role=role, correlation_ref=correlation_ref,
+                interrupt_existing=interrupt_existing, expected_revision=expected_revision,
+                acceptance_contract=acceptance_contract)
         store.conn.commit()
+        return result
     except Exception:
         store.conn.rollback()
         raise
-    row = _reservation_row(store, reservation_id)
-    assert row is not None
-    interrupted_ids = {old["id"] for old in interrupted}
-    remaining = [old for old in existing if old["id"] not in interrupted_ids]
-    for old in interrupted:
-        _reservation_event(store, dict(old), "reservation.interrupted", actor,
-                           {"reservation_id": old["id"], "reason": "explicit-takeover", "replacement_id": reservation_id})
-    _reservation_event(store, row, "reservation.reserved", actor,
-                       {"reservation_id": reservation_id, "session_id": session_id, "role": role,
-                        "correlation_ref": correlation_ref, "interrupt_existing": interrupt_existing,
-                        "conflicting_reservation_ids": [old["id"] for old in remaining],
-                        "release_digest": row["release_digest"]})
-    return _reservation.annotate_conflicts(_reservation.display(row), remaining)
+
+
+def current_reservation_with_conflicts(store: PgStore, reservation_id: int) -> dict | None:
+    """Current row and active overlaps from one SQL statement snapshot."""
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT r.*, COALESCE((SELECT jsonb_agg(to_jsonb(o) ORDER BY o.id) "
+            "FROM reservation o WHERE o.repo_id = r.repo_id AND o.work_item_id = r.work_item_id "
+            "AND o.state = 'active' AND o.id <> r.id), '[]'::jsonb) AS overlaps "
+            "FROM reservation r WHERE r.repo_id = %s AND r.id = %s",
+            (store.repo_id, reservation_id),
+        )
+        raw = cur.fetchone()
+    if raw is None:
+        return None
+    row = dict(raw)
+    overlaps = row.pop("overlaps") if row["state"] == "active" else []
+    row.pop("overlaps", None)
+    # JSONB serializes timestamptz in the SQL session timezone. Convert only
+    # owner-controlled timestamp columns (the reservation DDL's three
+    # timestamptz columns) back to native values before applying
+    # the same UTC normalizer used by admission snapshots.
+    normalized_overlaps = []
+    for overlap in overlaps:
+        overlap = dict(overlap)
+        for field in ("created_at", "last_activity_at", "released_at"):
+            if isinstance(overlap.get(field), str):
+                overlap[field] = _reservation.parse_time(overlap[field])
+        normalized_overlaps.append(_norm(overlap))
+    return _reservation.annotate_conflicts(_reservation.display(_norm(row)), normalized_overlaps)
 
 
 def note_session_activity(store: PgStore, work_item_id: int, *, session_id: str | None) -> list[dict]:
@@ -6199,6 +6246,7 @@ def idempotent_write(
     key: str,
     request_digest: str,
     effect: Callable[[Any], dict],
+    with_replay: bool = False,
 ) -> Any:
     """Claim the ledger row, perform ``effect`` and record its result in ONE transaction.
 
@@ -6217,6 +6265,9 @@ def idempotent_write(
     3. A caller whose insert found a committed row reads it back: the same
        digest replays the stored result, a different one raises
        :class:`IdempotencyConflict`.
+
+    ``with_replay`` adds internal claim/replay metadata for typed reserve;
+    the stored result itself and default evidence/proposal API remain unchanged.
 
     :class:`PgIdempotencyLedger` is the same ledger in the shared protocol's
     ``begin``/``complete`` shape, for callers that own their transaction.
@@ -6242,7 +6293,7 @@ def idempotent_write(
     assert stored is not None
     if stored["request_digest"] != request_digest:
         raise IdempotencyConflict("this idempotency_key was already used with different arguments")
-    return stored["result"]
+    return (stored["result"], not claimed) if with_replay else stored["result"]
 
 
 # ---------------------------------------------------------------------------
