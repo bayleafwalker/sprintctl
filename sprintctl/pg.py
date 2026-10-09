@@ -7834,3 +7834,101 @@ def mark_effect_intent_applied(
         },
         guard=lambda cur, row: _effect_application_guard(cur, store, row),
     )
+
+def evaluate_evidence_snapshot(
+    store: PgStore,
+    *,
+    binding: dict,
+    run_id: str,
+    subject: str,
+    basis: dict,
+    as_of: str,
+    current_input_digests: dict,
+    expected_tail: dict | None,
+) -> dict:
+    """Complete authenticated run chain/current Release in one readonly snapshot."""
+    from . import evidence_evaluation as evaluation
+
+    with repeatable_read_snapshot(store) as snapshot:
+        with snapshot.conn.cursor() as bounded:
+            bounded.execute("SET LOCAL statement_timeout = '5s'")
+        row = resolve_run(snapshot, run_id, **binding)
+        run_binding = {
+            "repo_id": store.repo_id,
+            **{
+                k: row[k]
+                for k in (
+                    "run_id",
+                    "principal_id",
+                    "workspace_id",
+                    "client_id",
+                    "grant_id",
+                )
+            },
+        }
+        with snapshot.conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '5s'")
+            cur.execute("SELECT transaction_timestamp() AS observed_at")
+            observed_at = _iso(cur.fetchone()["observed_at"])
+            cur.execute(
+                "SELECT count(*) AS n, COALESCE(sum(octet_length(to_jsonb(e)::text)),0) AS bytes FROM evidence_item e WHERE repo_id=%s AND run_id=%s",
+                (store.repo_id, run_id),
+            )
+            size = cur.fetchone()
+            if (
+                size["n"] > evaluation.MAX_CHAIN_ITEMS
+                or size["bytes"] > evaluation.MAX_SNAPSHOT_BYTES
+            ):
+                raise evaluation.EvaluationError(
+                    "evidence-snapshot-too-large",
+                    "complete source exceeds evaluator bound",
+                    409,
+                )
+            cur.execute(
+                "SELECT * FROM evidence_item WHERE repo_id=%s AND run_id=%s ORDER BY chain_seq",
+                (store.repo_id, run_id),
+            )
+            items = []
+            total_bytes = 0
+            for stored_item in cur:
+                item = _evidence_row(stored_item)
+                total_bytes += len(evaluation.canonical(item))
+                if total_bytes > evaluation.MAX_SNAPSHOT_BYTES:
+                    raise evaluation.EvaluationError(
+                        "evidence-snapshot-too-large",
+                        "complete evidence exceeds evaluator byte bound",
+                        409,
+                    )
+                items.append(item)
+            cur.execute(
+                "SELECT id FROM work_item WHERE repo_id=%s AND id=%s",
+                (store.repo_id, basis["item_id"]),
+            )
+            current_basis = None
+            if cur.fetchone() is not None:
+                _, revision, _ = _release_basis_locked(
+                    cur, store.repo_id, basis["item_id"], lock=False
+                )
+                release = _current_release_locked(cur, store.repo_id, basis["item_id"])
+                current_basis = {
+                    "item_id": basis["item_id"],
+                    "expected_revision": revision,
+                    "release_digest": None
+                    if release is None
+                    else release["release_digest"],
+                    "release_item_revision": None
+                    if release is None
+                    else release["item_revision"],
+                }
+        return evaluation.evaluate(
+            repo_id=store.repo_id,
+            run_binding=run_binding,
+            subject=subject,
+            requested_basis=basis,
+            current_basis=current_basis,
+            items=items,
+            expected_tail=expected_tail,
+            as_of=as_of,
+            current_input_digests=current_input_digests,
+            observed_at=observed_at,
+        )

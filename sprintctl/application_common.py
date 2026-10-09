@@ -90,6 +90,7 @@ _ADMIN_SHUTDOWN_READ_OPERATIONS = frozenset(
         "work.run.resolve-v1",
         "work.run.predecessor-context-v1",
         "work.evidence.tail-v1",
+        "work.evidence.evaluate-v1",
         "work.lease.read-v1",
         # Reads: a replay on a fresh connection only selects.
         "work.effect.get-v1",
