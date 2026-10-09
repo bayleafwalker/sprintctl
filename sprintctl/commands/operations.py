@@ -37,6 +37,7 @@ from .. import maintain as _maintain
 from .. import observations as _observations
 from .. import outbox as _outbox
 from .. import evidence_intake as _evidence_intake
+from .. import reserve_intake as _reserve_intake
 from .. import pg as _pg
 from .. import project as _project
 from .. import projection as _projection
@@ -1376,6 +1377,12 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
         # must not masquerade as an empty pending stream.
         native_pending = None
         native_status_error = "native-evidence-status-unavailable"
+    try:
+        reserve_pending = _reserve_intake.status(rollout_paths.outbox_path)["pending_reserve_request_ids"]
+        reserve_status_error = None
+    except (ValueError, OSError, sqlite3.Error):
+        reserve_pending = None
+        reserve_status_error = "native-reserve-status-unavailable"
     payload = {
         "uploaded_observation_count": uploaded_observation_count,
         "decisions": decisions,
@@ -1387,9 +1394,12 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
         "unsupported_command_event_ids": unsupported_event_ids,
         "release_trailers": harvest.to_dict(),
         "pending_evidence_request_ids": native_pending,
+        "pending_reserve_request_ids": reserve_pending,
     }
     if native_status_error is not None:
         payload["native_evidence_status_error"] = native_status_error
+    if reserve_status_error is not None:
+        payload["native_reserve_status_error"] = reserve_status_error
     if as_json:
         click.echo(json.dumps(payload, indent=2))
     else:
@@ -1403,6 +1413,10 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
             click.echo("Native evidence pending status is unavailable; do not infer absorption.", err=True)
         if payload["pending_evidence_request_ids"]:
             click.echo(f"{len(payload['pending_evidence_request_ids'])} native evidence requests pending; use authority evidence-sync.", err=True)
+        if reserve_status_error is not None:
+            click.echo("Native reserve pending status is unavailable; do not infer absorption.", err=True)
+        if reserve_pending:
+            click.echo(f"{len(reserve_pending)} native reserve requests pending; use authority reserve-sync.", err=True)
         if unsupported_event_ids:
             click.echo(
                 "these authority commands are not supported over the served batch "
@@ -1410,6 +1424,52 @@ def _served_authority_sync(config, batch_size: int, as_json: bool) -> None:
                 err=True,
             )
         click.echo(_render_resolved_context(resolved_context))
+
+
+@authority_commands.command("reserve-queue")
+@click.option("--request", "request_path", type=click.Path(exists=True, dir_okay=False, path_type=Path), required=True)
+@click.option("--run-binding", type=click.Path(exists=True, dir_okay=False, path_type=Path), required=True)
+def reserve_queue(request_path, run_binding):
+    """Capture reserve intent offline against a previously observed full basis."""
+    _root, repo_id, _marker = _backend.resolve_repo_identity(Path.cwd())
+    paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+    try:
+        result = _reserve_intake.capture(paths.outbox_path, request_path.read_bytes(),
+            run_binding.read_bytes(), repo_id=repo_id)
+    except (ValueError, OSError, sqlite3.Error) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(result, indent=2))
+
+
+@authority_commands.command("reserve-status")
+def reserve_status():
+    """Read pending reserve intent without connecting or initializing tables."""
+    paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+    try:
+        result = _reserve_intake.status(paths.outbox_path)
+    except (ValueError, OSError, sqlite3.Error) as exc:
+        raise click.ClickException("native reserve status unavailable") from exc
+    click.echo(json.dumps(result, indent=2))
+
+
+@authority_commands.command("reserve-sync")
+@click.pass_obj
+def reserve_sync(obj):
+    """Retry exact reserve intent through the native owner; stop at a gap."""
+    config = _served_config_or_none(obj)
+    if config is None:
+        raise click.ClickException("native reserve synchronization requires served mode")
+    from vuoro_client.errors import InvocationRejectedError
+    paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+    try:
+        result = _reserve_intake.synchronize(paths.outbox_path, repo_id=config.repo_id,
+            invoke=_served.native_reserve_invoker(config.served_profile, repo_id=config.repo_id),
+            rejection_type=InvocationRejectedError)
+    except (ValueError, OSError, sqlite3.Error) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(result, indent=2))
+    if result["pending_reserve_request_ids"]:
+        raise click.ClickException("native reserve remains pending; inspect exact retry or owner reconciliation")
 
 
 @authority_commands.command("evidence-queue")

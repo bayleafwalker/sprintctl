@@ -1,0 +1,98 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.s4.native-reserve-intake",
+  "contract_ref": {
+    "doc_id": "s4-native-reserve-intake",
+    "revision": "git:e8c6cf32656090c0a2e5206a14cb7eb237f196a7; October9 reserve-carrier source slice"
+  },
+  "implementation_sha": "9e4d5bab51941cde61e8301465c02b23742df42c",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary SQLite producers and actual native application on disposable PostgreSQL16",
+    "isolation": "independent producer files/connections, synchronized admission; no deployed HTTP or production fault tests",
+    "tool_versions": {
+      "python": "3.13.16",
+      "postgresql": "16.15",
+      "adapter-kit": "0.2.0",
+      "owner-base": "Sprintctl0.14.0"
+    }
+  },
+  "execution": {
+    "histories": 21,
+    "bounds": {
+      "carrier_unit_cases": 32,
+      "focused_unit_passed": 105,
+      "focused_skipped": 1,
+      "full_unit_passed": 1775,
+      "full_unit_skipped": 776,
+      "perf_deselected": 14,
+      "full_pg_passed": 774,
+      "empty_cleanup_scopes": 54
+    },
+    "faults_exercised": [
+      "commit-before-reply-loss",
+      "stale-release-basis",
+      "changed-caller-or-binding",
+      "unrelated-row-or-snapshot",
+      "invalid-overlap",
+      "unrelated-release",
+      "wrong-release-content-digest",
+      "lost-release-read-reply",
+      "damaged-confirmation",
+      "reassignment-and-release-before-replay",
+      "two-producer-contention",
+      "credential-replacement-between-resolution-and-admission"
+    ]
+  },
+  "claims": [
+    {
+      "property": "offline capture retains original intent/binding bytes without owner or observation authority",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_native_reserve_intake.py"
+      ]
+    },
+    {
+      "property": "postcommit reply loss and local confirmation interruption exactly reconcile one native effect",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_native_reserve_intake.py"
+      ]
+    },
+    {
+      "property": "two independent producers with same scoped key retain one owner reservation/event/key",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/pg/test_native_reserve_intake.py::test_reserve_carrier_two_independent_producers_share_one_owner_effect"
+      ]
+    },
+    {
+      "property": "confirmation correlates immutable admission and Release content; damaged content and malformed receipts refuse",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_native_reserve_intake.py",
+        "tests/pg/test_native_reserve_intake.py"
+      ]
+    },
+    {
+      "property": "one credential snapshot retains original principal/workspace throughout sync despite replacement after resolve",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_native_reserve_intake.py::test_reserve_transport_pins_one_credential_snapshot_for_pass",
+        "tests/pg/test_native_reserve_intake.py::test_reserve_transport_credential_change_after_resolve_keeps_original_owner"
+      ]
+    },
+    {
+      "property": "full S4 causal absorption, production enrollment, import, cutover and soak",
+      "result": "unknown"
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "implementation_sha is the staged Git implementation tree before this result packet, not a source commit or deployment receipt.",
+    "Independent Astra source review approved after owner key regex and midpass credential snapshot corrections; it did not execute tests.",
+    "An earlier full unit run failed only the stale release version oracle; the oracle was updated for0.14.1 and the final complete non-perf suite passed.",
+    "No production authority outage, import, hook change, identity/grant alteration or API-key inference occurred.",
+    "Concurrent admission checks one retained effect, not a newly measured lock wait or general linearizability guarantee."
+  ]
+}
