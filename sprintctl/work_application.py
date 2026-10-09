@@ -770,6 +770,7 @@ class WorkApplication:
             "work.run.resolve-v1": target._run_resolve,
             "work.run.predecessor-context-v1": target._run_predecessor_context,
             "work.evidence.tail-v1": target._evidence_tail,
+            "work.evidence.evaluate-v1": target._evidence_evaluate,
             "work.evidence.append-v1": target._evidence_append,
             "work.session-note.write-v1": target._session_note_write,
             "work.lease.acquire-v1": target._claim_acquire,
@@ -2038,6 +2039,44 @@ class WorkApplication:
         self._require_owned_run(run_id, context)
         item = self.backend.evidence_tail(self.store, run_id)
         return {"repo_id": self.repo_id, "run_id": run_id, "item": item}
+
+    def _evidence_evaluate(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        from . import evidence_evaluation as evaluation
+        from . import pg as _pg
+
+        authorities = getattr(context.identity, "authorities", ()) or ()
+        if not {"work:evidence", "work:read"} <= set(authorities):
+            raise ApplicationRejection(
+                "authority-required",
+                "evaluation requires work:evidence and work:read",
+                403,
+            )
+        if getattr(context, "idempotency_key", None) is not None:
+            raise ApplicationRejection(
+                "invalid-arguments",
+                "evaluation is read-only and accepts no idempotency key",
+                422,
+            )
+        principal_id, workspace_id = _identity_binding(context)
+        client_id, grant_id = _grant_binding(context)
+        try:
+            evaluation.validate_request(arguments)
+            return self.backend.evaluate_evidence_snapshot(
+                self.store,
+                binding={
+                    "principal_id": principal_id,
+                    "workspace_id": workspace_id,
+                    "client_id": client_id,
+                    "grant_id": grant_id,
+                },
+                **arguments,
+            )
+        except _pg.RunNotFound as exc:
+            raise ApplicationRejection("run-not-found", str(exc), 404) from exc
+        except evaluation.EvaluationError as exc:
+            raise ApplicationRejection(exc.code, str(exc), exc.status) from exc
 
     def _evidence_append(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         run_id = arguments["run_id"]

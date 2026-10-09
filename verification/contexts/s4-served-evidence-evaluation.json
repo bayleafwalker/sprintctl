@@ -1,0 +1,95 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.s4.served-evidence-evaluation",
+  "owner_repo": "sprintctl",
+  "subject": "readonly-consistent-chain-release-validity-evaluation",
+  "contract_ref": {
+    "doc_id": "s4-served-evidence-evaluation",
+    "revision": "git:c089e5fd2f1681236f227ffb9f4d0c751ff7d8e7; October9 read prerequisite"
+  },
+  "source_of_truth": "complete run-bound evidence chain and current item/recorded Release in owner readonly repeatable-read snapshot",
+  "depth": 2,
+  "backends": [
+    "pure-policy",
+    "disposable-postgresql-16"
+  ],
+  "actors": [
+    "authenticated-run-reader",
+    "independent-appender",
+    "independent-item-editor"
+  ],
+  "initial_state": [
+    "bound run with current frozen Release",
+    "complete authored evidence chain"
+  ],
+  "operations": [
+    {
+      "name": "evaluate",
+      "actors": [
+        "authenticated-run-reader"
+      ]
+    },
+    {
+      "name": "append",
+      "actors": [
+        "independent-appender"
+      ]
+    },
+    {
+      "name": "edit",
+      "actors": [
+        "independent-item-editor"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one coherent full chain and item/Release read snapshot"
+  },
+  "assumptions": {
+    "isolation": "temporary SQLite and disposable PostgreSQL, independent race connections; no deployed HTTP faults",
+    "clock": "no real authority-offline or expiry lifecycle exercised"
+  },
+  "bounds": {
+    "new_pg_histories": 7,
+    "production_mutation": false
+  },
+  "invariants": [
+    "both work:read and work:evidence required plus exact principal/workspace/client/grant binding",
+    "full chain/tail continuity and complete content hash; no truncated source",
+    "readonly sibling closes without changing caller transaction",
+    "authored claims cannot become execution facts; unsupported authority and authorizes_execution false",
+    "inclusive zoned validity with missing inputs unknown and stale full Release basis"
+  ],
+  "faults": [
+    "missing authority or wrong binding",
+    "malformed or oversized closed inputs",
+    "changed tail or broken chain",
+    "concurrent append plus description edit",
+    "oversized source before full fetch",
+    "forged trusted claims",
+    "invalid validity windows",
+    "missing or changed input digests",
+    "stale recorded Release"
+  ],
+  "oracles": [
+    "actual WorkApplication results versus published JSON schema",
+    "old coherent concurrent snapshot then fresh conflict/staleness",
+    "original transaction XID and Decision row count",
+    "sibling closed on success and refusal",
+    "baseline descriptor hashes unchanged"
+  ],
+  "implementation_anchors": [
+    "sprintctl/evidence_evaluation.py",
+    "sprintctl/pg.py::evaluate_evidence_snapshot",
+    "sprintctl/work_application.py::_evidence_evaluate",
+    "tests/test_evidence_evaluation.py",
+    "tests/pg/test_evidence_evaluation.py"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "stateful-test",
+    "concurrent-history",
+    "fault-scenario"
+  ]
+}

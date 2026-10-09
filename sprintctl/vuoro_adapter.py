@@ -883,6 +883,136 @@ _BOUND_ADMISSION_SCHEMA = _object_schema(
      "reservation_id": {"type": "integer", "minimum": 1}},
     required=("schema_version", "causal_basis", "run_binding", "reservation_id"),
 )
+_EVALUATION_INPUTS_SCHEMA = {
+    "type": "object",
+    "maxProperties": 256,
+    "propertyNames": {"type": "string", "minLength": 1, "maxLength": 256},
+    "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 256},
+}
+_EVALUATION_TAIL_SCHEMA = _object_schema(
+    {
+        "item_id": {"type": "string", "minLength": 1},
+        "chain_seq": {"type": "integer", "minimum": 0},
+        "entry_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    },
+    required=("item_id", "chain_seq", "entry_digest"),
+)
+_EVALUATION_BASIS_PROPERTIES = {
+    "item_id": {"type": "integer", "minimum": 1},
+    "expected_revision": {
+        "type": "string",
+        "pattern": _releases._RELEASE_REVISION_RE.pattern,
+    },
+    "release_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+}
+_EVALUATION_REQUEST_BASIS = _object_schema(
+    _EVALUATION_BASIS_PROPERTIES, required=tuple(_EVALUATION_BASIS_PROPERTIES)
+)
+_EVALUATION_CURRENT_BASIS = _object_schema(
+    {
+        **_EVALUATION_BASIS_PROPERTIES,
+        "release_digest": {"type": ["string", "null"]},
+        "release_item_revision": {"type": ["string", "null"]},
+    },
+    required=(*_EVALUATION_BASIS_PROPERTIES, "release_item_revision"),
+)
+_EVALUATION_NULL_CURRENT = {"anyOf": [_EVALUATION_CURRENT_BASIS, {"type": "null"}]}
+_EVALUATION_STRINGS = {"type": "array", "items": {"type": "string"}}
+_EVALUATION_VALIDITY = _object_schema(
+    {
+        "item_id": {"type": "string"},
+        "digest": {"type": "string"},
+        "status": {
+            "enum": [
+                "valid",
+                "invalid",
+                "not-yet-valid",
+                "expired",
+                "unknown",
+                "changed",
+            ]
+        },
+        "reason_codes": _EVALUATION_STRINGS,
+        "missing_inputs": _EVALUATION_STRINGS,
+        "changed_inputs": _EVALUATION_STRINGS,
+    },
+    required=(
+        "item_id",
+        "digest",
+        "status",
+        "reason_codes",
+        "missing_inputs",
+        "changed_inputs",
+    ),
+)
+_EVALUATION_ASSERTION = _object_schema(
+    {
+        "evidence_item_id": {"type": "string"},
+        "claim_index": {"type": "integer", "minimum": 0},
+        "assertion": {"type": "object"},
+        "validity_status": {
+            "enum": [
+                "valid",
+                "invalid",
+                "not-yet-valid",
+                "expired",
+                "unknown",
+                "changed",
+            ]
+        },
+        "authority": {"const": "authored-assertion"},
+    },
+    required=(
+        "evidence_item_id",
+        "claim_index",
+        "assertion",
+        "validity_status",
+        "authority",
+    ),
+)
+_EVALUATION_RESULT_PROPERTIES = {
+    "schema_version": {"const": "evidence-evaluation/v1"},
+    "evaluator_revision": {"const": "s4-evidence-evaluation/v1"},
+    "repo_id": {"type": "string"},
+    "run_binding": _BOUND_RUN_BINDING_SCHEMA,
+    "subject": {"type": "string", "minLength": 1, "maxLength": 512},
+    "as_of": {"type": "string"},
+    "observed_at": {"type": "string"},
+    "requested_basis": _EVALUATION_REQUEST_BASIS,
+    "current_basis": _EVALUATION_NULL_CURRENT,
+    "basis_status": {"enum": ["current", "missing", "stale"]},
+    "evaluated_input_digests": _EVALUATION_INPUTS_SCHEMA,
+    "input_assurance": {"const": "caller-supplied"},
+    "source_watermark": _object_schema(
+        {
+            "evidence_chain": _object_schema(
+                {
+                    "tail": {"anyOf": [_EVALUATION_TAIL_SCHEMA, {"type": "null"}]},
+                    "item_count": {"type": "integer", "minimum": 0},
+                },
+                required=("tail", "item_count"),
+            ),
+            "item_release": _EVALUATION_NULL_CURRENT,
+            "execution_facts": {"type": "null"},
+        },
+        required=("evidence_chain", "item_release", "execution_facts"),
+    ),
+    "snapshot_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "evidence_validity": {"type": "array", "items": _EVALUATION_VALIDITY},
+    "authored_assertions": {"type": "array", "items": _EVALUATION_ASSERTION},
+    "authenticated_execution_facts": {"type": "array", "maxItems": 0},
+    "authority_coverage": {"const": "unsupported"},
+    "effect_state": {"const": "unknown"},
+    "recommendation": {"const": "reconcile"},
+    "reason_codes": _EVALUATION_STRINGS,
+    "supporting_ids": {"type": "array", "maxItems": 0},
+    "conflicting_ids": {"type": "array", "maxItems": 0},
+    "authorizes_execution": {"const": False},
+}
+_EVALUATION_RESULT_SCHEMA = _result_schema(
+    tuple(_EVALUATION_RESULT_PROPERTIES), _EVALUATION_RESULT_PROPERTIES
+)
+
 WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
     WorkOperationContract(
         "work.identity.current",
@@ -1067,6 +1197,59 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
             },
         ),
         "work:evidence",
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.evidence.evaluate-v1",
+        _object_schema(
+            {
+                "run_id": _RUN_ID_SCHEMA,
+                "subject": {"type": "string", "minLength": 1, "maxLength": 512},
+                "basis": _object_schema(
+                    {
+                        "item_id": {"type": "integer", "minimum": 1},
+                        "expected_revision": {
+                            "type": "string",
+                            "pattern": _releases._RELEASE_REVISION_RE.pattern,
+                        },
+                        "release_digest": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$",
+                        },
+                    },
+                    required=("item_id", "expected_revision", "release_digest"),
+                ),
+                "as_of": {"type": "string", "minLength": 1},
+                "current_input_digests": _EVALUATION_INPUTS_SCHEMA,
+                "expected_tail": {
+                    "anyOf": [
+                        {"type": "null"},
+                        _object_schema(
+                            {
+                                "item_id": {"type": "string", "minLength": 1},
+                                "chain_seq": {"type": "integer", "minimum": 0},
+                                "entry_digest": {
+                                    "type": "string",
+                                    "pattern": "^sha256:[0-9a-f]{64}$",
+                                },
+                            },
+                            required=("item_id", "chain_seq", "entry_digest"),
+                        ),
+                    ]
+                },
+            },
+            required=(
+                "run_id",
+                "subject",
+                "basis",
+                "as_of",
+                "current_input_digests",
+                "expected_tail",
+            ),
+        ),
+        _EVALUATION_RESULT_SCHEMA,
+        "work:read",
         "read",
         "not-allowed",
     ),

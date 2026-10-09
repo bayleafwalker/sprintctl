@@ -79,11 +79,12 @@ def test_resource_schema_gate_removes_exactly_the_three_owner_operations() -> No
         "work.maintenance.resource.changes",
     }
 
-    assert len(available) == 76
-    assert len(unavailable) == 73
+    assert len(available) == 77
+    assert len(unavailable) == 74
     assert {spec["name"] for spec in available} - {
         spec["name"] for spec in unavailable
     } == resource_names
+    assert {spec["name"] for spec in unavailable} >= {"work.evidence.evaluate-v1"}
     assert not {spec["name"] for spec in available if spec["name"].startswith("work.claim.")}
 
 

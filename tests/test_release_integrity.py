@@ -48,12 +48,13 @@ class TestReleaseIntegrity:
         Minor 0.14.0 adds typed native reservation replay, also on schema 21.
         Patch 0.14.2 adds proposal intake and pins evidence credentials without catalog changes.
         Minor 0.15.0 adds bound proposal causal admission on the same schema21.
-        Patch 0.15.1 adds its offline carrier without further catalog changes."""
+        Patch 0.15.1 adds its offline carrier without further catalog changes.
+        Minor 0.16.0 adds read-only evidence evaluation on the same schema21."""
         from sprintctl import pg_migrations
 
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
-        assert pyproject["project"]["version"] == __version__ == "0.15.1"
+        assert pyproject["project"]["version"] == __version__ == "0.16.0"
         assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 21
         assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 21
 

@@ -35,6 +35,7 @@ PUBLISHED_OPERATIONS = (
         "work.effect.reject-v1",
         "work.event.add",
         "work.evidence.append-v1",
+        "work.evidence.evaluate-v1",
         "work.evidence.ingest",
         "work.evidence.tail-v1",
         "work.handoff.record",

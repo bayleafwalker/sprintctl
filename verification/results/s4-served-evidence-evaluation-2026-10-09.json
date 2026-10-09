@@ -1,0 +1,92 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.s4.served-evidence-evaluation",
+  "contract_ref": {
+    "doc_id": "s4-served-evidence-evaluation",
+    "revision": "git:c089e5fd2f1681236f227ffb9f4d0c751ff7d8e7; October9 read prerequisite"
+  },
+  "implementation_sha": "39f4623859331f44eab89d34d6fa3a57d54e0e5b",
+  "depth": 2,
+  "environment": {
+    "backend": "pure policy and disposable PostgreSQL16 owner through actual WorkApplication",
+    "isolation": "unique disposable repo scopes and sibling/independent connections; no production mutations",
+    "tool_versions": {
+      "python": "3.13.16",
+      "postgresql": "16.15",
+      "candidate": "sprintctl0.16.0/schema21"
+    }
+  },
+  "execution": {
+    "histories": 25,
+    "bounds": {
+      "full_unit_passed": 1879,
+      "full_unit_skipped": 2,
+      "full_unit_deselected": 859,
+      "full_pg_passed": 845,
+      "empty_cleanup_scopes": 58,
+      "post_version_focused_passed": 58
+    },
+    "faults_exercised": [
+      "missing authority or wrong binding",
+      "malformed or oversized closed inputs",
+      "changed tail or broken chain",
+      "concurrent append plus description edit",
+      "oversized source before full fetch",
+      "forged trusted claims",
+      "invalid validity windows",
+      "missing or changed input digests",
+      "stale recorded Release"
+    ]
+  },
+  "claims": [
+    {
+      "property": "closed dual-authority run binding and readonly exact-tail source evaluation",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_evidence_evaluation.py"
+      ]
+    },
+    {
+      "property": "actual concurrent append and edit returns coherent old snapshot; fresh read tail conflict then stale basis; sibling closes",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_evidence_evaluation.py::test_concurrent_append_and_edit_are_one_repeatable_snapshot"
+      ]
+    },
+    {
+      "property": "inclusive validity and missing/changed inputs; forged authored trust cannot supply execution authority",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_evidence_evaluation.py"
+      ]
+    },
+    {
+      "property": "actual empty/current/stale/invalid legacy validity responses satisfy closed published result schema",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_evidence_evaluation.py::test_actual_served_result_matches_published_schema"
+      ]
+    },
+    {
+      "property": "all baseline descriptors remain bytewise unchanged; one additive read operation",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_bound_proposal_owner.py",
+        "tests/test_native_reserve_owner.py"
+      ]
+    },
+    {
+      "property": "authenticated execution-fact authority, deployed HTTP, real inventory import, writer qualification, full effective-state equivalence and cutover/soak",
+      "result": "unknown"
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "implementation_sha is staged implementation tree before this receipt; not deployment.",
+    "Astra approved bounded read-time source/design conditional on required gates, now passing locally.",
+    "First full unit run: two older additive-catalog expectations and sandbox uv-cache failure; corrected expectations preserve all baseline descriptor hash assertions; escalated full rerun passed.",
+    "New actual PG schema fixture first used wrong table, then uncommitted invalid source invisible to correct sibling snapshot. Corrected table and fixture commit; final full PG845passed.",
+    "Candidate local wheel SHA256 af1e203d0a7f8d2498bd26e245dc9b755ef4b2249ef6d3479ef568eea90bf126; tag contract v0.16.0 validated.",
+    "No Decision writes, no authenticated execution-fact source, no new capabilities/identity grants/schema migration."
+  ]
+}
