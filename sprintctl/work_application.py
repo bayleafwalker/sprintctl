@@ -1716,6 +1716,17 @@ class WorkApplication:
         if authenticated_actor is not None and actor != authenticated_actor:
             raise _reservation_actor_mismatch(actor, authenticated_actor)
         expected_revision = arguments.get("expected_revision")
+        contract = None
+        if "acceptance_contract" in arguments:
+            if not isinstance(arguments["acceptance_contract"], dict):
+                raise ApplicationRejection("invalid-arguments", "acceptance_contract must be an object", 422)
+            if expected_revision is None or (arguments.get("role") or _reservation.DEFAULT_ROLE) != "execution":
+                raise ApplicationRejection("invalid-arguments",
+                    "an explicit acceptance contract requires an execution reservation and expected_revision", 422)
+            try:
+                contract = _releases.normalize_acceptance_contract(arguments["acceptance_contract"])
+            except ValueError as exc:
+                raise ApplicationRejection("invalid-arguments", str(exc), 422) from exc
         if expected_revision is not None:
             try:
                 _releases.validate_basis(expected_revision)
@@ -1727,7 +1738,7 @@ class WorkApplication:
                 role=arguments.get("role") or _reservation.DEFAULT_ROLE,
                 correlation_ref=arguments.get("correlation_ref"),
                 interrupt_existing=bool(arguments.get("interrupt_existing", False)),
-                expected_revision=expected_revision)
+                expected_revision=expected_revision, acceptance_contract=contract)
         except _releases.StaleReleaseBasis as exc:
             # A queued request made against an item revision that has since
             # moved on: the same stale-basis refusal authority commands get.

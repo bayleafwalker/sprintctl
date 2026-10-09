@@ -1481,6 +1481,43 @@ def test_click_free_reservation_reserve_matches_cli_state_flow(conn, runner, act
         assert reservation["session_id"] == "thread-1"
         assert reservation["correlation_ref"] == "actionq:job-1"
 
+def test_served_execution_reservation_freezes_explicit_protected_contract(conn, active_sprint):
+    track = db.get_or_create_track(conn, active_sprint["id"], "protected-contract")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Protected proof")
+    app = _application(store=conn, backend=db)
+    item = app.invoke("work.read.item", {"item_id": item_id}, _context())["item"]
+    args = dict(item_id=item_id, actor="served-test", session_id="contract-proof",
+        expected_revision=item["edit_revision"],
+        acceptance_contract={"review_required": True, "effect_verification_required": True})
+    result = app.invoke("work.reservation.reserve", args, _context())
+    release = app.invoke("work.read.release", {"item_id": item_id}, _context())["release"]
+    assert release["release_digest"] == result["reservation"]["release_digest"]
+    assert release["acceptance_contract"] == args["acceptance_contract"]
+    schema = next(c.input_schema for c in WORK_OPERATION_CONTRACTS if c.name == "work.reservation.reserve")
+    jsonschema.validate(args, schema)
+
+
+@pytest.mark.parametrize("change", ["missing-basis", "observation", "invalid-contract", "null-contract", "stale-basis"])
+def test_explicit_contract_refuses_invalid_or_unseen_basis_without_freezing_release(conn, active_sprint, change):
+    track = db.get_or_create_track(conn, active_sprint["id"], "protected-contract-refusal")
+    item_id = db.create_work_item(conn, active_sprint["id"], track, "Unchanged proof")
+    app = _application(store=conn, backend=db)
+    item = app.invoke("work.read.item", {"item_id": item_id}, _context())["item"]
+    args = dict(item_id=item_id, actor="served-test", session_id="contract-refusal",
+        expected_revision=item["edit_revision"],
+        acceptance_contract={"effect_verification_required": True})
+    if change == "missing-basis": del args["expected_revision"]
+    if change == "observation": args["role"] = "observation"
+    if change == "invalid-contract": args["acceptance_contract"]["effect_verification_required"] = "true"
+    if change == "null-contract": args["acceptance_contract"] = None
+    if change == "stale-basis": args["expected_revision"] = args["expected_revision"].replace("@description:v0", "@description:v1")
+    with pytest.raises(ApplicationRejection):
+        app.invoke("work.reservation.reserve", args, _context())
+    assert db.list_reservations(conn, item_id) == []
+    assert db.current_release(conn, item_id) is None
+    assert app.invoke("work.read.item", {"item_id": item_id}, _context())["item"] == item
+
+
 def test_second_reservation_coexists_and_is_reported_as_a_conflict(conn, active_sprint):
     """The default is coexistence: the ledger records both and says so.
 

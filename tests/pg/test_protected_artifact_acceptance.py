@@ -76,6 +76,28 @@ def test_required_receipt_cannot_be_omitted(store):
     assert pg.get_work_item(store, item) == before
 
 
+def test_served_reservation_contract_requires_actual_owner_receipt(store):
+    item = _items(store)[0]
+    app = _app(store)
+    basis = app.invoke("work.read.item", {"item_id": item}, CHECKER)["item"]["edit_revision"]
+    reserved = app.invoke("work.reservation.reserve", {
+        "item_id": item, "actor": CHECKER.identity.actor, "session_id": uuid.uuid4().hex,
+        "expected_revision": basis,
+        "acceptance_contract": {"review_required": True, "effect_verification_required": True},
+    }, CHECKER)["reservation"]
+    release = app.invoke("work.read.release", {"item_id": item}, CHECKER)["release"]
+    assert release["release_digest"] == reserved["release_digest"]
+    assert release["acceptance_contract"]["effect_verification_required"] is True
+    intent = _propose(store, item, _run(store, PROPOSER))
+    with pytest.raises(ApplicationRejection) as error:
+        accept(app, intent)
+    assert error.value.code == "effect-verification-required"
+    assert _get(store, intent["intent_id"]) == intent
+    ref, _, body = receipt(store, intent, release)
+    accepted = accept(app, intent, ref)
+    assert accepted["acceptance"]["verification"]["receipt"] == body
+
+
 def test_exact_raw_artifact_protected_receipt_is_preserved_in_acceptance_without_settlement(store):
     item, release, intent = setup(store)
     assert intent["release_digest"] == release["release_digest"]
