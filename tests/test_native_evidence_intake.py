@@ -503,6 +503,7 @@ def test_evidence_pass_keeps_identity_across_credential_replacement(monkeypatch)
     assert len(clients) == 3
 
 
+@_requires_312
 def test_evidence_pass_does_not_switch_after_revocation(monkeypatch):
     from types import SimpleNamespace
     from vuoro_client.errors import InvocationRejectedError
