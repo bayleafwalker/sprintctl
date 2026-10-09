@@ -1,0 +1,89 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.s4.bound-proposal-owner",
+  "contract_ref": {
+    "doc_id": "s4-bound-proposal-owner",
+    "revision": "git:31c33fe6cd1b18f453df8b6c74d55695241f6798; October9 additive causal owner slice"
+  },
+  "implementation_sha": "0634951687c38638d0caf4794c801cb17da2c0df",
+  "depth": 2,
+  "environment": {
+    "backend": "disposable PostgreSQL16 owner",
+    "isolation": "independent bounded connections; no production effects",
+    "tool_versions": {
+      "python": "3.13.16",
+      "postgresql": "16.15",
+      "adapter-kit": "0.2.0",
+      "candidate": "sprintctl0.15.0/schema21"
+    }
+  },
+  "execution": {
+    "histories": 27,
+    "bounds": {
+      "full_unit_passed": 1821,
+      "full_unit_skipped": 2,
+      "full_unit_deselected": 827,
+      "full_pg_passed": 813,
+      "empty_cleanup_scopes": 56,
+      "release_metadata_tests_passed": 41,
+      "release_metadata_tests_skipped": 1
+    },
+    "faults_exercised": [
+      "stale fullrevision/same Release digest",
+      "missing/mismatched scoped reserve receipt",
+      "unbound/uncommitted trailer commit",
+      "stale tail/payload digest supplied as entry digest",
+      "post-insert failure",
+      "postcommit retry/current lifecycle",
+      "bound/bound and legacy/bound key contention",
+      "missing authority/foreign run binding",
+      "held reverse locks",
+      "edit/append contention observed by blocker PID"
+    ]
+  },
+  "claims": [
+    {
+      "property": "all causal guards admit a fresh proposal and immutable receipt atomically; refusals/insert failure leave no effect",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_bound_proposal_owner.py"
+      ]
+    },
+    {
+      "property": "exact historical replay bypasses admission locks and retains original admission beside current lifecycle",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_bound_proposal_owner.py"
+      ]
+    },
+    {
+      "property": "shared-key, append/edit and forbidden reverse lock histories serialize without cycles",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/pg/test_bound_proposal_owner.py"
+      ]
+    },
+    {
+      "property": "legacy published descriptors unchanged",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_bound_proposal_owner.py::test_only_catalog_addition_and_every_existing_descriptor_byte_preserved"
+      ]
+    },
+    {
+      "property": "service deployment, bound offline producer, offline equivalence, import/cutover and soak",
+      "result": "unknown"
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "implementation_sha is the staged implementation tree before this packet, not a deployment.",
+    "Independent Astra source review approved after actual lock/authorization histories.",
+    "Initial review caught repo_id missing from public run row; fixed using application scope, then actual legacy and bound proposals passed.",
+    "Initial PG fixtures had mismatched actor and malformed evidence request digest; corrected to owner contracts before passing runs.",
+    "Initial full unit found two stale additive catalog inventory expectations; final full rerun passed.",
+    "Uncommitted reserve prerequisite test holds a real ledger row; it does not claim a complete concurrent native reserve operation.",
+    "Existing-intent sentinel holds an unrelated existing intent; cross-operation same-key collision is separately tested.",
+    "Postcommit retry exercises actual committed owner state without injecting deployed network faults."
+  ]
+}

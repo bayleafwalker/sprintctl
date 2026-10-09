@@ -25,6 +25,7 @@ from .application_common import (
     PREDECESSOR_CONTEXT_MAX_LIMIT,
 )
 from . import effect_intent as _effect
+from . import releases as _releases
 from . import unbound as _unbound
 from .application import (
     SUPPORTED_BATCH_TYPES,
@@ -853,6 +854,35 @@ _EFFECT_BINDING_PROPERTIES: dict[str, Any] = {
     "canonical_intent_digest": _EFFECT_DIGEST_SCHEMA,
 }
 _EFFECT_BINDING_REQUIRED = ("intent_id", "revision", "canonical_intent_digest")
+_BOUND_CAUSAL_BASIS_SCHEMA = _object_schema(
+    {
+        "expected_revision": {"type": "string", "pattern": _releases._RELEASE_REVISION_RE.pattern},
+        "release_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "reserve_idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
+        "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "evidence_tail": _object_schema(
+            {"item_id": {"type": "string", "minLength": 1},
+             "chain_seq": {"type": "integer", "minimum": 0},
+             "entry_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}},
+            required=("item_id", "chain_seq", "entry_digest"),
+        ),
+    },
+    required=("expected_revision", "release_digest", "reserve_idempotency_key", "commit_sha", "evidence_tail"),
+)
+_BOUND_RUN_BINDING_SCHEMA = _object_schema(
+    {"repo_id": {"type": "string"}, "run_id": _RUN_ID_SCHEMA,
+     "principal_id": {"type": "string", "minLength": 1},
+     "workspace_id": {"type": "string", "minLength": 1},
+     "client_id": _NULLABLE_BINDING_ID_SCHEMA, "grant_id": _NULLABLE_BINDING_ID_SCHEMA},
+    required=("repo_id", "run_id", "principal_id", "workspace_id", "client_id", "grant_id"),
+)
+_BOUND_ADMISSION_SCHEMA = _object_schema(
+    {"schema_version": {"const": "sprintctl-bound-proposal-admission/v1"},
+     "causal_basis": _BOUND_CAUSAL_BASIS_SCHEMA,
+     "run_binding": _BOUND_RUN_BINDING_SCHEMA,
+     "reservation_id": {"type": "integer", "minimum": 1}},
+    required=("schema_version", "causal_basis", "run_binding", "reservation_id"),
+)
 WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
     WorkOperationContract(
         "work.identity.current",
@@ -1193,6 +1223,36 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
             ),
         ),
         _EFFECT_RESULT,
+        _effect.AUTHORITY_PROPOSE,
+        "write",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        _effect.OPERATION_BOUND_PROPOSE,
+        _object_schema(
+            {
+                "causal_basis": _BOUND_CAUSAL_BASIS_SCHEMA,
+                "run_id": _RUN_ID_SCHEMA,
+                "item_id": {"type": "integer", "minimum": 1},
+                "repository": {"type": "string", "minLength": 1, "maxLength": _effect.MAX_REPOSITORY},
+                "base_commit": _EFFECT_COMMIT_SCHEMA,
+                "title": {"type": "string", "minLength": 1, "maxLength": _effect.MAX_TITLE},
+                "rationale": {"type": "string", "minLength": 1, "maxLength": _effect.MAX_RATIONALE},
+                "unified_diff": {
+                    "type": "string", "minLength": 1, "maxLength": _effect.MAX_UNIFIED_DIFF,
+                },
+                "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
+            },
+            required=(
+                "run_id", "item_id", "repository", "base_commit", "title", "rationale",
+                "unified_diff", "idempotency_key", "causal_basis",
+            ),
+        ),
+        _result_schema(
+            ("repo_id", "intent", "admission"),
+            {"repo_id": {"type": "string"}, "intent": _EFFECT_INTENT_SCHEMA,
+             "admission": _BOUND_ADMISSION_SCHEMA},
+        ),
         _effect.AUTHORITY_PROPOSE,
         "write",
         "not-allowed",

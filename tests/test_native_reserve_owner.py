@@ -81,6 +81,6 @@ def test_native_reserve_is_only_catalog_addition_with_all_legacy_bytes_preserved
         for entry in catalog_operation_specs(resource_schema_available=True)
     }
     expected = fixture["operation_sha256"]
-    assert set(actual) - set(expected) == {"work.reservation.reserve-v1"}
+    assert set(actual) - set(expected) == {"work.reservation.reserve-v1", "work.effect.propose-bound-v1"}
     assert not set(expected) - set(actual)
     assert {name: actual[name] for name in expected} == expected

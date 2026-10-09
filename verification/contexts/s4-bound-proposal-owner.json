@@ -1,0 +1,110 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.s4.bound-proposal-owner",
+  "owner_repo": "sprintctl",
+  "subject": "atomic-bound-proposal-admission-and-historical-replay",
+  "contract_ref": {
+    "doc_id": "s4-bound-proposal-owner",
+    "revision": "git:31c33fe6cd1b18f453df8b6c74d55695241f6798; October9 additive causal owner slice"
+  },
+  "source_of_truth": "native PostgreSQL work/Release/reserve ledger/trailer/evidence owner",
+  "depth": 2,
+  "backends": [
+    "disposable-postgresql-16"
+  ],
+  "actors": [
+    "bound-proposer",
+    "legacy-proposer",
+    "independent-editor",
+    "evidence-appender",
+    "foreign-principal"
+  ],
+  "initial_state": [
+    "registered exact run binding",
+    "existing work item and observed full revision",
+    "precommitted native reserve receipt, Release/trailer pair and evidence tail"
+  ],
+  "operations": [
+    {
+      "name": "bound-admission",
+      "actors": [
+        "bound-proposer",
+        "legacy-proposer"
+      ]
+    },
+    {
+      "name": "exact-replay",
+      "actors": [
+        "bound-proposer",
+        "legacy-proposer"
+      ]
+    },
+    {
+      "name": "changed-request",
+      "actors": [
+        "bound-proposer",
+        "legacy-proposer"
+      ]
+    },
+    {
+      "name": "concurrent-key-collision",
+      "actors": [
+        "bound-proposer",
+        "legacy-proposer"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one scoped proposal with immutable admission and current intent replay"
+  },
+  "assumptions": {
+    "isolation": "disposable PostgreSQL, independent race and lock connections; no deployed service or offline transport",
+    "clock": "short statement timeouts and bounded synchronization; no expiry or soak claims"
+  },
+  "bounds": {
+    "new_pg_histories": 27,
+    "production_mutation": false
+  },
+  "invariants": [
+    "full revision and Release recorded basis match",
+    "native original reserve admission and exact commit pair match",
+    "actual entry tail compared under shared append lock",
+    "legacy/bound keys share ledger but request digests differ",
+    "atomic proposal/admission rollback",
+    "historical admission survives subsequent changes",
+    "no reverse repository/reserve/existing-intent locks"
+  ],
+  "faults": [
+    "stale fullrevision/same Release digest",
+    "missing/mismatched scoped reserve receipt",
+    "unbound/uncommitted trailer commit",
+    "stale tail/payload digest supplied as entry digest",
+    "post-insert failure",
+    "postcommit retry/current lifecycle",
+    "bound/bound and legacy/bound key contention",
+    "missing authority/foreign run binding",
+    "held reverse locks",
+    "edit/append contention observed by blocker PID"
+  ],
+  "oracles": [
+    "proposal and ledger row counts",
+    "published input/result schema",
+    "actual pg_blocking_pids",
+    "statement timeout while forbidden locks held",
+    "original admission and current intent equality",
+    "attested 0.14.2 descriptor SHA256 baseline"
+  ],
+  "implementation_anchors": [
+    "sprintctl/effect_causal.py",
+    "sprintctl/pg.py::effect_causal_admission_in_transaction",
+    "sprintctl/work_application.py::_effect_propose_impl",
+    "tests/pg/test_bound_proposal_owner.py"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "stateful-test",
+    "concurrent-history",
+    "fault-scenario"
+  ]
+}
