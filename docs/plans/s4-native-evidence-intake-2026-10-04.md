@@ -142,3 +142,16 @@ cutover, rotated hook transition and ninety-day read-only soak are still open;
 no dates start from this source PR. Resource-authority #2603 is not an intake
 carrier. No live import, classification, grant, NDJSON upload, hook change,
 legacy retirement or production migration is authorized by these tests.
+
+## October 9 credential snapshot prerequisite
+
+`authority evidence-sync` constructs one lazy native invoker for its entire pass.
+The first authenticated request resolves the configured credential reference;
+run resolution and every append or exact retry in that pass reuse that same
+in-memory credential. Each RPC creates a fresh asynchronous client. Replacement
+credentials become visible in a new pass; expiration or revocation stops the
+current pass with its original identity and leaves pending intent for review.
+The snapshot never enters producer rows or receipts.
+
+This prerequisite does not establish causal proposal admission, offline/online
+equivalence, import readiness, hook cutover or a soak start date.
