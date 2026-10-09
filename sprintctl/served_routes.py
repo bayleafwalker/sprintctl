@@ -149,6 +149,7 @@ SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
     ServedRoute("authority.evidence-sync", "work.evidence.append-v1"),
     ServedRoute("authority.proposal-sync.resolve", "work.run.resolve-v1"),
     ServedRoute("authority.proposal-sync", "work.effect.propose-v1"),
+    ServedRoute("authority.proposal-sync.bound", "work.effect.propose-bound-v1", notes="Captured bound request selects the additive owner operation."),
     ServedRoute("authority.reserve-sync.resolve", "work.run.resolve-v1"),
     ServedRoute("authority.reserve-sync", "work.reservation.reserve-v1"),
     ServedRoute("authority.reserve-sync.release", "work.read.release"),
@@ -340,7 +341,7 @@ def classified_click_paths() -> frozenset[str]:
 
 
 def _cli_path(route_path: str) -> str:
-    if route_path == "authority.proposal-sync.resolve":
+    if route_path in {"authority.proposal-sync.resolve", "authority.proposal-sync.bound"}:
         return "authority proposal-sync"
     if route_path == "authority.evidence-sync.resolve":
         return "authority evidence-sync"

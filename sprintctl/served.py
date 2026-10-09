@@ -921,7 +921,7 @@ def native_proposal_invoker(served_profile: ServedProfile, *, repo_id: str):
         return snapshot
 
     def invoke(operation, arguments):
-        if operation not in {"work.run.resolve-v1", "work.effect.propose-v1"}:
+        if operation not in {"work.run.resolve-v1", "work.effect.propose-v1", "work.effect.propose-bound-v1"}:
             raise ValueError("unsupported native proposal intake operation")
         return asyncio.run(_invoke_operation(served_profile, operation, arguments,
             repo_id=repo_id, _credential_resolver=pinned))

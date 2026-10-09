@@ -1,0 +1,96 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.s4.bound-proposal-carrier",
+  "contract_ref": {
+    "doc_id": "s4-bound-proposal-carrier",
+    "revision": "git:a2296561f39c747af9336f4dff0ad88d71fc59c6; October9 bound producer slice"
+  },
+  "implementation_sha": "3d0dfe04156417256fff2fd8f383a463fbc0748f",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary SQLite producers and disposable PostgreSQL16 owner",
+    "isolation": "independent producer files and race connections; no production effects",
+    "tool_versions": {
+      "python": "3.13.16",
+      "postgresql": "16.15",
+      "adapter-kit": "0.2.0",
+      "candidate": "sprintctl0.15.1/schema21",
+      "legacy-fixture": "attested actual sprintctl0.14.2 wheel"
+    }
+  },
+  "execution": {
+    "histories": 7,
+    "bounds": {
+      "targeted_passed": 105,
+      "targeted_skipped": 1,
+      "full_unit_passed": 1857,
+      "full_unit_skipped": 2,
+      "full_unit_deselected": 834,
+      "full_pg_passed": 820,
+      "empty_cleanup_scopes": 57
+    },
+    "faults_exercised": [
+      "malformed schema/operation type",
+      "crossed schema/operation pair",
+      "missing/extra causal fields",
+      "wrong receipt admission/binding/Release/reservation ID",
+      "damaged source/admission/confirmed operation",
+      "owner commit then reply loss",
+      "edit/tail/release/reject after admission",
+      "accepted/applied current lifecycle",
+      "stale causal tail",
+      "independent producer same-key and cross-variant collisions",
+      "unavailable bound owner"
+    ]
+  },
+  "claims": [
+    {
+      "property": "released legacy confirmed and pending history remains readable and original bytes/receipt unchanged while bound request joins FIFO",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_bound_proposal_intake.py::test_released_legacy_confirmed_and_pending_history_remains_unchanged"
+      ]
+    },
+    {
+      "property": "bound receipt/history exactly correlate original admission and request; invalid outcomes stay pending and stop FIFO",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_bound_proposal_intake.py"
+      ]
+    },
+    {
+      "property": "actual owner postcommit reply loss reconciles original admission after item/tail/reservation/intent changes",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_bound_proposal_intake.py"
+      ]
+    },
+    {
+      "property": "independent producer files share one owner proposal, including cross-variant conflict",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/pg/test_bound_proposal_intake.py::test_independent_producers_share_one_owner_key"
+      ]
+    },
+    {
+      "property": "bound/legacy native facades retain argument keys and one pass credential snapshot",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_native_proposal_intake.py::test_proposal_transport_pins_credential_and_keeps_key_in_arguments"
+      ]
+    },
+    {
+      "property": "actual service HTTP, stopped-authority equivalence, import/cutover and soak",
+      "result": "unknown"
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "implementation_sha is the staged implementation tree before this packet, not deployment.",
+    "Astra approved bounded source after fixing unhashable schema/operation values to controlled refusal; four negative cases pass.",
+    "First route check found an ambiguous command path; bound route now uses explicit alias mapped to the same CLI.",
+    "Released-carrier fixture was produced by actual attested0.14.2 wheel; its confirmations use a stub facade. Actual owner commit/recovery is separately tested in disposable PG.",
+    "Facade credential tests use stub clients; no deployed HTTP or authentication expiry claim.",
+    "All pre-existing owner catalog descriptors and schema remain unchanged in this producer patch."
+  ]
+}
