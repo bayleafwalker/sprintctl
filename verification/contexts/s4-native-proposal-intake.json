@@ -1,0 +1,111 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.s4.native-proposal-intake",
+  "owner_repo": "sprintctl",
+  "subject": "durable-native-proposal-request-replay",
+  "contract_ref": {
+    "doc_id": "s4-native-proposal-intake",
+    "revision": "git:65ee3227d02787df5fc46bfa89de6e02829acecd; October9 proposal carrier slice"
+  },
+  "source_of_truth": "native PostgreSQL effect owner; producer stores immutable intent and correlated receipts only",
+  "depth": 2,
+  "backends": [
+    "temporary-sqlite-producer",
+    "disposable-postgresql-16"
+  ],
+  "actors": [
+    "offline-producer",
+    "second-producer",
+    "native-work-owner",
+    "effect-acceptor"
+  ],
+  "initial_state": [
+    "registered run binding",
+    "empty proposal producer",
+    "existing work item"
+  ],
+  "operations": [
+    {
+      "name": "offline-capture",
+      "actors": [
+        "offline-producer",
+        "native-work-owner"
+      ]
+    },
+    {
+      "name": "run-resolution",
+      "actors": [
+        "offline-producer",
+        "native-work-owner"
+      ]
+    },
+    {
+      "name": "native-propose",
+      "actors": [
+        "offline-producer",
+        "native-work-owner"
+      ]
+    },
+    {
+      "name": "exact-replay",
+      "actors": [
+        "offline-producer",
+        "native-work-owner"
+      ]
+    },
+    {
+      "name": "local-confirmation-crash",
+      "actors": [
+        "offline-producer",
+        "native-work-owner"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one-scoped-proposal-and-correlated-producer-confirmation"
+  },
+  "assumptions": {
+    "isolation": "temporary SQLite and disposable PostgreSQL, independent race connections; no deployed HTTP faults",
+    "clock": "no real authority-offline or expiry lifecycle exercised"
+  },
+  "bounds": {
+    "new_pg_histories": 12,
+    "production_mutation": false
+  },
+  "invariants": [
+    "original bytes and whitespace preserved",
+    "argument key only; no envelope key",
+    "uncertainty stops FIFO",
+    "current lifecycle replay confirms unchanged immutable content",
+    "one scoped owner effect with independent producers"
+  ],
+  "faults": [
+    "reply lost after real owner commit",
+    "local crash before confirmation",
+    "changed caller or registered binding",
+    "missing work item",
+    "wrong receipt content/principal/digest",
+    "damaged confirmation",
+    "two-producer admission contention",
+    "credential replacement after resolve"
+  ],
+  "oracles": [
+    "actual owner intent and idempotency row counts",
+    "immutable byte/hash checks",
+    "current state and canonical digest checks",
+    "started/confirmed history and pending identifiers"
+  ],
+  "implementation_anchors": [
+    "sprintctl/proposal_intake.py",
+    "sprintctl/served.py::native_proposal_invoker",
+    "sprintctl/commands/operations.py::proposal_sync",
+    "tests/pg/test_native_proposal_intake.py"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "stateful-test",
+    "concurrent-history",
+    "fault-scenario"
+  ]
+}
