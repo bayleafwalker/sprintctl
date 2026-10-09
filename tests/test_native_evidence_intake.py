@@ -146,7 +146,7 @@ def test_batch_sync_reports_native_pending_without_absorbing_it(
     )
     monkeypatch.setattr(
         served,
-        "native_evidence_invoke",
+        "native_evidence_invoker",
         lambda *a, **k: pytest.fail(
             "batch sync must not silently invoke native intake"
         ),
@@ -252,7 +252,7 @@ def test_cli_native_sync_confirms_or_reports_pending(
             "item": {**item, "claims": [], "provenance": {}},
         }
 
-    monkeypatch.setattr(served, "native_evidence_invoke", invoke)
+    monkeypatch.setattr(served, "native_evidence_invoker", lambda profile, *, repo_id: lambda operation, arguments: invoke(profile, operation, arguments, repo_id=repo_id))
     result = runner.invoke(cli, ["authority", "evidence-sync"])
     assert result.exit_code == (1 if failure else 0), result.output
     report = json.loads(result.output.split("\nError:")[0])
@@ -383,7 +383,7 @@ def test_real_served_refusal_allows_cli_tail_correction_and_batch_reports_queue(
             "evidence-chain-conflict", "owner refusal", status_code=409
         )
 
-    monkeypatch.setattr(served, "native_evidence_invoke", invoke)
+    monkeypatch.setattr(served, "native_evidence_invoker", lambda profile, *, repo_id: lambda operation, arguments: invoke(profile, operation, arguments, repo_id=repo_id))
     refused = runner.invoke(cli, ["authority", "evidence-sync"])
     assert refused.exit_code == 1, refused.output
     state = intake.status(_rollout_paths(tmp_path).outbox_path)[
@@ -464,3 +464,67 @@ def test_native_transport_preserves_explicit_repository_scope(operation, monkeyp
         None, operation, {"run_id": "registered-run"}, repo_id="agentops"
     )
     assert result == {"scope_observed": "agentops"}
+
+
+def test_evidence_pass_keeps_identity_across_credential_replacement(monkeypatch):
+    from types import SimpleNamespace
+    resolutions, tokens, clients = [], [], []
+    def resolve(ref):
+        resolutions.append(ref)
+        return 'identity-A' if len(resolutions) == 1 else 'identity-B'
+    class Client:
+        def __init__(self, resolver): self.resolver = resolver
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def invoke(self, operation, arguments, **kwargs):
+            assert kwargs['repo_id'] == 'repo'
+            assert 'idempotency_key' not in kwargs
+            tokens.append(self.resolver('test-reference'))
+            return {}
+    def client(profile, *, credential_resolver):
+        result = Client(credential_resolver)
+        clients.append(result)
+        return result
+    monkeypatch.setattr(served, 'resolve_file_credential', resolve)
+    monkeypatch.setattr(served, '_client', client)
+    profile = SimpleNamespace(credential_ref='test-reference')
+    call = served.native_evidence_invoker(profile, repo_id='repo')
+    assert resolutions == []
+    call('work.run.resolve-v1', {})
+    call(intake.OPERATION, {'idempotency_key': 'argument-key'})
+    assert resolutions == ['test-reference']
+    assert tokens == ['identity-A', 'identity-A']
+    assert len({id(c) for c in clients}) == 2
+    # A new pass may deliberately observe a replacement; the old pass may not.
+    served.native_evidence_invoker(profile, repo_id='repo')('work.run.resolve-v1', {})
+    assert tokens[-1] == 'identity-B'
+    with pytest.raises(ValueError, match='unsupported'):
+        call('work.effect.propose-v1', {})
+    assert len(clients) == 3
+
+
+@_requires_312
+def test_evidence_pass_does_not_switch_after_revocation(monkeypatch):
+    from types import SimpleNamespace
+    from vuoro_client.errors import InvocationRejectedError
+    resolutions, tokens = [], []
+    def resolve(ref):
+        resolutions.append(ref)
+        return 'identity-A' if len(resolutions) == 1 else 'identity-B'
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def invoke(self, operation, arguments, **kwargs):
+            tokens.append(self.resolver('test-reference'))
+            if len(tokens) == 2:
+                raise InvocationRejectedError('unauthorized', 'revoked', status_code=401)
+            return {}
+    def client(profile, *, credential_resolver):
+        result = Client(); result.resolver = credential_resolver; return result
+    monkeypatch.setattr(served, 'resolve_file_credential', resolve)
+    monkeypatch.setattr(served, '_client', client)
+    call = served.native_evidence_invoker(SimpleNamespace(credential_ref='test-reference'), repo_id='repo')
+    call('work.run.resolve-v1', {})
+    with pytest.raises(InvocationRejectedError):
+        call(intake.OPERATION, {})
+    assert resolutions == ['test-reference'] and tokens == ['identity-A', 'identity-A']
