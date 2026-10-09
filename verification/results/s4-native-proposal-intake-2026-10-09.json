@@ -71,6 +71,7 @@
     "Public propose-v1 catalog and owner semantics unchanged; current owner Release on proposal is not a producer-observed causal basis.",
     "First local append-only test attempted deletion from an empty attempt table; fixture now stores a started row before asserting row triggers.",
     "First PG run780passed; new caller/crash/race histories added before final786passed run.",
-    "Initial full unit run found stale release-validator version and an existing additive sync-report expectation; both updated before the final full rerun."
+    "Initial full unit run found stale release-validator version and an existing additive sync-report expectation; both updated before the final full rerun.",
+    "Initial exact-head Python3.12 CI hit an existing maintenance replay fixture that generated a new timestamped envelope for replay. The fixture now reuses its original frozen envelope; product maintenance semantics unchanged. Updated-head CI required after this test-only correction."
   ]
 }
