@@ -1,0 +1,126 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.s4.bound-proposal-carrier",
+  "owner_repo": "sprintctl",
+  "subject": "durable-bound-proposal-carrier-and-admission-correlation",
+  "contract_ref": {
+    "doc_id": "s4-bound-proposal-carrier",
+    "revision": "git:a2296561f39c747af9336f4dff0ad88d71fc59c6; October9 bound producer slice"
+  },
+  "source_of_truth": "native bound proposal owner; immutable original carrier bytes and admission receipts",
+  "depth": 2,
+  "backends": [
+    "temporary-sqlite-producer",
+    "disposable-postgresql-16"
+  ],
+  "actors": [
+    "offline-producer",
+    "second-producer",
+    "native-work-owner",
+    "effect-acceptor"
+  ],
+  "initial_state": [
+    "registered run binding",
+    "captured full causal basis and precommitted prerequisites",
+    "legacy confirmed/pending rows produced by attested0.14.2 carrier"
+  ],
+  "operations": [
+    {
+      "name": "offline-capture",
+      "actors": [
+        "offline-producer",
+        "native-work-owner"
+      ]
+    },
+    {
+      "name": "run-resolution",
+      "actors": [
+        "offline-producer",
+        "native-work-owner"
+      ]
+    },
+    {
+      "name": "native-propose",
+      "actors": [
+        "offline-producer",
+        "native-work-owner"
+      ]
+    },
+    {
+      "name": "exact-replay",
+      "actors": [
+        "offline-producer",
+        "native-work-owner"
+      ]
+    },
+    {
+      "name": "local-confirmation-crash",
+      "actors": [
+        "offline-producer",
+        "native-work-owner"
+      ]
+    },
+    {
+      "name": "legacy-bound-collision",
+      "actors": [
+        "offline-producer",
+        "second-producer",
+        "native-work-owner"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one-scoped-proposal-and-correlated-producer-confirmation"
+  },
+  "assumptions": {
+    "isolation": "temporary SQLite and disposable PostgreSQL, independent race connections; no deployed HTTP faults",
+    "clock": "no real authority-offline or expiry lifecycle exercised"
+  },
+  "bounds": {
+    "new_pg_histories": 7,
+    "production_mutation": false
+  },
+  "invariants": [
+    "exact schema/operation pair and closed causal args",
+    "shared legacy/bound scoped capture key namespace",
+    "original bytes and confirmed legacy receipt retained",
+    "exact admission guards/binding and intent Release correlation",
+    "captured operation in invocation and confirmed attempts",
+    "current lifecycle replay preserves immutable admission",
+    "uncertainty stops mixed FIFO; no fallback or refresh"
+  ],
+  "faults": [
+    "malformed schema/operation type",
+    "crossed schema/operation pair",
+    "missing/extra causal fields",
+    "wrong receipt admission/binding/Release/reservation ID",
+    "damaged source/admission/confirmed operation",
+    "owner commit then reply loss",
+    "edit/tail/release/reject after admission",
+    "accepted/applied current lifecycle",
+    "stale causal tail",
+    "independent producer same-key and cross-variant collisions",
+    "unavailable bound owner"
+  ],
+  "oracles": [
+    "original released-carrier byte/hash/receipt comparisons",
+    "actual owner intent and ledger row counts",
+    "confirmed admission and current lifecycle correlations",
+    "pending IDs/FIFO and operation receipts",
+    "actual facade argument keys and pass credential snapshot"
+  ],
+  "implementation_anchors": [
+    "sprintctl/proposal_intake.py",
+    "sprintctl/served.py::native_proposal_invoker",
+    "sprintctl/served_routes.py",
+    "tests/test_bound_proposal_intake.py",
+    "tests/pg/test_bound_proposal_intake.py"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "stateful-test",
+    "concurrent-history",
+    "fault-scenario"
+  ]
+}

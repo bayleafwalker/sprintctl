@@ -1,0 +1,156 @@
+{
+  "source": "attested published sprintctl0.14.2 wheel",
+  "wheel_sha256": "22e59a1df5d6455c622463c8db9133f3ace445d9e50e491a31704c5a40ab9aab",
+  "binding": {
+    "repo_id": "legacy-artifact",
+    "run_id": "run_AAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "principal_id": "principal",
+    "workspace_id": "workspace",
+    "client_id": null,
+    "grant_id": null
+  },
+  "requests": [
+    {
+      "schema_version": "native-proposal-request/v1",
+      "operation": "work.effect.propose-v1",
+      "arguments": {
+        "run_id": "run_AAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "item_id": 1,
+        "repository": "example",
+        "base_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "title": " title ",
+        "rationale": " why\n",
+        "unified_diff": "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b \n",
+        "idempotency_key": "legacy-first-key"
+      }
+    },
+    {
+      "schema_version": "native-proposal-request/v1",
+      "operation": "work.effect.propose-v1",
+      "arguments": {
+        "run_id": "run_AAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "item_id": 1,
+        "repository": "example",
+        "base_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "title": " title ",
+        "rationale": " why\n",
+        "unified_diff": "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b \n",
+        "idempotency_key": "legacy-pending-key"
+      }
+    }
+  ],
+  "tables": [
+    {
+      "name": "native_proposal_request",
+      "schema": "CREATE TABLE native_proposal_request (\n        request_id TEXT PRIMARY KEY, source BLOB NOT NULL, source_sha256 TEXT NOT NULL,\n        binding_source BLOB NOT NULL, binding_sha256 TEXT NOT NULL,\n        request_json TEXT NOT NULL, binding_json TEXT NOT NULL, owner_key TEXT NOT NULL)",
+      "rows": [
+        [
+          "258c55fb-8003-4b10-9e0c-2b365214cdbe",
+          {
+            "bytes_base64": "ewogICJzY2hlbWFfdmVyc2lvbiI6ICJuYXRpdmUtcHJvcG9zYWwtcmVxdWVzdC92MSIsCiAgIm9wZXJhdGlvbiI6ICJ3b3JrLmVmZmVjdC5wcm9wb3NlLXYxIiwKICAiYXJndW1lbnRzIjogewogICAgInJ1bl9pZCI6ICJydW5fQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEiLAogICAgIml0ZW1faWQiOiAxLAogICAgInJlcG9zaXRvcnkiOiAiZXhhbXBsZSIsCiAgICAiYmFzZV9jb21taXQiOiAiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYiIsCiAgICAidGl0bGUiOiAiIHRpdGxlICIsCiAgICAicmF0aW9uYWxlIjogIiB3aHlcbiIsCiAgICAidW5pZmllZF9kaWZmIjogIi0tLSBhL3hcbisrKyBiL3hcbkBAIC0xICsxIEBAXG4tYVxuK2IgXG4iLAogICAgImlkZW1wb3RlbmN5X2tleSI6ICJsZWdhY3ktZmlyc3Qta2V5IgogIH0KfQo="
+          },
+          "8725f52a1b3cbe9f49eeec67a3015c1e7d2ce54ba6aa568a6e399bcb8cad3fec",
+          {
+            "bytes_base64": "eyJyZXBvX2lkIjogImxlZ2FjeS1hcnRpZmFjdCIsICJydW5faWQiOiAicnVuX0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBIiwgInByaW5jaXBhbF9pZCI6ICJwcmluY2lwYWwiLCAid29ya3NwYWNlX2lkIjogIndvcmtzcGFjZSIsICJjbGllbnRfaWQiOiBudWxsLCAiZ3JhbnRfaWQiOiBudWxsfQ=="
+          },
+          "fdaa9996efda9392f8bf8304116f8f167914f6e7424a39fb4a1218764d2f0aaa",
+          "{\"arguments\":{\"base_commit\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"idempotency_key\":\"legacy-first-key\",\"item_id\":1,\"rationale\":\" why\\n\",\"repository\":\"example\",\"run_id\":\"run_AAAAAAAAAAAAAAAAAAAAAAAAAA\",\"title\":\" title \",\"unified_diff\":\"--- a/x\\n+++ b/x\\n@@ -1 +1 @@\\n-a\\n+b \\n\"},\"operation\":\"work.effect.propose-v1\",\"schema_version\":\"native-proposal-request/v1\"}",
+          "{\"client_id\":null,\"grant_id\":null,\"principal_id\":\"principal\",\"repo_id\":\"legacy-artifact\",\"run_id\":\"run_AAAAAAAAAAAAAAAAAAAAAAAAAA\",\"workspace_id\":\"workspace\"}",
+          "legacy-first-key"
+        ],
+        [
+          "b4405861-f7c9-4e28-b7f2-7f22a9984701",
+          {
+            "bytes_base64": "ewogICJzY2hlbWFfdmVyc2lvbiI6ICJuYXRpdmUtcHJvcG9zYWwtcmVxdWVzdC92MSIsCiAgIm9wZXJhdGlvbiI6ICJ3b3JrLmVmZmVjdC5wcm9wb3NlLXYxIiwKICAiYXJndW1lbnRzIjogewogICAgInJ1bl9pZCI6ICJydW5fQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEiLAogICAgIml0ZW1faWQiOiAxLAogICAgInJlcG9zaXRvcnkiOiAiZXhhbXBsZSIsCiAgICAiYmFzZV9jb21taXQiOiAiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYiIsCiAgICAidGl0bGUiOiAiIHRpdGxlICIsCiAgICAicmF0aW9uYWxlIjogIiB3aHlcbiIsCiAgICAidW5pZmllZF9kaWZmIjogIi0tLSBhL3hcbisrKyBiL3hcbkBAIC0xICsxIEBAXG4tYVxuK2IgXG4iLAogICAgImlkZW1wb3RlbmN5X2tleSI6ICJsZWdhY3ktcGVuZGluZy1rZXkiCiAgfQp9Cg=="
+          },
+          "84124bb994507db7971b0c2c4d5afb49c98317aa9ecdf1cf608cc59c9a5cacbc",
+          {
+            "bytes_base64": "eyJyZXBvX2lkIjogImxlZ2FjeS1hcnRpZmFjdCIsICJydW5faWQiOiAicnVuX0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBIiwgInByaW5jaXBhbF9pZCI6ICJwcmluY2lwYWwiLCAid29ya3NwYWNlX2lkIjogIndvcmtzcGFjZSIsICJjbGllbnRfaWQiOiBudWxsLCAiZ3JhbnRfaWQiOiBudWxsfQ=="
+          },
+          "fdaa9996efda9392f8bf8304116f8f167914f6e7424a39fb4a1218764d2f0aaa",
+          "{\"arguments\":{\"base_commit\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"idempotency_key\":\"legacy-pending-key\",\"item_id\":1,\"rationale\":\" why\\n\",\"repository\":\"example\",\"run_id\":\"run_AAAAAAAAAAAAAAAAAAAAAAAAAA\",\"title\":\" title \",\"unified_diff\":\"--- a/x\\n+++ b/x\\n@@ -1 +1 @@\\n-a\\n+b \\n\"},\"operation\":\"work.effect.propose-v1\",\"schema_version\":\"native-proposal-request/v1\"}",
+          "{\"client_id\":null,\"grant_id\":null,\"principal_id\":\"principal\",\"repo_id\":\"legacy-artifact\",\"run_id\":\"run_AAAAAAAAAAAAAAAAAAAAAAAAAA\",\"workspace_id\":\"workspace\"}",
+          "legacy-pending-key"
+        ]
+      ]
+    },
+    {
+      "name": "native_proposal_attempt",
+      "schema": "CREATE TABLE native_proposal_attempt (\n        sequence INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT NOT NULL REFERENCES native_proposal_request(request_id),\n        attempt_id TEXT NOT NULL, operation TEXT NOT NULL,\n        phase TEXT NOT NULL CHECK(phase IN ('started','confirmed','rejected','unknown')),\n        result_json TEXT, result_sha256 TEXT, code TEXT, http_status INTEGER)",
+      "rows": [
+        [
+          1,
+          "258c55fb-8003-4b10-9e0c-2b365214cdbe",
+          "713c07a2-b51a-42de-83b9-5fdec0893bf1",
+          "work.run.resolve-v1",
+          "started",
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          2,
+          "258c55fb-8003-4b10-9e0c-2b365214cdbe",
+          "713c07a2-b51a-42de-83b9-5fdec0893bf1",
+          "work.effect.propose-v1",
+          "started",
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          3,
+          "258c55fb-8003-4b10-9e0c-2b365214cdbe",
+          "713c07a2-b51a-42de-83b9-5fdec0893bf1",
+          "work.effect.propose-v1",
+          "confirmed",
+          "{\"intent\":{\"acceptance\":null,\"application\":null,\"base_commit\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"canonical_intent_digest\":\"d773893ff54fd46fdc08e1d9b5f053691fff3f695a65787aa7af1829ee17ad5e\",\"created_at\":\"2026-10-09T00:00:00Z\",\"intent_id\":\"intent_BBBBBBBBBBBBBBBBBBBBBBBBBB\",\"item_id\":1,\"proposer_principal\":\"principal\",\"rationale\":\" why\\n\",\"rejection\":null,\"repository\":\"example\",\"revision\":1,\"run_id\":\"run_AAAAAAAAAAAAAAAAAAAAAAAAAA\",\"state\":\"proposed\",\"title\":\" title \",\"unified_diff\":\"--- a/x\\n+++ b/x\\n@@ -1 +1 @@\\n-a\\n+b \\n\"},\"repo_id\":\"legacy-artifact\"}",
+          "cf75e3539b5a4a4635ca4a68c4f132cc9159b4fd513963981d9198247b595152",
+          null,
+          null
+        ],
+        [
+          4,
+          "b4405861-f7c9-4e28-b7f2-7f22a9984701",
+          "38f61664-80b1-46d5-934c-079e1d4e9d04",
+          "work.run.resolve-v1",
+          "started",
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          5,
+          "b4405861-f7c9-4e28-b7f2-7f22a9984701",
+          "38f61664-80b1-46d5-934c-079e1d4e9d04",
+          "work.effect.propose-v1",
+          "started",
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          6,
+          "b4405861-f7c9-4e28-b7f2-7f22a9984701",
+          "38f61664-80b1-46d5-934c-079e1d4e9d04",
+          "work.effect.propose-v1",
+          "unknown",
+          null,
+          null,
+          "outcome-unconfirmed",
+          null
+        ]
+      ]
+    }
+  ],
+  "triggers": [
+    "CREATE TRIGGER native_proposal_attempt_delete BEFORE DELETE ON native_proposal_attempt BEGIN SELECT RAISE(ABORT, 'native proposal intake is append-only'); END",
+    "CREATE TRIGGER native_proposal_attempt_update BEFORE UPDATE ON native_proposal_attempt BEGIN SELECT RAISE(ABORT, 'native proposal intake is append-only'); END",
+    "CREATE TRIGGER native_proposal_request_delete BEFORE DELETE ON native_proposal_request BEGIN SELECT RAISE(ABORT, 'native proposal intake is append-only'); END",
+    "CREATE TRIGGER native_proposal_request_update BEFORE UPDATE ON native_proposal_request BEGIN SELECT RAISE(ABORT, 'native proposal intake is append-only'); END"
+  ]
+}

@@ -15,12 +15,14 @@ import sqlite3
 from typing import Any, Callable
 import uuid
 
-from . import evidence_intake as evidence, outbox, effect_intent
+from . import evidence_intake as evidence, outbox, effect_intent, effect_causal
 from .contracts import reject_credential_shaped_values
 
 OPERATION = "work.effect.propose-v1"
 RESOLVE = "work.run.resolve-v1"
 SCHEMA = "native-proposal-request/v1"
+BOUND_SCHEMA = "native-bound-proposal-request/v1"
+BOUND_OPERATION = effect_intent.OPERATION_BOUND_PROPOSE
 TABLES = {"native_proposal_request", "native_proposal_attempt"}
 ARGUMENTS = {"run_id", "item_id", "repository", "base_commit", "title", "rationale",
              "unified_diff", "idempotency_key"}
@@ -34,8 +36,12 @@ def _normalize(raw: bytes, binding_raw: bytes, repo_id: str) -> tuple[dict, dict
     request, binding = evidence._parse(raw), evidence._parse(binding_raw)
     if set(request) != {"schema_version", "operation", "arguments"}:
         raise ValueError("proposal request must have exactly three envelope fields")
-    if request["schema_version"] != SCHEMA or request["operation"] != OPERATION:
+    if not all(isinstance(request[name], str) for name in ("schema_version", "operation")):
+        raise ValueError("proposal schema and operation must be strings")
+    pair = (request["schema_version"], request["operation"])
+    if pair not in {(SCHEMA, OPERATION), (BOUND_SCHEMA, BOUND_OPERATION)}:
         raise ValueError("unsupported proposal request schema or operation")
+    bound = pair == (BOUND_SCHEMA, BOUND_OPERATION)
     if set(binding) != evidence.BINDING_FIELDS or binding.get("repo_id") != repo_id:
         raise ValueError("proposal requires the exact registered run binding and repository")
     for name in ("repo_id", "run_id", "principal_id", "workspace_id"):
@@ -47,8 +53,11 @@ def _normalize(raw: bytes, binding_raw: bytes, repo_id: str) -> tuple[dict, dict
         if binding[name] is not None and (not isinstance(binding[name], str) or not binding[name]):
             raise ValueError("invalid registered grant binding")
     args = request["arguments"]
-    if not isinstance(args, dict) or set(args) != ARGUMENTS:
+    expected = ARGUMENTS | {"causal_basis"} if bound else ARGUMENTS
+    if not isinstance(args, dict) or set(args) != expected:
         raise ValueError("invalid closed proposal arguments")
+    if bound:
+        effect_causal.validate_basis(args["causal_basis"])
     if not evidence._same_json(args["run_id"], binding["run_id"]):
         raise ValueError("proposal run differs from registered binding")
     if type(args["item_id"]) is not int or args["item_id"] <= 0:
@@ -167,11 +176,24 @@ def status(path: Path) -> dict:
 
 
 def _receipt(result: Any, args: dict, binding: dict) -> None:
-    if not isinstance(result, dict) or set(result) != {"repo_id", "intent"} or result.get("repo_id") != binding["repo_id"]:
+    bound = "causal_basis" in args
+    fields = {"repo_id", "intent", "admission"} if bound else {"repo_id", "intent"}
+    if not isinstance(result, dict) or set(result) != fields or result.get("repo_id") != binding["repo_id"]:
         raise ValueError("uncorrelated proposal repository")
+    if bound:
+        admission = result["admission"]
+        if (not isinstance(admission, dict)
+            or set(admission) != {"schema_version", "causal_basis", "run_binding", "reservation_id"}
+            or admission["schema_version"] != effect_causal.ADMISSION_SCHEMA
+            or not evidence._same_json(admission["causal_basis"], args["causal_basis"])
+            or not evidence._same_json(admission["run_binding"], binding)
+            or type(admission["reservation_id"]) is not int or admission["reservation_id"] <= 0):
+            raise ValueError("uncorrelated bound proposal admission")
     intent = result["intent"]
     if not isinstance(intent, dict):
         raise ValueError("invalid proposal intent")
+    if bound and not evidence._same_json(intent.get("release_digest"), args["causal_basis"]["release_digest"]):
+        raise ValueError("bound proposal intent differs from captured Release")
     for name in (*effect_intent.DIGEST_FIELDS, "run_id"):
         if not evidence._same_json(intent.get(name), args[name]):
             raise ValueError("proposal receipt differs from captured content")
@@ -197,7 +219,9 @@ def _validate_history(conn):
             _digest(binding_raw) != row["binding_sha256"] or evidence._json(request) != row["request_json"] or
             evidence._json(binding) != row["binding_json"] or request["arguments"]["idempotency_key"] != row["owner_key"]):
             raise ValueError("proposal intent integrity mismatch")
-        for result in conn.execute("SELECT result_json,result_sha256 FROM native_proposal_attempt WHERE request_id=? AND phase='confirmed'", (row["request_id"],)):
+        for result in conn.execute("SELECT operation,result_json,result_sha256 FROM native_proposal_attempt WHERE request_id=? AND phase='confirmed'", (row["request_id"],)):
+            if result["operation"] != request["operation"]:
+                raise ValueError("proposal confirmation operation mismatch")
             content = result["result_json"]
             if not isinstance(content, str) or _digest(content.encode()) != result["result_sha256"]:
                 raise ValueError("proposal confirmation integrity mismatch")
@@ -229,7 +253,7 @@ def synchronize(path: Path, *, repo_id: str, invoke: Callable, rejection_type: t
                 resolved = invoke(operation, {"run_id": binding["run_id"]})
                 if not evidence._same_json(resolved, binding):
                     raise ValueError("registered run binding changed")
-                operation = OPERATION
+                operation = request["operation"]
                 _attempt(conn, row["request_id"], attempt, operation, "started")
                 result = invoke(operation, request["arguments"])
                 _receipt(result, request["arguments"], binding)

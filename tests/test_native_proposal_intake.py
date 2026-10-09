@@ -109,7 +109,8 @@ def test_readonly_status_refuses_corrupted_confirmation(tmp_path):
     with pytest.raises(ValueError,match='integrity'):intake.status(path)
 
 
-def test_proposal_transport_pins_credential_and_keeps_key_in_arguments(monkeypatch):
+@pytest.mark.parametrize("operation", [intake.OPERATION, intake.BOUND_OPERATION])
+def test_proposal_transport_pins_credential_and_keeps_key_in_arguments(monkeypatch, operation):
     resolved,tokens,calls=[],[],[]
     def resolve(ref):resolved.append(ref);return 'identity-A' if len(resolved)==1 else 'identity-B'
     class Client:
@@ -121,7 +122,7 @@ def test_proposal_transport_pins_credential_and_keeps_key_in_arguments(monkeypat
     def client(profile,*,credential_resolver):obj=Client();obj.resolver=credential_resolver;return obj
     monkeypatch.setattr(served,'resolve_file_credential',resolve);monkeypatch.setattr(served,'_client',client)
     call=served.native_proposal_invoker(SimpleNamespace(credential_ref='reference'),repo_id='repo')
-    assert resolved==[];call(intake.RESOLVE,{});call(intake.OPERATION,{'idempotency_key':'argument-key'})
+    assert resolved==[];call(intake.RESOLVE,{});call(operation,{'idempotency_key':'argument-key'})
     assert resolved==['reference'] and tokens==['identity-A','identity-A']
     assert calls[1][1]=={'idempotency_key':'argument-key'}
     with pytest.raises(ValueError,match='unsupported'):call('work.effect.accept-v1',{})
@@ -132,8 +133,14 @@ from tests.test_served_authority_sync import _configure_served_repo,_requires_31
 
 
 @_requires_312
-def test_cli_capture_status_sync_and_batch_separation(runner,tmp_path,monkeypatch):
+@pytest.mark.parametrize("bound", [False, True])
+def test_cli_capture_status_sync_and_batch_separation(runner,tmp_path,monkeypatch,bound):
     _configure_served_repo(tmp_path,monkeypatch);request,binding=payload(tmp_path.name)
+    response = receipt
+    if bound:
+        from tests.test_bound_proposal_intake import bound_payload, bound_receipt
+        request, binding = bound_payload(); binding['repo_id'] = tmp_path.name
+        response = bound_receipt
     source=tmp_path/'request.json';source.write_text(json.dumps(request));run_binding=tmp_path/'binding.json';run_binding.write_text(json.dumps(binding))
     queued=runner.invoke(cli,['authority','proposal-queue','--request',str(source),'--run-binding',str(run_binding)])
     assert queued.exit_code==0,queued.output;identity=json.loads(queued.output)['request_id']
@@ -146,12 +153,12 @@ def test_cli_capture_status_sync_and_batch_separation(runner,tmp_path,monkeypatc
     def factory(profile,*,repo_id):
         assert repo_id==tmp_path.name
         def invoke(op,args):
-            calls.append((op,args));return binding if op==intake.RESOLVE else receipt(request,binding)
+            calls.append((op,args));return binding if op==intake.RESOLVE else response(request,binding)
         return invoke
     monkeypatch.setattr(served,'native_proposal_invoker',factory)
     result=runner.invoke(cli,['authority','proposal-sync']);assert result.exit_code==0,result.output
     assert json.loads(result.output)['confirmed_proposal_request_ids']==[identity]
-    assert calls[1]==(intake.OPERATION,request['arguments'])
+    assert calls[1]==(request['operation'],request['arguments'])
 
 
 @_requires_312
