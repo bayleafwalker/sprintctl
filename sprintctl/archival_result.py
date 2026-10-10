@@ -206,6 +206,19 @@ def _validate(records, repo, workspace, item_id):
         if d["state"] == "proposed":
             raise ValueError("unresolved proposed intent")
         binding = d.get("verification_binding")
+        release = rels.get(d.get("release_digest"))
+        requirement = (
+            release["acceptance_contract"].get("effect_verification_required", False)
+            if release
+            else False
+        )
+        if type(requirement) is not bool:
+            raise ValueError("invalid frozen verification requirement")
+        selected = report["payload"].get("accepted_intent_id") == d["intent_id"]
+        if (
+            selected or (requirement and d["state"] in {"accepted", "applied"})
+        ) and not binding:
+            raise ValueError("missing required protected verification binding")
         if binding:
             ref = binding
             ev = evidence.get((ref["run_id"], ref["item_id"]))
@@ -240,8 +253,19 @@ def _validate(records, repo, workspace, item_id):
             != payload.get("canonical_intent_digest")
             or matching[0].get("release_digest") != payload.get("release_digest")
             or payload.get("release_digest") != decision["release_digest"]
+            or matching[0]["work_item_id"] != item_id
+            or matching[0]["run_id"] != report["run_id"]
+            or matching[0]["state"] not in {"accepted", "applied"}
         ):
             raise ValueError("missing outcome intent join")
+        if (
+            "verification_receipt_digest" in payload
+            and payload["verification_receipt_digest"]
+            != matching[0]["verification_binding"]["evidence_digest"]
+        ):
+            raise ValueError(
+                "outcome verification receipt digest differs from protected receipt"
+            )
     return report
 
 

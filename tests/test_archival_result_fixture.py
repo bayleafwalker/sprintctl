@@ -166,6 +166,8 @@ async def create_result(endpoint, tokens, root, *, capability_in_payload=False):
                         "canonical_intent_digest"
                     ],
                     "release_digest": result["release"]["release_digest"],
+                    "verification_receipt_digest": "sha256:"
+                    + archive.digest(result["verification_receipt"]),
                     **(
                         {"source_claim_handle": lease["lease_id"]}
                         if capability_in_payload
@@ -377,6 +379,91 @@ def test_actual_native_source_archive_target_and_refusals(monkeypatch):
                 "item_id": item,
                 "expected_bundle_digest": bundle["bundle_digest"],
             }
+
+            def assert_empty_target():
+                for table in (*pg._EXPORT_TABLES, *archive.NATIVE):
+                    assert (
+                        target.conn.execute(
+                            f"SELECT count(*) AS n FROM {table}"
+                        ).fetchone()["n"]
+                        == 0
+                    )
+
+            def wrong_receipt_digest(b):
+                report = next(
+                    r["data"]
+                    for r in b["records"]
+                    if r["table"] == "work_outcome_report"
+                )
+                original = report["payload_digest"]
+                report["payload"]["verification_receipt_digest"] = "sha256:" + "0" * 64
+                report["payload_digest"] = pg.outcome_payload_digest(
+                    report["outcome"],
+                    report["summary"],
+                    report["payload"],
+                    report["checks"],
+                )
+                decision = next(
+                    r["data"]
+                    for r in b["records"]
+                    if r["table"] == "work_decision"
+                    and r["data"]["id"] == report["decision_id"]
+                )
+                decision["evidence_digests"] = [
+                    report["payload_digest"] if d == original else d
+                    for d in decision["evidence_digests"]
+                ]
+
+            # Both complete resealed omissions must refuse before any table writes.
+            for remove in (False, True):
+                bad = copy.deepcopy(bundle)
+                intent = next(
+                    r["data"]
+                    for r in bad["records"]
+                    if r["table"] == "work_effect_intent"
+                )
+                if remove:
+                    intent.pop("verification_binding")
+                else:
+                    intent["verification_binding"] = None
+                reseal(bad)
+                with pytest.raises(
+                    ValueError, match="required protected verification binding"
+                ):
+                    archive._validate(bad["records"], REPO, "demo", item)
+                target.conn.rollback()
+                with pytest.raises(
+                    ValueError, match="required protected verification binding"
+                ):
+                    pg.import_ndjson(
+                        target,
+                        bad,
+                        archive_result={
+                            **args,
+                            "expected_bundle_digest": bad["bundle_digest"],
+                        },
+                    )
+                target.conn.rollback()
+                assert_empty_target()
+
+            bad = reseal(copy.deepcopy(bundle))
+            wrong_receipt_digest(bad)
+            reseal(bad)
+            with pytest.raises(ValueError, match="outcome verification receipt digest"):
+                archive._validate(bad["records"], REPO, "demo", item)
+            target.conn.rollback()
+            with pytest.raises(ValueError, match="outcome verification receipt digest"):
+                pg.import_ndjson(
+                    target,
+                    bad,
+                    archive_result={
+                        **args,
+                        "expected_bundle_digest": bad["bundle_digest"],
+                    },
+                )
+            target.conn.rollback()
+            assert_empty_target()
+
             # Resealing outer projections cannot hide wrong native digest domains.
             mutations = [
                 lambda b: b.update(workspace_id="other"),
@@ -620,6 +707,8 @@ def test_actual_native_source_archive_target_and_refusals(monkeypatch):
                 "two_connection_imports": "one accepted, one occupied-target refusal",
                 "source_concurrency": "writer committed between base/native reads; export retained coherent earlier snapshot, after-comparison changed/inconclusive",
                 "atomic_interruption": "native insertion failed after base rows; target remained empty",
+                "required_binding_refusals": "NULL and removed binding with resealed projection/outer hashes; prevalidation and import refused, all base/native target tables empty",
+                "receipt_digest_refusal": "wrong receipt digest with recomputed outcome and Decision evidence digests; prevalidation and import refused, all base/native target tables empty",
                 "source_only_admission_projection": bundle["source_only_admissions"],
                 "full_native_admission": "unknown",
                 "current_authorization": "unknown",

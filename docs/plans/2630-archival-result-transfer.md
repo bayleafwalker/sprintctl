@@ -36,7 +36,11 @@ The existing twelve migration tables are reused, with five native additions:
 `work_effect_intent`. Original result payload, Release, canonical intent and
 evidence chain digest domains must validate unchanged. The protected artifact
 receipt must join the exact original evidence/run/chain and stored acceptance
-binding, including its body and digest. Missing links fail the whole transfer.
+binding, including its body and digest. The selected accepted intent always
+requires this binding; other accepted/applied intents require it when their
+frozen Release requires protected verification. If the outcome includes a
+verification receipt digest, it must match that exact protected receipt. Missing
+links fail the whole transfer.
 
 Effect-attempt authorization/event rows and run-predecessor rows are unsupported
 in this first contract; any source rows in these tables cause explicit refusal.
