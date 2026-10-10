@@ -13,6 +13,7 @@ from .application_common import *
 from . import contracts as _contracts
 from . import decisions as _decisions
 from . import effect_intent as _effect
+from . import effect_preview as _preview
 from . import effect_attempt as _attempt
 from . import reservation as _reservation
 from . import releases as _releases
@@ -784,6 +785,7 @@ class WorkApplication:
             _effect.OPERATION_PROPOSE: target._effect_propose,
             _effect.OPERATION_BOUND_PROPOSE: target._effect_propose_bound,
             _effect.OPERATION_GET: target._effect_get,
+            _effect.OPERATION_PREVIEW: target._effect_preview,
             _effect.OPERATION_LIST_PROPOSED: target._effect_list_proposed,
             _effect.OPERATION_LIST_ACCEPTED: target._effect_list_accepted,
             _effect.OPERATION_ACCEPT: target._effect_accept,
@@ -2473,6 +2475,31 @@ class WorkApplication:
                 "effect-not-found", f"effect intent {intent_id!r} not found", 404
             )
         return self._effect_intent_result(intent)
+
+    def _effect_preview(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        _effect_arguments(arguments, frozenset({"intent_id", "disclose_paths"}))
+        disclose = arguments.get("disclose_paths", False)
+        if not isinstance(disclose, bool):
+            raise ApplicationRejection("invalid-arguments", "disclose_paths must be boolean", 422)
+        # The same repository-scoped read and GET authority as the existing
+        # full-content read. Public transports must retain their own run gate.
+        intent = self._effect_get({"intent_id": _effect_intent_id(arguments)}, context)["intent"]
+        candidates = None
+        complete = False
+        authorities = getattr(context.identity, "authorities", ()) or ()
+        if _effect.AUTHORITY_LIST_PROPOSED in authorities:
+            candidates = self.backend.list_proposed_effect_intents(
+                self.store, item_id=intent["item_id"], limit=_effect.LIST_DEFAULT_LIMIT,
+            )
+            # A full page cannot establish that there are no more candidates.
+            complete = len(candidates) < _effect.LIST_DEFAULT_LIMIT
+        try:
+            preview = _preview.preview_intent(intent, disclose_paths=disclose,
+                                              duplicate_candidates=candidates,
+                                              candidates_complete=complete)
+        except _preview.PreviewBindingError as exc:
+            raise ApplicationRejection("effect-digest-mismatch", str(exc), 409) from None
+        return {"repo_id": self.repo_id, "preview": preview}
 
     def _effect_list_proposed(
         self, arguments: dict[str, Any], _context: InvocationContext, *, state: str = "proposed"

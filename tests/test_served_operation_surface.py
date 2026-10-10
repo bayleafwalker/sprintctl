@@ -35,6 +35,7 @@ PUBLISHED_OPERATIONS = (
         "work.effect.list-accepted-v1",
         "work.effect.list-proposed-v1",
         "work.effect.mark-applied-v1",
+        "work.effect.preview-v1",
         "work.effect.propose-bound-v1",
     "work.effect.propose-v1",
         "work.effect.reject-v1",

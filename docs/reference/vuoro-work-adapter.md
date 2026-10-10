@@ -454,19 +454,21 @@ applies nothing. The operations are served only by the PostgreSQL authority.
 |---|---|---|
 | `work.effect.propose-v1` | `work.effect.propose` | record a proposal bound to the caller's own run and an existing item; idempotent per `idempotency_key` |
 | `work.effect.get-v1` | `work.effect.get` | read one intent |
+| `work.effect.preview-v1` | `work.effect.get` | derive a static, redacted declaration report from one current intent; no acceptance or execution |
 | `work.effect.list-accepted-v1` | `work.effect.list-accepted` | accepted intents awaiting application, ordered by proposal creation time then intent id; optional `item_id` and `limit`; durable restart discovery; neither list capability implies the other |
 | `work.effect.list-proposed-v1` | `work.effect.list-proposed` | intents still `proposed`, oldest first; optional `item_id` and `limit` |
 | `work.effect.accept-v1` | `work.effect.accept` | `proposed` to `accepted` |
 | `work.effect.reject-v1` | `work.effect.reject` | `proposed` to `rejected`; requires a `reason` |
 | `work.effect.mark-applied-v1` | `work.effect.mark-applied` | `accepted` to `applied`; requires the `commit_sha` and `pr_url` |
 
-- **Separate capabilities.** Each operation has its own capability, none of
+- **Separate capabilities.** Each mutating operation has its own capability, none of
   them `work:claim`, `work:write` or another ordinary work authority, so a
   principal that may change work state does not inherit acceptance authority,
   and a worker that may propose cannot accept. The Vuoro service refuses a call
   whose identity lacks the operation's `required_authority`;
   `WorkApplication.invoke` checks it again and answers `authority-required`
   (403), failing closed for an identity that carries no authorities.
+  Preview shares GET's full-content read capability; it adds no authority.
 - **Revision and digest.** An intent carries `revision` (1; a change is a new
   proposal, never a new revision of an accepted one) and
   `canonical_intent_digest`: the lowercase sha256 of the canonical JSON of the
@@ -503,6 +505,46 @@ applies nothing. The operations are served only by the PostgreSQL authority.
   same key with other content is `idempotency-conflict` (409).
 
 ## Authority and retry semantics
+
+### Static declared-change preview
+
+`work.effect.preview-v1` accepts `intent_id` and optional `disclose_paths`
+(default false). It reuses the repository-scoped full-intent GET permission
+and query. It returns `sprintctl-declared-effect-preview/v1`, bound to the
+stored content digest, diff digest, intent revision/state, base commit and
+Release digest when available. It never returns diff hunks, title or rationale.
+Callers without GET permission are denied before reading, rather than receiving
+an existence or path hint. Opting into path display does not grant permission:
+the same capability already permits the complete diff through GET.
+
+The static Git numstat parser reads stdin in a temporary directory outside any
+repository, with inherited Git configuration and credentials removed. It does
+not apply the patch, inspect a checkout, run repository hooks or validate
+acceptance. Git must be available; missing Git, parser timeout, unsafe paths or
+unsupported patches report unavailable/unsupported with no partial path list
+or raw diagnostics. Path output is capped at200 and marks truncation. Renames
+and copies include declared sources. These are declared changes, not proof of
+what an eventual checkout or external system will change.
+
+Resources are `not-declared`: EffectIntent contains a diff, not a governed
+resource set. Protected policy and external consequences are `unknown`.
+Neither YAML names nor file paths imply cluster impact, permission, readiness,
+policy approval or success. Existing acceptance and application receipts are
+marked observed or missing; a missing receipt is not predicted to arrive.
+
+Duplicate candidates are read only when the caller also holds the existing
+`work.effect.list-proposed` capability. Matches share repository, item, Release
+and verified canonical content digest. The scope is proposed intents only,
+and a full bounded page marks completeness false. Missing list permission
+returns unknown. Candidate absence never proves global uniqueness.
+The intent and candidate list are separate reads, not an atomic snapshot.
+
+This owner read adds no public MCP tool or Cloud grant. Any future public
+projection must keep the existing exact run/principal/client/grant binding
+checks before returning paths or candidate IDs. It cannot widen visibility
+using repository-level owner GET. Preview is a snapshot; owner acceptance must
+still recheck current revision/digest/Release and authority. There is no new
+Decision writer, ledger, lifecycle transition or database migration.
 
 Reservations and lifecycle transitions accept the existing immutable
 authority-command producer record. Before arbitration, the application

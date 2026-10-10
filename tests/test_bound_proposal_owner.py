@@ -53,5 +53,5 @@ def test_only_catalog_addition_and_every_existing_descriptor_byte_preserved():
     actual = {entry['name']: hashlib.sha256(json.dumps(entry, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
               for entry in catalog_operation_specs(resource_schema_available=True)}
     from sprintctl.effect_attempt import OPERATION_AUTHORITIES
-    assert set(actual) - set(baseline['operation_sha256']) == {BOUND, "work.evidence.evaluate-v1"} | set(OPERATION_AUTHORITIES)
+    assert set(actual) - set(baseline['operation_sha256']) == {BOUND, "work.evidence.evaluate-v1", "work.effect.preview-v1"} | set(OPERATION_AUTHORITIES)
     assert {k: actual[k] for k in baseline['operation_sha256']} == baseline['operation_sha256']

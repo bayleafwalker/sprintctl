@@ -849,6 +849,46 @@ _EFFECT_RESULT = _result_schema(
     ("repo_id", "intent"),
     {"repo_id": {"type": "string"}, "intent": _EFFECT_INTENT_SCHEMA},
 )
+def _preview_object(properties):
+    return _object_schema(properties, required=tuple(properties))
+
+
+_PREVIEW_STATUS = {"type": "string", "enum": ["parsed", "unsupported", "unavailable"]}
+_PREVIEW_NULLABLE_STRING = {"type": ["string", "null"]}
+_PREVIEW_NULLABLE_COUNT = {"type": ["integer", "null"], "minimum": 0}
+_EFFECT_PREVIEW_SCHEMA = _preview_object({
+    "schema": {"const": "sprintctl-declared-effect-preview/v1"},
+    "basis": _preview_object({
+        "intent_id": _EFFECT_ID_SCHEMA, "revision": _EFFECT_REVISION_SCHEMA,
+        "canonical_intent_digest": _EFFECT_DIGEST_SCHEMA,
+        "state": {"enum": list(_effect.EFFECT_STATES)},
+        "item_id": {"type": "integer", "minimum": 1},
+        "repository": {"type": "string"}, "base_commit": _EFFECT_COMMIT_SCHEMA,
+        "release_digest": {"anyOf": [_EFFECT_DIGEST_SCHEMA, {"type": "null"}]},
+    }),
+    "unified_diff_sha256": _EFFECT_DIGEST_SCHEMA,
+    "declared_changes": _preview_object({
+        "status": _PREVIEW_STATUS, "path_count": _PREVIEW_NULLABLE_COUNT,
+        "paths": {"type": "array", "maxItems": 200, "items": _preview_object({
+            "path": {"type": "string"}, "added_lines": _PREVIEW_NULLABLE_COUNT,
+            "removed_lines": _PREVIEW_NULLABLE_COUNT, "source_only": {"type": "boolean"},
+        })}, "redacted": {"type": "boolean"}, "truncated": {"type": "boolean"},
+    }),
+    "resources": _preview_object({"status": {"const": "not-declared"}}),
+    "protected_policy": _preview_object({"status": {"const": "unknown"}}),
+    "external_consequences": _preview_object({"status": {"const": "unknown"}}),
+    "duplicate_relation": _preview_object({
+        "status": {"enum": ["observed", "unknown"]},
+        "candidate_intent_ids": {"type": "array", "maxItems": 200, "items": _EFFECT_ID_SCHEMA},
+        "complete": {"type": "boolean"}, "scope": {"type": "string"},
+    }),
+    "receipt_source": _preview_object({
+        "operation": {"const": "work.effect.get-v1"},
+        "acceptance": {"enum": ["observed", "missing"]},
+        "application": {"enum": ["observed", "missing"]},
+    }),
+    "authorization": {"const": "none; owner acceptance and execution checks remain required"},
+})
 _EFFECT_BINDING_PROPERTIES: dict[str, Any] = {
     "intent_id": _EFFECT_ID_ARGUMENT_SCHEMA,
     "revision": _EFFECT_REVISION_SCHEMA,
@@ -1445,6 +1485,16 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         _effect.OPERATION_GET,
         _object_schema({"intent_id": _EFFECT_ID_ARGUMENT_SCHEMA}, required=("intent_id",)),
         _EFFECT_RESULT,
+        _effect.AUTHORITY_GET,
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        _effect.OPERATION_PREVIEW,
+        _object_schema({"intent_id": _EFFECT_ID_ARGUMENT_SCHEMA,
+                        "disclose_paths": {"type": "boolean"}}, required=("intent_id",)),
+        _result_schema(("repo_id", "preview"),
+                       {"repo_id": {"type": "string"}, "preview": _EFFECT_PREVIEW_SCHEMA}),
         _effect.AUTHORITY_GET,
         "read",
         "not-allowed",

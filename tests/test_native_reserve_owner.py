@@ -82,6 +82,6 @@ def test_native_reserve_is_only_catalog_addition_with_all_legacy_bytes_preserved
     }
     expected = fixture["operation_sha256"]
     from sprintctl.effect_attempt import OPERATION_AUTHORITIES
-    assert set(actual) - set(expected) == {"work.reservation.reserve-v1", "work.effect.propose-bound-v1", "work.evidence.evaluate-v1"} | set(OPERATION_AUTHORITIES)
+    assert set(actual) - set(expected) == {"work.reservation.reserve-v1", "work.effect.propose-bound-v1", "work.evidence.evaluate-v1", "work.effect.preview-v1"} | set(OPERATION_AUTHORITIES)
     assert not set(expected) - set(actual)
     assert {name: actual[name] for name in expected} == expected
