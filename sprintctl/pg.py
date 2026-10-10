@@ -5175,7 +5175,9 @@ def export_ndjson(sqlite_conn: Any, repo_id: str, out: Any) -> dict[str, int]:
     return counts
 
 
-def export_from_postgres(source_conn: Any, repo_id: str) -> list[dict]:
+def export_from_postgres(
+    source_conn: Any, repo_id: str, *, archive_result: dict | None = None,
+) -> list[dict] | dict:
     """Read one repository's rows from another PostgreSQL database's identically
     shaped work tables, in the same table order and record shape ``export_ndjson``
     produces from sqlite -- so both sources can feed the same ``import_ndjson``.
@@ -5185,7 +5187,13 @@ def export_from_postgres(source_conn: Any, repo_id: str) -> list[dict]:
     separate, independently-deployed sprintctl authority (e.g. a pre-served-mode
     direct-remote database), not the destination ``store``'s own connection.
     Read-only: never mutates ``source_conn``.
+    The opt-in ``archive_result`` path is fixture-only historical reconstruction;
+    see ``docs/plans/2630-archival-result-transfer.md``. It is not a served endpoint.
     """
+    if archive_result is not None:
+        from .archival_result import export_fixture_result
+
+        return export_fixture_result(source_conn, repo_id, **archive_result)
     records: list[dict] = []
     with source_conn.cursor() as cur:
         for table in _EXPORT_TABLES:
@@ -5255,11 +5263,13 @@ def list_repos(conn: Any) -> list[str]:
 
 def import_ndjson(
     store: PgStore,
-    records: list[dict],
+    records: list[dict] | dict,
     *,
     replace: bool = False,
     remap_ids: bool = False,
     trusted_state_transfer: bool = False,
+    archive_result: dict | None = None,
+    _archive_transaction: bool = False,
 ) -> dict[str, int]:
     """Import NDJSON records into pg, preserving original sqlite integer IDs.
 
@@ -5272,6 +5282,12 @@ def import_ndjson(
     imports demote them to explicit non-authoritative imported history.
     All work done in a single transaction.
     """
+    if archive_result is not None:
+        if replace or remap_ids or trusted_state_transfer:
+            raise ValueError("archival reconstruction cannot replace, remap or restore authority")
+        from .archival_result import import_fixture_result
+
+        return import_fixture_result(store, records, **archive_result)
     authority_event_types = {
         _contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE,
     }
@@ -5394,9 +5410,11 @@ def import_ndjson(
             # names this import instead of surfacing at a later commit.
             cur.execute("SET CONSTRAINTS ALL IMMEDIATE")
 
-        store.conn.commit()
+        if not _archive_transaction:
+            store.conn.commit()
     except Exception:
-        store.conn.rollback()
+        if not _archive_transaction:
+            store.conn.rollback()
         raise
     return counts
 
