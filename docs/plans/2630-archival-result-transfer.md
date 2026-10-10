@@ -38,9 +38,12 @@ evidence chain digest domains must validate unchanged. The protected artifact
 receipt must join the exact original evidence/run/chain and stored acceptance
 binding, including its body and digest. The selected accepted intent always
 requires this binding; other accepted/applied intents require it when their
-frozen Release requires protected verification. If the outcome includes a
-verification receipt digest, it must match that exact protected receipt. Missing
-links fail the whole transfer.
+frozen Release requires protected verification. This first protected-result
+slice requires the outcome to name its accepted intent ID, canonical intent
+digest, Release digest and verification receipt digest. These must join the exact
+accepted/applied intent, original receipt, item and outcome run. Removing the
+intent or outcome links cannot downgrade this contract into an unprotected
+result. Missing links fail the whole transfer.
 
 Effect-attempt authorization/event rows and run-predecessor rows are unsupported
 in this first contract; any source rows in these tables cause explicit refusal.

@@ -464,6 +464,69 @@ def test_actual_native_source_archive_target_and_refusals(monkeypatch):
             target.conn.rollback()
             assert_empty_target()
 
+            # Removal of all links and intent closure must not downgrade this
+            # protected-result contract into a generic accepted outcome archive.
+            links = (
+                "accepted_intent_id",
+                "canonical_intent_digest",
+                "release_digest",
+                "verification_receipt_digest",
+            )
+            for removed in (*((key,) for key in links), links):
+                bad = copy.deepcopy(bundle)
+                report = next(
+                    r["data"]
+                    for r in bad["records"]
+                    if r["table"] == "work_outcome_report"
+                )
+                original_digest = report["payload_digest"]
+                for key in removed:
+                    report["payload"].pop(key)
+                report["payload_digest"] = pg.outcome_payload_digest(
+                    report["outcome"],
+                    report["summary"],
+                    report["payload"],
+                    report["checks"],
+                )
+                decision = next(
+                    r["data"]
+                    for r in bad["records"]
+                    if r["table"] == "work_decision"
+                    and r["data"]["id"] == report["decision_id"]
+                )
+                decision["evidence_digests"] = [
+                    report["payload_digest"] if d == original_digest else d
+                    for d in decision["evidence_digests"]
+                ]
+                if removed == links:
+                    retained = [
+                        (r, provenance)
+                        for r, provenance in zip(bad["records"], bad["row_provenance"])
+                        if r["table"] != "work_effect_intent"
+                    ]
+                    bad["records"] = [r for r, _ in retained]
+                    bad["row_provenance"] = [p for _, p in retained]
+                    bad["source_only_admissions"] = []
+                reseal(bad)
+                with pytest.raises(
+                    ValueError, match="required protected outcome links"
+                ):
+                    archive._validate(bad["records"], REPO, "demo", item)
+                target.conn.rollback()
+                with pytest.raises(
+                    ValueError, match="required protected outcome links"
+                ):
+                    pg.import_ndjson(
+                        target,
+                        bad,
+                        archive_result={
+                            **args,
+                            "expected_bundle_digest": bad["bundle_digest"],
+                        },
+                    )
+                target.conn.rollback()
+                assert_empty_target()
+
             # Resealing outer projections cannot hide wrong native digest domains.
             mutations = [
                 lambda b: b.update(workspace_id="other"),
@@ -707,6 +770,7 @@ def test_actual_native_source_archive_target_and_refusals(monkeypatch):
                 "two_connection_imports": "one accepted, one occupied-target refusal",
                 "source_concurrency": "writer committed between base/native reads; export retained coherent earlier snapshot, after-comparison changed/inconclusive",
                 "atomic_interruption": "native insertion failed after base rows; target remained empty",
+                "protected_outcome_link_refusals": "each mandatory link removed and entire intent/admission closure removed with recomputed canonical outcome/Decision links and resealed hashes; prevalidation/import refused, all target base/native tables empty",
                 "required_binding_refusals": "NULL and removed binding with resealed projection/outer hashes; prevalidation and import refused, all base/native target tables empty",
                 "receipt_digest_refusal": "wrong receipt digest with recomputed outcome and Decision evidence digests; prevalidation and import refused, all base/native target tables empty",
                 "source_only_admission_projection": bundle["source_only_admissions"],

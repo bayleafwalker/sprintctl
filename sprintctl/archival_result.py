@@ -241,31 +241,37 @@ def _validate(records, repo, workspace, item_id):
                     "protected verification binding differs from source evidence"
                 )
     payload = report["payload"]
-    if "accepted_intent_id" in payload:
-        matching = [
-            d
-            for d in tables["work_effect_intent"]
-            if d["intent_id"] == payload["accepted_intent_id"]
-        ]
-        if (
-            len(matching) != 1
-            or matching[0]["canonical_intent_digest"]
-            != payload.get("canonical_intent_digest")
-            or matching[0].get("release_digest") != payload.get("release_digest")
-            or payload.get("release_digest") != decision["release_digest"]
-            or matching[0]["work_item_id"] != item_id
-            or matching[0]["run_id"] != report["run_id"]
-            or matching[0]["state"] not in {"accepted", "applied"}
-        ):
-            raise ValueError("missing outcome intent join")
-        if (
-            "verification_receipt_digest" in payload
-            and payload["verification_receipt_digest"]
-            != matching[0]["verification_binding"]["evidence_digest"]
-        ):
-            raise ValueError(
-                "outcome verification receipt digest differs from protected receipt"
-            )
+    required_links = {
+        "accepted_intent_id",
+        "canonical_intent_digest",
+        "release_digest",
+        "verification_receipt_digest",
+    }
+    if not isinstance(payload, dict) or any(not payload.get(k) for k in required_links):
+        raise ValueError("missing required protected outcome links")
+    matching = [
+        d
+        for d in tables["work_effect_intent"]
+        if d["intent_id"] == payload["accepted_intent_id"]
+    ]
+    if (
+        len(matching) != 1
+        or matching[0]["canonical_intent_digest"]
+        != payload.get("canonical_intent_digest")
+        or matching[0].get("release_digest") != payload.get("release_digest")
+        or payload.get("release_digest") != decision["release_digest"]
+        or matching[0]["work_item_id"] != item_id
+        or matching[0]["run_id"] != report["run_id"]
+        or matching[0]["state"] not in {"accepted", "applied"}
+    ):
+        raise ValueError("missing outcome intent join")
+    if (
+        payload["verification_receipt_digest"]
+        != matching[0]["verification_binding"]["evidence_digest"]
+    ):
+        raise ValueError(
+            "outcome verification receipt digest differs from protected receipt"
+        )
     return report
 
 
