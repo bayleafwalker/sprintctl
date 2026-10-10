@@ -66,6 +66,7 @@ LIST_ACCEPTED = "work.effect.list-accepted-v1"
 ACCEPT = "work.effect.accept-v1"
 REJECT = "work.effect.reject-v1"
 MARK_APPLIED = "work.effect.mark-applied-v1"
+PREVIEW = "work.effect.preview-v1"
 
 _READ_EFFECTS = {"work:read", "work.effect.get", "work.effect.list-proposed", "work.effect.list-accepted"}
 _ORDINARY_WORK = {"work:read", "work:write", "work:claim", "work:lifecycle", "work:evidence", "work:sprint"}
@@ -192,6 +193,29 @@ def _binding(intent: dict, **overrides) -> dict:
 
 def _accept(store, intent: dict, context=ACCEPTOR, **overrides) -> dict:
     return _invoke(store, ACCEPT, _binding(intent, **overrides), context)["intent"]
+
+
+def test_declared_preview_reads_actual_owner_without_transition_or_extra_authority(store):
+    item_id = _items(store)[0]
+    run_id = _run(store, PROPOSER)
+    first = _propose(store, item_id, run_id)
+    duplicate = _propose(store, item_id, run_id)
+    before = _get(store, first["intent_id"])
+    result = _invoke(store, PREVIEW, {"intent_id": first["intent_id"]}, PROPOSER)["preview"]
+    assert result["basis"]["canonical_intent_digest"] == first["canonical_intent_digest"]
+    assert result["declared_changes"]["paths"] == []
+    assert result["declared_changes"]["path_count"] == 1
+    assert result["duplicate_relation"]["candidate_intent_ids"] == [duplicate["intent_id"]]
+    assert result["resources"]["status"] == "not-declared"
+    assert result["external_consequences"]["status"] == "unknown"
+    assert _get(store, first["intent_id"]) == before
+    disclosed = _invoke(store, PREVIEW, {"intent_id": first["intent_id"], "disclose_paths": True}, PROPOSER)["preview"]
+    assert disclosed["declared_changes"]["paths"][0]["path"] == "README.md"
+    refused = _refused(lambda: _invoke(store, ACCEPT, _binding(first), PROPOSER))
+    assert refused.code == "authority-required"
+    no_get = _context("no-preview", {"work:read", "work.effect.propose"})
+    assert _refused(lambda: _invoke(store, PREVIEW, {"intent_id": first["intent_id"]}, no_get)).code == "authority-required"
+    assert _get(store, first["intent_id"]) == before
 
 
 def _reject(store, intent: dict, context=ACCEPTOR, reason: str = "not wanted", **overrides) -> dict:

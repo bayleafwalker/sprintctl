@@ -77,12 +77,13 @@ def test_report_rejects_malformed_claims_without_claiming_independent_success(co
         contract.validate_arguments(contract.OPERATION_REPORT, {**REDEEM, "commit_sha": commit, "pr_url": url})
 
 
-def test_only_five_attempt_descriptors_are_added_to_actual_released_owner_catalog():
+def test_only_attempt_and_declared_preview_descriptors_are_added_to_released_catalog():
     from sprintctl.vuoro_adapter import catalog_operation_specs
     baseline = json.loads((Path(__file__).parent / "fixtures/attempt-v0170-base-catalog.json").read_text())
     actual = {r["name"]: hashlib.sha256(json.dumps(r, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
               for r in catalog_operation_specs(resource_schema_available=True)}
-    assert set(actual) - set(baseline["operation_sha256"]) == set(contract.OPERATION_AUTHORITIES)
+    from sprintctl.effect_intent import OPERATION_PREVIEW
+    assert set(actual) - set(baseline["operation_sha256"]) == set(contract.OPERATION_AUTHORITIES) | {OPERATION_PREVIEW}
     assert {k: actual[k] for k in baseline["operation_sha256"]} == baseline["operation_sha256"]
 
 
