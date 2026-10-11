@@ -8,12 +8,15 @@
       "request_schema": "register-correlated.schema.json",
       "authority": "work:evidence",
       "correlation_source": "verified-gateway-identity-metadata-only",
+      "verified_metadata_schema": "verified-correlation-metadata.schema.json",
       "required_verified_metadata": ["invocation_id", "attempt_id", "principal_epoch"],
       "pair_rule": "both-ids-required-together",
-      "missing_pair": "use-legacy-work.run.register-v1",
+      "missing_pair": "typed-refusal-for-correlated-operation; caller-routes-to-legacy-v1",
       "partial_pair": "typed-refusal-before-write",
       "ledger_tool": "register_run",
       "legacy_idempotency_and_result": "unchanged",
+      "result_schema": "register-correlated.result.schema.json",
+      "legacy_replay_without_correlation": "legacy-unbound-with-null-receipt-no-retroactive-link",
       "owner_acceptance_dependency": false
     },
     "work.run.invocation-receipt-get-v1": {
@@ -23,9 +26,10 @@
       "repo_source": "explicit-selected-owner-repository-context",
       "identity_source": "current-verified-owner-identity",
       "requires_existing_owned_run": true,
-      "lookup": "exact-invocation-and-attempt-pair-only",
+      "lookup": "exact-run-invocation-and-attempt-triple-only",
       "enumeration": false,
-      "foreign_or_unknown": "same-run-not-found-404"
+      "foreign_or_unknown": "same-run-not-found-404",
+      "owned_run_without_exact_receipt": "correlation-absent"
     }
   },
   "identity_binding_fields": [

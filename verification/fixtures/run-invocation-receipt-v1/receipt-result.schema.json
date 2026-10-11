@@ -12,7 +12,7 @@
     "attempt_id": {"type": "string", "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$"},
     "owner_record_kind": {"const": "run"},
     "owner_record_id": {"type": "string", "pattern": "^run_[0-9A-HJKMNP-TV-Z]{26}$"},
-    "owner_record_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "owner_record_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "owner_binding": {
       "type": "object",
       "additionalProperties": false,
@@ -21,7 +21,7 @@
         "repo_id": {"type": "string", "minLength": 1},
         "workspace_id": {"type": "string", "minLength": 1},
         "principal_id": {"type": "string", "minLength": 1},
-        "principal_epoch": {"type": "integer", "minimum": 0},
+        "principal_epoch": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
         "client_id": {"type": ["string", "null"]},
         "grant_id": {"type": ["string", "null"]}
       }

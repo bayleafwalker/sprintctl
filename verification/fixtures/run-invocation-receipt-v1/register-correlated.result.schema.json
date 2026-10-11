@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sprintctl.invalid/schemas/work.run.register-correlated-v1.result.json",
+  "title": "work.run.register-correlated-v1 result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["repo_id", "run", "correlation_status", "receipt"],
+  "properties": {
+    "repo_id": {"type": "string", "minLength": 1},
+    "run": {"$ref": "#/$defs/run"},
+    "correlation_status": {"enum": ["bound", "legacy-unbound"]},
+    "receipt": {
+      "oneOf": [
+        {"$ref": "#/$defs/receipt"},
+        {"type": "null"}
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"correlation_status": {"const": "bound"}}},
+      "then": {"properties": {"receipt": {"$ref": "#/$defs/receipt"}}}
+    },
+    {
+      "if": {"properties": {"correlation_status": {"const": "legacy-unbound"}}},
+      "then": {"properties": {"receipt": {"type": "null"}}}
+    }
+  ],
+  "$defs": {
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "repo_id", "invocation_id", "attempt_id", "owner_record_kind", "owner_record_id", "owner_record_digest", "owner_binding"],
+      "properties": {
+        "schema": {"const": "sprintctl-run-invocation-receipt/v1"},
+        "repo_id": {"type": "string", "minLength": 1},
+        "invocation_id": {"type": "string", "pattern": "^inv_[0-9A-HJKMNP-TV-Z]{26}$"},
+        "attempt_id": {"type": "string", "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$"},
+        "owner_record_kind": {"const": "run"},
+        "owner_record_id": {"type": "string", "pattern": "^run_[0-9A-HJKMNP-TV-Z]{26}$"},
+        "owner_record_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "owner_binding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["repo_id", "workspace_id", "principal_id", "principal_epoch", "client_id", "grant_id"],
+          "properties": {
+            "repo_id": {"type": "string", "minLength": 1},
+            "workspace_id": {"type": "string", "minLength": 1},
+            "principal_id": {"type": "string", "minLength": 1},
+            "principal_epoch": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+            "client_id": {"type": ["string", "null"]},
+            "grant_id": {"type": ["string", "null"]}
+          }
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "principal_id", "workspace_id", "client_id", "grant_id", "harness_id", "harness_build", "model_id", "recipe_id", "observed_profile", "grant_ids", "claim_ids", "created_at"],
+      "properties": {
+        "run_id": {"type": "string", "pattern": "^run_[0-9A-HJKMNP-TV-Z]{26}$"},
+        "principal_id": {"type": "string", "minLength": 1},
+        "workspace_id": {"type": "string", "minLength": 1},
+        "client_id": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "grant_id": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "harness_id": {"type": "string", "minLength": 1},
+        "harness_build": {"type": "string", "minLength": 1},
+        "model_id": {"type": "string", "minLength": 1},
+        "recipe_id": {"type": "string", "minLength": 1},
+        "observed_profile": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["instruction_digest", "skill_digests"],
+          "properties": {
+            "instruction_digest": {"type": "string", "minLength": 1},
+            "skill_digests": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["skill_id", "digest"],
+                "properties": {
+                  "skill_id": {"type": "string", "minLength": 1},
+                  "digest": {"type": "string", "minLength": 1}
+                }
+              }
+            }
+          }
+        },
+        "grant_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "claim_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "created_at": {"type": "string"},
+        "predecessor_run_id": {"anyOf": [{"type": "string", "pattern": "^run_[0-9A-HJKMNP-TV-Z]{26}$"}, {"type": "null"}]}
+      }
+    }
+  }
+}

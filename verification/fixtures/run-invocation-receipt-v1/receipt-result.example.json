@@ -5,7 +5,7 @@
   "attempt_id": "att_0123456789ABCDEFGHJKMNPQRS",
   "owner_record_kind": "run",
   "owner_record_id": "run_0123456789ABCDEFGHJKMNPQRS",
-  "owner_record_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "owner_record_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "owner_binding": {
     "repo_id": "repo_example",
     "workspace_id": "workspace_example",

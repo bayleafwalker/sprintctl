@@ -22,7 +22,13 @@ requires both valid IDs and the verified `principal_epoch`; an absent or
 partial pair is a typed refusal before any owner write. The gateway must use
 the legacy operation when no admitted signed pair exists. The correlated
 operation preserves the existing `work:evidence` authorization and all
-existing run checks.
+existing run checks. Its result retains the exact legacy `{repo_id, run}`
+fields and adds `correlation_status` and `receipt`. A newly bound or exact
+correlated replay returns `bound` and the exact receipt. If an idempotent
+replay resolves to a legacy run that predates correlation, the result is
+`legacy-unbound` with a null receipt; it never attaches that run to the
+current invocation. Missing or partial metadata on the correlated operation
+is a typed refusal, not a silent fallback.
 
 The owner calls the existing idempotent write path with the canonical tool
 name `register_run`, the original arguments, and the original identity-derived
@@ -40,10 +46,12 @@ semantic run rejection.
 
 `work.run.invocation-receipt-get-v1` is an exact lookup, not a list or a
 search. It requires `work:read`, the currently authenticated verified
-identity, and both `invocation_id` and `attempt_id`. The repository is the
+identity, and exact `run_id`, `invocation_id`, and `attempt_id`. The owner
+first resolves the run through its existing current owned-run check, then
+looks up the exact triple. The repository is the
 explicit selected repository in the owner invocation context; there is no
 default in a multi-repository context. The operation joins only that exact
-pair and the linked run ID stored by the successful registration. It does not
+triple to the run linked by successful registration. It does not
 enumerate runs, infer a run from an item, timestamp, idempotency key, or
 caller-supplied owner ID, or return a “current” receipt.
 
@@ -56,9 +64,11 @@ from verified identity metadata and compared with the current verified
 identity on receipt reads. Nullable client/grant values compare exactly,
 including null. Correlation adds no permission: registration still passes
 the existing owner authorization and domain checks, and reads additionally
-pass `work:read` and the existing owned-run check. Unknown IDs and every
-foreign repo/workspace/principal/epoch/client/grant/run binding return the
-same `run-not-found`/404 response.
+pass `work:read` and the existing owned-run check. Unknown run IDs and every
+foreign repo/workspace/principal/epoch/client/grant binding return the same
+`run-not-found`/404 response. For a currently owned run with no matching
+invocation/attempt receipt, return the distinct `correlation-absent` result;
+do not search or retroactively adopt an uncorrelated run.
 
 ## Schema 23 storage invariants
 
@@ -80,16 +90,24 @@ cross-bound identity metadata writes no correlation row. No request digest,
 idempotency key, raw arguments, token, patch, or response body is added to
 the public receipt or logs.
 
-The immutable `owner_record_digest` is `sha256:` followed by the lowercase
-hex SHA-256 over canonical UTF-8 JSON of
-the immutable run projection: `repo_id`, `run_id`, `principal_id`,
-`workspace_id`, `client_id`, `grant_id`, `harness_id`, `harness_build`,
-`model_id`, `recipe_id`, `observed_profile`, `predecessor_run_id`, and
-`created_at` normalized to UTC RFC 3339 with a `Z` suffix. The canonical JSON
-uses sorted keys, no insignificant whitespace, UTF-8, and rejects non-finite
-numbers. `grant_ids` and `claim_ids` are explicitly excluded because they are
-mutable. The owner request digest and idempotency key are also excluded and
-remain private internal binding data.
+`owner_record_digest` is the lowercase 64-hex SHA-256 required by the Cloud
+journal schema. It is
+`SHA256(UTF8("sprintctl-run-owner-record/v1\0") || JCS(projection))`, where
+JCS is RFC 8785 under the Cloud contract's I-JSON safe-integer profile. The
+projection contains `repo_id`, `owner_record_kind: "run"`, `run_id`,
+`principal_id`, verified `principal_epoch`, `workspace_id`, `client_id`,
+`grant_id`, `harness_id`, `harness_build`, `model_id`, `recipe_id`,
+`observed_profile`, `predecessor_run_id` (normalized to null when absent),
+`created_at`, and the private `owner_request_digest`. Normalize the timestamp
+to UTC and serialize exactly as `YYYY-MM-DDTHH:mm:ss.ffffffZ`. JCS sorts
+property names by UTF-16 code units, applies RFC 8785 string escaping, accepts
+only integers in `[-9007199254740991, 9007199254740991]`, and rejects floats,
+non-finite numbers, invalid Unicode, and out-of-range integers. See the
+machine-readable vectors in `owner-record-digest-vectors.json`. Exclude
+`grant_ids` and `claim_ids` because they are mutable. Never emit the raw
+request digest, idempotency key, or run arguments in a receipt, audit, or log;
+the private request digest is an input only to this integrity commitment and
+internal retry binding.
 
 The storage relations are globally addressable by the opaque invocation and
 attempt IDs, while all reads and uniqueness checks remain bound to `repo_id`
