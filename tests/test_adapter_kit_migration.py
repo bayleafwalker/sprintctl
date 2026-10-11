@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import tomllib
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
-import tomllib
 
 import pytest
+from vuoro_adapter_kit import (
+    SCHEMA_DIALECT as ADAPTER_SCHEMA_DIALECT,
+)
+from vuoro_adapter_kit import (
+    SCHEMA_FEATURES as ADAPTER_SCHEMA_FEATURES,
+)
 
 from sprintctl.vuoro_adapter import (
     SCHEMA_DIALECT,
@@ -12,19 +18,14 @@ from sprintctl.vuoro_adapter import (
     WORK_OPERATION_CONTRACTS,
     catalog_operation_specs,
 )
-from vuoro_adapter_kit import (
-    SCHEMA_DIALECT as ADAPTER_SCHEMA_DIALECT,
-    SCHEMA_FEATURES as ADAPTER_SCHEMA_FEATURES,
-)
-
 
 ROOT = Path(__file__).parents[1]
 ADAPTER_URL = (
     "https://github.com/bayleafwalker/vuoro/releases/download/"
-    "vuoro-adapter-kit-v0.2.0/"
-    "vuoro_adapter_kit-0.2.0-py3-none-any.whl"
+    "vuoro-adapter-kit-v0.2.2/"
+    "vuoro_adapter_kit-0.2.2-py3-none-any.whl"
 )
-ADAPTER_DIGEST = "4bdf13bd09c8ea0c889f5cfb479327885163413a64ed690a9ba1b8d82dfaa163"
+ADAPTER_DIGEST = "6d78c2f05a8e3a72c480b0e333232bc90ccee1a36b71fba09f5bc8fc8e5377fa"
 
 
 def test_shared_schema_metadata_and_owner_contract_order_are_preserved() -> None:

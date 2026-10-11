@@ -8,7 +8,7 @@ version = "0.19.0"
 requires-python = ">=3.11"
 dependencies = [
     "click>=8.1",
-    "vuoro-adapter-kit @ https://github.com/bayleafwalker/vuoro/releases/download/vuoro-adapter-kit-v0.2.0/vuoro_adapter_kit-0.2.0-py3-none-any.whl#sha256=4bdf13bd09c8ea0c889f5cfb479327885163413a64ed690a9ba1b8d82dfaa163",
+    "vuoro-adapter-kit @ https://github.com/bayleafwalker/vuoro/releases/download/vuoro-adapter-kit-v0.2.2/vuoro_adapter_kit-0.2.2-py3-none-any.whl#sha256=6d78c2f05a8e3a72c480b0e333232bc90ccee1a36b71fba09f5bc8fc8e5377fa",
 ]
 
 [project.scripts]
