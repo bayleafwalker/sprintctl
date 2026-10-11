@@ -852,6 +852,60 @@ _EFFECT_RESULT = _result_schema(
 def _preview_object(properties):
     return _object_schema(properties, required=tuple(properties))
 
+_EFFECT_ACCEPTANCE_SNAPSHOT_PROPERTIES = {
+    "schema": {"const": "sprintctl-effect-acceptance-snapshot/v1"},
+    "snapshot_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "authorizes_acceptance": {"const": False},
+    "requested_basis_matches": {"type": "boolean"},
+    "artifact_digest_matches": {"type": "boolean"},
+    "intent": _preview_object({
+        "intent_id": _EFFECT_ID_SCHEMA, "revision": _EFFECT_REVISION_SCHEMA,
+        "canonical_intent_digest": _EFFECT_DIGEST_SCHEMA,
+        "state": {"enum": list(_effect.EFFECT_STATES)},
+        "item_id": {"type": "integer", "minimum": 1},
+        "release_digest": {"anyOf": [_EFFECT_DIGEST_SCHEMA, {"type": "null"}]},
+        "artifact_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    }),
+    "current_item": _preview_object({
+        "item_id": {"type": "integer", "minimum": 1},
+        "status": {"enum": ["pending", "active", "blocked", "done"]},
+        "work_edit_revision": {"type": "string", "minLength": 1},
+        "status_revision": {"type": "string", "minLength": 1},
+    }),
+    "current_release": {"anyOf": [_preview_object({
+        "release_digest": _EFFECT_DIGEST_SCHEMA,
+        "item_revision": {"type": "string", "minLength": 1},
+        "effect_verification_required": {"type": "boolean"},
+        "effect_check_revisions": {"type": ["object", "null"],
+            "maxProperties": 64,
+            "propertyNames": {"type": "string", "minLength": 1, "maxLength": 200},
+            "additionalProperties": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}},
+        "revision_currentness": {"enum": ["unknown", "matches", "mismatch"]},
+    }), {"type": "null"}]},
+    "decision_facts": {"type": "array", "maxItems": 20, "items": _preview_object({
+        "id": {"type": "integer", "minimum": 1},
+        "kind": {"enum": sorted(_DECISION_KINDS)},
+        "release_digest": {"anyOf": [_EFFECT_DIGEST_SCHEMA, {"type": "null"}]},
+        "evidence_digests": {"type": "array", "maxItems": 64, "items": _EFFECT_DIGEST_SCHEMA},
+    })},
+    "decision_count": {"type": "integer", "minimum": 0},
+    "decision_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "reference_count": {"type": "integer", "minimum": 0},
+    "reference_set_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "evidence_obligations": {"type": "array", "maxItems": 64, "items": _preview_object({
+        "label": {"type": "string", "minLength": 1, "maxLength": 200},
+        "mapping": {"const": "unknown"},
+    })},
+    "receipt": _preview_object({
+        "status": {"enum": ["not-supplied", "not-found", "owner-record-observed"]},
+        "comparison": {"enum": ["unknown", "matches", "mismatch"]},
+        "evidence_digest": {"anyOf": [{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, {"type": "null"}]},
+        "check_revision_comparison": {"enum": ["unknown", "matches", "mismatch"]},
+    }),
+    "lease_settlement": {"const": "unknown"},
+}
+_EFFECT_ACCEPTANCE_SNAPSHOT_SCHEMA = _preview_object(_EFFECT_ACCEPTANCE_SNAPSHOT_PROPERTIES)
+
 
 _PREVIEW_STATUS = {"type": "string", "enum": ["parsed", "unsupported", "unavailable"]}
 _PREVIEW_NULLABLE_STRING = {"type": ["string", "null"]}
@@ -1227,6 +1281,96 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "not-allowed",
     ),
     WorkOperationContract(
+        "work.run.continuation-delta-v1",
+        _object_schema({
+            "run_id": _RUN_ID_SCHEMA,
+            "item_id": {"type": "integer", "minimum": 1},
+            "checkpoint": {"type": "object", "properties": {
+                "repo_id": {"type": "string", "minLength": 1},
+                "item_id": {"type": "integer", "minimum": 1},
+                "work_edit_revision": {"type": "string", "minLength": 1},
+                "status_revision": {"type": "string", "minLength": 1},
+                "current_release_digest": {"anyOf": [_EFFECT_DIGEST_SCHEMA, {"type": "null"}]},
+                "current_decision_digest": {"anyOf": [{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, {"type": "null"}]},
+                "current_reference_set_digest": {"anyOf": [{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, {"type": "null"}]},
+            }, "required": ["repo_id", "item_id", "work_edit_revision", "status_revision",
+                           "current_release_digest", "current_decision_digest", "current_reference_set_digest"],
+                "additionalProperties": False},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 64, "default": 32},
+            "cursor": {"type": "object", "properties": {
+                "expected_snapshot_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+                "checkpoint_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+                "last_reference_id": {"type": "integer", "minimum": 1},
+            }, "required": ["expected_snapshot_digest", "checkpoint_digest", "last_reference_id"],
+                "additionalProperties": False},
+            "after_note_id": {"type": "integer", "minimum": 0},
+            "after_chain_seq": {"type": "integer", "minimum": 0},
+        }, required=("run_id", "item_id")),
+        _result_schema(("repo_id", "delta"), {"repo_id": {"type": "string"},
+            "delta": _preview_object({
+                "schema": {"const": "sprintctl-work-continuation-delta/v1"},
+                "snapshot_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+                "authorizes_action": {"const": False},
+                "authorization_scope": _preview_object({
+                    "repo_id": {"type": "string"}, "run_id": _RUN_ID_SCHEMA,
+                    "run_owned": {"const": True},
+                }),
+                "work": _preview_object({
+                    "item_id": {"type": "integer", "minimum": 1},
+                    "status": {"enum": ["pending", "active", "blocked", "done"]},
+                    "work_edit_revision": {"type": "string", "minLength": 1},
+                    "status_revision": {"type": "string", "minLength": 1},
+                }),
+                "current": _preview_object({
+                    "repo_id": {"type": "string"}, "item_id": {"type": "integer", "minimum": 1},
+                    "work_edit_revision": {"type": "string", "minLength": 1},
+                    "status_revision": {"type": "string", "minLength": 1},
+                    "current_release_digest": {"anyOf": [_EFFECT_DIGEST_SCHEMA, {"type": "null"}]},
+                    "current_decision_digest": {"anyOf": [{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, {"type": "null"}]},
+                    "current_reference_set_digest": {"anyOf": [{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, {"type": "null"}]},
+                }),
+                "comparison": _preview_object({key: {"enum": ["unknown", "changed", "unchanged"]}
+                    for key in ("work_edit_revision", "status_revision", "current_release_digest",
+                                "current_decision_digest", "current_reference_set_digest")}),
+                "reference_page": {"type": "array", "maxItems": 64, "items": _preview_object({
+                    "reference_id": {"type": "integer", "minimum": 1}, "ref_type": {"type": "string"},
+                })},
+                "reference_page_complete": {"type": "boolean"},
+                "next_reference_cursor": {"anyOf": [
+                    {"type": "object", "properties": {
+                        "expected_snapshot_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+                        "checkpoint_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+                        "last_reference_id": {"type": "integer", "minimum": 1},
+                    }, "required": ["expected_snapshot_digest", "checkpoint_digest", "last_reference_id"],
+                        "additionalProperties": False}, {"type": "null"}]},
+                "reference_git_correspondence": {"const": "unknown"},
+                "source_bytes": {"const": "unknown"},
+                "external_missing_content": {"const": "unknown"},
+                "decision_page": {"type": "array", "maxItems": 64, "items": _preview_object({
+                    "id": {"type": "integer", "minimum": 1}, "kind": {"enum": sorted(_DECISION_KINDS)},
+                    "release_digest": {"anyOf": [_EFFECT_DIGEST_SCHEMA, {"type": "null"}]},
+                    "evidence_digests": {"type": "array", "maxItems": 64, "items": _EFFECT_DIGEST_SCHEMA},
+                })},
+                "decision_count": {"type": "integer", "minimum": 0},
+                "decision_page_complete": {"type": "boolean"},
+                "current_release": {"anyOf": [_preview_object({
+                    "release_digest": _EFFECT_DIGEST_SCHEMA, "item_revision": {"type": "string", "minLength": 1},
+                }), {"type": "null"}]},
+                "predecessor_run_id": {"anyOf": [_RUN_ID_SCHEMA, {"type": "null"}]},
+                "predecessor_notes": {"type": "array", "maxItems": 64, "items": _preview_object({
+                    "note_id": {"type": "integer", "minimum": 1}, "created_at": {"type": "string"},
+                })},
+                "predecessor_evidence": {"type": "array", "maxItems": 64, "items": _preview_object({
+                    "item_id": {"type": "string"}, "chain_seq": {"type": "integer", "minimum": 0},
+                    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+                    "kind": {"type": "string"},
+                })},
+                "next_after_note_id": {"type": ["integer", "null"], "minimum": 1},
+                "next_after_chain_seq": {"type": ["integer", "null"], "minimum": 0},
+            })}),
+        "work:read", "read", "not-allowed",
+    ),
+    WorkOperationContract(
         "work.evidence.tail-v1",
         _object_schema({"run_id": _RUN_ID_SCHEMA}, required=("run_id",)),
         _result_schema(
@@ -1485,6 +1629,25 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         _effect.OPERATION_GET,
         _object_schema({"intent_id": _EFFECT_ID_ARGUMENT_SCHEMA}, required=("intent_id",)),
         _EFFECT_RESULT,
+        _effect.AUTHORITY_GET,
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        _effect.OPERATION_ACCEPTANCE_SNAPSHOT,
+        _object_schema({
+            "intent_id": _EFFECT_ID_ARGUMENT_SCHEMA,
+            "revision": _EFFECT_REVISION_SCHEMA,
+            "canonical_intent_digest": _EFFECT_DIGEST_SCHEMA,
+            "artifact_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            "verification_ref": {"type": "object", "properties": {
+                "run_id": _RUN_ID_SCHEMA,
+                "item_id": {"type": "string", "minLength": 1, "maxLength": 128},
+            }, "required": ["run_id", "item_id"], "additionalProperties": False},
+        }, required=("intent_id", "revision", "canonical_intent_digest", "artifact_sha256")),
+        _result_schema(("repo_id", "snapshot"), {
+            "repo_id": {"type": "string"}, "snapshot": _EFFECT_ACCEPTANCE_SNAPSHOT_SCHEMA,
+        }),
         _effect.AUTHORITY_GET,
         "read",
         "not-allowed",

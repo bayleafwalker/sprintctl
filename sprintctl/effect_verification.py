@@ -27,7 +27,8 @@ def receipt_digest(detail: Mapping[str, Any]) -> str:
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
-def validate_receipt(item: Mapping[str, Any], intent: Mapping[str, Any], release_digest: str) -> dict:
+def validate_receipt(item: Mapping[str, Any], intent: Mapping[str, Any], release_digest: str,
+                     expected_check_revisions: Mapping[str, str] | None = None) -> dict:
     """Return the exact checked detail, or refuse without inferring any link.
 
     The caller must first establish receipt ownership from native run storage,
@@ -67,6 +68,21 @@ def validate_receipt(item: Mapping[str, Any], intent: Mapping[str, Any], release
                 or check["status"] != "passed"):
             raise ValueError("every named, revision-bound protected check must pass")
         names.add(check["name"])
+    if expected_check_revisions is not None:
+        # The contract is normalized when the immutable Release is created;
+        # keep validation defensive because this function is also used while
+        # importing/reconstructing protected receipts.
+        if (not isinstance(expected_check_revisions, Mapping) or not expected_check_revisions
+                or len(expected_check_revisions) > 64
+                or any(not isinstance(name, str) or not name.strip() or len(name) > 200
+                       or not isinstance(revision, str) or not _SHA.fullmatch(revision)
+                       for name, revision in expected_check_revisions.items())):
+            raise ValueError("invalid frozen effect check revision requirements")
+        by_name = {check["name"]: check for check in checks}
+        for name, revision in expected_check_revisions.items():
+            observed = by_name.get(name)
+            if observed is None or observed["revision"] != revision or observed["status"] != "passed":
+                raise ValueError(f"required effect check {name!r} is missing or has a different revision")
     if item.get("digest") != receipt_digest(detail):
         raise ValueError("verification receipt content differs from its recorded digest")
     return detail

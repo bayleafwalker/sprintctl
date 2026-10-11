@@ -75,6 +75,13 @@ predecessor notes/evidence selected by the existing note-id and chain-sequence
 cursors. Source bytes, missing external content and correspondence between a
 reference digest and Git content remain `unknown`.
 
+Decision and reference facts are capped at 64 rows per collection. A complete
+collection digest is returned only when the full set fits inside that cap;
+larger sets return a null digest and comparisons for that digest are
+`unknown`. Counts and append-only high-water IDs remain in the snapshot digest
+so a reference cursor can detect additions and removals without hashing a
+paged subset.
+
 Reference paging uses a cursor object containing `expected_snapshot_digest`,
 `checkpoint_digest` and `last_reference_id`. A later
 page recomputes current owner facts inside its own read-only transaction. A

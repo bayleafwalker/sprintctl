@@ -4937,6 +4937,62 @@ def list_refs(store: PgStore, work_item_id: int) -> list[dict]:
     return [_serialize_ref(r) for r in _refcore.list_refs(_RefPg(store), work_item_id)]
 
 
+def owner_read_facts(
+    store: PgStore, work_item_id: int, *, limit: int = 64, after_reference_id: int = 0
+) -> dict[str, Any]:
+    """Read capped Decision/reference facts for advisory work snapshots.
+
+    Counts and maximum append-only ids let a continuation cursor detect
+    reference-set movement without returning the whole set. A full digest is
+    only meaningful when the complete population fits in the cap.
+    """
+    if type(limit) is not int or not 1 <= limit <= 64 or type(after_reference_id) is not int or after_reference_id < 0:
+        raise ValueError("owner read bounds are invalid")
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) AS count, max(id) AS max_id FROM work_decision "
+            "WHERE repo_id=%s AND work_item_id=%s", (store.repo_id, work_item_id)
+        )
+        decision_stats = cur.fetchone()
+        cur.execute(
+            "SELECT * FROM work_decision WHERE repo_id=%s AND work_item_id=%s "
+            "ORDER BY id LIMIT 65", (store.repo_id, work_item_id)
+        )
+        decision_rows = cur.fetchall()
+        cur.execute(
+            "SELECT count(*) AS count, max(id) AS max_id FROM ref "
+            "WHERE repo_id=%s AND work_item_id=%s", (store.repo_id, work_item_id)
+        )
+        reference_stats = cur.fetchone()
+        cur.execute(
+            "SELECT id, ref_type, url, label FROM ref WHERE repo_id=%s AND work_item_id=%s "
+            "AND id>%s ORDER BY id LIMIT %s",
+            (store.repo_id, work_item_id, after_reference_id, limit + 1),
+        )
+        reference_rows = cur.fetchall()
+        if int(reference_stats["count"]) <= 64:
+            cur.execute(
+                "SELECT id, ref_type, url, label FROM ref WHERE repo_id=%s AND work_item_id=%s "
+                "ORDER BY id", (store.repo_id, work_item_id)
+            )
+            complete_reference_rows = cur.fetchall()
+        else:
+            complete_reference_rows = None
+    return {
+        "decisions": [_decision_row(row) for row in decision_rows[:64]],
+        "decision_count": int(decision_stats["count"]),
+        "decision_max_id": decision_stats["max_id"],
+        "decisions_complete": int(decision_stats["count"]) <= 64,
+        "references": [_norm(row) for row in reference_rows[:limit]],
+        "reference_digest_facts": None if complete_reference_rows is None else
+            [_norm(row) for row in complete_reference_rows],
+        "reference_count": int(reference_stats["count"]),
+        "reference_max_id": reference_stats["max_id"],
+        "references_complete": int(reference_stats["count"]) <= 64,
+        "reference_page_has_more": len(reference_rows) > limit,
+    }
+
+
 def list_refs_for_items(store: PgStore, work_item_ids: list[int]) -> dict[int, list[dict]]:
     rows = _refcore.list_refs_for_items(_RefPg(store), work_item_ids)
     refs_by_item: dict[int, list[dict]] = {}
@@ -7724,37 +7780,46 @@ def _effect_transition(
     return _in_write_transaction(store, cur, body)
 
 
-def _effect_release_locked(cur: Any, store: PgStore, row: Mapping[str, Any]) -> tuple[str | None, bool]:
+def _effect_release_locked(
+    cur: Any, store: PgStore, row: Mapping[str, Any]
+) -> tuple[str | None, bool, Mapping[str, str] | None]:
     # Intent row is already locked. Serialize the current release/revision
     # with reservations, description edits and Decisions under the item lock.
     _item, revision, _count = _release_basis_locked(cur, store.repo_id, int(row["work_item_id"]))
     current = _current_release_locked(cur, store.repo_id, int(row["work_item_id"]))
     proposed_digest = row.get("release_digest")
 
-    def requirement(release: Mapping[str, Any] | None) -> bool:
+    def requirement(release: Mapping[str, Any] | None) -> tuple[bool, Mapping[str, str] | None]:
         if release is None:
-            return False
-        value = release["acceptance_contract"].get("effect_verification_required", False)
+            return False, None
+        try:
+            contract = _releases.normalize_acceptance_contract(release["acceptance_contract"])
+        except (TypeError, ValueError) as exc:
+            raise EffectRefused("effect-verification-refused", "invalid frozen verification requirement") from exc
+        value = contract.get("effect_verification_required", False)
+        revisions = contract.get("effect_check_revisions")
         if type(value) is not bool:
             raise EffectRefused("effect-verification-refused", "invalid frozen verification requirement")
-        return value
+        return value or bool(revisions), revisions
 
-    required = requirement(current)
+    required, check_revisions = requirement(current)
     if proposed_digest is not None:
         cur.execute("SELECT acceptance_contract FROM work_release WHERE repo_id=%s AND release_digest=%s",
                     (store.repo_id, proposed_digest))
         proposed = cur.fetchone()
-        proposed_required = requirement(proposed)
+        proposed_required, proposed_revisions = requirement(proposed)
         required = required or proposed_required
+        if check_revisions is None:
+            check_revisions = proposed_revisions
         if (current is None or current["release_digest"] != proposed_digest or current["item_revision"] != revision):
             raise EffectRefused("effect-release-mismatch", "the proposal Release is no longer the current work revision")
-    return proposed_digest, required
+    return proposed_digest, required, check_revisions
 
 
 def _effect_verification_locked(cur: Any, store: PgStore, row: Mapping[str, Any],
                                 verification_ref: Mapping[str, str] | None,
                                 binding: tuple[str, str, str | None, str | None]) -> Mapping[str, Any]:
-    proposed_digest, required = _effect_release_locked(cur, store, row)
+    proposed_digest, required, check_revisions = _effect_release_locked(cur, store, row)
     if verification_ref is None:
         if required:
             raise EffectRefused("effect-verification-required", "this Release requires protected artifact verification")
@@ -7770,7 +7835,9 @@ def _effect_verification_locked(cur: Any, store: PgStore, row: Mapping[str, Any]
     if receipt is None:
         raise EffectRefused("effect-verification-refused", "no eligible protected verification receipt")
     try:
-        detail = _effect_verification.validate_receipt(_evidence_row(receipt), _effect_row(row), proposed_digest)
+        detail = _effect_verification.validate_receipt(
+            _evidence_row(receipt), _effect_row(row), proposed_digest, check_revisions
+        )
     except ValueError as exc:
         raise EffectRefused("effect-verification-refused", str(exc)) from exc
     frozen = {"run_id": verification_ref["run_id"], "item_id": verification_ref["item_id"],
@@ -7778,6 +7845,36 @@ def _effect_verification_locked(cur: Any, store: PgStore, row: Mapping[str, Any]
               "verifier_principal": principal, "workspace_id": workspace, "client_id": client, "grant_id": grant,
               "receipt": detail}
     return {"verification_binding": psycopg.types.json.Jsonb(frozen)}
+
+
+def get_effect_verification_receipt(
+    store: PgStore,
+    verification_ref: Mapping[str, str],
+    *,
+    principal_id: str,
+    workspace_id: str,
+    client_id: str | None,
+    grant_id: str | None,
+) -> dict | None:
+    """Read one receipt only from the caller's fully bound run.
+
+    This is a read helper for the advisory acceptance snapshot. The same
+    identity tuple is also checked by the protected acceptance transaction;
+    callers must not treat this preview read as authority or a reservation.
+    """
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT e.* FROM evidence_item e JOIN run r "
+            "ON r.repo_id=e.repo_id AND r.run_id=e.run_id "
+            "WHERE e.repo_id=%s AND e.run_id=%s AND e.item_id=%s "
+            "AND r.principal_id=%s AND r.workspace_id=%s "
+            "AND r.client_id IS NOT DISTINCT FROM %s "
+            "AND r.grant_id IS NOT DISTINCT FROM %s",
+            (store.repo_id, verification_ref["run_id"], verification_ref["item_id"],
+             principal_id, workspace_id, client_id, grant_id),
+        )
+        row = cur.fetchone()
+    return _evidence_row(row) if row is not None else None
 
 
 def accept_effect_intent(
@@ -7830,7 +7927,7 @@ def reject_effect_intent(
 
 
 def _effect_application_guard(cur: Any, store: PgStore, row: Mapping[str, Any]) -> Mapping[str, Any]:
-    _release, required = _effect_release_locked(cur, store, row)
+    _release, required, _check_revisions = _effect_release_locked(cur, store, row)
     if required and row.get("verification_binding") is None:
         raise EffectRefused("effect-verification-required", "application requires the frozen protected verification")
     return {}
