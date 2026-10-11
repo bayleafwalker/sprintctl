@@ -2,6 +2,7 @@
 from types import SimpleNamespace
 import uuid
 
+import jsonschema
 import pytest
 
 from sprintctl import effect_verification, pg
@@ -14,6 +15,7 @@ pytestmark = PG_MARKS
 
 CHECKER = _context(ACCEPTOR.identity.principal_id,
                    set(ACCEPTOR.identity.authorities) | {"work:evidence"})
+CONTRACTS = {contract.name: contract for contract in WORK_OPERATION_CONTRACTS}
 
 
 def _owned_context(base, *, grant_id=None):
@@ -35,13 +37,17 @@ def _acceptance_snapshot(store, intent, *, ref=None, context=CHECKER):
     }
     if ref is not None:
         args["verification_ref"] = ref
-    return _app(store).invoke("work.effect.acceptance-snapshot-v1", args, context)["snapshot"]
+    result = _app(store).invoke("work.effect.acceptance-snapshot-v1", args, context)
+    jsonschema.Draft202012Validator(CONTRACTS["work.effect.acceptance-snapshot-v1"].result_schema).validate(result)
+    return result["snapshot"]
 
 
 def _continuation(app, run_id, item_id, context, **kwargs):
-    return app.invoke("work.run.continuation-delta-v1", {
+    result = app.invoke("work.run.continuation-delta-v1", {
         "run_id": run_id, "item_id": item_id, **kwargs,
-    }, context)["delta"]
+    }, context)
+    jsonschema.Draft202012Validator(CONTRACTS["work.run.continuation-delta-v1"].result_schema).validate(result)
+    return result["delta"]
 
 
 def test_acceptance_snapshot_is_owner_scoped_atomic_and_never_authorizes(store):
@@ -78,6 +84,18 @@ def test_acceptance_snapshot_requires_both_effect_and_work_read_authorities(stor
     assert denied.value.code == "authority-required"
 
 
+def test_acceptance_snapshot_overflow_returns_unknown_collection_digests(store):
+    item_id = _items(store)[0]
+    pg.reserve(store, item_id, actor="operator", session_id=uuid.uuid4().hex, role="execution")
+    intent = _propose(store, item_id, _run(store, PROPOSER))
+    for index in range(65):
+        pg.add_ref(store, item_id, "issue", f"https://example.test/snapshot/{index}", str(index))
+    snapshot = _acceptance_snapshot(store, intent)
+    assert snapshot["decision_facts_complete"] is True
+    assert snapshot["reference_facts_complete"] is False
+    assert snapshot["reference_set_digest"] is None
+
+
 def test_acceptance_snapshot_uses_shared_receipt_predicate_and_caller_run_binding(store):
     from tests.pg.test_protected_artifact_acceptance import receipt
 
@@ -111,20 +129,71 @@ def test_continuation_requires_current_owned_run_and_explicit_item(store):
     assert delta["authorization_scope"] == {"repo_id": store.repo_id, "run_id": run_id, "run_owned": True}
     assert set(delta["comparison"].values()) == {"unknown"}
     assert delta["source_bytes"] == delta["external_missing_content"] == "unknown"
+    assert delta["work"]["description_sha256"].startswith("sha256:")
+    assert len(delta["work"]["description_excerpt"]) <= 500
+    assert delta["latest_decision"] is None
     foreign = _context("another-principal", set(PROPOSER.identity.authorities))
     with pytest.raises(ApplicationRejection) as denied:
         _continuation(app, run_id, item_id, foreign)
+    assert denied.value.code == "run-not-found"
+    wrong_grant = _owned_context(PROPOSER, grant_id="revoked-or-replaced-grant")
+    with pytest.raises(ApplicationRejection) as denied:
+        _continuation(app, run_id, item_id, wrong_grant)
     assert denied.value.code == "run-not-found"
     with pytest.raises(ApplicationRejection) as denied:
         app.invoke("work.run.continuation-delta-v1", {"run_id": run_id}, PROPOSER)
     assert denied.value.code == "invalid-arguments"
 
 
+def test_continuation_reads_only_current_unacknowledged_owner_checkpoint_and_description(store):
+    app = _app(store)
+    item_id = _items(store)[0]
+    run_id = _run(store, PROPOSER)
+    item = pg.get_work_item(store, item_id)
+    checkpoint_id = pg.create_event(
+        store, item["sprint_id"], "agent", "lane.checkpoint", work_item_id=item_id,
+        payload={"summary": "checkpoint", "git_sha": "a" * 40,
+                  "release_digest": "b" * 64},
+    )
+    initial = _continuation(app, run_id, item_id, PROPOSER)
+    description = "D" * 700
+    row, revision = pg.get_work_item_with_edit_revision(store, item_id)
+    pg.update_work_item_description(store, item_id, description,
+                                    expected_revision=revision, actor="editor")
+    pg.record_decision(store, item_id, "revise", actor="reviewer")
+    delta = _continuation(app, run_id, item_id, PROPOSER, checkpoint=initial["current"])
+    assert delta["work"]["description_excerpt"] == description[:500]
+    assert delta["work"]["description_truncated"] is True
+    assert delta["comparison"]["work_edit_revision"] == "changed"
+    assert delta["comparison"]["current_decision_digest"] == "changed"
+    assert delta["source_checkpoint"]["note_id"] == checkpoint_id
+    assert delta["source_checkpoint"]["item_id"] == item_id
+    assert delta["source_checkpoint"]["declared_git_sha"] == "a" * 40
+    assert delta["source_checkpoint"]["git_currentness"] == "unknown"
+    pg.create_event(store, item["sprint_id"], "reviewer", "lane.checkpoint.ack",
+                    work_item_id=item_id, payload={"summary": "ack"})
+    acknowledged = _continuation(app, run_id, item_id, PROPOSER)
+    assert acknowledged["source_checkpoint"] is None
+
+
+def test_continuation_latest_decision_is_exact_when_page_overflows(store):
+    app = _app(store)
+    item_id = _items(store)[0]
+    run_id = _run(store, PROPOSER)
+    decisions = [pg.record_decision(store, item_id, "revise", actor=f"reviewer-{index}")
+                 for index in range(65)]
+    delta = _continuation(app, run_id, item_id, PROPOSER, limit=16)
+    assert delta["decision_page_complete"] is False
+    assert delta["current"]["current_decision_digest"] is None
+    assert delta["latest_decision_id"] == decisions[-1]["id"]
+    assert delta["latest_decision"]["id"] == decisions[-1]["id"]
+
+
 def test_continuation_compares_checkpoint_and_refuses_stale_keyset_cursor(store):
     app = _app(store)
     item_id = _items(store)[0]
     run_id = _run(store, PROPOSER)
-    pg.add_ref(store, item_id, "issue", "https://example.test/1", "one")
+    removed_id = pg.add_ref(store, item_id, "issue", "https://example.test/1", "one")
     pg.add_ref(store, item_id, "issue", "https://example.test/2", "two")
     initial = _continuation(app, run_id, item_id, PROPOSER)
     checkpoint = initial["current"]
@@ -135,6 +204,7 @@ def test_continuation_compares_checkpoint_and_refuses_stale_keyset_cursor(store)
                            checkpoint=checkpoint, cursor=cursor)
     assert second["reference_page_complete"] is True
     assert second["comparison"]["current_reference_set_digest"] == "unchanged"
+    pg.remove_ref(store, removed_id, item_id)
     pg.add_ref(store, item_id, "issue", "https://example.test/3", "three")
     with pytest.raises(ApplicationRejection) as stale:
         _continuation(app, run_id, item_id, PROPOSER, limit=1,

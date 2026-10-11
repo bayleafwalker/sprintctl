@@ -4956,9 +4956,14 @@ def owner_read_facts(
         decision_stats = cur.fetchone()
         cur.execute(
             "SELECT * FROM work_decision WHERE repo_id=%s AND work_item_id=%s "
-            "ORDER BY id LIMIT 65", (store.repo_id, work_item_id)
+            "ORDER BY id DESC LIMIT 65", (store.repo_id, work_item_id)
         )
-        decision_rows = cur.fetchall()
+        decision_rows = list(reversed(cur.fetchall()[:64]))
+        cur.execute(
+            "SELECT * FROM work_decision WHERE repo_id=%s AND work_item_id=%s "
+            "ORDER BY id DESC LIMIT 1", (store.repo_id, work_item_id)
+        )
+        latest_decision_row = cur.fetchone()
         cur.execute(
             "SELECT count(*) AS count, max(id) AS max_id FROM ref "
             "WHERE repo_id=%s AND work_item_id=%s", (store.repo_id, work_item_id)
@@ -4979,7 +4984,8 @@ def owner_read_facts(
         else:
             complete_reference_rows = None
     return {
-        "decisions": [_decision_row(row) for row in decision_rows[:64]],
+        "decisions": [_decision_row(row) for row in decision_rows],
+        "latest_decision": _decision_row(latest_decision_row) if latest_decision_row else None,
         "decision_count": int(decision_stats["count"]),
         "decision_max_id": decision_stats["max_id"],
         "decisions_complete": int(decision_stats["count"]) <= 64,
@@ -4990,6 +4996,52 @@ def owner_read_facts(
         "reference_max_id": reference_stats["max_id"],
         "references_complete": int(reference_stats["count"]) <= 64,
         "reference_page_has_more": len(reference_rows) > limit,
+    }
+
+
+def current_unacked_source_checkpoint(store: PgStore, work_item_id: int) -> dict[str, Any] | None:
+    """Return the current item checkpoint note when no later acknowledgement cites it.
+
+    This uses bounded indexed reads and mirrors ``lane.checkpoint``'s owner
+    acknowledgement rule. It performs no Git inspection.
+    """
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, created_at, payload FROM event WHERE repo_id=%s AND work_item_id=%s "
+            "AND event_type='lane.checkpoint' ORDER BY created_at DESC, id DESC LIMIT 1",
+            (store.repo_id, work_item_id),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        note_id = int(row["id"])
+        note_id_text = str(note_id)
+        pattern = f"(^|[^0-9]){note_id_text}([^0-9]|$)"
+        cur.execute(
+            "SELECT EXISTS (SELECT 1 FROM event e WHERE e.repo_id=%s AND e.work_item_id=%s "
+            "AND (e.created_at > %s OR (e.created_at=%s AND e.id>%s)) AND ("
+            "e.event_type='lane.checkpoint.ack' OR (e.event_type IN ('lane.review','lane.dispatch') AND ("
+            "(jsonb_typeof(e.payload->'evidence_event_id')='number' AND e.payload->>'evidence_event_id'=%s) OR "
+            "(jsonb_typeof(e.payload->'detail')='string' AND e.payload->>'detail' ~ %s) OR "
+            "EXISTS (SELECT 1 FROM jsonb_array_elements(CASE "
+            "WHEN jsonb_typeof(e.payload->'tags')='array' THEN e.payload->'tags' ELSE '[]'::jsonb END) AS tags(tag) "
+            "WHERE jsonb_typeof(tags.tag)='string' AND (tags.tag #>> '{}') ~ %s))))) AS acknowledged",
+            (store.repo_id, work_item_id, row["created_at"], row["created_at"], note_id,
+             note_id_text, pattern, pattern),
+        )
+        acknowledged = bool(cur.fetchone()["acknowledged"])
+    if acknowledged:
+        return None
+    payload = row["payload"] if isinstance(row["payload"], dict) else {}
+    raw_sha = payload.get("git_sha")
+    return {
+        "item_id": work_item_id,
+        "note_id": note_id,
+        "created_at": _iso(row["created_at"]) or str(row["created_at"]),
+        "release_digest": payload.get("release_digest"),
+        "declared_git_sha": raw_sha if isinstance(raw_sha, str) and re.fullmatch(r"[0-9a-f]{40}", raw_sha) else None,
+        "acknowledgement": "unacknowledged",
+        "git_currentness": "unknown",
     }
 
 

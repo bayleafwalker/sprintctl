@@ -69,18 +69,23 @@ The checkpoint is caller-owned comparison data, not authority. It must name
 the same repository and item as the current request. An absent checkpoint
 returns `comparison: unknown` for every comparison; it never synthesizes an
 unchanged baseline. The owner returns a canonical snapshot digest over the
-current item, current Release, current Decision facts and the complete
-reference-set digest, along with bounded reference identifiers and one-hop
-predecessor notes/evidence selected by the existing note-id and chain-sequence
-cursors. Source bytes, missing external content and correspondence between a
-reference digest and Git content remain `unknown`.
+current item, current Release, current Decision facts, reference-set digest
+and current unacknowledged source checkpoint. The result includes a bounded
+title/description excerpt, reference records, and one-hop predecessor
+notes/evidence selected by the existing note-id and chain-sequence cursors.
+The source checkpoint is an owner-declared note with its timestamp and any
+declared Git SHA; no Git inspection occurs. Reference digests cover owner
+reference records only. Source bytes, missing external content and
+correspondence between a reference record and Git content remain `unknown`.
 
 Decision and reference facts are capped at 64 rows per collection. A complete
 collection digest is returned only when the full set fits inside that cap;
 larger sets return a null digest and comparisons for that digest are
 `unknown`. Counts and append-only high-water IDs remain in the snapshot digest
 so a reference cursor can detect additions and removals without hashing a
-paged subset.
+paged subset. Decision rows are append-only and reference IDs are monotonically
+allocated; deletion and reinsertion therefore changes the count or high-water
+ID even when the population size is unchanged.
 
 Reference paging uses a cursor object containing `expected_snapshot_digest`,
 `checkpoint_digest` and `last_reference_id`. A later

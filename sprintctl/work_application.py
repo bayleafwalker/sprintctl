@@ -2650,7 +2650,7 @@ class WorkApplication:
                 "decision_facts": decision_facts[-20:],
                 "decision_count": decision_count,
                 "decision_digest": decision_digest,
-                "decision_facts_complete": owner_facts_page["decisions_complete"],
+                "decision_facts_complete": decision_count <= 20,
                 "reference_count": owner_facts_page["reference_count"],
                 "reference_set_digest": reference_digest,
                 "reference_facts_complete": owner_facts_page["references_complete"],
@@ -2770,7 +2770,22 @@ class WorkApplication:
                 "current_decision_digest": decision_digest,
                 "current_reference_set_digest": reference_digest,
             }
+            checkpoint_reader = getattr(self.backend, "current_unacked_source_checkpoint", None)
+            if not callable(checkpoint_reader):
+                raise ApplicationRejection("unsupported-backend", "source checkpoint reads require PostgreSQL", 501)
+            source_checkpoint = checkpoint_reader(owner_store, item_id)
+            if source_checkpoint is not None:
+                raw_checkpoint_release = source_checkpoint.get("release_digest")
+                source_checkpoint["release_digest"] = (
+                    raw_checkpoint_release if isinstance(raw_checkpoint_release, str)
+                    and re.fullmatch(r"[0-9a-f]{64}", raw_checkpoint_release) else None
+                )
+            title = item.get("title") if isinstance(item.get("title"), str) else ""
+            description = item.get("description") if isinstance(item.get("description"), str) else ""
             snapshot_facts = {**current, "status": item["status"], "run_id": owned_run["run_id"],
+                              "title": title,
+                              "description_sha256": _owner_read_digest(item.get("description") or ""),
+                              "source_checkpoint": source_checkpoint,
                               "predecessor_run_id": owned_run.get("predecessor_run_id"),
                               "decision_count": decision_count,
                               "decision_max_id": owner_facts_page["decision_max_id"],
@@ -2806,19 +2821,34 @@ class WorkApplication:
                 "authorization_scope": {"repo_id": self.repo_id, "run_id": owned_run["run_id"],
                                         "run_owned": True},
                 "work": {"item_id": item_id, "status": item["status"],
-                         "work_edit_revision": edit_revision, "status_revision": status_revision},
+                         "work_edit_revision": edit_revision, "status_revision": status_revision,
+                         "title": title[:200], "title_truncated": len(title) > 200,
+                         "description_excerpt": description[:500],
+                         "description_truncated": len(description) > 500,
+                         "description_sha256": _owner_read_digest(description)},
                 "current": current,
                 "comparison": comparison,
-                "reference_page": [{"reference_id": int(row["id"]), "ref_type": row["ref_type"]}
+                "reference_page": [{"reference_id": int(row["id"]), "ref_type": row["ref_type"],
+                                    "url": row["url"][:2048], "label": row.get("label", "")[:200]}
                                    for row in selected],
                 "reference_page_complete": not has_more,
                 "next_reference_cursor": next_cursor,
                 "reference_git_correspondence": "unknown",
+                "reference_digest_domain": "owner-reference-records/v1",
                 "source_bytes": "unknown",
                 "external_missing_content": "unknown",
+                "source_checkpoint": source_checkpoint,
                 "decision_page": decision_facts[-limit:],
                 "decision_count": decision_count,
-                "decision_page_complete": owner_facts_page["decisions_complete"],
+                "decision_page_complete": decision_count <= limit,
+                "latest_decision": None if owner_facts_page["latest_decision"] is None else {
+                    "id": owner_facts_page["latest_decision"]["id"],
+                    "kind": owner_facts_page["latest_decision"]["kind"],
+                    "release_digest": owner_facts_page["latest_decision"].get("release_digest"),
+                    "evidence_digests": owner_facts_page["latest_decision"].get("evidence_digests", []),
+                },
+                "latest_decision_id": (None if owner_facts_page["latest_decision"] is None
+                                        else owner_facts_page["latest_decision"]["id"]),
                 "current_release": None if release is None else {
                     "release_digest": release_digest, "item_revision": release["item_revision"]},
                 "predecessor_run_id": predecessor["predecessor_run_id"],
