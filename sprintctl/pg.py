@@ -5873,6 +5873,13 @@ def record_run_invocation_attempt(
         "SELECT pg_advisory_xact_lock(hashtext('run_invocation_attempt'), hashtext(%s))",
         (attempt_id,),
     )
+    # Attempt IDs are global across correlated and legacy-replay paths. Lock
+    # and read the ID before an unbound legacy replay can return early.
+    cur.execute(
+        "SELECT * FROM work_run_invocation_attempt WHERE attempt_id=%s FOR UPDATE",
+        (attempt_id,),
+    )
+    prior_attempt = cur.fetchone()
     cur.execute(
         "SELECT pg_advisory_xact_lock(hashtext('run_invocation_binding'), hashtext(%s))",
         (invocation_id,),
@@ -5926,6 +5933,8 @@ def record_run_invocation_attempt(
             raise RunInvocationConflict("invocation ID or owner binding is already in use")
     else:
         if not allow_new_binding:
+            if prior_attempt is not None:
+                raise RunInvocationConflict("attempt ID is already bound to another invocation")
             return None
         cur.execute(
             "INSERT INTO work_run_invocation_binding(invocation_id,repo_id,run_id,workspace_id,"
@@ -5938,11 +5947,6 @@ def record_run_invocation_attempt(
         )
         binding = expected
 
-    cur.execute(
-        "SELECT * FROM work_run_invocation_attempt WHERE attempt_id=%s FOR UPDATE",
-        (attempt_id,),
-    )
-    prior_attempt = cur.fetchone()
     attempt_binding = {
         key: expected[key]
         for key in (

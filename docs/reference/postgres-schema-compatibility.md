@@ -18,7 +18,7 @@ reports the minimum and maximum versions this runtime supports.
 
 The current source tree (sprintctl 0.19.0) admits exactly remote schema 23
 (schema 18 for sprintctl 0.9.0 through 0.10.x): `MINIMUM_SCHEMA_VERSION` and
-`MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 22, and
+`MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 23, and
 `remote-schema-version` in `pyproject.toml` records the same value. Any other
 ledger version fails closed before a runtime command is served.
 

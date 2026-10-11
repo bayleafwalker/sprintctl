@@ -162,6 +162,41 @@ def test_legacy_replay_is_not_retroactively_adopted(receipt_store):
     store.conn.rollback()
 
 
+def test_legacy_unbound_replay_rejects_attempt_id_bound_to_another_run(receipt_store):
+    app = _CheckedApplication(receipt_store)
+    correlated_args = _args()
+    invocation, attempt = _ids()
+    app.invoke(
+        "work.run.register-correlated-v1",
+        correlated_args,
+        _correlated_context(invocation, attempt),
+    )
+
+    legacy_args = _args()
+    legacy = app.invoke("work.run.register-v1", legacy_args, _context())
+    new_invocation, _new_attempt = _ids()
+    with pytest.raises(ApplicationRejection) as raised:
+        app.invoke(
+            "work.run.register-correlated-v1",
+            legacy_args,
+            _correlated_context(new_invocation, attempt),
+        )
+    assert raised.value.code == "invocation-correlation-conflict"
+
+    with receipt_store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) AS n FROM work_run_invocation_attempt WHERE attempt_id=%s",
+            (attempt,),
+        )
+        assert cur.fetchone()["n"] == 1
+        cur.execute(
+            "SELECT count(*) AS n FROM work_run_invocation_binding WHERE run_id=%s",
+            (legacy["run"]["run_id"],),
+        )
+        assert cur.fetchone()["n"] == 0
+    receipt_store.conn.rollback()
+
+
 def test_idempotency_replay_cannot_bind_a_different_invocation_or_attempt(receipt_store):
     app = _CheckedApplication(receipt_store)
     args = _args()
