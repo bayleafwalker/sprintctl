@@ -8,24 +8,24 @@ without the service distribution.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import inspect
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from vuoro_adapter_kit import (
     SCHEMA_DIALECT as _ADAPTER_SCHEMA_DIALECT,
+)
+from vuoro_adapter_kit import (
     SCHEMA_FEATURES as _ADAPTER_SCHEMA_FEATURES,
+)
+from vuoro_adapter_kit import (
     object_schema,
     operation_spec,
 )
 
 from . import decisions as _decisions
-from .application_common import (
-    PREDECESSOR_CONTEXT_DEFAULT_LIMIT,
-    PREDECESSOR_CONTEXT_MAX_LIMIT,
-)
-from . import effect_intent as _effect
 from . import effect_attempt as _attempt
+from . import effect_intent as _effect
 from . import releases as _releases
 from . import unbound as _unbound
 from .application import (
@@ -34,7 +34,10 @@ from .application import (
     ProjectWorkApplication,
     WorkApplication,
 )
-
+from .application_common import (
+    PREDECESSOR_CONTEXT_DEFAULT_LIMIT,
+    PREDECESSOR_CONTEXT_MAX_LIMIT,
+)
 
 WORK_API_VERSION = "work-api/v1"
 WORK_SCHEMA_VERSION = "work-schema/v1"
@@ -542,6 +545,22 @@ _CORRELATED_RUN_RESULT_OBJECT = _object_schema(
     },
     required=("repo_id", "run", "correlation_status", "receipt"),
 )
+_CORRELATED_RUN_RESULT_OBJECT["oneOf"] = [
+    {
+        "properties": {
+            "correlation_status": {"const": "bound"},
+            "receipt": _RUN_INVOCATION_RECEIPT_SCHEMA,
+        },
+        "required": ["correlation_status", "receipt"],
+    },
+    {
+        "properties": {
+            "correlation_status": {"const": "legacy-unbound"},
+            "receipt": {"type": "null"},
+        },
+        "required": ["correlation_status", "receipt"],
+    },
+]
 _SESSION_NOTE_RESULT_OBJECT = _object_schema(
     {
         "note_id": {"type": "integer", "minimum": 1},

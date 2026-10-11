@@ -314,6 +314,24 @@ def test_schema23_catalog_is_exact_and_receipts_are_immutable(receipt_store):
     }, _correlated_context(invocation, attempt, authorities={"work:read"})) == result["receipt"]
 
 
+def test_schema23_catalog_rejects_same_name_index_with_wrong_columns(receipt_store):
+    store = receipt_store
+    assert pg_migrations.compatibility_handshake(store)["compatible"] is True
+    with store.conn.cursor() as cur:
+        cur.execute("DROP INDEX idx_work_run_invocation_attempt_owner")
+        cur.execute(
+            "CREATE INDEX idx_work_run_invocation_attempt_owner "
+            "ON work_run_invocation_attempt(attempt_id)"
+        )
+        catalog = pg_migrations.compatibility_handshake(store)["capabilities"][
+            "run_invocation_storage"
+        ]
+        assert catalog["available"] is False
+        assert catalog["complete"] is False
+    store.conn.rollback()
+    assert pg_migrations.compatibility_handshake(store)["compatible"] is True
+
+
 @pytest.mark.parametrize(
     "statement",
     [

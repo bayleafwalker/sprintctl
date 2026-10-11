@@ -178,6 +178,17 @@ def test_correlated_register_result_has_bound_and_legacy_unbound_variants():
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(invalid, schema)
 
+    adapter_contract = next(
+        item for item in WORK_OPERATION_CONTRACTS
+        if item.name == "work.run.register-correlated-v1"
+    )
+    for invalid in (
+        {**bound, "receipt": None},
+        {**unbound, "receipt": bound["receipt"]},
+    ):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(invalid, adapter_contract.result_schema)
+
 
 def test_served_catalog_operations_match_the_frozen_machine_contract():
     contracts = {item.name: item for item in WORK_OPERATION_CONTRACTS}

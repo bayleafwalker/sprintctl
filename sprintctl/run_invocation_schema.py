@@ -20,7 +20,7 @@ FUNCTIONS = (
     "sprintctl_run_invocation_has_attempt",
 )
 TABLES = ("work_run_invocation_binding", "work_run_invocation_attempt")
-EXPECTED_CATALOG_FINGERPRINT = "1e5f73a2b70dba7ad3fe138ad25e1a99e89d80931d23abdf81df4e3b15ba1405"
+EXPECTED_CATALOG_FINGERPRINT = "5f692d61d0d4b7234bb5eb9626fa4a6d9510112fcc91812ba2a76bc6850f1291"
 
 
 def install(cur: Any) -> None:
@@ -59,6 +59,11 @@ def inspect_catalog(cur: Any) -> dict[str, Any]:
         "OR left(c.relname,length('work_run_invocation_binding_'))='work_run_invocation_binding_' "
         "OR left(c.relname,length('work_run_invocation_attempt_'))='work_run_invocation_attempt_') "
         "AND c.relkind IN ('r','i')), "
+        "idx AS (SELECT jsonb_agg(jsonb_build_array(c.relname,replace(pg_get_indexdef(c.oid),"
+        "quote_ident(current_schema()) || '.', ''),"
+        "i.indisvalid,i.indisready) ORDER BY c.relname) v FROM pg_index i "
+        "JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace n ON n.oid=c.relnamespace "
+        "WHERE n.nspname=current_schema() AND c.relname='idx_work_run_invocation_attempt_owner'), "
         "cols AS (SELECT jsonb_agg(jsonb_build_array(c.relname,a.attname,a.attnum,"
         "format_type(a.atttypid,a.atttypmod),t.typname,a.attnotnull,"
         "COALESCE(pg_get_expr(d.adbin,d.adrelid),'')) ORDER BY c.relname,a.attnum) v "
@@ -82,21 +87,23 @@ def inspect_catalog(cur: Any) -> dict[str, Any]:
         "FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
         "WHERE n.nspname=current_schema() AND p.proname=ANY(%s)) "
         "SELECT rels.table_count, rels.object_count, funcs.function_count, rels.v AS relations, "
+        "idx.v AS indexes, "
         "cols.v AS columns, cons.v AS constraints, trigs.v AS triggers, funcs.v AS functions "
-        "FROM rels,cols,cons,trigs,funcs",
+        "FROM rels,idx,cols,cons,trigs,funcs",
         (list(FUNCTIONS),),
     )
     row = cur.fetchone()
     if isinstance(row, dict):
         get = row.get
     else:
-        names = ("table_count", "object_count", "function_count", "relations", "columns", "constraints", "triggers", "functions")
+        names = ("table_count", "object_count", "function_count", "relations", "indexes", "columns", "constraints", "triggers", "functions")
         get = lambda key: row[names.index(key)]
     table_count = int(get("table_count") or 0)
     object_count = int(get("object_count") or 0)
     function_count = int(get("function_count") or 0)
     parts = {
         "relations": get("relations"),
+        "indexes": get("indexes"),
         "columns": get("columns"),
         "constraints": get("constraints"),
         "triggers": get("triggers"),
