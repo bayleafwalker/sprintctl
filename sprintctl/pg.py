@@ -5927,10 +5927,24 @@ def record_run_invocation_attempt(
         raise RunInvocationConflict("run invocation binding is ambiguous")
     if bindings:
         binding = bindings[0]
-        if not _invocation_binding_matches(binding, expected):
-            if binding["owner_record_digest"] != record_digest:
-                raise RunInvocationIntegrityError("run owner record changed after receipt creation")
+        owner_tuple = {
+            key: expected[key]
+            for key in (
+                "invocation_id",
+                "repo_id",
+                "run_id",
+                "workspace_id",
+                "principal_id",
+                "principal_epoch",
+                "client_id",
+                "grant_id",
+                "owner_request_digest",
+            )
+        }
+        if not _invocation_binding_matches(binding, owner_tuple):
             raise RunInvocationConflict("invocation ID or owner binding is already in use")
+        if binding["owner_record_digest"] != record_digest:
+            raise RunInvocationIntegrityError("run owner record changed after receipt creation")
     else:
         if not allow_new_binding:
             if prior_attempt is not None:
