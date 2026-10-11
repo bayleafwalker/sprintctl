@@ -34,6 +34,11 @@ executed. When `effect_check_revisions` is absent from a legacy Release,
 revision currentness is `unknown`. `evidence_obligations` are descriptive
 labels and remain unmapped unless separately established. Lease/settlement
 requirements are outside this snapshot and remain `unknown`.
+The owner returns up to 64 obligation labels with their total count and an
+`evidence_obligations_complete` flag. Each label is limited to a 200-character
+excerpt and includes `label_truncated` plus a SHA-256 digest of the complete
+owner label. Overflow means the displayed set is incomplete; these labels are
+descriptive facts, not enforced requirements.
 
 The Release field `effect_check_revisions`, when present, maps one to 64 exact
 check names to lowercase `sha256:<hex>` revisions. Protected acceptance
@@ -94,4 +99,9 @@ different snapshot or checkpoint is rejected as stale before reference
 content is returned. Cursors select a page; they never establish authority.
 Reference pages and predecessor notes/evidence are separately bounded, and
 the owner reports truncation and next cursors without implying that a page is
-the complete population.
+the complete population. A reference URL is returned as a maximum
+2048-character excerpt and a label as a maximum 200-character excerpt. Each
+has an explicit truncation marker and a SHA-256 digest of its complete stored
+owner value. A truncated URL is not a complete link and must not be treated as
+actionable. The digests bind owner-record values only; they do not establish
+Git content.

@@ -17,6 +17,10 @@ ARTIFACT_DOMAIN = "utf8-unified-diff/v1"
 _SHA = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
+class CheckRevisionMismatch(ValueError):
+    """A protected receipt failed the immutable Release check revision map."""
+
+
 def artifact_digest(unified_diff: str) -> str:
     return "sha256:" + hashlib.sha256(unified_diff.encode("utf-8")).hexdigest()
 
@@ -82,7 +86,9 @@ def validate_receipt(item: Mapping[str, Any], intent: Mapping[str, Any], release
         for name, revision in expected_check_revisions.items():
             observed = by_name.get(name)
             if observed is None or observed["revision"] != revision or observed["status"] != "passed":
-                raise ValueError(f"required effect check {name!r} is missing or has a different revision")
+                raise CheckRevisionMismatch(
+                    f"required effect check {name!r} is missing or has a different revision"
+                )
     if item.get("digest") != receipt_digest(detail):
         raise ValueError("verification receipt content differs from its recorded digest")
     return detail

@@ -896,8 +896,12 @@ _EFFECT_ACCEPTANCE_SNAPSHOT_PROPERTIES = {
     "reference_facts_complete": {"type": "boolean"},
     "evidence_obligations": {"type": "array", "maxItems": 64, "items": _preview_object({
         "label": {"type": "string", "minLength": 1, "maxLength": 200},
+        "label_truncated": {"type": "boolean"},
+        "label_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
         "mapping": {"const": "unknown"},
     })},
+    "evidence_obligation_count": {"type": "integer", "minimum": 0},
+    "evidence_obligations_complete": {"type": "boolean"},
     "receipt": _preview_object({
         "status": {"enum": ["not-supplied", "not-found", "owner-record-observed", "unknown-no-evidence-authority"]},
         "comparison": {"enum": ["unknown", "matches", "mismatch"]},
@@ -1343,7 +1347,12 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
                     "reference_id": {"type": "integer", "minimum": 1},
                     "ref_type": {"type": "string", "maxLength": 32},
                     "url": {"type": "string", "maxLength": 2048},
+                    "url_truncated": {"type": "boolean"},
+                    "url_is_complete": {"type": "boolean"},
+                    "url_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
                     "label": {"type": "string", "maxLength": 200},
+                    "label_truncated": {"type": "boolean"},
+                    "label_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
                 })},
                 "reference_page_complete": {"type": "boolean"},
                 "next_reference_cursor": {"anyOf": [

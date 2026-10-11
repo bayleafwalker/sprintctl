@@ -5039,7 +5039,7 @@ def current_unacked_source_checkpoint(store: PgStore, work_item_id: int) -> dict
         "note_id": note_id,
         "created_at": _iso(row["created_at"]) or str(row["created_at"]),
         "release_digest": payload.get("release_digest"),
-        "declared_git_sha": raw_sha if isinstance(raw_sha, str) and re.fullmatch(r"[0-9a-f]{40}", raw_sha) else None,
+        "declared_git_sha": raw_sha if isinstance(raw_sha, str) and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", raw_sha) else None,
         "acknowledgement": "unacknowledged",
         "git_currentness": "unknown",
     }

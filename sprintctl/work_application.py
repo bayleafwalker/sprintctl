@@ -90,6 +90,11 @@ def _owner_read_digest(value: Any) -> str:
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
+def _owner_text_digest(value: str) -> str:
+    """Hash the exact UTF-8 text bytes represented by a bounded excerpt."""
+    return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 @contextmanager
 def _capture_application_rejection(errors: list[tuple[str, str, int, Any]]):
     """Let a read-only snapshot finish before re-raising frozen rejections."""
@@ -2570,7 +2575,7 @@ class WorkApplication:
             if release is not None:
                 contract = _releases.normalize_acceptance_contract(release["acceptance_contract"])
                 expected_revisions = contract.get("effect_check_revisions")
-                obligations = list(contract.get("evidence_obligations") or [])[:64]
+                obligations = list(contract.get("evidence_obligations") or [])
             receipt_status = "not-supplied"
             receipt_comparison = "unknown"
             revision_comparison = "unknown"
@@ -2591,18 +2596,18 @@ class WorkApplication:
                                 _effect_verification.validate_receipt(
                                     receipt, intent, release["release_digest"], expected_revisions
                                 )
-                            except ValueError:
+                            except _effect_verification.CheckRevisionMismatch:
                                 receipt_comparison = "mismatch"
                                 if expected_revisions is not None:
                                     revision_comparison = "mismatch"
+                            except ValueError:
+                                receipt_comparison = "mismatch"
                             else:
                                 receipt_comparison = "matches"
                                 if expected_revisions is not None:
                                     revision_comparison = "matches"
                         else:
                             receipt_comparison = "mismatch"
-                            if expected_revisions is not None:
-                                revision_comparison = "mismatch"
             decision_facts = [{
                 "id": row["id"], "kind": row["kind"],
                 "release_digest": row.get("release_digest"),
@@ -2654,8 +2659,12 @@ class WorkApplication:
                 "reference_count": owner_facts_page["reference_count"],
                 "reference_set_digest": reference_digest,
                 "reference_facts_complete": owner_facts_page["references_complete"],
-                "evidence_obligations": [{"label": label, "mapping": "unknown"}
-                                          for label in obligations],
+                "evidence_obligations": [{
+                    "label": label[:200], "label_truncated": len(label) > 200,
+                    "label_sha256": _owner_text_digest(label), "mapping": "unknown",
+                } for label in obligations[:64]],
+                "evidence_obligation_count": len(obligations),
+                "evidence_obligations_complete": len(obligations) <= 64,
                 "receipt": {"status": receipt_status,
                             "comparison": receipt_comparison,
                             "evidence_digest": evidence_digest,
@@ -2784,7 +2793,7 @@ class WorkApplication:
             description = item.get("description") if isinstance(item.get("description"), str) else ""
             snapshot_facts = {**current, "status": item["status"], "run_id": owned_run["run_id"],
                               "title": title,
-                              "description_sha256": _owner_read_digest(item.get("description") or ""),
+                              "description_sha256": _owner_text_digest(item.get("description") or ""),
                               "source_checkpoint": source_checkpoint,
                               "predecessor_run_id": owned_run.get("predecessor_run_id"),
                               "decision_count": decision_count,
@@ -2825,12 +2834,18 @@ class WorkApplication:
                          "title": title[:200], "title_truncated": len(title) > 200,
                          "description_excerpt": description[:500],
                          "description_truncated": len(description) > 500,
-                         "description_sha256": _owner_read_digest(description)},
+                         "description_sha256": _owner_text_digest(description)},
                 "current": current,
                 "comparison": comparison,
-                "reference_page": [{"reference_id": int(row["id"]), "ref_type": row["ref_type"],
-                                    "url": row["url"][:2048], "label": row.get("label", "")[:200]}
-                                   for row in selected],
+                "reference_page": [{
+                    "reference_id": int(row["id"]), "ref_type": row["ref_type"],
+                    "url": row["url"][:2048], "url_truncated": len(row["url"]) > 2048,
+                    "url_is_complete": len(row["url"]) <= 2048,
+                    "url_sha256": _owner_text_digest(row["url"]),
+                    "label": row.get("label", "")[:200],
+                    "label_truncated": len(row.get("label", "")) > 200,
+                    "label_sha256": _owner_text_digest(row.get("label", "")),
+                } for row in selected],
                 "reference_page_complete": not has_more,
                 "next_reference_cursor": next_cursor,
                 "reference_git_correspondence": "unknown",

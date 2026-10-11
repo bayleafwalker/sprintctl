@@ -4,6 +4,7 @@ import uuid
 
 import jsonschema
 import pytest
+import hashlib
 
 from sprintctl import effect_verification, pg
 from sprintctl.application import ApplicationRejection
@@ -96,6 +97,23 @@ def test_acceptance_snapshot_overflow_returns_unknown_collection_digests(store):
     assert snapshot["reference_set_digest"] is None
 
 
+def test_acceptance_snapshot_preserves_oversized_descriptive_obligations(store):
+    item_id = _items(store)[0]
+    labels = ["long obligation " + "x" * 220, *[f"obligation-{index}" for index in range(64)]]
+    pg.reserve(store, item_id, actor="operator", session_id=uuid.uuid4().hex,
+        role="execution", acceptance_contract={"evidence_obligations": labels})
+    intent = _propose(store, item_id, _run(store, PROPOSER))
+    snapshot = _acceptance_snapshot(store, intent)
+    assert snapshot["evidence_obligation_count"] == 65
+    assert snapshot["evidence_obligations_complete"] is False
+    assert len(snapshot["evidence_obligations"]) == 64
+    first = snapshot["evidence_obligations"][0]
+    assert len(first["label"]) == 200
+    assert first["label_truncated"] is True
+    assert first["label_sha256"] == "sha256:" + hashlib.sha256(labels[0].encode()).hexdigest()
+    assert first["mapping"] == "unknown"
+
+
 def test_acceptance_snapshot_uses_shared_receipt_predicate_and_caller_run_binding(store):
     from tests.pg.test_protected_artifact_acceptance import receipt
 
@@ -118,6 +136,29 @@ def test_acceptance_snapshot_uses_shared_receipt_predicate_and_caller_run_bindin
     assert hidden["receipt"]["status"] == "unknown-no-evidence-authority"
     assert hidden["receipt"]["evidence_digest"] is None
     assert hidden["receipt"]["comparison"] == "unknown"
+
+
+@pytest.mark.parametrize("binding", ["artifact", "release"])
+def test_snapshot_does_not_mislabel_unrelated_receipt_binding_failure_as_revision_mismatch(store, binding):
+    from tests.pg.test_protected_artifact_acceptance import receipt
+
+    item_id = _items(store)[0]
+    expected = "sha256:" + "d" * 64
+    reservation = pg.reserve(store, item_id, actor="operator", session_id=uuid.uuid4().hex,
+        role="execution", acceptance_contract={"effect_check_revisions": {"patch-check": expected}})
+    release = pg.get_release(store, reservation["release_digest"])
+    intent = _propose(store, item_id, _run(store, PROPOSER))
+
+    def mutate(body):
+        if binding == "artifact":
+            body["artifact"]["digest"] = "sha256:" + "a" * 64
+        else:
+            body["release_digest"] = "sha256:" + "b" * 64
+
+    ref, _, _ = receipt(store, intent, release, mutate=mutate)
+    snapshot = _acceptance_snapshot(store, intent, ref=ref)
+    assert snapshot["receipt"]["comparison"] == "mismatch"
+    assert snapshot["receipt"]["check_revision_comparison"] == "unknown"
 
 
 def test_continuation_requires_current_owned_run_and_explicit_item(store):
@@ -174,6 +215,13 @@ def test_continuation_reads_only_current_unacknowledged_owner_checkpoint_and_des
                     work_item_id=item_id, payload={"summary": "ack"})
     acknowledged = _continuation(app, run_id, item_id, PROPOSER)
     assert acknowledged["source_checkpoint"] is None
+    sha256_checkpoint_id = pg.create_event(
+        store, item["sprint_id"], "agent", "lane.checkpoint", work_item_id=item_id,
+        payload={"summary": "sha256 checkpoint", "git_sha": "c" * 64},
+    )
+    sha256_checkpoint = _continuation(app, run_id, item_id, PROPOSER)["source_checkpoint"]
+    assert sha256_checkpoint["note_id"] == sha256_checkpoint_id
+    assert sha256_checkpoint["declared_git_sha"] == "c" * 64
 
 
 def test_continuation_latest_decision_is_exact_when_page_overflows(store):
@@ -227,6 +275,24 @@ def test_continuation_overflow_keeps_large_population_digest_unknown(store):
                            cursor=first["next_reference_cursor"])
     assert len(second["reference_page"]) == 1
     assert second["reference_page_complete"] is True
+
+
+def test_continuation_marks_oversized_reference_values_as_excerpts(store):
+    app = _app(store)
+    item_id = _items(store)[0]
+    run_id = _run(store, PROPOSER)
+    long_url = "https://example.test/" + "u" * 2100
+    long_label = "label-" + "l" * 220
+    pg.add_ref(store, item_id, "doc", long_url, long_label)
+    delta = _continuation(app, run_id, item_id, PROPOSER)
+    reference = delta["reference_page"][0]
+    assert len(reference["url"]) == 2048
+    assert reference["url_truncated"] is True
+    assert reference["url_is_complete"] is False
+    assert reference["url_sha256"] == "sha256:" + hashlib.sha256(long_url.encode()).hexdigest()
+    assert len(reference["label"]) == 200
+    assert reference["label_truncated"] is True
+    assert reference["label_sha256"] == "sha256:" + hashlib.sha256(long_label.encode()).hexdigest()
 
 
 def test_continuation_schema_is_read_only_and_bounded():
