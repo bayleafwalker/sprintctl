@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sprintctl.invalid/schemas/work.run.invocation-receipt-get-v1.request.json",
+  "title": "work.run.invocation-receipt-get-v1 request",
+  "description": "Exact-ID lookup. Repository and verified identity come from the owner invocation context, never request properties.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["invocation_id", "attempt_id"],
+  "properties": {
+    "invocation_id": {"type": "string", "pattern": "^inv_[0-9A-HJKMNP-TV-Z]{26}$"},
+    "attempt_id": {"type": "string", "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$"}
+  }
+}

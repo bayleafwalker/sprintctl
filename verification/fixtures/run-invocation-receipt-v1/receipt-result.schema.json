@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sprintctl.invalid/schemas/sprintctl-run-invocation-receipt-v1.json",
+  "title": "Sprintctl run invocation receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "repo_id", "invocation_id", "attempt_id", "owner_record_kind", "owner_record_id", "owner_record_digest", "owner_binding"],
+  "properties": {
+    "schema": {"const": "sprintctl-run-invocation-receipt/v1"},
+    "repo_id": {"type": "string", "minLength": 1},
+    "invocation_id": {"type": "string", "pattern": "^inv_[0-9A-HJKMNP-TV-Z]{26}$"},
+    "attempt_id": {"type": "string", "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$"},
+    "owner_record_kind": {"const": "run"},
+    "owner_record_id": {"type": "string", "pattern": "^run_[0-9A-HJKMNP-TV-Z]{26}$"},
+    "owner_record_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "owner_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo_id", "workspace_id", "principal_id", "principal_epoch", "client_id", "grant_id"],
+      "properties": {
+        "repo_id": {"type": "string", "minLength": 1},
+        "workspace_id": {"type": "string", "minLength": 1},
+        "principal_id": {"type": "string", "minLength": 1},
+        "principal_epoch": {"type": "integer", "minimum": 0},
+        "client_id": {"type": ["string", "null"]},
+        "grant_id": {"type": ["string", "null"]}
+      }
+    }
+  }
+}

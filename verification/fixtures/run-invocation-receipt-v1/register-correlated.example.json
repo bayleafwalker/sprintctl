@@ -1,0 +1,9 @@
+{
+  "harness_id": "harness-example",
+  "harness_build": "build-17",
+  "model_id": "model-example",
+  "recipe_id": "recipe-example",
+  "observed_profile": {"instruction_digest": "sha256:example", "skill_digests": []},
+  "idempotency_key": "run:example-0001",
+  "predecessor_run_id": "run_0123456789ABCDEFGHJKMNPQRS"
+}
