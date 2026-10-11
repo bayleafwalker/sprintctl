@@ -1,8 +1,9 @@
 # Hosted run invocation receipt contract
 
-Status: proposed v1 contract, contract-only. This document defines an
-additive owner-side correlation capability. It does not enable Cloud
-population accounting or make invocation correlation an acceptance condition.
+Status: v1 owner implementation is present in source behind PostgreSQL schema
+23. It requires a separately applied and qualified schema migration before the
+new operations are available. This does not enable Cloud population accounting
+or make invocation correlation an acceptance condition.
 
 ## Operations
 
@@ -142,4 +143,5 @@ contracts and qualification. This contract enables only run registration.
 Schema 23 is additive and PostgreSQL-only. The local SQLite backend has no
 run/idempotency storage; these operations remain explicitly unsupported there
 unless a future separately reviewed implementation adds the actual data
-model. No migration is applied by this contract packet.
+model. Runtime startup only checks compatibility; it never applies this
+migration.

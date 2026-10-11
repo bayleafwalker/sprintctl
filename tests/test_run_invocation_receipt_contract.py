@@ -8,6 +8,8 @@ from pathlib import Path
 import jsonschema
 import pytest
 
+from sprintctl.run_invocation import jcs_bytes, owner_record_digest
+from sprintctl.vuoro_adapter import WORK_OPERATION_CONTRACTS
 
 FIXTURES = Path(__file__).parents[1] / "verification/fixtures/run-invocation-receipt-v1"
 _JCS_SAFE_INTEGER = 9007199254740991
@@ -27,9 +29,7 @@ def _jcs_number_supported(value):
         return True
     if isinstance(value, int):
         return -_JCS_SAFE_INTEGER <= value <= _JCS_SAFE_INTEGER
-    if isinstance(value, float):
-        return False
-    return True
+    return not isinstance(value, float)
 
 
 def test_correlated_register_keeps_legacy_arguments_and_rejects_transport_claims():
@@ -179,6 +179,24 @@ def test_correlated_register_result_has_bound_and_legacy_unbound_variants():
             jsonschema.validate(invalid, schema)
 
 
+def test_served_catalog_operations_match_the_frozen_machine_contract():
+    contracts = {item.name: item for item in WORK_OPERATION_CONTRACTS}
+    register = contracts["work.run.register-correlated-v1"]
+    receipt_get = contracts["work.run.invocation-receipt-get-v1"]
+    jsonschema.validate(_example("register-correlated.example.json"), register.input_schema)
+    jsonschema.validate(_example("register-correlated.bound.example.json"), register.result_schema)
+    jsonschema.validate(_example("register-correlated.legacy-unbound.example.json"), register.result_schema)
+    jsonschema.validate({
+        "run_id": "run_0123456789ABCDEFGHJKMNPQRS",
+        "invocation_id": "inv_0123456789ABCDEFGHJKMNPQRS",
+        "attempt_id": "att_0123456789ABCDEFGHJKMNPQRS",
+    }, receipt_get.input_schema)
+    jsonschema.validate(_example("receipt-result.example.json"), receipt_get.result_schema)
+    assert register.required_authority == "work:evidence"
+    assert receipt_get.required_authority == "work:read"
+    assert receipt_get.input_schema["additionalProperties"] is False
+
+
 def test_owner_digest_vectors_pin_domain_jcs_bytes_and_digest_format():
     vectors = _example("owner-record-digest-vectors.json")
     prefix = vectors["domain_prefix_utf8"].encode("utf-8")
@@ -193,6 +211,8 @@ def test_owner_digest_vectors_pin_domain_jcs_bytes_and_digest_format():
         canonical = vector["canonical_utf8"].encode("utf-8")
         assert json.loads(canonical) == vector["projection"]
         assert hashlib.sha256(prefix + canonical).hexdigest() == vector["expected_sha256"]
+        assert jcs_bytes(vector["projection"]) == canonical
+        assert owner_record_digest(vector["projection"]) == vector["expected_sha256"]
     unicode_vector = vectors["valid_vectors"][1]
     assert list(unicode_vector["projection"]) == ["𐀀", "\ue000"]
     assert vectors["rejected_number_examples"] == [
@@ -210,3 +230,9 @@ def test_owner_digest_vectors_pin_domain_jcs_bytes_and_digest_format():
             assert not _jcs_number_supported(non_finite)
         else:
             assert not _jcs_number_supported(vector["value"])
+
+
+def test_jcs_rejects_unsafe_integers_floats_nonfinite_and_unpaired_surrogates():
+    for value in (9007199254740992, -9007199254740992, 1.0, float("nan"), "\ud800"):
+        with pytest.raises(ValueError):
+            jcs_bytes({"value": value})

@@ -510,6 +510,38 @@ _REGISTERED_RUN_RESULT_OBJECT = _object_schema(
     },
     required=tuple(_RUN_RESULT_OBJECT["required"]),
 )
+_RUN_INVOCATION_RECEIPT_SCHEMA = _object_schema(
+    {
+        "schema": {"const": "sprintctl-run-invocation-receipt/v1"},
+        "repo_id": {"type": "string", "minLength": 1},
+        "invocation_id": {"type": "string", "pattern": "^inv_[0-9A-HJKMNP-TV-Z]{26}$"},
+        "attempt_id": {"type": "string", "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$"},
+        "owner_record_kind": {"const": "run"},
+        "owner_record_id": _RUN_ID_SCHEMA,
+        "owner_record_digest": _SHA256_HEX,
+        "owner_binding": _object_schema(
+            {
+                "repo_id": {"type": "string", "minLength": 1},
+                "workspace_id": {"type": "string", "minLength": 1},
+                "principal_id": {"type": "string", "minLength": 1},
+                "principal_epoch": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+                "client_id": _NULLABLE_BINDING_ID_SCHEMA,
+                "grant_id": _NULLABLE_BINDING_ID_SCHEMA,
+            },
+            required=("repo_id", "workspace_id", "principal_id", "principal_epoch", "client_id", "grant_id"),
+        ),
+    },
+    required=("schema", "repo_id", "invocation_id", "attempt_id", "owner_record_kind", "owner_record_id", "owner_record_digest", "owner_binding"),
+)
+_CORRELATED_RUN_RESULT_OBJECT = _object_schema(
+    {
+        "repo_id": {"type": "string", "minLength": 1},
+        "run": _REGISTERED_RUN_RESULT_OBJECT,
+        "correlation_status": {"enum": ["bound", "legacy-unbound"]},
+        "receipt": {"anyOf": [_RUN_INVOCATION_RECEIPT_SCHEMA, {"type": "null"}]},
+    },
+    required=("repo_id", "run", "correlation_status", "receipt"),
+)
 _SESSION_NOTE_RESULT_OBJECT = _object_schema(
     {
         "note_id": {"type": "integer", "minimum": 1},
@@ -1214,6 +1246,40 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         ),
         "work:evidence",
         "write",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.run.register-correlated-v1",
+        _object_schema(
+            {
+                "harness_id": {"type": "string", "minLength": 1},
+                "harness_build": {"type": "string", "minLength": 1},
+                "model_id": {"type": "string", "minLength": 1},
+                "recipe_id": {"type": "string", "minLength": 1},
+                "observed_profile": _OBSERVED_PROFILE_SCHEMA,
+                "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
+                "predecessor_run_id": {"type": "string", "minLength": 1},
+            },
+            required=("harness_id", "harness_build", "model_id", "recipe_id", "observed_profile", "idempotency_key"),
+        ),
+        _CORRELATED_RUN_RESULT_OBJECT,
+        "work:evidence",
+        "write",
+        "required",
+    ),
+    WorkOperationContract(
+        "work.run.invocation-receipt-get-v1",
+        _object_schema(
+            {
+                "run_id": _RUN_ID_SCHEMA,
+                "invocation_id": {"type": "string", "pattern": "^inv_[0-9A-HJKMNP-TV-Z]{26}$"},
+                "attempt_id": {"type": "string", "pattern": "^att_[0-9A-HJKMNP-TV-Z]{26}$"},
+            },
+            required=("run_id", "invocation_id", "attempt_id"),
+        ),
+        _RUN_INVOCATION_RECEIPT_SCHEMA,
+        "work:read",
+        "read",
         "not-allowed",
     ),
     WorkOperationContract(

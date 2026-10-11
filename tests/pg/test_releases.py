@@ -293,7 +293,7 @@ class TestRollingWindow:
 
 
 class TestSchema15Migration:
-    def test_migrating_14_to_15_is_idempotent(self, pg_test_scope, monkeypatch):
+    def test_migrating_14_to_15_is_idempotent(self, pg_test_scope, monkeypatch, store):
         schema = "release_v15_" + uuid.uuid4().hex
         conn = psycopg.connect(_PG_URL, row_factory=dict_row)
         assert_disposable_connection(conn)
@@ -309,6 +309,8 @@ class TestSchema15Migration:
                 # Schema 21 references the Release table withheld in this fixture.
                 patch.setattr(pg, "_apply_schema_version_21", lambda cur: None)
                 patch.setattr(pg, "_apply_schema_version_22", lambda cur: None)
+                patch.setattr(pg, "_apply_schema_version_23", lambda cur: None)
+                patch.setattr(pg_migrations, "compatibility_handshake", lambda store: {"compatible": True})
                 pg_migrations.migrate_schema(store)
             with conn.cursor() as cur:
                 cur.execute("UPDATE schema_version SET version = 14")

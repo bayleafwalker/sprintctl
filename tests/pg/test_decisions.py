@@ -312,7 +312,7 @@ def _fold_counts(cur, repo_id):
 
 class TestSchema14Fold:
     def test_v13_fixture_folds_exact_counts_and_rerun_is_a_no_op(
-        self, pg_test_scope, monkeypatch
+        self, pg_test_scope, monkeypatch, store
     ):
         schema = "decision_fold_" + uuid.uuid4().hex
         conn = psycopg.connect(_PG_URL, row_factory=dict_row)
@@ -332,6 +332,8 @@ class TestSchema14Fold:
                 # Schema 21 references the Release table withheld in this fixture.
                 patch.setattr(pg, "_apply_schema_version_21", lambda cur: None)
                 patch.setattr(pg, "_apply_schema_version_22", lambda cur: None)
+                patch.setattr(pg, "_apply_schema_version_23", lambda cur: None)
+                patch.setattr(pg_migrations, "compatibility_handshake", lambda store: {"compatible": True})
                 pg_migrations.migrate_schema(store)
             with conn.cursor() as cur:
                 cur.execute("UPDATE schema_version SET version = 13")

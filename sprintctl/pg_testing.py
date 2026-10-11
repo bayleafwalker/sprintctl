@@ -28,6 +28,8 @@ REPO_TABLES = (
     # leases from their item and run; listed first for the same reason.
     "work_outcome_report",
     "work_lease",
+    "work_run_invocation_attempt",
+    "work_run_invocation_binding",
     # E2 (agentops#2466): the ledger carries no FK to run, session_note and
     # evidence_item cascade from run (ON DELETE CASCADE), but are listed
     # explicitly first so scope cleanup does not depend on the cascade.

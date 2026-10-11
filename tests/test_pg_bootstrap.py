@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from sprintctl import pg, pg_migrations
+from sprintctl import pg, pg_migrations, run_invocation_schema
 
 
 CURRENT = pg_migrations.CURRENT_SCHEMA_VERSION
@@ -63,6 +63,19 @@ class _SchemaCursor:
         raise AssertionError(f"unexpected fetchall for query: {self._query}")
 
     def fetchone(self):
+        if "WITH names(name) AS (VALUES ('work_run_invocation_binding')" in self._query:
+            # This fake models schemas before migration 23, so none of the
+            # append-only invocation binding/attempt objects exist yet.
+            return {
+                "table_count": 0,
+                "object_count": 0,
+                "function_count": 0,
+                "relations": None,
+                "columns": None,
+                "constraints": None,
+                "triggers": None,
+                "functions": None,
+            }
         if "SELECT c.relname FROM pg_class" in self._query or "SELECT p.proname FROM pg_proc" in self._query:
             return None  # No foreign attempt objects in this empty bootstrap fake.
         if "SELECT data_type FROM information_schema.columns" in self._query:
@@ -136,6 +149,27 @@ def _store(version=4, **kwargs):
     return pg.PgStore(conn=conn, repo_id="test-repo"), conn
 
 
+@pytest.fixture(autouse=True)
+def _stub_invocation_catalog_for_schema_state_fakes(monkeypatch):
+    """Keep these ledger-state fakes independent of PostgreSQL catalog DDL."""
+    from sprintctl import run_invocation_schema
+
+    def inspect_catalog(cur):
+        version = cur._conn.version
+        available = version is not None and version >= 23
+        return {
+            "table_count": 2 if available else 0,
+            "catalog_fingerprint": (
+                run_invocation_schema.EXPECTED_CATALOG_FINGERPRINT if available else "0" * 64
+            ),
+            "expected_catalog_fingerprint": run_invocation_schema.EXPECTED_CATALOG_FINGERPRINT,
+            "available": available,
+            "complete": True,
+        }
+
+    monkeypatch.setattr(run_invocation_schema, "inspect_catalog", inspect_catalog)
+
+
 def test_snapshot_uses_store_connection_factory_instead_of_redacted_dsn(monkeypatch):
     class Context:
         def __enter__(self):
@@ -200,6 +234,14 @@ def test_runtime_compatibility_probe_is_read_only_and_publishes_work_api():
                 "trigger_function_fingerprint": pg_migrations.MAINTENANCE_TRIGGER_FUNCTION_FINGERPRINT,
                 "expected_trigger_function_fingerprint": pg_migrations.MAINTENANCE_TRIGGER_FUNCTION_FINGERPRINT,
                 "marker_version": 1,
+            },
+            "run_invocation_storage": {
+                "schema_version": "sprintctl-run-invocation-storage/v1",
+                "table_count": 2,
+                "catalog_fingerprint": run_invocation_schema.EXPECTED_CATALOG_FINGERPRINT,
+                "expected_catalog_fingerprint": run_invocation_schema.EXPECTED_CATALOG_FINGERPRINT,
+                "available": True,
+                "complete": True,
             },
             "repository_ingest_cursor": {
                 "schema_version": "sprintctl-repository-ingest-cursor/v1",
