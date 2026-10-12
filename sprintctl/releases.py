@@ -149,6 +149,17 @@ def normalize_acceptance_contract(contract: Mapping[str, Any] | None) -> dict[st
             )
     if "effect_verification_required" in contract and type(contract["effect_verification_required"]) is not bool:
         raise ValueError("acceptance_contract.effect_verification_required must be a boolean")
+    if "effect_check_revisions" in contract:
+        revisions = contract["effect_check_revisions"]
+        if (not isinstance(revisions, Mapping) or not revisions or len(revisions) > 64
+                or any(not isinstance(name, str) or not name.strip() or len(name) > 200
+                       or not isinstance(revision, str)
+                       or re.fullmatch(r"sha256:[0-9a-f]{64}", revision) is None
+                       for name, revision in revisions.items())):
+            raise ValueError(
+                "acceptance_contract.effect_check_revisions must map one to 64 "
+                "non-empty check names to exact sha256 revisions"
+            )
     if "verification_profile" in contract:
         profile = contract["verification_profile"]
         if profile not in SUPPORTED_VERIFICATION_PROFILES:

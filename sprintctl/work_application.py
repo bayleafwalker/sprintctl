@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+from contextlib import contextmanager
 
 from .application_common import *
 from . import contracts as _contracts
 from . import decisions as _decisions
 from . import effect_intent as _effect
+from . import effect_verification as _effect_verification
 from . import effect_preview as _preview
 from . import effect_attempt as _attempt
 from . import reservation as _reservation
@@ -79,6 +82,26 @@ def _request_digest(tool: str, arguments: dict, *, exclude: frozenset[str] = fro
     body = {key: value for key, value in arguments.items() if key not in excluded}
     canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(f"{tool}\n{canonical}".encode()).hexdigest()
+
+
+def _owner_read_digest(value: Any) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=False, allow_nan=False).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _owner_text_digest(value: str) -> str:
+    """Hash the exact UTF-8 text bytes represented by a bounded excerpt."""
+    return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+@contextmanager
+def _capture_application_rejection(errors: list[tuple[str, str, int, Any]]):
+    """Let a read-only snapshot finish before re-raising frozen rejections."""
+    try:
+        yield
+    except ApplicationRejection as exc:
+        errors.append((exc.code, exc.message, exc.http_status, exc.details))
 
 
 #: The lease TTL is authority configuration, never the caller's
@@ -771,6 +794,7 @@ class WorkApplication:
             "work.run.register-v1": target._run_register,
             "work.run.resolve-v1": target._run_resolve,
             "work.run.predecessor-context-v1": target._run_predecessor_context,
+            "work.run.continuation-delta-v1": target._read_run_continuation_delta,
             "work.evidence.tail-v1": target._evidence_tail,
             "work.evidence.evaluate-v1": target._evidence_evaluate,
             "work.evidence.append-v1": target._evidence_append,
@@ -785,6 +809,7 @@ class WorkApplication:
             _effect.OPERATION_PROPOSE: target._effect_propose,
             _effect.OPERATION_BOUND_PROPOSE: target._effect_propose_bound,
             _effect.OPERATION_GET: target._effect_get,
+            _effect.OPERATION_ACCEPTANCE_SNAPSHOT: target._read_effect_acceptance_snapshot,
             _effect.OPERATION_PREVIEW: target._effect_preview,
             _effect.OPERATION_LIST_PROPOSED: target._effect_list_proposed,
             _effect.OPERATION_LIST_ACCEPTED: target._effect_list_accepted,
@@ -2475,6 +2500,380 @@ class WorkApplication:
                 "effect-not-found", f"effect intent {intent_id!r} not found", 404
             )
         return self._effect_intent_result(intent)
+
+    def _read_effect_acceptance_snapshot(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        """Read bounded acceptance facts at one PostgreSQL snapshot point."""
+        allowed = frozenset({"intent_id", "revision", "canonical_intent_digest",
+                             "artifact_sha256", "verification_ref"})
+        _effect_arguments(arguments, allowed)
+        intent_id = _effect_intent_id(arguments)
+        revision = arguments.get("revision")
+        digest = arguments.get("canonical_intent_digest")
+        artifact_sha256 = arguments.get("artifact_sha256")
+        if (type(revision) is not int or revision < 1
+                or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or not isinstance(artifact_sha256, str)
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", artifact_sha256)):
+            raise ApplicationRejection("invalid-arguments", "give an exact effect revision and artifact digest", 422)
+        authorities = set(getattr(context.identity, "authorities", ()) or ())
+        if "work:read" not in authorities:
+            raise ApplicationRejection("authority-required", "acceptance snapshot requires work:read", 403)
+        verification_ref = arguments.get("verification_ref")
+        if verification_ref is not None:
+            if (type(verification_ref) is not dict or set(verification_ref) != {"run_id", "item_id"}
+                    or not isinstance(verification_ref["run_id"], str)
+                    or not 1 <= len(verification_ref["run_id"]) <= 128
+                    or not verification_ref["run_id"].isprintable()
+                    or not isinstance(verification_ref["item_id"], str)
+                    or not 1 <= len(verification_ref["item_id"]) <= 128):
+                raise ApplicationRejection("invalid-arguments", "verification_ref must name one run and evidence item", 422)
+        snapshot = getattr(self.backend, "repeatable_read_snapshot", None)
+        if not callable(snapshot) or not callable(getattr(self.backend, "get_effect_verification_receipt", None)):
+            raise ApplicationRejection(
+                "unsupported-backend", "acceptance snapshots require the PostgreSQL owner", 501
+            )
+        principal_id, workspace_id = _identity_binding(context)
+        client_id, grant_id = _grant_binding(context)
+        deferred_rejections: list[tuple[str, str, int, Any]] = []
+        with snapshot(self.store) as owner_store, _capture_application_rejection(deferred_rejections):
+            intent = self.backend.get_effect_intent(owner_store, intent_id)
+            if intent is None:
+                raise ApplicationRejection("effect-not-found", "no authorized owner effect was found", 404)
+            exact = (intent["revision"] == revision
+                     and intent["canonical_intent_digest"] == digest
+                     and _effect.canonical_intent_digest(intent) == intent["canonical_intent_digest"])
+            artifact = _effect_verification.artifact_digest(intent["unified_diff"])
+            item_result = self.backend.get_work_item_with_edit_revision(owner_store, int(intent["item_id"]))
+            if item_result is None:
+                raise ApplicationRejection("item-not-found", "no authorized owner item was found", 404)
+            item, edit_revision = item_result
+            release = self.backend.current_release(owner_store, int(intent["item_id"]))
+            fact_reader = getattr(self.backend, "owner_read_facts", None)
+            if not callable(fact_reader):
+                raise ApplicationRejection("unsupported-backend", "bounded owner reads require PostgreSQL", 501)
+            owner_facts_page = fact_reader(owner_store, int(intent["item_id"]), limit=64)
+            decisions = owner_facts_page["decisions"]
+            decision_count = owner_facts_page["decision_count"]
+            decision_digest = (_owner_read_digest([{
+                "id": row["id"], "kind": row["kind"],
+                "release_digest": row.get("release_digest"),
+                "evidence_digests": row.get("evidence_digests", []),
+            } for row in decisions]) if owner_facts_page["decisions_complete"] else None)
+            reference_facts = [{"id": row["id"], "ref_type": row["ref_type"],
+                                "url": row["url"], "label": row.get("label", "")}
+                               for row in owner_facts_page["references"]]
+            reference_digest_facts = owner_facts_page["reference_digest_facts"]
+            reference_digest = (_owner_read_digest([{
+                "id": row["id"], "ref_type": row["ref_type"],
+                "url": row["url"], "label": row.get("label", ""),
+            } for row in reference_digest_facts])
+                if owner_facts_page["references_complete"] else None)
+            expected_revisions = None
+            obligations: list[str] = []
+            if release is not None:
+                contract = _releases.normalize_acceptance_contract(release["acceptance_contract"])
+                expected_revisions = contract.get("effect_check_revisions")
+                obligations = list(contract.get("evidence_obligations") or [])
+            receipt_status = "not-supplied"
+            receipt_comparison = "unknown"
+            revision_comparison = "unknown"
+            evidence_digest = None
+            if verification_ref is not None:
+                if "work:evidence" not in authorities:
+                    receipt_status = "unknown-no-evidence-authority"
+                else:
+                    receipt = self.backend.get_effect_verification_receipt(
+                        owner_store, verification_ref, principal_id=principal_id,
+                        workspace_id=workspace_id, client_id=client_id, grant_id=grant_id,
+                    )
+                    receipt_status = "not-found" if receipt is None else "owner-record-observed"
+                    if receipt is not None:
+                        evidence_digest = receipt.get("digest")
+                        if release is not None and intent.get("release_digest") == release["release_digest"]:
+                            try:
+                                _effect_verification.validate_receipt(
+                                    receipt, intent, release["release_digest"], expected_revisions
+                                )
+                            except _effect_verification.CheckRevisionMismatch:
+                                receipt_comparison = "mismatch"
+                                if expected_revisions is not None:
+                                    revision_comparison = "mismatch"
+                            except ValueError:
+                                receipt_comparison = "mismatch"
+                            else:
+                                receipt_comparison = "matches"
+                                if expected_revisions is not None:
+                                    revision_comparison = "matches"
+                        else:
+                            receipt_comparison = "mismatch"
+            decision_facts = [{
+                "id": row["id"], "kind": row["kind"],
+                "release_digest": row.get("release_digest"),
+                "evidence_digests": row.get("evidence_digests", []),
+            } for row in decisions]
+            current_item = {"item_id": int(intent["item_id"]), "status": item["status"],
+                             "work_edit_revision": edit_revision,
+                             "status_revision": self.backend.item_status_revision(item)}
+            current_release = None if release is None else {
+                "release_digest": release["release_digest"],
+                "item_revision": release["item_revision"],
+                "effect_verification_required": bool(
+                    contract.get("effect_verification_required", False) or expected_revisions
+                ),
+                "effect_check_revisions": expected_revisions,
+                "revision_currentness": "unknown" if expected_revisions is None else revision_comparison,
+            }
+            owner_facts = {
+                "repo_id": self.repo_id, "intent_id": intent_id,
+                "intent_revision": intent["revision"],
+                "canonical_intent_digest": intent["canonical_intent_digest"],
+                "artifact_sha256": artifact,
+                "current_item": current_item,
+                "current_release": current_release,
+                "current_decision_digest": decision_digest,
+                "current_reference_set_digest": reference_digest,
+                "decision_count": decision_count,
+                "decision_max_id": owner_facts_page["decision_max_id"],
+                "reference_count": owner_facts_page["reference_count"],
+                "reference_max_id": owner_facts_page["reference_max_id"],
+            }
+            return {"repo_id": self.repo_id, "snapshot": {
+                "schema": "sprintctl-effect-acceptance-snapshot/v1",
+                "snapshot_digest": _owner_read_digest(owner_facts),
+                "authorizes_acceptance": False,
+                "requested_basis_matches": exact,
+                "artifact_digest_matches": artifact == artifact_sha256,
+                "intent": {"intent_id": intent_id, "revision": intent["revision"],
+                           "canonical_intent_digest": intent["canonical_intent_digest"],
+                           "state": intent["state"], "item_id": int(intent["item_id"]),
+                           "release_digest": intent.get("release_digest"),
+                           "artifact_sha256": artifact},
+                "current_item": current_item,
+                "current_release": current_release,
+                "decision_facts": decision_facts[-20:],
+                "decision_count": decision_count,
+                "decision_digest": decision_digest,
+                "decision_facts_complete": decision_count <= 20,
+                "reference_count": owner_facts_page["reference_count"],
+                "reference_set_digest": reference_digest,
+                "reference_facts_complete": owner_facts_page["references_complete"],
+                "evidence_obligations": [{
+                    "label": label[:200], "label_truncated": len(label) > 200,
+                    "label_sha256": _owner_text_digest(label), "mapping": "unknown",
+                } for label in obligations[:64]],
+                "evidence_obligation_count": len(obligations),
+                "evidence_obligations_complete": len(obligations) <= 64,
+                "receipt": {"status": receipt_status,
+                            "comparison": receipt_comparison,
+                            "evidence_digest": evidence_digest,
+                            "check_revision_comparison": revision_comparison},
+                "lease_settlement": "unknown",
+            }}
+        if deferred_rejections:
+            raise ApplicationRejection(*deferred_rejections[0])
+
+    def _read_run_continuation_delta(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        """Compare a caller checkpoint with bounded current owner facts."""
+        allowed = frozenset({"run_id", "item_id", "checkpoint", "limit", "cursor",
+                             "after_note_id", "after_chain_seq"})
+        _effect_arguments(arguments, allowed)
+        run_id = arguments.get("run_id")
+        item_id = arguments.get("item_id")
+        limit = arguments.get("limit", 32)
+        if (not isinstance(run_id, str) or re.fullmatch(r"run_[0-9A-HJKMNP-TV-Z]{26}", run_id) is None
+                or type(item_id) is not int or item_id < 1
+                or type(limit) is not int or not 1 <= limit <= 64):
+            raise ApplicationRejection("invalid-arguments", "give an owned run, explicit item id and limit 1 to 64", 422)
+        after_note_id = arguments.get("after_note_id")
+        after_chain_seq = arguments.get("after_chain_seq")
+        for name, value in (("after_note_id", after_note_id), ("after_chain_seq", after_chain_seq)):
+            if value is not None and (type(value) is not int or value < 0):
+                raise ApplicationRejection("invalid-arguments", f"{name} must be a non-negative integer", 422)
+        checkpoint = arguments.get("checkpoint")
+        checkpoint_fields = {"repo_id", "item_id", "work_edit_revision", "status_revision",
+                             "current_release_digest", "current_decision_digest",
+                             "current_reference_set_digest"}
+        if checkpoint is not None:
+            if type(checkpoint) is not dict or set(checkpoint) != checkpoint_fields:
+                raise ApplicationRejection("invalid-arguments", "checkpoint must use the complete owner checkpoint schema", 422)
+            if (checkpoint.get("repo_id") != self.repo_id or checkpoint.get("item_id") != item_id
+                    or any(not isinstance(checkpoint.get(key), str) or not checkpoint[key]
+                           for key in ("work_edit_revision", "status_revision"))
+                    or (checkpoint["current_release_digest"] is not None
+                        and (not isinstance(checkpoint["current_release_digest"], str)
+                             or not re.fullmatch(r"[0-9a-f]{64}", checkpoint["current_release_digest"])))
+                    or any(checkpoint.get(key) is not None and (
+                           not isinstance(checkpoint[key], str)
+                           or not re.fullmatch(r"sha256:[0-9a-f]{64}", checkpoint[key]))
+                           for key in ("current_decision_digest", "current_reference_set_digest"))):
+                raise ApplicationRejection("invalid-arguments", "checkpoint does not match this repository and item", 422)
+        checkpoint_digest = _owner_read_digest(checkpoint)
+        cursor = arguments.get("cursor")
+        if cursor is not None:
+            if (type(cursor) is not dict
+                    or set(cursor) != {"expected_snapshot_digest", "checkpoint_digest", "last_reference_id"}
+                    or not isinstance(cursor.get("expected_snapshot_digest"), str)
+                    or not re.fullmatch(r"sha256:[0-9a-f]{64}", cursor["expected_snapshot_digest"])
+                    or not isinstance(cursor.get("checkpoint_digest"), str)
+                    or not re.fullmatch(r"sha256:[0-9a-f]{64}", cursor["checkpoint_digest"])
+                    or type(cursor.get("last_reference_id")) is not int
+                    or cursor["last_reference_id"] < 1
+                    or cursor["checkpoint_digest"] != checkpoint_digest):
+                raise ApplicationRejection("invalid-arguments", "cursor is malformed or bound to another checkpoint", 422)
+        snapshot = getattr(self.backend, "repeatable_read_snapshot", None)
+        if not callable(snapshot) or not callable(getattr(self.backend, "predecessor_context", None)):
+            raise ApplicationRejection("unsupported-backend", "continuation delta requires PostgreSQL owner state", 501)
+        principal_id, workspace_id = _identity_binding(context)
+        client_id, grant_id = _grant_binding(context)
+        deferred_rejections: list[tuple[str, str, int, Any]] = []
+        with snapshot(self.store) as owner_store, _capture_application_rejection(deferred_rejections):
+            try:
+                owned_run = self.backend.resolve_run(
+                    owner_store, run_id, principal_id=principal_id, workspace_id=workspace_id,
+                    client_id=client_id, grant_id=grant_id,
+                )
+            except Exception as exc:
+                from . import pg as _pg
+                if isinstance(exc, _pg.RunNotFound):
+                    raise ApplicationRejection("run-not-found", "no run belongs to the current caller", 404) from exc
+                raise
+            item_result = self.backend.get_work_item_with_edit_revision(owner_store, item_id)
+            if item_result is None:
+                raise ApplicationRejection("item-not-found", "no authorized owner item was found", 404)
+            item, edit_revision = item_result
+            status_revision = self.backend.item_status_revision(item)
+            release = self.backend.current_release(owner_store, item_id)
+            fact_reader = getattr(self.backend, "owner_read_facts", None)
+            if not callable(fact_reader):
+                raise ApplicationRejection("unsupported-backend", "bounded owner reads require PostgreSQL", 501)
+            last_reference_id = cursor["last_reference_id"] if cursor is not None else 0
+            owner_facts_page = fact_reader(
+                owner_store, item_id, limit=limit, after_reference_id=last_reference_id
+            )
+            decisions = owner_facts_page["decisions"]
+            decision_count = owner_facts_page["decision_count"]
+            decision_facts = [{"id": row["id"], "kind": row["kind"],
+                               "release_digest": row.get("release_digest"),
+                               "evidence_digests": row.get("evidence_digests", [])}
+                              for row in decisions]
+            reference_facts = [{"id": row["id"], "ref_type": row["ref_type"],
+                                "url": row["url"], "label": row.get("label", "")}
+                               for row in owner_facts_page["references"]]
+            release_digest = release["release_digest"] if release is not None else None
+            decision_digest = (_owner_read_digest(decision_facts)
+                               if owner_facts_page["decisions_complete"] else None)
+            reference_digest_facts = owner_facts_page["reference_digest_facts"]
+            reference_digest = (_owner_read_digest([{
+                "id": row["id"], "ref_type": row["ref_type"],
+                "url": row["url"], "label": row.get("label", ""),
+            } for row in reference_digest_facts])
+                if owner_facts_page["references_complete"] else None)
+            current = {
+                "repo_id": self.repo_id, "item_id": item_id,
+                "work_edit_revision": edit_revision, "status_revision": status_revision,
+                "current_release_digest": release_digest,
+                "current_decision_digest": decision_digest,
+                "current_reference_set_digest": reference_digest,
+            }
+            checkpoint_reader = getattr(self.backend, "current_unacked_source_checkpoint", None)
+            if not callable(checkpoint_reader):
+                raise ApplicationRejection("unsupported-backend", "source checkpoint reads require PostgreSQL", 501)
+            source_checkpoint = checkpoint_reader(owner_store, item_id)
+            if source_checkpoint is not None:
+                raw_checkpoint_release = source_checkpoint.get("release_digest")
+                source_checkpoint["release_digest"] = (
+                    raw_checkpoint_release if isinstance(raw_checkpoint_release, str)
+                    and re.fullmatch(r"[0-9a-f]{64}", raw_checkpoint_release) else None
+                )
+            title = item.get("title") if isinstance(item.get("title"), str) else ""
+            description = item.get("description") if isinstance(item.get("description"), str) else ""
+            snapshot_facts = {**current, "status": item["status"], "run_id": owned_run["run_id"],
+                              "title": title,
+                              "description_sha256": _owner_text_digest(item.get("description") or ""),
+                              "source_checkpoint": source_checkpoint,
+                              "predecessor_run_id": owned_run.get("predecessor_run_id"),
+                              "decision_count": decision_count,
+                              "decision_max_id": owner_facts_page["decision_max_id"],
+                              "reference_count": owner_facts_page["reference_count"],
+                              "reference_max_id": owner_facts_page["reference_max_id"]}
+            snapshot_digest = _owner_read_digest(snapshot_facts)
+            if cursor is not None and cursor["expected_snapshot_digest"] != snapshot_digest:
+                raise ApplicationRejection("stale-cursor", "owner facts changed between reference pages", 409)
+            comparison = {key: "unknown" if checkpoint is None or current[key] is None else
+                          "unchanged" if checkpoint[key] == current[key] else "changed"
+                          for key in ("work_edit_revision", "status_revision", "current_release_digest",
+                                      "current_decision_digest", "current_reference_set_digest")}
+            selected = owner_facts_page["references"]
+            has_more = owner_facts_page["reference_page_has_more"]
+            next_cursor = None
+            if has_more and selected:
+                next_cursor = {"expected_snapshot_digest": snapshot_digest,
+                               "checkpoint_digest": checkpoint_digest,
+                               "last_reference_id": int(selected[-1]["id"])}
+            predecessor = self.backend.predecessor_context(
+                owner_store, run_id, limit=limit, after_note_id=after_note_id,
+                after_chain_seq=after_chain_seq,
+            )
+            predecessor_notes = [{"note_id": row["note_id"], "created_at": row["created_at"]}
+                                 for row in predecessor["session_notes"]]
+            predecessor_evidence = [{"item_id": row["item_id"], "chain_seq": row["chain_seq"],
+                                     "digest": row["digest"], "kind": row["kind"]}
+                                    for row in predecessor["evidence"]]
+            return {"repo_id": self.repo_id, "delta": {
+                "schema": "sprintctl-work-continuation-delta/v1",
+                "snapshot_digest": snapshot_digest,
+                "authorizes_action": False,
+                "authorization_scope": {"repo_id": self.repo_id, "run_id": owned_run["run_id"],
+                                        "run_owned": True},
+                "work": {"item_id": item_id, "status": item["status"],
+                         "work_edit_revision": edit_revision, "status_revision": status_revision,
+                         "title": title[:200], "title_truncated": len(title) > 200,
+                         "description_excerpt": description[:500],
+                         "description_truncated": len(description) > 500,
+                         "description_sha256": _owner_text_digest(description)},
+                "current": current,
+                "comparison": comparison,
+                "reference_page": [{
+                    "reference_id": int(row["id"]), "ref_type": row["ref_type"],
+                    "url": row["url"][:2048], "url_truncated": len(row["url"]) > 2048,
+                    "url_is_complete": len(row["url"]) <= 2048,
+                    "url_sha256": _owner_text_digest(row["url"]),
+                    "label": row.get("label", "")[:200],
+                    "label_truncated": len(row.get("label", "")) > 200,
+                    "label_sha256": _owner_text_digest(row.get("label", "")),
+                } for row in selected],
+                "reference_page_complete": not has_more,
+                "next_reference_cursor": next_cursor,
+                "reference_git_correspondence": "unknown",
+                "reference_digest_domain": "owner-reference-records/v1",
+                "source_bytes": "unknown",
+                "external_missing_content": "unknown",
+                "source_checkpoint": source_checkpoint,
+                "decision_page": decision_facts[-limit:],
+                "decision_count": decision_count,
+                "decision_page_complete": decision_count <= limit,
+                "latest_decision": None if owner_facts_page["latest_decision"] is None else {
+                    "id": owner_facts_page["latest_decision"]["id"],
+                    "kind": owner_facts_page["latest_decision"]["kind"],
+                    "release_digest": owner_facts_page["latest_decision"].get("release_digest"),
+                    "evidence_digests": owner_facts_page["latest_decision"].get("evidence_digests", []),
+                },
+                "latest_decision_id": (None if owner_facts_page["latest_decision"] is None
+                                        else owner_facts_page["latest_decision"]["id"]),
+                "current_release": None if release is None else {
+                    "release_digest": release_digest, "item_revision": release["item_revision"]},
+                "predecessor_run_id": predecessor["predecessor_run_id"],
+                "predecessor_notes": predecessor_notes,
+                "predecessor_evidence": predecessor_evidence,
+                "next_after_note_id": predecessor["next_after_note_id"],
+                "next_after_chain_seq": predecessor["next_after_chain_seq"],
+            }}
+        if deferred_rejections:
+            raise ApplicationRejection(*deferred_rejections[0])
 
     def _effect_preview(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         _effect_arguments(arguments, frozenset({"intent_id", "disclose_paths"}))

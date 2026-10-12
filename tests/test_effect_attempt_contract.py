@@ -83,7 +83,10 @@ def test_only_attempt_and_declared_preview_descriptors_are_added_to_released_cat
     actual = {r["name"]: hashlib.sha256(json.dumps(r, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
               for r in catalog_operation_specs(resource_schema_available=True)}
     from sprintctl.effect_intent import OPERATION_PREVIEW
-    assert set(actual) - set(baseline["operation_sha256"]) == set(contract.OPERATION_AUTHORITIES) | {OPERATION_PREVIEW}
+    assert set(actual) - set(baseline["operation_sha256"]) == (
+        set(contract.OPERATION_AUTHORITIES) | {OPERATION_PREVIEW,
+            "work.effect.acceptance-snapshot-v1", "work.run.continuation-delta-v1"}
+    )
     assert {k: actual[k] for k in baseline["operation_sha256"]} == baseline["operation_sha256"]
 
 

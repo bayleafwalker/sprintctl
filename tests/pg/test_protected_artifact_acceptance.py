@@ -21,10 +21,13 @@ CHECKER = _context(ACCEPTOR.identity.principal_id, set(ACCEPTOR.identity.authori
 SECOND_CHECKER = _context(SECOND_ACCEPTOR.identity.principal_id, set(SECOND_ACCEPTOR.identity.authorities) | {"work:evidence"})
 
 
-def setup(store, *, required=True):
+def setup(store, *, required=True, check_revisions=None):
     item = _items(store)[0]
+    contract = {"effect_verification_required": required}
+    if check_revisions is not None:
+        contract["effect_check_revisions"] = check_revisions
     reservation = pg.reserve(store, item, actor="operator", session_id=uuid.uuid4().hex,
-        role="execution", acceptance_contract={"effect_verification_required": required})
+        role="execution", acceptance_contract=contract)
     intent = _propose(store, item, _run(store, PROPOSER))
     return item, reservation, intent
 
@@ -96,6 +99,39 @@ def test_served_reservation_contract_requires_actual_owner_receipt(store):
     ref, _, body = receipt(store, intent, release)
     accepted = accept(app, intent, ref)
     assert accepted["acceptance"]["verification"]["receipt"] == body
+
+
+def test_release_named_check_revision_is_required_on_actual_acceptance(store):
+    expected_revision = "sha256:" + "d" * 64
+    item, release, intent = setup(
+        store, required=False, check_revisions={"patch-check": expected_revision}
+    )
+    release = pg.get_release(store, release["release_digest"])
+    assert release is not None
+    assert release["acceptance_contract"]["effect_check_revisions"] == {
+        "patch-check": expected_revision
+    }
+    with pytest.raises(ApplicationRejection) as error:
+        accept(_app(store), intent)
+    assert error.value.code == "effect-verification-required"
+    ref, _, _ = receipt(store, intent, release, mutate=lambda body: body["checks"].__setitem__(
+        0, {"name": "patch-check", "revision": "sha256:" + "c" * 64, "status": "passed"}
+    ))
+    with pytest.raises(ApplicationRejection) as error:
+        accept(_app(store), intent, ref)
+    assert error.value.code == "effect-verification-refused"
+    ref, _, _ = receipt(store, intent, release)
+    accepted = accept(_app(store), intent, ref)
+    assert accepted["state"] == "accepted"
+
+
+def test_release_check_revision_map_must_not_be_empty(store):
+    item = _items(store)[0]
+    basis = pg.item_release_revision(store, item)
+    with pytest.raises(ValueError, match="effect_check_revisions"):
+        pg.reserve(store, item, actor="operator", session_id=uuid.uuid4().hex,
+                   role="execution", expected_revision=basis,
+                   acceptance_contract={"effect_check_revisions": {}})
 
 
 def test_exact_raw_artifact_protected_receipt_is_preserved_in_acceptance_without_settlement(store):

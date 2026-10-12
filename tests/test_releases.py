@@ -495,3 +495,31 @@ def test_protected_effect_verification_requirement_changes_the_frozen_release_di
     required = releases.normalize_acceptance_contract({"effect_verification_required": True})
     optional = releases.normalize_acceptance_contract({"effect_verification_required": False})
     assert releases.release_digest(UUID, revision, required, []) != releases.release_digest(UUID, revision, optional, [])
+
+
+def test_effect_check_revisions_are_opt_in_exact_named_sha256_revisions():
+    legacy = releases.normalize_acceptance_contract({"effect_verification_required": True})
+    assert "effect_check_revisions" not in legacy
+    expected = {"unit": "sha256:" + "a" * 64, "integration": "sha256:" + "b" * 64}
+    normalized = releases.normalize_acceptance_contract({"effect_check_revisions": expected})
+    assert normalized["effect_check_revisions"] == expected
+
+
+@pytest.mark.parametrize("value", [
+    None, [], "sha256:" + "a" * 64, {}, {"": "sha256:" + "a" * 64},
+    {"unit": "a" * 64}, {"unit": "sha256:" + "A" * 64},
+    {"unit": "sha256:" + "a" * 63},
+])
+def test_effect_check_revisions_reject_malformed_contracts(value):
+    with pytest.raises(ValueError, match="effect_check_revisions"):
+        releases.normalize_acceptance_contract({"effect_check_revisions": value})
+
+
+def test_effect_check_revisions_change_the_frozen_release_digest():
+    revision = releases.release_revision(EDIT_REVISION, 0)
+    revisions = {"unit": "sha256:" + "a" * 64}
+    declared = releases.normalize_acceptance_contract({"effect_check_revisions": revisions})
+    legacy = releases.normalize_acceptance_contract({})
+    assert releases.release_digest(UUID, revision, declared, []) != releases.release_digest(
+        UUID, revision, legacy, []
+    )

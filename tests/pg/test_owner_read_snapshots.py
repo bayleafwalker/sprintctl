@@ -1,0 +1,303 @@
+"""PostgreSQL owner reads are atomic, bounded and never grant permission."""
+from types import SimpleNamespace
+import uuid
+
+import jsonschema
+import pytest
+import hashlib
+
+from sprintctl import effect_verification, pg
+from sprintctl.application import ApplicationRejection
+from sprintctl.vuoro_adapter import WORK_OPERATION_CONTRACTS
+from tests.pg._shared import PG_MARKS, _PG_URL, dict_row, psycopg
+from tests.pg.test_effect_intent import PROPOSER, ACCEPTOR, _context, _app, _run, _items, _propose
+
+pytestmark = PG_MARKS
+
+CHECKER = _context(ACCEPTOR.identity.principal_id,
+                   set(ACCEPTOR.identity.authorities) | {"work:evidence"})
+CONTRACTS = {contract.name: contract for contract in WORK_OPERATION_CONTRACTS}
+
+
+def _owned_context(base, *, grant_id=None):
+    identity = SimpleNamespace(**vars(base.identity))
+    identity.grant_id = grant_id
+    return SimpleNamespace(**{**vars(base), "identity": identity})
+
+
+@pytest.fixture(autouse=True)
+def snapshot_connection_factory(store):
+    store.connection_factory = lambda: psycopg.connect(_PG_URL, row_factory=dict_row)
+
+
+def _acceptance_snapshot(store, intent, *, ref=None, context=CHECKER):
+    args = {
+        "intent_id": intent["intent_id"], "revision": intent["revision"],
+        "canonical_intent_digest": intent["canonical_intent_digest"],
+        "artifact_sha256": effect_verification.artifact_digest(intent["unified_diff"]),
+    }
+    if ref is not None:
+        args["verification_ref"] = ref
+    result = _app(store).invoke("work.effect.acceptance-snapshot-v1", args, context)
+    jsonschema.Draft202012Validator(CONTRACTS["work.effect.acceptance-snapshot-v1"].result_schema).validate(result)
+    return result["snapshot"]
+
+
+def _continuation(app, run_id, item_id, context, **kwargs):
+    result = app.invoke("work.run.continuation-delta-v1", {
+        "run_id": run_id, "item_id": item_id, **kwargs,
+    }, context)
+    jsonschema.Draft202012Validator(CONTRACTS["work.run.continuation-delta-v1"].result_schema).validate(result)
+    return result["delta"]
+
+
+def test_acceptance_snapshot_is_owner_scoped_atomic_and_never_authorizes(store):
+    item_id = _items(store)[0]
+    release = pg.reserve(store, item_id, actor="operator", session_id=uuid.uuid4().hex,
+        role="execution", acceptance_contract={"effect_check_revisions": {
+            "patch-check": "sha256:" + "d" * 64}})
+    intent = _propose(store, item_id, _run(store, PROPOSER))
+    snapshot = _acceptance_snapshot(store, intent)
+    assert snapshot["schema"] == "sprintctl-effect-acceptance-snapshot/v1"
+    assert snapshot["authorizes_acceptance"] is False
+    assert snapshot["requested_basis_matches"] is True
+    assert snapshot["artifact_digest_matches"] is True
+    assert snapshot["current_item"]["item_id"] == item_id
+    assert snapshot["current_release"]["release_digest"] == release["release_digest"]
+    assert snapshot["current_release"]["effect_verification_required"] is True
+    assert snapshot["current_release"]["revision_currentness"] == "unknown"
+    assert snapshot["receipt"]["status"] == "not-supplied"
+    assert snapshot["lease_settlement"] == "unknown"
+    assert "unified_diff" not in snapshot["intent"]
+
+
+def test_acceptance_snapshot_requires_both_effect_and_work_read_authorities(store):
+    item_id = _items(store)[0]
+    pg.reserve(store, item_id, actor="operator", session_id=uuid.uuid4().hex, role="execution")
+    intent = _propose(store, item_id, _run(store, PROPOSER))
+    no_effect_get = _context(CHECKER.identity.principal_id, {"work:read"})
+    with pytest.raises(ApplicationRejection) as denied:
+        _acceptance_snapshot(store, intent, context=no_effect_get)
+    assert denied.value.code == "authority-required"
+    no_work_read = _context(CHECKER.identity.principal_id, {"work.effect.get"})
+    with pytest.raises(ApplicationRejection) as denied:
+        _acceptance_snapshot(store, intent, context=no_work_read)
+    assert denied.value.code == "authority-required"
+
+
+def test_acceptance_snapshot_overflow_returns_unknown_collection_digests(store):
+    item_id = _items(store)[0]
+    pg.reserve(store, item_id, actor="operator", session_id=uuid.uuid4().hex, role="execution")
+    intent = _propose(store, item_id, _run(store, PROPOSER))
+    for index in range(65):
+        pg.add_ref(store, item_id, "issue", f"https://example.test/snapshot/{index}", str(index))
+    snapshot = _acceptance_snapshot(store, intent)
+    assert snapshot["decision_facts_complete"] is True
+    assert snapshot["reference_facts_complete"] is False
+    assert snapshot["reference_set_digest"] is None
+
+
+def test_acceptance_snapshot_preserves_oversized_descriptive_obligations(store):
+    item_id = _items(store)[0]
+    labels = ["long obligation " + "x" * 220, *[f"obligation-{index}" for index in range(64)]]
+    pg.reserve(store, item_id, actor="operator", session_id=uuid.uuid4().hex,
+        role="execution", acceptance_contract={"evidence_obligations": labels})
+    intent = _propose(store, item_id, _run(store, PROPOSER))
+    snapshot = _acceptance_snapshot(store, intent)
+    assert snapshot["evidence_obligation_count"] == 65
+    assert snapshot["evidence_obligations_complete"] is False
+    assert len(snapshot["evidence_obligations"]) == 64
+    first = snapshot["evidence_obligations"][0]
+    assert len(first["label"]) == 200
+    assert first["label_truncated"] is True
+    assert first["label_sha256"] == "sha256:" + hashlib.sha256(labels[0].encode()).hexdigest()
+    assert first["mapping"] == "unknown"
+
+
+def test_acceptance_snapshot_uses_shared_receipt_predicate_and_caller_run_binding(store):
+    from tests.pg.test_protected_artifact_acceptance import receipt
+
+    item_id = _items(store)[0]
+    expected = "sha256:" + "d" * 64
+    reservation = pg.reserve(store, item_id, actor="operator", session_id=uuid.uuid4().hex,
+        role="execution", acceptance_contract={"effect_check_revisions": {"patch-check": expected}})
+    release = pg.get_release(store, reservation["release_digest"])
+    intent = _propose(store, item_id, _run(store, PROPOSER))
+    ref, _, _ = receipt(store, intent, release)
+    matching = _acceptance_snapshot(store, intent, ref=ref)
+    assert matching["receipt"]["comparison"] == "matches"
+    assert matching["receipt"]["check_revision_comparison"] == "matches"
+    foreign = _acceptance_snapshot(store, intent, ref=ref,
+                                   context=_owned_context(CHECKER, grant_id="different-grant"))
+    assert foreign["receipt"]["status"] == "not-found"
+    assert foreign["receipt"]["comparison"] == "unknown"
+    without_evidence = _context(CHECKER.identity.principal_id, {"work:read", "work.effect.get"})
+    hidden = _acceptance_snapshot(store, intent, ref=ref, context=without_evidence)
+    assert hidden["receipt"]["status"] == "unknown-no-evidence-authority"
+    assert hidden["receipt"]["evidence_digest"] is None
+    assert hidden["receipt"]["comparison"] == "unknown"
+
+
+@pytest.mark.parametrize("binding", ["artifact", "release"])
+def test_snapshot_does_not_mislabel_unrelated_receipt_binding_failure_as_revision_mismatch(store, binding):
+    from tests.pg.test_protected_artifact_acceptance import receipt
+
+    item_id = _items(store)[0]
+    expected = "sha256:" + "d" * 64
+    reservation = pg.reserve(store, item_id, actor="operator", session_id=uuid.uuid4().hex,
+        role="execution", acceptance_contract={"effect_check_revisions": {"patch-check": expected}})
+    release = pg.get_release(store, reservation["release_digest"])
+    intent = _propose(store, item_id, _run(store, PROPOSER))
+
+    def mutate(body):
+        if binding == "artifact":
+            body["artifact"]["digest"] = "sha256:" + "a" * 64
+        else:
+            body["release_digest"] = "sha256:" + "b" * 64
+
+    ref, _, _ = receipt(store, intent, release, mutate=mutate)
+    snapshot = _acceptance_snapshot(store, intent, ref=ref)
+    assert snapshot["receipt"]["comparison"] == "mismatch"
+    assert snapshot["receipt"]["check_revision_comparison"] == "unknown"
+
+
+def test_continuation_requires_current_owned_run_and_explicit_item(store):
+    app = _app(store)
+    item_id = _items(store)[0]
+    run_id = _run(store, PROPOSER)
+    delta = _continuation(app, run_id, item_id, PROPOSER)
+    assert delta["authorizes_action"] is False
+    assert delta["authorization_scope"] == {"repo_id": store.repo_id, "run_id": run_id, "run_owned": True}
+    assert set(delta["comparison"].values()) == {"unknown"}
+    assert delta["source_bytes"] == delta["external_missing_content"] == "unknown"
+    assert delta["work"]["description_sha256"].startswith("sha256:")
+    assert len(delta["work"]["description_excerpt"]) <= 500
+    assert delta["latest_decision"] is None
+    foreign = _context("another-principal", set(PROPOSER.identity.authorities))
+    with pytest.raises(ApplicationRejection) as denied:
+        _continuation(app, run_id, item_id, foreign)
+    assert denied.value.code == "run-not-found"
+    wrong_grant = _owned_context(PROPOSER, grant_id="revoked-or-replaced-grant")
+    with pytest.raises(ApplicationRejection) as denied:
+        _continuation(app, run_id, item_id, wrong_grant)
+    assert denied.value.code == "run-not-found"
+    with pytest.raises(ApplicationRejection) as denied:
+        app.invoke("work.run.continuation-delta-v1", {"run_id": run_id}, PROPOSER)
+    assert denied.value.code == "invalid-arguments"
+
+
+def test_continuation_reads_only_current_unacknowledged_owner_checkpoint_and_description(store):
+    app = _app(store)
+    item_id = _items(store)[0]
+    run_id = _run(store, PROPOSER)
+    item = pg.get_work_item(store, item_id)
+    checkpoint_id = pg.create_event(
+        store, item["sprint_id"], "agent", "lane.checkpoint", work_item_id=item_id,
+        payload={"summary": "checkpoint", "git_sha": "a" * 40,
+                  "release_digest": "b" * 64},
+    )
+    initial = _continuation(app, run_id, item_id, PROPOSER)
+    description = "D" * 700
+    row, revision = pg.get_work_item_with_edit_revision(store, item_id)
+    pg.update_work_item_description(store, item_id, description,
+                                    expected_revision=revision, actor="editor")
+    pg.record_decision(store, item_id, "revise", actor="reviewer")
+    delta = _continuation(app, run_id, item_id, PROPOSER, checkpoint=initial["current"])
+    assert delta["work"]["description_excerpt"] == description[:500]
+    assert delta["work"]["description_truncated"] is True
+    assert delta["comparison"]["work_edit_revision"] == "changed"
+    assert delta["comparison"]["current_decision_digest"] == "changed"
+    assert delta["source_checkpoint"]["note_id"] == checkpoint_id
+    assert delta["source_checkpoint"]["item_id"] == item_id
+    assert delta["source_checkpoint"]["declared_git_sha"] == "a" * 40
+    assert delta["source_checkpoint"]["git_currentness"] == "unknown"
+    pg.create_event(store, item["sprint_id"], "reviewer", "lane.checkpoint.ack",
+                    work_item_id=item_id, payload={"summary": "ack"})
+    acknowledged = _continuation(app, run_id, item_id, PROPOSER)
+    assert acknowledged["source_checkpoint"] is None
+    sha256_checkpoint_id = pg.create_event(
+        store, item["sprint_id"], "agent", "lane.checkpoint", work_item_id=item_id,
+        payload={"summary": "sha256 checkpoint", "git_sha": "c" * 64},
+    )
+    sha256_checkpoint = _continuation(app, run_id, item_id, PROPOSER)["source_checkpoint"]
+    assert sha256_checkpoint["note_id"] == sha256_checkpoint_id
+    assert sha256_checkpoint["declared_git_sha"] == "c" * 64
+
+
+def test_continuation_latest_decision_is_exact_when_page_overflows(store):
+    app = _app(store)
+    item_id = _items(store)[0]
+    run_id = _run(store, PROPOSER)
+    decisions = [pg.record_decision(store, item_id, "revise", actor=f"reviewer-{index}")
+                 for index in range(65)]
+    delta = _continuation(app, run_id, item_id, PROPOSER, limit=16)
+    assert delta["decision_page_complete"] is False
+    assert delta["current"]["current_decision_digest"] is None
+    assert delta["latest_decision_id"] == decisions[-1]["id"]
+    assert delta["latest_decision"]["id"] == decisions[-1]["id"]
+
+
+def test_continuation_compares_checkpoint_and_refuses_stale_keyset_cursor(store):
+    app = _app(store)
+    item_id = _items(store)[0]
+    run_id = _run(store, PROPOSER)
+    removed_id = pg.add_ref(store, item_id, "issue", "https://example.test/1", "one")
+    pg.add_ref(store, item_id, "issue", "https://example.test/2", "two")
+    initial = _continuation(app, run_id, item_id, PROPOSER)
+    checkpoint = initial["current"]
+    first_page = _continuation(app, run_id, item_id, PROPOSER, limit=1, checkpoint=checkpoint)
+    cursor = first_page["next_reference_cursor"]
+    assert cursor is not None
+    second = _continuation(app, run_id, item_id, PROPOSER, limit=1,
+                           checkpoint=checkpoint, cursor=cursor)
+    assert second["reference_page_complete"] is True
+    assert second["comparison"]["current_reference_set_digest"] == "unchanged"
+    pg.remove_ref(store, removed_id, item_id)
+    pg.add_ref(store, item_id, "issue", "https://example.test/3", "three")
+    with pytest.raises(ApplicationRejection) as stale:
+        _continuation(app, run_id, item_id, PROPOSER, limit=1,
+                      checkpoint=checkpoint, cursor=cursor)
+    assert stale.value.code == "stale-cursor"
+
+
+def test_continuation_overflow_keeps_large_population_digest_unknown(store):
+    app = _app(store)
+    item_id = _items(store)[0]
+    run_id = _run(store, PROPOSER)
+    for index in range(65):
+        pg.add_ref(store, item_id, "issue", f"https://example.test/{index}", str(index))
+    first = _continuation(app, run_id, item_id, PROPOSER, limit=64)
+    assert first["current"]["current_reference_set_digest"] is None
+    assert first["comparison"]["current_reference_set_digest"] == "unknown"
+    assert first["reference_page_complete"] is False
+    assert first["next_reference_cursor"] is not None
+    second = _continuation(app, run_id, item_id, PROPOSER, limit=64,
+                           cursor=first["next_reference_cursor"])
+    assert len(second["reference_page"]) == 1
+    assert second["reference_page_complete"] is True
+
+
+def test_continuation_marks_oversized_reference_values_as_excerpts(store):
+    app = _app(store)
+    item_id = _items(store)[0]
+    run_id = _run(store, PROPOSER)
+    long_url = "https://example.test/" + "u" * 2100
+    long_label = "label-" + "l" * 220
+    pg.add_ref(store, item_id, "doc", long_url, long_label)
+    delta = _continuation(app, run_id, item_id, PROPOSER)
+    reference = delta["reference_page"][0]
+    assert len(reference["url"]) == 2048
+    assert reference["url_truncated"] is True
+    assert reference["url_is_complete"] is False
+    assert reference["url_sha256"] == "sha256:" + hashlib.sha256(long_url.encode()).hexdigest()
+    assert len(reference["label"]) == 200
+    assert reference["label_truncated"] is True
+    assert reference["label_sha256"] == "sha256:" + hashlib.sha256(long_label.encode()).hexdigest()
+
+
+def test_continuation_schema_is_read_only_and_bounded():
+    contract = next(c for c in WORK_OPERATION_CONTRACTS
+                    if c.name == "work.run.continuation-delta-v1")
+    assert contract.required_authority == "work:read"
+    assert contract.execution_semantics == "read"
+    assert contract.input_schema["properties"]["limit"]["maximum"] == 64
