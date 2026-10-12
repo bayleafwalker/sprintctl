@@ -216,6 +216,206 @@ def test_idempotency_replay_cannot_bind_a_different_invocation_or_attempt(receip
     assert first["correlation_status"] == "bound"
 
 
+@pytest.mark.parametrize("reuse_attempt", [True, False])
+def test_new_run_cannot_reuse_existing_invocation_or_attempt_atomically(
+    receipt_store, reuse_attempt
+):
+    store = receipt_store
+    app = _CheckedApplication(store)
+    invocation, attempt = _ids()
+    original_args = _args()
+    original = app.invoke(
+        "work.run.register-correlated-v1",
+        original_args,
+        _correlated_context(invocation, attempt),
+    )
+    original_run_id = original["run"]["run_id"]
+    second_attempt = attempt if reuse_attempt else _ids()[1]
+    conflicting_args = _args()
+
+    with pytest.raises(ApplicationRejection) as raised:
+        app.invoke(
+            "work.run.register-correlated-v1",
+            conflicting_args,
+            _correlated_context(invocation, second_attempt),
+        )
+    assert (raised.value.code, raised.value.http_status) == (
+        "invocation-correlation-conflict",
+        409,
+    )
+
+    receipt_query = {
+        "run_id": original_run_id,
+        "invocation_id": invocation,
+        "attempt_id": attempt,
+    }
+    assert app.invoke(
+        "work.run.invocation-receipt-get-v1",
+        receipt_query,
+        _correlated_context(invocation, attempt, authorities={"work:read"}),
+    ) == original["receipt"]
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) AS n FROM run WHERE repo_id=%s AND idempotency_key=%s",
+            (store.repo_id, original_args["idempotency_key"]),
+        )
+        assert cur.fetchone()["n"] == 1
+        cur.execute(
+            "SELECT count(*) AS n FROM work_idempotency_ledger "
+            "WHERE repo_id=%s AND idempotency_key=%s",
+            (store.repo_id, original_args["idempotency_key"]),
+        )
+        assert cur.fetchone()["n"] == 1
+        for table in ("run", "work_idempotency_ledger"):
+            cur.execute(
+                f"SELECT count(*) AS n FROM {table} "
+                "WHERE repo_id=%s AND idempotency_key=%s",
+                (store.repo_id, conflicting_args["idempotency_key"]),
+            )
+            assert cur.fetchone()["n"] == 0
+        cur.execute(
+            "SELECT count(*) AS n FROM work_run_invocation_binding "
+            "WHERE invocation_id=%s",
+            (invocation,),
+        )
+        assert cur.fetchone()["n"] == 1
+        cur.execute(
+            "SELECT count(*) AS n FROM work_run_invocation_attempt "
+            "WHERE invocation_id=%s",
+            (invocation,),
+        )
+        assert cur.fetchone()["n"] == 1
+        cur.execute(
+            "SELECT count(*) AS n FROM work_run_invocation_attempt "
+            "WHERE attempt_id=%s",
+            (second_attempt,),
+        )
+        expected_attempt_count = 1 if reuse_attempt else 0
+        assert cur.fetchone()["n"] == expected_attempt_count
+    store.conn.rollback()
+
+
+def test_existing_invocation_epoch_collision_is_a_conflict(receipt_store):
+    store = receipt_store
+    app = _CheckedApplication(store)
+    invocation, attempt = _ids()
+    original_args = _args()
+    original = app.invoke(
+        "work.run.register-correlated-v1",
+        original_args,
+        _correlated_context(invocation, attempt, principal_epoch=7),
+    )
+    fresh_attempt = _ids()[1]
+
+    with pytest.raises(ApplicationRejection) as raised:
+        app.invoke(
+            "work.run.register-correlated-v1",
+            original_args,
+            _correlated_context(
+                invocation,
+                fresh_attempt,
+                principal_epoch=8,
+            ),
+        )
+    assert (raised.value.code, raised.value.http_status) == (
+        "invocation-correlation-conflict",
+        409,
+    )
+    assert app.invoke(
+        "work.run.invocation-receipt-get-v1",
+        {
+            "run_id": original["run"]["run_id"],
+            "invocation_id": invocation,
+            "attempt_id": attempt,
+        },
+        _correlated_context(
+            invocation,
+            attempt,
+            principal_epoch=7,
+            authorities={"work:read"},
+        ),
+    ) == original["receipt"]
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) AS n FROM run WHERE repo_id=%s AND idempotency_key=%s",
+            (store.repo_id, original_args["idempotency_key"]),
+        )
+        assert cur.fetchone()["n"] == 1
+        cur.execute(
+            "SELECT count(*) AS n FROM work_idempotency_ledger "
+            "WHERE repo_id=%s AND idempotency_key=%s",
+            (store.repo_id, original_args["idempotency_key"]),
+        )
+        assert cur.fetchone()["n"] == 1
+        cur.execute(
+            "SELECT count(*) AS n FROM work_run_invocation_binding "
+            "WHERE invocation_id=%s",
+            (invocation,),
+        )
+        assert cur.fetchone()["n"] == 1
+        cur.execute(
+            "SELECT count(*) AS n FROM work_run_invocation_attempt "
+            "WHERE attempt_id=%s",
+            (fresh_attempt,),
+        )
+        assert cur.fetchone()["n"] == 0
+        cur.execute(
+            "SELECT count(*) AS n FROM work_run_invocation_attempt "
+            "WHERE invocation_id=%s",
+            (invocation,),
+        )
+        assert cur.fetchone()["n"] == 1
+    store.conn.rollback()
+
+
+def test_exact_owner_tuple_with_changed_run_projection_remains_integrity_unknown(
+    receipt_store,
+):
+    store = receipt_store
+    app = _CheckedApplication(store)
+    invocation, attempt = _ids()
+    args = _args()
+    bound = app.invoke(
+        "work.run.register-correlated-v1",
+        args,
+        _correlated_context(invocation, attempt),
+    )
+    run_id = bound["run"]["run_id"]
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE run SET harness_build=%s WHERE repo_id=%s AND run_id=%s",
+            ("tampered-after-receipt", store.repo_id, run_id),
+        )
+        assert cur.rowcount == 1
+    store.conn.commit()
+
+    with pytest.raises(ApplicationRejection) as read_error:
+        app.invoke(
+            "work.run.invocation-receipt-get-v1",
+            {"run_id": run_id, "invocation_id": invocation, "attempt_id": attempt},
+            _correlated_context(
+                invocation, attempt, authorities={"work:read"}
+            ),
+        )
+    assert (read_error.value.code, read_error.value.http_status) == (
+        "run-invocation-integrity-unknown",
+        503,
+    )
+    store.conn.rollback()
+
+    with pytest.raises(ApplicationRejection) as replay_error:
+        app.invoke(
+            "work.run.register-correlated-v1",
+            args,
+            _correlated_context(invocation, attempt),
+        )
+    assert (replay_error.value.code, replay_error.value.http_status) == (
+        "run-invocation-integrity-unknown",
+        503,
+    )
+    store.conn.rollback()
+
+
 def test_digest_conflict_never_appends_an_invocation_attempt(receipt_store):
     store = receipt_store
     app = _CheckedApplication(store)
