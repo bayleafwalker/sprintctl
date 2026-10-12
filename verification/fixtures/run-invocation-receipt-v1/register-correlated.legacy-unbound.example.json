@@ -1,0 +1,20 @@
+{
+  "repo_id": "repo_example",
+  "run": {
+    "run_id": "run_0123456789ABCDEFGHJKMNPQRS",
+    "principal_id": "https://issuer.example:subject-7:3",
+    "workspace_id": "workspace_example",
+    "client_id": "client_example",
+    "grant_id": "grant_example",
+    "harness_id": "harness-example",
+    "harness_build": "build-17",
+    "model_id": "model-example",
+    "recipe_id": "recipe-example",
+    "observed_profile": {"instruction_digest": "sha256:example", "skill_digests": []},
+    "grant_ids": [],
+    "claim_ids": [],
+    "created_at": "2026-10-11T12:34:56.123456Z"
+  },
+  "correlation_status": "legacy-unbound",
+  "receipt": null
+}

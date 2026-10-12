@@ -15,7 +15,7 @@ from typing import Any, Mapping
 
 
 WORK_API_VERSION = "sprintctl-work/v1"
-CURRENT_SCHEMA_VERSION = 22
+CURRENT_SCHEMA_VERSION = 23
 # The v0.3 release is a coordinated schema/runtime cutover, so the runtime
 # admits exactly the schema it was built against.  A wider window would be a
 # false promise: reservation storage only arrived in schema 8, the live
@@ -46,7 +46,8 @@ CURRENT_SCHEMA_VERSION = 22
 # verification bindings. A 20 writer cannot honor a required verification bar.
 # 22 adds authenticated cooperative attempt authorizations and append-only
 # consumption/report facts. Older runtimes cannot honor their one-use contract.
-MINIMUM_SCHEMA_VERSION = 22
+# 23 adds immutable run/invocation owner correlations and exact attempt receipts.
+MINIMUM_SCHEMA_VERSION = 23
 MAXIMUM_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION
 STARTUP_MODE_ENV = "SPRINTCTL_REMOTE_SCHEMA_MODE"
 MIGRATION_LOCK_TIMEOUT_ENV = "SPRINTCTL_MIGRATION_LOCK_TIMEOUT"
@@ -235,6 +236,8 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
         with store.conn.cursor() as cur:
             state = _read_schema_state(cur)
             maintenance = _read_maintenance_bridge(cur)
+            from .run_invocation_schema import inspect_catalog
+            run_invocation = inspect_catalog(cur)
     finally:
         if was_idle:
             store.conn.rollback()
@@ -243,6 +246,8 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
         and MINIMUM_SCHEMA_VERSION <= state.version <= MAXIMUM_SCHEMA_VERSION
         and maintenance["available"]
         and maintenance["complete"]
+        and run_invocation["complete"]
+        and (state.version is None or state.version < 23 or run_invocation["available"])
     )
     if state.version is None:
         reason = "schema-version-table-missing"
@@ -254,6 +259,10 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
         reason = "maintenance-storage-partial"
     elif not maintenance["available"]:
         reason = "maintenance-storage-missing"
+    elif not run_invocation["complete"]:
+        reason = "run-invocation-storage-partial"
+    elif state.version is not None and state.version >= 23 and not run_invocation["available"]:
+        reason = "run-invocation-storage-missing"
     else:
         reason = None
     return {
@@ -268,6 +277,10 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
         "reason": reason,
         "capabilities": {
             "maintenance_storage": maintenance,
+            "run_invocation_storage": {
+                "schema_version": "sprintctl-run-invocation-storage/v1",
+                **run_invocation,
+            },
             "repository_ingest_cursor": {
                 "schema_version": "sprintctl-repository-ingest-cursor/v1",
                 "scope": "repository",
@@ -492,6 +505,11 @@ def migrate_schema(store: Any) -> dict[str, Any]:
                 _pg._apply_schema_version_22(cur)
                 cur.execute("UPDATE schema_version SET version = %s", (22,))
                 applied.append(22)
+                state = SchemaState(version=22, row_count=1)
+            if state.version < 23:
+                _pg._apply_schema_version_23(cur)
+                cur.execute("UPDATE schema_version SET version = %s", (23,))
+                applied.append(23)
         store.conn.commit()
     except Exception:
         store.conn.rollback()

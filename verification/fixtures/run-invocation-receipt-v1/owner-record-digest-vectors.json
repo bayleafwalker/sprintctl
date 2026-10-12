@@ -1,0 +1,47 @@
+{
+  "contract": "sprintctl-run-owner-record-digest/v1",
+  "domain_prefix_utf8": "sprintctl-run-owner-record/v1\u0000",
+  "domain_prefix_hex": "737072696e7463746c2d72756e2d6f776e65722d7265636f72642f763100",
+  "digest_format": "64 lowercase hexadecimal characters; no prefix",
+  "algorithm": "RFC8785 JCS UTF-8 bytes, with safe-integer-only profile, prefixed by the UTF-8 domain prefix above, then SHA-256",
+  "valid_vectors": [
+    {
+      "name": "full-immutable-run-projection",
+      "projection": {
+        "client_id": "client-example",
+        "created_at": "2026-10-11T12:34:56.123456Z",
+        "grant_id": "grant-example",
+        "harness_build": "build-17",
+        "harness_id": "harness-example",
+        "model_id": "model-example",
+        "observed_profile": {"instruction_digest": "sha256:example", "skill_digests": []},
+        "owner_record_kind": "run",
+        "owner_request_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "predecessor_run_id": null,
+        "principal_epoch": 3,
+        "principal_id": "https://issuer.example:subject-7:3",
+        "recipe_id": "recipe-example",
+        "repo_id": "repo-example",
+        "run_id": "run_0123456789ABCDEFGHJKMNPQRS",
+        "workspace_id": "workspace-example"
+      },
+      "canonical_utf8": "{\"client_id\":\"client-example\",\"created_at\":\"2026-10-11T12:34:56.123456Z\",\"grant_id\":\"grant-example\",\"harness_build\":\"build-17\",\"harness_id\":\"harness-example\",\"model_id\":\"model-example\",\"observed_profile\":{\"instruction_digest\":\"sha256:example\",\"skill_digests\":[]},\"owner_record_kind\":\"run\",\"owner_request_digest\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"predecessor_run_id\":null,\"principal_epoch\":3,\"principal_id\":\"https://issuer.example:subject-7:3\",\"recipe_id\":\"recipe-example\",\"repo_id\":\"repo-example\",\"run_id\":\"run_0123456789ABCDEFGHJKMNPQRS\",\"workspace_id\":\"workspace-example\"}",
+      "expected_sha256": "46b0e65c958713a10e75c88c41a9222c3cc9dc0bd47cd5a3400cd0b923c8b609"
+    },
+    {
+      "name": "utf16-key-order-non-bmp-before-bmp",
+      "projection": {"𐀀": "nonBMP", "": "bmp"},
+      "canonical_utf8": "{\"𐀀\":\"nonBMP\",\"\":\"bmp\"}",
+      "expected_sha256": "a947d57783afd2f22fba50d366fb8dfa9a9781842b8b220aa1604bf0fa889031"
+    }
+  ],
+  "rejected_number_examples": [
+    {"name": "safe-integer-upper-plus-one", "value": 9007199254740992},
+    {"name": "safe-integer-lower-minus-one", "value": -9007199254740992},
+    {"name": "float-even-if-integral", "value": 1.0},
+    {"name": "non-finite", "value": "NaN"}
+  ],
+  "excluded_mutable_fields": ["grant_ids", "claim_ids"],
+  "included_private_fields": ["owner_request_digest"],
+  "private_fields_never_emitted": ["owner_request_digest", "idempotency_key", "run_arguments"]
+}

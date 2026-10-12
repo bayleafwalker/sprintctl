@@ -563,6 +563,7 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
             "work.reservation.touch",
             "work.reservation.reassign",
             "work.reservation.release",
+        "work.run.register-correlated-v1",
         }
 
 

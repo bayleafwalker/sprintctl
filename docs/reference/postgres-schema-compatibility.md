@@ -16,11 +16,16 @@ create, alter, or repair schema objects.
 work API as `sprintctl-work/v1`, reports the actual remote schema version, and
 reports the minimum and maximum versions this runtime supports.
 
-The current source tree (sprintctl 0.17.0) admits exactly remote schema 22
+The current source tree (sprintctl 0.19.0) admits exactly remote schema 23
 (schema 18 for sprintctl 0.9.0 through 0.10.x): `MINIMUM_SCHEMA_VERSION` and
-`MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 22, and
+`MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 23, and
 `remote-schema-version` in `pyproject.toml` records the same value. Any other
 ledger version fails closed before a runtime command is served.
+
+Schema 23 adds immutable run invocation bindings and attempt receipts, while
+retaining the schema-22 effect-attempt records. Correlation is supplementary
+provenance and does not change run acceptance authority. See
+[run invocation receipts](../protocols/run-invocation-receipt.md).
 
 Schema 22 adds `work_effect_attempt` and `work_effect_attempt_event`. Its
 authorizations bind an authenticated applier, accepted intent, full current

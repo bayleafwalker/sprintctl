@@ -51,6 +51,8 @@ from . import outbox
 from . import pg_migrations as _pg_migrations
 from . import refcore as _refcore
 from . import rows as _rows
+from .run_invocation import owner_record_digest as _run_owner_record_digest
+from .run_invocation import owner_timestamp as _run_owner_timestamp
 from . import sprintcore as _sprintcore
 from . import trackcore as _trackcore
 from . import unbound as _unbound
@@ -3319,6 +3321,11 @@ def _apply_schema_version_22(cur: Any) -> None:
     install(cur)
 
 
+def _apply_schema_version_23(cur: Any) -> None:
+    from .run_invocation_schema import install
+    install(cur)
+
+
 # ---------------------------------------------------------------------------
 # Row normalisation
 #
@@ -5745,6 +5752,14 @@ class IdempotencyConflict(ValueError):
     code = IDEMPOTENCY_KEY_REUSED
 
 
+class RunInvocationConflict(ValueError):
+    """A transport correlation ID is already bound to another owner tuple."""
+
+
+class RunInvocationIntegrityError(ValueError):
+    """Stored immutable run data no longer matches its correlation digest."""
+
+
 def _mint_run_id() -> str:
     return "run_" + "".join(secrets.choice(_RUN_ID_ALPHABET) for _ in range(26))
 
@@ -5786,6 +5801,256 @@ def _run_row(row: dict) -> dict:
     }
 
 
+def _run_owner_projection(row: dict, *, principal_epoch: int) -> dict[str, Any]:
+    return {
+        "repo_id": row["repo_id"],
+        "owner_record_kind": "run",
+        "run_id": row["run_id"],
+        "principal_id": row["principal_id"],
+        "principal_epoch": principal_epoch,
+        "workspace_id": row["workspace_id"],
+        "client_id": row["client_id"],
+        "grant_id": row["grant_id"],
+        "harness_id": row["harness_id"],
+        "harness_build": row["harness_build"],
+        "model_id": row["model_id"],
+        "recipe_id": row["recipe_id"],
+        "observed_profile": row["observed_profile"],
+        "predecessor_run_id": row["predecessor_run_id"],
+        "created_at": _run_owner_timestamp(row["created_at"]),
+        "owner_request_digest": row["request_digest"],
+    }
+
+
+def _run_invocation_receipt(binding: Mapping[str, Any], attempt_id: str) -> dict[str, Any]:
+    return {
+        "schema": "sprintctl-run-invocation-receipt/v1",
+        "repo_id": binding["repo_id"],
+        "invocation_id": binding["invocation_id"],
+        "attempt_id": attempt_id,
+        "owner_record_kind": "run",
+        "owner_record_id": binding["run_id"],
+        "owner_record_digest": binding["owner_record_digest"],
+        "owner_binding": {
+            "repo_id": binding["repo_id"],
+            "workspace_id": binding["workspace_id"],
+            "principal_id": binding["principal_id"],
+            "principal_epoch": int(binding["principal_epoch"]),
+            "client_id": binding["client_id"],
+            "grant_id": binding["grant_id"],
+        },
+    }
+
+
+def _invocation_binding_matches(
+    row: Mapping[str, Any], expected: Mapping[str, Any]
+) -> bool:
+    return all(row[key] == expected[key] for key in expected)
+
+
+def record_run_invocation_attempt(
+    store: PgStore,
+    *,
+    cur: Any,
+    run_id: str,
+    invocation_id: str,
+    attempt_id: str,
+    principal_id: str,
+    principal_epoch: int,
+    workspace_id: str,
+    client_id: str | None,
+    grant_id: str | None,
+    owner_request_digest: str,
+    allow_new_binding: bool,
+) -> dict[str, Any] | None:
+    """Append the exact verified attempt inside the owner idempotency txn.
+
+    ``None`` means this key replay resolved to a pre-correlation run, which
+    must remain unbound. Every SQL write uses the caller's cursor so failure
+    rolls the run and ledger back together.
+    """
+    cur.execute(
+        "SELECT pg_advisory_xact_lock(hashtext('run_invocation_attempt'), hashtext(%s))",
+        (attempt_id,),
+    )
+    # Attempt IDs are global across correlated and legacy-replay paths. Lock
+    # and read the ID before an unbound legacy replay can return early.
+    cur.execute(
+        "SELECT * FROM work_run_invocation_attempt WHERE attempt_id=%s FOR UPDATE",
+        (attempt_id,),
+    )
+    prior_attempt = cur.fetchone()
+    cur.execute(
+        "SELECT pg_advisory_xact_lock(hashtext('run_invocation_binding'), hashtext(%s))",
+        (invocation_id,),
+    )
+    cur.execute(
+        "SELECT r.*, rp.predecessor_run_id FROM run r LEFT JOIN run_predecessor rp "
+        "ON rp.repo_id=r.repo_id AND rp.run_id=r.run_id "
+        "WHERE r.repo_id=%s AND r.run_id=%s FOR KEY SHARE OF r",
+        (store.repo_id, run_id),
+    )
+    owner_run = cur.fetchone()
+    if owner_run is None:
+        raise RunNotFound("the run does not belong to this caller")
+    if (
+        owner_run["principal_id"] != principal_id
+        or owner_run["workspace_id"] != workspace_id
+        or owner_run["client_id"] != client_id
+        or owner_run["grant_id"] != grant_id
+        or owner_run["request_digest"] != owner_request_digest
+    ):
+        raise RunInvocationConflict("run invocation owner binding conflicts with the current write")
+
+    projection = _run_owner_projection(owner_run, principal_epoch=principal_epoch)
+    record_digest = _run_owner_record_digest(projection)
+    expected = {
+        "invocation_id": invocation_id,
+        "repo_id": store.repo_id,
+        "run_id": run_id,
+        "workspace_id": workspace_id,
+        "principal_id": principal_id,
+        "principal_epoch": principal_epoch,
+        "client_id": client_id,
+        "grant_id": grant_id,
+        "owner_request_digest": owner_request_digest,
+        "owner_record_digest": record_digest,
+    }
+
+    cur.execute(
+        "SELECT * FROM work_run_invocation_binding WHERE invocation_id=%s "
+        "OR (repo_id=%s AND run_id=%s) FOR UPDATE",
+        (invocation_id, store.repo_id, run_id),
+    )
+    bindings = cur.fetchall()
+    if len(bindings) > 1:
+        raise RunInvocationConflict("run invocation binding is ambiguous")
+    if bindings:
+        binding = bindings[0]
+        owner_tuple = {
+            key: expected[key]
+            for key in (
+                "invocation_id",
+                "repo_id",
+                "run_id",
+                "workspace_id",
+                "principal_id",
+                "principal_epoch",
+                "client_id",
+                "grant_id",
+                "owner_request_digest",
+            )
+        }
+        if not _invocation_binding_matches(binding, owner_tuple):
+            raise RunInvocationConflict("invocation ID or owner binding is already in use")
+        if binding["owner_record_digest"] != record_digest:
+            raise RunInvocationIntegrityError("run owner record changed after receipt creation")
+    else:
+        if not allow_new_binding:
+            if prior_attempt is not None:
+                raise RunInvocationConflict("attempt ID is already bound to another invocation")
+            return None
+        cur.execute(
+            "INSERT INTO work_run_invocation_binding(invocation_id,repo_id,run_id,workspace_id,"
+            "principal_id,principal_epoch,client_id,grant_id,owner_request_digest,owner_record_digest) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (
+                invocation_id, store.repo_id, run_id, workspace_id, principal_id,
+                principal_epoch, client_id, grant_id, owner_request_digest, record_digest,
+            ),
+        )
+        binding = expected
+
+    attempt_binding = {
+        key: expected[key]
+        for key in (
+            "invocation_id", "repo_id", "run_id", "workspace_id", "principal_id",
+            "principal_epoch", "client_id", "grant_id", "owner_request_digest",
+        )
+    }
+    if prior_attempt is not None:
+        if not _invocation_binding_matches(prior_attempt, attempt_binding):
+            raise RunInvocationConflict("attempt ID is already bound to another invocation")
+    else:
+        cur.execute(
+            "INSERT INTO work_run_invocation_attempt(attempt_id,invocation_id,repo_id,run_id,"
+            "workspace_id,principal_id,principal_epoch,client_id,grant_id,owner_request_digest) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (
+                attempt_id, invocation_id, store.repo_id, run_id, workspace_id,
+                principal_id, principal_epoch, client_id, grant_id, owner_request_digest,
+            ),
+        )
+    return _run_invocation_receipt(binding, attempt_id)
+
+
+def get_run_invocation_receipt(
+    store: PgStore,
+    *,
+    run_id: str,
+    invocation_id: str,
+    attempt_id: str,
+    principal_id: str,
+    principal_epoch: int,
+    workspace_id: str,
+    client_id: str | None,
+    grant_id: str | None,
+) -> dict[str, Any] | None:
+    """Read only an exact receipt for this run and complete current identity."""
+    cur = store.conn.cursor()
+    try:
+        cur.execute(
+            "SELECT a.*, b.owner_record_digest,b.owner_request_digest "
+            "FROM work_run_invocation_attempt a JOIN work_run_invocation_binding b "
+            "ON b.invocation_id=a.invocation_id WHERE a.repo_id=%s AND a.run_id=%s "
+            "AND a.invocation_id=%s AND a.attempt_id=%s",
+            (store.repo_id, run_id, invocation_id, attempt_id),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        expected_tuple = {
+            "repo_id": store.repo_id,
+            "run_id": run_id,
+            "invocation_id": invocation_id,
+            "attempt_id": attempt_id,
+            "principal_id": principal_id,
+            "principal_epoch": principal_epoch,
+            "workspace_id": workspace_id,
+            "client_id": client_id,
+            "grant_id": grant_id,
+        }
+        if not _invocation_binding_matches(row, expected_tuple):
+            raise RunNotFound("the run does not belong to this caller")
+        cur.execute(
+            "SELECT r.*, rp.predecessor_run_id FROM run r LEFT JOIN run_predecessor rp "
+            "ON rp.repo_id=r.repo_id AND rp.run_id=r.run_id "
+            "WHERE r.repo_id=%s AND r.run_id=%s",
+            (store.repo_id, run_id),
+        )
+        owner_run = cur.fetchone()
+        if owner_run is None:
+            raise RunNotFound("the run does not belong to this caller")
+        projection = _run_owner_projection(owner_run, principal_epoch=principal_epoch)
+        digest = _run_owner_record_digest(projection)
+        if digest != row["owner_record_digest"] or row["owner_request_digest"] != owner_run["request_digest"]:
+            raise RunInvocationIntegrityError("run owner record changed after receipt creation")
+        binding = {
+            "invocation_id": invocation_id,
+            "repo_id": store.repo_id,
+            "run_id": run_id,
+            "workspace_id": workspace_id,
+            "principal_id": principal_id,
+            "principal_epoch": principal_epoch,
+            "client_id": client_id,
+            "grant_id": grant_id,
+            "owner_record_digest": digest,
+        }
+        return _run_invocation_receipt(binding, attempt_id)
+    finally:
+        cur.close()
+
+
 def _replay_or_conflict(stored_digest: str, request_digest: str, what: str) -> None:
     """A row already stored under this idempotency key replays only for the
     same request.  Checked at the storage layer too, not only in
@@ -5813,6 +6078,7 @@ def register_run(
     observed_profile: dict,
     predecessor_run_id: str | None = None,
     cur: Any | None = None,
+    return_created: bool = False,
 ) -> dict:
     """Mint (or return the existing) run for this binding and idempotency key.
 
@@ -5870,7 +6136,10 @@ def register_run(
                 "VALUES (%s, %s, %s)",
                 (store.repo_id, run_id, predecessor_run_id),
             )
-        return {**_run_row(row), "predecessor_run_id": _predecessor_of(cur, store, row["run_id"])}
+        result = {**_run_row(row), "predecessor_run_id": _predecessor_of(cur, store, row["run_id"])}
+        if return_created:
+            return result, row["run_id"] == run_id
+        return result
 
     return _in_write_transaction(store, cur, body)
 
@@ -6383,6 +6652,7 @@ def idempotent_write(
     request_digest: str,
     effect: Callable[[Any], dict],
     with_replay: bool = False,
+    after_result: Callable[[Any, dict, bool], Any] | None = None,
 ) -> Any:
     """Claim the ledger row, perform ``effect`` and record its result in ONE transaction.
 
@@ -6422,13 +6692,21 @@ def idempotent_write(
                         tool=tool, key=key, result=effect(cur),
                     ),
                 }
+            assert stored is not None
+            if stored["request_digest"] != request_digest:
+                raise IdempotencyConflict(
+                    "this idempotency_key was already used with different arguments"
+                )
+            result = stored["result"]
+            if after_result is not None:
+                result = after_result(cur, result, not claimed)
         store.conn.commit()
     except Exception:
         store.conn.rollback()
         raise
     assert stored is not None
-    if stored["request_digest"] != request_digest:
-        raise IdempotencyConflict("this idempotency_key was already used with different arguments")
+    if after_result is not None:
+        return result
     return (stored["result"], not claimed) if with_replay else stored["result"]
 
 

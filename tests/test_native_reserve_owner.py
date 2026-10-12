@@ -86,6 +86,7 @@ def test_native_reserve_is_only_catalog_addition_with_all_legacy_bytes_preserved
         "work.reservation.reserve-v1", "work.effect.propose-bound-v1",
         "work.evidence.evaluate-v1", "work.effect.preview-v1",
         "work.effect.acceptance-snapshot-v1", "work.run.continuation-delta-v1",
+        "work.run.register-correlated-v1", "work.run.invocation-receipt-get-v1",
     } | set(OPERATION_AUTHORITIES)
     assert not set(expected) - set(actual)
     assert {name: actual[name] for name in expected} == expected

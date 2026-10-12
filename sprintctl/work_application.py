@@ -738,6 +738,15 @@ class WorkApplication:
         _require_effect_authority(operation, context)
         if not self._ensure_postgres_runtime_available():
             raise self._runtime_unavailable()
+        if operation in {
+            "work.run.register-correlated-v1",
+            "work.run.invocation-receipt-get-v1",
+        } and (getattr(self.store, "remote_schema_version", None) or 0) < 23:
+            raise ApplicationRejection(
+                "owner-capability-unavailable",
+                "run invocation receipts require the compatible PostgreSQL schema 23 owner",
+                503,
+            )
         target = self._scoped_for(requested_repo_id)
         handlers = {
             "work.identity.current": target._identity_current,
@@ -792,6 +801,8 @@ class WorkApplication:
             "work.read.release": target._read_release,
             "work.read.unbound": target._read_unbound,
             "work.run.register-v1": target._run_register,
+            "work.run.register-correlated-v1": target._run_register_correlated,
+            "work.run.invocation-receipt-get-v1": target._run_invocation_receipt_get,
             "work.run.resolve-v1": target._run_resolve,
             "work.run.predecessor-context-v1": target._run_predecessor_context,
             "work.run.continuation-delta-v1": target._read_run_continuation_delta,
@@ -1927,6 +1938,7 @@ class WorkApplication:
         *,
         digest_exclude: frozenset[str] = frozenset(),
         digest_binding: Mapping[str, Any] | None = None,
+        after_result: Callable[[Any, dict[str, Any], bool], Any] | None = None,
     ) -> dict[str, Any]:
         """Replay a stored result, refuse a conflicting one, or perform ``effect``.
 
@@ -1967,10 +1979,17 @@ class WorkApplication:
         from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
 
         try:
-            return self.backend.idempotent_write(
-                self.store, workspace_id=workspace_id, principal_id=principal_id, tool=tool,
-                key=key, request_digest=digest, effect=lambda cur: effect(cur, digest),
-            )
+            call = {
+                "workspace_id": workspace_id,
+                "principal_id": principal_id,
+                "tool": tool,
+                "key": key,
+                "request_digest": digest,
+                "effect": lambda cur: effect(cur, digest),
+            }
+            if after_result is not None:
+                call["after_result"] = after_result
+            return self.backend.idempotent_write(self.store, **call)
         except _pg.IdempotencyConflict as exc:
             raise ApplicationRejection(exc.code, str(exc), 409) from exc
 
@@ -2024,6 +2043,183 @@ class WorkApplication:
             context, "register_run", arguments, effect,
             digest_binding={"client_id": client_id, "grant_id": grant_id},
         )
+
+    def _run_register_correlated(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        """Register a run and append its verified invocation receipt atomically.
+
+        Correlation metadata is read only from the identity object that the
+        serving boundary constructed after validating its signed assertion;
+        it is deliberately absent from the operation arguments and digest.
+        """
+        identity = getattr(context, "identity", None)
+        if "work:evidence" not in (getattr(identity, "authorities", None) or ()):
+            raise ApplicationRejection(
+                "authority-required", "correlated registration requires work:evidence", 403
+            )
+        invocation_id = getattr(identity, "invocation_id", None)
+        attempt_id = getattr(identity, "attempt_id", None)
+        principal_epoch = getattr(identity, "principal_epoch", None)
+        from .run_invocation import ATTEMPT_ID_RE, INVOCATION_ID_RE
+
+        if (
+            not isinstance(invocation_id, str)
+            or not INVOCATION_ID_RE.fullmatch(invocation_id)
+            or not isinstance(attempt_id, str)
+            or not ATTEMPT_ID_RE.fullmatch(attempt_id)
+            or isinstance(principal_epoch, bool)
+            or not isinstance(principal_epoch, int)
+            or not 0 <= principal_epoch <= 9007199254740991
+        ):
+            raise ApplicationRejection(
+                "invocation-correlation-required",
+                "correlated registration requires a verified invocation, attempt, and principal epoch",
+                422,
+            )
+
+        principal_id, workspace_id = _identity_binding(context)
+        client_id, grant_id = _grant_binding(context)
+        request_digest = _request_digest(
+            "register_run", {**arguments, "client_id": client_id, "grant_id": grant_id}
+        )
+        predecessor_run_id = arguments.get("predecessor_run_id")
+        if predecessor_run_id is not None:
+            authorities = getattr(identity, "authorities", None) or ()
+            if "work:read" not in authorities:
+                raise ApplicationRejection(
+                    "authority-required",
+                    "naming a predecessor run requires the work:read authority",
+                    403,
+                )
+        from . import pg as _pg
+
+        run_created: list[bool] = []
+
+        def effect(cur: Any, request_digest: str) -> dict[str, Any]:
+            row, created = self.backend.register_run(
+                self.store,
+                principal_id=principal_id,
+                workspace_id=workspace_id,
+                client_id=client_id,
+                grant_id=grant_id,
+                idempotency_key=arguments["idempotency_key"],
+                request_digest=request_digest,
+                harness_id=arguments["harness_id"],
+                harness_build=arguments["harness_build"],
+                model_id=arguments["model_id"],
+                recipe_id=arguments["recipe_id"],
+                observed_profile=arguments["observed_profile"],
+                predecessor_run_id=predecessor_run_id,
+                cur=cur,
+                return_created=True,
+            )
+            run_created.append(created)
+            return {"repo_id": self.repo_id, "run": row}
+
+        def append_receipt(
+            cur: Any, legacy_result: dict[str, Any], replayed: bool
+        ) -> dict[str, Any]:
+            receipt = self.backend.record_run_invocation_attempt(
+                self.store,
+                cur=cur,
+                run_id=legacy_result["run"]["run_id"],
+                invocation_id=invocation_id,
+                attempt_id=attempt_id,
+                principal_id=principal_id,
+                principal_epoch=principal_epoch,
+                workspace_id=workspace_id,
+                client_id=client_id,
+                grant_id=grant_id,
+                owner_request_digest=request_digest,
+                allow_new_binding=bool(not replayed and run_created and run_created[-1]),
+            )
+            return {
+                "repo_id": legacy_result["repo_id"],
+                "run": legacy_result["run"],
+                "correlation_status": "bound" if receipt is not None else "legacy-unbound",
+                "receipt": receipt,
+            }
+
+        try:
+            return self._idempotent_write(
+                context,
+                "register_run",
+                arguments,
+                effect,
+                digest_binding={"client_id": client_id, "grant_id": grant_id},
+                after_result=append_receipt,
+            )
+        except _pg.PredecessorNotEligible as exc:
+            raise ApplicationRejection(exc.code, str(exc), 422) from exc
+        except _pg.RunInvocationConflict as exc:
+            raise ApplicationRejection("invocation-correlation-conflict", str(exc), 409) from exc
+        except _pg.RunInvocationIntegrityError as exc:
+            raise ApplicationRejection(
+                "run-invocation-integrity-unknown",
+                "run receipt integrity could not be verified; retry or inspect owner state",
+                503,
+            ) from exc
+        except ApplicationRejection:
+            raise
+        except Exception as exc:
+            raise ApplicationRejection(
+                "run-invocation-write-unknown",
+                "the owner write outcome is unknown; retry with the same idempotency key",
+                503,
+            ) from exc
+
+    def _run_invocation_receipt_get(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        run_id = _required_text(arguments.get("run_id"), "run_id")
+        invocation_id = _required_text(arguments.get("invocation_id"), "invocation_id")
+        attempt_id = _required_text(arguments.get("attempt_id"), "attempt_id")
+        identity = getattr(context, "identity", None)
+        if "work:read" not in (getattr(identity, "authorities", None) or ()):
+            raise ApplicationRejection(
+                "authority-required", "invocation receipt reads require work:read", 403
+            )
+        principal_epoch = getattr(identity, "principal_epoch", None)
+        if (
+            isinstance(principal_epoch, bool)
+            or not isinstance(principal_epoch, int)
+            or not 0 <= principal_epoch <= 9007199254740991
+        ):
+            raise ApplicationRejection(
+                "identity-unbound", "the caller has no verified principal epoch", 403
+            )
+        # The same current owner lookup is the privacy gate and runs before
+        # correlation storage is queried.
+        self._require_owned_run(run_id, context)
+        principal_id, workspace_id = _identity_binding(context)
+        client_id, grant_id = _grant_binding(context)
+        from . import pg as _pg
+        try:
+            receipt = self.backend.get_run_invocation_receipt(
+                self.store,
+                run_id=run_id,
+                invocation_id=invocation_id,
+                attempt_id=attempt_id,
+                principal_id=principal_id,
+                principal_epoch=principal_epoch,
+                workspace_id=workspace_id,
+                client_id=client_id,
+                grant_id=grant_id,
+            )
+        except _pg.RunNotFound as exc:
+            raise ApplicationRejection("run-not-found", str(exc), 404) from exc
+        except _pg.RunInvocationIntegrityError as exc:
+            raise ApplicationRejection(
+                "run-invocation-integrity-unknown",
+                "run receipt integrity could not be verified",
+                503,
+            ) from exc
+        if receipt is None:
+            raise ApplicationRejection(
+                "correlation-absent", "the owned run has no exact invocation receipt", 404
+            )
+        return receipt
 
     def _run_resolve(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         row = self._require_owned_run(arguments["run_id"], context)
