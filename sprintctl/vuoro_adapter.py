@@ -26,6 +26,7 @@ from vuoro_adapter_kit import (
 from . import decisions as _decisions
 from . import effect_attempt as _attempt
 from . import effect_intent as _effect
+from . import effect_intent_export as _effect_export
 from . import releases as _releases
 from . import unbound as _unbound
 from .application import (
@@ -1751,6 +1752,17 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         _effect.OPERATION_GET,
         _object_schema({"intent_id": _EFFECT_ID_ARGUMENT_SCHEMA}, required=("intent_id",)),
         _EFFECT_RESULT,
+        _effect.AUTHORITY_GET,
+        "read",
+        "not-allowed",
+    ),
+    WorkOperationContract(
+        _effect.OPERATION_EXPORT_PROPOSAL,
+        _object_schema({
+            "intent_id": _EFFECT_ID_ARGUMENT_SCHEMA,
+            "intent_revision": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        }, required=("intent_id", "intent_revision")),
+        _effect_export.RESULT_SCHEMA,
         _effect.AUTHORITY_GET,
         "read",
         "not-allowed",

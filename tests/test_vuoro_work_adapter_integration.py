@@ -34,25 +34,27 @@ def anyio_backend() -> str:
 # change to what clients see, so they must be updated in the same commit as
 # the catalog change and never re-pinned to make a red test pass.
 #
-# Re-pinned for the bounded volatile-context pilot, which adds exactly two
-# read-only owner operations at both schema versions. Schema 7 still gates
-# exactly the three work.maintenance.resource.* operations.
+# Q4 export successor: recomputed against canonical sprintctl a0b3910 with
+# vuoro-adapter-kit 0.2.2 and frozen vuoro-service 0.1.94 source 7c0ddee248a8.
+# Historical 46/49-operation pins predated a0 and were already stale there.
+# Canonical a0 has 84/87 operations; this adds exactly one readonly export.
+# The separate baseline check below retains every a0 operation byte unchanged.
 @pytest.mark.parametrize(
     ("remote_schema_version", "operation_count", "byte_count", "operations_sha", "revision"),
     [
         (
             6,
-            46,
-            53_243,
-            "2e1100b582060a283100ef6d2f47be49031d104a4f783a6b32b87a7daf609937",
-            "2e1100b582060a283100ef6d2f47be49031d104a4f783a6b32b87a7daf609937",
+            85,
+            214_338,
+            "29fd88288806a8087a8cb40b01963975a30a9be64780b84bd25dda816e92bba4",
+            "29fd88288806a8087a8cb40b01963975a30a9be64780b84bd25dda816e92bba4",
         ),
         (
             7,
-            49,
-            58_358,
-            "54d630b66f0869b074ec057b0708f3ef9f08c366db5a2b3b1913898af6e7357e",
-            "d1994bf90b9506955a39cf2ceacae1f89468aa04a7e8519a990db29f869e8504",
+            88,
+            219_453,
+            "1214611a57d0773b8b27490c4fd1d98c846188b2e3cac2209c0c9161fd440f2f",
+            "3549917134598afac8055523629316655e4f158e8e6260ea9930ce5626255969",
         ),
     ],
 )
@@ -83,6 +85,14 @@ def test_adapter_kit_migration_preserves_catalog_bytes_and_registry_revision(
     assert len(payload) == byte_count
     assert hashlib.sha256(payload).hexdigest() == operations_sha
     assert registry.revision == revision
+    legacy = [operation for operation in operations
+              if operation["name"] != "work.effect.export-proposal-v2"]
+    baseline = {
+        6: (84, 210454, "505e9ee59b89c402dc75d7f272aeaace00edabe79c0fbc05ff8e153debec6155"),
+        7: (87, 215569, "45658cbc0c2a7b080a0a39f5d6ff95b54a771896c9ca44976884fdb57a4c67dc"),
+    }[remote_schema_version]
+    legacy_payload = json.dumps(legacy, sort_keys=True, separators=(",", ":")).encode()
+    assert (len(legacy), len(legacy_payload), hashlib.sha256(legacy_payload).hexdigest()) == baseline
 
 
 @pytest.mark.anyio
