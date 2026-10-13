@@ -2263,7 +2263,8 @@ def test_q4_export_catalog_is_closed_readonly_and_requires_effect_read():
                                  "intent_revision": 1, extra: "forged"}, contract.input_schema)
 
 
-def test_q4_export_sqlite_routing_refuses_authority_and_missing_pg(tmp_path):
+@pytest.mark.parametrize("operation", ["work.effect.export-proposal-v2", "work.effect.basis-v1"])
+def test_q4_export_sqlite_routing_refuses_authority_and_missing_pg(tmp_path, operation):
     from sprintctl import effect_intent
     conn = db.get_connection(tmp_path / "q4.sqlite")
     db.init_db(conn)
@@ -2283,15 +2284,23 @@ def test_q4_export_sqlite_routing_refuses_authority_and_missing_pg(tmp_path):
     ):
         context.identity.authorities = frozenset(authorities)
         with pytest.raises(ApplicationRejection) as caught:
-            app.invoke(effect_intent.OPERATION_EXPORT_PROPOSAL, args, context)
+            app.invoke(operation, args, context)
         assert caught.value.code == expected
     conn.close()
 
 
-@pytest.mark.parametrize("operation", ["work.effect.export-proposal-v2", "work.effect.export-proposal-v3"])
+@pytest.mark.parametrize("operation", ["work.effect.export-proposal-v2", "work.effect.export-proposal-v3", "work.effect.basis-v1"])
 def test_native_export_schemas_keep_closed_identical_requests_and_pg_only_routing(operation):
     contract = next(c for c in WORK_OPERATION_CONTRACTS if c.name == operation)
     assert contract.required_authority == "work.effect.get"
     assert contract.execution_semantics == "read" and contract.idempotency == "not-allowed"
     assert set(contract.input_schema["properties"]) == {"intent_id", "intent_revision"}
     assert contract.input_schema["additionalProperties"] is False
+
+
+def test_effect_basis_request_is_exact_frozen_utf8_200_not_legacy_ascii_id():
+    contract = next(c for c in WORK_OPERATION_CONTRACTS if c.name == "work.effect.basis-v1")
+    assert contract.input_schema["properties"]["intent_id"] == {"type":"string", "minLength":1, "maxLength":200}
+    jsonschema.validate({"intent_id":"é"*200, "intent_revision":1}, contract.input_schema)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({"intent_id":"é"*201, "intent_revision":1}, contract.input_schema)

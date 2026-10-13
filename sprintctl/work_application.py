@@ -822,6 +822,7 @@ class WorkApplication:
             _effect.OPERATION_GET: target._effect_get,
             _effect.OPERATION_EXPORT_PROPOSAL: target._export_effect_proposal,
             _effect.OPERATION_EXPORT_PROPOSAL_V3: target._export_effect_proposal_v3,
+            _effect.OPERATION_BASIS: target._read_effect_basis,
             _effect.OPERATION_ACCEPTANCE_SNAPSHOT: target._read_effect_acceptance_snapshot,
             _effect.OPERATION_PREVIEW: target._effect_preview,
             _effect.OPERATION_LIST_PROPOSED: target._effect_list_proposed,
@@ -2698,6 +2699,27 @@ class WorkApplication:
                 "effect-not-found", f"effect intent {intent_id!r} not found", 404
             )
         return self._effect_intent_result(intent)
+
+    def _read_effect_basis(self, arguments, context):
+        from . import effect_basis
+        from .effect_intent_export import ExportRefused
+
+        _effect_arguments(arguments, frozenset({"intent_id", "intent_revision"}))
+        intent_id = _effect_text(arguments.get("intent_id"), "intent_id", 200)
+        revision = arguments.get("intent_revision")
+        if type(revision) is not int or not 1 <= revision <= effect_basis.MAX_SAFE_INTEGER:
+            raise ApplicationRejection("invalid-arguments", "an exact positive intent revision is required", 422)
+        if "work:read" not in (getattr(context.identity, "authorities", ()) or ()):
+            raise ApplicationRejection("authority-required", "effect basis requires work:read", 403)
+        _principal, workspace_id = _identity_binding(context)
+        if not callable(getattr(self.backend, "repeatable_read_snapshot", None)) or not callable(
+            getattr(self.backend, "effect_proposal_release_basis", None)
+        ):
+            raise ApplicationRejection("unsupported-backend", "effect basis requires the PostgreSQL owner", 501)
+        try:
+            return effect_basis.read_basis(self.backend, self.store, intent_id, revision, workspace_id)
+        except ExportRefused as exc:
+            raise ApplicationRejection(exc.code, "the bounded effect basis is unavailable", 409) from None
 
     def _export_effect_proposal_v3(self, arguments, context):
         return self._export_effect_proposal(arguments, context, version=3)

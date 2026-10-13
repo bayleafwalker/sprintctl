@@ -34,27 +34,27 @@ def anyio_backend() -> str:
 # change to what clients see, so they must be updated in the same commit as
 # the catalog change and never re-pinned to make a red test pass.
 #
-# Q4 v3 successor: recomputed against canonical sprintctl dd0cde57 with
+# Q4 basis successor: recomputed against canonical sprintctl da10ace4 with
 # vuoro-adapter-kit 0.2.2 and frozen vuoro-service 0.1.94 source 7c0ddee248a8.
 # Historical 46/49-operation pins predated a0 and were already stale there.
-# Canonical dd0 has 85/88 operations; this adds exactly one readonly v3 export.
-# The separate baseline check below retains every dd0 operation byte unchanged.
+# Canonical da10 has 86/89 operations; this adds exactly one readonly basis.
+# Subtraction retains every da10 operation byte, then the historical dd0 gate.
 @pytest.mark.parametrize(
     ("remote_schema_version", "operation_count", "byte_count", "operations_sha", "revision"),
     [
         (
             6,
-            86,
-            221_061,
-            "e47eafd5ae592bf68ccc5185d5acc5412dd5d23b53af6d22b54580c88c2d08c1",
-            "e47eafd5ae592bf68ccc5185d5acc5412dd5d23b53af6d22b54580c88c2d08c1",
+            87,
+            225_459,
+            "45465c368b31a6b7c790fdeaf8a0718da46fc48608ade628986ee4ec37db3c28",
+            "45465c368b31a6b7c790fdeaf8a0718da46fc48608ade628986ee4ec37db3c28",
         ),
         (
             7,
-            89,
-            226_176,
-            "5549b7bd21af079d04687cb23860e60f1941604d7ba34bc58d806939759b2c25",
-            "7df9baa0623164039680be05ee022a543ff728462b7aabe7d367807d119983ed",
+            90,
+            230_574,
+            "60b52ef1fe022176add9b893a538c88aeb676562ec615e7ac02ee716702e8354",
+            "e33a63dc20091542bc30d7ac18efd3cc952618b65da2b6ce566063071b084f89",
         ),
     ],
 )
@@ -85,7 +85,15 @@ def test_adapter_kit_migration_preserves_catalog_bytes_and_registry_revision(
     assert len(payload) == byte_count
     assert hashlib.sha256(payload).hexdigest() == operations_sha
     assert registry.revision == revision
-    legacy = [operation for operation in operations
+    predecessor = [operation for operation in operations
+                   if operation["name"] != "work.effect.basis-v1"]
+    predecessor_baseline = {
+        6: (86, 221061, "e47eafd5ae592bf68ccc5185d5acc5412dd5d23b53af6d22b54580c88c2d08c1"),
+        7: (89, 226176, "5549b7bd21af079d04687cb23860e60f1941604d7ba34bc58d806939759b2c25"),
+    }[remote_schema_version]
+    predecessor_payload = json.dumps(predecessor, sort_keys=True, separators=(",", ":")).encode()
+    assert (len(predecessor), len(predecessor_payload), hashlib.sha256(predecessor_payload).hexdigest()) == predecessor_baseline
+    legacy = [operation for operation in predecessor
               if operation["name"] != "work.effect.export-proposal-v3"]
     baseline = {
         6: (85, 214338, "29fd88288806a8087a8cb40b01963975a30a9be64780b84bd25dda816e92bba4"),
