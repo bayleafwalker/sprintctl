@@ -4341,6 +4341,18 @@ def list_releases(store: PgStore, work_item_id: int) -> list[dict]:
     return [_release_row(row) for row in rows]
 
 
+def effect_proposal_release_basis(store: PgStore, work_item_id: int) -> tuple[dict, str, dict | None]:
+    """Readonly current full Release basis; caller owns the repeatable snapshot.
+
+    Never invoke the locking acceptance helper in a readonly proposal export.
+    """
+    with store.conn.cursor() as cur:
+        item, revision, _count = _release_basis_locked(
+            cur, store.repo_id, work_item_id, lock=False
+        )
+        return item, revision, _current_release_locked(cur, store.repo_id, work_item_id)
+
+
 def current_release(store: PgStore, work_item_id: int) -> dict | None:
     """Return the item's current release, or None after a revise decision."""
     with store.conn.cursor() as cur:

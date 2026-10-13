@@ -55,7 +55,8 @@ def test_only_catalog_addition_and_every_existing_descriptor_byte_preserved():
     from sprintctl.effect_attempt import OPERATION_AUTHORITIES
     assert set(actual) - set(baseline['operation_sha256']) == {
         BOUND, "work.evidence.evaluate-v1", "work.effect.preview-v1",
-        "work.effect.acceptance-snapshot-v1", "work.run.continuation-delta-v1",
+        "work.effect.acceptance-snapshot-v1", "work.effect.export-proposal-v2",
+        "work.run.continuation-delta-v1",
         "work.run.register-correlated-v1", "work.run.invocation-receipt-get-v1",
     } | set(OPERATION_AUTHORITIES)
     assert {k: actual[k] for k in baseline['operation_sha256']} == baseline['operation_sha256']

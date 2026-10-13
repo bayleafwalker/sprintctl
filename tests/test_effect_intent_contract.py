@@ -243,3 +243,10 @@ def test_the_intent_store_is_a_schema_after_the_lease_tables():
     from sprintctl import pg_migrations
 
     assert pg_migrations.CURRENT_SCHEMA_VERSION > 18
+
+
+@pytest.mark.parametrize("value", [1.5, float("nan"), 2**53, "\ud800", {"\U00010000": "key"}])
+def test_q4_export_refuses_noncanonical_native_values(value):
+    from sprintctl.effect_intent_export import ExportRefused, _canonical
+    with pytest.raises(ExportRefused):
+        _canonical(value)

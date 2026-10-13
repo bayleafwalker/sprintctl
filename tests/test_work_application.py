@@ -2247,3 +2247,42 @@ def test_placeholders_and_digests_are_not_credentials():
         "https://github.com/bayleafwalker/sprintctl/pull/58",
     ):
         assert contracts.credential_shape(text) is None
+
+
+def test_q4_export_catalog_is_closed_readonly_and_requires_effect_read():
+    from sprintctl import effect_intent
+    contract = next(c for c in WORK_OPERATION_CONTRACTS
+                    if c.name == effect_intent.OPERATION_EXPORT_PROPOSAL)
+    assert contract.required_authority == effect_intent.AUTHORITY_GET
+    assert contract.input_schema["additionalProperties"] is False
+    assert set(contract.input_schema["properties"]) == {"intent_id", "intent_revision"}
+    jsonschema.validate({"intent_id": "ei_" + "a" * 32, "intent_revision": 1}, contract.input_schema)
+    for extra in ("repository", "workspace_id", "verification_ref", "origin"):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({"intent_id": "ei_" + "a" * 32,
+                                 "intent_revision": 1, extra: "forged"}, contract.input_schema)
+
+
+def test_q4_export_sqlite_routing_refuses_authority_and_missing_pg(tmp_path):
+    from sprintctl import effect_intent
+    conn = db.get_connection(tmp_path / "q4.sqlite")
+    db.init_db(conn)
+    app = WorkApplication(
+        repo_id="repo-q4", store=conn, backend=db,
+        ingest_records=lambda rows: [], arbitrate_command=lambda *a: None,
+        list_records=lambda *a: [], list_decisions=lambda *a: [],
+    )
+    context = _context()
+    context.identity.principal_id = "reader"
+    context.identity.workspace_id = "workspace-q4"
+    args = {"intent_id": "ei_" + "a" * 32, "intent_revision": 1}
+    for authorities, expected in (
+        (set(), "authority-required"),
+        ({"work.effect.get"}, "authority-required"),
+        ({"work.effect.get", "work:read"}, "unsupported-backend"),
+    ):
+        context.identity.authorities = frozenset(authorities)
+        with pytest.raises(ApplicationRejection) as caught:
+            app.invoke(effect_intent.OPERATION_EXPORT_PROPOSAL, args, context)
+        assert caught.value.code == expected
+    conn.close()

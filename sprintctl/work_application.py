@@ -820,6 +820,7 @@ class WorkApplication:
             _effect.OPERATION_PROPOSE: target._effect_propose,
             _effect.OPERATION_BOUND_PROPOSE: target._effect_propose_bound,
             _effect.OPERATION_GET: target._effect_get,
+            _effect.OPERATION_EXPORT_PROPOSAL: target._export_effect_proposal,
             _effect.OPERATION_ACCEPTANCE_SNAPSHOT: target._read_effect_acceptance_snapshot,
             _effect.OPERATION_PREVIEW: target._effect_preview,
             _effect.OPERATION_LIST_PROPOSED: target._effect_list_proposed,
@@ -2696,6 +2697,28 @@ class WorkApplication:
                 "effect-not-found", f"effect intent {intent_id!r} not found", 404
             )
         return self._effect_intent_result(intent)
+
+    def _export_effect_proposal(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        from . import effect_intent_export as export
+
+        _effect_arguments(arguments, frozenset({"intent_id", "intent_revision"}))
+        intent_id = _effect_intent_id(arguments)
+        revision = arguments.get("intent_revision")
+        if type(revision) is not int or not 1 <= revision <= export.MAX_SAFE_INTEGER:
+            raise ApplicationRejection("invalid-arguments", "an exact positive intent revision is required", 422)
+        if "work:read" not in (getattr(context.identity, "authorities", ()) or ()):
+            raise ApplicationRejection("authority-required", "proposal export requires work:read", 403)
+        _principal, workspace_id = _identity_binding(context)
+        if not callable(getattr(self.backend, "repeatable_read_snapshot", None)) or not callable(
+            getattr(self.backend, "effect_proposal_release_basis", None)
+        ):
+            raise ApplicationRejection("unsupported-backend", "proposal exports require the PostgreSQL owner", 501)
+        try:
+            return export.export_proposal(self.backend, self.store, intent_id, revision, workspace_id)
+        except export.ExportRefused as exc:
+            raise ApplicationRejection(exc.code, "the bounded proposal export is unavailable", 409) from None
 
     def _read_effect_acceptance_snapshot(
         self, arguments: dict[str, Any], context: InvocationContext
