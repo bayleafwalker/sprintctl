@@ -15,7 +15,7 @@ from typing import Any, Mapping
 
 
 WORK_API_VERSION = "sprintctl-work/v1"
-CURRENT_SCHEMA_VERSION = 23
+CURRENT_SCHEMA_VERSION = 24
 # The v0.3 release is a coordinated schema/runtime cutover, so the runtime
 # admits exactly the schema it was built against.  A wider window would be a
 # false promise: reservation storage only arrived in schema 8, the live
@@ -47,7 +47,8 @@ CURRENT_SCHEMA_VERSION = 23
 # 22 adds authenticated cooperative attempt authorizations and append-only
 # consumption/report facts. Older runtimes cannot honor their one-use contract.
 # 23 adds immutable run/invocation owner correlations and exact attempt receipts.
-MINIMUM_SCHEMA_VERSION = 23
+# 24 adds the exact readonly proposal-associated verification lookup index.
+MINIMUM_SCHEMA_VERSION = 24
 MAXIMUM_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION
 STARTUP_MODE_ENV = "SPRINTCTL_REMOTE_SCHEMA_MODE"
 MIGRATION_LOCK_TIMEOUT_ENV = "SPRINTCTL_MIGRATION_LOCK_TIMEOUT"
@@ -238,6 +239,8 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
             maintenance = _read_maintenance_bridge(cur)
             from .run_invocation_schema import inspect_catalog
             run_invocation = inspect_catalog(cur)
+            from .effect_verification_export_index import inspect_catalog as inspect_verification_index
+            verification_index = inspect_verification_index(cur)
     finally:
         if was_idle:
             store.conn.rollback()
@@ -248,6 +251,8 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
         and maintenance["complete"]
         and run_invocation["complete"]
         and (state.version is None or state.version < 23 or run_invocation["available"])
+        and verification_index["complete"]
+        and (state.version is None or state.version < 24 or verification_index["available"])
     )
     if state.version is None:
         reason = "schema-version-table-missing"
@@ -263,6 +268,10 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
         reason = "run-invocation-storage-partial"
     elif state.version is not None and state.version >= 23 and not run_invocation["available"]:
         reason = "run-invocation-storage-missing"
+    elif not verification_index["complete"]:
+        reason = "verification-export-index-invalid"
+    elif state.version is not None and state.version >= 24 and not verification_index["available"]:
+        reason = "verification-export-index-missing"
     else:
         reason = None
     return {
@@ -510,6 +519,11 @@ def migrate_schema(store: Any) -> dict[str, Any]:
                 _pg._apply_schema_version_23(cur)
                 cur.execute("UPDATE schema_version SET version = %s", (23,))
                 applied.append(23)
+                state = SchemaState(version=23, row_count=1)
+            if state.version < 24:
+                _pg._apply_schema_version_24(cur)
+                cur.execute("UPDATE schema_version SET version = %s", (24,))
+                applied.append(24)
         store.conn.commit()
     except Exception:
         store.conn.rollback()

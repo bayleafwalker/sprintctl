@@ -2286,3 +2286,12 @@ def test_q4_export_sqlite_routing_refuses_authority_and_missing_pg(tmp_path):
             app.invoke(effect_intent.OPERATION_EXPORT_PROPOSAL, args, context)
         assert caught.value.code == expected
     conn.close()
+
+
+@pytest.mark.parametrize("operation", ["work.effect.export-proposal-v2", "work.effect.export-proposal-v3"])
+def test_native_export_schemas_keep_closed_identical_requests_and_pg_only_routing(operation):
+    contract = next(c for c in WORK_OPERATION_CONTRACTS if c.name == operation)
+    assert contract.required_authority == "work.effect.get"
+    assert contract.execution_semantics == "read" and contract.idempotency == "not-allowed"
+    assert set(contract.input_schema["properties"]) == {"intent_id", "intent_revision"}
+    assert contract.input_schema["additionalProperties"] is False

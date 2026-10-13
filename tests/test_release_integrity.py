@@ -58,8 +58,8 @@ class TestReleaseIntegrity:
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
         assert pyproject["project"]["version"] == __version__ == "0.19.0"
-        assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 23
-        assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 23
+        assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 24
+        assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 24
 
     def test_release_contract_names_this_version(self):
         """The tag workflow validates the wheel against RELEASE_VERSION; a

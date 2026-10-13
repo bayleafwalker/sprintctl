@@ -62,10 +62,20 @@ def _text(value: Any, maximum: int = 200, *, empty: bool = False) -> None:
 
 
 def export_proposal(backend, store, intent_id: str, revision: int,
-                    workspace_id: str) -> dict[str, Any]:
+                    workspace_id: str, *, version: int = 2) -> dict[str, Any]:
     """One PostgreSQL readonly repeatable snapshot; no writes or arbitrary runs."""
     try:
+        _require(version in (2, 3))
         with backend.repeatable_read_snapshot(store) as snapshot:
+            if version == 3:
+                from .effect_verification_export_index import inspect_catalog
+                with snapshot.conn.cursor() as cur:
+                    cur.execute("SELECT version FROM schema_version")
+                    versions = cur.fetchall()
+                    _require(len(versions) == 1 and versions[0]["version"] == 24,
+                             "proposal-verification-index-unavailable")
+                    index = inspect_catalog(cur)
+                _require(index["available"] and index["complete"], "proposal-verification-index-unavailable")
             intent = backend.get_effect_intent(snapshot, intent_id)
             _require(intent is not None, "proposal-export-unavailable")
             _require(intent["state"] == "proposed" and intent["revision"] == revision,
@@ -89,9 +99,10 @@ def export_proposal(backend, store, intent_id: str, revision: int,
                 _require(type(contract["review_required"]) is bool)
             obligations = contract.get("evidence_obligations", [])
             _require(len(obligations) <= 64 and all(len(label) <= 200 for label in obligations))
-            _require(not contract.get("effect_verification_required", False)
-                     and "effect_check_revisions" not in contract,
-                     "proposal-verification-selection-unavailable")
+            if version == 2:
+                _require(not contract.get("effect_verification_required", False)
+                         and "effect_check_revisions" not in contract,
+                         "proposal-verification-selection-unavailable")
             refs = release["context_refs"]
             _require(type(refs) is list and len(refs) <= 128)
             _require(all(type(ref) is dict and set(ref) == {"ref_type", "url", "label"}
@@ -128,6 +139,11 @@ def export_proposal(backend, store, intent_id: str, revision: int,
                 "release": {key: release[key] for key in (
                     "work_item_id", "item_revision", "release_digest", "acceptance_contract", "context_refs")},
             }
+            if version == 3:
+                from .effect_verification_export import SCHEMA as schema_v3, project_rows
+                rows = backend.effect_proposal_verification_rows(snapshot, intent_id, workspace_id)
+                result["schema"] = schema_v3
+                result["verification_evidence"] = project_rows(backend, rows, intent, release, workspace_id)
             # Native subset is <=2MiB; protected projection and transport enforce
             # their own exact 2MiB canonical/envelope and 4MiB raw HTTP budgets.
             _canonical(result)

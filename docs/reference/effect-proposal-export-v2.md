@@ -83,3 +83,8 @@ coherent output across a concurrent native edit, plus cross-principal authorized
 projection, namespace/repository refusal, stale revision/Release, changed revise
 count, unsupported contract, and required-verification refusal. SQLite routing
 and closed catalog request checks are in `tests/test_work_application.py`.
+
+The explicit [v3 successor](effect-proposal-export-v3.md) adds existing
+proposal-associated native verification receipts with bounded all-candidate
+validation. This v2 request, response and required-verification refusal remain
+unchanged; callers must explicitly select a v3 retrieval profile.

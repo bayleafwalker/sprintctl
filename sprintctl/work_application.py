@@ -821,6 +821,7 @@ class WorkApplication:
             _effect.OPERATION_BOUND_PROPOSE: target._effect_propose_bound,
             _effect.OPERATION_GET: target._effect_get,
             _effect.OPERATION_EXPORT_PROPOSAL: target._export_effect_proposal,
+            _effect.OPERATION_EXPORT_PROPOSAL_V3: target._export_effect_proposal_v3,
             _effect.OPERATION_ACCEPTANCE_SNAPSHOT: target._read_effect_acceptance_snapshot,
             _effect.OPERATION_PREVIEW: target._effect_preview,
             _effect.OPERATION_LIST_PROPOSED: target._effect_list_proposed,
@@ -2698,8 +2699,11 @@ class WorkApplication:
             )
         return self._effect_intent_result(intent)
 
+    def _export_effect_proposal_v3(self, arguments, context):
+        return self._export_effect_proposal(arguments, context, version=3)
+
     def _export_effect_proposal(
-        self, arguments: dict[str, Any], context: InvocationContext
+        self, arguments: dict[str, Any], context: InvocationContext, *, version: int = 2
     ) -> dict[str, Any]:
         from . import effect_intent_export as export
 
@@ -2716,7 +2720,7 @@ class WorkApplication:
         ):
             raise ApplicationRejection("unsupported-backend", "proposal exports require the PostgreSQL owner", 501)
         try:
-            return export.export_proposal(self.backend, self.store, intent_id, revision, workspace_id)
+            return export.export_proposal(self.backend, self.store, intent_id, revision, workspace_id, version=version)
         except export.ExportRefused as exc:
             raise ApplicationRejection(exc.code, "the bounded proposal export is unavailable", 409) from None
 

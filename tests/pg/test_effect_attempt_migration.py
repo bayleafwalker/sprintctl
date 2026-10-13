@@ -14,6 +14,7 @@ pytestmark = PG_MARKS
 
 def make_schema21(store):
     with store.conn.cursor() as cur:
+        cur.execute("DROP INDEX idx_evidence_item_effect_verification_subject")
         cur.execute("DROP TABLE work_run_invocation_attempt, work_run_invocation_binding")
         cur.execute("DROP FUNCTION sprintctl_run_invocation_binding_guard(), "
                     "sprintctl_run_invocation_attempt_guard(), "
@@ -46,8 +47,8 @@ def test_populated_upgrade_preserves_acceptance_and_runtime_probe_does_not_migra
     store.conn.rollback()
     assert_no_attempt_storage(store)
     result = pg_migrations.migrate_schema(store)
-    assert result["applied_versions"] == [22, 23]
-    assert result["compatibility"]["remote_schema"]["actual"] == 23
+    assert result["applied_versions"] == [22, 23, 24]
+    assert result["compatibility"]["remote_schema"]["actual"] == 24
     assert _get(store, intent["intent_id"]) == accepted
     with store.conn.cursor() as cur:
         cur.execute("SELECT p.proname,pg_get_functiondef(p.oid) AS body FROM pg_proc p "
@@ -110,7 +111,7 @@ def test_injected_mid_ddl_failure_rolls_back_objects_and_version(migration_store
         pg_migrations.migrate_schema(store)
     assert_no_attempt_storage(store)
     monkeypatch.setattr(schema, "DDL", ddl)
-    assert pg_migrations.migrate_schema(store)["applied_versions"] == [22, 23]
+    assert pg_migrations.migrate_schema(store)["applied_versions"] == [22, 23, 24]
 
 
 def test_catalog_has_restrictive_parent_links_unique_authorizations_and_exact_guard_definitions(migration_store):
