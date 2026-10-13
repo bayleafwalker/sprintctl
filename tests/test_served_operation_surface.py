@@ -32,6 +32,7 @@ PUBLISHED_OPERATIONS = (
         "work.effect.attempt-redeem-v1",
         "work.effect.attempt-report-applied-v1",
         "work.effect.attempt-seal-unused-v1",
+        "work.effect.basis-v1",
         "work.effect.export-proposal-v2", "work.effect.export-proposal-v3",
         "work.effect.get-v1",
         "work.effect.list-accepted-v1",
