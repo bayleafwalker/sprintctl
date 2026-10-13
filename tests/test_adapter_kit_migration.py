@@ -80,8 +80,8 @@ def test_resource_schema_gate_removes_exactly_the_three_owner_operations() -> No
         "work.maintenance.resource.changes",
     }
 
-    assert len(available) == 88  # adds the readonly Q4 proposal export
-    assert len(unavailable) == 85
+    assert len(available) == 89  # adds the readonly Q4 associated-verification export
+    assert len(unavailable) == 86
     assert {spec["name"] for spec in available} - {
         spec["name"] for spec in unavailable
     } == resource_names

@@ -493,7 +493,7 @@ def test_correlation_failure_rolls_back_run_ledger_and_receipts(receipt_store, m
 
 def test_schema23_catalog_is_exact_and_receipts_are_immutable(receipt_store):
     store = receipt_store
-    assert store.remote_schema_version == 23
+    assert store.remote_schema_version == 24
     handshake = pg_migrations.compatibility_handshake(store)
     capability = handshake["capabilities"]["run_invocation_storage"]
     assert handshake["compatible"] is True

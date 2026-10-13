@@ -34,27 +34,27 @@ def anyio_backend() -> str:
 # change to what clients see, so they must be updated in the same commit as
 # the catalog change and never re-pinned to make a red test pass.
 #
-# Q4 export successor: recomputed against canonical sprintctl a0b3910 with
+# Q4 v3 successor: recomputed against canonical sprintctl dd0cde57 with
 # vuoro-adapter-kit 0.2.2 and frozen vuoro-service 0.1.94 source 7c0ddee248a8.
 # Historical 46/49-operation pins predated a0 and were already stale there.
-# Canonical a0 has 84/87 operations; this adds exactly one readonly export.
-# The separate baseline check below retains every a0 operation byte unchanged.
+# Canonical dd0 has 85/88 operations; this adds exactly one readonly v3 export.
+# The separate baseline check below retains every dd0 operation byte unchanged.
 @pytest.mark.parametrize(
     ("remote_schema_version", "operation_count", "byte_count", "operations_sha", "revision"),
     [
         (
             6,
-            85,
-            214_338,
-            "29fd88288806a8087a8cb40b01963975a30a9be64780b84bd25dda816e92bba4",
-            "29fd88288806a8087a8cb40b01963975a30a9be64780b84bd25dda816e92bba4",
+            86,
+            221_061,
+            "e47eafd5ae592bf68ccc5185d5acc5412dd5d23b53af6d22b54580c88c2d08c1",
+            "e47eafd5ae592bf68ccc5185d5acc5412dd5d23b53af6d22b54580c88c2d08c1",
         ),
         (
             7,
-            88,
-            219_453,
-            "1214611a57d0773b8b27490c4fd1d98c846188b2e3cac2209c0c9161fd440f2f",
-            "3549917134598afac8055523629316655e4f158e8e6260ea9930ce5626255969",
+            89,
+            226_176,
+            "5549b7bd21af079d04687cb23860e60f1941604d7ba34bc58d806939759b2c25",
+            "7df9baa0623164039680be05ee022a543ff728462b7aabe7d367807d119983ed",
         ),
     ],
 )
@@ -86,10 +86,10 @@ def test_adapter_kit_migration_preserves_catalog_bytes_and_registry_revision(
     assert hashlib.sha256(payload).hexdigest() == operations_sha
     assert registry.revision == revision
     legacy = [operation for operation in operations
-              if operation["name"] != "work.effect.export-proposal-v2"]
+              if operation["name"] != "work.effect.export-proposal-v3"]
     baseline = {
-        6: (84, 210454, "505e9ee59b89c402dc75d7f272aeaace00edabe79c0fbc05ff8e153debec6155"),
-        7: (87, 215569, "45658cbc0c2a7b080a0a39f5d6ff95b54a771896c9ca44976884fdb57a4c67dc"),
+        6: (85, 214338, "29fd88288806a8087a8cb40b01963975a30a9be64780b84bd25dda816e92bba4"),
+        7: (88, 219453, "1214611a57d0773b8b27490c4fd1d98c846188b2e3cac2209c0c9161fd440f2f"),
     }[remote_schema_version]
     legacy_payload = json.dumps(legacy, sort_keys=True, separators=(",", ":")).encode()
     assert (len(legacy), len(legacy_payload), hashlib.sha256(legacy_payload).hexdigest()) == baseline

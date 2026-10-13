@@ -3326,6 +3326,17 @@ def _apply_schema_version_23(cur: Any) -> None:
     install(cur)
 
 
+def _apply_schema_version_24(cur: Any) -> None:
+    from .effect_verification_export_index import install
+    install(cur)
+
+
+def effect_proposal_verification_rows(store: PgStore, intent_id: str, workspace_id: str) -> list:
+    """Readonly exact proposal-associated receipt set, within caller snapshot."""
+    from .effect_verification_export import read_rows
+    return read_rows(store, intent_id, workspace_id)
+
+
 # ---------------------------------------------------------------------------
 # Row normalisation
 #

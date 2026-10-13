@@ -27,6 +27,7 @@ from . import decisions as _decisions
 from . import effect_attempt as _attempt
 from . import effect_intent as _effect
 from . import effect_intent_export as _effect_export
+from . import effect_verification_export as _verification_export
 from . import releases as _releases
 from . import unbound as _unbound
 from .application import (
@@ -1766,6 +1767,14 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         _effect.AUTHORITY_GET,
         "read",
         "not-allowed",
+    ),
+    WorkOperationContract(
+        _effect.OPERATION_EXPORT_PROPOSAL_V3,
+        _object_schema({"intent_id": _EFFECT_ID_ARGUMENT_SCHEMA,
+                        "intent_revision": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}},
+                       required=("intent_id", "intent_revision")),
+        _verification_export.RESULT_SCHEMA_V3,
+        _effect.AUTHORITY_GET, "read", "not-allowed",
     ),
     WorkOperationContract(
         _effect.OPERATION_ACCEPTANCE_SNAPSHOT,

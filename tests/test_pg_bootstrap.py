@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from sprintctl import pg, pg_migrations, run_invocation_schema
+from sprintctl import pg, pg_migrations, run_invocation_schema, effect_verification_export_index
 
 
 CURRENT = pg_migrations.CURRENT_SCHEMA_VERSION
@@ -49,6 +49,8 @@ class _SchemaCursor:
             self._conn.marker_version = 1
         if "CREATE TRIGGER maintenance_capability_recovery_immutable" in query:
             self._conn.maintenance_triggers = 2
+        if query == effect_verification_export_index.DDL:
+            self._conn.verification_export_index_installed = True
         return self
 
     rowcount = 0
@@ -122,6 +124,7 @@ class _SchemaCursor:
 
 class _SchemaConnection:
     def __init__(self, version=4, *, version_rows=1, fail_on=None, maintenance_relations=None, maintenance_triggers=None, function_schema="public", function_valid=True):
+        self.verification_export_index_installed = version is not None and version >= 24
         self.calls = []
         self.version = version
         self.version_rows = version_rows if version is not None else 0
@@ -168,6 +171,10 @@ def _stub_invocation_catalog_for_schema_state_fakes(monkeypatch):
         }
 
     monkeypatch.setattr(run_invocation_schema, "inspect_catalog", inspect_catalog)
+    monkeypatch.setattr(
+        effect_verification_export_index, "inspect_catalog",
+        lambda cur: {"available": cur._conn.verification_export_index_installed, "complete": True},
+    )
 
 
 def test_snapshot_uses_store_connection_factory_instead_of_redacted_dsn(monkeypatch):
