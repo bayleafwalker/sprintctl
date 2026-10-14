@@ -33,6 +33,8 @@ no migration or DDL.
 | Maintenance recovery evidence | `work.maintenance.recovery-record` | key equals the immutable recovery record ID; the result always declares `authority=none` |
 | Cutover evidence | `work.pilot.cutover-evidence` | key forbidden |
 | Runs (0.8.0, schema 17) | `work.run.register-v1`, `work.run.resolve-v1` | register requires an `idempotency_key` argument (write-tool ledger); resolve forbids one |
+| Run resolution facts (schema 26) | `work.run.resolve-v2` | key forbidden; no authority (only the caller's own run resolves, as for v1) |
+| Approvals (schema 26) | `work.approval.record-v1`, `work.approval.get-v1` | record requires an `idempotency_key` argument (write-tool ledger) and `work:approve`; get forbids a key and needs `work:read` |
 | Run continuation (0.11.0, schema 20, agentops#2525) | `work.run.predecessor-context-v1`; optional `predecessor_run_id` on `work.run.register-v1` | read, `work:read`, forbids a key; its presence in the catalog is the capability signal for both |
 | Run evidence and notes (0.8.0, schema 17) | `work.evidence.tail-v1`, `work.evidence.append-v1`, `work.session-note.write-v1` | tail forbids a key; append and note writes require an `idempotency_key` argument (write-tool ledger) |
 | Effect intents (0.11.0, schema 19) | `work.effect.propose-v1`, `work.effect.get-v1`, `work.effect.list-proposed-v1`, `work.effect.accept-v1`, `work.effect.reject-v1`, `work.effect.mark-applied-v1` | propose requires an `idempotency_key` argument (write-tool ledger); every other operation forbids one, and a transition is a compare-and-set on `revision` and `canonical_intent_digest` |
@@ -124,6 +126,16 @@ evidence or ledger storage.
   principal, is `run-not-found` (404), with the same code and message as an
   unknown id. The evidence and note operations resolve the run the same way
   first.
+- `work.run.resolve-v2` (schema 26) resolves under exactly the same rule and
+  returns v1's fields plus `issued_at` (the owner's `run.created_at`, the
+  server time the binding was minted), `superseded_by_run_id` and `state`.
+  `superseded_by_run_id` is the first run (by link time, then id) registered
+  with this run as its `predecessor_run_id`, null while there is none; a
+  link is never removed while its predecessor exists, so supersession is
+  permanent. `state` is `active` or `superseded`: a run has no recorded close
+  (leases end, runs do not), so there is no `closed` state. v1's descriptor
+  is byte-frozen, so these facts are a new operation version rather than
+  added v1 result fields; v1 answers exactly as before.
 - `work.evidence.append-v1` extends the run's chain under a per-run lock.
   `chain_seq` must be one past the stored tail. `chain_prev_digest` must be
   the tail's `entry_digest` as `vuoro_evidence.core.chain` defines it, or null
@@ -662,3 +674,33 @@ The inventory is also machine-readable as
 `sprintctl.vuoro_adapter.LEGACY_REMOTE_COMMAND_PARITY`. It is reservation-parity
 evidence, not authorization to remove direct mode. Endpoint/identity cutover
 and backend retirement remain separate governed items.
+
+## Structured approvals (schema 26)
+
+`work.approval.record-v1` records one immutable operator approval: the
+`transition` (a token such as `rollout-resume`), the `run_id` and
+`expires_at`, with an optional `rationale` (at most 2048 bytes). The
+repository, workspace and approver (principal, OAuth client and grant) are
+the authenticated call's, never arguments. It is a separate record rather
+than fields on `work.decision.record`: decisions are item outcomes and that
+descriptor is byte-frozen, while an approval names a run and expires.
+
+- Authority: recording needs `work:approve`, which no other operation
+  requires and the default agent grant does not carry; the owner re-checks it
+  and fails closed. `work.approval.get-v1` needs `work:read`.
+- The run must be a run of this repository in the approver's workspace
+  (`run-not-found`, 404, for unknown and foreign alike) and must not already
+  have a registered successor (`run-superseded`, 409).
+- `expires_at` must be an RFC 3339 timestamp with an offset, after the
+  owner's clock and at most 7 days later (`invalid-expiry`, 422); storage
+  enforces the same bound.
+- Write-tool ledger: the same `idempotency_key` with the same arguments and
+  grant replays the stored approval (`replayed: true`); anything else is
+  `idempotency-conflict` (409).
+- `work.approval.get-v1` reads one approval by `approval_id` within this
+  repository and the caller's workspace (`approval-not-found`, 404,
+  otherwise) and adds the owner's `evaluated_at` and `expired`.
+
+Nothing here enforces an approval. The consumer compares `transition`,
+`repo_id`, `run_id`, the approver and `expires_at` with the effect it is
+about to dispatch, and checks the run with `work.run.resolve-v2`.

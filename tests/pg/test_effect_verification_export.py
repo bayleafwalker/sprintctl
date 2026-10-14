@@ -232,5 +232,5 @@ def test_v3_refuses_schema23_even_when_exact_index_was_left_in_place(store):
         refused(lambda: export(store, intent), "proposal-verification-index-unavailable")
     finally:
         with store.conn.cursor() as cur:
-            cur.execute("UPDATE schema_version SET version=25")
+            cur.execute("UPDATE schema_version SET version=26")
         store.conn.commit()

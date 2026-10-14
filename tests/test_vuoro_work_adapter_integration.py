@@ -41,22 +41,24 @@ def anyio_backend() -> str:
 # Subtraction retains every da10 operation byte, then the historical dd0 gate.
 # Schema 25 adds the ten work.agent.*/work.message.* operations (97/100);
 # removing them reproduces the 87/90-operation basis pins byte for byte.
+# Schema 26 adds work.run.resolve-v2 and work.approval.{record,get}-v1
+# (100/103); removing them reproduces the 97/100 pins byte for byte.
 @pytest.mark.parametrize(
     ("remote_schema_version", "operation_count", "byte_count", "operations_sha", "revision"),
     [
         (
             6,
-            97,
-            236_630,
-            "eafd1a4415fb2ef0540f7cd36b8e6d92c5dbb7d1b7eb5bb0aafbefc4cd071739",
-            "eafd1a4415fb2ef0540f7cd36b8e6d92c5dbb7d1b7eb5bb0aafbefc4cd071739",
+            100,
+            241_556,
+            "b07a6b35d49ccf559595b2520173e0b75b91582e57ee34e38bcc4408a2652b2f",
+            "b07a6b35d49ccf559595b2520173e0b75b91582e57ee34e38bcc4408a2652b2f",
         ),
         (
             7,
-            100,
-            241_745,
-            "e6c9ef82b65113eb2ea4d555e3f5ee36eab233a6bcc1f3e174cc18bfe925ba71",
-            "f135ba3f9c46115e318ec231c54872db0af487079c6a349214462ee620c64a3e",
+            103,
+            246_671,
+            "20d35fb06b29872edd429ae225999bc0ce58383a0e747af6e2175a58e5d42bb3",
+            "9c0e0ca5a2616561488e6682f0b8d89fd97ffa35ddc07e18e0769b45374d6689",
         ),
     ],
 )
@@ -87,8 +89,15 @@ def test_adapter_kit_migration_preserves_catalog_bytes_and_registry_revision(
     assert len(payload) == byte_count
     assert hashlib.sha256(payload).hexdigest() == operations_sha
     assert registry.revision == revision
+    schema26 = {"work.run.resolve-v2", "work.approval.record-v1", "work.approval.get-v1"}
+    inbox_basis = [operation for operation in operations if operation["name"] not in schema26]
+    inbox_payload = json.dumps(inbox_basis, sort_keys=True, separators=(",", ":")).encode()
+    assert (len(inbox_basis), len(inbox_payload), hashlib.sha256(inbox_payload).hexdigest()) == {
+        6: (97, 236630, "eafd1a4415fb2ef0540f7cd36b8e6d92c5dbb7d1b7eb5bb0aafbefc4cd071739"),
+        7: (100, 241745, "e6c9ef82b65113eb2ea4d555e3f5ee36eab233a6bcc1f3e174cc18bfe925ba71"),
+    }[remote_schema_version]
     from sprintctl.agent_inbox import OPERATIONS as agent_inbox_operations
-    basis = [operation for operation in operations if operation["name"] not in agent_inbox_operations]
+    basis = [operation for operation in inbox_basis if operation["name"] not in agent_inbox_operations]
     basis_payload = json.dumps(basis, sort_keys=True, separators=(",", ":")).encode()
     assert (len(basis), len(basis_payload), hashlib.sha256(basis_payload).hexdigest()) == {
         6: (87, 225459, "45465c368b31a6b7c790fdeaf8a0718da46fc48608ade628986ee4ec37db3c28"),

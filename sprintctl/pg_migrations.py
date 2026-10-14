@@ -15,7 +15,7 @@ from typing import Any, Mapping
 
 
 WORK_API_VERSION = "sprintctl-work/v1"
-CURRENT_SCHEMA_VERSION = 25
+CURRENT_SCHEMA_VERSION = 26
 # The v0.3 release is a coordinated schema/runtime cutover, so the runtime
 # admits exactly the schema it was built against.  A wider window would be a
 # false promise: reservation storage only arrived in schema 8, the live
@@ -51,7 +51,10 @@ CURRENT_SCHEMA_VERSION = 25
 # 25 adds the agent directory and durable inbox (vuoro agent-directory-and-
 # inbox contract v1): instances, declarations, observations, messages with a
 # per-repository inbox_seq counter, and append-only receipts.
-MINIMUM_SCHEMA_VERSION = 25
+# 26 adds immutable structured transition approvals (work_approval): a 25
+# authority has nowhere to record or read one, so a 26 runtime refuses it and
+# a 25 runtime refuses a 26 authority.
+MINIMUM_SCHEMA_VERSION = 26
 MAXIMUM_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION
 STARTUP_MODE_ENV = "SPRINTCTL_REMOTE_SCHEMA_MODE"
 MIGRATION_LOCK_TIMEOUT_ENV = "SPRINTCTL_MIGRATION_LOCK_TIMEOUT"
@@ -246,6 +249,8 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
             verification_index = inspect_verification_index(cur)
             from .agent_inbox_schema import inspect_catalog as inspect_agent_inbox
             agent_inbox = inspect_agent_inbox(cur)
+            from .approval_schema import inspect_catalog as inspect_approval
+            approval = inspect_approval(cur)
     finally:
         if was_idle:
             store.conn.rollback()
@@ -260,6 +265,8 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
         and (state.version is None or state.version < 24 or verification_index["available"])
         and agent_inbox["complete"]
         and (state.version is None or state.version < 25 or agent_inbox["available"])
+        and approval["complete"]
+        and (state.version is None or state.version < 26 or approval["available"])
     )
     if state.version is None:
         reason = "schema-version-table-missing"
@@ -283,6 +290,10 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
         reason = "agent-inbox-storage-partial"
     elif state.version is not None and state.version >= 25 and not agent_inbox["available"]:
         reason = "agent-inbox-storage-missing"
+    elif not approval["complete"]:
+        reason = "approval-storage-partial"
+    elif state.version is not None and state.version >= 26 and not approval["available"]:
+        reason = "approval-storage-missing"
     else:
         reason = None
     return {
@@ -304,6 +315,10 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
             "agent_inbox_storage": {
                 "schema_version": "sprintctl-agent-inbox-storage/v1",
                 **agent_inbox,
+            },
+            "approval_storage": {
+                "schema_version": "sprintctl-approval-storage/v1",
+                **approval,
             },
             "repository_ingest_cursor": {
                 "schema_version": "sprintctl-repository-ingest-cursor/v1",
@@ -544,6 +559,11 @@ def migrate_schema(store: Any) -> dict[str, Any]:
                 _pg._apply_schema_version_25(cur)
                 cur.execute("UPDATE schema_version SET version = %s", (25,))
                 applied.append(25)
+                state = SchemaState(version=25, row_count=1)
+            if state.version < 26:
+                _pg._apply_schema_version_26(cur)
+                cur.execute("UPDATE schema_version SET version = %s", (26,))
+                applied.append(26)
         store.conn.commit()
     except Exception:
         store.conn.rollback()

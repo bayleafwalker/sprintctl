@@ -21,6 +21,8 @@ TEST_ROLE_PREFIX = "sprintctl_test_"
 TEST_DATABASE_PREFIX = "sprintctl_test_"
 DISPOSABLE_DATABASE_COMMENT = "sprintctl:disposable-integration-test"
 REPO_TABLES = (
+    # Schema 26 (approvals): append-only, RESTRICT on run; before run.
+    "work_approval",
     # Schema 25 (agent directory and inbox): append-only children first.
     "agent_message_receipt",
     "agent_message",
@@ -228,6 +230,7 @@ def cleanup_test_repositories(conn: Any, repo_ids: Iterable[str]) -> dict[str, A
                 "agent_observation",
                 "agent_declaration_revision",
                 "agent_instance",
+                "work_approval",
             )
             for table in immutable_tables:
                 cur.execute(f"ALTER TABLE {table} DISABLE TRIGGER USER")  # noqa: S608

@@ -3336,6 +3336,11 @@ def _apply_schema_version_25(cur: Any) -> None:
     install(cur)
 
 
+def _apply_schema_version_26(cur: Any) -> None:
+    from .approval_schema import install
+    install(cur)
+
+
 def effect_proposal_verification_rows(store: PgStore, intent_id: str, workspace_id: str) -> list:
     """Readonly exact proposal-associated receipt set, within caller snapshot."""
     from .effect_verification_export import read_rows
@@ -6293,6 +6298,55 @@ def resolve_run(
     ) != binding:
         raise RunNotFound(f"no run {run_id!r} belongs to the caller")
     return row
+
+
+def resolve_run_facts(
+    store: PgStore,
+    run_id: str,
+    *,
+    principal_id: str,
+    workspace_id: str,
+    client_id: str | None,
+    grant_id: str | None,
+) -> dict:
+    """:func:`resolve_run` plus the run's issue time and supersession, read
+    in one statement (``work.run.resolve-v2``).
+
+    ``issued_at`` is the owner's ``run.created_at``: the server time the
+    binding was minted.  ``superseded_by_run_id`` is the first run (by
+    ``run_predecessor.created_at``, then ``run_id``) registered with this run
+    as its ``predecessor_run_id``; None while there is none.  A link is never
+    removed while its predecessor exists (RESTRICT), so once a run is
+    superseded it stays superseded and the answer does not change.  The same
+    binding rule and the same single :class:`RunNotFound` as
+    :func:`resolve_run` apply.
+    """
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT r.run_id, r.principal_id, r.workspace_id, r.client_id, r.grant_id, "
+            "r.created_at, (SELECT rp.run_id FROM run_predecessor rp "
+            "  WHERE rp.repo_id = r.repo_id AND rp.predecessor_run_id = r.run_id "
+            "  ORDER BY rp.created_at, rp.run_id LIMIT 1) AS superseded_by_run_id "
+            "FROM run r WHERE r.repo_id = %s AND r.run_id = %s",
+            (store.repo_id, run_id),
+        )
+        row = cur.fetchone()
+    binding = (principal_id, workspace_id, client_id, grant_id)
+    if row is None or (
+        row["principal_id"], row["workspace_id"], row["client_id"], row["grant_id"]
+    ) != binding:
+        raise RunNotFound(f"no run {run_id!r} belongs to the caller")
+    successor = row["superseded_by_run_id"]
+    return {
+        "run_id": row["run_id"],
+        "principal_id": row["principal_id"],
+        "workspace_id": row["workspace_id"],
+        "client_id": row["client_id"],
+        "grant_id": row["grant_id"],
+        "issued_at": _iso(row["created_at"]) or str(row["created_at"]),
+        "superseded_by_run_id": successor,
+        "state": "active" if successor is None else "superseded",
+    }
 
 
 def _evidence_row(row: dict) -> dict:

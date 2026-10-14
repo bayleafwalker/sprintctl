@@ -80,8 +80,8 @@ def test_resource_schema_gate_removes_exactly_the_three_owner_operations() -> No
         "work.maintenance.resource.changes",
     }
 
-    assert len(available) == 100  # adds the ten agent directory and inbox operations
-    assert len(unavailable) == 97
+    assert len(available) == 103  # adds resolve-v2 and the two approval operations
+    assert len(unavailable) == 100
     assert {spec["name"] for spec in available} - {
         spec["name"] for spec in unavailable
     } == resource_names

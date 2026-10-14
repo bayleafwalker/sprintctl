@@ -60,6 +60,20 @@ def install(cur: Any) -> None:
 
 def inspect_catalog(cur: Any) -> dict[str, Any]:
     """Return an exact schema fingerprint for startup compatibility checks."""
+    return inspect_relations(
+        cur, relations=RELATIONS, functions=FUNCTIONS, table_total=len(TABLES),
+        expected=EXPECTED_CATALOG_FINGERPRINT,
+    )
+
+
+def inspect_relations(
+    cur: Any, *, relations: tuple[str, ...], functions: tuple[str, ...],
+    table_total: int, expected: str,
+) -> dict[str, Any]:
+    """Fingerprint the named relations, their columns, constraints, indexes,
+    triggers and guard functions in the current schema.  Shared by every
+    deployment-only store that is admitted by an exact catalog fingerprint
+    (schema 25's inbox, schema 26's approvals)."""
     cur.execute(
         "WITH names(name) AS (SELECT unnest(%s::text[])), "
         "rels AS (SELECT count(*) FILTER (WHERE c.relkind='r') AS table_count, count(*) AS object_count, "
@@ -97,7 +111,7 @@ def inspect_catalog(cur: Any) -> dict[str, Any]:
         "SELECT rels.table_count, rels.object_count, funcs.function_count, rels.v AS relations, "
         "idx.v AS indexes, cols.v AS columns, cons.v AS constraints, trigs.v AS triggers, "
         "funcs.v AS functions FROM rels,idx,cols,cons,trigs,funcs",
-        (list(RELATIONS), list(FUNCTIONS)),
+        (list(relations), list(functions)),
     )
     row = cur.fetchone()
     names = ("table_count", "object_count", "function_count", "relations", "indexes", "columns",
@@ -110,11 +124,11 @@ def inspect_catalog(cur: Any) -> dict[str, Any]:
     fingerprint = hashlib.sha256(
         json.dumps(parts, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     ).hexdigest()
-    available = table_count == len(TABLES) and fingerprint == EXPECTED_CATALOG_FINGERPRINT
+    available = table_count == table_total and fingerprint == expected
     return {
         "table_count": table_count,
         "catalog_fingerprint": fingerprint,
-        "expected_catalog_fingerprint": EXPECTED_CATALOG_FINGERPRINT,
+        "expected_catalog_fingerprint": expected,
         "available": available,
         "complete": (object_count == 0 and function_count == 0) or available,
     }

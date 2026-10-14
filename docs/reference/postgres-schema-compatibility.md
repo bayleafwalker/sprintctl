@@ -16,11 +16,24 @@ create, alter, or repair schema objects.
 work API as `sprintctl-work/v1`, reports the actual remote schema version, and
 reports the minimum and maximum versions this runtime supports.
 
-The current source tree (sprintctl 0.19.0) admits exactly remote schema 25
-(schema 18 for sprintctl 0.9.0 through 0.10.x): `MINIMUM_SCHEMA_VERSION` and
-`MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 25, and
+The current source tree (unreleased after sprintctl 0.19.0, which admits
+exactly schema 25) admits exactly remote schema 26 (schema 18 for sprintctl
+0.9.0 through 0.10.x): `MINIMUM_SCHEMA_VERSION` and
+`MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 26, and
 `remote-schema-version` in `pyproject.toml` records the same value. Any other
 ledger version fails closed before a runtime command is served.
+
+Schema 26 adds `work_approval`, the immutable structured transition
+approvals behind `work.approval.record-v1` and `work.approval.get-v1`. Rows
+are append-only (update, delete and truncate raise), reference their run with
+`ON DELETE RESTRICT`, and storage bounds `expires_at` to after `recorded_at`
+and at most 7 days later. The handshake publishes
+`capabilities.approval_storage` with an exact catalog fingerprint
+(`sprintctl/approval_schema.py`); a partial catalog reports
+`approval-storage-partial` and a schema-26 ledger without it
+`approval-storage-missing`. A pre-existing relation, index or guard function
+with one of its names refuses the migration. `work.run.resolve-v2` needs no
+new storage: it reads `run.created_at` and `run_predecessor`.
 
 Schema 25 adds the agent directory and durable inbox (vuoro contract
 `agent-directory-and-inbox` v1): `agent_instance`,
@@ -264,8 +277,9 @@ retry-eligible:
   `work.maintain.check`, `work.maintenance.resource.get`,
   `work.maintenance.resource.changes`, `work.public.list-v1`,
   `work.public.item-v1`, `work.validate.item-status-mutation`,
-  `work.run.resolve-v1`, `work.evidence.tail-v1`, `work.lease.read-v1`,
-  `work.effect.get-v1` and `work.effect.list-proposed-v1`;
+  `work.run.resolve-v1`, `work.run.resolve-v2`, `work.evidence.tail-v1`,
+  `work.lease.read-v1`, `work.effect.get-v1`, `work.effect.list-proposed-v1`
+  and `work.approval.get-v1`;
 - commands keyed by a durable unique constraint, when the request carries a
   required, non-empty idempotency key: `work.lifecycle.arbitrate`,
   `work.decision.record`, `work.evidence.ingest`, `work.batch.apply`,

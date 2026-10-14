@@ -359,11 +359,12 @@ def export_fixture_result(conn, repo_id, *, workspace_id, item_id):
             "work_effect_attempt",
             "work_effect_attempt_event",
             "run_predecessor",
+            "work_approval",
         ):
             if snapshot.conn.execute(
                 f"SELECT count(*) AS n FROM {table} WHERE repo_id=%s", (repo_id,)
             ).fetchone()["n"]:
-                raise ValueError("effect attempt or predecessor closure is unsupported")
+                raise ValueError("effect attempt, predecessor or approval closure is unsupported")
         _validate(raw, repo_id, workspace_id, item_id)
         ledger = snapshot.conn.execute(
             "SELECT idempotency_key,result FROM work_idempotency_ledger WHERE repo_id=%s "
@@ -572,6 +573,7 @@ def import_fixture_result(
             "work_effect_attempt_event",
             "work_idempotency_ledger",
             "run_predecessor",
+            "work_approval",
             "session_note",
         ):
             store.conn.execute(f"LOCK TABLE {table} IN ACCESS EXCLUSIVE MODE")
