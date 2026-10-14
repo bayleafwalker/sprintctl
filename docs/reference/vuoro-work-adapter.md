@@ -127,15 +127,40 @@ evidence or ledger storage.
   unknown id. The evidence and note operations resolve the run the same way
   first.
 - `work.run.resolve-v2` (schema 26) resolves under exactly the same rule and
-  returns v1's fields plus `issued_at` (the owner's `run.created_at`, the
-  server time the binding was minted), `superseded_by_run_id` and `state`.
-  `superseded_by_run_id` is the first run (by link time, then id) registered
-  with this run as its `predecessor_run_id`, null while there is none; a
-  link is never removed while its predecessor exists, so supersession is
-  permanent. `state` is `active` or `superseded`: a run has no recorded close
-  (leases end, runs do not), so there is no `closed` state. v1's descriptor
-  is byte-frozen, so these facts are a new operation version rather than
-  added v1 result fields; v1 answers exactly as before.
+  returns v1's fields plus `issued_at`, `superseded_by_run_id` and `state`.
+  v1's descriptor is byte-frozen, so these facts are a new operation version
+  rather than added v1 result fields; v1 answers exactly as before.
+  - `issued_at` is the owner's `run.created_at`: PostgreSQL `now()`, the
+    start of the registering transaction. An approval's `recorded_at` is
+    instead `clock_timestamp()` read after the run lock is held. Both are the
+    owner's clock; `issued_at` can precede the registration's commit by the
+    length of that transaction (normally milliseconds). From schema 26 a
+    trigger refuses any change to a run's binding columns or `created_at`.
+  - `superseded_by_run_id` is *a* successor: of the runs registered with
+    this run as their `predecessor_run_id`, the one with the lowest
+    `run_id`. That is deterministic and independent of commit timing, but a
+    run may have several successors (continuation does not restrict it), and
+    a later successor with a lower id would then be reported instead. Null
+    while there is none.
+  - `state` is `active` or `superseded`. From schema 26 continuation links
+    are append-only in storage (no UPDATE, DELETE or TRUNCATE, including the
+    CASCADE from deleting a successor run), so `superseded` is permanent. A
+    run has no recorded close (leases end, runs do not), so there is no
+    `closed` state.
+  - Registering a successor locks the predecessor row `FOR NO KEY UPDATE`,
+    the lock `work.approval.record-v1` takes on the run it approves, so the
+    two serialize.
+  - **Decision: who can supersede a run.** Any principal in the run's
+    workspace that may register a run with a predecessor (`work:evidence`
+    and `work:read`) can register a successor and so supersede it. This is
+    the continuation contract (E2/E3 shared contract section 4, agentops#253
+    R4 decision 3): continuing a run on another harness, with a different
+    principal, client or grant, is the purpose of the link. Restricting it to
+    the same principal or grant lineage would break that contract and
+    `work.run.register-v1`'s released behaviour. Supersession only takes
+    authority away from the predecessor (a consumer refuses it); it never
+    grants the successor anything of the predecessor's, since the
+    predecessor's run still resolves only to its own binding.
 - `work.evidence.append-v1` extends the run's chain under a per-run lock.
   `chain_seq` must be one past the stored tail. `chain_prev_digest` must be
   the tail's `entry_digest` as `vuoro_evidence.core.chain` defines it, or null
@@ -185,7 +210,8 @@ evidence or ledger storage.
   therefore readable workspace-wide within the repository and must not
   hold secrets or anything the workspace's other members may not see.
 - A run that another run continues cannot be deleted (`ON DELETE
-  RESTRICT`); deleting the successor removes only its link.
+  RESTRICT`). From schema 26 the successor cannot be deleted either: its
+  link is append-only, so the CASCADE that would remove it is refused.
 
 ## Work leases
 
@@ -688,9 +714,19 @@ descriptor is byte-frozen, while an approval names a run and expires.
 - Authority: recording needs `work:approve`, which no other operation
   requires and the default agent grant does not carry; the owner re-checks it
   and fails closed. `work.approval.get-v1` needs `work:read`.
+  `work:approve` is minted only by the operator-controlled Vuoro identity
+  registry, into operator identities. Vuoro Cloud (the OAuth edge) has no
+  scope that maps to it, so no OAuth grant, and no agent session, can hold
+  it.
 - The run must be a run of this repository in the approver's workspace
   (`run-not-found`, 404, for unknown and foreign alike) and must not already
-  have a registered successor (`run-superseded`, 409).
+  have a registered successor (`run-superseded`, 409). The approver may not
+  be the run's own principal (`self-approval-refused`, 403), whatever its
+  client or grant.
+- Recording locks the run `FOR NO KEY UPDATE`, the lock successor
+  registration takes on its predecessor, so an approval and a successor of
+  the same run serialize: an approval never commits for a run whose
+  successor committed first.
 - `expires_at` must be an RFC 3339 timestamp with an offset, after the
   owner's clock and at most 7 days later (`invalid-expiry`, 422); storage
   enforces the same bound.
@@ -704,3 +740,13 @@ descriptor is byte-frozen, while an approval names a run and expires.
 Nothing here enforces an approval. The consumer compares `transition`,
 `repo_id`, `run_id`, the approver and `expires_at` with the effect it is
 about to dispatch, and checks the run with `work.run.resolve-v2`.
+
+**Approvals are not consumed.** The owner records no use: an approval stays
+valid for any number of effects until `expires_at`. A consumer that needs
+one-use semantics must record the use itself (for example as evidence on the
+run, or in its own ledger keyed by `approval_id`) and refuse a second use.
+
+**Rationales are visible workspace-wide.** Any principal in the workspace
+holding `work:read` can read an approval, rationale included, by id.
+A rationale must not hold secrets or anything the workspace's other members
+may not see.

@@ -6181,8 +6181,12 @@ def _require_eligible_predecessor(
     cur: Any, store: PgStore, predecessor_run_id: str, workspace_id: str
 ) -> None:
     if _RUN_ID_RE.fullmatch(predecessor_run_id or "") is not None:
+        # FOR NO KEY UPDATE: the lock work.approval.record-v1 takes on the
+        # run it approves, so a successor link and an approval of the same
+        # run serialize (schema 26).
         cur.execute(
-            "SELECT workspace_id FROM run WHERE repo_id = %s AND run_id = %s",
+            "SELECT workspace_id FROM run WHERE repo_id = %s AND run_id = %s "
+            "FOR NO KEY UPDATE",
             (store.repo_id, predecessor_run_id),
         )
         row = cur.fetchone()
@@ -6313,12 +6317,14 @@ def resolve_run_facts(
     in one statement (``work.run.resolve-v2``).
 
     ``issued_at`` is the owner's ``run.created_at``: the server time the
-    binding was minted.  ``superseded_by_run_id`` is the first run (by
-    ``run_predecessor.created_at``, then ``run_id``) registered with this run
-    as its ``predecessor_run_id``; None while there is none.  A link is never
-    removed while its predecessor exists (RESTRICT), so once a run is
-    superseded it stays superseded and the answer does not change.  The same
-    binding rule and the same single :class:`RunNotFound` as
+    registering transaction started (``now()``), immutable from schema 26.
+    ``superseded_by_run_id`` is a successor: of the runs registered with
+    this run as their ``predecessor_run_id``, the one with the lowest
+    ``run_id`` -- deterministic and independent of commit timing, but a run
+    can have several successors and a later one with a lower id would be
+    reported instead.  None while there is none.  Links are append-only
+    from schema 26, so once a run is superseded it stays superseded.  The
+    same binding rule and the same single :class:`RunNotFound` as
     :func:`resolve_run` apply.
     """
     with store.conn.cursor() as cur:
@@ -6326,7 +6332,7 @@ def resolve_run_facts(
             "SELECT r.run_id, r.principal_id, r.workspace_id, r.client_id, r.grant_id, "
             "r.created_at, (SELECT rp.run_id FROM run_predecessor rp "
             "  WHERE rp.repo_id = r.repo_id AND rp.predecessor_run_id = r.run_id "
-            "  ORDER BY rp.created_at, rp.run_id LIMIT 1) AS superseded_by_run_id "
+            "  ORDER BY rp.run_id LIMIT 1) AS superseded_by_run_id "
             "FROM run r WHERE r.repo_id = %s AND r.run_id = %s",
             (store.repo_id, run_id),
         )

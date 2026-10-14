@@ -231,17 +231,22 @@ class TestRegisterWithPredecessor:
                     (store.repo_id, predecessor),
                 )
         store.conn.rollback()
-        # Deleting the successor drops its link and nothing else.
+        # Schema 26: links are append-only, so deleting the successor (whose
+        # CASCADE would remove the link) is refused too and supersession
+        # stays permanent.
+        with pytest.raises(psycopg.errors.CheckViolation):
+            with store.conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM run WHERE repo_id = %s AND run_id = %s", (store.repo_id, successor)
+                )
+        store.conn.rollback()
         with store.conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM run WHERE repo_id = %s AND run_id = %s", (store.repo_id, successor)
-            )
             cur.execute(
                 "SELECT count(*) AS n FROM run_predecessor WHERE repo_id = %s AND predecessor_run_id = %s",
                 (store.repo_id, predecessor),
             )
-            assert cur.fetchone()["n"] == 0
-        store.conn.commit()
+            assert cur.fetchone()["n"] == 1
+        store.conn.rollback()
 
 
 class TestPredecessorContext:

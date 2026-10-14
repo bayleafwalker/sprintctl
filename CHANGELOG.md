@@ -6,19 +6,26 @@
 
 - `work.run.resolve-v2`: resolve-v1's binding, under the same binding rule,
   plus `issued_at` (the owner's `run.created_at`), `superseded_by_run_id`
-  (the first run registered with this run as `predecessor_run_id`, else
-  null) and `state` (`active` or `superseded`; a run has no recorded close,
+  (a successor: the lowest `run_id` among runs registered with this run as
+  `predecessor_run_id`, else null) and `state` (`active` or `superseded`; a run has no recorded close,
   so there is no `closed`). resolve-v1 is unchanged: its catalog descriptor
   is byte-frozen, so the new fields are a new version.
 - Structured approvals: `work.approval.record-v1` records an immutable
   approval of a `transition` for a `run_id` until `expires_at` (at most 7
   days), as the authenticated approver, under the new `work:approve`
-  authority; `work.approval.get-v1` (`work:read`) reads one by
-  `approval_id` with the owner's `evaluated_at` and `expired`. PostgreSQL
-  only; standalone SQLite refuses them with `unsupported-backend`.
+  authority (minted only by the operator-controlled identity registry; Vuoro
+  Cloud has no scope for it); `work.approval.get-v1` (`work:read`) reads one
+  by `approval_id` with the owner's `evaluated_at` and `expired`. A principal
+  cannot approve its own run (`self-approval-refused`). Approvals are not
+  consumed: the consumer must record each use itself. Rationales are
+  readable by every `work:read` holder in the workspace. PostgreSQL only;
+  standalone SQLite refuses them with `unsupported-backend`.
 - PostgreSQL schema 26 (`_apply_schema_version_26`,
   `sprintctl/approval_schema.py`) adds the append-only `work_approval`
-  table. The compatibility handshake publishes `approval_storage` with an
+  table, makes `run_predecessor` append-only (supersession is permanent; a
+  successor run can no longer be deleted) and makes a run's binding columns
+  and `created_at` immutable. Successor registration and approval recording
+  serialize on a `FOR NO KEY UPDATE` lock of the run. The compatibility handshake publishes `approval_storage` with an
   exact catalog fingerprint. The runtime admits exactly schema 26, so the
   next release is a coordinated cutover.
 

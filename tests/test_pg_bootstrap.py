@@ -83,7 +83,8 @@ class _SchemaCursor:
                 "triggers": None,
                 "functions": None,
             }
-        if "SELECT c.relname FROM pg_class" in self._query or "SELECT p.proname FROM pg_proc" in self._query:
+        if ("SELECT c.relname FROM pg_class" in self._query or "SELECT p.proname FROM pg_proc" in self._query
+                or "SELECT t.tgname FROM pg_trigger" in self._query):
             return None  # No foreign attempt objects in this empty bootstrap fake.
         if "SELECT data_type FROM information_schema.columns" in self._query:
             return None  # This empty fake has no pre-existing binding columns.

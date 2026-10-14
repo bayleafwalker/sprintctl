@@ -68,12 +68,14 @@ def inspect_catalog(cur: Any) -> dict[str, Any]:
 
 def inspect_relations(
     cur: Any, *, relations: tuple[str, ...], functions: tuple[str, ...],
-    table_total: int, expected: str,
+    table_total: int, expected: str, trigger_tables: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Fingerprint the named relations, their columns, constraints, indexes,
     triggers and guard functions in the current schema.  Shared by every
     deployment-only store that is admitted by an exact catalog fingerprint
-    (schema 25's inbox, schema 26's approvals)."""
+    (schema 25's inbox, schema 26's approvals).  ``trigger_tables`` are
+    existing tables whose user triggers alone are fingerprinted as well (a
+    guard a schema adds to a table it does not own)."""
     cur.execute(
         "WITH names(name) AS (SELECT unnest(%s::text[])), "
         "rels AS (SELECT count(*) FILTER (WHERE c.relkind='r') AS table_count, count(*) AS object_count, "
@@ -103,7 +105,7 @@ def inspect_relations(
         "t.tgenabled,t.tgtype) ORDER BY c.relname,t.tgname) v FROM pg_trigger t "
         "JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace "
         "JOIN pg_proc p ON p.oid=t.tgfoid WHERE n.nspname=current_schema() "
-        "AND c.relname IN (SELECT name FROM names) AND NOT t.tgisinternal), "
+        "AND (c.relname IN (SELECT name FROM names) OR c.relname = ANY(%s)) AND NOT t.tgisinternal), "
         "funcs AS (SELECT count(*) AS function_count, "
         "jsonb_agg(jsonb_build_array(p.proname,p.prosrc) ORDER BY p.proname) v "
         "FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
@@ -111,7 +113,7 @@ def inspect_relations(
         "SELECT rels.table_count, rels.object_count, funcs.function_count, rels.v AS relations, "
         "idx.v AS indexes, cols.v AS columns, cons.v AS constraints, trigs.v AS triggers, "
         "funcs.v AS functions FROM rels,idx,cols,cons,trigs,funcs",
-        (list(relations), list(functions)),
+        (list(relations), list(trigger_tables), list(functions)),
     )
     row = cur.fetchone()
     names = ("table_count", "object_count", "function_count", "relations", "indexes", "columns",

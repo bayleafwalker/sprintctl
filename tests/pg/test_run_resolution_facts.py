@@ -9,12 +9,13 @@ dispatches through.  The 25 -> 26 upgrade runs in an isolated schema.
 """
 from __future__ import annotations
 
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from sprintctl import approval_schema, pg, pg_migrations
+from sprintctl import approval, approval_schema, pg, pg_migrations
 from sprintctl.application import ApplicationRejection
 
 from tests.pg._shared import (
@@ -25,7 +26,13 @@ from tests.pg._shared import (
     drop_schema26,
     psycopg,
 )
-from tests.pg.test_run_evidence import _app, _context as _base_context, _register
+from tests.pg.test_run_evidence import (
+    _app,
+    _context as _base_context,
+    _register,
+    _sibling_store,
+    _wait_until_lock_blocked,
+)
 
 pytestmark = PG_MARKS
 
@@ -61,6 +68,15 @@ def _rejection(call) -> ApplicationRejection:
 
 def _in(seconds: float) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
+
+
+def _approvals(store, run_id: str) -> int:
+    with store.conn.cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM work_approval WHERE repo_id=%s AND run_id=%s",
+                    (store.repo_id, run_id))
+        count = cur.fetchone()["n"]
+    store.conn.rollback()
+    return count
 
 
 def _approve(app, run_id, *, context=None, key=None, **overrides) -> dict:
@@ -108,13 +124,89 @@ class TestResolveV2:
         own = app.invoke("work.run.resolve-v2", {"run_id": successor["run_id"]}, _context(**SUCCESSOR))
         assert own["state"] == "active" and own["superseded_by_run_id"] is None
 
-    def test_the_first_registered_successor_is_reported_and_stays_reported(self, store):
+    def test_with_several_successors_the_lowest_run_id_is_reported(self, store):
         app = _app(store)
         predecessor = _run(app)
-        first = _run(app, context=_context(**SUCCESSOR), predecessor_run_id=predecessor["run_id"])
-        _run(app, context=_context(**SUCCESSOR), predecessor_run_id=predecessor["run_id"])
+        successors = [
+            _run(app, context=_context(**SUCCESSOR), predecessor_run_id=predecessor["run_id"])["run_id"]
+            for _ in range(3)
+        ]
         v2 = app.invoke("work.run.resolve-v2", {"run_id": predecessor["run_id"]}, _context(**AGENT))
-        assert v2["superseded_by_run_id"] == first["run_id"]
+        assert v2["superseded_by_run_id"] == min(successors)
+        assert v2["state"] == "superseded"
+
+    def test_concurrent_successors_serialize_on_the_predecessor_and_both_links_stand(self, store):
+        """Two registrations naming one predecessor: the second waits on the
+        predecessor's row lock until the first commits; the answer is the
+        lowest run_id whatever the commit order."""
+        app = _app(store)
+        predecessor = _run(app)["run_id"]
+        holder, other = _sibling_store(store), _sibling_store(store)
+        holder.remote_schema_version = other.remote_schema_version = store.remote_schema_version
+        try:
+            with holder.conn.cursor() as cur:
+                held = pg.register_run(
+                    holder, principal_id="github:2:0", workspace_id="ws-1", client_id=None,
+                    grant_id=None, idempotency_key=_key(), request_digest="b" * 64,
+                    harness_id="h", harness_build="1", model_id="m", recipe_id="r",
+                    observed_profile={}, predecessor_run_id=predecessor, cur=cur,
+                )
+            done, result = threading.Event(), {}
+
+            def second():
+                try:
+                    result["run"] = _run(_app(other), context=_context(**SUCCESSOR),
+                                         predecessor_run_id=predecessor)["run_id"]
+                finally:
+                    done.set()
+
+            thread = threading.Thread(target=second)
+            thread.start()
+            observer = _sibling_store(store).conn
+            try:
+                assert _wait_until_lock_blocked(observer, other.conn.info.backend_pid, done)
+            finally:
+                observer.close()
+            holder.conn.commit()
+            thread.join(10)
+            assert done.is_set() and "run" in result
+            v2 = app.invoke("work.run.resolve-v2", {"run_id": predecessor}, _context(**AGENT))
+            assert v2["superseded_by_run_id"] == min(held["run_id"], result["run"])
+        finally:
+            holder.conn.rollback()
+            holder.conn.close()
+            other.conn.close()
+
+    def test_links_and_run_bindings_are_immutable_in_storage(self, store):
+        app = _app(store)
+        predecessor = _run(app)
+        successor = _run(app, context=_context(**SUCCESSOR), predecessor_run_id=predecessor["run_id"])
+        for statement, args in (
+            ("UPDATE run_predecessor SET predecessor_run_id = run_id WHERE repo_id=%s AND run_id=%s",
+             (store.repo_id, successor["run_id"])),
+            ("DELETE FROM run_predecessor WHERE repo_id=%s AND run_id=%s",
+             (store.repo_id, successor["run_id"])),
+            ("TRUNCATE run_predecessor", None),
+            ("UPDATE run SET created_at = created_at - interval '1 hour' WHERE repo_id=%s AND run_id=%s",
+             (store.repo_id, predecessor["run_id"])),
+            ("UPDATE run SET grant_id = 'other' WHERE repo_id=%s AND run_id=%s",
+             (store.repo_id, predecessor["run_id"])),
+            ("UPDATE run SET principal_id = 'github:9:0' WHERE repo_id=%s AND run_id=%s",
+             (store.repo_id, predecessor["run_id"])),
+        ):
+            with pytest.raises(psycopg.errors.CheckViolation):
+                with store.conn.cursor() as cur:
+                    cur.execute(statement, args)
+            store.conn.rollback()
+        v2 = app.invoke("work.run.resolve-v2", {"run_id": predecessor["run_id"]}, _context(**AGENT))
+        assert v2["issued_at"] == predecessor["created_at"] and v2["state"] == "superseded"
+        # Non-binding columns stay writable (receipt integrity checks rely on
+        # detecting such tampering, not on the trigger).
+        with store.conn.cursor() as cur:
+            cur.execute("UPDATE run SET harness_build = harness_build WHERE repo_id=%s AND run_id=%s",
+                        (store.repo_id, predecessor["run_id"]))
+            assert cur.rowcount == 1
+        store.conn.rollback()
 
     @pytest.mark.parametrize("other", [
         dict(principal_id="github:9:0"), dict(workspace_id="ws-other"),
@@ -190,6 +282,99 @@ class TestApprovalRecordAndGet:
             app, run["run_id"], key=key, expires_at=expires_at, context=_operator(grant_id="grant-op-2")))
         assert other_grant.code == "idempotency-conflict"
 
+    def test_a_principal_cannot_approve_its_own_run(self, store):
+        app = _app(store)
+        run = _run(app)
+        for context in (_operator(principal_id=AGENT["principal_id"]),
+                        _operator(**AGENT)):
+            error = _rejection(lambda: _approve(app, run["run_id"], context=context))
+            assert (error.code, error.http_status) == ("self-approval-refused", 403)
+
+    def test_record_and_successor_registration_serialize_on_the_run(self, store):
+        """An in-flight successor registration holds the run's lock: a
+        concurrent approval waits, then sees the committed link and refuses."""
+        app = _app(store)
+        run_id = _run(app)["run_id"]
+        holder, other = _sibling_store(store), _sibling_store(store)
+        holder.remote_schema_version = other.remote_schema_version = store.remote_schema_version
+        try:
+            with holder.conn.cursor() as cur:
+                successor = pg.register_run(
+                    holder, principal_id="github:2:0", workspace_id="ws-1", client_id=None,
+                    grant_id=None, idempotency_key=_key(), request_digest="c" * 64,
+                    harness_id="h", harness_build="1", model_id="m", recipe_id="r",
+                    observed_profile={}, predecessor_run_id=run_id, cur=cur,
+                )["run_id"]
+            done, result = threading.Event(), {}
+
+            def record():
+                try:
+                    _approve(_app(other), run_id)
+                    result["outcome"] = "recorded"
+                except ApplicationRejection as exc:
+                    result["outcome"] = exc.code
+                finally:
+                    done.set()
+
+            thread = threading.Thread(target=record)
+            thread.start()
+            observer = _sibling_store(store).conn
+            try:
+                assert _wait_until_lock_blocked(observer, other.conn.info.backend_pid, done)
+            finally:
+                observer.close()
+            holder.conn.commit()
+            thread.join(10)
+            assert result == {"outcome": "run-superseded"}
+            assert _approvals(store, run_id) == 0
+            v2 = app.invoke("work.run.resolve-v2", {"run_id": run_id}, _context(**AGENT))
+            assert v2["superseded_by_run_id"] == successor
+        finally:
+            holder.conn.rollback()
+            holder.conn.close()
+            other.conn.close()
+
+    def test_an_in_flight_approval_makes_a_successor_wait_for_it(self, store):
+        """The reverse order: the approval commits first, the successor link
+        after it, and resolve-v2 then reports the run superseded."""
+        app = _app(store)
+        run_id = _run(app)["run_id"]
+        holder, other = _sibling_store(store), _sibling_store(store)
+        holder.remote_schema_version = other.remote_schema_version = store.remote_schema_version
+        try:
+            with holder.conn.cursor() as cur:
+                approval.record(
+                    cur, holder, principal_id=OPERATOR["principal_id"], workspace_id="ws-1",
+                    client_id=None, grant_id=None, idempotency_key=_key(), request_digest="d" * 64,
+                    transition="rollout-resume", run_id=run_id,
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=1), rationale=None,
+                )
+            done, result = threading.Event(), {}
+
+            def register():
+                try:
+                    result["run"] = _run(_app(other), context=_context(**SUCCESSOR),
+                                         predecessor_run_id=run_id)["run_id"]
+                finally:
+                    done.set()
+
+            thread = threading.Thread(target=register)
+            thread.start()
+            observer = _sibling_store(store).conn
+            try:
+                assert _wait_until_lock_blocked(observer, other.conn.info.backend_pid, done)
+            finally:
+                observer.close()
+            holder.conn.commit()
+            thread.join(10)
+            assert "run" in result and _approvals(store, run_id) == 1
+            v2 = app.invoke("work.run.resolve-v2", {"run_id": run_id}, _context(**AGENT))
+            assert (v2["state"], v2["superseded_by_run_id"]) == ("superseded", result["run"])
+        finally:
+            holder.conn.rollback()
+            holder.conn.close()
+            other.conn.close()
+
     def test_the_run_must_be_this_workspaces_and_not_superseded(self, store):
         app = _app(store)
         foreign = _run(app, context=_context(**{**AGENT, "workspace_id": "ws-2"}))
@@ -264,6 +449,10 @@ class TestApprovalRecordAndGet:
                 with store.conn.cursor() as cur:
                     cur.execute(statement, (store.repo_id,))
             store.conn.rollback()
+        with pytest.raises(psycopg.errors.CheckViolation):
+            with store.conn.cursor() as cur:
+                cur.execute("TRUNCATE work_approval")
+        store.conn.rollback()
         with pytest.raises(psycopg.errors.ForeignKeyViolation):
             with store.conn.cursor() as cur:
                 cur.execute("DELETE FROM run WHERE repo_id=%s AND run_id=%s", (store.repo_id, run["run_id"]))
@@ -386,7 +575,7 @@ def test_a_pre_existing_lookalike_is_refused_without_advancing(isolated):
 def test_a_partial_install_on_26_is_reported_not_repaired(isolated):
     store = isolated
     with store.conn.cursor() as cur:
-        cur.execute("DROP TRIGGER sprintctl_approval_no_truncate ON work_approval")
+        cur.execute("DROP TRIGGER sprintctl_run_binding_immutable ON run")
     store.conn.commit()
     handshake = pg_migrations.compatibility_handshake(store)
     assert handshake["compatible"] is False and handshake["reason"] == "approval-storage-partial"

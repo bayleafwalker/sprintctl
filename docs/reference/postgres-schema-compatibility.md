@@ -31,9 +31,16 @@ and at most 7 days later. The handshake publishes
 `capabilities.approval_storage` with an exact catalog fingerprint
 (`sprintctl/approval_schema.py`); a partial catalog reports
 `approval-storage-partial` and a schema-26 ledger without it
-`approval-storage-missing`. A pre-existing relation, index or guard function
-with one of its names refuses the migration. `work.run.resolve-v2` needs no
-new storage: it reads `run.created_at` and `run_predecessor`.
+`approval-storage-missing`. A pre-existing relation, index, guard function or
+guard trigger with one of its names refuses the migration.
+`work.run.resolve-v2` needs no new table: it reads `run.created_at` and
+`run_predecessor`. Schema 26 guards both: `run_predecessor` becomes
+append-only (UPDATE, DELETE and TRUNCATE raise, so a successor run can no
+longer be deleted either), and a trigger refuses any change to a run's
+binding columns or `created_at`. Those triggers are part of the
+`approval_storage` fingerprint, so a database missing one is
+`approval-storage-partial`. The runtime role needs `SELECT, INSERT` on
+`work_approval` and nothing more.
 
 Schema 25 adds the agent directory and durable inbox (vuoro contract
 `agent-directory-and-inbox` v1): `agent_instance`,

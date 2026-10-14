@@ -15,6 +15,13 @@ client and grant), the repository and the workspace come from the
 authenticated call only, never from arguments.  The approved run must be a
 run of this repository in the approver's workspace, and must not already be
 superseded; an approval never widens what the run's own binding resolves to.
+A principal never approves its own run.  ``work:approve`` is minted only
+by the operator-controlled identity registry; no Vuoro Cloud scope maps to
+it.
+
+Approvals are not consumed: the owner records no use, so a consumer that
+needs one-use semantics records each use itself.  Rationales are readable by
+every ``work:read`` holder in the workspace.
 
 Nothing here enforces an approval: the consumer (for example agentops
 ``scripts/execution_authority.py``) compares ``transition``, ``repo_id``,
@@ -158,25 +165,35 @@ def record(
 ) -> dict[str, Any]:
     """Insert one approval and return it.
 
-    The run is locked ``FOR KEY SHARE`` (it cannot be deleted, and a
-    successor's link insert does not block) and must be in this repository
-    and the approver's workspace (``run-not-found`` otherwise, one code for
-    unknown and foreign).  A run that already has a registered successor is
-    ``run-superseded``.  ``expires_at`` must be after the owner's clock and
+    The run is locked ``FOR NO KEY UPDATE``, the same lock
+    :func:`sprintctl.pg.register_run` takes on a named predecessor, so an
+    approval and a successor registration for one run serialize: whichever
+    commits second sees the first.  (``NO KEY UPDATE`` rather than
+    ``UPDATE`` so evidence, note and lease writes, whose foreign-key checks
+    take ``KEY SHARE`` on the run, are not blocked.)  The run must be in this
+    repository and the approver's workspace (``run-not-found`` otherwise, one
+    code for unknown and foreign).  The approver may not be the run's own
+    principal (``self-approval-refused``).  A run that already has a
+    registered successor is ``run-superseded``.  ``expires_at`` must be after the owner's clock and
     within :data:`MAX_LIFETIME_SECONDS` of it (``invalid-expiry``).
     """
     from .pg import _mint_prefixed_id, _replay_or_conflict
 
     cur.execute(
-        "SELECT workspace_id FROM run WHERE repo_id = %s AND run_id = %s FOR KEY SHARE",
+        "SELECT workspace_id, principal_id FROM run WHERE repo_id = %s AND run_id = %s "
+        "FOR NO KEY UPDATE",
         (store.repo_id, run_id),
     )
     run = cur.fetchone()
     if run is None or run["workspace_id"] != workspace_id:
         raise ApprovalRefused("run-not-found", f"no run {run_id!r} in this workspace", 404)
+    if run["principal_id"] == principal_id:
+        raise ApprovalRefused(
+            "self-approval-refused", "a principal cannot approve a transition for its own run", 403
+        )
     cur.execute(
         "SELECT run_id FROM run_predecessor WHERE repo_id = %s AND predecessor_run_id = %s "
-        "ORDER BY created_at, run_id LIMIT 1",
+        "ORDER BY run_id LIMIT 1",
         (store.repo_id, run_id),
     )
     successor = cur.fetchone()

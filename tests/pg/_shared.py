@@ -118,8 +118,11 @@ def store(pg_test_scope):
 def drop_schema26(cur) -> None:
     """Remove schema 26's approval storage, for fixtures that rebuild an
     older schema in place before migrating it forward again."""
+    cur.execute("DROP TRIGGER sprintctl_run_binding_immutable ON run")
+    cur.execute("DROP TRIGGER sprintctl_run_predecessor_append_only ON run_predecessor")
+    cur.execute("DROP TRIGGER sprintctl_run_predecessor_no_truncate ON run_predecessor")
     cur.execute("DROP TABLE work_approval")
-    cur.execute("DROP FUNCTION sprintctl_approval_append_only()")
+    cur.execute("DROP FUNCTION sprintctl_approval_append_only(), sprintctl_run_binding_immutable()")
 
 
 def drop_schema25(cur) -> None:
