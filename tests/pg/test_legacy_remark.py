@@ -135,6 +135,7 @@ class TestSchema16Migration:
                 patch.setattr(pg, "_apply_schema_version_22", lambda cur: None)
                 patch.setattr(pg, "_apply_schema_version_23", lambda cur: None)
                 patch.setattr(pg, "_apply_schema_version_25", lambda cur: None)
+                patch.setattr(pg, "_apply_schema_version_26", lambda cur: None)
                 patch.setattr(pg_migrations, "compatibility_handshake", lambda store: {"compatible": True})
                 pg_migrations.migrate_schema(store)
             with conn.cursor() as cur:

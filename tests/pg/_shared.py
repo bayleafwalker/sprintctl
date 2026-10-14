@@ -115,9 +115,21 @@ def store(pg_test_scope):
         conn.close()
 
 
-def drop_schema25(cur) -> None:
-    """Remove schema 25's agent inbox storage, for fixtures that rebuild an
+def drop_schema26(cur) -> None:
+    """Remove schema 26's approval storage, for fixtures that rebuild an
     older schema in place before migrating it forward again."""
+    cur.execute("DROP TRIGGER sprintctl_run_binding_immutable ON run")
+    cur.execute("DROP TRIGGER sprintctl_run_predecessor_append_only ON run_predecessor")
+    cur.execute("DROP TRIGGER sprintctl_run_predecessor_no_truncate ON run_predecessor")
+    cur.execute("DROP TABLE work_approval")
+    cur.execute("DROP FUNCTION sprintctl_approval_append_only(), sprintctl_run_binding_immutable()")
+
+
+def drop_schema25(cur) -> None:
+    """Remove schema 25's agent inbox storage (and schema 26 above it), for
+    fixtures that rebuild an older schema in place before migrating it
+    forward again."""
+    drop_schema26(cur)
     cur.execute("DROP TABLE agent_message_receipt, agent_message, agent_inbox_counter, "
                 "agent_observation, agent_declaration_revision, agent_instance")
     cur.execute("DROP FUNCTION sprintctl_agent_append_only(), sprintctl_agent_instance_guard()")

@@ -8,6 +8,8 @@ import pytest
 
 from sprintctl import effect_attempt as contract
 from sprintctl.agent_inbox import OPERATIONS as AGENT_INBOX_OPERATIONS
+#: Schema 26: run resolution facts and structured approvals.
+SCHEMA26_OPERATIONS = {"work.run.resolve-v2", "work.approval.record-v1", "work.approval.get-v1"}
 
 REVISION = "item:11111111-1111-1111-1111-111111111111@description:v1@sha256:" + "a" * 64 + "@revise:0"
 OPEN = {"intent_id": "intent_" + "1" * 26, "revision": 1,
@@ -96,6 +98,7 @@ def test_only_attempt_and_declared_preview_descriptors_are_added_to_released_cat
             "work.run.invocation-receipt-get-v1",
         }
         | AGENT_INBOX_OPERATIONS
+        | SCHEMA26_OPERATIONS
     )
     assert {k: actual[k] for k in baseline["operation_sha256"]} == baseline["operation_sha256"]
 

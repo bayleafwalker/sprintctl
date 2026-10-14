@@ -24,6 +24,7 @@ from vuoro_adapter_kit import (
 )
 
 from . import agent_inbox as _inbox
+from . import approval as _approval
 from . import decisions as _decisions
 from . import effect_attempt as _attempt
 from . import effect_intent as _effect
@@ -2966,6 +2967,105 @@ def _agent_inbox_operation_contracts() -> tuple[WorkOperationContract, ...]:
 
 
 WORK_OPERATION_CONTRACTS += _agent_inbox_operation_contracts()
+
+
+# --------------------------------------------------------------------------
+# Run resolution facts and structured approvals (schema 26).
+#
+# work.run.resolve-v2 is resolve-v1's binding plus the owner-side facts an
+# effect-boundary authority check needs: when the binding was issued and
+# whether a successor run has superseded it.  resolve-v1's descriptor is
+# byte-frozen, so the facts are a new version, not added result fields.  A
+# run has no recorded close, so state is only active | superseded.
+#
+# work.approval.record-v1 / get-v1 store and read one immutable operator
+# approval of a named transition for one run, until expires_at.  Recording
+# needs work:approve, which the default agent grant does not carry; the
+# approver, repository and workspace are the caller's, never arguments.
+# --------------------------------------------------------------------------
+def _run_resolution_operation_contracts() -> tuple[WorkOperationContract, ...]:
+    timestamp = {"type": "string", "minLength": 1}
+    approval_id = {"type": "string", "pattern": _approval.APPROVAL_ID_PATTERN}
+    approval_properties = {
+        "approval_id": approval_id,
+        "repo_id": {"type": "string"},
+        "workspace_id": {"type": "string", "minLength": 1},
+        "run_id": _RUN_ID_SCHEMA,
+        "transition": {"type": "string", "pattern": _approval.TRANSITION_PATTERN},
+        "rationale": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "approver": _object_schema(
+            {
+                "principal_id": {"type": "string", "minLength": 1},
+                "client_id": _NULLABLE_BINDING_ID_SCHEMA,
+                "grant_id": _NULLABLE_BINDING_ID_SCHEMA,
+            },
+            required=("principal_id", "client_id", "grant_id"),
+        ),
+        "recorded_at": timestamp,
+        "expires_at": timestamp,
+    }
+    return (
+        WorkOperationContract(
+            "work.run.resolve-v2",
+            _object_schema({"run_id": _RUN_ID_SCHEMA}, required=("run_id",)),
+            _result_schema(
+                (
+                    "repo_id", "run_id", "principal_id", "workspace_id", "client_id",
+                    "grant_id", "issued_at", "superseded_by_run_id", "state",
+                ),
+                {
+                    "repo_id": {"type": "string"},
+                    "run_id": _RUN_ID_SCHEMA,
+                    "principal_id": {"type": "string", "minLength": 1},
+                    "workspace_id": {"type": "string", "minLength": 1},
+                    "client_id": _NULLABLE_BINDING_ID_SCHEMA,
+                    "grant_id": _NULLABLE_BINDING_ID_SCHEMA,
+                    "issued_at": timestamp,
+                    "superseded_by_run_id": {"anyOf": [_RUN_ID_SCHEMA, {"type": "null"}]},
+                    "state": {"enum": ["active", "superseded"]},
+                },
+            ),
+            # As resolve-v1: only the caller's own run resolves (run-not-found
+            # otherwise), so no bucket authority gates it.
+            None,
+            "read",
+            "not-allowed",
+        ),
+        WorkOperationContract(
+            _approval.OPERATION_RECORD,
+            _object_schema(
+                {
+                    "transition": {"type": "string", "pattern": _approval.TRANSITION_PATTERN},
+                    "run_id": _RUN_ID_SCHEMA,
+                    "expires_at": {"type": "string", "minLength": 1},
+                    "rationale": {"type": "string", "maxLength": _approval.RATIONALE_MAX_BYTES},
+                    "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
+                },
+                required=("transition", "run_id", "expires_at", "idempotency_key"),
+            ),
+            _result_schema(
+                (*approval_properties, "replayed"),
+                {**approval_properties, "replayed": {"type": "boolean"}},
+            ),
+            _approval.AUTHORITY_RECORD,
+            "write",
+            "not-allowed",
+        ),
+        WorkOperationContract(
+            _approval.OPERATION_GET,
+            _object_schema({"approval_id": approval_id}, required=("approval_id",)),
+            _result_schema(
+                (*approval_properties, "evaluated_at", "expired"),
+                {**approval_properties, "evaluated_at": timestamp, "expired": {"type": "boolean"}},
+            ),
+            _approval.AUTHORITY_GET,
+            "read",
+            "not-allowed",
+        ),
+    )
+
+
+WORK_OPERATION_CONTRACTS += _run_resolution_operation_contracts()
 
 
 LEGACY_REMOTE_COMMAND_PARITY: tuple[dict[str, str], ...] = (

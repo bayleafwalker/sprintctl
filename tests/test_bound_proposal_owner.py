@@ -9,6 +9,8 @@ from sprintctl.effect_causal import validate_basis
 from sprintctl.vuoro_adapter import WORK_OPERATION_CONTRACTS, catalog_operation_specs
 from tests.test_effect_intent_contract import PROPOSE_ARGS
 from sprintctl.agent_inbox import OPERATIONS as AGENT_INBOX_OPERATIONS
+#: Schema 26: run resolution facts and structured approvals.
+SCHEMA26_OPERATIONS = {"work.run.resolve-v2", "work.approval.record-v1", "work.approval.get-v1"}
 
 BOUND = 'work.effect.propose-bound-v1'
 REVISION = 'item:00000000-0000-0000-0000-000000000001@description:v0@sha256:' + 'a' * 64 + '@revise:0'
@@ -59,5 +61,5 @@ def test_only_catalog_addition_and_every_existing_descriptor_byte_preserved():
         "work.effect.acceptance-snapshot-v1", "work.effect.export-proposal-v2", "work.effect.export-proposal-v3", "work.effect.basis-v1",
         "work.run.continuation-delta-v1",
         "work.run.register-correlated-v1", "work.run.invocation-receipt-get-v1",
-    } | set(OPERATION_AUTHORITIES) | AGENT_INBOX_OPERATIONS
+    } | set(OPERATION_AUTHORITIES) | AGENT_INBOX_OPERATIONS | SCHEMA26_OPERATIONS
     assert {k: actual[k] for k in baseline['operation_sha256']} == baseline['operation_sha256']

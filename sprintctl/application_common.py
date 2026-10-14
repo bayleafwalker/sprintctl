@@ -88,6 +88,8 @@ _ADMIN_SHUTDOWN_READ_OPERATIONS = frozenset(
         "work.public.item-v1",
         "work.validate.item-status-mutation",
         "work.run.resolve-v1",
+        "work.run.resolve-v2",
+        "work.approval.get-v1",
         "work.run.predecessor-context-v1",
         "work.evidence.tail-v1",
         "work.evidence.evaluate-v1",

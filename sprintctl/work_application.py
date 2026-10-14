@@ -14,6 +14,7 @@ from functools import partial
 
 from .application_common import *
 from . import agent_inbox as _inbox
+from . import approval as _approval
 from . import contracts as _contracts
 from . import decisions as _decisions
 from . import effect_intent as _effect
@@ -806,6 +807,7 @@ class WorkApplication:
             "work.run.register-correlated-v1": target._run_register_correlated,
             "work.run.invocation-receipt-get-v1": target._run_invocation_receipt_get,
             "work.run.resolve-v1": target._run_resolve,
+            "work.run.resolve-v2": target._run_resolve_v2,
             "work.run.predecessor-context-v1": target._run_predecessor_context,
             "work.run.continuation-delta-v1": target._read_run_continuation_delta,
             "work.evidence.tail-v1": target._evidence_tail,
@@ -838,6 +840,8 @@ class WorkApplication:
             _attempt.OPERATION_REPORT: target._effect_attempt_report,
             _attempt.OPERATION_GET: target._effect_attempt_get,
             **{name: target._agent_inbox for name in _inbox.OPERATIONS},
+            _approval.OPERATION_RECORD: target._approval_record,
+            _approval.OPERATION_GET: target._approval_get,
         }
         try:
             handler = handlers[operation]
@@ -2239,6 +2243,87 @@ class WorkApplication:
             "client_id": row["client_id"],
             "grant_id": row["grant_id"],
         }
+
+    def _run_resolve_v2(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        """resolve-v1's binding plus ``issued_at``, ``superseded_by_run_id``
+        and ``state`` (active | superseded), under the same binding rule."""
+        if not callable(getattr(self.backend, "resolve_run_facts", None)):
+            raise ApplicationRejection(
+                "unsupported-backend", "run resolution requires the PostgreSQL owner", 501
+            )
+        principal_id, workspace_id = _identity_binding(context)
+        client_id, grant_id = _grant_binding(context)
+        from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
+
+        try:
+            facts = self.backend.resolve_run_facts(
+                self.store, arguments["run_id"], principal_id=principal_id,
+                workspace_id=workspace_id, client_id=client_id, grant_id=grant_id,
+            )
+        except _pg.RunNotFound as exc:
+            raise ApplicationRejection("run-not-found", str(exc), 404) from exc
+        return {"repo_id": self.repo_id, **facts}
+
+    def _require_approval_capability(self, operation: str, context: InvocationContext) -> None:
+        # The service checks the catalog authority first; this is the owner's
+        # own fail-closed check for a caller that reaches invoke directly.
+        required = _approval.OPERATION_AUTHORITIES[operation]
+        authorities = getattr(getattr(context, "identity", None), "authorities", None) or ()
+        if required not in authorities:
+            raise ApplicationRejection(
+                "authority-required", f"{operation} requires the {required} authority", 403
+            )
+        if not callable(getattr(self.backend, "idempotent_write", None)):
+            raise ApplicationRejection(
+                "unsupported-backend",
+                "approvals require the PostgreSQL owner; standalone SQLite does not store them",
+                501,
+            )
+        if (getattr(self.store, "remote_schema_version", None) or 0) < _approval.SCHEMA_VERSION:
+            raise ApplicationRejection(
+                "owner-capability-unavailable",
+                f"approvals require the PostgreSQL schema {_approval.SCHEMA_VERSION} owner",
+                503,
+            )
+
+    def _approval_record(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        self._require_approval_capability(_approval.OPERATION_RECORD, context)
+        principal_id, workspace_id = _identity_binding(context)
+        client_id, grant_id = _grant_binding(context)
+        try:
+            fields = _approval.record_arguments(arguments)
+        except _approval.ApprovalRefused as exc:
+            raise ApplicationRejection(exc.code, str(exc), exc.http_status) from exc
+
+        def effect(cur: Any, request_digest: str) -> dict[str, Any]:
+            try:
+                return _approval.record(
+                    cur, self.store, principal_id=principal_id, workspace_id=workspace_id,
+                    client_id=client_id, grant_id=grant_id,
+                    idempotency_key=arguments["idempotency_key"], request_digest=request_digest,
+                    **fields,
+                )
+            except _approval.ApprovalRefused as exc:
+                raise ApplicationRejection(exc.code, str(exc), exc.http_status) from exc
+
+        # The approver's grant is part of the request: the same key under
+        # another grant is a conflict, never a replay of that grant's record.
+        return self._idempotent_write(
+            context, _approval.LEDGER_TOOL, arguments, effect,
+            digest_binding={"client_id": client_id, "grant_id": grant_id},
+            after_result=lambda _cur, result, replayed: {**result, "replayed": replayed},
+        )
+
+    def _approval_get(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        self._require_approval_capability(_approval.OPERATION_GET, context)
+        _principal_id, workspace_id = _identity_binding(context)
+        try:
+            approval_id = _approval.get_arguments(arguments)
+            with self.store.conn.cursor() as cur:
+                return _approval.get(cur, self.store, workspace_id=workspace_id,
+                                     approval_id=approval_id)
+        except _approval.ApprovalRefused as exc:
+            raise ApplicationRejection(exc.code, str(exc), exc.http_status) from exc
 
     def _run_predecessor_context(
         self, arguments: dict[str, Any], context: InvocationContext
