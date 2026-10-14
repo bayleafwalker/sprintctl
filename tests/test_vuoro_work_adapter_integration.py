@@ -39,22 +39,24 @@ def anyio_backend() -> str:
 # Historical 46/49-operation pins predated a0 and were already stale there.
 # Canonical da10 has 86/89 operations; this adds exactly one readonly basis.
 # Subtraction retains every da10 operation byte, then the historical dd0 gate.
+# Schema 25 adds the ten work.agent.*/work.message.* operations (97/100);
+# removing them reproduces the 87/90-operation basis pins byte for byte.
 @pytest.mark.parametrize(
     ("remote_schema_version", "operation_count", "byte_count", "operations_sha", "revision"),
     [
         (
             6,
-            87,
-            225_459,
-            "45465c368b31a6b7c790fdeaf8a0718da46fc48608ade628986ee4ec37db3c28",
-            "45465c368b31a6b7c790fdeaf8a0718da46fc48608ade628986ee4ec37db3c28",
+            97,
+            236_630,
+            "eafd1a4415fb2ef0540f7cd36b8e6d92c5dbb7d1b7eb5bb0aafbefc4cd071739",
+            "eafd1a4415fb2ef0540f7cd36b8e6d92c5dbb7d1b7eb5bb0aafbefc4cd071739",
         ),
         (
             7,
-            90,
-            230_574,
-            "60b52ef1fe022176add9b893a538c88aeb676562ec615e7ac02ee716702e8354",
-            "e33a63dc20091542bc30d7ac18efd3cc952618b65da2b6ce566063071b084f89",
+            100,
+            241_745,
+            "e6c9ef82b65113eb2ea4d555e3f5ee36eab233a6bcc1f3e174cc18bfe925ba71",
+            "f135ba3f9c46115e318ec231c54872db0af487079c6a349214462ee620c64a3e",
         ),
     ],
 )
@@ -85,7 +87,14 @@ def test_adapter_kit_migration_preserves_catalog_bytes_and_registry_revision(
     assert len(payload) == byte_count
     assert hashlib.sha256(payload).hexdigest() == operations_sha
     assert registry.revision == revision
-    predecessor = [operation for operation in operations
+    from sprintctl.agent_inbox import OPERATIONS as agent_inbox_operations
+    basis = [operation for operation in operations if operation["name"] not in agent_inbox_operations]
+    basis_payload = json.dumps(basis, sort_keys=True, separators=(",", ":")).encode()
+    assert (len(basis), len(basis_payload), hashlib.sha256(basis_payload).hexdigest()) == {
+        6: (87, 225459, "45465c368b31a6b7c790fdeaf8a0718da46fc48608ade628986ee4ec37db3c28"),
+        7: (90, 230574, "60b52ef1fe022176add9b893a538c88aeb676562ec615e7ac02ee716702e8354"),
+    }[remote_schema_version]
+    predecessor = [operation for operation in basis
                    if operation["name"] != "work.effect.basis-v1"]
     predecessor_baseline = {
         6: (86, 221061, "e47eafd5ae592bf68ccc5185d5acc5412dd5d23b53af6d22b54580c88c2d08c1"),

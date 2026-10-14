@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import click
 
-from . import db, doctor, lifecycle, operations, remote_schema, repo, reservation, session, transfer, work
+from . import db, doctor, inbox, lifecycle, operations, remote_schema, repo, reservation, session, transfer, work
 
 
 _RUNTIME_INTERNALS = {"_RUNTIME", "_sync_runtime", "_wrap_runtime_callbacks", "register"}
@@ -53,6 +53,11 @@ def register_commands(root: click.Group, *, get_store: repo.GetStore) -> None:
     # insertion order. Keep that observable help/inventory ordering stable.
     repo.register(root, get_store=get_store)
     remote_schema.register(root)
+
+
+def register_inbox_commands(root: click.Group) -> None:
+    """Attach the served-only agent, message and run verbs."""
+    inbox.register(root)
 
 
 def register_doctor_command(root: click.Group) -> None:

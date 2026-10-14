@@ -4,7 +4,7 @@ import uuid
 import pytest
 
 from sprintctl import pg, pg_migrations
-from tests.pg._shared import PG_MARKS, _PG_URL, assert_disposable_connection, dict_row, psycopg
+from tests.pg._shared import PG_MARKS, _PG_URL, assert_disposable_connection, dict_row, drop_schema25, psycopg
 from tests.pg.test_protected_artifact_acceptance import setup
 from tests.pg.test_effect_intent import _accept, _get
 
@@ -37,6 +37,7 @@ def make_schema20(store):
     # The v19 guard and all v20 tables remain intact. Remove only v21's
     # additive metadata, then set the ledger to that exact historical shape.
     with store.conn.cursor() as cur:
+        drop_schema25(cur)
         cur.execute("DROP INDEX idx_evidence_item_effect_verification_subject")
         # The fixture starts on the current schema. Remove schema22's owned
         # additions before reconstructing the actual historical schema20.
@@ -70,13 +71,13 @@ def test_upgrade_preserves_legacy_acceptance_and_is_idempotent(migration_store):
         assert cur.fetchall() == []  # read-only startup has not migrated
     store.conn.rollback()
     result = pg_migrations.migrate_schema(store)
-    assert result["applied_versions"] == [21, 22, 23, 24]
+    assert result["applied_versions"] == [21, 22, 23, 24, 25]
     assert _get(store, intent["intent_id"]) == accepted
     assert pg_migrations.migrate_schema(store)["applied_versions"] == []
     assert _get(store, intent["intent_id"]) == accepted
     # The old schema-20 admission range cannot admit the upgraded database.
     actual = result["compatibility"]["remote_schema"]["actual"]
-    assert actual == 24 and not 20 <= actual <= 20
+    assert actual == 25 and not 20 <= actual <= 20
 
 
 @pytest.mark.parametrize("column, sql_type", [

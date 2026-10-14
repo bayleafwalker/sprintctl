@@ -32,6 +32,7 @@ packages = ["sprintctl", "sprintctl.commands"]
 
 [tool.sprintctl]
 capabilities = [
+    "agent-inbox/v1",
     "item-evidence-observations/v1",
     "normalized-scope-refs/v1",
     "portable-aggregate-uuid-json/v1",
@@ -42,7 +43,7 @@ capabilities = [
     "volatile-context-item-projection/v1",
 ]
 sqlite-schema-version = 25
-remote-schema-version = 24
+remote-schema-version = 25
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

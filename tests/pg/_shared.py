@@ -115,6 +115,14 @@ def store(pg_test_scope):
         conn.close()
 
 
+def drop_schema25(cur) -> None:
+    """Remove schema 25's agent inbox storage, for fixtures that rebuild an
+    older schema in place before migrating it forward again."""
+    cur.execute("DROP TABLE agent_message_receipt, agent_message, agent_inbox_counter, "
+                "agent_observation, agent_declaration_revision, agent_instance")
+    cur.execute("DROP FUNCTION sprintctl_agent_append_only(), sprintctl_agent_instance_guard()")
+
+
 def _uid() -> str:
     return uuid.uuid4().hex[:8]
 

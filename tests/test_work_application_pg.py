@@ -809,6 +809,9 @@ def test_schema_migration_gives_up_on_a_held_ddl_lock(store_factory, monkeypatch
             # Remove the additive schema23 and schema22 tables before creating
             # the old schema13 fixture. Their restrictive parent FKs also
             # require doing this before the deliberate work_item lock is held.
+            from tests.pg._shared import drop_schema25
+
+            drop_schema25(cur)
             cur.execute("DROP TABLE work_run_invocation_attempt, work_run_invocation_binding")
             cur.execute(
                 "DROP FUNCTION sprintctl_run_invocation_immutable_guard(), "

@@ -153,6 +153,19 @@ SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
     ServedRoute("authority.reserve-sync.resolve", "work.run.resolve-v1"),
     ServedRoute("authority.reserve-sync", "work.reservation.reserve-v1"),
     ServedRoute("authority.reserve-sync.release", "work.read.release"),
+    # Agent directory and inbox (schema 25) and run continuation: served-only verbs.
+    ServedRoute("agent.register", "work.agent.register-v1"),
+    ServedRoute("agent.observe", "work.agent.observe-v1"),
+    ServedRoute("agent.retire", "work.agent.retire-v1"),
+    ServedRoute("agent.list", "work.agent.list-v1"),
+    ServedRoute("agent.describe", "work.agent.describe-v1"),
+    ServedRoute("message.send", "work.message.send-v1"),
+    ServedRoute("message.read", "work.message.read-v1"),
+    ServedRoute("message.status", "work.message.status-v1"),
+    ServedRoute("message.receipt", "work.message.receipt-v1"),
+    ServedRoute("message.cancel", "work.message.cancel-v1"),
+    ServedRoute("run.context", "work.run.predecessor-context-v1"),
+    ServedRoute("run.note", "work.session-note.write-v1"),
 )
 
 
@@ -258,6 +271,18 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     "migrate-to-remote": "unavailable",
     "remote-backfill": "unavailable",
     "repo list": "unavailable",
+    "agent register": "catalog",
+    "agent observe": "catalog",
+    "agent retire": "catalog",
+    "agent list": "catalog",
+    "agent describe": "catalog",
+    "message send": "catalog",
+    "message read": "catalog",
+    "message status": "catalog",
+    "message receipt": "catalog",
+    "message cancel": "catalog",
+    "run context": "catalog",
+    "run note": "catalog",
 }
 
 

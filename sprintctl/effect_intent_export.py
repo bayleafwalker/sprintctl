@@ -72,7 +72,7 @@ def export_proposal(backend, store, intent_id: str, revision: int,
                 with snapshot.conn.cursor() as cur:
                     cur.execute("SELECT version FROM schema_version")
                     versions = cur.fetchall()
-                    _require(len(versions) == 1 and versions[0]["version"] == 24,
+                    _require(len(versions) == 1 and versions[0]["version"] >= 24,
                              "proposal-verification-index-unavailable")
                     index = inspect_catalog(cur)
                 _require(index["available"] and index["complete"], "proposal-verification-index-unavailable")

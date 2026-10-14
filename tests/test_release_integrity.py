@@ -52,14 +52,16 @@ class TestReleaseIntegrity:
         Minor 0.16.0 adds read-only evidence evaluation on the same schema21.
         Minor 0.17.0 adds authenticated cooperative attempt facts and schema22.
         Minor 0.18.0 adds read-only declared-effect preview on the same schema22.
-        Minor 0.19.0 adds correlated run invocation receipts and schema23."""
+        Minor 0.19.0 adds correlated run invocation receipts and schema23,
+        the verification lookup index (schema24) and the agent directory and
+        inbox (schema25)."""
         from sprintctl import pg_migrations
 
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
         assert pyproject["project"]["version"] == __version__ == "0.19.0"
-        assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 24
-        assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 24
+        assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 25
+        assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 25
 
     def test_release_contract_names_this_version(self):
         """The tag workflow validates the wheel against RELEASE_VERSION; a

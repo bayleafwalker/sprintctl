@@ -95,6 +95,11 @@ _ADMIN_SHUTDOWN_READ_OPERATIONS = frozenset(
         # Reads: a replay on a fresh connection only selects.
         "work.effect.get-v1",
         "work.effect.list-proposed-v1",
+        # Agent directory and inbox reads only select.
+        "work.agent.list-v1",
+        "work.agent.describe-v1",
+        "work.message.read-v1",
+        "work.message.status-v1",
     }
 )
 # SQLSTATEs that mean the session itself is gone: 57P0x (admin or crash

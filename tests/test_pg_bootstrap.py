@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from sprintctl import pg, pg_migrations, run_invocation_schema, effect_verification_export_index
+from sprintctl import agent_inbox_schema
 
 
 CURRENT = pg_migrations.CURRENT_SCHEMA_VERSION
@@ -51,6 +52,8 @@ class _SchemaCursor:
             self._conn.maintenance_triggers = 2
         if query == effect_verification_export_index.DDL:
             self._conn.verification_export_index_installed = True
+        if query == agent_inbox_schema.DDL:
+            self._conn.agent_inbox_installed = True
         return self
 
     rowcount = 0
@@ -125,6 +128,7 @@ class _SchemaCursor:
 class _SchemaConnection:
     def __init__(self, version=4, *, version_rows=1, fail_on=None, maintenance_relations=None, maintenance_triggers=None, function_schema="public", function_valid=True):
         self.verification_export_index_installed = version is not None and version >= 24
+        self.agent_inbox_installed = version is not None and version >= 25
         self.calls = []
         self.version = version
         self.version_rows = version_rows if version is not None else 0
@@ -175,6 +179,18 @@ def _stub_invocation_catalog_for_schema_state_fakes(monkeypatch):
         effect_verification_export_index, "inspect_catalog",
         lambda cur: {"available": cur._conn.verification_export_index_installed, "complete": True},
     )
+
+    def inspect_agent_inbox(cur):
+        available = cur._conn.agent_inbox_installed
+        return {
+            "table_count": 6 if available else 0,
+            "catalog_fingerprint": agent_inbox_schema.EXPECTED_CATALOG_FINGERPRINT if available else "0" * 64,
+            "expected_catalog_fingerprint": agent_inbox_schema.EXPECTED_CATALOG_FINGERPRINT,
+            "available": available,
+            "complete": True,
+        }
+
+    monkeypatch.setattr(agent_inbox_schema, "inspect_catalog", inspect_agent_inbox)
 
 
 def test_snapshot_uses_store_connection_factory_instead_of_redacted_dsn(monkeypatch):
@@ -247,6 +263,14 @@ def test_runtime_compatibility_probe_is_read_only_and_publishes_work_api():
                 "table_count": 2,
                 "catalog_fingerprint": run_invocation_schema.EXPECTED_CATALOG_FINGERPRINT,
                 "expected_catalog_fingerprint": run_invocation_schema.EXPECTED_CATALOG_FINGERPRINT,
+                "available": True,
+                "complete": True,
+            },
+            "agent_inbox_storage": {
+                "schema_version": "sprintctl-agent-inbox-storage/v1",
+                "table_count": 6,
+                "catalog_fingerprint": agent_inbox_schema.EXPECTED_CATALOG_FINGERPRINT,
+                "expected_catalog_fingerprint": agent_inbox_schema.EXPECTED_CATALOG_FINGERPRINT,
                 "available": True,
                 "complete": True,
             },

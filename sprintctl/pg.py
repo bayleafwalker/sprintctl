@@ -3331,6 +3331,11 @@ def _apply_schema_version_24(cur: Any) -> None:
     install(cur)
 
 
+def _apply_schema_version_25(cur: Any) -> None:
+    from .agent_inbox_schema import install
+    install(cur)
+
+
 def effect_proposal_verification_rows(store: PgStore, intent_id: str, workspace_id: str) -> list:
     """Readonly exact proposal-associated receipt set, within caller snapshot."""
     from .effect_verification_export import read_rows

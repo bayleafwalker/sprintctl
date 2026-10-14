@@ -23,6 +23,7 @@ from vuoro_adapter_kit import (
     operation_spec,
 )
 
+from . import agent_inbox as _inbox
 from . import decisions as _decisions
 from . import effect_attempt as _attempt
 from . import effect_intent as _effect
@@ -2864,6 +2865,107 @@ def _attempt_operation_contracts() -> tuple[WorkOperationContract, ...]:
 
 
 WORK_OPERATION_CONTRACTS += _attempt_operation_contracts()
+
+
+# --------------------------------------------------------------------------
+# work.agent.* / work.message.* (schema 25): the agent directory and durable
+# inbox, vuoro contract v1 (docs/architecture/agent-directory-and-inbox.md;
+# schemas agent-{declaration,message,message-receipt,directory-entry}-v1).
+# Writes need work:evidence and reads work:read (vuoro M0 baseline 2.5).
+# principal_id, workspace_id and repo_id are the caller's, never arguments.
+# Nested records are validated by the owner (sprintctl.agent_inbox) against
+# the contract's schemas; the catalog fixes the argument names.
+# --------------------------------------------------------------------------
+def _agent_inbox_operation_contracts() -> tuple[WorkOperationContract, ...]:
+    instance_id = {"type": "string", "pattern": "^ins_[0-9A-HJKMNP-TV-Z]{26}$"}
+    message_id = {"type": "string", "pattern": "^msg_[0-9A-HJKMNP-TV-Z]{26}$"}
+    text = {"type": "string", "maxLength": 2048}
+    timestamp = {"type": "string"}
+    record = {"type": "object"}
+    reason = _object_schema({"code": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$"}, "text": text},
+                            required=("code", "text"))
+    replayed = {"replayed": {"type": "boolean"}}
+    receipt_required = ("schema", "message_id", "kind", "principal_id", "instance_id", "recorded_at")
+    receipt = {"type": "object", "required": list(receipt_required)}
+    # An agent-message-receipt/v1 plus "replayed"; kind fields stay open.
+    receipt_result = _object_schema(
+        {"schema": {"const": "agent-message-receipt/v1"}, "message_id": message_id,
+         "kind": {"type": "string"}, "principal_id": {"type": "string"},
+         "instance_id": {"anyOf": [instance_id, {"type": "null"}]}, "recorded_at": timestamp, **replayed},
+        required=(*receipt_required, "replayed"), additional_properties=True)
+    stamps = {
+        "message_id": message_id, "sender_principal_id": {"type": "string"},
+        "workspace_id": {"type": "string"}, "repo_id": {"type": "string"},
+        "persisted_at": timestamp, "envelope_digest": _SHA256_HEX,
+        "inbox_seq": {"type": "integer", "minimum": 1},
+    }
+    stamped_message = {"type": "object", "required": [*stamps, "receipts"]}
+    definitions = (
+        (_inbox.OPERATION_REGISTER, "work:evidence", "write",
+         _object_schema({"instance_id": instance_id, "declaration": record,
+                         "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA},
+                        required=("instance_id", "declaration", "idempotency_key")),
+         _object_schema({"instance_id": instance_id, "declaration_revision": {"type": "integer", "minimum": 1},
+                         **replayed}, required=("instance_id", "declaration_revision", "replayed"))),
+        (_inbox.OPERATION_OBSERVE, "work:evidence", "write",
+         _object_schema({"instance_id": instance_id,
+                         "fact": {"enum": ["observed", "reachable", "executing", "attended"]},
+                         "channel": {"type": "string", "pattern": "^[a-z][a-z0-9.-]{0,63}$"},
+                         "run_id": _RUN_ID_SCHEMA,
+                         "valid_for_seconds": {"type": "integer", "minimum": 1, "maximum": 3600},
+                         "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA},
+                        required=("instance_id", "fact", "valid_for_seconds", "idempotency_key")),
+         _object_schema({"instance_id": instance_id, "fact": {"type": "string"}, "observed_at": timestamp,
+                         "valid_until": timestamp, "source": {"const": "self-reported"}, **replayed},
+                        required=("instance_id", "fact", "observed_at", "valid_until", "source", "replayed"))),
+        (_inbox.OPERATION_RETIRE, "work:evidence", "write",
+         _object_schema({"instance_id": instance_id, "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                         "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA},
+                        required=("instance_id", "reason", "idempotency_key")),
+         _object_schema({"instance_id": instance_id, "retired_at": timestamp, **replayed},
+                        required=("instance_id", "retired_at", "replayed"))),
+        (_inbox.OPERATION_LIST, "work:read", "read",
+         _object_schema({"include_retired": {"type": "boolean", "default": True}}),
+         _object_schema({"entries": {"type": "array", "items": record}}, required=("entries",))),
+        (_inbox.OPERATION_DESCRIBE, "work:read", "read",
+         _object_schema({"principal_id": {"type": "string", "minLength": 1, "maxLength": 512}},
+                        required=("principal_id",)),
+         _object_schema({"schema": {"const": "agent-directory-entry/v1"}, "principal_id": {"type": "string"},
+                         "evaluated_at": timestamp, "instances": {"type": "array", "items": record}},
+                        required=("schema", "principal_id", "evaluated_at", "instances"))),
+        (_inbox.OPERATION_SEND, "work:evidence", "write",
+         _object_schema({"message": record}, required=("message",)),
+         _object_schema({**stamps, **replayed}, required=(*stamps, "replayed"))),
+        (_inbox.OPERATION_READ, "work:read", "read",
+         _object_schema({"after_seq": {"type": "integer", "minimum": 0},
+                         "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                         "instance_id": instance_id}, required=("after_seq", "limit")),
+         _object_schema({"messages": {"type": "array", "items": stamped_message},
+                         "next_after_seq": {"type": "integer", "minimum": 0}},
+                        required=("messages", "next_after_seq"))),
+        (_inbox.OPERATION_STATUS, "work:read", "read",
+         _object_schema({"message_id": message_id}, required=("message_id",)),
+         _object_schema({"message": stamped_message, "receipts": {"type": "array", "items": receipt}},
+                        required=("message", "receipts"))),
+        (_inbox.OPERATION_RECEIPT, "work:evidence", "write",
+         _object_schema({"message_id": message_id, "instance_id": instance_id,
+                         "kind": {"enum": list(_inbox.RECEIPT_KINDS)}, "reason": reason, "run_id": _RUN_ID_SCHEMA,
+                         "detail": text, "outcome": {"enum": list(_inbox.OUTCOMES)},
+                         "evidence_refs": {"type": "array", "maxItems": 32, "items": record},
+                         "summary": text},
+                        required=("message_id", "instance_id", "kind")),
+         receipt_result),
+        (_inbox.OPERATION_CANCEL, "work:evidence", "write",
+         _object_schema({"message_id": message_id, "reason": text}, required=("message_id", "reason")),
+         receipt_result),
+    )
+    return tuple(
+        WorkOperationContract(name, input_schema, result_schema, authority, semantics, "not-allowed")
+        for name, authority, semantics, input_schema, result_schema in definitions
+    )
+
+
+WORK_OPERATION_CONTRACTS += _agent_inbox_operation_contracts()
 
 
 LEGACY_REMOTE_COMMAND_PARITY: tuple[dict[str, str], ...] = (
