@@ -345,11 +345,13 @@ def identity_as_dict(identity: PostgresTestIdentity) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Agent inbox test clock (schema 25).  Test support only: the owner reads
-# sprintctl.agent_inbox_pg.TEST_CLOCK_SETTING from its own session, and no
-# served operation ever sets a session parameter, so this is unreachable from
-# the served surface.  The setting is per connection (session) and follows
-# the transaction: commit after calling, as for any other write.
+# Agent inbox test clock (schema 25).  Test support only.  The owner honours
+# sprintctl.agent_inbox_pg.TEST_CLOCK_SETTING only after one of these hooks has
+# switched agent_inbox_pg._TEST_CLOCK_ENABLED on in this process, and only on a
+# database commented DISPOSABLE_DATABASE_COMMENT; a session setting alone
+# (connection options, PGOPTIONS, ALTER ROLE/DATABASE SET) is ignored.  The
+# setting is per connection (session) and follows the transaction: commit
+# after calling, as for any other write.
 # ---------------------------------------------------------------------------
 
 def _scalar(row: Any) -> Any:
@@ -360,7 +362,10 @@ def freeze_inbox_clock(store: Any, at: Any = None) -> str:
     """Freeze the inbox owner's clock for ``store``'s session at ``at``
     (a datetime or RFC 3339 string; default: now, truncated to the second).
     Returns the frozen instant as PostgreSQL renders it."""
+    from . import agent_inbox_pg
     from .agent_inbox_pg import TEST_CLOCK_SETTING
+
+    agent_inbox_pg._TEST_CLOCK_ENABLED = True
 
     with store.conn.cursor() as cur:
         cur.execute(
@@ -377,7 +382,10 @@ def shift_inbox_clock(store: Any, seconds: float) -> str:
     The first call freezes the clock (at now, truncated to the second) before
     advancing it, so later evaluations differ by exactly the shifts applied.
     """
+    from . import agent_inbox_pg
     from .agent_inbox_pg import TEST_CLOCK_SETTING
+
+    agent_inbox_pg._TEST_CLOCK_ENABLED = True
 
     with store.conn.cursor() as cur:
         cur.execute(

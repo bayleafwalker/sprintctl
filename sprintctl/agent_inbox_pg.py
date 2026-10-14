@@ -23,19 +23,44 @@ from . import agent_inbox as contract
 from .agent_inbox import InboxRefused
 from .rows import iso_timestamp as _iso
 
-#: Test support only (sprintctl.pg_testing.shift_inbox_clock): a session
-#: setting that, when present, replaces the owner's clock for this session.
-#: No served operation sets session parameters, so production reads always
-#: fall through to clock_timestamp().
+#: The session setting the test clock uses (sprintctl.pg_testing).  A
+#: session setting alone is never trusted: anyone who can shape a connection
+#: (libpq options, PGOPTIONS, ALTER ROLE/DATABASE ... SET) could set it.
 TEST_CLOCK_SETTING = "sprintctl.inbox_test_now"
+#: Process-local switch, set only by pg_testing.freeze_inbox_clock and
+#: shift_inbox_clock.  While it is off -- always, in a served runtime -- the
+#: owner's clock is clock_timestamp() and nothing else.
+_TEST_CLOCK_ENABLED = False
 
 
 def owner_now(cur: Any) -> datetime:
+    """The owner's clock: clock_timestamp().
+
+    Only when test support has switched the test clock on in this process,
+    and only on a database commented as disposable, does a valid
+    ``sprintctl.inbox_test_now`` session setting replace it.  Anything else
+    (no setting, an unparsable one) is the real clock.
+    """
+    if not _TEST_CLOCK_ENABLED:
+        cur.execute("SELECT clock_timestamp() AS now")
+        return _first(cur.fetchone(), "now")
+    from .pg_testing import DISPOSABLE_DATABASE_COMMENT
+
     cur.execute(
-        "SELECT COALESCE(NULLIF(current_setting(%s, true), '')::timestamptz, clock_timestamp()) AS now",
+        "SELECT clock_timestamp() AS now, current_setting(%s, true) AS frozen, "
+        "shobj_description(d.oid, 'pg_database') AS comment "
+        "FROM pg_database d WHERE d.datname = current_database()",
         (TEST_CLOCK_SETTING,),
     )
-    return _first(cur.fetchone(), "now")
+    row = cur.fetchone()
+    now, frozen, comment = (row["now"], row["frozen"], row["comment"]) if isinstance(row, Mapping) else row
+    if comment != DISPOSABLE_DATABASE_COMMENT or not frozen:
+        return now
+    try:
+        value = datetime.fromisoformat(frozen)
+    except ValueError:
+        return now
+    return value if value.tzinfo is not None else now
 
 
 def _first(row: Any, key: str) -> Any:
@@ -310,7 +335,7 @@ def _insert_message(cur: Any, store: Any, values: Mapping[str, Any]) -> dict:
         "recipient_principal_id, recipient_instance_id, envelope, envelope_digest, persisted_at) "
         "VALUES (%(repo_id)s,%(workspace_id)s,%(message_id)s,%(inbox_seq)s,%(sender_principal_id)s,"
         "%(recipient_principal_id)s,%(recipient_instance_id)s,%(envelope)s,%(envelope_digest)s,"
-        "%(persisted_at)s) RETURNING *",
+        "%(persisted_at)s) ON CONFLICT (repo_id, workspace_id, message_id) DO NOTHING RETURNING *",
         dict(values),
     )
     return cur.fetchone()
@@ -328,9 +353,7 @@ def send(cur: Any, store: Any, principal_id: str, workspace_id: str, envelope: M
     digest = hashlib.sha256(encoded).hexdigest()
     existing = _message(cur, store, workspace_id, envelope["message_id"])
     if existing is not None:
-        if existing["sender_principal_id"] == principal_id and existing["envelope_digest"] == digest:
-            return {**_stamps(existing), "replayed": True}
-        _refuse("message-id-conflict", "that message_id is already used by another envelope")
+        return _replay_or_conflict(existing, principal_id, digest)
     _require_recipient(cur, store, workspace_id, envelope["recipient"])
     _require_context(cur, store, workspace_id, envelope["context"])
     inbox_seq = _allocate_inbox_seq(cur, store, workspace_id)
@@ -342,7 +365,19 @@ def send(cur: Any, store: Any, principal_id: str, workspace_id: str, envelope: M
         "envelope": encoded.decode("utf-8"), "envelope_digest": digest,
         "persisted_at": owner_now(cur),
     })
+    if row is None:
+        # Another sender's insert of this message_id committed while this
+        # one waited (on the counter row, then on the key): re-read it.
+        # Raising rolls this send's counter increment back with it.
+        return _replay_or_conflict(_message(cur, store, workspace_id, envelope["message_id"]),
+                                   principal_id, digest)
     return {**_stamps(row), "replayed": False}
+
+
+def _replay_or_conflict(existing: Mapping[str, Any], principal_id: str, digest: str) -> dict:
+    if existing["sender_principal_id"] == principal_id and existing["envelope_digest"] == digest:
+        return {**_stamps(existing), "replayed": True}
+    _refuse("message-id-conflict", "that message_id is already used by another envelope")
 
 
 # -- inbox: reads ------------------------------------------------------------
@@ -459,7 +494,10 @@ def receipt(cur: Any, store: Any, principal_id: str, workspace_id: str, message_
     message = _message(cur, store, workspace_id, message_id, lock=" FOR NO KEY UPDATE")
     if message is None or message["recipient_principal_id"] != principal_id:
         _refuse("not-found", "no such message in the caller's inbox")
-    instance = _owned_instance(cur, store, principal_id, workspace_id, instance_id)
+    # FOR SHARE: a concurrent retirement waits until this receipt commits.
+    # Lock order is message, then instance; send and retire never take them
+    # in the other order.
+    instance = _owned_instance(cur, store, principal_id, workspace_id, instance_id, lock=" FOR SHARE")
     target = message["recipient_instance_id"]
     if target is not None and target != instance_id and kind != "result-linked":
         _refuse("not-found", "that message is addressed to another instance")

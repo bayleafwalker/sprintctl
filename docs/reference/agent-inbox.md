@@ -52,12 +52,20 @@ arguments. A record outside the caller's `(workspace, repo)` is `not-found`.
 
 ## Test clock
 
-The owner reads time from `clock_timestamp()`, unless its session carries the
-setting `sprintctl.inbox_test_now`. Only test support sets it:
-`sprintctl.pg_testing.freeze_inbox_clock(store, at=None)`,
-`shift_inbox_clock(store, seconds)` (the first call freezes the clock at the
-current second) and `release_inbox_clock(store)`. Commit after calling any of
-them. No served operation sets a session setting.
+The owner reads time from `clock_timestamp()`. A session setting alone never
+changes that, because anyone who shapes a connection can set one (libpq
+options, `PGOPTIONS`, `ALTER ROLE/DATABASE ... SET`). The setting
+`sprintctl.inbox_test_now` replaces the clock only when all three hold:
+
+- test support has switched on the process-local flag
+  `agent_inbox_pg._TEST_CLOCK_ENABLED`;
+- the database comment is `sprintctl:disposable-integration-test`;
+- the value parses as a timestamp with a time zone.
+
+The test-support functions are `sprintctl.pg_testing.freeze_inbox_clock(store, at=None)`,
+`shift_inbox_clock(store, seconds)` and `release_inbox_clock(store)`. The
+first two switch the flag on, and the first call to `shift_inbox_clock`
+freezes the clock at the current second. Commit after calling any of them.
 
 ## CLI
 

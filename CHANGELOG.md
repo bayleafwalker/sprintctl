@@ -25,9 +25,11 @@
   and add the `agent-inbox/v1` capability.
 - Test support: `sprintctl.pg_testing.freeze_inbox_clock`,
   `shift_inbox_clock` and `release_inbox_clock` control the owner's clock for
-  one session.
+  one session. They take effect only after one of the first two switches on a
+  process-local flag, and only on a database commented as disposable. A
+  session setting alone is ignored.
 
 ### Changed
 
-- `work.effect.export-proposal-v3` now admits schema 24 or later instead of
+- `work.effect.export-proposal-v3` now admits schema 24 or 25 instead of
   exactly schema 24.

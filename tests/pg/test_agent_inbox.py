@@ -43,8 +43,8 @@ def new_message_id() -> str:
     return "msg_" + _ulid()
 
 
-def _connect() -> pg.PgStore:
-    conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+def _connect(**options) -> pg.PgStore:
+    conn = psycopg.connect(_PG_URL, row_factory=dict_row, **options)
     assert_disposable_connection(conn)
     store = pg.PgStore(conn=conn, repo_id="itest-agent-inbox-bootstrap")
     pg_migrations.migrate_schema(store)  # no-op past 25; records the handshake version
@@ -728,3 +728,144 @@ def test_owner_clock_is_the_database_clock_unless_a_test_freezes_it(w):
         assert abs((cur.fetchone()["now"] - real).total_seconds()) < 5
     w.c.store.conn.rollback()
     assert isinstance(real, datetime)
+
+
+# -- review fixes (owner clock, send race, receipt/retire race, run scope) -----
+
+def test_a_session_setting_alone_never_moves_the_owner_clock(w, monkeypatch):
+    """The test clock needs the process-local flag only pg_testing sets: a
+    setting injected through connection options, PGOPTIONS or ALTER ROLE/
+    DATABASE SET is ignored by the production path."""
+    monkeypatch.setattr(agent_inbox_pg, "_TEST_CLOCK_ENABLED", False, raising=False)
+    injected = _connect(options="-c sprintctl.inbox_test_now=2001-01-01T00:00:00Z")
+    try:
+        with injected.conn.cursor() as cur:
+            cur.execute("SELECT current_setting('sprintctl.inbox_test_now') AS v")
+            assert cur.fetchone()["v"].startswith("2001-01-01")
+            assert agent_inbox_pg.owner_now(cur).year >= 2026
+        injected.conn.rollback()
+        stamps = Client(injected)(w.S, "work.message.send-v1", message=w.message())
+        assert not stamps["persisted_at"].startswith("2001"), stamps["persisted_at"]
+        with injected.conn.cursor() as cur:
+            cur.execute("SELECT set_config('sprintctl.inbox_test_now', 'not a time', false)")
+            assert agent_inbox_pg.owner_now(cur).year >= 2026  # garbage is ignored, not blamed on the caller
+        injected.conn.rollback()
+    finally:
+        injected.conn.close()
+
+
+def test_the_test_clock_is_honoured_once_test_support_enables_it(w):
+    pg_testing.freeze_inbox_clock(w.c.store, "2026-10-14T12:00:00Z")
+    w.c.store.conn.commit()
+    assert w.send()["persisted_at"] == "2026-10-14T12:00:00Z"
+
+
+def test_two_senders_racing_on_one_message_id_get_message_id_conflict(w):
+    """The first sender holds its commit; the second's insert must resolve to
+    message-id-conflict, never a raw unique violation."""
+    message = w.message()
+    first, second = _connect(), _connect()
+    reached, release = threading.Event(), threading.Event()
+    first.conn = _GatedConnection(first.conn, reached, release)
+    results = {}
+
+    def send(name, store, ctx):
+        try:
+            results[name] = ("ok", WorkApplication.postgres(store).invoke(
+                "work.message.send-v1", {"message": message}, ctx))
+        except ApplicationRejection as error:
+            results[name] = (error.code, None)
+        except Exception as error:  # noqa: BLE001 - the regression under test
+            results[name] = (type(error).__name__, None)
+
+    try:
+        a = threading.Thread(target=send, args=("S", first, w.S))
+        a.start()
+        assert reached.wait(30)
+        b = threading.Thread(target=send, args=("X", second, w.X))
+        b.start()
+        b.join(1)  # X waits behind S's counter row
+        release.set()
+        a.join(30)
+        b.join(30)
+    finally:
+        release.set()
+        first.conn.close()
+        second.conn.close()
+    assert results["S"][0] == "ok"
+    assert results["X"] == ("message-id-conflict", None), results["X"]
+    assert [m["message_id"] for m in w.read()["messages"]] == [message["message_id"]]
+
+
+def test_a_retirement_cannot_commit_between_a_receipts_check_and_its_insert(w):
+    m = w.sent()
+    writer, retirer = _connect(), _connect()
+    reached, release = threading.Event(), threading.Event()
+    writer.conn = _GatedConnection(writer.conn, reached, release)
+    retired, failures = threading.Event(), []
+
+    def receipt():
+        try:
+            WorkApplication.postgres(writer).invoke(
+                "work.message.receipt-v1", {"message_id": m, "instance_id": w.ins1, "kind": "accepted"}, w.R)
+        except Exception as error:  # noqa: BLE001
+            failures.append(error)
+
+    def retire():
+        try:
+            WorkApplication.postgres(retirer).invoke(
+                "work.agent.retire-v1", {"instance_id": w.ins1, "reason": "gone", "idempotency_key": w.key()}, w.R)
+        except Exception as error:  # noqa: BLE001
+            failures.append(error)
+        finally:
+            retired.set()
+
+    try:
+        r = threading.Thread(target=receipt)
+        r.start()
+        assert reached.wait(30)
+        t = threading.Thread(target=retire)
+        t.start()
+        retired_while_held = retired.wait(1.5)
+        release.set()
+        r.join(30)
+        t.join(30)
+    finally:
+        release.set()
+        writer.conn.close()
+        retirer.conn.close()
+    assert not failures, failures
+    assert not retired_while_held, "the instance retired while its receipt was being written"
+    _, entry = w.instance(w.ins1)
+    assert entry["registered"]["state"] == "retired"
+    assert w.kinds(m) == ["accepted"]  # written before the retirement, not after it
+
+
+def test_run_lookups_are_scoped_to_the_callers_workspace(w):
+    """A run of the same repository in another workspace does not exist."""
+    elsewhere = context("github:2:0", w.repo, "ws-other")
+    foreign_run = w.new_run(elsewhere)
+    expect("context-not-found", w.send, message=w.message(context={"predecessor_run_id": foreign_run}))
+    m = w.sent()
+    w.rcpt(m, "accepted")
+    expect("run-not-found", w.rcpt, m, "run-linked", run_id=foreign_run)
+    expect("run-not-found", w.rcpt, m, "launch-ambiguous", detail="x", run_id=foreign_run)
+    w.rcpt(m, "run-linked", run_id=w.run)
+
+
+def test_stored_digests_use_the_canonical_encoding(w):
+    """The owner stamps and stores exactly the golden digests."""
+    from tests.test_agent_inbox_contract import (GOLDEN_ENVELOPE, GOLDEN_ENVELOPE_BYTES,
+                                                 GOLDEN_REFUSED_DIGEST, GOLDEN_REFUSED_FIELDS)
+
+    message = {**GOLDEN_ENVELOPE, "message_id": new_message_id(), "context": {"item_id": w.item}}
+    expected = hashlib.sha256(GOLDEN_ENVELOPE_BYTES.replace(
+        b"msg_BBBBBBBBBBBBBBBBBBBBBBBBBB", message["message_id"].encode()).replace(
+        b'"item_id":7', b'"item_id":%d' % w.item)).hexdigest()
+    assert w.send(message=message)["envelope_digest"] == expected
+    w.rcpt(message["message_id"], "refused", **GOLDEN_REFUSED_FIELDS)
+    with w.c.store.conn.cursor() as cur:
+        cur.execute("SELECT field_digest FROM agent_message_receipt WHERE repo_id=%s AND message_id=%s",
+                    (w.repo, message["message_id"]))
+        assert cur.fetchone()["field_digest"] == GOLDEN_REFUSED_DIGEST
+    w.c.store.conn.rollback()

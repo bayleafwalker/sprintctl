@@ -239,3 +239,38 @@ def test_standalone_sqlite_refuses_every_operation_clearly(tmp_path):
             app.invoke(operation, {}, context)
         assert caught.value.code == "unsupported-backend", operation
         assert "PostgreSQL" in caught.value.message
+
+
+# -- canonical JSON goldens (contract section 3.1: keys sorted, no
+# insignificant whitespace, UTF-8 -- the work owner's digest encoding) -----
+
+GOLDEN_ENVELOPE = {  # deliberately unsorted, with non-ASCII text
+    "recipient": {"principal_id": "github:2:0"},
+    "body": {"text": "Jatka työtä — 続けて"},
+    "schema": "agent-message/v1", "mode": "request", "message_id": "msg_" + "B" * 26,
+    "kind": "continue", "created_at": "2026-10-14T10:00:00Z", "context": {"item_id": 7},
+}
+GOLDEN_ENVELOPE_BYTES = (
+    '{"body":{"text":"Jatka työtä — 続けて"},"context":{"item_id":7},'
+    '"created_at":"2026-10-14T10:00:00Z","kind":"continue",'
+    '"message_id":"msg_BBBBBBBBBBBBBBBBBBBBBBBBBB","mode":"request",'
+    '"recipient":{"principal_id":"github:2:0"},"schema":"agent-message/v1"}'
+).encode("utf-8")
+GOLDEN_ENVELOPE_DIGEST = "5c8b9b314e0a29bd39c8bd94dd5590a6d9bd0234e8093a48d7e4e74a068a649c"
+GOLDEN_REFUSED_FIELDS = {"reason": {"text": "kiireinen ä", "code": "busy"}}
+GOLDEN_REFUSED_DIGEST = "c2fbd3afceda94e92344c2d30587ef33a0362e00eaf404117f02e20f25074103"
+
+
+def test_canonical_json_is_sorted_compact_utf8():
+    assert inbox.canonical_bytes({"ö": 1, "z": 2, "a": {"é": "ü", "b": None}}) == (
+        '{"a":{"b":null,"é":"ü"},"z":2,"ö":1}'.encode("utf-8"))
+    assert inbox.canonical_bytes(GOLDEN_ENVELOPE) == GOLDEN_ENVELOPE_BYTES
+    assert inbox.sha256_hex(GOLDEN_ENVELOPE) == GOLDEN_ENVELOPE_DIGEST
+    admitted, encoded = inbox.admit_envelope(GOLDEN_ENVELOPE)
+    assert encoded == GOLDEN_ENVELOPE_BYTES
+
+
+def test_receipt_field_digest_golden():
+    _, _, kind, fields = inbox.receipt_arguments(
+        {"message_id": MSG, "instance_id": INS, "kind": "refused", **GOLDEN_REFUSED_FIELDS})
+    assert kind == "refused" and inbox.sha256_hex(fields) == GOLDEN_REFUSED_DIGEST
