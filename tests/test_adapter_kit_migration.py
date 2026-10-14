@@ -80,8 +80,8 @@ def test_resource_schema_gate_removes_exactly_the_three_owner_operations() -> No
         "work.maintenance.resource.changes",
     }
 
-    assert len(available) == 90  # adds the readonly Q4 effect basis
-    assert len(unavailable) == 87
+    assert len(available) == 100  # adds the ten agent directory and inbox operations
+    assert len(unavailable) == 97
     assert {spec["name"] for spec in available} - {
         spec["name"] for spec in unavailable
     } == resource_names

@@ -1,0 +1,426 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:vuoro:agent-message-receipt:v1",
+  "title": "Vuoro agent message receipt v1",
+  "$comment": "Uniqueness, ordering and writer rules are the store's; see contract section 3.3.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "agent-message-receipt/v1"
+        },
+        "message_id": {
+          "type": "string",
+          "pattern": "^msg_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "principal_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "instance_id": {
+          "type": "string",
+          "pattern": "^ins_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "recorded_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "replayed": {
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "observed"
+        }
+      },
+      "required": [
+        "schema",
+        "message_id",
+        "kind",
+        "principal_id",
+        "instance_id",
+        "recorded_at"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "agent-message-receipt/v1"
+        },
+        "message_id": {
+          "type": "string",
+          "pattern": "^msg_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "principal_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "instance_id": {
+          "type": "string",
+          "pattern": "^ins_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "recorded_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "replayed": {
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "acknowledged"
+        }
+      },
+      "required": [
+        "schema",
+        "message_id",
+        "kind",
+        "principal_id",
+        "instance_id",
+        "recorded_at"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "agent-message-receipt/v1"
+        },
+        "message_id": {
+          "type": "string",
+          "pattern": "^msg_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "principal_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "instance_id": {
+          "type": "string",
+          "pattern": "^ins_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "recorded_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "replayed": {
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "accepted"
+        }
+      },
+      "required": [
+        "schema",
+        "message_id",
+        "kind",
+        "principal_id",
+        "instance_id",
+        "recorded_at"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "agent-message-receipt/v1"
+        },
+        "message_id": {
+          "type": "string",
+          "pattern": "^msg_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "principal_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "instance_id": {
+          "type": "string",
+          "pattern": "^ins_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "recorded_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "replayed": {
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "refused"
+        },
+        "reason": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,63}$"
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 2048
+            }
+          },
+          "required": [
+            "code",
+            "text"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema",
+        "message_id",
+        "kind",
+        "principal_id",
+        "instance_id",
+        "recorded_at",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "agent-message-receipt/v1"
+        },
+        "message_id": {
+          "type": "string",
+          "pattern": "^msg_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "principal_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "instance_id": {
+          "type": "string",
+          "pattern": "^ins_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "recorded_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "replayed": {
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "run-linked"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^run_[0-9A-HJKMNP-TV-Z]{26}$"
+        }
+      },
+      "required": [
+        "schema",
+        "message_id",
+        "kind",
+        "principal_id",
+        "instance_id",
+        "recorded_at",
+        "run_id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "agent-message-receipt/v1"
+        },
+        "message_id": {
+          "type": "string",
+          "pattern": "^msg_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "principal_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "instance_id": {
+          "type": "string",
+          "pattern": "^ins_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "recorded_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "replayed": {
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "launch-ambiguous"
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^run_[0-9A-HJKMNP-TV-Z]{26}$"
+        }
+      },
+      "required": [
+        "schema",
+        "message_id",
+        "kind",
+        "principal_id",
+        "instance_id",
+        "recorded_at",
+        "detail"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "agent-message-receipt/v1"
+        },
+        "message_id": {
+          "type": "string",
+          "pattern": "^msg_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "principal_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "instance_id": {
+          "type": "string",
+          "pattern": "^ins_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "recorded_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "replayed": {
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "result-linked"
+        },
+        "outcome": {
+          "enum": [
+            "completed",
+            "failed",
+            "canceled",
+            "abandoned",
+            "not-started"
+          ]
+        },
+        "evidence_refs": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,31}$"
+              },
+              "ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              }
+            },
+            "required": [
+              "kind",
+              "ref"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "reason": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,63}$"
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 2048
+            }
+          },
+          "required": [
+            "code",
+            "text"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema",
+        "message_id",
+        "kind",
+        "principal_id",
+        "instance_id",
+        "recorded_at",
+        "outcome",
+        "evidence_refs",
+        "summary"
+      ],
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "not-started"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "reason"
+        ]
+      }
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "agent-message-receipt/v1"
+        },
+        "message_id": {
+          "type": "string",
+          "pattern": "^msg_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "principal_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "instance_id": {
+          "type": "null"
+        },
+        "recorded_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "replayed": {
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "cancel-requested"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "schema",
+        "message_id",
+        "kind",
+        "principal_id",
+        "instance_id",
+        "recorded_at",
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

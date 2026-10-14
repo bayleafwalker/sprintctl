@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:vuoro:agent-declaration:v1",
+  "title": "Vuoro agent declaration v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "agent-declaration/v1"
+    },
+    "harness": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "adapter": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "name",
+            "version"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "host_class": {
+      "enum": [
+        "workstation",
+        "devbox",
+        "cloud-interactive",
+        "cloud-unattended",
+        "other"
+      ]
+    },
+    "interactivity": {
+      "enum": [
+        "interactive",
+        "non-interactive"
+      ]
+    },
+    "accepted_kinds": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "continue"
+        ]
+      },
+      "uniqueItems": true,
+      "maxItems": 8
+    },
+    "channels": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9.-]{0,63}$"
+          },
+          "wake_modes": {
+            "type": "array",
+            "uniqueItems": true,
+            "minItems": 1,
+            "items": {
+              "enum": [
+                "read-while-running",
+                "attention-during-run",
+                "start-after-stop"
+              ]
+            }
+          }
+        },
+        "required": [
+          "channel",
+          "wake_modes"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "harness",
+    "adapter",
+    "host_class",
+    "interactivity",
+    "accepted_kinds",
+    "channels"
+  ],
+  "additionalProperties": false
+}

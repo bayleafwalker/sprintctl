@@ -10,8 +10,10 @@ import hashlib
 import json
 import re
 from contextlib import contextmanager
+from functools import partial
 
 from .application_common import *
+from . import agent_inbox as _inbox
 from . import contracts as _contracts
 from . import decisions as _decisions
 from . import effect_intent as _effect
@@ -835,9 +837,12 @@ class WorkApplication:
             _attempt.OPERATION_SEAL_UNUSED: target._effect_attempt_seal_unused,
             _attempt.OPERATION_REPORT: target._effect_attempt_report,
             _attempt.OPERATION_GET: target._effect_attempt_get,
+            **{name: target._agent_inbox for name in _inbox.OPERATIONS},
         }
         try:
             handler = handlers[operation]
+            if operation in _inbox.OPERATIONS:
+                handler = partial(handler, operation)
         except KeyError as exc:
             raise ApplicationRejection(
                 "unknown-work-operation", f"unknown work operation: {operation}", 404
@@ -2364,6 +2369,101 @@ class WorkApplication:
             return {"repo_id": self.repo_id, "run_id": run_id, **note}
 
         return self._idempotent_write(context, "write_session_note", arguments, effect)
+
+    # -- work.agent.* / work.message.* --------------------------------------
+    # Agent directory and durable inbox, vuoro contract v1
+    # (docs/architecture/agent-directory-and-inbox.md).  PostgreSQL only.
+    # principal_id and workspace_id come from the authenticated identity and
+    # the repository from the call's scope, never from the wire.  register,
+    # observe and retire claim the idempotency ledger with the caller's
+    # idempotency_key; send claims it with the message_id (the contract's
+    # idempotency key for a message), so a same-sender retry replays its
+    # stamps.  Receipts and cancels take no key: their natural keys replay.
+
+    def _agent_inbox(self, operation: str, arguments: dict[str, Any],
+                     context: InvocationContext) -> dict[str, Any]:
+        if not callable(getattr(self.backend, "idempotent_write", None)):
+            raise ApplicationRejection(
+                "unsupported-backend",
+                "the agent directory and inbox require the PostgreSQL owner; "
+                "standalone SQLite does not store them",
+                501,
+            )
+        if (getattr(self.store, "remote_schema_version", None) or 0) < _inbox.SCHEMA_VERSION:
+            raise ApplicationRejection(
+                "owner-capability-unavailable",
+                f"the agent directory and inbox require the PostgreSQL schema {_inbox.SCHEMA_VERSION} owner",
+                503,
+            )
+        from . import agent_inbox_pg as storage
+        from . import pg as _pg
+
+        principal_id, workspace_id = _identity_binding(context)
+        try:
+            if operation in _inbox.READ_OPERATIONS:
+                with self.store.conn.cursor() as cur:
+                    return self._agent_inbox_read(storage, cur, operation, arguments,
+                                                  principal_id, workspace_id)
+            if operation in (_inbox.OPERATION_RECEIPT, _inbox.OPERATION_CANCEL):
+                if operation == _inbox.OPERATION_RECEIPT:
+                    message_id, instance_id, kind, fields = _inbox.receipt_arguments(arguments)
+                    body = lambda cur: storage.receipt(cur, self.store, principal_id, workspace_id,
+                                                       message_id, instance_id, kind, fields)
+                else:
+                    args = _inbox.cancel_arguments(arguments)
+                    body = lambda cur: storage.cancel(cur, self.store, principal_id, workspace_id,
+                                                      args["message_id"], args["reason"])
+                return _pg._in_write_transaction(self.store, None, body)
+            return self._agent_inbox_write(storage, operation, arguments, principal_id, workspace_id)
+        except _inbox.InboxRefused as exc:
+            raise ApplicationRejection(exc.code, str(exc), exc.http_status, details=exc.details) from exc
+
+    def _agent_inbox_read(self, storage: Any, cur: Any, operation: str, arguments: dict[str, Any],
+                          principal_id: str, workspace_id: str) -> dict[str, Any]:
+        if operation == _inbox.OPERATION_LIST:
+            include_retired = _inbox.list_arguments(arguments)
+            return {"entries": storage.directory(cur, self.store, workspace_id,
+                                                 include_retired=include_retired)}
+        if operation == _inbox.OPERATION_DESCRIBE:
+            wanted = _inbox.describe_arguments(arguments)
+            entries = storage.directory(cur, self.store, workspace_id, principal_id=wanted)
+            if not entries:
+                raise _inbox.InboxRefused("not-found", "no such principal is registered in this repository")
+            return entries[0]
+        if operation == _inbox.OPERATION_READ:
+            return storage.read(cur, self.store, principal_id, workspace_id, _inbox.read_arguments(arguments))
+        return storage.status(cur, self.store, principal_id, workspace_id,
+                              _inbox.status_arguments(arguments))
+
+    def _agent_inbox_write(self, storage: Any, operation: str, arguments: dict[str, Any],
+                           principal_id: str, workspace_id: str) -> dict[str, Any]:
+        from . import pg as _pg
+
+        if operation == _inbox.OPERATION_SEND:
+            envelope, encoded = _inbox.send_arguments(arguments)
+            key, tool = envelope["message_id"], "agent_message_send"
+            effect = lambda cur: storage.send(cur, self.store, principal_id, workspace_id, envelope, encoded)
+        else:
+            validate, write, tool = {
+                _inbox.OPERATION_REGISTER: (_inbox.register_arguments, storage.register, "agent_register"),
+                _inbox.OPERATION_OBSERVE: (_inbox.observe_arguments, storage.observe, "agent_observe"),
+                _inbox.OPERATION_RETIRE: (_inbox.retire_arguments, storage.retire, "agent_retire"),
+            }[operation]
+            args = validate(arguments)
+            key = args["idempotency_key"]
+            effect = lambda cur: write(cur, self.store, principal_id, workspace_id, args)
+        try:
+            result, replayed = self.backend.idempotent_write(
+                self.store, workspace_id=workspace_id, principal_id=principal_id, tool=tool, key=key,
+                request_digest=_request_digest(tool, arguments), effect=effect, with_replay=True,
+            )
+        except _pg.IdempotencyConflict as exc:
+            if operation == _inbox.OPERATION_SEND:
+                raise _inbox.InboxRefused(
+                    "message-id-conflict", "that message_id was already sent with another envelope"
+                ) from exc
+            raise _inbox.InboxRefused(exc.code, str(exc)) from exc
+        return {**result, "replayed": bool(replayed or result.get("replayed"))}
 
     # -- work.lease.* -----------------------------------------------------
     # agentops#2520 (E2b): the exclusive durable lease behind the Vuoro MCP

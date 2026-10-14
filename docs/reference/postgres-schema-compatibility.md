@@ -16,11 +16,23 @@ create, alter, or repair schema objects.
 work API as `sprintctl-work/v1`, reports the actual remote schema version, and
 reports the minimum and maximum versions this runtime supports.
 
-The current source tree (sprintctl 0.19.0) admits exactly remote schema 23
+The current source tree (sprintctl 0.19.0) admits exactly remote schema 25
 (schema 18 for sprintctl 0.9.0 through 0.10.x): `MINIMUM_SCHEMA_VERSION` and
-`MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 23, and
+`MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 25, and
 `remote-schema-version` in `pyproject.toml` records the same value. Any other
 ledger version fails closed before a runtime command is served.
+
+Schema 25 adds the agent directory and durable inbox (vuoro contract
+`agent-directory-and-inbox` v1): `agent_instance`,
+`agent_declaration_revision`, `agent_observation`, `agent_inbox_counter`,
+`agent_message` and `agent_message_receipt`, with append-only guards and
+partial unique indexes for the receipt natural keys. The handshake publishes
+`capabilities.agent_inbox_storage` with an exact catalog fingerprint
+(`sprintctl/agent_inbox_schema.py`); a partial catalog reports
+`agent-inbox-storage-partial` and a schema-25 ledger without it
+`agent-inbox-storage-missing`. A pre-existing relation, index or guard function
+with one of its names refuses the migration. See
+[agent directory and inbox](agent-inbox.md).
 
 Schema 23 adds immutable run invocation bindings and attempt receipts, while
 retaining the schema-22 effect-attempt records. Correlation is supplementary

@@ -21,6 +21,13 @@ TEST_ROLE_PREFIX = "sprintctl_test_"
 TEST_DATABASE_PREFIX = "sprintctl_test_"
 DISPOSABLE_DATABASE_COMMENT = "sprintctl:disposable-integration-test"
 REPO_TABLES = (
+    # Schema 25 (agent directory and inbox): append-only children first.
+    "agent_message_receipt",
+    "agent_message",
+    "agent_inbox_counter",
+    "agent_observation",
+    "agent_declaration_revision",
+    "agent_instance",
     # M2-1 (agentops#2541): effect intents cascade from their item and run;
     # listed first for the same reason.
     "work_effect_intent",
@@ -216,6 +223,11 @@ def cleanup_test_repositories(conn: Any, repo_ids: Iterable[str]) -> dict[str, A
                 "work_legacy_evidence",
                 "work_release",
                 "release_commit",
+                "agent_message_receipt",
+                "agent_message",
+                "agent_observation",
+                "agent_declaration_revision",
+                "agent_instance",
             )
             for table in immutable_tables:
                 cur.execute(f"ALTER TABLE {table} DISABLE TRIGGER USER")  # noqa: S608
@@ -330,3 +342,63 @@ class FixtureCleanup:
 def identity_as_dict(identity: PostgresTestIdentity) -> dict[str, Any]:
     """Return a JSON-friendly identity for diagnostics without connection data."""
     return asdict(identity)
+
+
+# ---------------------------------------------------------------------------
+# Agent inbox test clock (schema 25).  Test support only.  The owner honours
+# sprintctl.agent_inbox_pg.TEST_CLOCK_SETTING only after one of these hooks has
+# switched agent_inbox_pg._TEST_CLOCK_ENABLED on in this process, and only on a
+# database commented DISPOSABLE_DATABASE_COMMENT; a session setting alone
+# (connection options, PGOPTIONS, ALTER ROLE/DATABASE SET) is ignored.  The
+# setting is per connection (session) and follows the transaction: commit
+# after calling, as for any other write.
+# ---------------------------------------------------------------------------
+
+def _scalar(row: Any) -> Any:
+    return next(iter(row.values())) if isinstance(row, dict) else row[0]
+
+
+def freeze_inbox_clock(store: Any, at: Any = None) -> str:
+    """Freeze the inbox owner's clock for ``store``'s session at ``at``
+    (a datetime or RFC 3339 string; default: now, truncated to the second).
+    Returns the frozen instant as PostgreSQL renders it."""
+    from . import agent_inbox_pg
+    from .agent_inbox_pg import TEST_CLOCK_SETTING
+
+    agent_inbox_pg._TEST_CLOCK_ENABLED = True
+
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT set_config(%s, COALESCE(%s::timestamptz, date_trunc('second', clock_timestamp()))::text,"
+            " false)",
+            (TEST_CLOCK_SETTING, None if at is None else str(at)),
+        )
+        return _scalar(cur.fetchone())
+
+
+def shift_inbox_clock(store: Any, seconds: float) -> str:
+    """Advance the inbox owner's clock for ``store``'s session by ``seconds``.
+
+    The first call freezes the clock (at now, truncated to the second) before
+    advancing it, so later evaluations differ by exactly the shifts applied.
+    """
+    from . import agent_inbox_pg
+    from .agent_inbox_pg import TEST_CLOCK_SETTING
+
+    agent_inbox_pg._TEST_CLOCK_ENABLED = True
+
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT set_config(%s, (COALESCE(NULLIF(current_setting(%s, true), '')::timestamptz,"
+            " date_trunc('second', clock_timestamp())) + make_interval(secs => %s))::text, false)",
+            (TEST_CLOCK_SETTING, TEST_CLOCK_SETTING, float(seconds)),
+        )
+        return _scalar(cur.fetchone())
+
+
+def release_inbox_clock(store: Any) -> None:
+    """Return ``store``'s session to the owner's real clock."""
+    from .agent_inbox_pg import TEST_CLOCK_SETTING
+
+    with store.conn.cursor() as cur:
+        cur.execute("SELECT set_config(%s, '', false)", (TEST_CLOCK_SETTING,))

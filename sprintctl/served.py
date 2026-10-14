@@ -842,6 +842,26 @@ __all__ = [
 ]
 
 
+#: The served-only ``agent``, ``message`` and ``run`` CLI verbs
+#: (sprintctl.commands.inbox): the agent directory and inbox, plus the run
+#: continuation read and session-note write.
+AGENT_OPERATIONS = frozenset({
+    "work.agent.register-v1", "work.agent.observe-v1", "work.agent.retire-v1",
+    "work.agent.list-v1", "work.agent.describe-v1", "work.message.send-v1",
+    "work.message.read-v1", "work.message.status-v1", "work.message.receipt-v1",
+    "work.message.cancel-v1", "work.run.predecessor-context-v1", "work.session-note.write-v1",
+})
+
+
+def invoke_agent_operation(
+    served_profile: ServedProfile, operation: str, arguments: dict[str, Any], *, repo_id: str
+) -> Any:
+    """Invoke one operation of :data:`AGENT_OPERATIONS` and return its result."""
+    if operation not in AGENT_OPERATIONS:
+        raise ValueError(f"unsupported agent operation: {operation}")
+    return asyncio.run(_invoke_operation(served_profile, operation, arguments, repo_id=repo_id))
+
+
 def native_evidence_invoke(
     served_profile: ServedProfile, operation: str, arguments: dict[str, Any], *, repo_id: str
 ) -> Any:

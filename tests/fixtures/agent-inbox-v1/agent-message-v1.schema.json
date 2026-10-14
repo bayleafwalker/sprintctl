@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:vuoro:agent-message:v1",
+  "title": "Vuoro agent message v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "agent-message/v1"
+    },
+    "message_id": {
+      "type": "string",
+      "pattern": "^msg_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "recipient": {
+      "type": "object",
+      "properties": {
+        "principal_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "instance_id": {
+          "type": "string",
+          "pattern": "^ins_[0-9A-HJKMNP-TV-Z]{26}$"
+        }
+      },
+      "required": [
+        "principal_id"
+      ],
+      "additionalProperties": false
+    },
+    "kind": {
+      "const": "continue"
+    },
+    "mode": {
+      "enum": [
+        "request",
+        "delegation"
+      ]
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "item_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "predecessor_run_id": {
+          "type": "string",
+          "pattern": "^run_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "work_link": {
+          "type": "string",
+          "pattern": "^vuoro-work://link/v1/[A-Za-z0-9_-]+$",
+          "maxLength": 4096
+        },
+        "correlation_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{8,128}$"
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "item_id"
+          ]
+        },
+        {
+          "required": [
+            "predecessor_run_id"
+          ]
+        }
+      ]
+    },
+    "body": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 16384
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "properties": {
+          "uri": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "uri",
+          "sha256",
+          "size_bytes"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "not_after": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "schema",
+    "message_id",
+    "recipient",
+    "kind",
+    "mode",
+    "context",
+    "body",
+    "created_at"
+  ],
+  "additionalProperties": false,
+  "$comment": "body.text maxLength counts characters; the 16 KiB UTF-8 and 64 KiB canonical-envelope limits are enforced by the store (contract section 3.1). mode 'delegation' is schema-valid and refused by the store in v1 (mode-not-supported)."
+}

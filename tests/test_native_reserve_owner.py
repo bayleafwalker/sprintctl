@@ -8,6 +8,7 @@ import pytest
 from sprintctl.application import ApplicationRejection
 from sprintctl.vuoro_adapter import WORK_OPERATION_CONTRACTS
 from tests.test_work_application import _application
+from sprintctl.agent_inbox import OPERATIONS as AGENT_INBOX_OPERATIONS
 
 
 def context(*, bound=True, authority=True, key="native-key-1"):
@@ -88,6 +89,6 @@ def test_native_reserve_is_only_catalog_addition_with_all_legacy_bytes_preserved
         "work.effect.acceptance-snapshot-v1", "work.effect.export-proposal-v2", "work.effect.export-proposal-v3", "work.effect.basis-v1",
         "work.run.continuation-delta-v1",
         "work.run.register-correlated-v1", "work.run.invocation-receipt-get-v1",
-    } | set(OPERATION_AUTHORITIES)
+    } | set(OPERATION_AUTHORITIES) | AGENT_INBOX_OPERATIONS
     assert not set(expected) - set(actual)
     assert {name: actual[name] for name in expected} == expected
