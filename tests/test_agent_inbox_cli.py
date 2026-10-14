@@ -67,7 +67,8 @@ def test_each_verb_sends_one_operation_and_prints_its_json(calls, argv, stdin, o
 
 
 def test_a_refusal_prints_the_error_code_as_json(calls, monkeypatch):
-    from vuoro_client.errors import InvocationRejectedError
+    errors = pytest.importorskip("vuoro_client.errors")  # the served extra
+    InvocationRejectedError = errors.InvocationRejectedError
 
     def refuse(*_args, **_kwargs):
         raise InvocationRejectedError("already-decided", "this message already has a decision", status_code=409)

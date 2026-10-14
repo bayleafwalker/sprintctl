@@ -35,13 +35,18 @@ def _invoke(operation: str, arguments: dict[str, Any]) -> None:
         raise click.ClickException(
             f"{operation} is served by the PostgreSQL owner only; set SPRINTCTL_BACKEND=served"
         )
-    from vuoro_client.errors import InvocationRejectedError  # served extra, lazy
+    try:  # served extra, lazy; absent only where nothing can be served
+        from vuoro_client.errors import InvocationRejectedError
+    except ModuleNotFoundError:
+        InvocationRejectedError = None  # type: ignore[assignment,misc]
 
     try:
         result = _served.invoke_agent_operation(
             config.served_profile, operation, arguments, repo_id=config.repo_id
         )
-    except InvocationRejectedError as exc:
+    except Exception as exc:
+        if InvocationRejectedError is None or not isinstance(exc, InvocationRejectedError):
+            raise
         message = str(exc).partition(": ")[2] or str(exc)
         click.echo(json.dumps({"error": {"code": exc.code, "message": message}}, indent=2))
         sys.exit(1)
