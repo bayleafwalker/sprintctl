@@ -4,9 +4,11 @@ import json
 import os
 import re
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+
+from .vuoro_credentials import CredentialResolutionError, read_delegated_handoff_file
 
 SERVED_MIN_PYTHON = (3, 12)
 SERVED_PROFILE_SCHEMA_VERSION = "vuoro-client-profile/v1"
@@ -52,6 +54,10 @@ class ServedProfile:
     credential_ref: str
     expected_environment: str
     source_path: Path
+    # Local provenance only; these fields never appear in the profile JSON or
+    # client-visible schemas. Only profiles read from the protected exact-CWD
+    # handoff may select the delegated-token reader.
+    trusted_implicit_delegated: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,6 +201,10 @@ def _load_served_profile(path: Path) -> ServedProfile:
         raw = json.loads(raw_text)
     except json.JSONDecodeError as exc:
         raise ServedProfileError(f"Error: invalid JSON in profile {path}: {exc}") from exc
+    return _load_served_profile_from_mapping(raw, path)
+
+
+def _load_served_profile_from_mapping(raw: object, path: Path) -> ServedProfile:
     if not isinstance(raw, dict):
         raise ServedProfileError(f"Error: profile {path} must be a JSON object.")
 
@@ -249,6 +259,48 @@ def _load_served_profile(path: Path) -> ServedProfile:
     )
 
 
+def _load_implicit_delegated_profile(cwd: Path) -> ServedProfile | None:
+    """Read only ``cwd/.vuoro/profile.json`` under the protected handoff rules."""
+    source = cwd / ".vuoro" / "profile.json"
+    # Do not inspect parents. Missing exact-CWD content is simply no handoff;
+    # any present-but-untrusted content refuses the selected served mode.
+    try:
+        raw_text = read_delegated_handoff_file(cwd, "profile.json", maximum_bytes=1_048_576)
+    except FileNotFoundError:
+        return None
+    except CredentialResolutionError as exc:
+        raise ServedProfileError(
+            "Error: trusted delegated profile is unavailable or invalid."
+        ) from exc
+    try:
+        raw = json.loads(raw_text.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ServedProfileError(
+            "Error: trusted delegated profile is unavailable or invalid."
+        ) from exc
+    if not isinstance(raw, dict):
+        raise ServedProfileError("Error: trusted delegated profile is unavailable or invalid.")
+    # The adapter handoff has one fixed sibling credential. Do not allow a
+    # profile document to redirect the delegated callback to another file.
+    credential_path = (cwd / ".vuoro" / "credential").absolute()
+    if raw.get("credential_ref") != f"file:{credential_path}":
+        raise ServedProfileError("Error: trusted delegated profile is unavailable or invalid.")
+    try:
+        parsed = _load_served_profile_from_mapping(raw, source)
+    except ServedProfileError as exc:
+        raise ServedProfileError(
+            "Error: trusted delegated profile is unavailable or invalid."
+        ) from exc
+    return ServedProfile(
+        name=parsed.name,
+        endpoint=parsed.endpoint,
+        credential_ref=f"file:{credential_path}",
+        expected_environment=parsed.expected_environment,
+        source_path=source,
+        trusted_implicit_delegated=True,
+    )
+
+
 def load_backend_config(
     *,
     cwd: Path | None = None,
@@ -258,16 +310,36 @@ def load_backend_config(
     allow_legacy_direct_remote: bool = False,
 ) -> BackendConfig:
     env = environ if environ is not None else os.environ
-    mode = env.get("SPRINTCTL_BACKEND") or "local"
-    if mode not in {"local", "remote", "served"}:
+    explicit_mode = env.get("SPRINTCTL_BACKEND")
+    if explicit_mode is not None and explicit_mode not in {"local", "remote", "served"}:
         raise BackendConfigError(
-            f"Error: invalid SPRINTCTL_BACKEND='{mode}'. Expected 'local' or 'served'."
+            f"Error: invalid SPRINTCTL_BACKEND='{explicit_mode}'. Expected 'local' or 'served'."
         )
     # Remote was a transitional workstation client.  It is deliberately
     # rejected before identity resolution, driver import, or connection setup
     # so a stale env var cannot silently reopen the retired PostgreSQL path.
     # The narrow owner/recovery helper below is the only caller allowed to
     # opt into the old configuration shape.
+    if explicit_mode == "remote" and not allow_legacy_direct_remote:
+        raise BackendConfigError(LEGACY_DIRECT_REMOTE_MIGRATION_GUIDANCE)
+
+    working_directory = (cwd or Path.cwd()).resolve()
+    repo_root, inferred_repo_id, marker = resolve_repo_identity(working_directory)
+    mode = explicit_mode or "local"
+    implicit_profile: ServedProfile | None = None
+    # A served repository marker may select the served client only when this
+    # exact worktree contains the protected adapter handoff. A marker by itself
+    # retains the old default-local mismatch refusal; an untrusted handoff is a
+    # hard error rather than a fallback to local or another credential.
+    if (
+        explicit_mode is None
+        and env.get("SPRINTCTL_VUORO_PROFILE") is None
+        and marker is not None
+        and marker.backend == "served"
+    ):
+        implicit_profile = _load_implicit_delegated_profile(working_directory)
+        if implicit_profile is not None:
+            mode = "served"
     if mode == "remote" and not allow_legacy_direct_remote:
         raise BackendConfigError(LEGACY_DIRECT_REMOTE_MIGRATION_GUIDANCE)
     url = env.get("SPRINTCTL_URL")
@@ -289,13 +361,19 @@ def load_backend_config(
                 f"(vuoro-client's minimum); the current interpreter is {current}."
             )
         profile_path_raw = env.get("SPRINTCTL_VUORO_PROFILE")
-        if not profile_path_raw:
-            raise BackendConfigError(
-                "Error: SPRINTCTL_BACKEND=served requires SPRINTCTL_VUORO_PROFILE."
-            )
-        served_profile = _load_served_profile(Path(profile_path_raw).expanduser())
+        if profile_path_raw:
+            # Explicit profile selection keeps its historical precedence and
+            # always uses the ordinary owner-only credential reader.
+            served_profile = _load_served_profile(Path(profile_path_raw).expanduser())
+        elif implicit_profile is not None:
+            served_profile = implicit_profile
+        else:
+            served_profile = _load_implicit_delegated_profile(working_directory)
+            if served_profile is None:
+                raise BackendConfigError(
+                    "Error: SPRINTCTL_BACKEND=served requires SPRINTCTL_VUORO_PROFILE."
+                )
 
-    repo_root, inferred_repo_id, marker = resolve_repo_identity(cwd)
     if (
         marker is not None
         and marker.backend == "remote"

@@ -10,8 +10,8 @@ A client's underlying ``httpx.AsyncClient`` is bound to the event loop it was
 built in, so a client must never be constructed outside ``asyncio.run(...)``
 and never reused across separate ``asyncio.run(...)`` calls -- reusing one
 across dead event loops breaks its transport on the next call. There is
-exactly one client construction site (:func:`_client`) and every operation
-below goes through it inside its own ``asyncio.run(...)``.
+exactly one client construction site (:func:`_default_client`) and every
+operation below goes through it inside its own ``asyncio.run(...)``.
 
 ``vuoro_client`` is imported lazily, inside the coroutines that need it, so
 importing this module -- and transitively ``sprintctl.cli`` -- never requires
@@ -24,16 +24,20 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from functools import partial
 from typing import Any
 
 from . import reservation as _reservation
 from .backend import ServedProfile
 from .served_routes import doctor_probe_command_paths, doctor_probe_operations
-from .vuoro_credentials import resolve_file_credential
+from .vuoro_credentials import (
+    resolve_delegated_profile_credential,
+    resolve_file_credential,
+)
 
 
 def _client_profile(served_profile: ServedProfile) -> Any:
-    from vuoro_client import Profile  # noqa: PLC0415 - optional extra, lazy import
+    from vuoro_client import Profile
 
     return Profile(
         name=served_profile.name,
@@ -43,15 +47,31 @@ def _client_profile(served_profile: ServedProfile) -> Any:
     )
 
 
-def _client(served_profile: ServedProfile, *, credential_resolver=None) -> Any:
+def _default_client_credential_resolver(served_profile: ServedProfile):
+    if getattr(served_profile, "trusted_implicit_delegated", False):
+        return partial(resolve_delegated_profile_credential, served_profile)
+    return resolve_file_credential
+
+
+def _default_client(served_profile: ServedProfile, *, credential_resolver=None) -> Any:
     """Construct one fresh ``AsyncVuoroClient``. Callers must use it as an
     ``async with`` block inside the coroutine passed to a single
     ``asyncio.run(...)`` call -- never store or reuse the instance it
     returns."""
 
-    from vuoro_client import AsyncVuoroClient  # noqa: PLC0415 - optional extra, lazy import
+    from vuoro_client import AsyncVuoroClient
 
-    return AsyncVuoroClient(_client_profile(served_profile), credential_resolver or resolve_file_credential)
+    resolver = (
+        credential_resolver
+        if credential_resolver is not None
+        else _default_client_credential_resolver(served_profile)
+    )
+    return AsyncVuoroClient(_client_profile(served_profile), resolver)
+
+
+def _client(served_profile: ServedProfile, *, credential_resolver=None) -> Any:
+    """Compatibility facade for the single default client construction site."""
+    return _default_client(served_profile, credential_resolver=credential_resolver)
 
 
 async def _invoke_operation(
@@ -881,13 +901,14 @@ def native_reserve_invoker(served_profile: ServedProfile, *, repo_id: str):
     unresolved = object()
     snapshot = unresolved
     credential_ref = served_profile.credential_ref
+    base_resolver = _default_client_credential_resolver(served_profile)
 
     def pinned(ref):
         nonlocal snapshot
         if ref != credential_ref:
             raise ValueError("reserve credential reference changed during sync")
         if snapshot is unresolved:
-            snapshot = resolve_file_credential(ref)
+            snapshot = base_resolver(ref)
         return snapshot
 
     def invoke(operation, arguments, key):
@@ -909,13 +930,14 @@ def native_evidence_invoker(served_profile: ServedProfile, *, repo_id: str):
     unresolved = object()
     snapshot = unresolved
     credential_ref = served_profile.credential_ref
+    base_resolver = _default_client_credential_resolver(served_profile)
 
     def pinned(ref):
         nonlocal snapshot
         if ref != credential_ref:
             raise ValueError("evidence credential reference changed during sync")
         if snapshot is unresolved:
-            snapshot = resolve_file_credential(ref)
+            snapshot = base_resolver(ref)
         return snapshot
 
     def invoke(operation, arguments):
@@ -931,13 +953,14 @@ def native_proposal_invoker(served_profile: ServedProfile, *, repo_id: str):
     unresolved = object()
     snapshot = unresolved
     credential_ref = served_profile.credential_ref
+    base_resolver = _default_client_credential_resolver(served_profile)
 
     def pinned(ref):
         nonlocal snapshot
         if ref != credential_ref:
             raise ValueError("proposal credential reference changed during sync")
         if snapshot is unresolved:
-            snapshot = resolve_file_credential(ref)
+            snapshot = base_resolver(ref)
         return snapshot
 
     def invoke(operation, arguments):
