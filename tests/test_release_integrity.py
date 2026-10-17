@@ -55,15 +55,16 @@ class TestReleaseIntegrity:
         Minor 0.19.0 adds correlated run invocation receipts and schema23,
         the verification lookup index (schema24) and the agent directory and
         inbox (schema25). Unreleased schema26 (run resolution facts and
-        structured approvals) raises the strict floor again, so the next
-        release is a coordinated cutover and a minor release past 0.19.0."""
+        structured approvals) and schema27 (run-scoped delegation) raise the
+        strict floor, so the next release is a coordinated cutover and a
+        minor release past 0.19.0."""
         from sprintctl import pg_migrations
 
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
         assert pyproject["project"]["version"] == __version__ == "0.19.0"
-        assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 26
-        assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 26
+        assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 27
+        assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 27
 
     def test_release_contract_names_this_version(self):
         """The tag workflow validates the wheel against RELEASE_VERSION; a

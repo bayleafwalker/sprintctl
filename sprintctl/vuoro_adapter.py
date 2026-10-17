@@ -31,6 +31,7 @@ from . import effect_intent as _effect
 from . import effect_intent_export as _effect_export
 from . import effect_verification_export as _verification_export
 from . import effect_basis as _effect_basis
+from . import delegation as _delegation
 from . import releases as _releases
 from . import unbound as _unbound
 from .application import (
@@ -3066,6 +3067,76 @@ def _run_resolution_operation_contracts() -> tuple[WorkOperationContract, ...]:
 
 
 WORK_OPERATION_CONTRACTS += _run_resolution_operation_contracts()
+
+
+def _run_delegation_operation_contracts() -> tuple[WorkOperationContract, ...]:
+    delegation_id = {"type": "string", "pattern": _delegation.DELEGATION_ID_PATTERN}
+    operations = {
+        "type": "array",
+        "minItems": 1,
+        "uniqueItems": True,
+        "items": {"enum": sorted(_delegation.DELEGATED_OPERATIONS)},
+    }
+    record = {
+        "delegation_id": delegation_id,
+        "run_id": _RUN_ID_SCHEMA,
+        "creator_instance_id": {"type": "string", "pattern": _inbox.INSTANCE_ID_RE.pattern},
+        "operations": operations,
+        "created_at": {"type": "string", "minLength": 1},
+        "expires_at": {"type": "string", "minLength": 1},
+        "revoked_at": {"type": ["string", "null"]},
+        "revoked_reason": {"type": ["string", "null"]},
+        "state": {"enum": ["live", "expired", "revoked"]},
+    }
+    return (
+        WorkOperationContract(
+            _delegation.OP_DELEGATE,
+            _object_schema(
+                {
+                    "run_id": _RUN_ID_SCHEMA,
+                    "creator_instance_id": {"type": "string", "pattern": _inbox.INSTANCE_ID_RE.pattern},
+                    "operations": operations,
+                    "ttl_seconds": {"type": "integer", "minimum": 1, "maximum": _delegation.MAX_TTL_SECONDS},
+                    "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
+                },
+                required=("run_id", "creator_instance_id", "operations", "ttl_seconds", "idempotency_key"),
+            ),
+            _result_schema(
+                (*record, "token", "replayed"),
+                {**record, "token": {"type": ["string", "null"], "pattern": "^vrd_[A-Z2-7]{52}$"},
+                 "replayed": {"type": "boolean"}},
+            ),
+            "work:evidence", "write", "required",
+        ),
+        WorkOperationContract(
+            _delegation.OP_REVOKE,
+            _object_schema(
+                {
+                    "delegation_id": delegation_id,
+                    "reason": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$"},
+                    "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
+                },
+                required=("delegation_id", "reason", "idempotency_key"),
+            ),
+            _result_schema(
+                (*record, "already_revoked", "replayed"),
+                {**record, "already_revoked": {"type": "boolean"}, "replayed": {"type": "boolean"}},
+            ),
+            "work:evidence", "write", "required",
+        ),
+        WorkOperationContract(
+            _delegation.OP_GET,
+            _object_schema({"delegation_id": delegation_id}, required=("delegation_id",)),
+            _result_schema(
+                (*record, "evaluated_at"),
+                {**record, "evaluated_at": {"type": "string", "minLength": 1}},
+            ),
+            "work:read", "read", "not-allowed",
+        ),
+    )
+
+
+WORK_OPERATION_CONTRACTS += _run_delegation_operation_contracts()
 
 
 LEGACY_REMOTE_COMMAND_PARITY: tuple[dict[str, str], ...] = (

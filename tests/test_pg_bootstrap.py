@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from sprintctl import pg, pg_migrations, run_invocation_schema, effect_verification_export_index
-from sprintctl import agent_inbox_schema, approval_schema
+from sprintctl import agent_inbox_schema, approval_schema, delegation_schema
 
 
 CURRENT = pg_migrations.CURRENT_SCHEMA_VERSION
@@ -56,6 +56,8 @@ class _SchemaCursor:
             self._conn.agent_inbox_installed = True
         if query == approval_schema.DDL:
             self._conn.approval_installed = True
+        if query == delegation_schema.DDL:
+            self._conn.delegation_installed = True
         return self
 
     rowcount = 0
@@ -133,6 +135,7 @@ class _SchemaConnection:
         self.verification_export_index_installed = version is not None and version >= 24
         self.agent_inbox_installed = version is not None and version >= 25
         self.approval_installed = version is not None and version >= 26
+        self.delegation_installed = version is not None and version >= 27
         self.calls = []
         self.version = version
         self.version_rows = version_rows if version is not None else 0
@@ -207,6 +210,18 @@ def _stub_invocation_catalog_for_schema_state_fakes(monkeypatch):
         }
 
     monkeypatch.setattr(approval_schema, "inspect_catalog", inspect_approval)
+
+    def inspect_delegation(cur):
+        available = cur._conn.delegation_installed
+        return {
+            "table_count": 1 if available else 0,
+            "catalog_fingerprint": delegation_schema.EXPECTED_CATALOG_FINGERPRINT if available else "0" * 64,
+            "expected_catalog_fingerprint": delegation_schema.EXPECTED_CATALOG_FINGERPRINT,
+            "available": available,
+            "complete": True,
+        }
+
+    monkeypatch.setattr(delegation_schema, "inspect_catalog", inspect_delegation)
 
 
 def test_snapshot_uses_store_connection_factory_instead_of_redacted_dsn(monkeypatch):
@@ -295,6 +310,14 @@ def test_runtime_compatibility_probe_is_read_only_and_publishes_work_api():
                 "table_count": 1,
                 "catalog_fingerprint": approval_schema.EXPECTED_CATALOG_FINGERPRINT,
                 "expected_catalog_fingerprint": approval_schema.EXPECTED_CATALOG_FINGERPRINT,
+                "available": True,
+                "complete": True,
+            },
+            "delegation_storage": {
+                "schema_version": "sprintctl-run-delegation-storage/v1",
+                "table_count": 1,
+                "catalog_fingerprint": delegation_schema.EXPECTED_CATALOG_FINGERPRINT,
+                "expected_catalog_fingerprint": delegation_schema.EXPECTED_CATALOG_FINGERPRINT,
                 "available": True,
                 "complete": True,
             },

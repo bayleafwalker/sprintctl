@@ -15,7 +15,7 @@ from typing import Any, Mapping
 
 
 WORK_API_VERSION = "sprintctl-work/v1"
-CURRENT_SCHEMA_VERSION = 26
+CURRENT_SCHEMA_VERSION = 27
 # The v0.3 release is a coordinated schema/runtime cutover, so the runtime
 # admits exactly the schema it was built against.  A wider window would be a
 # false promise: reservation storage only arrived in schema 8, the live
@@ -54,7 +54,9 @@ CURRENT_SCHEMA_VERSION = 26
 # 26 adds immutable structured transition approvals (work_approval): a 25
 # authority has nowhere to record or read one, so a 26 runtime refuses it and
 # a 25 runtime refuses a 26 authority.
-MINIMUM_SCHEMA_VERSION = 26
+# 27 adds owner-stored, digest-only run-scoped delegation credentials. Older
+# runtimes do not publish or enforce the delegation operations.
+MINIMUM_SCHEMA_VERSION = 27
 MAXIMUM_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION
 STARTUP_MODE_ENV = "SPRINTCTL_REMOTE_SCHEMA_MODE"
 MIGRATION_LOCK_TIMEOUT_ENV = "SPRINTCTL_MIGRATION_LOCK_TIMEOUT"
@@ -251,6 +253,8 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
             agent_inbox = inspect_agent_inbox(cur)
             from .approval_schema import inspect_catalog as inspect_approval
             approval = inspect_approval(cur)
+            from .delegation_schema import inspect_catalog as inspect_delegation
+            delegation_store = inspect_delegation(cur)
     finally:
         if was_idle:
             store.conn.rollback()
@@ -267,6 +271,8 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
         and (state.version is None or state.version < 25 or agent_inbox["available"])
         and approval["complete"]
         and (state.version is None or state.version < 26 or approval["available"])
+        and delegation_store["complete"]
+        and (state.version is None or state.version < 27 or delegation_store["available"])
     )
     if state.version is None:
         reason = "schema-version-table-missing"
@@ -294,6 +300,10 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
         reason = "approval-storage-partial"
     elif state.version is not None and state.version >= 26 and not approval["available"]:
         reason = "approval-storage-missing"
+    elif not delegation_store["complete"]:
+        reason = "delegation-storage-partial"
+    elif state.version is not None and state.version >= 27 and not delegation_store["available"]:
+        reason = "delegation-storage-missing"
     else:
         reason = None
     return {
@@ -319,6 +329,10 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
             "approval_storage": {
                 "schema_version": "sprintctl-approval-storage/v1",
                 **approval,
+            },
+            "delegation_storage": {
+                "schema_version": "sprintctl-run-delegation-storage/v1",
+                **delegation_store,
             },
             "repository_ingest_cursor": {
                 "schema_version": "sprintctl-repository-ingest-cursor/v1",
@@ -564,6 +578,12 @@ def migrate_schema(store: Any) -> dict[str, Any]:
                 _pg._apply_schema_version_26(cur)
                 cur.execute("UPDATE schema_version SET version = %s", (26,))
                 applied.append(26)
+                state = SchemaState(version=26, row_count=1)
+            if state.version < 27:
+                from . import delegation_schema
+                delegation_schema.install(cur)
+                cur.execute("UPDATE schema_version SET version = %s", (27,))
+                applied.append(27)
         store.conn.commit()
     except Exception:
         store.conn.rollback()

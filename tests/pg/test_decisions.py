@@ -335,6 +335,10 @@ class TestSchema14Fold:
                 patch.setattr(pg, "_apply_schema_version_23", lambda cur: None)
                 patch.setattr(pg, "_apply_schema_version_25", lambda cur: None)
                 patch.setattr(pg, "_apply_schema_version_26", lambda cur: None)
+                # This isolated legacy fixture omits the agent-inbox owner
+                # tables that schema 27's delegation FK requires.
+                from sprintctl import delegation_schema
+                patch.setattr(delegation_schema, "install", lambda cur: None)
                 patch.setattr(pg_migrations, "compatibility_handshake", lambda store: {"compatible": True})
                 pg_migrations.migrate_schema(store)
             with conn.cursor() as cur:
@@ -344,7 +348,11 @@ class TestSchema14Fold:
                 sprint_ids = _seed_v13_fixture(cur, repo_id)
             conn.commit()
 
-            migrated = pg_migrations.migrate_schema(store)
+            with monkeypatch.context() as patch:
+                from sprintctl import delegation_schema
+                patch.setattr(delegation_schema, "install", lambda cur: None)
+                patch.setattr(pg_migrations, "compatibility_handshake", lambda store: {"compatible": True})
+                migrated = pg_migrations.migrate_schema(store)
             assert migrated["applied_versions"] == list(range(14, pg_migrations.CURRENT_SCHEMA_VERSION + 1))
 
             with conn.cursor() as cur:
@@ -383,7 +391,9 @@ class TestSchema14Fold:
                 pg._apply_schema_version_14(cur)
                 assert _fold_counts(cur, repo_id) == (decisions, evidence, items)
             conn.commit()
-            assert pg_migrations.migrate_schema(store)["applied_versions"] == []
+            with monkeypatch.context() as patch:
+                patch.setattr(pg_migrations, "compatibility_handshake", lambda store: {"compatible": True})
+                assert pg_migrations.migrate_schema(store)["applied_versions"] == []
 
             # A new item in the migrated schema is not legacy.
             with conn.cursor() as cur:

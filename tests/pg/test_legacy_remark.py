@@ -136,6 +136,10 @@ class TestSchema16Migration:
                 patch.setattr(pg, "_apply_schema_version_23", lambda cur: None)
                 patch.setattr(pg, "_apply_schema_version_25", lambda cur: None)
                 patch.setattr(pg, "_apply_schema_version_26", lambda cur: None)
+                # Schema 27's FK needs the agent-instance relation that this
+                # deliberately incomplete schema-15 fixture withholds.
+                from sprintctl import delegation_schema
+                patch.setattr(delegation_schema, "install", lambda cur: None)
                 patch.setattr(pg_migrations, "compatibility_handshake", lambda store: {"compatible": True})
                 pg_migrations.migrate_schema(store)
             with conn.cursor() as cur:

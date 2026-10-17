@@ -1,0 +1,69 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.run-delegation.pg-owner-v1",
+  "contract_ref": {
+    "doc_id": "docs/protocols/run-scoped-delegation.md",
+    "revision": "sha256:61005bf4ebed22fe352b6f218b7d9c8a85a002ee93ca1351fc0df8bd040e3bca"
+  },
+  "implementation_sha": "b2bcfbb387495ffab76076bbf8c448a6c3f95bad",
+  "depth": 2,
+  "environment": {
+    "backend": "PostgreSQL 16.15 disposable database; dedicated unprivileged test role; distinct repository scopes and independent connections for race histories",
+    "isolation": "READ COMMITTED for owner write transactions; observer connection polls PostgreSQL blocking-pid catalog",
+    "tool_versions": {
+      "Python": "3.12.14",
+      "pytest": "9.0.2",
+      "psycopg": "3.3.3"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 2,
+    "bounds": {
+      "concurrent_mint_actors": 2,
+      "concurrent_write_revoke_actors": 2,
+      "runs_per_history": 1
+    },
+    "faults_exercised": []
+  },
+  "claims": [
+    {
+      "property": "Two concurrent distinct-key mint attempts for one run leave exactly one live delegation.",
+      "result": "concurrency-tested",
+      "evidence": ["tests/pg/test_run_delegation.py::test_concurrent_mints_for_one_run_admit_exactly_one_live_row", "tests/pg: 1045 passed, 2 skipped"]
+    },
+    {
+      "property": "A delegated note write holding the shared delegation-row lock commits before revoke; the revoke blocks until it finishes, and a subsequent cached-context write refuses with no extra note.",
+      "result": "concurrency-tested",
+      "evidence": ["tests/pg/test_run_delegation.py::test_delegated_write_and_revoke_serialize_on_the_owner_row", "PostgreSQL pg_blocking_pids observed the revoke blocked by the writer backend PID"]
+    },
+    {
+      "property": "Provided parent expiry caps child expiry; expired or already expired parent identities cannot mint, and an expired credential no longer resolves.",
+      "result": "example-tested",
+      "evidence": ["tests/pg/test_run_delegation.py::test_expiry_and_parent_authority_bounds_are_owner_enforced"]
+    },
+    {
+      "property": "Only a SHA-256 token digest is persisted, and a same-key mint replay does not return the bearer token.",
+      "result": "example-tested",
+      "evidence": ["tests/pg/test_run_delegation.py::test_mint_is_digest_only_single_live_and_idempotent_without_revealing_replay"]
+    },
+    {
+      "property": "The owner cannot attest which process or device presents a copied bearer; a parent with no trusted expiry contributes no external lifetime cap.",
+      "result": "documented-only",
+      "evidence": ["docs/protocols/run-scoped-delegation.md"]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "An earlier callback expression returned None for a nondelegated append even though the evidence row committed; fixed by making the after-result callback absent unless a delegated context exists, then covered by the full PostgreSQL suite.",
+      "trace_ref": "sprintctl PR #150: e8bbe9dfbf9aa081d55e15b53e1ed57e7db30e6e -> fix 6e6dc6eee08266b19ee355a80c4f592e87acfa1c",
+      "seed": null
+    }
+  ],
+  "notes": [
+    "Owner contract digest is sha256:61005bf4ebed22fe352b6f218b7d9c8a85a002ee93ca1351fc0df8bd040e3bca.",
+    "Implementation SHA binds source through contract documentation commit b2bcfbb387495ffab76076bbf8c448a6c3f95bad; this result packet is added in a later evidence-only commit.",
+    "Full non-PG suite: 2207 passed, 40 skipped, 14 deselected.",
+    "No production migration, release, deployment, financial action, or external credential publication occurred."
+  ]
+}
