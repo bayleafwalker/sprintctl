@@ -2639,11 +2639,9 @@ class WorkApplication:
                 if delegated is not None else None
             ),
             after_result=(
-                lambda cur, stored, _replayed: (
-                    self._revalidate_delegation(
-                        cur, context, delegated, "work.evidence.append-v1", run_id
-                    ) or stored
-                )
+                (lambda cur, stored, _replayed: self._revalidate_delegation(
+                    cur, context, delegated, "work.evidence.append-v1", run_id
+                ) or stored)
                 if delegated is not None else None
             ),
         )
@@ -2681,11 +2679,9 @@ class WorkApplication:
                 if delegated is not None else None
             ),
             after_result=(
-                lambda cur, stored, _replayed: (
-                    self._revalidate_delegation(
-                        cur, context, delegated, "work.session-note.write-v1", run_id
-                    ) or stored
-                )
+                (lambda cur, stored, _replayed: self._revalidate_delegation(
+                    cur, context, delegated, "work.session-note.write-v1", run_id
+                ) or stored)
                 if delegated is not None else None
             ),
         )

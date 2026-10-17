@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import hashlib
+import threading
+import time
 import uuid
 from types import SimpleNamespace
 
@@ -10,7 +12,7 @@ import pytest
 from sprintctl import agent_inbox, delegation, delegation_pg, pg, pg_migrations
 from sprintctl.application import ApplicationRejection, WorkApplication
 from sprintctl.pg_testing import freeze_inbox_clock
-from tests.pg._shared import PG_MARKS
+from tests.pg._shared import PG_MARKS, _PG_URL, dict_row, psycopg
 from tests.pg.test_run_evidence import _context, _register
 from tests.agent_inbox_schemas import valid
 
@@ -66,6 +68,13 @@ def _rejection(call, code):
     return caught.value
 
 
+def _delegated_context(ctx, resolved):
+    delegated_ctx = SimpleNamespace(**vars(ctx))
+    delegated_ctx.identity = SimpleNamespace(**vars(ctx.identity))
+    delegated_ctx.identity.delegation = resolved.delegation
+    return delegated_ctx
+
+
 def test_mint_is_digest_only_single_live_and_idempotent_without_revealing_replay(store):
     app, ctx, run, instance = _world(store)
     key = _key()
@@ -92,6 +101,50 @@ def test_mint_is_digest_only_single_live_and_idempotent_without_revealing_replay
     _rejection(lambda: _mint(app, ctx, run, instance), "delegation-exists")
 
 
+def test_concurrent_mints_for_one_run_admit_exactly_one_live_row(store):
+    app, ctx, run, instance = _world(store)
+    second_conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+    second_store = pg.PgStore(
+        conn=second_conn, repo_id=store.repo_id,
+        remote_schema_version=pg_migrations.CURRENT_SCHEMA_VERSION,
+    )
+    second_app = WorkApplication.postgres(second_store)
+    barrier = threading.Barrier(2)
+    results: list[object] = []
+
+    def mint(application):
+        try:
+            barrier.wait(timeout=3)
+            results.append(_mint(application, ctx, run, instance))
+        except BaseException as exc:  # surfaced in the test thread below
+            results.append(exc)
+
+    threads = [
+        threading.Thread(target=mint, args=(app,), name="first-delegation-mint"),
+        threading.Thread(target=mint, args=(second_app,), name="second-delegation-mint"),
+    ]
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+    finally:
+        second_conn.close()
+    assert all(not thread.is_alive() for thread in threads)
+    successes = [value for value in results if isinstance(value, dict)]
+    refusals = [value for value in results if isinstance(value, ApplicationRejection)]
+    assert len(successes) == len(refusals) == 1, results
+    assert refusals[0].code == "delegation-exists"
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) AS n FROM work_run_delegation WHERE repo_id=%s AND run_id=%s "
+            "AND revoked_at IS NULL AND expires_at > statement_timestamp()",
+            (store.repo_id, run),
+        )
+        assert cur.fetchone()["n"] == 1
+    store.conn.rollback()
+
+
 def test_resolver_context_rechecks_run_operation_authority_and_revocation(store):
     app, ctx, run, instance = _world(store)
     created = _mint(app, ctx, run, instance)
@@ -105,9 +158,7 @@ def test_resolver_context_rechecks_run_operation_authority_and_revocation(store)
     assert resolved.delegation.operations == (
         "work.run.resolve-v1", "work.session-note.write-v1",
     )
-    delegated_ctx = SimpleNamespace(**vars(ctx))
-    delegated_ctx.identity = SimpleNamespace(**vars(ctx.identity))
-    delegated_ctx.identity.delegation = resolved.delegation
+    delegated_ctx = _delegated_context(ctx, resolved)
     assert app.invoke("work.run.resolve-v1", {"run_id": run}, delegated_ctx)["run_id"] == run
     _rejection(
         lambda: app.invoke("work.run.resolve-v1", {"run_id": "run_" + "A" * 26}, delegated_ctx),
@@ -145,6 +196,109 @@ def test_expiry_and_parent_authority_bounds_are_owner_enforced(store):
     second_run = _register(app, idempotency_key=_key(), context=ctx)["run"]["run_id"]
     ctx.identity.expires_at = "2026-10-17T09:59:59Z"
     _rejection(lambda: _mint(app, ctx, second_run, instance), "identity-expired")
+
+
+def test_delegated_write_and_revoke_serialize_on_the_owner_row(store, monkeypatch):
+    """A revoke waits for an in-flight authorized write; later writes refuse."""
+    app, ctx, run, instance = _world(store)
+    credential = _mint(app, ctx, run, instance)
+    resolved = app.resolve_run_delegation_digest(
+        hashlib.sha256(credential["token"].encode("ascii")).hexdigest()
+    )
+    delegated_ctx = _delegated_context(ctx, resolved)
+
+    revoke_conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+    observer = psycopg.connect(_PG_URL, row_factory=dict_row)
+    revoke_store = pg.PgStore(
+        conn=revoke_conn, repo_id=store.repo_id,
+        remote_schema_version=pg_migrations.CURRENT_SCHEMA_VERSION,
+    )
+    revoke_app = WorkApplication.postgres(revoke_store)
+    writer_pid = store.conn.info.backend_pid
+    revoke_pid = revoke_conn.info.backend_pid
+    row_locked = threading.Event()
+    release_writer = threading.Event()
+    revoke_started = threading.Event()
+    writer_results: list[object] = []
+    revoke_results: list[object] = []
+    original = WorkApplication._revalidate_delegation
+
+    def pause_after_shared_lock(self, cur, context, delegation_context, operation, run_id):
+        result = original(self, cur, context, delegation_context, operation, run_id)
+        if (
+            threading.current_thread().name == "delegated-note-writer"
+            and operation == "work.session-note.write-v1"
+        ):
+            row_locked.set()
+            if not release_writer.wait(timeout=5):
+                raise AssertionError("test did not release the paused delegated writer")
+        return result
+
+    def write_note():
+        try:
+            writer_results.append(app.invoke("work.session-note.write-v1", {
+                "run_id": run, "note": "committed before revocation",
+                "idempotency_key": _key(),
+            }, delegated_ctx))
+        except BaseException as exc:  # surfaced in the test thread below
+            writer_results.append(exc)
+
+    def revoke():
+        revoke_started.set()
+        try:
+            revoke_results.append(revoke_app.invoke(delegation.OP_REVOKE, {
+                "delegation_id": credential["delegation_id"],
+                "reason": "concurrent-revoke", "idempotency_key": _key(),
+            }, ctx))
+        except BaseException as exc:
+            revoke_results.append(exc)
+
+    monkeypatch.setattr(WorkApplication, "_revalidate_delegation", pause_after_shared_lock)
+    writer = threading.Thread(target=write_note, name="delegated-note-writer")
+    revoker = None
+    try:
+        writer.start()
+        assert row_locked.wait(timeout=3), "writer never acquired the delegation row lock"
+        revoker = threading.Thread(target=revoke, name="delegation-revoker")
+        revoker.start()
+        assert revoke_started.wait(timeout=1)
+
+        # Confirm PostgreSQL sees the revoke blocked by the still-open write
+        # transaction, rather than relying on timing alone.
+        deadline = time.monotonic() + 3
+        blocked = False
+        while time.monotonic() < deadline:
+            with observer.cursor() as cur:
+                cur.execute("SELECT pg_blocking_pids(%s) AS pids", (revoke_pid,))
+                blocked = writer_pid in cur.fetchone()["pids"]
+            observer.rollback()
+            if blocked:
+                break
+            if revoke_results:
+                break
+            time.sleep(0.02)
+        assert blocked, "revoke did not wait for the in-flight delegated write"
+    finally:
+        release_writer.set()
+        writer.join(timeout=5)
+        if revoker is not None:
+            revoker.join(timeout=5)
+        observer.close()
+        revoke_conn.close()
+
+    assert not writer.is_alive()
+    assert revoker is not None and not revoker.is_alive()
+    assert len(writer_results) == len(revoke_results) == 1
+    assert isinstance(writer_results[0], dict), writer_results[0]
+    assert isinstance(revoke_results[0], dict), revoke_results[0]
+    _rejection(lambda: app.invoke("work.session-note.write-v1", {
+        "run_id": run, "note": "must not commit after revocation",
+        "idempotency_key": _key(),
+    }, delegated_ctx), "credential-invalid")
+    with store.conn.cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM session_note WHERE repo_id=%s AND run_id=%s", (store.repo_id, run))
+        assert cur.fetchone()["n"] == 1
+    store.conn.rollback()
 
 
 def test_exact_creator_retirement_and_explicit_result_link_revoke(store):

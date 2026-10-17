@@ -111,7 +111,7 @@ def test_index_ddl_failure_rolls_back_index_and_ledger(isolated, monkeypatch):
         assert inspect_catalog(cur) == {"available": False, "complete": True}
     isolated.conn.rollback()
     monkeypatch.setattr(index, "DDL", original)
-    assert pg_migrations.migrate_schema(isolated)["applied_versions"] == [24, 25, 26]
+    assert pg_migrations.migrate_schema(isolated)["applied_versions"] == [24, 25, 26, 27]
 
 
 @pytest.mark.parametrize("flag", ["indisvalid", "indisready"])
