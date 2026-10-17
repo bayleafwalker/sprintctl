@@ -1,0 +1,91 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.run-delegation.pg-owner-v1",
+  "owner_repo": "sprintctl",
+  "subject": "schema-27 run-scoped delegation record and delegated write/revoke boundary",
+  "contract_ref": {
+    "doc_id": "docs/protocols/run-scoped-delegation.md",
+    "revision": "sha256:61005bf4ebed22fe352b6f218b7d9c8a85a002ee93ca1351fc0df8bd040e3bca"
+  },
+  "source_of_truth": "PostgreSQL work_run_delegation owner row and same-transaction evidence/session-note/idempotency rows",
+  "depth": 2,
+  "backends": ["PostgreSQL 16"],
+  "actors": ["parent", "delegated-runner", "creator-instance", "revoker"],
+  "initial_state": [
+    "Schema 27 is installed in a guarded disposable PostgreSQL database.",
+    "The parent owns one unsettled run and one active creator instance.",
+    "The parent identity has matching principal/workspace/client/grant binding and work:evidence authority.",
+    "No live delegation exists for the run before mint; tokens and DSNs are not packet data."
+  ],
+  "operations": [
+    {
+      "name": "mint two delegations with distinct idempotency keys for the same run",
+      "actors": ["parent"],
+      "synchronization": "Two independent PostgreSQL connections start at a barrier before mint."
+    },
+    {
+      "name": "write one session note using a resolved delegated context",
+      "actors": ["delegated-runner"],
+      "synchronization": "A test wrapper pauses after owner row FOR SHARE succeeds and before the note insert."
+    },
+    {
+      "name": "revoke the delegation while the delegated note write is paused",
+      "actors": ["parent"],
+      "synchronization": "A separate connection invokes revoke; pg_blocking_pids confirms it waits on the writer transaction."
+    },
+    {
+      "name": "retry a note write with the cached delegated context after revoke commits",
+      "actors": ["delegated-runner"],
+      "synchronization": "Invoke only after the owner revoke response has committed."
+    },
+    {
+      "name": "resolve a token after expiry or revocation and inspect the persisted credential digest",
+      "actors": ["parent"],
+      "synchronization": "Use the owner database clock and query only the digest column plus redacted idempotency result."
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one live delegation per exact run; shared delegated-write lock serializes before exclusive revoke; no write after revoke commit"
+  },
+  "assumptions": {
+    "isolation": "PostgreSQL default READ COMMITTED; each write and revoke uses one owner transaction.",
+    "clock": "Owner expiry comparisons use the PostgreSQL owner clock; one test-only clock hook is frozen inside the disposable database.",
+    "fairness": "The paused writer is explicitly released after PostgreSQL reports the revoke blocked on its lock."
+  },
+  "bounds": {
+    "concurrent_mint_actors": 2,
+    "concurrent_write_revoke_actors": 2,
+    "runs_per_history": 1,
+    "delegated_writes_per_revoke_history": 2,
+    "expiry_case_count": 1,
+    "token_bits": 256,
+    "maximum_ttl_seconds": 14400
+  },
+  "invariants": [
+    "At most one unrevoked and unexpired delegation exists for a run; a two-mint race has one success and one delegation-exists refusal.",
+    "A delegated operation is bound to the owner-resolved exact run and one of the closed operation allowlist.",
+    "A delegated write whose shared row lock precedes revoke may commit first; revoke waits for it, and a subsequent cached-context write refuses without adding a note.",
+    "Persisted credentials are plain SHA-256 digests; an exact mint retry returns no token and the idempotency record contains no token.",
+    "A child expiry is no later than a supplied trusted parent expiry or the owner-clock TTL cap."
+  ],
+  "faults": [],
+  "oracles": [
+    "tests/pg/test_run_delegation.py::test_concurrent_mints_for_one_run_admit_exactly_one_live_row",
+    "tests/pg/test_run_delegation.py::test_delegated_write_and_revoke_serialize_on_the_owner_row",
+    "tests/pg/test_run_delegation.py::test_expiry_and_parent_authority_bounds_are_owner_enforced",
+    "tests/pg/test_run_delegation.py::test_mint_is_digest_only_single_live_and_idempotent_without_revealing_replay",
+    "Complete actual PostgreSQL suite passes on the guarded disposable database."
+  ],
+  "implementation_anchors": [
+    "sprintctl/delegation.py:DelegatedRunContext",
+    "sprintctl/delegation_pg.py:mint",
+    "sprintctl/delegation_pg.py:require_live",
+    "sprintctl/delegation_pg.py:revoke",
+    "sprintctl/work_application.py:WorkApplication.resolve_run_delegation_digest",
+    "sprintctl/work_application.py:WorkApplication._evidence_append",
+    "sprintctl/work_application.py:WorkApplication._session_note_write",
+    "tests/pg/test_run_delegation.py"
+  ],
+  "expansions": ["semantic-doc", "stateful-test", "concurrent-history"]
+}
