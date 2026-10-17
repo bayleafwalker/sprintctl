@@ -54,15 +54,14 @@ class TestReleaseIntegrity:
         Minor 0.18.0 adds read-only declared-effect preview on the same schema22.
         Minor 0.19.0 adds correlated run invocation receipts and schema23,
         the verification lookup index (schema24) and the agent directory and
-        inbox (schema25). Unreleased schema26 (run resolution facts and
-        structured approvals) and schema27 (run-scoped delegation) raise the
-        strict floor, so the next release is a coordinated cutover and a
-        minor release past 0.19.0."""
+        inbox (schema25). Minor 0.20.0 adds schema26 (run resolution facts and
+        structured approvals) and schema27 (run-scoped delegation), raising the
+        strict floor in a coordinated owner migration."""
         from sprintctl import pg_migrations
 
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
-        assert pyproject["project"]["version"] == __version__ == "0.19.0"
+        assert pyproject["project"]["version"] == __version__ == "0.20.0"
         assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 27
         assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 27
 
