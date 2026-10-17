@@ -2,7 +2,18 @@
 
 ## Unreleased
 
+## 0.20.0 — 2026-10-17
+
+Requires an explicit PostgreSQL owner migration to schema 27. Previous
+schema-25 runtimes cannot serve the upgraded store.
+
 ### Added
+
+- Run-scoped delegated credentials: owner-held SHA-256 bearer records, a closed
+  operation allowlist, bounded expiry and explicit/settlement revocation.
+  Delegated reads and writes recheck the live record in the owner transaction.
+- Protected exact-CWD `.vuoro/profile.json` discovery lets launched sessions
+  use their run credential without receiving the host inbox credential.
 
 - `work.run.resolve-v2`: resolve-v1's binding, under the same binding rule,
   plus `issued_at` (the owner's `run.created_at`), `superseded_by_run_id`
