@@ -21,6 +21,8 @@ from . import effect_intent as _effect
 from . import effect_verification as _effect_verification
 from . import effect_preview as _preview
 from . import effect_attempt as _attempt
+from . import delegation as _delegation_contract
+from . import delegation_pg as _delegation_storage
 from . import reservation as _reservation
 from . import releases as _releases
 from . import volatile_context as _volatile_context
@@ -32,6 +34,7 @@ from . import volatile_context as _volatile_context
 #: ledger partition by typo or by construction.
 _IDEMPOTENT_RECORD_TOOLS = frozenset({
     "register_run", "append_evidence", "write_session_note", "claim_work", "report_outcome",
+    "delegate_run", "revoke_delegation",
 })
 
 
@@ -739,6 +742,26 @@ class WorkApplication:
         except ValueError as exc:
             raise ApplicationRejection("credential-shaped-value", str(exc), 422) from exc
         _require_effect_authority(operation, context)
+        try:
+            delegated = _delegation_contract.validate_delegated_context(
+                getattr(context.identity, "delegation", None)
+            ) if getattr(context.identity, "delegation", None) is not None else None
+        except _delegation_contract.DelegationRefused as exc:
+            raise ApplicationRejection(exc.code, str(exc), exc.http_status) from exc
+        if delegated is not None and operation not in _delegation_contract.DELEGATED_OPERATIONS:
+            raise ApplicationRejection(
+                "delegation-operation-not-allowed",
+                "delegated identities cannot invoke this operation",
+                403,
+            )
+        if (operation in _delegation_contract.PUBLIC_OPERATIONS or delegated is not None) and (
+            getattr(self.store, "remote_schema_version", None) or 0
+        ) < _delegation_contract.SCHEMA_VERSION:
+            raise ApplicationRejection(
+                "owner-capability-unavailable",
+                "run delegations require the PostgreSQL schema 27 owner",
+                503,
+            )
         if not self._ensure_postgres_runtime_available():
             raise self._runtime_unavailable()
         if operation in {
@@ -808,6 +831,9 @@ class WorkApplication:
             "work.run.invocation-receipt-get-v1": target._run_invocation_receipt_get,
             "work.run.resolve-v1": target._run_resolve,
             "work.run.resolve-v2": target._run_resolve_v2,
+            _delegation_contract.OP_DELEGATE: target._run_delegate,
+            _delegation_contract.OP_REVOKE: target._run_delegation_revoke,
+            _delegation_contract.OP_GET: target._run_delegation_get,
             "work.run.predecessor-context-v1": target._run_predecessor_context,
             "work.run.continuation-delta-v1": target._read_run_continuation_delta,
             "work.evidence.tail-v1": target._evidence_tail,
@@ -858,6 +884,8 @@ class WorkApplication:
             return result
         except ApplicationRejection:
             raise
+        except _delegation_contract.DelegationRefused as exc:
+            raise ApplicationRejection(exc.code, str(exc), exc.http_status) from exc
         except StaleCapabilityRevision as exc:
             raise ApplicationRejection(
                 "maintenance-revision-conflict", str(exc), 409
@@ -1941,6 +1969,63 @@ class WorkApplication:
         except _pg.RunNotFound as exc:
             raise ApplicationRejection("run-not-found", str(exc), 404) from exc
 
+    def _delegated_context(
+        self, context: InvocationContext, operation: str, run_id: str
+    ) -> _delegation_contract.DelegatedRunContext | None:
+        raw = getattr(context.identity, "delegation", None)
+        if raw is None:
+            return None
+        delegated = _delegation_contract.validate_delegated_context(raw)
+        if operation not in _delegation_contract.DELEGATED_OPERATIONS:
+            raise _delegation_contract.DelegationRefused(
+                "delegation-operation-not-allowed", "operation is outside the delegated surface", 403
+            )
+        if delegated.run_id != run_id:
+            raise _delegation_contract.DelegationRefused(
+                "delegation-run-mismatch", "operation run_id differs from the delegated run", 403
+            )
+        return delegated
+
+    def _revalidate_delegation(
+        self,
+        cur: Any,
+        context: InvocationContext,
+        delegated: _delegation_contract.DelegatedRunContext | None,
+        operation: str,
+        run_id: str,
+    ) -> None:
+        if delegated is None:
+            return
+        principal_id, workspace_id = _identity_binding(context)
+        client_id, grant_id = _grant_binding(context)
+        _delegation_storage.require_live(
+            cur, self.store, context=delegated, operation=operation, run_id=run_id,
+            principal_id=principal_id, workspace_id=workspace_id,
+            client_id=client_id, grant_id=grant_id,
+            authorities=set(getattr(context.identity, "authorities", ()) or ()),
+        )
+
+    def resolve_run_delegation_digest(
+        self, token_sha256: str
+    ) -> _delegation_contract.ResolvedRunDelegation:
+        """Resolve a delegated credential through the owner, for service auth.
+
+        This is intentionally not a catalog operation and takes only a token
+        digest. The returned record's repository and parent binding are
+        authoritative; callers must scope any subsequent request to exactly
+        that owner-returned repository. The operation handler rechecks the
+        stored row in its own transaction.
+        """
+        if not callable(getattr(self.backend, "resolve_run", None)) or (
+            getattr(self.store, "remote_schema_version", None) or 0
+        ) < _delegation_contract.SCHEMA_VERSION:
+            raise _delegation_contract.DelegationRefused(
+                "owner-capability-unavailable",
+                "run delegation resolution requires the PostgreSQL schema 27 owner",
+                503,
+            )
+        return _delegation_storage.resolve_token_digest(self.store, token_sha256)
+
     def _idempotent_write(
         self,
         context: InvocationContext,
@@ -2055,6 +2140,97 @@ class WorkApplication:
             context, "register_run", arguments, effect,
             digest_binding={"client_id": client_id, "grant_id": grant_id},
         )
+
+    def _run_delegate(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        identity = context.identity
+        if getattr(identity, "delegation", None) is not None:
+            raise _delegation_contract.DelegationRefused(
+                "delegation-depth-exceeded", "delegated identities cannot mint another delegation", 403
+            )
+        principal_id, workspace_id = _identity_binding(context)
+        client_id, grant_id = _grant_binding(context)
+        run_id = _required_text(arguments.get("run_id"), "run_id")
+        creator_instance_id = _required_text(
+            arguments.get("creator_instance_id"), "creator_instance_id"
+        )
+        if _inbox.INSTANCE_ID_RE.fullmatch(creator_instance_id) is None:
+            raise _delegation_contract.DelegationRefused(
+                "invalid-arguments", "creator_instance_id is malformed", 422
+            )
+        authorities = set(getattr(identity, "authorities", ()) or ())
+        operations = _delegation_storage.validate_operations(
+            arguments.get("operations"), authorities
+        )
+        ttl_seconds = _delegation_storage.validate_ttl_seconds(arguments.get("ttl_seconds"))
+        key = _delegation_storage.validate_idempotency_key(arguments.get("idempotency_key"))
+        parent_expires_at = _delegation_storage.parse_parent_expiry(
+            getattr(identity, "expires_at", None)
+        )
+        token = _delegation_storage.mint_token()
+
+        def effect(cur: Any, request_digest: str) -> dict[str, Any]:
+            return _delegation_storage.mint(
+                cur, self.store, principal_id=principal_id, workspace_id=workspace_id,
+                client_id=client_id, grant_id=grant_id, authorities=authorities,
+                run_id=run_id, creator_instance_id=creator_instance_id,
+                operations=operations, ttl_seconds=ttl_seconds,
+                parent_expires_at=parent_expires_at, idempotency_key=key,
+                request_digest=request_digest,
+                token_sha256=hashlib.sha256(token.encode("ascii")).hexdigest(),
+            )
+
+        def release_token(_cur: Any, result: dict[str, Any], replayed: bool) -> dict[str, Any]:
+            record = result["delegation"]
+            issued = not replayed and result.get("_owner_created") is True
+            return {
+                **record,
+                "token": token if issued else None,
+                "replayed": replayed or not issued,
+            }
+
+        return self._idempotent_write(
+            context, "delegate_run", arguments, effect,
+            digest_binding={"client_id": client_id, "grant_id": grant_id},
+            after_result=release_token,
+        )
+
+    def _run_delegation_revoke(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        principal_id, workspace_id = _identity_binding(context)
+        client_id, grant_id = _grant_binding(context)
+        key = _delegation_storage.validate_idempotency_key(arguments.get("idempotency_key"))
+        delegation_id = _required_text(arguments.get("delegation_id"), "delegation_id")
+        reason = arguments.get("reason")
+
+        def effect(cur: Any, _request_digest: str) -> dict[str, Any]:
+            return _delegation_storage.revoke(
+                cur, self.store, principal_id=principal_id, workspace_id=workspace_id,
+                client_id=client_id, grant_id=grant_id,
+                delegation_id=delegation_id, reason=reason,
+            )
+
+        return self._idempotent_write(
+            context, "revoke_delegation", arguments, effect,
+            digest_binding={"client_id": client_id, "grant_id": grant_id},
+            after_result=lambda _cur, result, replayed: {
+                **result, "replayed": replayed,
+            },
+        )
+
+    def _run_delegation_get(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        principal_id, workspace_id = _identity_binding(context)
+        client_id, grant_id = _grant_binding(context)
+        with self.store.conn.cursor() as cur:
+            return _delegation_storage.get(
+                cur, self.store, principal_id=principal_id, workspace_id=workspace_id,
+                client_id=client_id, grant_id=grant_id,
+                delegation_id=arguments.get("delegation_id"),
+            )
 
     def _run_register_correlated(
         self, arguments: dict[str, Any], context: InvocationContext
@@ -2234,6 +2410,14 @@ class WorkApplication:
         return receipt
 
     def _run_resolve(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        delegated = self._delegated_context(
+            context, "work.run.resolve-v1", arguments["run_id"]
+        )
+        if delegated is not None:
+            with self.store.conn.cursor() as cur:
+                self._revalidate_delegation(
+                    cur, context, delegated, "work.run.resolve-v1", arguments["run_id"]
+                )
         row = self._require_owned_run(arguments["run_id"], context)
         return {
             "repo_id": self.repo_id,
@@ -2334,6 +2518,9 @@ class WorkApplication:
         unknown id); the predecessor itself is never resolved to the caller.
         """
         run_id = arguments["run_id"]
+        delegated = self._delegated_context(
+            context, "work.run.predecessor-context-v1", run_id
+        )
         limit = _positive_int(
             arguments.get("limit", PREDECESSOR_CONTEXT_DEFAULT_LIMIT), "limit"
         )
@@ -2349,6 +2536,11 @@ class WorkApplication:
             after_note_id = _non_negative_int(after_note_id, "after_note_id")
         if after_chain_seq is not None:
             after_chain_seq = _non_negative_int(after_chain_seq, "after_chain_seq")
+        if delegated is not None:
+            with self.store.conn.cursor() as cur:
+                self._revalidate_delegation(
+                    cur, context, delegated, "work.run.predecessor-context-v1", run_id
+                )
         self._require_owned_run(run_id, context)
         continued = self.backend.predecessor_context(
             self.store, run_id, limit=limit,
@@ -2402,10 +2594,14 @@ class WorkApplication:
 
     def _evidence_append(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         run_id = arguments["run_id"]
+        delegated = self._delegated_context(context, "work.evidence.append-v1", run_id)
         self._require_owned_run(run_id, context)
         from . import pg as _pg  # Lazy: standalone SQLite needs no psycopg.
 
         def effect(cur: Any, request_digest: str) -> dict[str, Any]:
+            self._revalidate_delegation(
+                cur, context, delegated, "work.evidence.append-v1", run_id
+            )
             try:
                 item = self.backend.append_evidence(
                     self.store,
@@ -2428,21 +2624,42 @@ class WorkApplication:
                 raise ApplicationRejection("evidence-chain-conflict", str(exc), 409) from exc
             return {"repo_id": self.repo_id, "run_id": run_id, "item": item}
 
-        return self._idempotent_write(
+        result = self._idempotent_write(
             context,
             "append_evidence",
             arguments,
             effect,
             digest_exclude=frozenset({"chain_seq", "chain_prev_digest"}),
+            digest_binding=(
+                {
+                    "delegation_id": delegated.delegation_id,
+                    "client_id": _grant_binding(context)[0],
+                    "grant_id": _grant_binding(context)[1],
+                }
+                if delegated is not None else None
+            ),
+            after_result=(
+                lambda cur, stored, _replayed: (
+                    self._revalidate_delegation(
+                        cur, context, delegated, "work.evidence.append-v1", run_id
+                    ) or stored
+                )
+                if delegated is not None else None
+            ),
         )
+        return result
 
     def _session_note_write(
         self, arguments: dict[str, Any], context: InvocationContext
     ) -> dict[str, Any]:
         run_id = arguments["run_id"]
+        delegated = self._delegated_context(context, "work.session-note.write-v1", run_id)
         self._require_owned_run(run_id, context)
 
         def effect(cur: Any, request_digest: str) -> dict[str, Any]:
+            self._revalidate_delegation(
+                cur, context, delegated, "work.session-note.write-v1", run_id
+            )
             note = self.backend.write_session_note(
                 self.store,
                 run_id,
@@ -2453,7 +2670,25 @@ class WorkApplication:
             )
             return {"repo_id": self.repo_id, "run_id": run_id, **note}
 
-        return self._idempotent_write(context, "write_session_note", arguments, effect)
+        return self._idempotent_write(
+            context, "write_session_note", arguments, effect,
+            digest_binding=(
+                {
+                    "delegation_id": delegated.delegation_id,
+                    "client_id": _grant_binding(context)[0],
+                    "grant_id": _grant_binding(context)[1],
+                }
+                if delegated is not None else None
+            ),
+            after_result=(
+                lambda cur, stored, _replayed: (
+                    self._revalidate_delegation(
+                        cur, context, delegated, "work.session-note.write-v1", run_id
+                    ) or stored
+                )
+                if delegated is not None else None
+            ),
+        )
 
     # -- work.agent.* / work.message.* --------------------------------------
     # Agent directory and durable inbox, vuoro contract v1

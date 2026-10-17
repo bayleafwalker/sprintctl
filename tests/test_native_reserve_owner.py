@@ -11,6 +11,7 @@ from tests.test_work_application import _application
 from sprintctl.agent_inbox import OPERATIONS as AGENT_INBOX_OPERATIONS
 #: Schema 26: run resolution facts and structured approvals.
 SCHEMA26_OPERATIONS = {"work.run.resolve-v2", "work.approval.record-v1", "work.approval.get-v1"}
+SCHEMA27_OPERATIONS = {"work.run.delegate-v1", "work.run.delegation-revoke-v1", "work.run.delegation-get-v1"}
 
 
 def context(*, bound=True, authority=True, key="native-key-1"):
@@ -91,6 +92,6 @@ def test_native_reserve_is_only_catalog_addition_with_all_legacy_bytes_preserved
         "work.effect.acceptance-snapshot-v1", "work.effect.export-proposal-v2", "work.effect.export-proposal-v3", "work.effect.basis-v1",
         "work.run.continuation-delta-v1",
         "work.run.register-correlated-v1", "work.run.invocation-receipt-get-v1",
-    } | set(OPERATION_AUTHORITIES) | AGENT_INBOX_OPERATIONS | SCHEMA26_OPERATIONS
+    } | set(OPERATION_AUTHORITIES) | AGENT_INBOX_OPERATIONS | SCHEMA26_OPERATIONS | SCHEMA27_OPERATIONS
     assert not set(expected) - set(actual)
     assert {name: actual[name] for name in expected} == expected

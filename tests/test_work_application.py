@@ -558,6 +558,8 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         "work.maintenance.transition",
         "work.maintenance.recovery-record",
             "work.maintenance.resource.prepare",
+            "work.run.delegate-v1",
+            "work.run.delegation-revoke-v1",
             "work.reservation.reserve",
             "work.reservation.reserve-v1",
             "work.reservation.touch",

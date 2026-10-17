@@ -166,6 +166,12 @@ def retire(cur: Any, store: Any, principal_id: str, workspace_id: str, args: Map
         "WHERE repo_id=%s AND workspace_id=%s AND instance_id=%s",
         (now, args["reason"], store.repo_id, workspace_id, instance_id),
     )
+    # Retirement is an explicit owner fact. Revoke credentials created by
+    # this exact instance in the same transaction as the retirement.
+    from . import delegation_pg
+    delegation_pg.revoke_creator_instance(
+        cur, store, workspace_id=workspace_id, creator_instance_id=instance_id,
+    )
     return {"instance_id": instance_id, "retired_at": _iso(now), "replayed": False}
 
 
@@ -533,6 +539,21 @@ def receipt(cur: Any, store: Any, principal_id: str, workspace_id: str, message_
                         "instance may write abandoned once the acceptor is retired")
         if fields["outcome"] in contract.RUN_OUTCOMES and run_link is None:
             _refuse("not-accepted", f"outcome {fields['outcome']} requires a run-linked receipt")
+        if run_link is not None:
+            # Mint and settlement both lock the run row before delegation
+            # rows. This closes the race where result-linked could miss a
+            # delegation inserted concurrently for the same run.
+            run_id = run_link["fields"]["run_id"]
+            cur.execute(
+                "SELECT 1 FROM run WHERE repo_id=%s AND workspace_id=%s AND run_id=%s FOR UPDATE",
+                (store.repo_id, workspace_id, run_id),
+            )
+            if cur.fetchone() is not None:
+                from . import delegation_pg
+                delegation_pg.revoke_run(
+                    cur, store, workspace_id=workspace_id, run_id=run_id,
+                    reason="run-result-linked",
+                )
     return _insert_receipt(cur, store, workspace_id, message_id, kind, principal_id, instance_id, fields)
 
 

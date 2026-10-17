@@ -21,6 +21,8 @@ TEST_ROLE_PREFIX = "sprintctl_test_"
 TEST_DATABASE_PREFIX = "sprintctl_test_"
 DISPOSABLE_DATABASE_COMMENT = "sprintctl:disposable-integration-test"
 REPO_TABLES = (
+    # Schema 27: owner delegation rows restrict both their run and creator.
+    "work_run_delegation",
     # Schema 26 (approvals): append-only, RESTRICT on run; before run.
     "work_approval",
     # Schema 25 (agent directory and inbox): append-only children first.
@@ -231,6 +233,7 @@ def cleanup_test_repositories(conn: Any, repo_ids: Iterable[str]) -> dict[str, A
                 "agent_declaration_revision",
                 "agent_instance",
                 "work_approval",
+                "work_run_delegation",
                 "run_predecessor",
             )
             for table in immutable_tables:

@@ -114,6 +114,9 @@ class InvocationIdentity(Protocol):
     actor: str
     environment: str
     authorities: frozenset[str]
+    # Optional typed owner context installed only by a verified delegated
+    # identity resolver. The owner re-reads its row before allowing any use.
+    delegation: Any | None
 
 
 class InvocationContext(Protocol):

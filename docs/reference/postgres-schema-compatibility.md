@@ -17,9 +17,9 @@ work API as `sprintctl-work/v1`, reports the actual remote schema version, and
 reports the minimum and maximum versions this runtime supports.
 
 The current source tree (unreleased after sprintctl 0.19.0, which admits
-exactly schema 25) admits exactly remote schema 26 (schema 18 for sprintctl
+exactly schema 25) admits exactly remote schema 27 (schema 18 for sprintctl
 0.9.0 through 0.10.x): `MINIMUM_SCHEMA_VERSION` and
-`MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 26, and
+`MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 27, and
 `remote-schema-version` in `pyproject.toml` records the same value. Any other
 ledger version fails closed before a runtime command is served.
 
@@ -41,6 +41,21 @@ binding columns or `created_at`. Those triggers are part of the
 `approval_storage` fingerprint, so a database missing one is
 `approval-storage-partial`. The runtime role needs `SELECT, INSERT` on
 `work_approval` and nothing more.
+
+Schema 27 adds `work_run_delegation`, an immutable owner record except for
+one-way revocation. It binds the credential to one run and the caller's exact
+principal, workspace, client and grant, with a creator instance, closed
+operation list, authority snapshot, idempotency metadata, digest-only token,
+and expiry no more than four hours after creation. The handshake publishes
+`capabilities.delegation_storage` with an exact catalog fingerprint
+(`sprintctl/delegation_schema.py`); partial storage fails closed. Runtime
+reads and writes recheck the record, and writes hold a shared row lock through
+commit so a successful revoke prevents later delegated commits. Explicit
+run-result receipts and retirement of the exact creator instance revoke
+associated credentials transactionally. Session notes do not imply terminal
+settlement and do not trigger revocation. The runtime role needs
+`SELECT, INSERT, UPDATE` on `work_run_delegation`; the trigger limits updates
+to one-way revocation.
 
 Schema 25 adds the agent directory and durable inbox (vuoro contract
 `agent-directory-and-inbox` v1): `agent_instance`,

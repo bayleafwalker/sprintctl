@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import jsonschema
 import pytest
 
-from sprintctl import approval, approval_schema, db, pg_migrations
+from sprintctl import approval, approval_schema, db, delegation_schema, pg_migrations
 from sprintctl.application import ApplicationRejection, WorkApplication
 from sprintctl.vuoro_adapter import WORK_OPERATION_CONTRACTS, catalog_operation_specs
 
@@ -110,11 +110,12 @@ def test_record_arguments(arguments, code):
         assert caught.value.code == code
 
 
-def test_schema26_is_the_strict_runtime_window_and_its_ddl_is_deployment_only():
-    assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.MAXIMUM_SCHEMA_VERSION == 26
+def test_schema26_approval_floor_and_schema27_delegation_runtime_window():
+    assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.MAXIMUM_SCHEMA_VERSION == 27
     assert approval.SCHEMA_VERSION == 26
     assert "work_approval" in approval_schema.DDL
     assert f"interval '{approval_schema.MAX_LIFETIME_SECONDS} seconds'" in approval_schema.DDL
+    assert "work_run_delegation" in delegation_schema.DDL
 
 
 def _sqlite_app(tmp_path):

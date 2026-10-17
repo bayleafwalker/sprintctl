@@ -46,7 +46,7 @@ def test_exact_index_explicit_upgrade_readonly_admission_and_idempotent_migratio
         assert inspect_catalog(cur) == {"available": False, "complete": True}
     store.conn.rollback()
     result = pg_migrations.migrate_schema(store)
-    assert result["applied_versions"] == [24, 25, 26] and result["to_version"] == 26
+    assert result["applied_versions"] == [24, 25, 26, 27] and result["to_version"] == 27
     with store.conn.cursor() as cur:
         assert inspect_catalog(cur) == {"available": True, "complete": True}
     store.conn.rollback()
