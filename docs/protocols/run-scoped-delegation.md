@@ -52,5 +52,12 @@ binding, owner-authority snapshot, `delegation=resolved.delegation`, and
 authentication time. Sprintctl then revalidates the delegation row inside its
 read or write transaction.
 
+The bearer is a copyable 256-bit secret: the owner does not attest which
+process or device presents it. The creator instance binds mint authority and
+retirement revocation, but is not a hardware or runtime attestation. When a
+parent identity has no trusted `expires_at`, the owner can only cap the child
+by its own clock and the requested four-hour maximum; the record does not
+inherit an external parent lifetime that was never supplied.
+
 Schema 27 is an additive PostgreSQL migration. This source change does not
 execute a production migration or deploy a runtime.
