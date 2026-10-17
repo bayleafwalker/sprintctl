@@ -49,12 +49,12 @@ def _simulate_adapter_caller(monkeypatch, *, uid=None, groups=()):
     monkeypatch.setattr("sprintctl.vuoro_credentials.os.access", access)
 
 
-def _handoff(root: Path, monkeypatch, *, profile_mode=0o640, folder_mode=0o750):
+def _handoff(root: Path, monkeypatch, *, profile_mode=0o644, folder_mode=0o750):
     adapter_uid = os.geteuid()
     adapter_gid = os.getegid()
     # The adapter-owned sticky workroot protects its directory entries; its
     # group is the handoff reader group.
-    root.chmod(0o1770)
+    root.chmod(0o3770)
     folder = root / ".vuoro"
     folder.mkdir()
     folder.chmod(folder_mode)
@@ -185,6 +185,26 @@ def test_untrusted_present_handoff_refuses_without_local_fallback(tmp_path, monk
         _simulate_adapter_caller(
             monkeypatch, uid=profile.stat().st_uid, groups={profile.stat().st_gid}
         )
+    with pytest.raises(backend.ServedProfileError):
+        backend.load_backend_config(cwd=tmp_path, environ={})
+
+
+@pytest.mark.parametrize(
+    ("profile_mode", "folder_mode"),
+    [(0o664, 0o750), (0o644, 0o770)],
+)
+def test_future_group_writers_refuse_even_when_current_caller_lacks_group(
+    tmp_path, monkeypatch, profile_mode, folder_mode
+):
+    _served_marker(tmp_path)
+    _past_python_gate(monkeypatch)
+    _handoff(
+        tmp_path, monkeypatch, profile_mode=profile_mode, folder_mode=folder_mode
+    )
+    # The modeled caller can read through the public profile bits but is not a
+    # member of the group that has write permission. The structural mode
+    # allowlist must reject the future writer regardless of current access.
+    _simulate_adapter_caller(monkeypatch, uid=os.geteuid() + 1, groups=())
     with pytest.raises(backend.ServedProfileError):
         backend.load_backend_config(cwd=tmp_path, environ={})
 

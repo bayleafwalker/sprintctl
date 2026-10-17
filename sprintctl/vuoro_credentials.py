@@ -43,9 +43,11 @@ def _stat_identity(value: os.stat_result) -> tuple[int, ...]:
 def read_delegated_handoff_file(cwd: Path, name: str, *, maximum_bytes: int) -> bytes:
     """Read one protected file under the exact-CWD ``.vuoro`` handoff.
 
-    The adapter owns a sticky workroot, its ``.vuoro`` directory and both
-    files. The caller can traverse/read the handoff but cannot replace or
-    modify it. Directory-relative no-follow opens and pre/post inode checks
+    The adapter owns a setgid/sticky ``03770`` workroot, its ``0750``
+    ``.vuoro`` directory and both files. The caller can traverse/read the
+    handoff but cannot replace or modify it. The exact mode allowlist prevents
+    a different, currently-unmatched group from gaining write access later.
+    Directory-relative no-follow opens and pre/post inode checks
     keep symlinks, FIFOs and replacement races out of the read path.
     """
     if name not in _HANDOFF_NAMES or maximum_bytes < 1:
@@ -67,16 +69,22 @@ def read_delegated_handoff_file(cwd: Path, name: str, *, maximum_bytes: int) -> 
         if (
             not stat.S_ISDIR(root.st_mode)
             or root.st_uid == caller
-            or not (root.st_mode & stat.S_ISVTX)
+            or stat.S_IMODE(root.st_mode) != 0o3770
             or not stat.S_ISDIR(directory.st_mode)
             or directory.st_uid != root.st_uid
             or directory.st_uid == caller
+            or directory.st_gid != root.st_gid
+            or stat.S_IMODE(directory.st_mode) != 0o750
             or _access_writable(directory_path)
             or not stat.S_ISREG(before.st_mode)
             or before.st_uid != directory.st_uid
             or before.st_gid != directory.st_gid
             or before.st_uid == caller
             or _access_writable(file_path)
+            or (
+                name == "profile.json"
+                and stat.S_IMODE(before.st_mode) not in {0o640, 0o644}
+            )
             or (name == "credential" and stat.S_IMODE(before.st_mode) != 0o640)
             or before.st_size > maximum_bytes
         ):
