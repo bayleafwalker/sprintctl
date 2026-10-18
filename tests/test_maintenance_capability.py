@@ -271,9 +271,12 @@ def test_capability_is_nonrenewable_and_expiry_terminalizes(store):
         prepare(store)
 
 
-def test_expiry_terminalizes_on_the_database_clock(store):
+def test_expiry_terminalizes_on_the_database_clock(store, monkeypatch):
     """The window decides expiry, not the caller's `at`."""
-    prepared = prepare(store, shifted_envelope(timedelta(hours=-3)))
+    value = shifted_envelope(timedelta(hours=-3))
+    with monkeypatch.context() as clock:
+        clock.setattr(store, "_decision_time", lambda: datetime.fromisoformat(value["window"]["expires_at"].replace("Z", "+00:00")) - timedelta(seconds=1))
+        prepared = prepare(store, value)
     expired = store.transition(capability_id=CAPABILITY_ID, request_id=str(uuid4()), action="attest", expected_revision=prepared["revision"], actor="operator", at=AT)
     assert expired["state"] == expired["outcome"] == "expired"
 
@@ -408,6 +411,14 @@ def _attested(store, value=None):
     )
 
 
+def _attested_before_expiry(store, value, monkeypatch):
+    """Prepare and attest while valid, then restore the expired real clock."""
+    before_expiry = datetime.fromisoformat(value["window"]["expires_at"].replace("Z", "+00:00")) - timedelta(seconds=1)
+    with monkeypatch.context() as clock:
+        clock.setattr(store, "_decision_time", lambda: before_expiry)
+        return _attested(store, value)
+
+
 def _receipts(store, *, action=None):
     rows = store.conn.execute(
         "SELECT action, outcome, created_at FROM maintenance_capability_receipt "
@@ -425,8 +436,8 @@ def _activate(store, attested, at):
     )
 
 
-def test_stale_pre_expiry_at_cannot_activate_after_database_expiry(store):
-    attested = _attested(store, shifted_envelope(timedelta(hours=-3)))
+def test_stale_pre_expiry_at_cannot_activate_after_database_expiry(store, monkeypatch):
+    attested = _attested_before_expiry(store, shifted_envelope(timedelta(hours=-3)), monkeypatch)
     # `at` sits comfortably inside the window that has since closed.
     result = _activate(store, attested, at=_stamp(timedelta(hours=-2, minutes=-30)))
     assert result["state"] == result["outcome"] == "expired"
@@ -441,8 +452,8 @@ def test_future_at_cannot_make_a_transition_admissible_early(store):
     assert store.get(CAPABILITY_ID)["state"] == "attested"
 
 
-def test_replay_after_expiry_is_rejected(store):
-    attested = _attested(store, shifted_envelope(timedelta(hours=-3)))
+def test_replay_after_expiry_is_rejected(store, monkeypatch):
+    attested = _attested_before_expiry(store, shifted_envelope(timedelta(hours=-3)), monkeypatch)
     first = _activate(store, attested, at=AT)
     assert first["outcome"] == "expired"
     # A replay of the same intent after expiry must not resurrect the window.
@@ -456,9 +467,9 @@ def test_replay_after_expiry_is_rejected(store):
     assert store.get(CAPABILITY_ID)["state"] == "expired"
 
 
-def test_expiry_boundary_is_deterministic(store):
+def test_expiry_boundary_is_deterministic(store, monkeypatch):
     """A window that closed a moment ago is expired, not admissible."""
-    attested = _attested(store, shifted_envelope(timedelta(hours=-1, seconds=-2)))
+    attested = _attested_before_expiry(store, shifted_envelope(timedelta(hours=-1, seconds=-2)), monkeypatch)
     result = _activate(store, attested, at=AT)
     assert result["state"] == result["outcome"] == "expired"
 

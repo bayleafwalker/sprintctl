@@ -43,10 +43,17 @@ new review, new capability ID, and a new zero-claim activation gate.
 
 Every request carries a canonical UUID and expected revision. Replaying the
 same request and bytes returns the prior receipt; changing bytes under the same
-request ID rejects. A stale revision, wrong plan/step/command, missing receipt,
+request ID rejects. A new preparation evaluates expiry using database-observed
+time after acquiring its writer transaction/lock and checking exact replay.
+At or after `expires_at`, it rejects without creating a capability, receipt,
+or resource binding. Supplied `at` remains audit data and cannot admit an
+expired envelope or reject an otherwise valid one. Exact replay still returns
+the original result even after the window closes. A stale revision, wrong
+plan/step/command, missing receipt,
 late JIT binding, active ordinary claim, invalid transition, or expired window
 has no requested authority effect. SQLite uses `BEGIN IMMEDIATE`; PostgreSQL
-locks the repository-scoped capability row. This is bounded CAS/idempotency
+serializes preparation with a repository-and-capability advisory lock, then
+locks the repository-scoped capability row for transitions. This is bounded CAS/idempotency
 evidence, not a general distributed linearizability claim.
 
 ## Recovery and audit

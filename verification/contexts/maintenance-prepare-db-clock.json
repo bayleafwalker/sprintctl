@@ -1,0 +1,97 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.maintenance-capability.prepare-db-clock",
+  "owner_repo": "sprintctl",
+  "subject": "new-maintenance-preparation-expiry-and-exact-replay",
+  "contract_ref": {
+    "doc_id": "sprintctl.maintenance-capability",
+    "revision": "sha256:df57e8e769d6c320c2dfe73f93733d143e934e7d9e851efeaab1085768ae76f4"
+  },
+  "source_of_truth": "SQLite-and-PostgreSQL-maintenance-capability-owner",
+  "depth": 2,
+  "backends": [
+    "sqlite",
+    "postgresql16"
+  ],
+  "actors": [
+    "preparer",
+    "writer-lock-holder"
+  ],
+  "initial_state": [
+    "temporary owner tables and no capability",
+    "valid or already-expired frozen envelope"
+  ],
+  "operations": [
+    {
+      "name": "prepare",
+      "actors": [
+        "preparer"
+      ],
+      "synchronization": "SQLite BEGIN IMMEDIATE or PostgreSQL per-capability advisory writer lock for every prepare path"
+    },
+    {
+      "name": "exact-replay",
+      "actors": [
+        "preparer"
+      ]
+    },
+    {
+      "name": "hold-writer-through-expiry",
+      "actors": [
+        "writer-lock-holder",
+        "preparer"
+      ],
+      "synchronization": "independent SQLite/PostgreSQL connections; observe attempted BEGIN IMMEDIATE or pg_locks wait before deadline; unlock after database expiry"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "preparation-expiry-admissibility"
+  },
+  "assumptions": {
+    "isolation": "SQLite immediate writer; PostgreSQL READ COMMITTED; all prepares share repository-and-capability advisory lock",
+    "clock": "database observed instant decides expiry; supplied at is audit data",
+    "fairness": "lock holder releases after observed expiry"
+  },
+  "bounds": {
+    "sqlite_cases": 10,
+    "new_postgresql_cases": 8,
+    "concurrent_connections": 2,
+    "observed_wait_deadline_seconds": 10
+  },
+  "invariants": [
+    "new expired preparation creates no owner receipt or resource binding",
+    "future audit time cannot reject a valid preparation",
+    "at-or-after expiry rejects new preparation",
+    "exact replay precedes new expiry checking",
+    "both ordinary and resource preparation observe database time after waiting for the writer lock",
+    "transition expiry coverage retains valid-before-expiry setup"
+  ],
+  "faults": [
+    "stale audit time with expired envelope",
+    "future audit time with valid envelope",
+    "exact replay after expiry",
+    "database instant equal to expiry",
+    "advisory writer wait spanning expiry"
+  ],
+  "oracles": [
+    "no owner receipt or resource rows after refusal",
+    "returned state and duplicate flag",
+    "unchanged audit created_at",
+    "database clock and pg_locks observation",
+    "existing lifecycle CAS and activation/reservation race regressions",
+    "SQLite trace callback observes BEGIN IMMEDIATE while competing writer holds transaction"
+  ],
+  "implementation_anchors": [
+    "sprintctl/maintenance_capability.py:SQLiteMaintenanceCapabilityStore",
+    "sprintctl/maintenance_capability.py:PostgresMaintenanceCapabilityStore",
+    "tests/test_maintenance_prepare_clock.py:test_expired_prepare_uses_database_clock_despite_stale_at",
+    "tests/pg/test_schema.py:TestMaintenanceCapabilityLifecycle"
+  ],
+  "expansions": [
+    "stateful-test",
+    "concurrent-history",
+    "fault-scenario",
+    "semantic-doc"
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.maintenance-capability.prepare-db-clock",
+  "contract_ref": {
+    "doc_id": "sprintctl.maintenance-capability",
+    "revision": "sha256:df57e8e769d6c320c2dfe73f93733d143e934e7d9e851efeaab1085768ae76f4"
+  },
+  "implementation_sha": "7b481393ff8438896f6a4f00d28b77c8156c2eff",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary SQLite databases and disposable PostgreSQL16.15",
+    "isolation": "independent writer connections; no shared owner fault injection",
+    "tool_versions": {
+      "Python": "3.13.16",
+      "pytest": "9.0.2",
+      "PostgreSQL": "16.15"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": {
+      "sqlite_writer_waits": 2,
+      "postgresql_advisory_waits": 2
+    },
+    "bounds": {
+      "sqlite_cases": 10,
+      "new_postgresql_cases": 8,
+      "concurrent_connections": 2,
+      "observed_wait_deadline_seconds": 10
+    },
+    "faults_exercised": [
+      "stale audit time with expired envelope",
+      "future audit time with valid envelope",
+      "exact replay after expiry",
+      "database instant equal to expiry",
+      "advisory writer wait spanning expiry"
+    ]
+  },
+  "claims": [
+    {
+      "property": "Expired new prepares create no capability, receipt or resource binding despite stale audit time",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_maintenance_prepare_clock.py",
+        "tests/pg/test_schema.py:TestMaintenanceCapabilityLifecycle"
+      ]
+    },
+    {
+      "property": "Both normal and resource preparation decide expiry after acquiring the writer lock",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/test_maintenance_prepare_clock.py:test_prepare_clock_after_sqlite_writer_wait",
+        "tests/pg/test_schema.py:TestMaintenanceCapabilityLifecycle.test_prepare_uses_clock_after_waiting_for_writer"
+      ]
+    },
+    {
+      "property": "Exact replay returns the prior result after expiry without adding a receipt",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_maintenance_prepare_clock.py:test_exact_prepare_replay_after_expiry_is_unchanged",
+        "tests/pg/test_schema.py:TestMaintenanceCapabilityLifecycle.test_prepare_exact_replay_after_database_expiry"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Original implementation accepted stale-audit expired prepare and rejected future-audit valid prepare; actual PostgreSQL unkeyed prepare skipped advisory wait before correction",
+      "trace_ref": "tests/pg/test_schema.py:TestMaintenanceCapabilityLifecycle.test_prepare_uses_clock_after_waiting_for_writer"
+    }
+  ],
+  "notes": [
+    "Candidate file SHA256: {\"sprintctl/maintenance_capability.py\": \"b37f93dd3a82e58cb6a6b7e380b5596778925b098e84e6c27b084680246fe0da\", \"tests/pg/test_schema.py\": \"efae19f56fb8cdbf52a52bdca48dd4f7f8cb9a975980cfee08d8d85d9520c9f8\", \"tests/test_maintenance_capability.py\": \"7a9d3b2f608458f75cdb5f677ce5cc1b62f283c646bd3cbe63e87a51a0bc161a\", \"tests/test_maintenance_prepare_clock.py\": \"609375090d704215b0437edf4d7b75e2a81771ae326fbf5ae47428ffdbb6a460\"}",
+    "Final targeted SQLite/lifecycle/resource80passed37.20s; final PostgreSQL maintenance lifecycle12passed14.12s with zero remaining rows. After rebase onto approval fix7b481393ff8438896f6a4f00d28b77c8156c2eff, final affected unit218passed34.38s; complete disposable PostgreSQL gate1123passed70.75s,71 fixture cleanups with zero remaining rows.",
+    "Earlier pre-lock-correction full nonPG2390passed4skipped580.03s; completePG1103passed1failed due independent unchanged-baseline approval DST defect. The latter is not a successful gate and is corrected separately under sprintctl#2756.",
+    "Actual SQLite trace observes BEGIN IMMEDIATE while another connection holds writer; holder confirms database time before and after expiry. PostgreSQL pg_locks confirms waiting while valid, holder releases only after observed database expiry.",
+    "Independent findings-first and optimistic rereview clear after making all PG prepare paths share the per-capability advisory lock.",
+    "No schema, catalog, input/result contract, audit timestamp or deployment change. No claim of distributed linearizability or protection against direct out-of-contract SQL writers."
+  ]
+}
