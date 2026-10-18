@@ -235,6 +235,8 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     # client and writes only local terminal receipts; it is not a catalog
     # operation and must not be rejected by the generic served guard.
     "authority reconcile": "local",
+    # Composes existing owner reads plus an explicitly selected activity probe.
+    "authority doctor": "local",
     "authority quarantine": "local",
     "authority rollover": "local",
     "projection-reads status": "unavailable",

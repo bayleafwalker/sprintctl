@@ -1,0 +1,36 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.authority-producer-preflight",
+  "owner_repo": "sprintctl",
+  "subject": "bounded producer and served-ledger diagnostic observations",
+  "contract_ref": {"doc_id": "sprintctl.authority-preflight", "revision": "operator:sprintctl#2096/event5399"},
+  "source_of_truth": "local immutable outbox records and stream counter; existing served record ledger and current stream high-water; explicit reservation activity response",
+  "depth": 2,
+  "backends": ["temporary SQLite WAL", "disposable PostgreSQL16 owner reads", "served CLI transport fixtures"],
+  "actors": ["reader", "independent SQLite writer", "served owner", "selected reservation session"],
+  "initial_state": ["one committed local producer record", "matching, missing or divergent served prefix", "optional existing active reservation"],
+  "operations": [
+    {"name": "read local producer snapshot", "actors": ["reader"], "synchronization": "BEGIN read transaction before reading stream and record metadata"},
+    {"name": "commit independent append between reader queries", "actors": ["independent SQLite writer"], "synchronization": "after stream SELECT, before record aggregate; distinct WAL connection"},
+    {"name": "inspect served immutable prefix", "actors": ["reader", "served owner"], "synchronization": "ordered bounded pages; stable explicit cursor; local snapshot recheck"},
+    {"name": "touch explicitly selected reservation", "actors": ["selected reservation session", "served owner"], "synchronization": "clean selected reads then advisory actor/session check before and after one touch; no atomic ownership guarantee"}
+  ],
+  "consistency": {"target": "application-invariant", "object": "one committed local snapshot and explicitly scoped diagnostic evidence"},
+  "assumptions": {"isolation": "SQLite WAL read transaction; served pages are separate observations, not a global atomic snapshot", "clock": "none", "fairness": "none"},
+  "bounds": {"local_records": 10000, "served_rows": 10000, "record_or_receipt_bytes": 1048576, "cumulative_bytes_per_inspection": 67108864, "SQLite_VM_instructions": 10000000, "concurrent_connections": 2, "automatic_write_retries": 0},
+  "invariants": [
+    "no initializing outbox open or direct PostgreSQL connection from the diagnostic",
+    "local record insert and sequence advancement remain atomic under either injected failure",
+    "reader never combines an old stream counter with a later committed record set",
+    "equal cursors cannot conceal divergent canonical record content",
+    "missing coverage, limits, source changes and unavailable reads remain unknown",
+    "quarantine and rollover evidence cannot produce a clear result",
+    "default invocation makes no work mutation; explicit probe never creates work or retries an uncertain write",
+    "advisory reservation metadata never becomes command-submission authority",
+    "retained runtime setgid permission policy and legacy observation IDs remain unchanged"
+  ],
+  "faults": ["missing outbox", "sequence gap", "nullable legacy stream mismatch", "inherited special mode bits", "quarantine receipt", "rollover marker", "divergent equal-cursor record", "missing committed prefix", "inspection limits", "cursor change during pagination", "independent writer commit during snapshot", "INSERT or counter UPDATE failure", "reassignment during touch", "lost touch response"],
+  "oracles": ["actual Click invocation", "canonical portable-record validator shared with the owner", "separate-connection overlapping read/write history", "unchanged counter and record count after injected rollback", "real disposable owner ledger roundtrip", "captured single probe invocation and structured unknown output"],
+  "implementation_anchors": ["sprintctl/authority_doctor.py:local_snapshot", "sprintctl/authority_doctor.py:remote_prefix", "sprintctl/authority_doctor.py:quarantine_check", "sprintctl/authority_doctor.py:diagnose", "sprintctl/commands/operations.py:authority_doctor", "tests/test_authority_doctor.py", "tests/pg/test_authority_doctor.py"],
+  "expansions": ["stateful-test", "fault-scenario", "semantic-doc"]
+}
