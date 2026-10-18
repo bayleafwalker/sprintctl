@@ -2194,6 +2194,18 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work:sprint", "write", "not-allowed",
     ),
     WorkOperationContract(
+        "work.sprint.kind",
+        _object_schema({
+            "sprint_id": {"type": "integer", "minimum": 1, "maximum": (1 << 63) - 1},
+            "kind": {"enum": ["active_sprint", "backlog", "archive"]},
+            "expected_revision": {"type": "string", "minLength": 1},
+        }, required=("sprint_id", "kind", "expected_revision")),
+        _result_schema(("repo_id", "sprint"), {
+            "repo_id": {"type": "string"}, "sprint": {"type": "object"},
+        }),
+        "work:sprint", "write", "not-allowed",
+    ),
+    WorkOperationContract(
         "work.event.add",
         _object_schema(
             {

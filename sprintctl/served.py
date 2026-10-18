@@ -178,6 +178,18 @@ def sprint_create(
     )
 
 
+def sprint_kind(
+    served_profile: ServedProfile, *, repo_id: str, sprint_id: int,
+    kind: str, expected_revision: str,
+) -> dict[str, Any]:
+    """Reclassify one sprint against its exact identity/kind/status basis."""
+    return asyncio.run(_invoke_operation(
+        served_profile, "work.sprint.kind",
+        {"sprint_id": sprint_id, "kind": kind, "expected_revision": expected_revision},
+        repo_id=repo_id,
+    ))
+
+
 def read_item(
     served_profile: ServedProfile, *, repo_id: str, item_id: int
 ) -> dict[str, Any]:
@@ -870,6 +882,7 @@ __all__ = [
     "read_sprint",
     "read_sprints",
     "sprint_create",
+    "sprint_kind",
 ]
 
 

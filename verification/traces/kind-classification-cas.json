@@ -1,0 +1,80 @@
+{
+  "schema": "sprintctl-sprint-kind-histories/v1",
+  "captured_at": "2026-10-18T11:13:44.303561+00:00",
+  "scope": "Temporary SQLite and disposable PostgreSQL only; monotonic intervals are comparable only within one case.",
+  "histories": [
+    {
+      "backend": "sqlite",
+      "case": "competing-kinds",
+      "history": [
+        {
+          "action": "backlog",
+          "completed_ns": 18023078323689,
+          "outcome": "accepted",
+          "started_ns": 18023049284838
+        },
+        {
+          "action": "archive",
+          "completed_ns": 18023082381997,
+          "outcome": "conflict",
+          "started_ns": 18023049298218
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.db",
+      "case": "archive-versus-activate",
+      "history": [
+        {
+          "action": "activate",
+          "completed_ns": 18023846661783,
+          "outcome": "accepted",
+          "started_ns": 18023816068855
+        },
+        {
+          "action": "archive",
+          "completed_ns": 18023849168684,
+          "outcome": "refused",
+          "started_ns": 18023816082635
+        }
+      ]
+    },
+    {
+      "backend": "postgresql",
+      "case": "competing-kinds",
+      "history": [
+        {
+          "action": "backlog",
+          "completed_ns": 18551103515336,
+          "outcome": "accepted",
+          "started_ns": 18551102599902
+        },
+        {
+          "action": "archive",
+          "completed_ns": 18551103635097,
+          "outcome": "conflict",
+          "started_ns": 18551102622992
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "case": "archive-versus-activate",
+      "history": [
+        {
+          "action": "archive",
+          "completed_ns": 18551109824405,
+          "outcome": "accepted",
+          "started_ns": 18551108866731
+        },
+        {
+          "action": "activate",
+          "completed_ns": 18551109965866,
+          "outcome": "refused",
+          "started_ns": 18551108844411
+        }
+      ]
+    }
+  ],
+  "limits": "Four bounded independent-connection examples, not a global linearizability proof or ABA protection."
+}

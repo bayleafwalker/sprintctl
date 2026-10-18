@@ -63,7 +63,7 @@ def anyio_backend() -> str:
     ],
 )
 def test_adapter_kit_migration_preserves_catalog_bytes_and_registry_revision(
-    remote_schema_version, operation_count, byte_count, operations_sha, revision
+    remote_schema_version, operation_count, byte_count, operations_sha, revision, monkeypatch
 ):
     store = SimpleNamespace(
         repo_id="sprintctl", remote_schema_version=remote_schema_version
@@ -83,12 +83,27 @@ def test_adapter_kit_migration_preserves_catalog_bytes_and_registry_revision(
         operation.model_dump(mode="json")
         for operation in registry.catalog().operations
     ]
+    # The schema27 delegation trio and sprint-kind extension are additive.
+    # Preserve every historical descriptor byte and registry revision below;
+    # never repin the old catalog to make the extension pass.
+    extensions = {"work.run.delegate-v1", "work.run.delegation-get-v1",
+                  "work.run.delegation-revoke-v1", "work.sprint.kind"}
+    assert extensions <= {operation["name"] for operation in operations}
+    import sprintctl.vuoro_adapter as adapter
+    original_specs = adapter.catalog_operation_specs
+    with monkeypatch.context() as patch:
+        patch.setattr(adapter, "catalog_operation_specs", lambda **kwargs: [
+            spec for spec in original_specs(**kwargs) if spec["name"] not in extensions
+        ])
+        historical = CatalogRegistry()
+        register_work_catalog(historical, work)
+    operations = [operation.model_dump(mode="json") for operation in historical.catalog().operations]
     payload = json.dumps(operations, sort_keys=True, separators=(",", ":")).encode()
 
     assert len(operations) == operation_count
     assert len(payload) == byte_count
     assert hashlib.sha256(payload).hexdigest() == operations_sha
-    assert registry.revision == revision
+    assert historical.revision == revision
     schema26 = {"work.run.resolve-v2", "work.approval.record-v1", "work.approval.get-v1"}
     inbox_basis = [operation for operation in operations if operation["name"] not in schema26]
     inbox_payload = json.dumps(inbox_basis, sort_keys=True, separators=(",", ":")).encode()
@@ -396,3 +411,38 @@ async def test_generic_client_round_trips_create_edit_show_with_audit(tmp_path):
     )
     assert audit["event_type"] == "item-edited"
     assert audit["actor"] == "served-editor"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('authorities,repo_id,allowed', [
+    (frozenset({'work:read', 'work:sprint'}), 'sprintctl', True),
+    (frozenset({'work:read'}), 'sprintctl', False),
+    (frozenset({'work:sprint'}), 'other-repository', False),
+])
+async def test_served_sprint_kind_authority_and_repository_scope(tmp_path, authorities, repo_id, allowed):
+    from sprintctl.sprintcore import sprint_kind_revision
+    connection = db.get_connection(tmp_path / 'kind.db')
+    db.init_db(connection)
+    sid = db.create_sprint(connection, 'Kind authority')
+    original = db.get_sprint(connection, sid)
+    work = WorkApplication(repo_id='sprintctl', store=connection, backend=db,
+                           ingest_records=lambda records: [], arbitrate_command=lambda record, credentials: None,
+                           list_records=lambda after, limit: [], list_decisions=lambda after, limit: [])
+    registry = CatalogRegistry()
+    register_work_catalog(registry, work)
+    app = create_app(settings=ServiceSettings(environment_name='vuoro-dev', environment_class='development', compatibility_state='compatible'), registry=registry,
+                     identity_resolver=StaticBearerIdentityResolver({'identity': Identity(actor='operator', environment='vuoro-dev', authorities=authorities, repo_ids=frozenset({'sprintctl'}))}))
+    try:
+        async with AsyncVuoroClient(Profile('dev', 'http://test', 'identity-ref', 'vuoro-dev'), lambda _: 'identity', transport=httpx.ASGITransport(app=app)) as client:
+            arguments = {'sprint_id': sid, 'kind': 'archive', 'expected_revision': sprint_kind_revision(original)}
+            if allowed:
+                result = await client.invoke('work.sprint.kind', arguments, repo_id=repo_id)
+                assert result['sprint']['kind'] == 'archive'
+                readback = await client.invoke('work.read.sprints', {'include_archive': True}, repo_id=repo_id)
+                assert next(s for s in readback['sprints'] if s['id'] == sid)['kind'] == 'archive'
+            else:
+                with pytest.raises(InvocationRejectedError):
+                    await client.invoke('work.sprint.kind', arguments, repo_id=repo_id)
+                assert db.get_sprint(connection, sid)['kind'] == original['kind']
+    finally:
+        connection.close()

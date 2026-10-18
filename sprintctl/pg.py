@@ -3456,10 +3456,33 @@ def list_active_sprints(store: PgStore) -> list[dict]:
     return _sprintcore.list_active_sprints(_SprintPg(store))
 
 
-def set_sprint_kind(store: PgStore, sprint_id: int, kind: str) -> None:
-    _sprintcore.set_sprint_kind(
-        _SprintPg(store), sprint_id, kind, valid_kinds=SPRINT_KINDS
-    )
+def set_sprint_kind(
+    store: PgStore, sprint_id: int, kind: str, *,
+    expected_revision: str | None = None,
+) -> dict:
+    _sprintcore.validate_sprint_kind_id(sprint_id)
+    if kind not in SPRINT_KINDS:
+        raise ValueError(f"Invalid kind '{kind}'")
+    if expected_revision is not None:
+        _sprintcore.validate_kind_revision(expected_revision)
+    try:
+        with store.conn.cursor() as cur:
+            cur.execute("SELECT * FROM sprint WHERE repo_id = %s AND id = %s FOR UPDATE", (store.repo_id, sprint_id))
+            row = cur.fetchone()
+            if row is None:
+                raise ValueError(f"Sprint #{sprint_id} not found")
+            sprint = _norm(row)
+            current = _sprintcore.sprint_kind_revision(sprint)
+            if expected_revision is not None and expected_revision != current:
+                raise StatusConflict(f"Sprint #{sprint_id} kind revision mismatch: expected {expected_revision}, current {current}")
+            cur.execute("UPDATE sprint SET kind = %s WHERE repo_id = %s AND id = %s", (kind, store.repo_id, sprint_id))
+            result = {**sprint, "kind": kind}
+            result["kind_revision"] = _sprintcore.sprint_kind_revision(result)
+        store.conn.commit()
+        return result
+    except Exception:
+        store.conn.rollback()
+        raise
 
 
 def list_sprints(store: PgStore) -> list[dict]:
@@ -3499,6 +3522,8 @@ def set_sprint_status(
                 raise InvalidTransition(
                     f"cannot transition sprint {current} -> {new_status}. Allowed: {allowed}"
                 )
+            if new_status == "active" and sprint["kind"] == "archive":
+                raise InvalidTransition(f"cannot activate sprint {sprint_id}: kind is archive")
             cur.execute(
                 "UPDATE sprint SET status = %s WHERE repo_id = %s AND id = %s",
                 (new_status, store.repo_id, sprint_id),

@@ -1,0 +1,99 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.sprint-kind-cas",
+  "owner_repo": "sprintctl",
+  "subject": "repository-scoped sprint kind state-basis CAS and archive activation",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2369",
+    "revision": "native:release:4dd5d6b27aeba93029ff5e9dea198d0e14bf2d107048e9c1423086c437c618a0"
+  },
+  "source_of_truth": "Sprintctl item2369 frozen Release, approved native scope note5255, current owner sprint row",
+  "depth": 2,
+  "backends": [
+    "temporary SQLite",
+    "disposable PostgreSQL16.15",
+    "local ASGI Vuoro service0.1.96"
+  ],
+  "actors": [
+    "authorized sprint operator",
+    "concurrent operator",
+    "unauthorized reader"
+  ],
+  "initial_state": [
+    "one planned sprint with exact identity/kind/status basis"
+  ],
+  "operations": [
+    {
+      "name": "classify sprint kind",
+      "actors": [
+        "authorized sprint operator",
+        "concurrent operator"
+      ]
+    },
+    {
+      "name": "activate sprint",
+      "actors": [
+        "authorized sprint operator",
+        "concurrent operator"
+      ]
+    },
+    {
+      "name": "attempt unauthorized scope or invalid input",
+      "actors": [
+        "unauthorized reader"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one sprint state-basis comparison and update"
+  },
+  "assumptions": {
+    "isolation": "SQLiteBEGINIMMEDIATE or PostgreSQL sprint row lock; native fixtures isolated and cleaned",
+    "clock": "monotonic invocation/completion samples; no timing-based authority",
+    "fairness": "none"
+  },
+  "bounds": {
+    "actors_per_history": 2,
+    "concurrent_histories": 4,
+    "kinds": 3,
+    "sprint_id_max": 9223372036854775807
+  },
+  "invariants": [
+    "matching identity/kind/status required, including same-kind no-op",
+    "only one writer wins a shared state basis",
+    "archive-first refuses activation; activation-first invalidates earlier classification basis",
+    "existing active sprint may still be classified archive",
+    "work:sprint and repository scope required for served mutation",
+    "no local database fallback in served CLI",
+    "signed64 range refusal precedes basis read/write",
+    "published existing descriptor bytes preserved; exactly one named addition"
+  ],
+  "faults": [
+    "stale same-kind basis",
+    "foreign identity basis",
+    "missing authority",
+    "wrong repository",
+    "malformed basis",
+    "oversized or boolean ID",
+    "concurrent classification and activation"
+  ],
+  "oracles": [
+    "tests/test_sprint_kind.py",
+    "tests/pg/test_sprint_kind.py",
+    "tests/test_vuoro_work_adapter_integration.py",
+    "verification/traces/kind-classification-cas.json"
+  ],
+  "implementation_anchors": [
+    "sprintctl/sprintcore.py",
+    "sprintctl/db.py",
+    "sprintctl/pg.py",
+    "sprintctl/authority.py",
+    "sprintctl/work_application.py",
+    "sprintctl/commands/work.py"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "fault-scenario"
+  ]
+}

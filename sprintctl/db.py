@@ -1325,10 +1325,31 @@ def list_active_sprints(conn: sqlite3.Connection) -> list[dict]:
     return _sprintcore.list_active_sprints(_SprintSqlite(conn))
 
 
-def set_sprint_kind(conn: sqlite3.Connection, sprint_id: int, kind: str) -> None:
-    _sprintcore.set_sprint_kind(
-        _SprintSqlite(conn), sprint_id, kind, valid_kinds=SPRINT_KINDS
-    )
+def set_sprint_kind(
+    conn: sqlite3.Connection, sprint_id: int, kind: str, *,
+    expected_revision: str | None = None,
+) -> dict:
+    _sprintcore.validate_sprint_kind_id(sprint_id)
+    if kind not in SPRINT_KINDS:
+        raise ValueError(f"Invalid kind '{kind}'")
+    if expected_revision is not None:
+        _sprintcore.validate_kind_revision(expected_revision)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        sprint = get_sprint(conn, sprint_id)
+        if sprint is None:
+            raise ValueError(f"Sprint #{sprint_id} not found")
+        current = _sprintcore.sprint_kind_revision(sprint)
+        if expected_revision is not None and expected_revision != current:
+            raise StatusConflict(f"Sprint #{sprint_id} kind revision mismatch: expected {expected_revision}, current {current}")
+        conn.execute("UPDATE sprint SET kind = ? WHERE id = ?", (kind, sprint_id))
+        result = {**sprint, "kind": kind}
+        result["kind_revision"] = _sprintcore.sprint_kind_revision(result)
+        conn.commit()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def list_sprints(conn: sqlite3.Connection) -> list[dict]:
@@ -1710,6 +1731,8 @@ def set_sprint_status(
                 f"expected {expected_revision}, current {current_revision}"
             )
         _validate_sprint_transition(sprint["status"], new_status)
+        if new_status == "active" and sprint["kind"] == "archive":
+            raise InvalidTransition(f"cannot activate sprint {sprint_id}: kind is archive")
         conn.execute("UPDATE sprint SET status = ? WHERE id = ?", (new_status, sprint_id))
         conn.commit()
     except Exception:

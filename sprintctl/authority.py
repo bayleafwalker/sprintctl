@@ -486,6 +486,8 @@ def _handle_sprint(
     current_revision = sprint_revision(sprint)
     _check_basis(envelope, current_revision)
     target = "active" if envelope.record_type == "sprint.activate" else "closed"
+    if target == "active" and sprint["kind"] == "archive":
+        raise _RejectedCommand("invalid-transition", "cannot activate archived sprint", current_revision=current_revision)
     current = sprint["status"]
     if target not in SPRINT_TRANSITIONS.get(current, set()):
         raise _RejectedCommand(

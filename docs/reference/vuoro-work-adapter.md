@@ -751,3 +751,11 @@ run, or in its own ledger keyed by `approval_id`) and refuse a second use.
 holding `work:read` can read an approval, rationale included, by id.
 A rationale must not hold secrets or anything the workspace's other members
 may not see.
+
+## Sprint classification
+
+`work.sprint.kind` permits an authenticated `work:sprint` principal to change
+one sprint kind against its exact identity/kind/status basis. The command
+`sprint kind` reads that basis or accepts `--expected-revision`; it never falls
+back to a local database. See the [classification contract](../plans/served-sprint-kind.md)
+for conflicts, archive activation rules and unknown outcomes after response loss.

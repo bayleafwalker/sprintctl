@@ -17,7 +17,31 @@ production-authority behaviour):
 from __future__ import annotations
 
 from typing import Protocol
+import re
 from uuid import uuid4
+
+
+_KIND_REVISION = re.compile(
+    r"^sprint:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    r"@kind:(active_sprint|backlog|archive)@status:(planned|active|closed)$"
+)
+
+
+def sprint_kind_revision(sprint: dict) -> str:
+    """State-basis comparison, not a monotonic revision or authority proof."""
+    return f"sprint:{sprint['aggregate_uuid']}@kind:{sprint['kind']}@status:{sprint['status']}"
+
+
+def validate_sprint_kind_id(value: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= (1 << 63) - 1:
+        raise ValueError("sprint_id must be a positive signed 64-bit integer")
+    return value
+
+
+def validate_kind_revision(value: str) -> str:
+    if not isinstance(value, str) or not _KIND_REVISION.fullmatch(value):
+        raise ValueError("expected_revision must be a valid sprint kind revision")
+    return value
 
 
 class SprintConn(Protocol):

@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from . import calc, maintain
+from .sprintcore import sprint_kind_revision
 
 
 def build_sprint_show_detail(
@@ -34,6 +35,7 @@ def build_sprint_show_detail(
         "end_date": sprint["end_date"],
         "status": sprint["status"],
         "kind": sprint["kind"],
+        "kind_revision": sprint_kind_revision(sprint),
     }
     items = backend.list_work_items(store, sprint_id=sprint["id"])
     tracks = backend.list_tracks(store, sprint["id"])

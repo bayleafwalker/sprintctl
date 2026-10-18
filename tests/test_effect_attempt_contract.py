@@ -100,7 +100,7 @@ def test_only_attempt_and_declared_preview_descriptors_are_added_to_released_cat
         }
         | AGENT_INBOX_OPERATIONS
         | SCHEMA26_OPERATIONS
-        | SCHEMA27_OPERATIONS
+        | SCHEMA27_OPERATIONS | {"work.sprint.kind"}
     )
     assert {k: actual[k] for k in baseline["operation_sha256"]} == baseline["operation_sha256"]
 

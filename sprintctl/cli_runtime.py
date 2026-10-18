@@ -578,6 +578,8 @@ def _collect_sprint_show_payload(conn, s: dict, detail: bool, *, m=None) -> dict
     }
     if s.get("aggregate_uuid"):
         out["status_revision"] = m.sprint_status_revision(s)
+        from .sprintcore import sprint_kind_revision
+        out["kind_revision"] = sprint_kind_revision(s)
     if not detail:
         return out
     from . import sprint_detail

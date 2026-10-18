@@ -154,7 +154,6 @@ def test_unclassified_legacy_store_paths_fail_before_get_store_in_served_mode(
     )
 
     for argv in (
-        ["sprint", "kind", "--id", "1", "--kind", "backlog"],
         ["render", "--sprint-id", "1"],
         ["repo", "list"],
     ):

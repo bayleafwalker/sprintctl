@@ -1,0 +1,74 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.sprint-kind-cas",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2369",
+    "revision": "native:release:4dd5d6b27aeba93029ff5e9dea198d0e14bf2d107048e9c1423086c437c618a0"
+  },
+  "implementation_sha": "95f8fedf0a5023cba6fdf8cf668f8e3bbce122bb",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary SQLite3.53.1 and disposable PostgreSQL16.15",
+    "isolation": "SQLiteBEGINIMMEDIATE or PostgreSQL sprint row lock; native fixtures isolated and cleaned",
+    "tool_versions": {
+      "Python": "3.13.16",
+      "SQLite": "3.53.1",
+      "PostgreSQL": "16.15",
+      "vuoro-service": "0.1.96 local isolated test build"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 4,
+    "bounds": {
+      "actors_per_history": 2,
+      "concurrent_histories": 4,
+      "kinds": 3,
+      "sprint_id_max": 9223372036854775807
+    },
+    "faults_exercised": [
+      "stale same-kind basis",
+      "foreign identity basis",
+      "missing authority",
+      "wrong repository",
+      "malformed basis",
+      "oversized or boolean ID",
+      "concurrent classification and activation"
+    ]
+  },
+  "claims": [
+    {
+      "property": "State-basis classification and activation conflicts produce one acceptance and one refusal in four synchronized independent-connection examples",
+      "result": "concurrency-tested",
+      "evidence": [
+        "verification/traces/kind-classification-cas.json",
+        "tests/test_sprint_kind.py",
+        "tests/pg/test_sprint_kind.py"
+      ]
+    },
+    {
+      "property": "Actual HTTP owner authority/repository refusals and CLI no-store/range guards",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_vuoro_work_adapter_integration.py",
+        "tests/test_sprint_kind.py"
+      ]
+    },
+    {
+      "property": "Deployed acceptance or estate-wide generated-contract qualification",
+      "result": "unknown",
+      "evidence": [
+        "docs/plans/served-sprint-kind.md"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "Implementation SHA is the final rebased candidate base; exact changed-source SHA256s: {\"sprintctl/authority.py\": \"02ecde048c010160d1d0f8fc8e84442cf02f6b375ead03f0308a1b3d142eecc4\", \"sprintctl/commands/work.py\": \"4458026ea064762cc35b37eb2c8714af4503d006c68a067b518131203d97d7c2\", \"sprintctl/db.py\": \"269703c5ba14e0793fd28f9c2d62755ccfd0b6950dedf8ca6433e04258f07912\", \"sprintctl/pg.py\": \"d6c19c7435cf5317ae0455561a484975c89085d2101ea33449e6759eebba4b74\", \"sprintctl/sprintcore.py\": \"b21fe007fa07c758d011ccad1ba6390b2688ce97c42acf4b52fe3fe7de1c048b\", \"sprintctl/vuoro_adapter.py\": \"394d1af4ae66527ffede902b223f2e888ecb479013a6db7ba7f1d310aba300b3\", \"sprintctl/work_application.py\": \"09c94ab94e2864b2dda3dec68ce81c85316a749fe2eb15fe40bcd297ee648589\", \"tests/pg/test_sprint_kind.py\": \"7cb53aeb19ef394772565c233bdcdb4f77cb4b4a2b2a7cd150ad6eab70e49d30\", \"tests/test_sprint_kind.py\": \"6afb00903f13e2056c81a7ad9aebf117039fcac6860b8096ce56692d5687f757\"}",
+    "Full normal-case source run2395passed1107skipped14deselected. Collected before final signed-ID guard, six extra ID/range cases and served scope disclosure; final affected200passed, currentCLI/docs35passed, finalSQLite20passed and native6passed1099deselected,zero remaining rows.",
+    "Actual local service integration14passed, including three generic HTTP authorization/scope cases; historical operation byte/revision pins retained, not repinned. Service installed only in isolated worktree test environment; no global tool or deployment pin changes.",
+    "Current source repair does not select canonical estateIDL/transport or satisfy EC05source/deployed/provider qualification. State-basis tokens have no monotonic ABA guarantee; write is not automatically replayed.",
+    "Independent review clear including oversized-ID CLI fix; final main CI and rebased focused counts recorded in native closeout.",
+    "Final rebase includes served maintenance-check, retired actor convention, approval UTC and maintenance prepare-clock fixes. Combineddoctor39operations;175targeted tests passed including actual local service integration;15native PostgreSQL kind/prepare tests passed1114deselected with3clean fixture scopes. Earlier full2395normal-case result was on base16f121f before the final small ID/range/scope changes; final mainCI must cover complete landed source."
+  ]
+}

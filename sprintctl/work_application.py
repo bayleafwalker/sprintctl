@@ -804,6 +804,7 @@ class WorkApplication:
             "work.maintenance.resource.get": target._maintenance_resource_get,
             "work.maintenance.resource.changes": target._maintenance_resource_changes,
             "work.sprint.create": target._sprint_create,
+            "work.sprint.kind": target._sprint_kind,
             "work.event.add": target._event_add,
             "work.handoff.record": target._handoff_record,
             "work.item.create": target._item_create,
@@ -1549,7 +1550,9 @@ class WorkApplication:
         return {"repo_id": self.repo_id, "events": events}
 
     def _read_sprint(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
-        return {"repo_id": self.repo_id, "sprint": self._resolve_sprint(arguments.get("sprint_id"))}
+        from .sprintcore import sprint_kind_revision
+        sprint = self._resolve_sprint(arguments.get("sprint_id"))
+        return {"repo_id": self.repo_id, "sprint": {**sprint, "kind_revision": sprint_kind_revision(sprint)}}
 
     def _read_sprint_detail(
         self, arguments: dict[str, Any], _context: InvocationContext
@@ -1577,6 +1580,30 @@ class WorkApplication:
                 self.store, sprint, backend=self.backend, now=now
             ),
         }
+
+    def _sprint_kind(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        from .sprintcore import validate_kind_revision, validate_sprint_kind_id
+
+        if "work:sprint" not in (getattr(context.identity, "authorities", None) or ()):
+            raise ApplicationRejection("authority-required", "sprint kind requires work:sprint", 403)
+        if set(arguments) != {"sprint_id", "kind", "expected_revision"}:
+            raise ApplicationRejection("invalid-arguments", "sprint_id, kind and expected_revision are required", 422)
+        sprint_id = _positive_int(arguments.get("sprint_id"), "sprint_id")
+        kind = arguments.get("kind")
+        if not isinstance(kind, str) or kind not in {"active_sprint", "backlog", "archive"}:
+            raise ApplicationRejection("invalid-arguments", "kind must be active_sprint, backlog, or archive", 422)
+        try:
+            validate_sprint_kind_id(sprint_id)
+            expected = validate_kind_revision(arguments.get("expected_revision"))
+        except ValueError as exc:
+            raise ApplicationRejection("invalid-arguments", str(exc), 422) from exc
+        try:
+            sprint = self.backend.set_sprint_kind(self.store, sprint_id, kind, expected_revision=expected)
+        except self.backend.StatusConflict as exc:
+            raise ApplicationRejection("sprint-kind-conflict", str(exc), 409) from exc
+        except ValueError as exc:
+            raise ApplicationRejection("sprint-kind-rejected", str(exc), 422) from exc
+        return {"repo_id": self.repo_id, "sprint": sprint}
 
     def _sprint_create(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
         """Create a sprint inside the authenticated repository scope."""

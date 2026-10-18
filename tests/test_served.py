@@ -551,11 +551,12 @@ def test_expected_operations_matches_all_served_cli_command_paths():
         for route in routes_for(path)
     }
     assert served.EXPECTED_OPERATIONS == expected
-    assert len(served.EXPECTED_OPERATIONS) == 38
+    assert len(served.EXPECTED_OPERATIONS) == 39
     assert served.EXPECTED_OPERATIONS == {
         "work.identity.current",
         "work.read.sprints",
         "work.sprint.create",
+        "work.sprint.kind",
         "work.read.context",
         "work.read.context-candidates",
         "work.read.handoff",

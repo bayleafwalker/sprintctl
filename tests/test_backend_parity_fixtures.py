@@ -398,7 +398,6 @@ class TestServedUnavailableParity:
     @pytest.mark.parametrize(
         "argv",
         [
-            ["sprint", "kind", "--id", "1", "--kind", "backlog"],
             ["db", "vacuum"],
             ["maintain", "sweep"],
             ["maintain", "carryover", "--from-sprint", "1", "--to-sprint", "2"],

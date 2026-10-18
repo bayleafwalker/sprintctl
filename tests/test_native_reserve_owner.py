@@ -92,6 +92,6 @@ def test_native_reserve_is_only_catalog_addition_with_all_legacy_bytes_preserved
         "work.effect.acceptance-snapshot-v1", "work.effect.export-proposal-v2", "work.effect.export-proposal-v3", "work.effect.basis-v1",
         "work.run.continuation-delta-v1",
         "work.run.register-correlated-v1", "work.run.invocation-receipt-get-v1",
-    } | set(OPERATION_AUTHORITIES) | AGENT_INBOX_OPERATIONS | SCHEMA26_OPERATIONS | SCHEMA27_OPERATIONS
+    } | set(OPERATION_AUTHORITIES) | AGENT_INBOX_OPERATIONS | SCHEMA26_OPERATIONS | SCHEMA27_OPERATIONS | {"work.sprint.kind"}
     assert not set(expected) - set(actual)
     assert {name: actual[name] for name in expected} == expected

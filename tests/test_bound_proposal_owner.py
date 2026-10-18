@@ -58,7 +58,7 @@ def test_only_catalog_addition_and_every_existing_descriptor_byte_preserved():
               for entry in catalog_operation_specs(resource_schema_available=True)}
     from sprintctl.effect_attempt import OPERATION_AUTHORITIES
     assert set(actual) - set(baseline['operation_sha256']) == {
-        BOUND, "work.evidence.evaluate-v1", "work.effect.preview-v1",
+        BOUND, "work.sprint.kind", "work.evidence.evaluate-v1", "work.effect.preview-v1",
         "work.effect.acceptance-snapshot-v1", "work.effect.export-proposal-v2", "work.effect.export-proposal-v3", "work.effect.basis-v1",
         "work.run.continuation-delta-v1",
         "work.run.register-correlated-v1", "work.run.invocation-receipt-get-v1",

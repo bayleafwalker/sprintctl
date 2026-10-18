@@ -128,6 +128,7 @@ PUBLISHED_OPERATIONS = (
         "work.run.resolve-v2",
         "work.session-note.write-v1",
         "work.sprint.create",
+        "work.sprint.kind",
         "work.validate.item-status-mutation",
 )
 

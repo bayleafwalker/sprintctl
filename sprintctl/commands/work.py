@@ -528,20 +528,51 @@ def sprint_list(obj, include_backlog, include_archive, active_only, project_path
     help="New kind",
 )
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.option("--expected-revision", default=None, help="Exact kind revision (otherwise read the current basis first)")
 @click.pass_obj
-def sprint_kind_cmd(obj, sprint_id, kind, as_json) -> None:
-    """Set the kind classification of a sprint."""
+def sprint_kind_cmd(obj, sprint_id, kind, as_json, expected_revision) -> None:
+    """Set sprint classification with an identity/kind/status state comparison."""
+    from ..sprintcore import sprint_kind_revision, validate_kind_revision, validate_sprint_kind_id
+
     sprint_id = _apply_scoped_id(obj, sprint_id, field="sprint")
-    store, m = _get_store(obj)
     try:
-        m.set_sprint_kind(store, sprint_id, kind)
-    except ValueError as e:
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
+        validate_sprint_kind_id(sprint_id)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if expected_revision is not None:
+        try:
+            validate_kind_revision(expected_revision)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+    config = _served_config_or_none(obj)
+    context = _resolved_context(config) if config is not None else None
+    if config is not None:
+        if expected_revision is None:
+            current = _run_served("sprint kind basis", _served.read_sprint, config.served_profile,
+                                  repo_id=config.repo_id, sprint_id=sprint_id, resolved_context=context)["sprint"]
+            expected_revision = sprint_kind_revision(current)
+        result = _run_served("sprint kind", _served.sprint_kind, config.served_profile,
+                             repo_id=config.repo_id, sprint_id=sprint_id, kind=kind, expected_revision=expected_revision,
+                             resolved_context=context)["sprint"]
+    else:
+        store, m = _get_store(obj)
+        current = m.get_sprint(store, sprint_id)
+        if current is None:
+            raise click.ClickException(f"Sprint #{sprint_id} not found")
+        try:
+            result = m.set_sprint_kind(store, sprint_id, kind,
+                                      expected_revision=expected_revision or sprint_kind_revision(current))
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
     if as_json:
-        click.echo(json.dumps({"sprint_id": sprint_id, "kind": kind}, indent=2))
+        payload = {"sprint_id": sprint_id, "kind": kind, "kind_revision": result["kind_revision"]}
+        if context is not None:
+            payload["resolved_context"] = context
+        click.echo(json.dumps(payload, indent=2))
         return
     click.echo(f"Sprint #{sprint_id} kind set to: {kind}")
+    if context is not None:
+        click.echo(_render_resolved_context(context))
 
 
 @sprint.command("backlog-seed")
