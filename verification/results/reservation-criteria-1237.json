@@ -1,0 +1,78 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.reservation-criteria-1237",
+  "contract_ref": {
+    "doc_id": "sprintctl.reservation-criteria-1237",
+    "revision": "sha256:752615f284bf282d42b051f5f78a00e8c3032f54b56363ed1812860e3794114a"
+  },
+  "implementation_sha": "e31124de724e4716ffbe71ca021394f742b3ec39",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary SQLite, private localhost PostgreSQL16.15, Vuoro source contract imported into isolated verification environment",
+    "isolation": "no shared database/lease/capability mutation, deployment or secret values",
+    "tool_versions": {
+      "Python": "3.13.16",
+      "pytest": "9.0.2",
+      "PostgreSQL": "16.15"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": {
+      "source": "existing tests/pg/test_native_reserve_owner.py and test_native_reserve_intake.py",
+      "independent_connections": true
+    },
+    "bounds": {
+      "observed_catalog_operations": 107,
+      "local_cases": 83,
+      "postgresql_owner_cases": 28,
+      "postgresql_intake_cases": 21,
+      "separate_schema_observation_cases": 1,
+      "vuoro_static_cases": 6
+    },
+    "faults_exercised": [
+      "same key with changed normalized request",
+      "response loss at owner commit boundary",
+      "concurrent same-key admission",
+      "maintenance interleaving",
+      "unknown retired proof envelope field"
+    ]
+  },
+  "claims": [
+    {
+      "property": "Native same-key reserve histories preserve one admission effect and immutable replay identity",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/pg/test_native_reserve_owner.py",
+        "tests/pg/test_native_reserve_intake.py"
+      ]
+    },
+    {
+      "property": "Observed schemas/source envelope omit or reject retired work-claim proof fields",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_authority_contracts.py",
+        "tests/test_native_reserve_owner.py",
+        "docs/evidence/reservation-criteria-1237-20261018.md"
+      ]
+    },
+    {
+      "property": "Historical catalog wording and missing counterpart/runtime qualification remain open",
+      "result": "documented-only",
+      "evidence": [
+        "docs/evidence/reservation-criteria-1237-20261018.md"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "83 local cases passed2.05s; initial misnamed TestMigrations selector collected no tests, corrected to AST-resolved TestEdgeCases archive/drop example before final successful run.",
+    "50 PG cases passed5.50s:28owner,21intake,1metadata-only1238probe;3fixturecleanups/zero rows. No general exactly-once external effect, global linearizability or historical migration proof.",
+    "6 static Vuoro envelope cases passed0.13s ataa5af4d; source-only package imported with PYTHONPATH and bytecode disabled, no server/wheel/deployed identity qualification.",
+    "Source catalog walk107ops found0 banned declared proof keys and0work.claim.* ops. Both reserve descriptors require envelope keys; legacy facade per-invocation key/no native dedup remains distinct from reserve-v1 ledger/replayed result.",
+    "Qualified current Vuoro1243 native lookup returned item-not-found;102-row returned list had no matching title. No repository rescoping, successor invention or blanket historical absence claim. Current source composition locks Sprintctl0.20.0/bef3902 but is not deployment evidence.",
+    "Current reservation protocol draft status preserved; old superseded plan is history. No native item status/dependency/terminal or product/schema/catalog/grant changes. Verification reservation361 to release after immutable evidence handoff.",
+    "Independent criterion findings-first/optimistic review clear for evidence publication only; both legacy items remain pending.",
+    "Final documentation checks22passed0.06s; packet validators/whitespace and independent final artifact review clear for evidence publication only."
+  ]
+}

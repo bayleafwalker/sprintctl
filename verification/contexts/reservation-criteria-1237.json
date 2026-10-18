@@ -1,0 +1,101 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.reservation-criteria-1237",
+  "owner_repo": "sprintctl",
+  "subject": "existing-credential-free-native-replay-and-twin-evidence",
+  "contract_ref": {
+    "doc_id": "sprintctl.reservation-criteria-1237",
+    "revision": "sha256:752615f284bf282d42b051f5f78a00e8c3032f54b56363ed1812860e3794114a"
+  },
+  "source_of_truth": "current owner operation schemas and native reserve ledger; historical criteria remain open",
+  "depth": 2,
+  "backends": [
+    "temporary-sqlite",
+    "disposable-postgresql16",
+    "vuoro-source-envelope"
+  ],
+  "actors": [
+    "caller",
+    "same-key-retry",
+    "competing-writer",
+    "maintenance-actor"
+  ],
+  "initial_state": [
+    "Sprintctl e31124de724e4716ffbe71ca021394f742b3ec39",
+    "Vuoro aa5af4de351f011c1d4f795eaa72b692c5dfcb47",
+    "temporary work/release/ledger fixtures"
+  ],
+  "operations": [
+    {
+      "name": "native-reserve-and-exact-replay",
+      "actors": [
+        "caller",
+        "same-key-retry",
+        "competing-writer"
+      ]
+    },
+    {
+      "name": "maintenance-interleave",
+      "actors": [
+        "caller",
+        "maintenance-actor"
+      ]
+    },
+    {
+      "name": "inspect-catalog-and-source-envelope",
+      "actors": [
+        "caller"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "native-reserve-replay-without-legacy-proof"
+  },
+  "assumptions": {
+    "identity": "static fixture principals, not deployed authentication proof",
+    "legacy": "required catalog key is not a legacy native-dedup guarantee",
+    "counterpart": "historical Vuoro1243 not found in current scoped read; no invented successor"
+  },
+  "bounds": {
+    "observed_catalog_operations": 107,
+    "local_cases": 83,
+    "postgresql_owner_cases": 28,
+    "postgresql_intake_cases": 21,
+    "separate_schema_observation_cases": 1,
+    "vuoro_static_cases": 6
+  },
+  "invariants": [
+    "observed work schemas declare no retired claim-proof field keys",
+    "native same-key replay preserves one admission effect and snapshot in exercised histories",
+    "legacy advisory wrapper and native replay owner remain distinct",
+    "strict source envelope rejects retired transient proof field",
+    "source evidence does not close counterpart/runtime qualification"
+  ],
+  "faults": [
+    "same key with changed normalized request",
+    "response loss at owner commit boundary",
+    "concurrent same-key admission",
+    "maintenance interleaving",
+    "unknown retired proof envelope field"
+  ],
+  "oracles": [
+    "existing native owner/intake transaction tests",
+    "recursive schema-key inspection",
+    "Vuoro source envelope validation",
+    "fresh qualified twin lookup and bounded current listing"
+  ],
+  "implementation_anchors": [
+    "sprintctl/work_application.py:_reservation_reserve_v1",
+    "sprintctl/served.py:reservation_operation",
+    "tests/test_native_reserve_owner.py",
+    "tests/pg/test_native_reserve_owner.py",
+    "tests/pg/test_native_reserve_intake.py",
+    "docs/evidence/reservation-criteria-1237-20261018.md"
+  ],
+  "expansions": [
+    "stateful-test",
+    "concurrent-history",
+    "semantic-doc"
+  ]
+}
