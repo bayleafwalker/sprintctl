@@ -2,7 +2,8 @@
 from dataclasses import dataclass
 from typing import Callable
 
-from . import contracts, decisions
+from . import contracts, decisions, calc
+from datetime import datetime, timedelta
 
 
 @dataclass(frozen=True)
@@ -64,3 +65,44 @@ def carryover_item(p: CarryoverParticipant, source: int, target: int, item_id: i
     if copied is None:
         raise ValueError(f"Carried item #{new_id} could not be read")
     return copied
+
+
+@dataclass(frozen=True)
+class StaleItemParticipant:
+    """Noncommitting status/event operations in one backend-owned transaction."""
+    lock_item: Callable[[int], dict | None]
+    get_item: Callable[[int], dict | None]
+    get_track: Callable[[int], dict | None]
+    block_item: Callable[[int], None]
+    insert_event: Callable[..., int]
+
+
+def block_stale_item(
+    p: StaleItemParticipant, sprint_id: int, item_id: int,
+    now: datetime, threshold: timedelta,
+) -> dict | None:
+    """Recheck current work and return its public pretransition projection."""
+    locked = p.lock_item(item_id)
+    if locked is None or locked["sprint_id"] != sprint_id or locked["status"] != "active":
+        return None
+    item = p.get_item(item_id)
+    if item is None:
+        raise ValueError(f"Item #{item_id} projection could not be read")
+    track = p.get_track(item["track_id"])
+    if track is None:
+        raise ValueError(f"Item #{item_id} track could not be read")
+    # list_work_items includes track_name; get_work_item alone does not.
+    # Preserve that public pretransition projection using current locked data.
+    item = {**item, "track_name": track["name"]}
+    info = calc.item_staleness(item, now, threshold)
+    if not info["is_stale"]:
+        return None
+    contracts.require_generic_event_write_allowed("auto-blocked-stale")
+    p.block_item(item_id)
+    p.insert_event(
+        sprint_id, "maintain-sweep", "auto-blocked-stale",
+        source_type="system", work_item_id=item_id,
+        payload={"idle_seconds": info["idle_seconds"],
+                 "threshold_seconds": int(threshold.total_seconds())},
+    )
+    return item

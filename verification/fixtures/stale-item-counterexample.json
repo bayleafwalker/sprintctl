@@ -1,0 +1,42 @@
+{
+  "source_commit": "e816d907fc1a803cbcfc4c112133a2f3c955e7d7",
+  "actors": [
+    "sweeper",
+    "independent reader"
+  ],
+  "initial": {
+    "item_status": "active",
+    "auto_blocked_stale_events": 0
+  },
+  "history": [
+    {
+      "actor": "sweeper",
+      "operation": "select stale active item"
+    },
+    {
+      "actor": "sweeper",
+      "operation": "status transition commits blocked"
+    },
+    {
+      "actor": "sweeper",
+      "operation": "event write fault before or after INSERT, operation fails"
+    },
+    {
+      "actor": "independent reader",
+      "observed": {
+        "item_status": "blocked",
+        "auto_blocked_stale_events": 0
+      }
+    },
+    {
+      "actor": "sweeper",
+      "operation": "ordinary retry",
+      "observed_affected_count": 0
+    }
+  ],
+  "required_failure_effect": {
+    "item_status": "active",
+    "auto_blocked_stale_events": 0
+  },
+  "scope": "Retained bounded before-repair trace on actual temporary SQLite and disposable PostgreSQL; not a physical-crash or distributed proof"
+}

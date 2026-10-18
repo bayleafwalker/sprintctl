@@ -1,0 +1,95 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.stale-item-atomicity",
+  "contract_ref": {
+    "doc_id": "sprintctl.stale-item-sweep",
+    "revision": "sha256:dd5dd5c256a4cd3500d35cb34a50c35ab4decd100fca90f21c39e439202b5d4f"
+  },
+  "implementation_sha": "bbb35db081532b5c973f32f0bf9e672765005ca9",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary SQLite WAL and disposable PostgreSQL16.15",
+    "isolation": "SQLite serialized writer; PG READ COMMITTED item lock; explicit caller ownership differences",
+    "tool_versions": {
+      "Python": "3.13.16",
+      "pytest": "9.0.2",
+      "PostgreSQL": "16.15"
+    }
+  },
+  "execution": {
+    "histories": 6,
+    "bounds": {
+      "shared_cases_per_backend": 13,
+      "sqlite_cases": 14,
+      "postgresql_cases": 18,
+      "event_insert_fault_points_per_backend": 2,
+      "stale_selection_cases": 5,
+      "competing_sweep_histories_per_backend": 1,
+      "held_writer_histories_per_backend": 2,
+      "connections_per_history": 2,
+      "sqlite_caller_boundary_cases": 1,
+      "postgresql_caller_boundary_cases": 4,
+      "postgresql_hosted_lease_cases": 1
+    },
+    "faults_exercised": [
+      "event failure before INSERT",
+      "failure after actual event INSERT",
+      "generic-event admission refusal",
+      "second item failure",
+      "stale initial selection",
+      "competing sweep and held-writer changes",
+      "caller transaction refusal"
+    ]
+  },
+  "claims": [
+    {
+      "property": "Per-item event faults leave original status/timestamp and event state intact; retry emits one event",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_stale_item_atomicity_contract.py:StaleItemAtomicityCases.test_event_failure_preserves_before_state_and_retry_emits_once",
+        "verification/fixtures/stale-item-counterexample.json"
+      ]
+    },
+    {
+      "property": "Selected work is rechecked after competing or held writers before a new block event",
+      "result": "concurrency-tested",
+      "evidence": [
+        "test_competing_sweeps_emit_one_event",
+        "test_waiting_writer_rechecks_holder_changes"
+      ]
+    },
+    {
+      "property": "Earlier successful items remain durable while a later item rolls back",
+      "result": "example-tested",
+      "evidence": [
+        "test_later_item_failure_preserves_earlier_commit_and_retry"
+      ]
+    },
+    {
+      "property": "Current pretransition output, explicit time inputs, caller boundaries and existing hosted lease behavior remain bounded as documented",
+      "result": "example-tested",
+      "evidence": [
+        "test_affected_projection_and_explicit_clock_are_preserved",
+        "tests/test_stale_item_atomicity.py",
+        "tests/pg/test_stale_item_atomicity.py"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Before repair, event fault left durable blocked status with no auto-blocked-stale event; retry found no active item",
+      "trace_ref": "verification/fixtures/stale-item-counterexample.json"
+    }
+  ],
+  "notes": [
+    "implementation_sha names the reviewed base; final candidate source/test/protocol SHA256: {\"docs/protocols/stale-item-sweep.md\": \"dd5dd5c256a4cd3500d35cb34a50c35ab4decd100fca90f21c39e439202b5d4f\", \"sprintctl/db.py\": \"7f6930f90c7755f7c1470ce6647d5a55fea87da958cdf5e82257bc039c9aee49\", \"sprintctl/maintain.py\": \"2fe9e2113d3d7bcaf71c3a44be8692d4419204a47b4a7aaf82a8467d72912b72\", \"sprintctl/maintaincore.py\": \"5e5c47955f89b41e2860e95b3b38a1f9508c18d8046ce972b2515239e4218754\", \"sprintctl/pg.py\": \"0955faf3fa3d89e1d2465dc57bd1c767af234b206fec9b898e237cfda20fb130\", \"tests/_stale_item_atomicity_contract.py\": \"06e91bc29a93df7d33cee6ea4bc729c78eb0429ac6836b8bbc039bbbf6afd450\", \"tests/pg/test_stale_item_atomicity.py\": \"9084a31cff21390d05da6d4a49169a0e6b40d0306629c3df991b81cda4de7809\", \"tests/test_stale_item_atomicity.py\": \"268541de021004edeb79d0f35c544ed28b5a7da6c9b7e52ebc9d04ba4fc9e962\", \"verification/fixtures/stale-item-counterexample.json\": \"04f2202f715b09a6344f9b4b856ec9456c03a5c197c76c1eb188d3d2d77658da\"}",
+    "Baseline sourcee816d907fc1a803cbcfc4c112133a2f3c955e7d7:2actualSQLite snapshot regressions failed0.99s;2actualPG snapshot regressions failed0.40s. An earlier invalid PG independent-connection fixture was corrected and is not product evidence.",
+    "Focused final SQLite14passed2.70s; final disposablePG18passed0.59s with one cleanup/zero rows. Both rerun after independent review strengthened the explicit-clock assertion to exact315662400seconds. Earlier61affectedSQLitechecks overlap and predate the final initial-fresh fast-path preservation.",
+    "Complete disposablePG1264passed81.10s with77cleanups across4names/zero remaining rows. Complete nonPG/nonperformance2615passed4skipped1278deselected290.35s with UV_OFFLINE=1 cached auxiliary dependencies; no network-install qualification. Product source unchanged afterward; the subsequent exact clock assertion was confirmed in both final focused gates.",
+    "Independent planner source review CLEAR; separately compared both extracted locked status AST bodies to originals. Public validation/commit/rollback wrappers preserved. A draft omitted track_name; unchanged pretransition projection oracle caught it, existing track read restored it.",
+    "Initially fresh candidates skip before owned transaction. A selected stale candidate changed before locked recheck can still cross PG precommit before being skipped; no broad caller-composition or unrelated-write parity claim.",
+    "No whole maintain.sweep, reservation interruption, auto-close, idempotency-key/cached-result, power-loss/failover or distributed proof. No API/schema/IDL/grant/service deployment. Parent2150 remains open.",
+    "Durable evidence:docs/evidence/stale-item-atomicity-2771.md",
+    "Clock-oracle mutation check: isolated pytest plugin replaced supplied2030 time with2026; exact idle_seconds assertion failed1case as intended. Normal unmodified clock case then passed1case. Product files unchanged."
+  ]
+}

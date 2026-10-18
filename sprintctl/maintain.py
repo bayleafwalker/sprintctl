@@ -250,22 +250,16 @@ def sweep_stale_items(
     items = m.list_work_items(conn, sprint_id=sprint_id, status="active")
     affected = []
     for item in items:
-        info = _calc.item_staleness(item, now, threshold)
-        if info["is_stale"]:
-            m.set_work_item_status(conn, item["id"], "blocked")
-            m.create_event(
-                conn,
-                sprint_id,
-                actor="maintain-sweep",
-                event_type="auto-blocked-stale",
-                source_type="system",
-                work_item_id=item["id"],
-                payload={
-                    "idle_seconds": info["idle_seconds"],
-                    "threshold_seconds": int(threshold.total_seconds()),
-                },
+        # Preserve the existing read-only fast path for initially fresh rows.
+        # Selected stale rows are checked again under the writer lock below.
+        if not _calc.item_staleness(item, now, threshold)["is_stale"]:
+            continue
+        with m._stale_item_transaction(conn) as participant:
+            blocked = _maintaincore.block_stale_item(
+                participant, sprint_id, item["id"], now, threshold
             )
-            affected.append(item)
+        if blocked is not None:
+            affected.append(blocked)
     return affected
 
 

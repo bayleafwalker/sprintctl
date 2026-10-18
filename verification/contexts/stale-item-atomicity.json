@@ -1,0 +1,113 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.stale-item-atomicity",
+  "owner_repo": "sprintctl",
+  "subject": "one stale active item transition and audit event",
+  "contract_ref": {
+    "doc_id": "sprintctl.stale-item-sweep",
+    "revision": "sha256:dd5dd5c256a4cd3500d35cb34a50c35ab4decd100fca90f21c39e439202b5d4f"
+  },
+  "source_of_truth": "native2771 Release1797d625fa6e0134f8a5462df039e52dec67b2a05ac40c0aaea91e55d94e7322, No doc5534 and docs/protocols/stale-item-sweep.md",
+  "depth": 2,
+  "backends": [
+    "temporary SQLite WAL",
+    "disposable PostgreSQL16.15"
+  ],
+  "actors": [
+    "sweeper",
+    "concurrent holder",
+    "independent durable reader"
+  ],
+  "initial_state": [
+    "active stale source with current public list projection",
+    "selected source can be refreshed, moved, deleted or terminal before lock",
+    "caller transaction and protected lease cases have explicitly bounded contracts"
+  ],
+  "operations": [
+    {
+      "name": "block one selected stale item",
+      "actors": [
+        "sweeper"
+      ],
+      "synchronization": "writer lock then current eligibility/staleness recheck, existing transition participant and noncommitting event"
+    },
+    {
+      "name": "compete or wait for source holder",
+      "actors": [
+        "sweeper",
+        "concurrent holder"
+      ],
+      "synchronization": "independent connections; initial selection barrier or held writer with SQLite BEGIN attempt/PG pg_blocking_pids observation"
+    },
+    {
+      "name": "observe rollback and retry",
+      "actors": [
+        "independent durable reader"
+      ],
+      "synchronization": "independent connection after failed item transaction"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one item status/timestamp and auto-blocked-stale event"
+  },
+  "assumptions": {
+    "clock": "preserve existing explicit now/threshold and database transition timestamp policy",
+    "isolation": "SQLite BEGIN IMMEDIATE; PG READ COMMITTED scoped item FOR UPDATE",
+    "caller_transactions": "selected stale write boundary follows documented SQLite refusal and PG precommit conventions; no unrelated-write parity",
+    "fairness": "none; bounded waits only"
+  },
+  "bounds": {
+    "shared_cases_per_backend": 13,
+    "sqlite_cases": 14,
+    "postgresql_cases": 18,
+    "event_insert_fault_points_per_backend": 2,
+    "stale_selection_cases": 5,
+    "competing_sweep_histories_per_backend": 1,
+    "held_writer_histories_per_backend": 2,
+    "connections_per_history": 2,
+    "sqlite_caller_boundary_cases": 1,
+    "postgresql_caller_boundary_cases": 4,
+    "postgresql_hosted_lease_cases": 1
+  },
+  "invariants": [
+    "one failed item does not leave status committed without its audit event",
+    "initially fresh fast path remains read-only; selected candidates recheck under lock",
+    "current public pretransition fields including track_name are preserved",
+    "existing locked status validation and protected lease behavior are reused",
+    "earlier completed items remain committed if later item fails",
+    "competing sweeps produce one block event for a still-eligible item",
+    "no whole-maintain command atomicity or automatic retry is inferred"
+  ],
+  "faults": [
+    "event failure before INSERT",
+    "failure after actual event INSERT",
+    "generic-event admission refusal",
+    "second item failure",
+    "stale initial selection",
+    "competing sweep and held-writer changes",
+    "caller transaction refusal"
+  ],
+  "oracles": [
+    "independent durable before-state comparison",
+    "one event and already-blocked retry/no stale repeat",
+    "current pretransition output comparison",
+    "observed database lock wait/attempt and holder change",
+    "lease row byte-value equality",
+    "caller state visibility before/after rollback"
+  ],
+  "implementation_anchors": [
+    "sprintctl/maintain.py:sweep_stale_items",
+    "sprintctl/maintaincore.py:block_stale_item",
+    "sprintctl/db.py:_set_work_item_status_locked",
+    "sprintctl/pg.py:_set_work_item_status_locked",
+    "tests/_stale_item_atomicity_contract.py:StaleItemAtomicityCases",
+    "tests/test_stale_item_atomicity.py",
+    "tests/pg/test_stale_item_atomicity.py"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "stateful-test",
+    "concurrency-test"
+  ]
+}
