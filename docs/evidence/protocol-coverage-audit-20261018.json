@@ -1,0 +1,949 @@
+{
+  "schema": "sprintctl-1131-readonly-coverage-audit/v1",
+  "observed_at": "2026-10-18T11:31:26.914722+00:00",
+  "source_git_sha": "072d0338c77848252d4986a0e6e15b9432a2a085",
+  "governing_doc": "docs/plans/adr-outbox-sync-model.md",
+  "governing_doc_sha256": "sha256:bbfb30b9d7b7c5802dc2852529464d6ccd79ccf9567f241b5d06778a4ef4fa1d",
+  "governing_ref_limit": "Native1131 refs are mutable unpinned doc paths; this audit records observed bytes and does not ratify or silently pin execution.",
+  "native_item": "sprintctl#1131",
+  "native_event": 1008,
+  "rows": [
+    {
+      "id": "F01",
+      "original_requirement": "Crash before and after local outbox fsync.",
+      "current_applicability": "Active producer durability; evidence narrower than physical crash around fsync.",
+      "state_owner": "Local SQLite producer outbox",
+      "implementation_anchors": [
+        "sprintctl/outbox.py:open_outbox",
+        "sprintctl/outbox.py:append_observation"
+      ],
+      "test_anchors": [
+        "tests/test_outbox.py::test_record_survives_restart_with_required_provenance",
+        "tests/test_outbox.py::test_failed_insert_rolls_back_stream_creation_and_sequence"
+      ],
+      "context_refs": [
+        "outbox-producer-sequencing"
+      ],
+      "established_evidence": "Fresh local tests assert WAL+synchronous FULL, close/reopen committed-record preservation, and injected insert failure rollback with no consumed stream sequence.",
+      "unproven_or_unimplemented": "No SIGKILL/power-loss/OS-fsync-boundary campaign was found or run. Orderly reopen plus SQL exception is not exhaustive crash durability.",
+      "classification": "example-tested; bounds stated per row"
+    },
+    {
+      "id": "F02",
+      "original_requirement": "Producer restart with pending (unsynchronized) records.",
+      "current_applicability": "Active normal-sync/outbox behavior.",
+      "state_owner": "Local outbox; remote ingest owner; disposable local cache",
+      "implementation_anchors": [
+        "sprintctl/outbox.py:open_outbox",
+        "sprintctl/sync.py:synchronize_outbox"
+      ],
+      "test_anchors": [
+        "tests/test_outbox.py::test_record_survives_restart_with_required_provenance",
+        "tests/test_sync.py::test_sync_recovers_after_lost_response_or_projection_apply_failure",
+        "tests/test_sync.py::test_normal_sync_migrates_legacy_pilot_databases_without_removing_them"
+      ],
+      "context_refs": [
+        "outbox-producer-sequencing",
+        "outbox-remote-ingestion"
+      ],
+      "established_evidence": "Fresh local examples retain producer records across reopen, retry committed remote admissions via a fake transport, and preserve original pilot files on normal-path migration.",
+      "unproven_or_unimplemented": "No actual killed producer process plus network partition/restart history ran in this audit; fake remote is not PostgreSQL/network behavior.",
+      "classification": "example-tested; bounds stated per row"
+    },
+    {
+      "id": "F03",
+      "original_requirement": "Duplicate batch upload.",
+      "current_applicability": "Active repository-scoped producer ingest idempotency.",
+      "state_owner": "PostgreSQL ingest_stream/ingest_record and repo cursor",
+      "implementation_anchors": [
+        "sprintctl/pg.py:ingest_records"
+      ],
+      "test_anchors": [
+        "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_retry_returns_original_offset_and_cursor_orders_new_records",
+        "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_concurrent_same_stream_retry_admits_once"
+      ],
+      "context_refs": [
+        "outbox-remote-ingestion"
+      ],
+      "established_evidence": "Source inspection: per-stream/repo locks, origin tuple/fingerprint comparison and original-offset return; PG tests include independent-connection same-stream competition. Historical1139event1035 records59disposablePG passes.",
+      "unproven_or_unimplemented": "PG histories not rerun here. No exactly-once external effect, global cross-repository order, or general linearizability claim.",
+      "classification": "concurrency-test anchors inspected; current PG execution unknown"
+    },
+    {
+      "id": "F04",
+      "original_requirement": "Lost server response after an accepted ingest.",
+      "current_applicability": "Active retry identity; distinguish repeated call from actual transport failure.",
+      "state_owner": "PostgreSQL ingest ledger; producer retry/cache cursor",
+      "implementation_anchors": [
+        "sprintctl/pg.py:ingest_records",
+        "sprintctl/sync.py:synchronize_outbox"
+      ],
+      "test_anchors": [
+        "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_lost_response_retry_does_not_advance_repository_cursor",
+        "tests/test_sync.py::test_sync_recovers_after_lost_response_or_projection_apply_failure"
+      ],
+      "context_refs": [
+        "outbox-remote-ingestion",
+        "projection-fault-recovery"
+      ],
+      "established_evidence": "Fresh local fake-transport example admits remote record then fails projection apply; retry deduplicates and advances unchanged cache once. PG source test repeats committed admission and asserts original cursor.",
+      "unproven_or_unimplemented": "PG test is equivalent post-commit retry, not an actual dropped HTTP response; no production transport loss exercised.",
+      "classification": "example-tested; bounds stated per row"
+    },
+    {
+      "id": "F05",
+      "original_requirement": "Missing origin sequence (gap in a producer stream).",
+      "current_applicability": "Active contiguous admission with explicit separately guarded stream bootstrap.",
+      "state_owner": "PostgreSQL ingest-stream high water",
+      "implementation_anchors": [
+        "sprintctl/pg.py:_admit_sequence",
+        "sprintctl/pg.py:ingest_records"
+      ],
+      "test_anchors": [
+        "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_gap_rejects_whole_batch_without_advancing_stream",
+        "tests/test_projection.py::test_gaps_and_out_of_order_inputs_are_rejected_without_advancing_watermark"
+      ],
+      "context_refs": [
+        "outbox-remote-ingestion"
+      ],
+      "established_evidence": "Fresh cache test rejects gaps without watermark advance. PG source test rejects the whole missing-sequence batch; ingestion handler rolls back on exceptions.",
+      "unproven_or_unimplemented": "Current PG runtime not rerun; explicit seed_ingest_stream bootstrap is a separate owner operation, not permission to silently skip gaps.",
+      "classification": "example-tested local cache; PG source-inspected"
+    },
+    {
+      "id": "F06",
+      "original_requirement": "Cursor application crash (mid projection apply).",
+      "current_applicability": "Active cached projection transaction.",
+      "state_owner": "Disposable SQLite cached rows and watermark",
+      "implementation_anchors": [
+        "sprintctl/projection.py:apply_ingested_records"
+      ],
+      "test_anchors": [
+        "tests/test_projection.py::test_failed_record_application_rolls_back_records_and_watermark",
+        "tests/test_sync.py::test_sync_recovers_after_lost_response_or_projection_apply_failure"
+      ],
+      "context_refs": [
+        "projection-fault-recovery"
+      ],
+      "established_evidence": "Fresh injected SQL/trigger failures retain previous records/watermark and retry converges.",
+      "unproven_or_unimplemented": "SQL exception is a bounded crash proxy; abrupt process/OS/storage fault during commit not exercised.",
+      "classification": "example-tested; bounds stated per row"
+    },
+    {
+      "id": "F07",
+      "original_requirement": "Remote state advancing while local is offline.",
+      "current_applicability": "Active cache freshness and contiguous catch-up.",
+      "state_owner": "Remote ingest ledger; local cached watermark",
+      "implementation_anchors": [
+        "sprintctl/projection.py:apply_ingested_records",
+        "sprintctl/projection.py:assess_freshness"
+      ],
+      "test_anchors": [
+        "tests/test_projection.py::test_offline_catch_up_and_full_log_rebuild_converge",
+        "tests/test_projection.py::test_serializable_input_and_unapplied_watermark_age"
+      ],
+      "context_refs": [
+        "projection-fault-recovery"
+      ],
+      "established_evidence": "Fresh local history holds cache at offset1, supplies later remote-history suffix and checks convergence plus watermark age.",
+      "unproven_or_unimplemented": "Remote history is supplied test data, not a live network outage. Read-surface stale fallback is separate tests/test_projection_reads.py, not rerun in this90-test audit.",
+      "classification": "example-tested; bounds stated per row"
+    },
+    {
+      "id": "F08",
+      "original_requirement": "Claim expiration during a partition.",
+      "current_applicability": "Original credential-bearing CLI claim retired. Advisory reservations have no TTL and no mutation authority. Hosted work leases are a separate PostgreSQL protocol.",
+      "state_owner": "Advisory reservation rows; separately hosted work_lease settlement owner",
+      "implementation_anchors": [
+        "sprintctl/db.py:reserve",
+        "sprintctl/db.py:touch_reservation",
+        "sprintctl/pg.py:heartbeat_lease",
+        "sprintctl/pg.py:complete_lease"
+      ],
+      "test_anchors": [
+        "tests/test_authority_fault_protocol.py::test_sqlite_partition_reassignment_rejects_stale_reservation_touch",
+        "tests/pg/test_authority.py::TestAuthorityFaultHistories::test_partition_reassignment_then_stale_touch_is_rejected",
+        "tests/pg/test_work_lease.py::TestHeartbeat::test_an_expired_lease_cannot_heartbeat_even_when_nobody_took_it",
+        "tests/pg/test_work_lease.py::TestOperatorLeaseContract::test_inv_l1_a_superseded_lease_keeps_its_result_but_not_its_authority"
+      ],
+      "context_refs": [
+        "authority-claim-partition-expiry"
+      ],
+      "established_evidence": "Fresh SQLite reservation example explicitly interrupts predecessor then rejects old-session touch. Hosted PG source tests retain stale results without settlement authority.",
+      "unproven_or_unimplemented": "Old context describes removed create_claim/heartbeat_claim functions and expired proof. Reservation interruption is not lease expiry; hosted lease tests not rerun; no external-effect fencing proved.",
+      "classification": "retired original; example-tested advisory replacement; hosted source-inspected"
+    },
+    {
+      "id": "F09",
+      "original_requirement": "Stale item-completion or sprint-close command.",
+      "current_applicability": "Active owner CAS/transition and terminal Decision semantics; old sequential duplicate test is not full CAS coverage.",
+      "state_owner": "SQLite local owner or repository-scoped PostgreSQL authority",
+      "implementation_anchors": [
+        "sprintctl/db.py:set_work_item_status",
+        "sprintctl/db.py:close_sprint_with_boundary_event",
+        "sprintctl/authority.py:arbitrate_command"
+      ],
+      "test_anchors": [
+        "tests/test_authority_fault_protocol.py::test_sqlite_stale_item_and_sprint_commands_reject_without_second_mutation",
+        "tests/test_core.py::TestStatusTransitions::test_item_status_rejects_stale_revision_without_row_or_event_effect",
+        "tests/pg/test_authority.py::TestAuthorityCommandArbitration::test_item_transition_retry_and_stale_rejection_are_durable",
+        "tests/pg/test_authority.py::TestAuthorityCommandArbitration::test_sprint_close_boundary_and_decision_commit_atomically"
+      ],
+      "context_refs": [
+        "authority-stale-commands",
+        "authority-command-arbitration"
+      ],
+      "established_evidence": "Fresh local fault example rejects duplicate terminal transitions and retains exactly one close boundary. Source-only CLI test asserts stale basis produces no row/event mutation; PG source tests bind durable rejection/atomic close.",
+      "unproven_or_unimplemented": "Explicit stale-basis CLI and PG tests not rerun here. No claim that a state-based revision is a monotonic epoch or prevents every ABA scenario.",
+      "classification": "example-tested; bounds stated per row"
+    },
+    {
+      "id": "F10",
+      "original_requirement": "Artifact pointer unavailable remotely.",
+      "current_applicability": "Original capability-receipt artifact authority path retired. Current external bytes/reference availability deliberately unknown; required protected receipt is separately fail-closed.",
+      "state_owner": "Evidence/reference owner and protected verification receipt owner, not a generic Sprintctl artifact fetcher",
+      "implementation_anchors": [
+        "sprintctl/authority.py:arbitrate_command",
+        "sprintctl/resume_diagnostics.py:diagnose_resume",
+        "sprintctl/effect_explanation.py:render_effect_explanation"
+      ],
+      "test_anchors": [
+        "tests/test_authority_fault_protocol.py::test_sqlite_retired_capability_receipt_events_are_refused_without_event",
+        "tests/pg/test_authority.py::TestAuthorityCommandArbitration::test_retired_capability_receipt_commands_are_refused",
+        "tests/pg/test_protected_artifact_acceptance.py::test_required_receipt_cannot_be_omitted",
+        "tests/test_resume_diagnostics.py::test_caller_reports_never_upgrade_owner_unknowns"
+      ],
+      "context_refs": [
+        "authority-command-arbitration"
+      ],
+      "established_evidence": "Fresh tests refuse retired capability events. Current source distinguishes caller-reported access from owner assurance and refuses missing required protected verification receipts.",
+      "unproven_or_unimplemented": "No actual remote-artifact fetch/unavailability fault proved; current command deliberately performs zero content calls. Historical authority-capability-artifact result has no matching current context file. Do not claim result packets establish availability.",
+      "classification": "retired old protocol; current availability unknown, receipt refusal source-inspected"
+    },
+    {
+      "id": "F11",
+      "original_requirement": "Session start without a clean end.",
+      "current_applicability": "Active reconstruction of persisted checkpoint/reservation/run-predecessor context.",
+      "state_owner": "Owner events/reservations and hosted run-predecessor records",
+      "implementation_anchors": [
+        "sprintctl/handoff.py:_last_recorded_checkpoint",
+        "sprintctl/handoff.py:record_handoff_generated",
+        "sprintctl/pg.py:resume_lease"
+      ],
+      "test_anchors": [
+        "tests/test_handoff_checkpoint.py::test_the_resumability_outcome_end_to_end",
+        "tests/test_handoff_checkpoint.py::test_a_session_with_no_worktree_records_no_checkpoint",
+        "tests/pg/test_run_continuation.py::TestPredecessorContext::test_continuation_transfers_context_not_authority",
+        "tests/pg/test_work_lease.py::TestResume::test_a_restarted_holder_whose_lease_was_taken_over_is_told_so"
+      ],
+      "context_refs": [],
+      "established_evidence": "Fresh in-process owner application test records predecessor then reads with no Git context, recovers revision/session and preserves checkpoint across worktreeless handoffs. Separate retained fresh-process/agent trials have their own bounded results.",
+      "unproven_or_unimplemented": "Only persisted facts can be reconstructed; abrupt death before checkpoint or dirty uncommitted contents are not recovered. Hosted restart tests source-inspected; no cross-host/provider qualification here.",
+      "classification": "example-tested; bounds stated per row"
+    },
+    {
+      "id": "F12",
+      "original_requirement": "Duplicate or conflicting scribe proposals.",
+      "current_applicability": "Original generic scribe acceptance remains a historical bounded-model contract; its lifecycle disposition needs owner confirmation. Concrete native effect/bound proposal idempotency is a distinct implemented protocol.",
+      "state_owner": "Reference model only for old generic acceptance; PostgreSQL native effect-idempotency ledger for current proposal protocols",
+      "implementation_anchors": [
+        "tests/test_authority_fault_protocol.py:_ProposalAcceptanceReferenceModel",
+        "sprintctl/proposal_intake.py:synchronize"
+      ],
+      "test_anchors": [
+        "tests/test_authority_fault_protocol.py::test_bounded_proposal_model_is_idempotent_and_rejects_conflicting_payloads",
+        "tests/pg/test_effect_intent.py::TestPropose::test_the_same_key_replays_one_proposal",
+        "tests/pg/test_effect_intent.py::TestPropose::test_the_same_key_with_other_content_is_an_idempotency_conflict",
+        "tests/pg/test_native_proposal_intake.py::test_independent_producers_reconcile_one_owner_proposal"
+      ],
+      "context_refs": [
+        "authority-proposal-idempotency"
+      ],
+      "established_evidence": "Fresh bounded model enumerates8ordered valid histories plus repeated invalid case. Current PG source tests assert same-key/content replay and conflict; independent producers converge to one native proposal.",
+      "unproven_or_unimplemented": "No refinement mapping from old generic scribe ProposalDecision/effect model to current native lifecycle. Current replay may return current intent state, not the old model literal stable Decision object. Old result statement no proposal store is historical, not current absence.",
+      "classification": "exhaustively-checked-within-bound model only; native concurrency anchors source-inspected"
+    },
+    {
+      "id": "F13",
+      "original_requirement": "Projection schema upgrade and rebuild.",
+      "current_applicability": "Active disposable cache rebuild from retained contiguous history.",
+      "state_owner": "SQLite cache, captured PostgreSQL repository high-water",
+      "implementation_anchors": [
+        "sprintctl/projection.py:rebuild_cached_projection",
+        "sprintctl/sync.py:rebuild_ingest_projection"
+      ],
+      "test_anchors": [
+        "tests/test_projection.py::test_schema_v1_cache_fails_closed_until_atomic_rebuild",
+        "tests/test_projection.py::test_high_water_rebuild_replaces_cache_only_after_contiguous_capture",
+        "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_disposable_remote_history_rebuilds_projection"
+      ],
+      "context_refs": [
+        "projection-fault-recovery"
+      ],
+      "established_evidence": "Fresh local tests fail closed for old cache schema and replace sibling cache only after contiguous replay reaches captured high-water.",
+      "unproven_or_unimplemented": "No retained-base snapshot installer; full history required. Context still points at removed tests/test_pg_integration.py rather than current tests/pg/test_outbox.py.",
+      "classification": "example-tested; bounds stated per row"
+    },
+    {
+      "id": "F14",
+      "original_requirement": "Remote log retention or snapshot recovery.",
+      "current_applicability": "Safe refusal implemented for missing prefix; trusted snapshot creation/install remains separate unimplemented scope.",
+      "state_owner": "Remote retained ingest log; disposable cache recovery boundary",
+      "implementation_anchors": [
+        "sprintctl/projection.py:apply_ingested_records",
+        "sprintctl/projection.py:rebuild_cached_projection"
+      ],
+      "test_anchors": [
+        "tests/test_projection.py::test_retained_suffix_cannot_advance_an_empty_projection",
+        "tests/test_projection.py::test_high_water_rebuild_rejects_suffix_and_preserves_live_cache"
+      ],
+      "context_refs": [
+        "projection-fault-recovery"
+      ],
+      "established_evidence": "Fresh minimized retained-suffix examples reject skipped prefix, leave watermark0 or preserve prior live cache.",
+      "unproven_or_unimplemented": "No qualified snapshot-plus-base-offset restore protocol was found/run. Safe blocked recovery is the established outcome, not successful retention recovery.",
+      "classification": "example-tested; bounds stated per row"
+    },
+    {
+      "id": "I01",
+      "original_requirement": "No locally committed outbox record is lost across producer restart.",
+      "current_applicability": "Active bounded SQLite committed-record retention.",
+      "state_owner": "Local SQLite outbox",
+      "implementation_anchors": [
+        "sprintctl/outbox.py:open_outbox",
+        "sprintctl/outbox.py:append_observation"
+      ],
+      "test_anchors": [
+        "tests/test_outbox.py::test_record_survives_restart_with_required_provenance",
+        "tests/test_authority_outbox.py::test_concurrent_openers_serialize_migration_and_append_without_loss"
+      ],
+      "context_refs": [
+        "outbox-producer-sequencing"
+      ],
+      "established_evidence": "Fresh committed reopen and bounded concurrent migration/append histories preserve data; synchronous FULL asserted.",
+      "unproven_or_unimplemented": "No physical power-loss/OS-fsync campaign; do not upgrade bounded examples into universal durability proof.",
+      "classification": "example-tested; bounds stated per row"
+    },
+    {
+      "id": "I02",
+      "original_requirement": "One (origin_stream_id, origin_seq) is ingested at most once.",
+      "current_applicability": "Active within explicit repository scope; payload fingerprint must also match.",
+      "state_owner": "PostgreSQL repository/stream identity and immutable ingest record",
+      "implementation_anchors": [
+        "sprintctl/pg.py:ingest_records"
+      ],
+      "test_anchors": [
+        "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_concurrent_same_stream_retry_admits_once",
+        "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_changed_producer_timestamp_conflicts_with_existing_origin_tuple"
+      ],
+      "context_refs": [
+        "outbox-remote-ingestion"
+      ],
+      "established_evidence": "Source inspected UNIQUE(repo_id,origin_stream_id,origin_seq), stream/repo locks and fingerprint rejection; historical1139 evidence.",
+      "unproven_or_unimplemented": "PG tests not rerun; no cross-repository global identity or exactly-once external effect proof.",
+      "classification": "concurrency-test anchors inspected; current PG execution unknown"
+    },
+    {
+      "id": "I03",
+      "original_requirement": "Sequence gaps are detected.",
+      "current_applicability": "Active contiguous stream admission and cache replay; explicit guarded seed is separate.",
+      "state_owner": "PostgreSQL stream and SQLite cache cursors",
+      "implementation_anchors": [
+        "sprintctl/pg.py:_admit_sequence",
+        "sprintctl/projection.py:apply_ingested_records"
+      ],
+      "test_anchors": [
+        "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_gap_rejects_whole_batch_without_advancing_stream",
+        "tests/test_projection.py::test_gaps_and_out_of_order_inputs_are_rejected_without_advancing_watermark"
+      ],
+      "context_refs": [
+        "outbox-remote-ingestion",
+        "projection-fault-recovery"
+      ],
+      "established_evidence": "Fresh local cache gap examples reject without advancing; PG source handler rolls back whole gap batch.",
+      "unproven_or_unimplemented": "Current PG execution unknown; manually authorized stream seeding must not be confused with automatic acceptance of missing history.",
+      "classification": "example-tested; bounds stated per row"
+    },
+    {
+      "id": "I04",
+      "original_requirement": "The watermark never advances beyond unapplied remote events.",
+      "current_applicability": "Active transaction over cached records and matching cursor.",
+      "state_owner": "SQLite cached projection/watermark",
+      "implementation_anchors": [
+        "sprintctl/projection.py:apply_ingested_records",
+        "sprintctl/projection.py:apply_authority_decisions"
+      ],
+      "test_anchors": [
+        "tests/test_projection.py::test_failed_record_application_rolls_back_records_and_watermark",
+        "tests/test_projection.py::test_authority_decision_failure_rolls_back_rows_and_watermark"
+      ],
+      "context_refs": [
+        "projection-fault-recovery"
+      ],
+      "established_evidence": "Fresh trigger-failure tests roll back rows and both watermark domains atomically.",
+      "unproven_or_unimplemented": "No OS/storage crash campaign. Ingest and authority cursors are separate domains, not one global ordering.",
+      "classification": "example-tested; bounds stated per row"
+    },
+    {
+      "id": "I05",
+      "original_requirement": "Authority state changes only from remote-authored decisions.",
+      "current_applicability": "Original universal wording is too broad: local SQLite remains legitimate authority. Correct served invariant is owner-controlled mutation; producer reports/cache never grant authority.",
+      "state_owner": "Owning local/served lifecycle arbiter and terminal Decision records",
+      "implementation_anchors": [
+        "sprintctl/authority.py:arbitrate_command",
+        "sprintctl/db.py:set_work_item_status"
+      ],
+      "test_anchors": [
+        "tests/test_outbox.py::test_append_rejects_authority_decision_and_unknown_event_types",
+        "tests/test_authority_outbox.py::test_append_record_rejects_remote_decisions",
+        "tests/test_item_evidence_observations.py::test_cli_append_and_list_never_transition_authoritative_item",
+        "tests/pg/test_authority.py::TestAuthorityCommandArbitration::test_decision_insert_failure_rolls_back_request_and_effect"
+      ],
+      "context_refs": [
+        "authority-command-arbitration"
+      ],
+      "established_evidence": "Fresh producer observations cannot claim authority decisions or mutate item status; PG source atomically binds request/decision/effect or rolls back.",
+      "unproven_or_unimplemented": "Do not assert all local state mutations require a remote decision, or that advisory reservation possession grants mutation. Old claim-proof sidecar context is stale.",
+      "classification": "scope correction required; example-tested producer boundary, PG source-inspected"
+    },
+    {
+      "id": "I06",
+      "original_requirement": "Stale commands produce rejection, not mutation.",
+      "current_applicability": "Active per-operation owner preconditions; not a universal monotonic-fencing claim.",
+      "state_owner": "Owner CAS/lifecycle arbiter",
+      "implementation_anchors": [
+        "sprintctl/authority.py:arbitrate_command",
+        "sprintctl/db.py:set_work_item_status"
+      ],
+      "test_anchors": [
+        "tests/test_core.py::TestStatusTransitions::test_item_status_rejects_stale_revision_without_row_or_event_effect",
+        "tests/pg/test_authority.py::TestAuthorityCommandArbitration::test_item_transition_retry_and_stale_rejection_are_durable",
+        "tests/test_authority_fault_protocol.py::test_sqlite_stale_item_and_sprint_commands_reject_without_second_mutation"
+      ],
+      "context_refs": [
+        "authority-stale-commands",
+        "authority-command-arbitration"
+      ],
+      "established_evidence": "Fresh duplicate-terminal example has no second mutation/boundary; current CLI CAS and PG durable rejection anchors inspected.",
+      "unproven_or_unimplemented": "Full stale-basis CLI/PG set not rerun; declare exact operation/basis and distinguish state-basis revisions from monotonic epochs.",
+      "classification": "example-tested; bounds stated per row"
+    },
+    {
+      "id": "I07",
+      "original_requirement": "Claims are shown as valid only while backed by an unexpired remote grant.",
+      "current_applicability": "Retired for advisory reservations: no TTL/grant. Applicable TTL rule belongs only to separate hosted work lease protocol.",
+      "state_owner": "Advisory reservation display versus PostgreSQL hosted lease settlement",
+      "implementation_anchors": [
+        "sprintctl/db.py:reserve",
+        "sprintctl/pg.py:heartbeat_lease",
+        "sprintctl/pg.py:complete_lease"
+      ],
+      "test_anchors": [
+        "tests/test_authority_fault_protocol.py::test_sqlite_partition_reassignment_rejects_stale_reservation_touch",
+        "tests/pg/test_work_lease.py::TestHeartbeat::test_an_expired_lease_cannot_heartbeat_even_when_nobody_took_it",
+        "tests/pg/test_work_lease.py::TestOperatorLeaseContract::test_inv_l1_a_stale_lease_nobody_took_keeps_its_result_but_cannot_settle"
+      ],
+      "context_refs": [
+        "authority-claim-partition-expiry"
+      ],
+      "established_evidence": "Fresh advisory takeover rejects displaced touch; hosted source tests reject stale heartbeat and retain nonauthoritative late reports.",
+      "unproven_or_unimplemented": "No reservation expiry/exclusive-grant semantics may be reintroduced; PG lease tests not rerun; neither grants external-effect fencing.",
+      "classification": "retired old claim wording; bounded replacement evidence only"
+    },
+    {
+      "id": "I08",
+      "original_requirement": "Accepted/rejected proposal processing is idempotent.",
+      "current_applicability": "Domain-specific native proposal/authority request idempotency active; generic scribe-model refinement remains unknown.",
+      "state_owner": "PostgreSQL owner idempotency and authority-decision ledgers",
+      "implementation_anchors": [
+        "sprintctl/authority.py:arbitrate_command",
+        "sprintctl/proposal_intake.py:synchronize"
+      ],
+      "test_anchors": [
+        "tests/test_authority_fault_protocol.py::test_bounded_proposal_model_is_idempotent_and_rejects_conflicting_payloads",
+        "tests/pg/test_effect_intent.py::TestPropose::test_the_same_key_with_other_content_is_an_idempotency_conflict",
+        "tests/pg/test_native_proposal_intake.py::test_actual_commit_lost_reply_replays_current_state",
+        "tests/pg/test_authority.py::TestAuthorityCommandArbitration::test_item_transition_retry_and_stale_rejection_are_durable"
+      ],
+      "context_refs": [
+        "authority-proposal-idempotency",
+        "authority-command-arbitration"
+      ],
+      "established_evidence": "Fresh old model bounded histories; native source tests cover same-key conflict, current accepted/rejected/applied lifecycle replay, stable request decision identity and single stored proposal.",
+      "unproven_or_unimplemented": "Do not claim general refinement of old model or exactly-once target effects. Native protocol-specific scope/key/response semantics must be retained.",
+      "classification": "bounded model freshly executed; native examples/concurrency source-inspected"
+    },
+    {
+      "id": "I09",
+      "original_requirement": "Shadow projections remain equivalent to current authoritative state during migration.",
+      "current_applicability": "Original rollout-era whole-state pilot retired. Current cache reproduces ingest envelopes to a captured high-water, not every owner business table.",
+      "state_owner": "Historical pilot; current ingest cache owner; EC migration owners for future parity",
+      "implementation_anchors": [
+        "sprintctl/projection.py:rebuild_cached_projection",
+        "sprintctl/sync.py:rebuild_ingest_projection"
+      ],
+      "test_anchors": [
+        "tests/test_projection.py::test_offline_catch_up_and_full_log_rebuild_converge",
+        "tests/test_projection.py::test_high_water_rebuild_replaces_cache_only_after_contiguous_capture",
+        "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_disposable_remote_history_rebuilds_projection"
+      ],
+      "context_refs": [
+        "projection-fault-recovery"
+      ],
+      "established_evidence": "Fresh local full-history record/cursor equality; historical1145/1163 scope retained, pilot/cutover deleted6183d6b.",
+      "unproven_or_unimplemented": "No current whole-business-state shadow parity tool or future EC migration proof. Do not recreate retired pilot or equate cache-record convergence with canonical item/Decision-state equivalence.",
+      "classification": "retired rollout invariant; example-tested narrower cache convergence"
+    }
+  ],
+  "resolved_anchors": {
+    "tests/test_outbox.py::test_record_survives_restart_with_required_provenance": {
+      "path": "tests/test_outbox.py",
+      "symbol": "test_record_survives_restart_with_required_provenance",
+      "line": 20
+    },
+    "tests/test_outbox.py::test_failed_insert_rolls_back_stream_creation_and_sequence": {
+      "path": "tests/test_outbox.py",
+      "symbol": "test_failed_insert_rolls_back_stream_creation_and_sequence",
+      "line": 102
+    },
+    "sprintctl/outbox.py:open_outbox": {
+      "path": "sprintctl/outbox.py",
+      "symbol": "open_outbox",
+      "line": 199
+    },
+    "sprintctl/outbox.py:append_observation": {
+      "path": "sprintctl/outbox.py",
+      "symbol": "append_observation",
+      "line": 526
+    },
+    "tests/test_sync.py::test_sync_recovers_after_lost_response_or_projection_apply_failure": {
+      "path": "tests/test_sync.py",
+      "symbol": "test_sync_recovers_after_lost_response_or_projection_apply_failure",
+      "line": 120
+    },
+    "tests/test_sync.py::test_normal_sync_migrates_legacy_pilot_databases_without_removing_them": {
+      "path": "tests/test_sync.py",
+      "symbol": "test_normal_sync_migrates_legacy_pilot_databases_without_removing_them",
+      "line": 23
+    },
+    "sprintctl/sync.py:synchronize_outbox": {
+      "path": "sprintctl/sync.py",
+      "symbol": "synchronize_outbox",
+      "line": 156
+    },
+    "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_retry_returns_original_offset_and_cursor_orders_new_records": {
+      "path": "tests/pg/test_outbox.py",
+      "symbol": "TestProducerOutboxIngestion::test_retry_returns_original_offset_and_cursor_orders_new_records",
+      "line": 49
+    },
+    "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_concurrent_same_stream_retry_admits_once": {
+      "path": "tests/pg/test_outbox.py",
+      "symbol": "TestProducerOutboxIngestion::test_concurrent_same_stream_retry_admits_once",
+      "line": 314
+    },
+    "sprintctl/pg.py:ingest_records": {
+      "path": "sprintctl/pg.py",
+      "symbol": "ingest_records",
+      "line": 967
+    },
+    "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_lost_response_retry_does_not_advance_repository_cursor": {
+      "path": "tests/pg/test_outbox.py",
+      "symbol": "TestProducerOutboxIngestion::test_lost_response_retry_does_not_advance_repository_cursor",
+      "line": 166
+    },
+    "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_gap_rejects_whole_batch_without_advancing_stream": {
+      "path": "tests/pg/test_outbox.py",
+      "symbol": "TestProducerOutboxIngestion::test_gap_rejects_whole_batch_without_advancing_stream",
+      "line": 275
+    },
+    "tests/test_projection.py::test_gaps_and_out_of_order_inputs_are_rejected_without_advancing_watermark": {
+      "path": "tests/test_projection.py",
+      "symbol": "test_gaps_and_out_of_order_inputs_are_rejected_without_advancing_watermark",
+      "line": 65
+    },
+    "sprintctl/pg.py:_admit_sequence": {
+      "path": "sprintctl/pg.py",
+      "symbol": "_admit_sequence",
+      "line": 628
+    },
+    "tests/test_projection.py::test_failed_record_application_rolls_back_records_and_watermark": {
+      "path": "tests/test_projection.py",
+      "symbol": "test_failed_record_application_rolls_back_records_and_watermark",
+      "line": 31
+    },
+    "sprintctl/projection.py:apply_ingested_records": {
+      "path": "sprintctl/projection.py",
+      "symbol": "apply_ingested_records",
+      "line": 412
+    },
+    "tests/test_projection.py::test_offline_catch_up_and_full_log_rebuild_converge": {
+      "path": "tests/test_projection.py",
+      "symbol": "test_offline_catch_up_and_full_log_rebuild_converge",
+      "line": 137
+    },
+    "tests/test_projection.py::test_serializable_input_and_unapplied_watermark_age": {
+      "path": "tests/test_projection.py",
+      "symbol": "test_serializable_input_and_unapplied_watermark_age",
+      "line": 78
+    },
+    "sprintctl/projection.py:assess_freshness": {
+      "path": "sprintctl/projection.py",
+      "symbol": "assess_freshness",
+      "line": 580
+    },
+    "tests/test_authority_fault_protocol.py::test_sqlite_partition_reassignment_rejects_stale_reservation_touch": {
+      "path": "tests/test_authority_fault_protocol.py",
+      "symbol": "test_sqlite_partition_reassignment_rejects_stale_reservation_touch",
+      "line": 28
+    },
+    "tests/pg/test_authority.py::TestAuthorityFaultHistories::test_partition_reassignment_then_stale_touch_is_rejected": {
+      "path": "tests/pg/test_authority.py",
+      "symbol": "TestAuthorityFaultHistories::test_partition_reassignment_then_stale_touch_is_rejected",
+      "line": 42
+    },
+    "tests/pg/test_work_lease.py::TestHeartbeat::test_an_expired_lease_cannot_heartbeat_even_when_nobody_took_it": {
+      "path": "tests/pg/test_work_lease.py",
+      "symbol": "TestHeartbeat::test_an_expired_lease_cannot_heartbeat_even_when_nobody_took_it",
+      "line": 445
+    },
+    "tests/pg/test_work_lease.py::TestOperatorLeaseContract::test_inv_l1_a_superseded_lease_keeps_its_result_but_not_its_authority": {
+      "path": "tests/pg/test_work_lease.py",
+      "symbol": "TestOperatorLeaseContract::test_inv_l1_a_superseded_lease_keeps_its_result_but_not_its_authority",
+      "line": 1500
+    },
+    "sprintctl/db.py:reserve": {
+      "path": "sprintctl/db.py",
+      "symbol": "reserve",
+      "line": 1968
+    },
+    "sprintctl/db.py:touch_reservation": {
+      "path": "sprintctl/db.py",
+      "symbol": "touch_reservation",
+      "line": 2085
+    },
+    "sprintctl/pg.py:heartbeat_lease": {
+      "path": "sprintctl/pg.py",
+      "symbol": "heartbeat_lease",
+      "line": 7433
+    },
+    "sprintctl/pg.py:complete_lease": {
+      "path": "sprintctl/pg.py",
+      "symbol": "complete_lease",
+      "line": 7653
+    },
+    "tests/test_authority_fault_protocol.py::test_sqlite_stale_item_and_sprint_commands_reject_without_second_mutation": {
+      "path": "tests/test_authority_fault_protocol.py",
+      "symbol": "test_sqlite_stale_item_and_sprint_commands_reject_without_second_mutation",
+      "line": 77
+    },
+    "tests/test_core.py::TestStatusTransitions::test_item_status_rejects_stale_revision_without_row_or_event_effect": {
+      "path": "tests/test_core.py",
+      "symbol": "TestStatusTransitions::test_item_status_rejects_stale_revision_without_row_or_event_effect",
+      "line": 679
+    },
+    "tests/pg/test_authority.py::TestAuthorityCommandArbitration::test_item_transition_retry_and_stale_rejection_are_durable": {
+      "path": "tests/pg/test_authority.py",
+      "symbol": "TestAuthorityCommandArbitration::test_item_transition_retry_and_stale_rejection_are_durable",
+      "line": 193
+    },
+    "tests/pg/test_authority.py::TestAuthorityCommandArbitration::test_sprint_close_boundary_and_decision_commit_atomically": {
+      "path": "tests/pg/test_authority.py",
+      "symbol": "TestAuthorityCommandArbitration::test_sprint_close_boundary_and_decision_commit_atomically",
+      "line": 520
+    },
+    "sprintctl/db.py:set_work_item_status": {
+      "path": "sprintctl/db.py",
+      "symbol": "set_work_item_status",
+      "line": 1620
+    },
+    "sprintctl/db.py:close_sprint_with_boundary_event": {
+      "path": "sprintctl/db.py",
+      "symbol": "close_sprint_with_boundary_event",
+      "line": 1853
+    },
+    "sprintctl/authority.py:arbitrate_command": {
+      "path": "sprintctl/authority.py",
+      "symbol": "arbitrate_command",
+      "line": 657
+    },
+    "tests/test_authority_fault_protocol.py::test_sqlite_retired_capability_receipt_events_are_refused_without_event": {
+      "path": "tests/test_authority_fault_protocol.py",
+      "symbol": "test_sqlite_retired_capability_receipt_events_are_refused_without_event",
+      "line": 111
+    },
+    "tests/pg/test_authority.py::TestAuthorityCommandArbitration::test_retired_capability_receipt_commands_are_refused": {
+      "path": "tests/pg/test_authority.py",
+      "symbol": "TestAuthorityCommandArbitration::test_retired_capability_receipt_commands_are_refused",
+      "line": 636
+    },
+    "tests/pg/test_protected_artifact_acceptance.py::test_required_receipt_cannot_be_omitted": {
+      "path": "tests/pg/test_protected_artifact_acceptance.py",
+      "symbol": "test_required_receipt_cannot_be_omitted",
+      "line": 72
+    },
+    "tests/test_resume_diagnostics.py::test_caller_reports_never_upgrade_owner_unknowns": {
+      "path": "tests/test_resume_diagnostics.py",
+      "symbol": "test_caller_reports_never_upgrade_owner_unknowns",
+      "line": 42
+    },
+    "sprintctl/resume_diagnostics.py:diagnose_resume": {
+      "path": "sprintctl/resume_diagnostics.py",
+      "symbol": "diagnose_resume",
+      "line": 72
+    },
+    "sprintctl/effect_explanation.py:render_effect_explanation": {
+      "path": "sprintctl/effect_explanation.py",
+      "symbol": "render_effect_explanation",
+      "line": 13
+    },
+    "tests/test_handoff_checkpoint.py::test_the_resumability_outcome_end_to_end": {
+      "path": "tests/test_handoff_checkpoint.py",
+      "symbol": "test_the_resumability_outcome_end_to_end",
+      "line": 180
+    },
+    "tests/test_handoff_checkpoint.py::test_a_session_with_no_worktree_records_no_checkpoint": {
+      "path": "tests/test_handoff_checkpoint.py",
+      "symbol": "test_a_session_with_no_worktree_records_no_checkpoint",
+      "line": 123
+    },
+    "tests/pg/test_run_continuation.py::TestPredecessorContext::test_continuation_transfers_context_not_authority": {
+      "path": "tests/pg/test_run_continuation.py",
+      "symbol": "TestPredecessorContext::test_continuation_transfers_context_not_authority",
+      "line": 348
+    },
+    "tests/pg/test_work_lease.py::TestResume::test_a_restarted_holder_whose_lease_was_taken_over_is_told_so": {
+      "path": "tests/pg/test_work_lease.py",
+      "symbol": "TestResume::test_a_restarted_holder_whose_lease_was_taken_over_is_told_so",
+      "line": 679
+    },
+    "sprintctl/handoff.py:_last_recorded_checkpoint": {
+      "path": "sprintctl/handoff.py",
+      "symbol": "_last_recorded_checkpoint",
+      "line": 59
+    },
+    "sprintctl/handoff.py:record_handoff_generated": {
+      "path": "sprintctl/handoff.py",
+      "symbol": "record_handoff_generated",
+      "line": 165
+    },
+    "sprintctl/pg.py:resume_lease": {
+      "path": "sprintctl/pg.py",
+      "symbol": "resume_lease",
+      "line": 7289
+    },
+    "tests/test_authority_fault_protocol.py::test_bounded_proposal_model_is_idempotent_and_rejects_conflicting_payloads": {
+      "path": "tests/test_authority_fault_protocol.py",
+      "symbol": "test_bounded_proposal_model_is_idempotent_and_rejects_conflicting_payloads",
+      "line": 172
+    },
+    "tests/pg/test_effect_intent.py::TestPropose::test_the_same_key_replays_one_proposal": {
+      "path": "tests/pg/test_effect_intent.py",
+      "symbol": "TestPropose::test_the_same_key_replays_one_proposal",
+      "line": 290
+    },
+    "tests/pg/test_effect_intent.py::TestPropose::test_the_same_key_with_other_content_is_an_idempotency_conflict": {
+      "path": "tests/pg/test_effect_intent.py",
+      "symbol": "TestPropose::test_the_same_key_with_other_content_is_an_idempotency_conflict",
+      "line": 301
+    },
+    "tests/pg/test_native_proposal_intake.py::test_independent_producers_reconcile_one_owner_proposal": {
+      "path": "tests/pg/test_native_proposal_intake.py",
+      "symbol": "test_independent_producers_reconcile_one_owner_proposal",
+      "line": 112
+    },
+    "tests/test_authority_fault_protocol.py:_ProposalAcceptanceReferenceModel": {
+      "path": "tests/test_authority_fault_protocol.py",
+      "symbol": "_ProposalAcceptanceReferenceModel",
+      "line": 135
+    },
+    "sprintctl/proposal_intake.py:synchronize": {
+      "path": "sprintctl/proposal_intake.py",
+      "symbol": "synchronize",
+      "line": 239
+    },
+    "tests/test_projection.py::test_schema_v1_cache_fails_closed_until_atomic_rebuild": {
+      "path": "tests/test_projection.py",
+      "symbol": "test_schema_v1_cache_fails_closed_until_atomic_rebuild",
+      "line": 180
+    },
+    "tests/test_projection.py::test_high_water_rebuild_replaces_cache_only_after_contiguous_capture": {
+      "path": "tests/test_projection.py",
+      "symbol": "test_high_water_rebuild_replaces_cache_only_after_contiguous_capture",
+      "line": 235
+    },
+    "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_disposable_remote_history_rebuilds_projection": {
+      "path": "tests/pg/test_outbox.py",
+      "symbol": "TestProducerOutboxIngestion::test_disposable_remote_history_rebuilds_projection",
+      "line": 347
+    },
+    "sprintctl/projection.py:rebuild_cached_projection": {
+      "path": "sprintctl/projection.py",
+      "symbol": "rebuild_cached_projection",
+      "line": 479
+    },
+    "sprintctl/sync.py:rebuild_ingest_projection": {
+      "path": "sprintctl/sync.py",
+      "symbol": "rebuild_ingest_projection",
+      "line": 133
+    },
+    "tests/test_projection.py::test_retained_suffix_cannot_advance_an_empty_projection": {
+      "path": "tests/test_projection.py",
+      "symbol": "test_retained_suffix_cannot_advance_an_empty_projection",
+      "line": 169
+    },
+    "tests/test_projection.py::test_high_water_rebuild_rejects_suffix_and_preserves_live_cache": {
+      "path": "tests/test_projection.py",
+      "symbol": "test_high_water_rebuild_rejects_suffix_and_preserves_live_cache",
+      "line": 212
+    },
+    "tests/test_authority_outbox.py::test_concurrent_openers_serialize_migration_and_append_without_loss": {
+      "path": "tests/test_authority_outbox.py",
+      "symbol": "test_concurrent_openers_serialize_migration_and_append_without_loss",
+      "line": 289
+    },
+    "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_changed_producer_timestamp_conflicts_with_existing_origin_tuple": {
+      "path": "tests/pg/test_outbox.py",
+      "symbol": "TestProducerOutboxIngestion::test_changed_producer_timestamp_conflicts_with_existing_origin_tuple",
+      "line": 265
+    },
+    "tests/test_projection.py::test_authority_decision_failure_rolls_back_rows_and_watermark": {
+      "path": "tests/test_projection.py",
+      "symbol": "test_authority_decision_failure_rolls_back_rows_and_watermark",
+      "line": 112
+    },
+    "sprintctl/projection.py:apply_authority_decisions": {
+      "path": "sprintctl/projection.py",
+      "symbol": "apply_authority_decisions",
+      "line": 341
+    },
+    "tests/test_outbox.py::test_append_rejects_authority_decision_and_unknown_event_types": {
+      "path": "tests/test_outbox.py",
+      "symbol": "test_append_rejects_authority_decision_and_unknown_event_types",
+      "line": 87
+    },
+    "tests/test_authority_outbox.py::test_append_record_rejects_remote_decisions": {
+      "path": "tests/test_authority_outbox.py",
+      "symbol": "test_append_record_rejects_remote_decisions",
+      "line": 74
+    },
+    "tests/test_item_evidence_observations.py::test_cli_append_and_list_never_transition_authoritative_item": {
+      "path": "tests/test_item_evidence_observations.py",
+      "symbol": "test_cli_append_and_list_never_transition_authoritative_item",
+      "line": 145
+    },
+    "tests/pg/test_authority.py::TestAuthorityCommandArbitration::test_decision_insert_failure_rolls_back_request_and_effect": {
+      "path": "tests/pg/test_authority.py",
+      "symbol": "TestAuthorityCommandArbitration::test_decision_insert_failure_rolls_back_request_and_effect",
+      "line": 464
+    },
+    "tests/pg/test_work_lease.py::TestOperatorLeaseContract::test_inv_l1_a_stale_lease_nobody_took_keeps_its_result_but_cannot_settle": {
+      "path": "tests/pg/test_work_lease.py",
+      "symbol": "TestOperatorLeaseContract::test_inv_l1_a_stale_lease_nobody_took_keeps_its_result_but_cannot_settle",
+      "line": 1516
+    },
+    "tests/pg/test_native_proposal_intake.py::test_actual_commit_lost_reply_replays_current_state": {
+      "path": "tests/pg/test_native_proposal_intake.py",
+      "symbol": "test_actual_commit_lost_reply_replays_current_state",
+      "line": 36
+    }
+  },
+  "context_anchor_audit": [
+    {
+      "context": "verification/contexts/outbox-producer-sequencing.json",
+      "declared_anchors": 5,
+      "broken_anchors": []
+    },
+    {
+      "context": "verification/contexts/outbox-remote-ingestion.json",
+      "declared_anchors": 3,
+      "broken_anchors": []
+    },
+    {
+      "context": "verification/contexts/projection-fault-recovery.json",
+      "declared_anchors": 9,
+      "broken_anchors": [
+        {
+          "anchor": "tests/test_pg_integration.py:test_disposable_remote_history_rebuilds_projection",
+          "reason": "missing file"
+        }
+      ]
+    },
+    {
+      "context": "verification/contexts/authority-claim-partition-expiry.json",
+      "declared_anchors": 6,
+      "broken_anchors": [
+        {
+          "anchor": "sprintctl/db.py:create_claim",
+          "reason": "missing symbol"
+        },
+        {
+          "anchor": "sprintctl/db.py:heartbeat_claim",
+          "reason": "missing symbol"
+        },
+        {
+          "anchor": "sprintctl/pg.py:create_claim",
+          "reason": "missing symbol"
+        },
+        {
+          "anchor": "sprintctl/pg.py:heartbeat_claim",
+          "reason": "missing symbol"
+        },
+        {
+          "anchor": "tests/test_authority_fault_protocol.py:test_sqlite_partition_expiry_reassignment_rejects_stale_heartbeat",
+          "reason": "missing symbol"
+        },
+        {
+          "anchor": "tests/test_pg_integration.py:TestAuthorityFaultHistories",
+          "reason": "missing file"
+        }
+      ]
+    },
+    {
+      "context": "verification/contexts/authority-stale-commands.json",
+      "declared_anchors": 6,
+      "broken_anchors": [
+        {
+          "anchor": "tests/test_pg_integration.py:TestAuthorityFaultHistories",
+          "reason": "missing file"
+        }
+      ]
+    },
+    {
+      "context": "verification/contexts/authority-proposal-idempotency.json",
+      "declared_anchors": 2,
+      "broken_anchors": []
+    },
+    {
+      "context": "verification/contexts/authority-command-arbitration.json",
+      "declared_anchors": 7,
+      "broken_anchors": [
+        {
+          "anchor": "sprintctl/authority_config.py:store_pending_authority_credentials",
+          "reason": "missing symbol"
+        },
+        {
+          "anchor": "sprintctl/cli.py:authority_submit",
+          "reason": "missing symbol"
+        },
+        {
+          "anchor": "tests/test_pg_integration.py:TestAuthorityCommandArbitration",
+          "reason": "missing file"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "command": "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q -p no:cacheprovider --basetemp=/tmp/sprintctl-1131-coverage-audit-tests tests/test_outbox.py tests/test_authority_outbox.py tests/test_projection.py tests/test_sync.py tests/test_authority_fault_protocol.py tests/test_handoff_checkpoint.py tests/test_item_evidence_observations.py",
+    "result": "90 passed in51.84s",
+    "postgres_executed": false,
+    "formal_checker_executed": false,
+    "source_or_native_mutations": false
+  },
+  "limits": [
+    "No product repair or new protocol/model/context implementation.",
+    "No PostgreSQL histories, live fault injection, production mutation, OS/power-loss campaign, TLA+ checker or cross-provider proof executed.",
+    "All23 original requirements accounted for; accounted-for is not fully proved.",
+    "Historical result packets remain historical; source-present tests are not a current runtime pass.",
+    "Current protocol decisions and EC foundation gates remain owner-controlled."
+  ]
+}

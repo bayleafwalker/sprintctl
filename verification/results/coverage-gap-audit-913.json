@@ -1,0 +1,71 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.coverage-gap-audit-913",
+  "contract_ref": {
+    "doc_id": "sprintctl.coverage-gap-audit-913",
+    "revision": "sha256:9985eef9f0f5ce80a587c9f4329ade65a4e9ab496b118fca5954e0786a91a50c"
+  },
+  "implementation_sha": "20e120fb54b51bef001e4d5d57437388e8b8bc58",
+  "depth": 1,
+  "environment": {
+    "backend": "temporary local SQLite and declared fake served adapters",
+    "isolation": "profile/backend environment removed; temporary pytest roots; no live fault injection",
+    "tool_versions": {
+      "Python": "3.13.16",
+      "pytest": "9.0.2"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": null,
+    "bounds": {
+      "requested_axes": 3,
+      "reused_matrix_rows": 23,
+      "reused_failure_rows": 14,
+      "reused_invariant_rows": 9,
+      "revalidated_source_anchors": 70,
+      "current_coverage_examples": 145,
+      "separate_recovery_checks_in_same_cohort": 43
+    },
+    "faults_exercised": [
+      "existing stale state/session, rollback fault, overlap, no-ready/invalid maintenance examples in cited test cohort"
+    ]
+  },
+  "claims": [
+    {
+      "property": "Current requested coverage areas have bounded passing local examples",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_core.py:TestStatusTransitions",
+        "tests/test_decisions.py",
+        "tests/test_authority_fault_protocol.py",
+        "tests/test_reservations.py",
+        "tests/test_reservation_atomicity.py",
+        "tests/test_maintain.py",
+        "tests/test_served_maintain_check.py"
+      ]
+    },
+    {
+      "property": "Open coverage gaps and retired protocol distinctions are retained, not claimed fixed",
+      "result": "documented-only",
+      "evidence": [
+        "docs/evidence/coverage-gap-audit-913-20261018.md",
+        "docs/evidence/protocol-coverage-audit-20261018.json"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Historical1131 context survey found11 stale anchors among38 declarations in4of7contexts; equivalent current tests can exist elsewhere",
+      "trace_ref": "docs/evidence/protocol-coverage-audit-20261018.json"
+    }
+  ],
+  "notes": [
+    "No product repair or new runtime protocol. Native913No doc5484 scopes audit deliverable only.1131 full14scenario/9invariant qualification stays open.",
+    "Retained matrix bytes SHA256 fe8596395c7d217ee34094ae292b7050258730ec54fc98786209a6451056f5b5; original observation072d033, original90 local passes, no originalPG/formal execution. All70 source anchors re-resolved at4a00d18; line numbers remain historical.",
+    "Current20e120f cohort188passed17.34s:145 coverage examples plus43 separate recovery/doctor checks. Earlier4a00d18 coverage135passed13.46s; new10 local reservation atomicity cases reflect separately owned2763 repair.",
+    "Command: env -u SPRINTCTL_URL -u SPRINTCTL_VUORO_PROFILE -u SPRINTCTL_BACKEND -u SPRINTCTL_DB uv run --offline --frozen --extra dev --extra remote --extra served pytest -q tests/test_core.py::TestStatusTransitions tests/test_decisions.py tests/test_authority_fault_protocol.py tests/test_reservations.py tests/test_reservation_atomicity.py tests/test_maintain.py tests/test_served_maintain_check.py tests/test_db_recover.py tests/test_doctor.py --basetemp /var/tmp/sprintctl-backlog-current",
+    "No auditPG/formal/physical-fsync campaign, complete maintenance transaction proof, live project qualification, deployment or authority change. DisposablePG recovery execution belongs separately to1234, not to hosted lease/maintenance proof.",
+    "Independent findings-first and optimistic criterion/source/document/packet review clear; original three-axis audit deliverable satisfied, remaining protocol gaps unclosed."
+  ]
+}

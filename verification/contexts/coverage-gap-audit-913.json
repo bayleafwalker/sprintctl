@@ -1,0 +1,77 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.coverage-gap-audit-913",
+  "owner_repo": "sprintctl",
+  "subject": "coverage-audit-state-reservation-maintenance",
+  "contract_ref": {
+    "doc_id": "sprintctl.coverage-gap-audit-913",
+    "revision": "sha256:9985eef9f0f5ce80a587c9f4329ade65a4e9ab496b118fca5954e0786a91a50c"
+  },
+  "source_of_truth": "native913 audit title, current implementation/tests and retained1131 observation",
+  "depth": 1,
+  "backends": [
+    "temporary-sqlite",
+    "fake-served-transport"
+  ],
+  "actors": [
+    "auditor"
+  ],
+  "initial_state": [
+    "source baseline20e120fb54b51bef001e4d5d57437388e8b8bc58",
+    "retained unchanged1131 matrix observed072d0338c77848252d4986a0e6e15b9432a2a085"
+  ],
+  "operations": [
+    {
+      "name": "inspect-coverage-and-test-existing-examples",
+      "actors": [
+        "auditor"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "evidence-classification-and-coverage-boundaries"
+  },
+  "assumptions": {
+    "original-claims": "historical credential claims are retired; reservations and protected owner leases are distinct",
+    "authority": "audit does not authorize new product behavior or satisfy foundation gates"
+  },
+  "bounds": {
+    "requested_axes": 3,
+    "reused_matrix_rows": 23,
+    "reused_failure_rows": 14,
+    "reused_invariant_rows": 9,
+    "revalidated_source_anchors": 70,
+    "current_coverage_examples": 145,
+    "separate_recovery_checks_in_same_cohort": 43
+  },
+  "invariants": [
+    "audit distinguishes inspected anchors from executed histories",
+    "unchanged historical matrix preserves original source/results/limits",
+    "advisory reservations do not gain lease/TTL/authority semantics",
+    "remaining gaps remain explicit and unproved"
+  ],
+  "faults": [
+    "historical stale anchors",
+    "retired claim vocabulary interpreted as current authority",
+    "overclaiming local examples as PG/formal/whole-command crash proof"
+  ],
+  "oracles": [
+    "existing test outcomes",
+    "AST file/symbol resolution",
+    "matrix SHA256 unchanged",
+    "criterion/owner mapping reviewed independently"
+  ],
+  "implementation_anchors": [
+    "docs/evidence/coverage-gap-audit-913-20261018.md",
+    "docs/evidence/protocol-coverage-audit-20261018.json",
+    "tests/test_core.py:TestStatusTransitions",
+    "tests/test_maintain.py:TestMaintainSweep",
+    "tests/test_maintain.py:TestMaintainCarryover",
+    "tests/test_reservation_atomicity.py"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "stateful-test"
+  ]
+}
