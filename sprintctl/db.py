@@ -22,6 +22,7 @@ from . import rows as _rows
 from . import sprintcore as _sprintcore
 from . import trackcore as _trackcore
 from . import unbound as _unbound
+from . import obligationscore as _obligationscore
 from . import workitemcore as _workitemcore
 from . import reservationcore as _reservationcore
 from . import reservation as _reservation
@@ -2771,6 +2772,38 @@ def current_release(conn: sqlite3.Connection, work_item_id: int) -> dict | None:
     return _current_release_row(conn, work_item_id)
 
 
+class _ObligationsSqlite:
+    """Backend reads for the private shared obligation report."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self.conn = conn
+
+    def release(self, digest: str) -> dict | None:
+        return get_release(self.conn, digest)
+
+    def accepted_decisions(self, digest: str) -> list[dict]:
+        return _decision_rows(self.conn.execute(
+            "SELECT * FROM work_decision WHERE release_digest = ? AND kind = 'accept'",
+            (digest,),
+        ))
+
+    def release_digests(self, sprint_id: int | None) -> list[str]:
+        sprint_clause = ""
+        params: list = []
+        if sprint_id is not None:
+            sprint_clause = " AND wi.sprint_id = ?"
+            params.append(sprint_id)
+        rows = self.conn.execute(
+            "SELECT DISTINCT wr.release_digest FROM work_release wr "
+            "JOIN work_item wi ON wi.id = wr.work_item_id "
+            "WHERE json_type(wr.acceptance_contract, '$.evidence_obligations') = 'array' "
+            "AND json_array_length(wr.acceptance_contract, '$.evidence_obligations') > 0"
+            f"{sprint_clause}",
+            params,
+        ).fetchall()
+        return [row["release_digest"] for row in rows]
+
+
 def unmet_obligations(conn: sqlite3.Connection, release_digest: str) -> list[dict]:
     """Report a release's declared evidence obligations that went unmet (#2446).
 
@@ -2787,31 +2820,7 @@ def unmet_obligations(conn: sqlite3.Connection, release_digest: str) -> list[dic
     when it does not exist) and never raises for that case.  This is a pure
     report: nothing here is consulted by a transition or a validator.
     """
-    release = get_release(conn, release_digest)
-    if release is None:
-        return []
-    obligations = list(release["acceptance_contract"].get("evidence_obligations") or [])
-    if not obligations:
-        return []
-    decisions = _decision_rows(
-        conn.execute(
-            "SELECT * FROM work_decision WHERE release_digest = ? AND kind = 'accept'",
-            (release_digest,),
-        )
-    )
-    unmet: list[dict] = []
-    for decision in decisions:
-        if decision["evidence_digests"]:
-            continue
-        unmet.append(
-            {
-                "item_id": decision["work_item_id"],
-                "decision_id": decision["id"],
-                "release_digest": release_digest,
-                "unmet": list(obligations),
-            }
-        )
-    return unmet
+    return _obligationscore.unmet_obligations(_ObligationsSqlite(conn), release_digest)
 
 
 def list_unmet_obligations(
@@ -2823,26 +2832,7 @@ def list_unmet_obligations(
     total ``count`` and up to ``limit`` ``items`` rows.  See
     :func:`unmet_obligations` for the matching rule.
     """
-    if limit is None:
-        limit = _unbound.DEFAULT_LIMIT
-    sprint_clause = ""
-    params: list = []
-    if sprint_id is not None:
-        sprint_clause = " AND wi.sprint_id = ?"
-        params.append(sprint_id)
-    digest_rows = conn.execute(
-        "SELECT DISTINCT wr.release_digest FROM work_release wr "
-        "JOIN work_item wi ON wi.id = wr.work_item_id "
-        "WHERE json_type(wr.acceptance_contract, '$.evidence_obligations') = 'array' "
-        "AND json_array_length(wr.acceptance_contract, '$.evidence_obligations') > 0"
-        f"{sprint_clause}",
-        params,
-    ).fetchall()
-    rows: list[dict] = []
-    for row in digest_rows:
-        rows.extend(unmet_obligations(conn, row["release_digest"]))
-    rows.sort(key=lambda r: (r["item_id"], r["decision_id"]))
-    return {"count": len(rows), "items": rows[: int(limit)]}
+    return _obligationscore.list_unmet_obligations(_ObligationsSqlite(conn), sprint_id=sprint_id, limit=limit)
 
 
 def list_release_commits(conn: sqlite3.Connection, digest: str) -> list[dict]:
