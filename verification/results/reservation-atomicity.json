@@ -1,0 +1,83 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.reservation-atomicity",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2763",
+    "revision": "native:release:2dd910a1e5c9f62db5620723e636d24652efc54c4b276c4b26d7fc856f45b7f1"
+  },
+  "implementation_sha": "072d0338c77848252d4986a0e6e15b9432a2a085",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary SQLite and disposable PostgreSQL16.15",
+    "isolation": "independent read connections; one cleaned disposable PG scope"
+  },
+  "execution": {
+    "histories": 0,
+    "bounds": {
+      "cases_per_backend": 10,
+      "takeover_insertion_failure_positions": 3,
+      "displaced_executions": 2,
+      "preserved_non_execution": 2
+    },
+    "faults_exercised": [
+      "exception after actual reserved event insert",
+      "exception after each of three takeover lifecycle event inserts",
+      "new Release versus preexisting Release"
+    ]
+  },
+  "claims": [
+    {
+      "property": "failed admission leaves no partial reservation,Release,interruption or lifecycle event",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_reservation_atomicity_contract.py",
+        "tests/test_reservation_atomicity.py",
+        "tests/pg/test_reservation_atomicity.py"
+      ]
+    },
+    {
+      "property": "failed takeover preserves old row state and timestamps and preexisting Releases",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_reservation_atomicity_contract.py",
+        "tests/test_reservation_atomicity.py",
+        "tests/pg/test_reservation_atomicity.py"
+      ]
+    },
+    {
+      "property": "successful takeover preserves non-execution reservations, public conflicts and ordered event payloads",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_reservation_atomicity_contract.py",
+        "tests/test_reservation_atomicity.py",
+        "tests/pg/test_reservation_atomicity.py"
+      ]
+    },
+    {
+      "property": "unkeyed committed response loss is not rollback or retry deduplication",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_reservation_atomicity_contract.py",
+        "tests/test_reservation_atomicity.py",
+        "tests/pg/test_reservation_atomicity.py"
+      ]
+    },
+    {
+      "property": "global backend parity, power-loss or concurrent history qualification, hosted keyed replay semantics",
+      "result": "unknown"
+    }
+  ],
+  "counterexamples": [
+    "verification/traces/reservation-atomicity-before.json"
+  ],
+  "notes": [
+    "Base SHA pins pre-repair implementation; source diff captured by exact SHA256 below. Initial real old-source counterexample: 0rows/0Releases/0events ->1row/1Release/0events after inserted-event exception.",
+    "Fixed SQLite affected regression139passed, independently139passed. Same shared oracle real disposablePG16.15:10passed,1135deselected;1fixture scope cleaned zero rows.",
+    "Parent2150 remains open; no new shared repository abstraction, schema/API/IDL/hosted-keyed/deployment change. No automatic retry added.",
+    "Oracle success severity corrected before verification to existing informational contract; first old-source failure is still the independent durable-state counterexample.",
+    "sprintctl/db.py SHA256:2e0a3677988c4efc60fee55135787393b20821a55ecb4c2fc50073ef8462c848",
+    "tests/_reservation_atomicity_contract.py SHA256:61e364aa7aeddb507eed407d3ca1a733e8a2db22e3f96224195c87a482f5af1a",
+    "tests/test_reservation_atomicity.py SHA256:2d015cae0351e312eedb29698483f053275ce6a08509c37a6ea695034c77df78",
+    "tests/pg/test_reservation_atomicity.py SHA256:3707656e01106388bb640f3bba3a461f109bf5d5b3a8f8d15e4236535e31a4e8"
+  ]
+}

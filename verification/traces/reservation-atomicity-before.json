@@ -1,0 +1,15 @@
+{
+  "source_sha": "072d0338c77848252d4986a0e6e15b9432a2a085",
+  "fault": "exception after actual reservation.reserved insert",
+  "before": {
+    "reservations": 0,
+    "releases": 0,
+    "events": 0
+  },
+  "after": {
+    "reservations": 1,
+    "releases": 1,
+    "events": 0
+  },
+  "violation": "reservation and Release survive while lifecycle event rolls back"
+}

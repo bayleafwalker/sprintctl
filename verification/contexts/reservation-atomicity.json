@@ -1,0 +1,78 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.reservation-atomicity",
+  "owner_repo": "sprintctl",
+  "subject": "unkeyed reservation lifecycle row/Release/event atomicity",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2763",
+    "revision": "native:release:2dd910a1e5c9f62db5620723e636d24652efc54c4b276c4b26d7fc856f45b7f1"
+  },
+  "source_of_truth": "frozen Sprintctl#2763 Release and bounded scope decision5462",
+  "depth": 2,
+  "backends": [
+    "temporary SQLite",
+    "disposable PostgreSQL16.15"
+  ],
+  "actors": [
+    "reservation operator",
+    "independent durable reader"
+  ],
+  "initial_state": [
+    "item with no reservation or existing execution/observation/verification reservations",
+    "current Release absent, preexisting, or changed by new context ref"
+  ],
+  "operations": [
+    {
+      "name": "reserve with optional explicit takeover",
+      "actors": [
+        "reservation operator"
+      ]
+    },
+    {
+      "name": "read committed state after injected lifecycle insertion failure",
+      "actors": [
+        "independent durable reader"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one reservation admission transaction"
+  },
+  "assumptions": {
+    "isolation": "SQLiteBEGINIMMEDIATE; existing PostgreSQL repository admission/item locks",
+    "clock": "timestamps preserved by rollback; no clock-boundary claim",
+    "fairness": "none"
+  },
+  "bounds": {
+    "cases_per_backend": 10,
+    "takeover_insertion_failure_positions": 3,
+    "displaced_executions": 2,
+    "preserved_non_execution": 2
+  },
+  "invariants": [
+    "failed admission leaves no partial reservation,Release,interruption or lifecycle event",
+    "failed takeover preserves old row state and timestamps and preexisting Releases",
+    "successful takeover preserves non-execution reservations, public conflicts and ordered event payloads",
+    "unkeyed committed response loss is not rollback or retry deduplication"
+  ],
+  "faults": [
+    "exception after actual reserved event insert",
+    "exception after each of three takeover lifecycle event inserts",
+    "new Release versus preexisting Release"
+  ],
+  "oracles": [
+    "tests/_reservation_atomicity_contract.py",
+    "tests/test_reservation_atomicity.py",
+    "tests/pg/test_reservation_atomicity.py"
+  ],
+  "implementation_anchors": [
+    "sprintctl/db.py::reserve",
+    "sprintctl/db.py::_reservation_event_in_transaction",
+    "sprintctl/pg.py::reserve_in_transaction"
+  ],
+  "expansions": [
+    "fault-scenario",
+    "backend-parity"
+  ]
+}

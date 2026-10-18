@@ -2036,24 +2036,35 @@ def reserve(conn: sqlite3.Connection, work_item_id: int, *, actor: str, session_
             (work_item_id, session_id, actor, role, now, now, correlation_ref, release_digest),
         )
         reservation_id = cur.lastrowid
+        row = _reservation_row(conn, reservation_id)
+        assert row is not None
+        item = get_work_item(conn, work_item_id)
+        assert item is not None
+        interrupted_ids = {old["id"] for old in interrupted}
+        remaining = [old for old in existing if old["id"] not in interrupted_ids]
+        for old in interrupted:
+            _reservation_event_in_transaction(conn, item, old, "reservation.interrupted", actor,
+                {"reservation_id": old["id"], "reason": "explicit-takeover", "replacement_id": reservation_id})
+        _reservation_event_in_transaction(conn, item, row, "reservation.reserved", actor,
+            {"reservation_id": reservation_id, "session_id": session_id, "role": role,
+             "correlation_ref": correlation_ref, "interrupt_existing": interrupt_existing,
+             "conflicting_reservation_ids": [old["id"] for old in remaining],
+             "release_digest": row["release_digest"]})
+        result = _reservation.annotate_conflicts(_reservation.display(row), remaining)
         conn.commit()
+        return result
     except Exception:
         if conn.in_transaction:
             conn.rollback()
         raise
-    row = _reservation_row(conn, reservation_id)
-    assert row is not None
-    interrupted_ids = {old["id"] for old in interrupted}
-    remaining = [old for old in existing if old["id"] not in interrupted_ids]
-    for old in interrupted:
-        _reservation_event(conn, dict(old), "reservation.interrupted", actor,
-                           {"reservation_id": old["id"], "reason": "explicit-takeover", "replacement_id": reservation_id})
-    _reservation_event(conn, row, "reservation.reserved", actor,
-                       {"reservation_id": reservation_id, "session_id": session_id, "role": role,
-                        "correlation_ref": correlation_ref, "interrupt_existing": interrupt_existing,
-                        "conflicting_reservation_ids": [old["id"] for old in remaining],
-                        "release_digest": row["release_digest"]})
-    return _reservation.annotate_conflicts(_reservation.display(row), remaining)
+
+
+def _reservation_event_in_transaction(conn: sqlite3.Connection, item: dict, row: dict,
+                                      event_type: str, actor: str, payload: dict) -> None:
+    """Participate in the reservation transaction without committing it."""
+    _contracts.require_generic_event_write_allowed(event_type)
+    _insert_event(conn, item["sprint_id"], actor, event_type,
+                  source_type="system", work_item_id=row["work_item_id"], payload=payload)
 
 
 def note_session_activity(conn: sqlite3.Connection, work_item_id: int, *, session_id: str | None) -> list[dict]:
