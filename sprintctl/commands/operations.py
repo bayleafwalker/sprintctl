@@ -805,6 +805,49 @@ def authority_status(as_json: bool) -> None:
             )
 
 
+@authority_commands.command("doctor")
+@click.option("--served", "as_served", is_flag=True, help="Use the configured served owner.")
+@click.option("--check-permissions", is_flag=True, help="Inspect current terminal directory ownership and exact 0700 mode.")
+@click.option("--check-sequence", is_flag=True, help="Compare local producer metadata with the served stream cursor.")
+@click.option("--write-probe-reservation-id", type=click.IntRange(min=1, max=2**63-1),
+              help="Explicitly touch this active reservation in the current session after clean reads.")
+@click.option("--json", "as_json", is_flag=True, default=False)
+@click.pass_obj
+def authority_doctor(obj, as_served, check_permissions, check_sequence,
+                     write_probe_reservation_id, as_json) -> None:
+    """Inspect authority preflight evidence; unknown checks fail closed.
+
+    Without an explicit reservation probe this performs reads only. A successful
+    diagnostic never grants permission for another operation.
+    """
+    from .. import authority_doctor as diagnostic
+    from ..reservation import ambient_session_id
+
+    config = _served_config_or_none(obj)
+    if config is None:
+        raise click.ClickException("authority doctor requires a configured served backend")
+    if not check_permissions and not check_sequence:
+        check_permissions = check_sequence = True
+    try:
+        paths = _authority_config.authority_command_paths(cwd=Path.cwd())
+    except _authority_config.AuthorityCommandConfigError as error:
+        raise click.ClickException(str(error)) from error
+    report = diagnostic.diagnose(
+        paths, config.served_profile, repo_id=config.repo_id,
+        check_permissions=check_permissions, check_sequence=check_sequence,
+        probe_reservation_id=write_probe_reservation_id, session_id=ambient_session_id(),
+    )
+    if as_json:
+        click.echo(json.dumps(report, indent=2))
+    else:
+        click.echo(f"Authority preflight: {report['status']}")
+        for name, check in report["checks"].items():
+            click.echo(f"  {name}: {check['status']} ({check['reason']})")
+        click.echo(report["scope"])
+    if report["status"] != "pass":
+        raise SystemExit(1)
+
+
 def _served_authority_pages(
     read_page, *, page_size: int = 250, offset_key: str = "ingest_offset",
 ) -> list[dict[str, object]]:

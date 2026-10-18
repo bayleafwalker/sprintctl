@@ -71,6 +71,55 @@ authority validates the command basis, transitions, and decisions
 when a corresponding served command is invoked or an already-recorded request
 is retried through served `authority sync`.
 
+## Authority preflight
+
+With an existing validated served profile, inspect the producer before work:
+
+```sh
+sprintctl authority doctor --served --check-permissions --check-sequence --json
+```
+
+The diagnostic reports each selected check as `pass`, `fail` or `unknown`.
+It checks terminal-directory ownership and exact `0700` mode, a single local
+stream with contiguous sequences, current-stream quarantine/rollover evidence,
+and the served cursor plus immutable committed record content. Missing cursors,
+missing history, unavailable reads, concurrent changes and inspection limits
+remain unknown; a matching next sequence alone cannot establish alignment.
+The existing producer and ingestion fingerprint domains remain distinct: the
+comparison reuses the owner's canonical portable-record validator.
+
+The default path reads only: it never initializes or migrates an outbox,
+allocates a sequence, replays a command or writes a recovery receipt. SQLite
+may use WAL/SHM reader bookkeeping while its data transaction is read-only.
+Inspection covers at most 10,000 local records/receipts and 10,000 served rows,
+with 1 MiB per record/receipt and 64 MiB cumulative text/record/receipt budgets.
+Incomplete history is unknown, never inferred empty. No diagnostic changes
+directory modes. The strict mode check can flag inherited `02700` even where
+the retained runtime explicitly tolerates that otherwise-private directory.
+Retired claim-recovery and authority-credential directories are not recreated.
+
+An authenticated read does not prove write access. Without an explicit probe,
+`write_probe` remains unknown and the command exits 1. To record ordinary
+activity on an existing active reservation in the current session, explicitly
+select its ID:
+
+```sh
+sprintctl authority doctor --served --write-probe-reservation-id "$MY_RESERVATION_ID" --json
+```
+
+The probe runs only after clean selected checks and compares the authenticated
+actor and current session with the reservation before and after touching it.
+These are advisory metadata checks: reassignment can race the touch, and a
+lost response leaves its activity outcome unknown. The command never retries
+the write automatically or creates test work. A pass records only the specific
+operations actually exercised; it does not prove authorization for another
+operation or make the reservation a permission token.
+
+Exit 0 requires every selected check, including the explicit probe, to pass;
+failures and unknowns exit 1 after producing the report. This is an operator
+aid, not a migration/cutover gate or a replacement for backup and owner
+authorization checks. It introduces no served operation, schema or grant.
+
 ## Lost responses and retry
 
 The producer log is immutable, so a lost response is always safe to retry with

@@ -1,0 +1,11 @@
+{
+  "classification": "concurrency-tested bounded SQLite application invariant",
+  "test": "tests/test_authority_doctor.py:test_independent_writer_commit_between_metadata_queries_keeps_one_snapshot",
+  "asserted_history": ["reader begins transaction", "reader obtains stream next=2", "independent writer commits second record and next=3", "reader returns count=1 and next=2", "writer connection observes next=3"],
+  "initial_committed_records": 1,
+  "reader_returned_records": 1,
+  "reader_returned_next_origin_seq": 2,
+  "writer_observed_next_origin_seq": 3,
+  "oracle": "The read returns one committed prefix; it does not combine old next=2 with new count=2.",
+  "limitations": ["One deterministic two-connection overlap, not distributed linearizability", "Served ledger pages are independently observed; missing or changing coverage remains unknown"]
+}

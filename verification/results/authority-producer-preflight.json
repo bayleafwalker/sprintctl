@@ -1,0 +1,99 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.authority-producer-preflight",
+  "contract_ref": {
+    "doc_id": "sprintctl.authority-preflight",
+    "revision": "operator:sprintctl#2096/event5399"
+  },
+  "implementation_sha": "072d0338c77848252d4986a0e6e15b9432a2a085",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary SQLite WAL, disposable PostgreSQL16.15 owner reads and served CLI doubles",
+    "isolation": "one SQLite read transaction with independent concurrent writer; served pages are separate observations",
+    "tool_versions": {
+      "Python": "3.13.16",
+      "pytest": "9.0.2",
+      "PostgreSQL": "16.15"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": {
+      "independent_SQLite_overlap": 1,
+      "enqueue_fault_points": 2
+    },
+    "bounds": {
+      "local_records": 10000,
+      "served_rows": 10000,
+      "record_or_receipt_bytes": 1048576,
+      "cumulative_inspection_bytes": 67108864,
+      "automatic_write_retries": 0
+    },
+    "faults_exercised": [
+      "missing outbox",
+      "special directory mode bits",
+      "corrupt stream metadata",
+      "equal-cursor record divergence",
+      "missing history",
+      "changing pagination cursor",
+      "local append during owner read",
+      "quarantine and rollover",
+      "duplicate/deep JSON",
+      "oversized cells and unknown blob extension",
+      "lost touch response and reassignment",
+      "record INSERT and stream UPDATE failure"
+    ]
+  },
+  "claims": [
+    {
+      "property": "Local diagnostic observes one committed producer prefix during an independent writer commit",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/test_authority_doctor.py:test_independent_writer_commit_between_metadata_queries_keeps_one_snapshot",
+        "verification/fixtures/authority-producer-preflight-history.json"
+      ]
+    },
+    {
+      "property": "Failed INSERT or counter UPDATE does not advance the existing durable enqueue sequence",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_authority_doctor.py:test_failed_enqueue_cannot_consume_sequence",
+        "tests/test_outbox.py"
+      ]
+    },
+    {
+      "property": "Bounded current-stream and canonical committed-prefix checks never turn missing, divergent, changing or ambiguous evidence into a clear result",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_authority_doctor.py",
+        "tests/pg/test_authority_doctor.py"
+      ]
+    },
+    {
+      "property": "Explicit selected reservation activity is distinct from atomic ownership or authorization for another operation; uncertain writes are not retried",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_authority_doctor.py:test_reassignment_or_response_loss_never_proves_probe_binding",
+        "docs/guides/authority-commands.md"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Before implementation the actual CLI returned exit2 with No such command doctor; the missing-outbox preflight regression failed",
+      "trace_ref": "tests/test_authority_doctor.py:test_missing_outbox_is_unknown_and_never_initialized"
+    }
+  ],
+  "notes": [
+    "Candidate source and test SHA256: {\"docs/guides/authority-commands.md\": \"6e21bb7f107057226a6b9bce1ade015dfbb2fa6426f4c0315017a07b04fb423e\", \"sprintctl/authority_doctor.py\": \"bf78f9560f1a48e9d924949946692d4db6ac1429e1bf1b4abe6825cedbbd217c\", \"sprintctl/commands/operations.py\": \"7d60c481cbf4df647a49fa52bb06e4cf89dfb2504e790283425ef068c2af8698\", \"sprintctl/served_routes.py\": \"821e68c5bfea166d7ee0622fa8a793ed7836c033b4c4827b4d85055fe2d17b1f\", \"tests/pg/test_authority_doctor.py\": \"6fc62247002423d47e69fd87a4172217f519abdf1d468fe20d1a7dc4231a7159\", \"tests/test_authority_doctor.py\": \"15cb6327283640a79e79281c8d3a5b4e5895f7de420b542b4bfcadbc17c64707\"}",
+    "Final rebased focused preflight/producer/recovery/routing/docs/install suite:131passed28.78s. Final interpreter and disposable PostgreSQL confirmations are recorded in the evidence document.",
+    "The original sequence-allocation rewrite was not reproduced and is not implemented. Existing transactional append remains unchanged.",
+    "An earlier overlap-test hook matched both the new stream-size aggregate and the intended record aggregate; its barrier was narrowed to the actual after-stream-read point. Final asserted history returns the old complete prefix while the independent writer commits the next one.",
+    "SQLite mode=ro/query_only prevents data writes and initialization; WAL/SHM coordination bookkeeping may occur. Permission checks do not repair modes or change the retained runtime2700 policy.",
+    "No live negative probes, shared test events, migrations, grants, new served catalog operations or deployment. Real PostgreSQL test uses existing WorkApplication reads, not live HTTP authorization qualification.",
+    "Independent optimistic source review clear after full-prefix comparison, typed/byte guards, explicit columns and strict JSON fixes. No distributed/global atomic snapshot or cryptographic reservation ownership claim.",
+    "Child2764 only; parent2096 retains required command-authorization criterion (native updates5469/5470). Selected successful reads/touch do not prove lifecycle.arbitrate/batch.apply grants.",
+    "Final separate Python3.11.16 preflight/routing/docs79passed11skipped16.98s; final disposablePG16.15 roundtrip1passed0.68s with one cleanup/zero remaining rows.",
+    "Full evidence: docs/evidence/authority-producer-preflight-2764.md"
+  ]
+}
