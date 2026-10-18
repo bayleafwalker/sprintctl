@@ -1,0 +1,64 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.next-work-dispatch-context",
+  "contract_ref": {
+    "doc_id": "sprintctl.project-scope",
+    "revision": "sha256:0ffc1f0119ec3fcab9e097d57e6136318490004dc0146f7a16770b5a5eb5654d"
+  },
+  "implementation_sha": "95f8fedf0a5023cba6fdf8cf668f8e3bbce122bb",
+  "depth": 1,
+  "environment": {
+    "backend": "temporary SQLite, private PostgreSQL16.15, served CLI client facade to actual owner applications",
+    "isolation": "no live work/authority mutation or fault injection",
+    "tool_versions": {
+      "Python": "3.13.16",
+      "pytest": "9.0.2",
+      "PostgreSQL": "16.15"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": null,
+    "bounds": {
+      "sqlite_application_cases": 6,
+      "unavailable_project_cases": 2,
+      "served_cli_cases": 2,
+      "postgresql_application_cases": 6
+    },
+    "faults_exercised": [
+      "graph-ready candidate without contextual authority or effect evidence",
+      "member unavailable while another member has ready items"
+    ]
+  },
+  "claims": [
+    {
+      "property": "Existing repository/project graph reads never infer positive contextual dispatch admissibility",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_next_work_dispatch_context.py",
+        "tests/test_work_application_pg.py:test_next_work_graph_cannot_establish_dispatch_context"
+      ]
+    },
+    {
+      "property": "Empty/unavailable semantics, ready suggestions, closed schemas and served CLI list output remain valid",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_next_work_dispatch_context.py"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Original graph-ready repository, project and served CLI cases returned admissible without contextual inputs:5 failed5passed before correction",
+      "trace_ref": "tests/test_next_work_dispatch_context.py"
+    }
+  ],
+  "notes": [
+    "Candidate source/test SHA256: {\"docs/guides/project-scope.md\": \"0ffc1f0119ec3fcab9e097d57e6136318490004dc0146f7a16770b5a5eb5654d\", \"sprintctl/project_application.py\": \"64c783d2f76c1e6eb59cacefd23497d80f4ac89d93a7e00a0b7378b3cd2a9971\", \"sprintctl/work_application.py\": \"632541cc17e134976f64b45d9909d45e2aa2f35431a4866fa199e6f070127fcd\", \"tests/test_next_work_dispatch_context.py\": \"ff0b2417f1fbac357d2ddfeec0ea55ee1a5bbf74340deb3cfd17e09d842e737a\", \"tests/test_work_application.py\": \"02b1c86039e966baab622d0acf41f847e43ad992ec6096fe1f117c61e8d40975\", \"tests/test_work_application_pg.py\": \"c4e87531989581571a9f49312949fc9ef68ef48a35c2198c09cd3eb81627f207\"}",
+    "Final targeted applications/project/served/schema/routes/docs/install suite243passed37.20s; real PostgreSQL matrix and project transaction controls9passed1.41s,1cleanup with zero rows.",
+    "Consumer inventory: Sprintctl only two handlers and one prior positive expectation; schema enums already admit unknown. Agentops/Vuoro production Python/JS/TS search found no dependent positive-admission consumer. Vuoro tests/test_settlement_scenario.py retains a ready-items-available literal solely to verify opaque payload pass-through; other hits are historical snapshots/transcripts/catalogs, left unchanged.",
+    "No catalog, input/result schema, CLI production output shape, operation, actor, grant or authority change. Existing per-item seven-factor/contextual positive assessment remains OPEN under sprintctl#2095 behind the foundation gate; this bounded child is sprintctl#2758.",
+    "Explicit No doc decision5420 and dependency2758\u21922095 recorded before source edits. Independent optimistic plan and final findings-first/optimistic source review clear.",
+    "Evidence is example-tested projection correctness, not contextual gate enforcement or a general concurrency/linearizability proof."
+  ]
+}

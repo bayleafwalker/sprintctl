@@ -1150,8 +1150,8 @@ def test_click_next_work_and_application_handler_share_backend_semantics(
         "Not direct next-work"
     ]
     assert project_payload["graph_ready"] is True
-    assert project_payload["dispatch_admissible"] == "admissible"
-    assert project_payload["dispatch_reason"] == "ready-items-available"
+    assert project_payload["dispatch_admissible"] == "unknown"
+    assert project_payload["dispatch_reason"] == "dispatch-context-required"
 
     explained = project.invoke(
         "work.project.next-work-explain", {}, _context(repo_ids=frozenset({"test-repo"}))

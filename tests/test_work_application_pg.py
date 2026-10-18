@@ -956,6 +956,37 @@ def test_project_reads_do_not_leave_member_connections_idle_in_transaction(
         assert store.conn.info.transaction_status == TransactionStatus.IDLE
 
 
+@pytest.mark.parametrize("operation", [
+    "work.read.next-work", "work.project.next-work", "work.project.next-work-explain",
+])
+@pytest.mark.parametrize("ready", [False, True])
+def test_next_work_graph_cannot_establish_dispatch_context(store_factory, operation, ready):
+    import jsonschema
+    from sprintctl.application import ProjectMemberApplication, ProjectWorkApplication
+    from sprintctl.vuoro_adapter import WORK_OPERATION_CONTRACTS
+
+    store = store_factory("next-work-context")
+    sprint_id = pg.create_sprint(store, f"Graph-{uuid.uuid4().hex[:8]}", status="active")
+    item_id = None
+    if ready:
+        track_id = pg.get_or_create_track(store, sprint_id, "dispatch")
+        item_id = pg.create_work_item(store, sprint_id, track_id, "Graph-ready suggestion")
+    application = _application(store)
+    project = ProjectWorkApplication("test-project", (
+        ProjectMemberApplication(store.repo_id, application),), canonical_binding={
+            "project_id": "test-project", "backlog_repos": [store.repo_id]})
+    context = _context("reader", None, f"next-work-{uuid.uuid4().hex}", repo_id=store.repo_id)
+    context.identity.authorizes_repo = lambda repo_id: repo_id == store.repo_id
+    owner = application if operation == "work.read.next-work" else project
+    result = owner.invoke(operation, {}, context)
+    contract = next(c for c in WORK_OPERATION_CONTRACTS if c.name == operation)
+    jsonschema.validate(result, contract.result_schema)
+    assert result["graph_ready"] is ready
+    assert result["dispatch_admissible"] == ("unknown" if ready else "inadmissible")
+    assert result["dispatch_reason"] == ("dispatch-context-required" if ready else "no-ready-items")
+    assert [row["id"] for row in result["ready_items"]] == ([item_id] if ready else [])
+
+
 def test_compatibility_handshake_does_not_leave_the_shared_connection_in_a_transaction(
     store_factory,
 ):

@@ -138,8 +138,8 @@ class ProjectWorkApplication:
                 result["dispatch_reason"] = "member-unavailable"
             elif ready_items:
                 result["graph_ready"] = True
-                result["dispatch_admissible"] = "admissible"
-                result["dispatch_reason"] = "ready-items-available"
+                result["dispatch_admissible"] = "unknown"
+                result["dispatch_reason"] = "dispatch-context-required"
             else:
                 result["graph_ready"] = False
                 result["dispatch_admissible"] = "inadmissible"
