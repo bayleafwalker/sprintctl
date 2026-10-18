@@ -108,6 +108,16 @@ def _with_session_attribution(operation: str, arguments: dict[str, Any]) -> dict
     return {**arguments, "session_id": session_id}
 
 
+def maintain_check(
+    served_profile: ServedProfile, *, repo_id: str, sprint_id: int | None = None,
+) -> dict[str, Any]:
+    """Read the owning server's maintenance diagnostic without local storage."""
+    arguments = {} if sprint_id is None else {"sprint_id": sprint_id}
+    return asyncio.run(_invoke_operation(
+        served_profile, "work.maintain.check", arguments, repo_id=repo_id,
+    ))
+
+
 def read_sprints(
     served_profile: ServedProfile,
     *,
@@ -845,6 +855,7 @@ __all__ = [
     "item_ref_add",
     "item_ref_remove",
     "lifecycle_arbitrate",
+    "maintain_check",
     "project_next_work",
     "project_items",
     "project_context",

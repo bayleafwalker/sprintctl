@@ -1477,16 +1477,40 @@ def _record_handoff_generated(conn, sprint_id: int, bundle: dict, *, m=None) -> 
 
 @maintain.command("check")
 @click.option("--sprint-id", type=int, default=None, help="Sprint ID (defaults to active)")
-@click.option("--threshold", default=None, help="Staleness threshold, e.g. 4h (default: 4h)")
+@click.option("--threshold", default=None, help="Local staleness threshold, e.g. 4h; served mode uses server policy")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Emit machine-readable JSON")
 @click.pass_obj
 def maintain_check(obj, sprint_id, threshold, as_json) -> None:
     """Dry-run: report stale items and sprint health (no writes)."""
-    store, m = _get_store(obj)
-    s = _resolve_sprint(store, sprint_id, m=m)
-    now = datetime.now(timezone.utc)
-    td = _parse_threshold(threshold)
-    report = _maintain.check(store, s["id"], now, threshold=td, _m=m)
+    config = _served_config_or_none(obj)
+    if config is not None:
+        if threshold is not None:
+            raise click.UsageError(
+                "--threshold is local-only; served maintenance checks use the server's thresholds."
+            )
+        payload = _run_served(
+            "maintain check", _served.maintain_check, config.served_profile,
+            repo_id=config.repo_id, sprint_id=sprint_id,
+            resolved_context=_resolved_context(config),
+        )
+        if as_json:
+            click.echo(json.dumps(payload, indent=2))
+            return
+        if payload["sprint"] is None:
+            click.echo("No active sprint; no sprint maintenance findings.")
+            return
+        pending = payload["pending_threshold_hours"]
+        report = {
+            **payload,
+            "threshold": timedelta(hours=payload["threshold_hours"]),
+            "pending_threshold": timedelta(hours=pending) if pending is not None else None,
+        }
+    else:
+        store, m = _get_store(obj)
+        s = _resolve_sprint(store, sprint_id, m=m)
+        now = datetime.now(timezone.utc)
+        td = _parse_threshold(threshold)
+        report = _maintain.check(store, s["id"], now, threshold=td, _m=m)
 
     if as_json:
         pt = report["pending_threshold"]

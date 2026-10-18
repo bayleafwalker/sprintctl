@@ -81,8 +81,9 @@ read-only; it has no `--fix` option. `maintain sweep` changes stale item status
 and can interrupt stale reservations across the selected database, even with a
 sprint filter. It is a separate intended mutation, not an automatic preflight
 repair.
-Neither CLI maintenance command is available in served mode. The retained
-served Kctl source requests its own catalog diagnostic and fails on a missing
+In served mode, `maintain check` requests the existing read-only owner
+diagnostic with server thresholds; `maintain sweep` remains unavailable. The
+retained served Kctl source requests its own catalog diagnostic and fails on a missing
 operation; it does not reconstruct that diagnostic from local state.
 `--no-preflight` explicitly skips the check and does not fix a diagnostic or
 supply missing authority.
