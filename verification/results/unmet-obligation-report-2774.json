@@ -1,0 +1,111 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.unmet-obligation-report",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2774",
+    "revision": "native:release:1be95c31ab1cb0e6890de462d309c4e9a761a2ac47f786d3f4d0035986d96950"
+  },
+  "implementation_sha": "0b1b18004fa968e9919eeeb924b038e6b18b9986",
+  "depth": 1,
+  "environment": {
+    "python": "3.13.16",
+    "sqlite": "3.53.1",
+    "pytest": "9.0.2",
+    "postgresql": "16.15",
+    "backend": "temporary SQLite and registered disposable PostgreSQL",
+    "isolation": "normal backend reads; single-reader fixtures plus independent caller-write observer"
+  },
+  "execution": {
+    "histories": 0,
+    "bounds": {
+      "shared_cases_per_backend": 21,
+      "sqlite_additional_cases": 2,
+      "postgres_additional_cases": 2,
+      "concurrent_writers": 0
+    },
+    "faults_exercised": []
+  },
+  "claims": [
+    {
+      "property": "valid unknown/undeclared/empty releases return no obligations",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_unmet_obligations_contract.py",
+        "tests/test_unmet_obligations_parity.py",
+        "tests/pg/test_unmet_obligations_parity.py"
+      ]
+    },
+    {
+      "property": "malformed digest retains backend validation error",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_unmet_obligations_contract.py",
+        "tests/test_unmet_obligations_parity.py",
+        "tests/pg/test_unmet_obligations_parity.py"
+      ]
+    },
+    {
+      "property": "only accept Decisions without any evidence digest owe every declared label",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_unmet_obligations_contract.py",
+        "tests/test_unmet_obligations_parity.py",
+        "tests/pg/test_unmet_obligations_parity.py"
+      ]
+    },
+    {
+      "property": "declared order and repeated labels are retained in independent result lists",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_unmet_obligations_contract.py",
+        "tests/test_unmet_obligations_parity.py",
+        "tests/pg/test_unmet_obligations_parity.py"
+      ]
+    },
+    {
+      "property": "aggregate sort/count/default/int-limit and Python slicing stay unchanged",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_unmet_obligations_contract.py",
+        "tests/test_unmet_obligations_parity.py",
+        "tests/pg/test_unmet_obligations_parity.py"
+      ]
+    },
+    {
+      "property": "static sprint and PostgreSQL tenant exclusion are preserved",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_unmet_obligations_contract.py",
+        "tests/test_unmet_obligations_parity.py",
+        "tests/pg/test_unmet_obligations_parity.py"
+      ]
+    },
+    {
+      "property": "reads do not mutate rows or commit pending caller writes",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_unmet_obligations_contract.py",
+        "tests/test_unmet_obligations_parity.py",
+        "tests/pg/test_unmet_obligations_parity.py"
+      ]
+    },
+    {
+      "property": "snapshot consistency, concurrency/linearizability, public provider conformance or full repository-layer parity",
+      "result": "unknown"
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "Implementation_sha names the before-extraction base; candidate source/test content is pinned below.",
+    "Oracle written and run before product edits:23 SQLite cases passed in3.01s;23 actual PostgreSQL cases passed in0.51s,1314 deselected; one registered fixture cleanup reported zero remaining rows.",
+    "The exact same oracle source hashes remain unchanged after extraction.",
+    "After extraction focused local oracle+Release suite77passed in8.74s; actual PostgreSQL oracle+existing obligation suite31passed in0.59s,1306deselected; two fixture cleanup instances reported zero remaining rows.",
+    "An initial uv invocation failed before collection because the sandbox could not write the home cache; explicit temporary cache fixed invocation only. Tests and product were not changed to resolve that environment failure.",
+    "Source/test SHA256:{\"sprintctl/db.py\": \"eb5a69bcdd74a004472e58d0fae235bee7cfc86261b953145e57c453cf0aefa5\", \"sprintctl/obligationscore.py\": \"69fec0d0dfb5acb043ef6ea6832b1733276a8c2cbfa8af58d9afb3cd93159269\", \"sprintctl/pg.py\": \"dffae716cb14c7c8db67963f5bcb2a0df398a961b78a8d57874112130f014fbe\", \"tests/_unmet_obligations_contract.py\": \"1e7b9297cb8da1bfe0dfc2fa4fa3d8614c0aea3a4f790bbfbfe4ad85a7a53d46\", \"tests/pg/test_unmet_obligations_parity.py\": \"efc7b76680f275290fb5024d237ff62f7b34f68c6b44a8806a0baa328e671052\", \"tests/test_unmet_obligations_parity.py\": \"26f9029d3087bad20c7eabf45a11a219c96d3f2d83281023ff6ed4eadfc7cf8b\"}",
+    "This is a private source reuse change. SQL selection/tenancy/JSON decoding and public signatures remain backend-owned. No acceptance enforcement, evidence-kind inference, new snapshot/paging/API/IDL/schema/lease/deployment behavior. Parent2150 remains open.",
+    "Source inspection separately confirms unchanged current-membership joins/predicates in backend SQL. No item relocation race, concurrent snapshot or live membership-change qualification was run. Fresh returned-list checks cover separate report calls, not multiple accepts on one Release.",
+    "Full required local CI selection:2667passed,4skipped,14performance cases deselected in386.01s. Command: UV_OFFLINE=1 uv run --frozen --no-sync pytest tests --ignore=tests/pg --ignore=tests/test_work_application_pg.py -m \"not perf\" -q --tb=short.",
+    "Full actual disposable PostgreSQL16.15:1337passed in81.18s;79 fixture cleanup instances across4fixture names reported zero remaining rows. Command: PATH=/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin:$PATH timeout --foreground -k30s 900s scripts/pg-disposable-tests.sh.",
+    "Independent source review clear from optimistic planner and separate source owner; packet review narrowed current-membership claims to source inspection. Exact-head canonical CI remains pending publication."
+  ]
+}

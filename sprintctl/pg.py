@@ -58,6 +58,7 @@ from .run_invocation import owner_timestamp as _run_owner_timestamp
 from . import sprintcore as _sprintcore
 from . import trackcore as _trackcore
 from . import unbound as _unbound
+from . import obligationscore as _obligationscore
 from . import workitemcore as _workitemcore
 from .workitemcore import (
     EditConflict,
@@ -4473,6 +4474,44 @@ def current_release(store: PgStore, work_item_id: int) -> dict | None:
         return _current_release_locked(cur, store.repo_id, work_item_id)
 
 
+class _ObligationsPg:
+    """Tenant-scoped backend reads for the private obligation report."""
+
+    def __init__(self, store: PgStore) -> None:
+        self.store = store
+
+    def release(self, digest: str) -> dict | None:
+        return get_release(self.store, digest)
+
+    def accepted_decisions(self, digest: str) -> list[dict]:
+        with self.store.conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM work_decision WHERE repo_id = %s AND release_digest = %s "
+                "AND kind = 'accept'",
+                (self.store.repo_id, digest),
+            )
+            return [_decision_row(row) for row in cur.fetchall()]
+
+    def release_digests(self, sprint_id: int | None) -> list[str]:
+        sprint_clause = ""
+        params: list[Any] = [self.store.repo_id]
+        if sprint_id is not None:
+            sprint_clause = " AND wi.sprint_id = %s"
+            params.append(sprint_id)
+        with self.store.conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT wr.release_digest FROM work_release wr "
+                "JOIN work_item wi ON wi.repo_id = wr.repo_id AND wi.id = wr.work_item_id "
+                "WHERE wr.repo_id = %s "
+                "AND jsonb_typeof(wr.acceptance_contract -> 'evidence_obligations') = 'array' "
+                "AND jsonb_array_length(wr.acceptance_contract -> 'evidence_obligations') > 0"
+                f"{sprint_clause}",
+                params,
+            )
+            rows = cur.fetchall()
+        return [row["release_digest"] for row in rows]
+
+
 def unmet_obligations(store: PgStore, release_digest: str) -> list[dict]:
     """Report a release's declared evidence obligations that went unmet (#2446).
 
@@ -4482,32 +4521,7 @@ def unmet_obligations(store: PgStore, release_digest: str) -> list[dict]:
     declared label.  Returns ``[]`` (never raises) when the release has no
     declared obligations, including when it does not exist.
     """
-    release = get_release(store, release_digest)
-    if release is None:
-        return []
-    obligations = list(release["acceptance_contract"].get("evidence_obligations") or [])
-    if not obligations:
-        return []
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM work_decision WHERE repo_id = %s AND release_digest = %s "
-            "AND kind = 'accept'",
-            (store.repo_id, release_digest),
-        )
-        decisions = [_decision_row(row) for row in cur.fetchall()]
-    unmet: list[dict] = []
-    for decision in decisions:
-        if decision["evidence_digests"]:
-            continue
-        unmet.append(
-            {
-                "item_id": decision["work_item_id"],
-                "decision_id": decision["id"],
-                "release_digest": release_digest,
-                "unmet": list(obligations),
-            }
-        )
-    return unmet
+    return _obligationscore.unmet_obligations(_ObligationsPg(store), release_digest)
 
 
 def list_unmet_obligations(
@@ -4517,29 +4531,7 @@ def list_unmet_obligations(
 
     Mirrors :func:`sprintctl.db.list_unmet_obligations`.
     """
-    if limit is None:
-        limit = _unbound.DEFAULT_LIMIT
-    sprint_clause = ""
-    params: list[Any] = [store.repo_id]
-    if sprint_id is not None:
-        sprint_clause = " AND wi.sprint_id = %s"
-        params.append(sprint_id)
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT DISTINCT wr.release_digest FROM work_release wr "
-            "JOIN work_item wi ON wi.repo_id = wr.repo_id AND wi.id = wr.work_item_id "
-            "WHERE wr.repo_id = %s "
-            "AND jsonb_typeof(wr.acceptance_contract -> 'evidence_obligations') = 'array' "
-            "AND jsonb_array_length(wr.acceptance_contract -> 'evidence_obligations') > 0"
-            f"{sprint_clause}",
-            params,
-        )
-        digest_rows = cur.fetchall()
-    rows: list[dict] = []
-    for row in digest_rows:
-        rows.extend(unmet_obligations(store, row["release_digest"]))
-    rows.sort(key=lambda r: (r["item_id"], r["decision_id"]))
-    return {"count": len(rows), "items": rows[: int(limit)]}
+    return _obligationscore.list_unmet_obligations(_ObligationsPg(store), sprint_id=sprint_id, limit=limit)
 
 
 def list_release_commits(store: PgStore, digest: str) -> list[dict]:

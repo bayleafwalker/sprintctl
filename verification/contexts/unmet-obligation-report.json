@@ -1,0 +1,85 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.unmet-obligation-report",
+  "owner_repo": "sprintctl",
+  "subject": "existing read-only unmet-obligation report compatibility",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2774",
+    "revision": "native:release:1be95c31ab1cb0e6890de462d309c4e9a761a2ac47f786d3f4d0035986d96950"
+  },
+  "source_of_truth": "Existing2446 report behavior in db.py/pg.py at 0b1b18004fa968e9919eeeb924b038e6b18b9986; native scope decision5569; parent2150 remains open",
+  "depth": 1,
+  "backends": [
+    "temporary SQLite",
+    "disposable PostgreSQL16.15"
+  ],
+  "actors": [
+    "report reader",
+    "independent connection observing uncommitted caller writes"
+  ],
+  "initial_state": [
+    "public APIs create declared/undeclared releases and accepted/nonaccepted Decisions",
+    "older Release may be accepted explicitly after a newer Release is frozen",
+    "pending caller write stays uncommitted"
+  ],
+  "operations": [
+    {
+      "name": "unmet_obligations",
+      "actors": [
+        "report reader"
+      ],
+      "synchronization": "existing backend reads; no new transaction or snapshot"
+    },
+    {
+      "name": "list_unmet_obligations",
+      "actors": [
+        "report reader"
+      ],
+      "synchronization": "backend candidate selection then complete common reduction and limiting"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "exact bounded report rows, errors and no added mutations"
+  },
+  "assumptions": {
+    "isolation": "ordinary single-reader fixtures; independent observer for caller transaction visibility",
+    "clock": "none",
+    "fairness": "none"
+  },
+  "bounds": {
+    "shared_cases_per_backend": 21,
+    "sqlite_additional_cases": 2,
+    "postgres_additional_cases": 2,
+    "concurrent_writers": 0
+  },
+  "invariants": [
+    "valid unknown/undeclared/empty releases return no obligations",
+    "malformed digest retains backend validation error",
+    "only accept Decisions without any evidence digest owe every declared label",
+    "declared order and repeated labels are retained in independent result lists",
+    "aggregate sort/count/default/int-limit and Python slicing stay unchanged",
+    "sprint/current-membership and PostgreSQL tenant filtering stay backend-owned",
+    "reads do not mutate rows or commit pending caller writes"
+  ],
+  "faults": [],
+  "oracles": [
+    "shared exact expected report rows on actual backends before and after extraction",
+    "invalid digest and limit error assertions",
+    "SQLite before/after row dump and DB-file bytes",
+    "independent SQLite/PostgreSQL connection cannot observe pending caller write",
+    "PostgreSQL foreign tenant exclusion"
+  ],
+  "implementation_anchors": [
+    "sprintctl/obligationscore.py",
+    "sprintctl/db.py:_ObligationsSqlite",
+    "sprintctl/pg.py:_ObligationsPg",
+    "tests/_unmet_obligations_contract.py",
+    "tests/test_unmet_obligations_parity.py",
+    "tests/pg/test_unmet_obligations_parity.py"
+  ],
+  "expansions": [
+    "backend-parity",
+    "semantic-doc"
+  ]
+}
