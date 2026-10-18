@@ -7,12 +7,16 @@ dep-table behaviour. Mirrors the pattern established in ``sprintcore.py``.
 
 Validation (self-dependency check, work-item existence) stays in each
 backend's wrapper because it calls other backend-specific functions
-(``get_work_item``); this module only owns the raw storage shape.
+(``get_work_item``). This module owns the raw storage shape and the private
+read-only graph projection over backend-selected eligible rows.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Protocol
+
+from .workitemcore import effective_priority
 
 
 class DepConn(Protocol):
@@ -117,3 +121,30 @@ def remove_dep(conn: DepConn, dep_id: int, item_id: int) -> None:
         raise ValueError(f"Dep #{dep_id} not found for item #{item_id}")
     sql = f"DELETE FROM dep{_where(conn, f'id = {conn.ph}')}"
     conn.mutate(sql, conn.tenant_params() + (dep_id,))
+
+
+def _ready_items(items: list[dict], blockers_for: Callable[[int], list[dict]]) -> list[dict]:
+    """Project graph readiness from backend-selected eligible pending items.
+
+    Selection, hosted parking, SQL normalization and read transactions remain
+    backend-owned. This graph report does not authorize dispatch or effects.
+    A done blocker resolves an edge regardless of its terminal resolution.
+    """
+    ready = []
+    for item in items:
+        blockers = blockers_for(item["id"])
+        unresolved = [b for b in blockers if b["blocker_status"] != "done"]
+        if not unresolved:
+            ready.append({
+                **item,
+                "blockers_resolved": len(blockers),
+                "unresolved_blockers": 0,
+                "effective_priority": effective_priority(item),
+            })
+    ready.sort(key=lambda item: (
+        item["effective_priority"] is None,
+        item["effective_priority"] or 0,
+        item["created_at"],
+        item["id"],
+    ))
+    return ready

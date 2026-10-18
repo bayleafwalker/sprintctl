@@ -5284,28 +5284,8 @@ def get_ready_items(store: PgStore, sprint_id: int) -> list[dict]:
     # Parked work is not ready (agentops#2543) even if it was left pending.
     with store.conn.cursor() as cur:
         parked = _parked_items(cur, store, [int(item["id"]) for item in items])
-    ready = []
-    for item in items:
-        if int(item["id"]) in parked:
-            continue
-        blockers = list_deps_blocking(store, item["id"])
-        unresolved = [b for b in blockers if b["blocker_status"] != "done"]
-        if not unresolved:
-            ready.append({
-                **item,
-                "blockers_resolved": len(blockers),
-                "unresolved_blockers": 0,
-                "effective_priority": effective_priority(item),
-            })
-    ready.sort(
-        key=lambda it: (
-            it["effective_priority"] is None,
-            it["effective_priority"] or 0,
-            it["created_at"],
-            it["id"],
-        )
-    )
-    return ready
+    eligible = [item for item in items if int(item["id"]) not in parked]
+    return _depcore._ready_items(eligible, lambda ident: list_deps_blocking(store, ident))
 
 
 # ---------------------------------------------------------------------------

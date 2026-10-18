@@ -2395,35 +2395,7 @@ def get_ready_items(
     Items with no deps at all are always ready.
     """
     items = list_work_items(conn, sprint_id=sprint_id, status="pending")
-    ready = []
-    for item in items:
-        blockers = list_deps_blocking(conn, item["id"])
-        unresolved = [b for b in blockers if b["blocker_status"] != "done"]
-        if not unresolved:
-            ready.append({
-                **item,
-                "blockers_resolved": len(blockers),
-                "unresolved_blockers": 0,
-                "effective_priority": effective_priority(item),
-            })
-        else:
-            # Include items with unresolved blockers so caller can inspect
-            item_with_deps = {
-                **item,
-                "blockers_resolved": len(blockers) - len(unresolved),
-                "unresolved_blockers": len(unresolved),
-                "unresolved_blocker_ids": [b["item_id"] for b in unresolved],
-            }
-            _ = item_with_deps  # not included in ready list
-    ready.sort(
-        key=lambda it: (
-            it["effective_priority"] is None,
-            it["effective_priority"] or 0,
-            it["created_at"],
-            it["id"],
-        )
-    )
-    return ready
+    return _depcore._ready_items(items, lambda ident: list_deps_blocking(conn, ident))
 
 
 # --- Work decisions (TS-5): the only writer of terminal status ---
