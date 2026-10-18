@@ -117,6 +117,7 @@ class TestWritePath:
                 item_id,
                 kind,
                 actor="owner",
+                rationale="Record the reviewed terminal outcome",
                 evidence_digests=["d" * 64],
                 superseded_by_item_id=other if kind == "supersede" else None,
             )
@@ -137,7 +138,7 @@ class TestWritePath:
             db.record_decision(conn, item_id, "supersede", actor="owner")
         with pytest.raises(ValueError, match="lowercase hexadecimal"):
             db.record_decision(conn, item_id, "reject", actor="owner", evidence_digests=["X"])
-        db.record_decision(conn, item_id, "withdraw", actor="owner")
+        db.record_decision(conn, item_id, "withdraw", actor="owner", rationale="Work is no longer required")
         with pytest.raises(db.InvalidTransition, match="terminal"):
             db.record_decision(conn, item_id, "revise", actor="owner")
         assert [d["kind"] for d in db.list_decisions(conn, item_id)] == ["withdraw"]
@@ -314,7 +315,7 @@ class TestRecoveryWithDecisions:
         db.set_work_item_status(conn, legacy_open, "done", actor="closer")
         fresh = db.create_work_item(conn, sprint_id, track_id, "fresh")
         successor = db.create_work_item(conn, sprint_id, track_id, "successor")
-        db.record_decision(conn, fresh, "supersede", actor="p", superseded_by_item_id=successor)
+        db.record_decision(conn, fresh, "supersede", actor="p", rationale="Continue in the replacement item", superseded_by_item_id=successor)
         db.record_decision(conn, successor, "revise", actor="r")
         event_id = conn.execute(
             "INSERT INTO event (sprint_id, source_type, actor, event_type, payload) "

@@ -139,7 +139,7 @@ class TestReviseAndDecisions:
                 aggregate_type="item",
                 aggregate_uuid=item["aggregate_uuid"],
                 basis_revision=authority.item_revision(item),
-                payload={"kind": "reject", "release_digest": foreign},
+                payload={"kind": "reject", "rationale": "Review the requested release", "release_digest": foreign},
             )
             refused = authority.arbitrate_command(store, command)
         finally:

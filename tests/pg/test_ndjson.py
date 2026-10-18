@@ -121,7 +121,7 @@ class TestNdjsonRoundTrip:
         _db.set_work_item_status(conn, accepted, "done", actor="closer")
         old = _db.create_work_item(conn, sid, tid, "superseded")
         new = _db.create_work_item(conn, sid, tid, "successor")
-        _db.record_decision(conn, old, "supersede", actor="planner", superseded_by_item_id=new)
+        _db.record_decision(conn, old, "supersede", actor="planner", rationale="Continue in the replacement item", superseded_by_item_id=new)
         with _db.legacy_import_gate(conn):
             conn.execute(
                 "INSERT INTO work_item (sprint_id, track_id, title, status, legacy, "

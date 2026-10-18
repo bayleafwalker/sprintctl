@@ -89,6 +89,13 @@ decision and the same key with a different request is refused
 not a release of the item), `invalid-transition` (for example accepting a
 non-active item), `item-terminal`, `legacy-done-item` (all 409),
 `decision-rejected` (422) and `item-not-found` (404).
+Fresh `reject`, `withdraw` and `supersede` decisions require a rationale with
+at least one non-whitespace character. The authored string is retained
+unchanged. This admission rule runs after exact keyed replay, so historical
+requests with empty rationales still replay their immutable original results;
+changed request content still conflicts. `accept` and `revise` retain their
+existing optional-rationale behavior. This does not add another item status:
+retired items are terminal with the corresponding distinct `resolution`.
 A legacy item that was done before decisions existed and has no decision
 takes one *re-mark* through the same operation: a terminal kind with a
 non-empty rationale and at least one evidence digest. The item stays done and

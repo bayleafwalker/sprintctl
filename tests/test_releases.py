@@ -205,7 +205,7 @@ class TestReviseAndDecisions:
 
     def test_decision_without_any_release_stays_unbound(self, conn):
         item_id = _item(conn)
-        assert db.record_decision(conn, item_id, "withdraw", actor="owner")["release_digest"] is None
+        assert db.record_decision(conn, item_id, "withdraw", actor="owner", rationale="Work is no longer required")["release_digest"] is None
 
     def test_done_alias_also_binds_the_current_release(self, conn):
         item_id = _item(conn)
@@ -220,7 +220,8 @@ class TestReviseAndDecisions:
         _edit(conn, item_id, "v2")
         _reserve(conn, item_id)
         decision = db.record_decision(
-            conn, item_id, "reject", actor="owner", release_digest=first
+            conn, item_id, "reject", actor="owner", release_digest=first,
+            rationale="The earlier release does not meet the requirement",
         )
         assert decision["release_digest"] == first
 

@@ -164,7 +164,7 @@ class TestDecisionWritePath:
 
     def test_terminal_item_takes_no_further_decision(self, store):
         _sprint_id, _track_id, item_id = _item(store)
-        pg.record_decision(store, item_id, "withdraw", actor="owner")
+        pg.record_decision(store, item_id, "withdraw", actor="owner", rationale="Work is no longer required")
         with pytest.raises(pg.InvalidTransition, match="terminal"):
             pg.record_decision(store, item_id, "revise", actor="owner")
         assert len(pg.list_decisions(store, item_id)) == 1
@@ -531,7 +531,7 @@ class TestCopies:
             fresh = pg.create_work_item(source, sprint_id, track_id, "fresh")
             successor = pg.create_work_item(source, sprint_id, track_id, "successor")
             pg.record_decision(
-                source, fresh, "supersede", actor="planner", superseded_by_item_id=successor
+                source, fresh, "supersede", actor="planner", rationale="Continue in the replacement item", superseded_by_item_id=successor
             )
             pg.record_decision(source, successor, "revise", actor="reviewer")
             with source_conn.cursor() as cur:
@@ -606,7 +606,7 @@ class TestCopies:
 
     def test_replace_is_refused_before_any_delete(self, store):
         _sprint_id, _track_id, item_id = _item(store)
-        pg.record_decision(store, item_id, "withdraw", actor="owner")
+        pg.record_decision(store, item_id, "withdraw", actor="owner", rationale="Work is no longer required")
         before = pg.backfill_repo_row_counts(store.conn, store.repo_id)
         with pytest.raises(ValueError, match="cannot replace repository .* append-only"):
             pg.import_ndjson(store, [], replace=True)
