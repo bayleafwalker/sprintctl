@@ -1,0 +1,230 @@
+{
+  "cleanup": {
+    "all_remaining_rows_zero": true,
+    "cleanup_completed": true,
+    "deleted_nonzero_rows": {
+      "event": 2,
+      "sprint": 2,
+      "track": 2,
+      "work_item": 3
+    },
+    "finished_fixtures": 1,
+    "fixture": "pg_test_scope",
+    "qualified_run": "second PostgreSQL RED with cleanup retention only",
+    "report": "/tmp/sprintctl-2778-before-pg-cleanup.jsonl",
+    "scope_match": "second run assertion repo_id matches retained registered cleanup scope",
+    "sha256": "62678824107254be81375ae2da660eb2d3104320407b37935cb65bd1d5266fdf",
+    "started_fixtures": 1
+  },
+  "fault": "real database BEFORE INSERT event trigger aborts backlog-seeded insertion after target item creation",
+  "function_sources": {
+    "sprintctl/db.py": {
+      "function": "backlog_seed_from_candidates",
+      "hash_method": "UTF-8 ast.get_source_segment, without added trailing newline",
+      "sha256": "40b70654a4af8a0efc9f0dddf53113ecb6af87711078f488edc82c16ac1de0bd"
+    },
+    "sprintctl/pg.py": {
+      "function": "backlog_seed_from_candidates",
+      "hash_method": "UTF-8 ast.get_source_segment, without added trailing newline",
+      "sha256": "696296ef9d1e23857e91882e5a32d70e63717a83f9375afd2b5c79816729130f"
+    }
+  },
+  "kind": "actual before-repair per-candidate backlog linkage counterexample",
+  "limits": [
+    "Temporary SQLite and private registered disposable PostgreSQL only; no shared work/service data.",
+    "Original PostgreSQL RED exited before runner cleanup-check printing; its cleanup report was not retained. Do not attribute the second run report to that original run.",
+    "Second PostgreSQL run added only opt-in report retention in test fixture; product was still unchanged.",
+    "Compact state is derived from actual JSON assertion traces, with raw log and assertion JSON hashes retained.",
+    "This baseline shows the item/link failure+retry defect, not concurrency or a whole-command rollback contract.",
+    "Base191fc9e before-repair evidence is distinct from later a5d7998 post-rebase full-suite history capture."
+  ],
+  "observations": [
+    {
+      "after_failure": {
+        "counts": {
+          "events": 0,
+          "items": 1,
+          "tracks": 1
+        },
+        "item_ids": [
+          2
+        ],
+        "link_events": [],
+        "track_ids": [
+          2
+        ]
+      },
+      "after_retry": {
+        "counts": {
+          "events": 1,
+          "items": 2,
+          "tracks": 1
+        },
+        "item_ids": [
+          2,
+          3
+        ],
+        "link_events": [
+          {
+            "event_type": "backlog-seeded",
+            "id": 2,
+            "payload": {
+              "source_event_id": 1,
+              "source_event_type": "pattern-noted",
+              "source_item_id": 1,
+              "source_sprint_id": 1
+            },
+            "work_item_id": 3
+          }
+        ],
+        "track_ids": [
+          2
+        ]
+      },
+      "assertion_json_sha256": "3819dd368c11f05244d3e9d891fdc5fd4b7cd36a8bf4c13ed1085a368d1dae3d",
+      "backend": "SQLite",
+      "before": {
+        "counts": {
+          "events": 0,
+          "items": 0,
+          "tracks": 0
+        },
+        "item_ids": [],
+        "link_events": [],
+        "track_ids": []
+      },
+      "log": "/tmp/sprintctl-2778-before-sqlite-red.txt",
+      "log_sha256": "56b66353c6e8e25dfe9b93be12f041cd35b58bb580a1b4901b929cd46601128a",
+      "result": "actual expected-rollback assertion failed before repair",
+      "retry_return_count": 1,
+      "run": "original before-repair RED",
+      "source_base": "191fc9e0398b0aab8b5fb8001adca1ceede1597f",
+      "source_event_id": 1
+    },
+    {
+      "after_failure": {
+        "counts": {
+          "events": 0,
+          "items": 1,
+          "tracks": 1
+        },
+        "item_ids": [
+          2
+        ],
+        "link_events": [],
+        "track_ids": [
+          2
+        ]
+      },
+      "after_retry": {
+        "counts": {
+          "events": 1,
+          "items": 2,
+          "tracks": 1
+        },
+        "item_ids": [
+          2,
+          3
+        ],
+        "link_events": [
+          {
+            "event_type": "backlog-seeded",
+            "id": 3,
+            "payload": {
+              "source_event_id": 1,
+              "source_event_type": "pattern-noted",
+              "source_item_id": 1,
+              "source_sprint_id": 1
+            },
+            "work_item_id": 3
+          }
+        ],
+        "track_ids": [
+          2
+        ]
+      },
+      "assertion_json_sha256": "fc8f5171345310ba80de5c76f8976c14a16b82e7a22f5713de014ce67ce30b5b",
+      "backend": "PostgreSQL16.15",
+      "before": {
+        "counts": {
+          "events": 0,
+          "items": 0,
+          "tracks": 0
+        },
+        "item_ids": [],
+        "link_events": [],
+        "track_ids": []
+      },
+      "log": "/tmp/sprintctl-2778-before-pg-red.txt",
+      "log_sha256": "f3977b4e7f8ba1113f1ba06eb07d7f7cb829be265a4b94640371c71971194919",
+      "result": "actual expected-rollback assertion failed before repair",
+      "retry_return_count": 1,
+      "run": "original before-repair RED",
+      "source_base": "191fc9e0398b0aab8b5fb8001adca1ceede1597f",
+      "source_event_id": 1
+    },
+    {
+      "after_failure": {
+        "counts": {
+          "events": 0,
+          "items": 1,
+          "tracks": 1
+        },
+        "item_ids": [
+          2
+        ],
+        "link_events": [],
+        "track_ids": [
+          2
+        ]
+      },
+      "after_retry": {
+        "counts": {
+          "events": 1,
+          "items": 2,
+          "tracks": 1
+        },
+        "item_ids": [
+          2,
+          3
+        ],
+        "link_events": [
+          {
+            "event_type": "backlog-seeded",
+            "id": 3,
+            "payload": {
+              "source_event_id": 1,
+              "source_event_type": "pattern-noted",
+              "source_item_id": 1,
+              "source_sprint_id": 1
+            },
+            "work_item_id": 3
+          }
+        ],
+        "track_ids": [
+          2
+        ]
+      },
+      "assertion_json_sha256": "57f4e652457fc98098d0f9762735685d249c658a8cc72c65568f2df3f5950a11",
+      "backend": "PostgreSQL16.15",
+      "before": {
+        "counts": {
+          "events": 0,
+          "items": 0,
+          "tracks": 0
+        },
+        "item_ids": [],
+        "link_events": [],
+        "track_ids": []
+      },
+      "log": "/tmp/sprintctl-2778-before-pg-red-cleanup.txt",
+      "log_sha256": "8f4ccd0f6c27c1b756b6be60adac4bc54c07d0877472ab7f4911fc1f20f81aa9",
+      "result": "actual expected-rollback assertion failed before repair",
+      "retry_return_count": 1,
+      "run": "second before-repair RED with cleanup retention",
+      "source_base": "191fc9e0398b0aab8b5fb8001adca1ceede1597f",
+      "source_event_id": 1
+    }
+  ],
+  "source_base": "191fc9e0398b0aab8b5fb8001adca1ceede1597f"
+}

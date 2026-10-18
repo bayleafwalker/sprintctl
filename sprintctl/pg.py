@@ -42,6 +42,7 @@ from . import reservationcore as _reservationcore
 from . import reservation as _reservation
 from . import reservation_policy as _policy
 from . import contracts as _contracts
+from . import backlogcore as _backlogcore
 from . import maintaincore as _maintaincore
 from . import decisions as _decisions
 from . import releases as _releases
@@ -5292,53 +5293,85 @@ def get_ready_items(store: PgStore, sprint_id: int) -> list[dict]:
 # Backlog seeding
 # ---------------------------------------------------------------------------
 
+class _BacklogSeedPg:
+    """Tenant-scoped seed reads and sorted sprint locks per candidate."""
+
+    def __init__(self, store: PgStore) -> None:
+        self.store = store
+
+    def get_sprint(self, ident: int) -> dict | None:
+        return get_sprint(self.store, ident)
+
+    def candidates(self, source: int) -> list[dict]:
+        return list_knowledge_candidates(self.store, source)
+
+    def seeded_event_ids(self, target: int) -> set:
+        seeded = set()
+        for event in list_events(self.store, target):
+            if event["event_type"] == "backlog-seeded":
+                payload = json.loads(event.get("payload") or "{}") if isinstance(event.get("payload"), str) else (event.get("payload") or {})
+                if "source_event_id" in payload:
+                    seeded.add(payload["source_event_id"])
+        return seeded
+
+    def candidate(self, source: int, ident: int) -> dict | None:
+        placeholders = ", ".join("%s" for _ in KNOWLEDGE_EVENT_TYPES)
+        with self.store.conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM event WHERE repo_id = %s AND id = %s AND sprint_id = %s "
+                f"AND event_type IN ({placeholders})",
+                (self.store.repo_id, ident, source, *KNOWLEDGE_EVENT_TYPES),
+            )
+            row = cur.fetchone()
+        if row is None:
+            return None
+        event = _norm(row)
+        event["payload"] = _decode_event_payload(event)
+        return event
+
+    @contextmanager
+    def transaction(self, source: int, target: int):
+        # Existing public PG mutators commit implicit caller state. Managed
+        # outer/two-phase refusal happens before our rollback handler.
+        self.store.conn.commit()
+        try:
+            with self.store.conn.transaction():
+                with self.store.conn.cursor() as cur:
+                    # IN yields distinct rows; database ORDER BY fixes lock
+                    # order without changing accepted argument representations.
+                    cur.execute(
+                        "SELECT id FROM sprint WHERE repo_id = %s AND id IN (%s, %s) "
+                        "ORDER BY id FOR UPDATE", (self.store.repo_id, source, target),
+                    )
+                    cur.fetchall()
+                wi = _WorkItemPg(self.store, commit_insert=False)
+                track = _TrackPg(self.store, commit_insert=False)
+                yield _backlogcore.SeedParticipant(
+                    get_sprint=self.get_sprint, candidate=self.candidate,
+                    seeded_event_ids=self.seeded_event_ids,
+                    create_track=lambda sid, name: _trackcore.get_or_create_track(track, sid, name),
+                    create_item=lambda *args, **kwargs: _workitemcore.create_work_item(wi, *args, **kwargs),
+                    insert_event=lambda *args, **kwargs: _insert_event(self.store, *args, **kwargs),
+                    get_item=lambda ident: get_work_item(self.store, ident),
+                )
+        except Exception:
+            self.store.conn.rollback()
+            raise
+
+
 def backlog_seed_from_candidates(
     store: PgStore,
     source_sprint_id: int,
     target_sprint_id: int,
     actor: str = "system",
 ) -> list[dict]:
-    import json as _json
-    if get_sprint(store, source_sprint_id) is None:
-        raise ValueError(f"Source sprint #{source_sprint_id} not found")
-    if get_sprint(store, target_sprint_id) is None:
-        raise ValueError(f"Target sprint #{target_sprint_id} not found")
+    """Seed one candidate per owned transaction; see the SQLite entrypoint.
 
-    candidates = list_knowledge_candidates(store, source_sprint_id)
-    if not candidates:
-        return []
-
-    existing_events = list_events(store, target_sprint_id)
-    already_seeded: set[int] = set()
-    for ev in existing_events:
-        if ev["event_type"] == "backlog-seeded":
-            p = _json.loads(ev.get("payload") or "{}") if isinstance(ev.get("payload"), str) else (ev.get("payload") or {})
-            if "source_event_id" in p:
-                already_seeded.add(p["source_event_id"])
-
-    track_id = get_or_create_track(store, target_sprint_id, "knowledge")
-    seeded = []
-    for candidate in candidates:
-        if candidate["id"] in already_seeded:
-            continue
-        summary = candidate["payload"].get("summary", f"Knowledge item from event #{candidate['id']}")
-        title = f"[knowledge] {summary}"
-        item_id = create_work_item(store, target_sprint_id, track_id, title)
-        create_event(
-            store, target_sprint_id,
-            actor=actor,
-            event_type="backlog-seeded",
-            source_type="system",
-            work_item_id=item_id,
-            payload={
-                "source_sprint_id": source_sprint_id,
-                "source_item_id": candidate.get("work_item_id"),
-                "source_event_id": candidate["id"],
-                "source_event_type": candidate["event_type"],
-            },
-        )
-        seeded.append(get_work_item(store, item_id))
-    return seeded
+    Concurrent deduplication is qualified for default READ COMMITTED only.
+    Fresh-work precommit and caller ownership differ from SQLite; no-op reads
+    do not precommit. This does not add a hosted ingestion operation.
+    """
+    return _backlogcore.seed_candidates(_BacklogSeedPg(store), source_sprint_id, target_sprint_id, actor)
 
 
 # ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from . import contracts as _contracts
+from . import backlogcore as _backlogcore
 from . import maintaincore as _maintaincore
 from . import decisions as _decisions
 from . import depcore as _depcore
@@ -2837,59 +2838,75 @@ def legacy_import_gate(conn: sqlite3.Connection):
 
 # --- Backlog seeding ---
 
+class _BacklogSeedSqlite:
+    """Existing readers and one owned writer transaction per selected event."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self.conn = conn
+
+    def get_sprint(self, ident: int) -> dict | None:
+        return get_sprint(self.conn, ident)
+
+    def candidates(self, source: int) -> list[dict]:
+        return list_knowledge_candidates(self.conn, source)
+
+    def seeded_event_ids(self, target: int) -> set:
+        seeded = set()
+        for event in list_events(self.conn, target):
+            if event["event_type"] == "backlog-seeded":
+                payload = json.loads(event.get("payload") or "{}")
+                if "source_event_id" in payload:
+                    seeded.add(payload["source_event_id"])
+        return seeded
+
+    def candidate(self, source: int, ident: int) -> dict | None:
+        placeholders = ", ".join("?" for _ in KNOWLEDGE_EVENT_TYPES)
+        row = self.conn.execute(
+            "SELECT * FROM event WHERE id = ? AND sprint_id = ? "
+            f"AND event_type IN ({placeholders})", (ident, source, *KNOWLEDGE_EVENT_TYPES),
+        ).fetchone()
+        if row is None:
+            return None
+        event = dict(row)
+        event["payload"] = _decode_event_payload(event)
+        return event
+
+    @contextmanager
+    def transaction(self, source: int, target: int):
+        # Refuse before our rollback handler can touch unrelated caller work.
+        if self.conn.in_transaction:
+            raise ValueError("backlog seeding requires an idle SQLite connection")
+        try:
+            self.conn.execute("BEGIN IMMEDIATE")
+            wi = _WorkItemSqlite(self.conn, commit_insert=False)
+            track = _TrackSqlite(self.conn, commit_insert=False)
+            yield _backlogcore.SeedParticipant(
+                get_sprint=self.get_sprint, candidate=self.candidate,
+                seeded_event_ids=self.seeded_event_ids,
+                create_track=lambda sid, name: _trackcore.get_or_create_track(track, sid, name),
+                create_item=lambda *args, **kwargs: _workitemcore.create_work_item(wi, *args, **kwargs),
+                insert_event=lambda *args, **kwargs: _insert_event(self.conn, *args, **kwargs),
+                get_item=lambda ident: get_work_item(self.conn, ident),
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
+
 def backlog_seed_from_candidates(
     conn: sqlite3.Connection,
     source_sprint_id: int,
     target_sprint_id: int,
     actor: str = "system",
 ) -> list[dict]:
-    """Create backlog items in target_sprint from knowledge candidates in source_sprint.
+    """Seed each fresh candidate atomically with its linkage and prepared result.
 
-    Returns only the newly created items. Candidates already seeded (tracked via
-    backlog-seeded events in target_sprint) are skipped — making the call idempotent.
+    Return newly created items; earlier candidates survive a later failure.
+    Initially empty/all-linked calls do not create a track or commit caller
+    work. Deduplication relies on conforming writers and durable link events.
     """
-    if get_sprint(conn, source_sprint_id) is None:
-        raise ValueError(f"Source sprint #{source_sprint_id} not found")
-    if get_sprint(conn, target_sprint_id) is None:
-        raise ValueError(f"Target sprint #{target_sprint_id} not found")
-
-    candidates = list_knowledge_candidates(conn, source_sprint_id)
-    if not candidates:
-        return []
-
-    # Find already-seeded source event IDs to avoid duplicates.
-    existing_events = list_events(conn, target_sprint_id)
-    already_seeded: set[int] = set()
-    for ev in existing_events:
-        if ev["event_type"] == "backlog-seeded":
-            p = json.loads(ev.get("payload") or "{}")
-            if "source_event_id" in p:
-                already_seeded.add(p["source_event_id"])
-
-    track_id = get_or_create_track(conn, target_sprint_id, "knowledge")
-    seeded = []
-    for candidate in candidates:
-        if candidate["id"] in already_seeded:
-            continue
-        summary = candidate["payload"].get("summary", f"Knowledge item from event #{candidate['id']}")
-        title = f"[knowledge] {summary}"
-        item_id = create_work_item(conn, target_sprint_id, track_id, title)
-        create_event(
-            conn,
-            target_sprint_id,
-            actor=actor,
-            event_type="backlog-seeded",
-            source_type="system",
-            work_item_id=item_id,
-            payload={
-                "source_sprint_id": source_sprint_id,
-                "source_item_id": candidate.get("work_item_id"),
-                "source_event_id": candidate["id"],
-                "source_event_type": candidate["event_type"],
-            },
-        )
-        seeded.append(get_work_item(conn, item_id))
-    return seeded
+    return _backlogcore.seed_candidates(_BacklogSeedSqlite(conn), source_sprint_id, target_sprint_id, actor)
 
 
 # --- Database maintenance ---

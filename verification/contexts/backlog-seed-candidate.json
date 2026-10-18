@@ -1,0 +1,114 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.backlog-seed-candidate",
+  "owner_repo": "sprintctl",
+  "subject": "one manually seeded candidate and its scoped linkage identity",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2778",
+    "revision": "native:release:59e43ee3315ebc2c8b7ce650fef9218c71d2e4e6590ab866177cf7b3cf33f49a"
+  },
+  "source_of_truth": "Existing manual API plus frozen native scope5578; docs/protocols/backlog-seeding.md is a descriptive draft, not a new ratified provider contract",
+  "depth": 2,
+  "backends": [
+    "temporary SQLite",
+    "registered disposable PostgreSQL16.15 READ COMMITTED"
+  ],
+  "actors": [
+    "seed writer",
+    "competing seed writer",
+    "independent durable reader",
+    "fixture fault holder"
+  ],
+  "initial_state": [
+    "finite source candidate population, target initially linked or unlinked",
+    "caller state idle, implicit pending, managed outer or two-phase as specified",
+    "existing knowledge track absent or supplied by an earlier committed candidate"
+  ],
+  "operations": [
+    {
+      "name": "select initial candidates and receipts",
+      "actors": [
+        "seed writer"
+      ],
+      "synchronization": "existing eager validation/decoding before writes"
+    },
+    {
+      "name": "seed one candidate",
+      "actors": [
+        "seed writer",
+        "competing seed writer"
+      ],
+      "synchronization": "SQLite BEGIN IMMEDIATE or PG sorted distinct scoped sprint locks, then current event/receipt recheck"
+    },
+    {
+      "name": "observe committed or failed candidate",
+      "actors": [
+        "independent durable reader"
+      ],
+      "synchronization": "after injected fault or actual held-writer wait"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "per-candidate track/item/link/result preparation and bounded conforming-writer deduplication"
+  },
+  "assumptions": {
+    "isolation": "SQLite writer serialization; measured default PostgreSQL READ COMMITTED, including independent worker connections",
+    "clock": "existing backend timestamps, no age decision",
+    "fairness": "none",
+    "identity": "existing repository-local sprint/event mappings and durable generic links; no migration/remapping qualification",
+    "writers": "conforming seed writers; arbitrary SQL or fabricated/deleted receipts outside guarantee"
+  },
+  "bounds": {
+    "shared_cases_per_backend": 26,
+    "sqlite_additional_caller_cases": 3,
+    "postgres_additional_caller_tenant_cases": 6,
+    "ordered_histories_per_backend": 7,
+    "workers_per_competing_history": 2,
+    "max_initial_candidates_in_examples": 2
+  },
+  "invariants": [
+    "before-link, after-link, result-preparation and admission failures roll back selected candidate track/item/link state",
+    "earlier committed candidates survive a later failure; retry returns only newly seeded items",
+    "existing summary/default/actor/linkage and scoped two-target identities are preserved without receipt-ID coercion",
+    "initial empty/all-linked calls avoid track creation and preserve pending caller writes",
+    "fresh SQLite caller refusal and PG public precommit/managed/two-phase boundaries preserve their stated caller effects",
+    "selected event deletion/move/type change and missing sprint are rechecked after an actual writer wait",
+    "same-target conforming writers create one item/link and waiting loser skips at default isolation",
+    "opposite-direction calls complete in the recorded bounded histories"
+  ],
+  "faults": [
+    "actual SQL trigger abort before linkage insertion",
+    "exception after actual linkage insertion",
+    "exception after actual result lookup",
+    "exception after second candidate linkage insertion",
+    "generic event admission refusal",
+    "selected event deleted/moved/reclassified under held writer lock",
+    "source/target sprint removed under held writer lock",
+    "malformed unhashable initial receipt",
+    "managed/two-phase explicit commit refusal"
+  ],
+  "oracles": [
+    "independent before/after target tracks/items/link events",
+    "exact linkage payload and returned item shape/defaults",
+    "actual SQLite BEGIN attempt or PG pg_blocking_pids before holder release",
+    "actual ordered JUnit state_history observations",
+    "pending caller state observed through separate connections",
+    "registered PG cleanup reports"
+  ],
+  "implementation_anchors": [
+    "sprintctl/backlogcore.py:seed_candidates",
+    "sprintctl/backlogcore.py:seed_candidate",
+    "sprintctl/db.py:_BacklogSeedSqlite",
+    "sprintctl/pg.py:_BacklogSeedPg",
+    "tests/_backlog_seed_atomicity_contract.py",
+    "tests/test_backlog_seed_atomicity.py",
+    "tests/pg/test_backlog_seed_atomicity.py"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "backend-parity",
+    "concurrent-history",
+    "fault-scenario"
+  ]
+}
