@@ -1,0 +1,225 @@
+{
+  "artifacts_sha256": {
+    ".gitleaksignore": "81e78ea1e273f507bfe5954e07e8133ab7e5820d3c299c6e831b3adc6489edd9",
+    "sprintctl/db.py": "643b81aebfadab3f5d0532d84048b2b219aeff4964a1a156158cb8e2fee806a6",
+    "sprintctl/pg.py": "a95472c2b2b5e052880808b7b67407c26d05b972d7978fa8c03b71389b1eb6d9",
+    "sprintctl/workitemcore.py": "dcdd77ab8ab3cdf3641d959274e7c1324102cc7652306a14cb9bfc6ee5b92d9b",
+    "tests/_locked_decision_writing_contract.py": "70406d96f6d4f49ea43735b07137d56ed5b77d968a07a1b82da3ac84d43979e5",
+    "tests/pg/test_locked_decision_writing.py": "55594b233f61af26155f161910d35c8335a20873f3951448673df5ac32e8d51b",
+    "tests/test_locked_decision_writing.py": "fc5b6461e0999072fc6e1ebe11e7a92c3a178f6a2bd4f7a8879ed8eb9708c928",
+    "verification/contexts/locked-decision-writing.json": "97bf38b3721ace888b783463dc95ecf19e256d524812b20c207ea111ef5657cc",
+    "verification/fixtures/locked-decision-writing-baseline-2805.json": "374f0955283867ff7a10bceea86b045e8724b6d83ac31719b255da592e133c81",
+    "verification/fixtures/locked-decision-writing-before-histories-2805.json": "f2b5eda4da7e504fb3634843697cca579cb8cf853e21624528920d61fb32d70d",
+    "verification/fixtures/locked-decision-writing-negative-controls-2805.json": "51191e07ac36fd1dcccc4e47e31bb89a8e5a4800f0ab195b7ee3378ae3967449",
+    "verification/fixtures/locked-decision-writing-protected-2805.json": "c7eded85726787f4de7fb1fe8fa2fa479fb576f99a86d1c73cf84fab06fa3db6",
+    "verification/fixtures/locked-decision-writing-scanner-controls-2805.json": "89cfdbf409702b15563becf694ba8aed2b996e857c9f1f77fb624ebfd400c6f1",
+    "verification/fixtures/locked-decision-writing-source-pins-2805.json": "7fa8bc82d2495158ac84a37cb2db6c205e853a5df111d4a4e182a0ec5ff88bda",
+    "verification/traces/extract-locked-decision-writing-histories.py": "a635717049ae3140e2c6bd78932c447d86ada5c6b781c9ea4a81179a35008fbc",
+    "verification/traces/locked-decision-writing-histories-2805.json": "039ffd4fa7e11f2ddab18574898b09bf0675f42e8f2706f7b2b2a36929228ae6"
+  },
+  "claims": [
+    {
+      "evidence": [
+        "tests/_locked_decision_writing_contract.py",
+        "tests/test_locked_decision_writing.py",
+        "tests/pg/test_locked_decision_writing.py",
+        "verification/traces/locked-decision-writing-histories-2805.json"
+      ],
+      "property": "Admission and successor validation precede Release resolution; saved successor survives intentional same-thread resolver mutation while other INSERT fields remain late-read",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_locked_decision_writing_contract.py",
+        "tests/test_locked_decision_writing.py",
+        "tests/pg/test_locked_decision_writing.py",
+        "verification/traces/locked-decision-writing-histories-2805.json"
+      ],
+      "property": "SQLite returns opaque insertID then reads/decodes after item effects; PostgreSQL decodes RETURNING before native effects and returns that identical object",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_locked_decision_writing_contract.py",
+        "tests/test_locked_decision_writing.py",
+        "tests/pg/test_locked_decision_writing.py",
+        "verification/traces/locked-decision-writing-histories-2805.json"
+      ],
+      "property": "Five-kind/state and historical re-mark outcomes retain original errors, resolution, binding, status and close timestamp",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_locked_decision_writing_contract.py",
+        "tests/test_locked_decision_writing.py",
+        "tests/pg/test_locked_decision_writing.py",
+        "verification/traces/locked-decision-writing-histories-2805.json"
+      ],
+      "property": "PG reports stamp once for all applicable kinds before item binding; ordinary terminal lease update occurs once, legacy/revise do not settle active leases",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_locked_decision_writing_contract.py",
+        "tests/test_locked_decision_writing.py",
+        "tests/pg/test_locked_decision_writing.py",
+        "verification/traces/locked-decision-writing-histories-2805.json"
+      ],
+      "property": "complete_lease retains generic primitive lease reason followed by owner settled overwrite and later new outcome report",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_locked_decision_writing_contract.py",
+        "tests/test_locked_decision_writing.py",
+        "tests/pg/test_locked_decision_writing.py",
+        "verification/traces/locked-decision-writing-histories-2805.json"
+      ],
+      "property": "No helper event or transaction cleanup; actual primary pending/native SQL failure states and independent durable observations remain caller-owned",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_locked_decision_writing_contract.py",
+        "tests/test_locked_decision_writing.py",
+        "tests/pg/test_locked_decision_writing.py",
+        "verification/traces/locked-decision-writing-histories-2805.json",
+        "tests/_keyed_decision_contract.py",
+        "tests/test_keyed_decision_workflow.py",
+        "tests/pg/test_keyed_decision_workflow.py"
+      ],
+      "property": "Existing two-key-actor equal/different-item histories retain one fresh and replay/conflict results",
+      "result": "concurrency-tested"
+    }
+  ],
+  "context_id": "sprintctl.locked-decision-writing",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2805",
+    "revision": "native:release:cdfc755f2c4f768563e2ca7831d33fc72e52fcf6f0cbfb50d6d600bf4182e389"
+  },
+  "counterexamples": [],
+  "depth": 2,
+  "environment": {
+    "pg_isolation": "READ COMMITTED measured by direct primary/observer fixtures",
+    "postgresql": "16.15",
+    "psycopg": "3.3.3",
+    "pytest": "9.0.2",
+    "python": "3.13.16",
+    "scope": "Temporary SQLite and runner-owned local disposablePG; fsync=off disposablePG does not establish durability",
+    "sqlite": "3.53.1"
+  },
+  "execution": {
+    "bounds": {
+      "extra_pg_cases": 16,
+      "reused_keyed_writer_races_per_capture": 4,
+      "sequential_direct_observations_per_capture": 32,
+      "shared_cases": 55,
+      "workers_per_race": 2
+    },
+    "commands": {
+      "after-local": "UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-locked-decision-writing-local-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/test_locked_decision_writing.py tests/test_decisions.py tests/test_retirement_rationale.py tests/test_served_decisions.py tests/test_releases.py tests/test_keyed_decision_workflow.py tests/test_locked_item_status.py tests/test_carryover_atomicity.py tests/test_stale_item_atomicity.py tests/test_item_release.py tests/test_authority_fault_protocol.py tests/test_session_release.py -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2805-after-local.xml > /tmp/sprintctl-2805-after-local.txt 2>&1",
+      "after-pg": "PATH=/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-locked-decision-writing-pg-env UV_OFFLINE=1 timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh -k 'locked_decision_writing or decisions or retirement_rationale or releases or keyed_decision_workflow or locked_item_status or carryover_atomicity or stale_item_atomicity or item_release or authority or work_lease or session_release' --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2805-after-pg.xml > /tmp/sprintctl-2805-after-pg.txt 2>&1",
+      "before-local": "UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-locked-decision-writing-local-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/test_locked_decision_writing.py tests/test_decisions.py tests/test_retirement_rationale.py tests/test_served_decisions.py tests/test_releases.py tests/test_keyed_decision_workflow.py tests/test_locked_item_status.py tests/test_carryover_atomicity.py tests/test_stale_item_atomicity.py tests/test_item_release.py tests/test_authority_fault_protocol.py tests/test_session_release.py -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2805-before-local.xml > /tmp/sprintctl-2805-before-local.txt 2>&1",
+      "before-pg": "PATH=/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-locked-decision-writing-pg-env UV_OFFLINE=1 timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh -k 'locked_decision_writing or decisions or retirement_rationale or releases or keyed_decision_workflow or locked_item_status or carryover_atomicity or stale_item_atomicity or item_release or authority or work_lease or session_release' --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2805-before-pg.xml > /tmp/sprintctl-2805-before-pg.txt 2>&1",
+      "full-local": "UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-locked-decision-writing-local-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests --ignore=tests/pg --ignore=tests/test_work_application_pg.py -q -m 'not perf' -o junit_family=legacy --junitxml=/tmp/sprintctl-2805-full-local.xml > /tmp/sprintctl-2805-full-local.txt 2>&1",
+      "full-pg": "PATH=/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-locked-decision-writing-pg-env UV_OFFLINE=1 timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh -o junit_family=legacy --junitxml=/tmp/sprintctl-2805-full-pg.xml > /tmp/sprintctl-2805-full-pg.txt 2>&1"
+    },
+    "faults_exercised": [
+      "Python exceptions after actual Decision decode/INSERT/item/native writes",
+      "actual SQL trigger abort after INSERT/item UPDATE",
+      "finite in-memory wrong implementations including early SQLite read, PG copy/late decode, omitted/duplicate native effects, successor reread"
+    ],
+    "histories": 36,
+    "pg_cleanup_zero": {
+      "after": 29,
+      "before": 29,
+      "full": 88
+    },
+    "runs": {
+      "after-local": {
+        "errors": 0,
+        "failures": 0,
+        "log": "/tmp/sprintctl-2805-after-local.txt",
+        "log_sha256": "266b0b6ef57c1f30da347395a1e8b11a11cd13956ee8d90198e03039b315ab4a",
+        "passed": 418,
+        "seconds": 61.537,
+        "skipped": 0,
+        "tests": 418,
+        "xml": "/tmp/sprintctl-2805-after-local.xml",
+        "xml_sha256": "103c2ebb1836aef772aa52d60fdec2e4d252d330a16e5ec4bd824d60a837e3b7"
+      },
+      "after-pg": {
+        "errors": 0,
+        "failures": 0,
+        "log": "/tmp/sprintctl-2805-after-pg.txt",
+        "log_sha256": "877488ded39d260b21c958cd96eee5fc628dc9ed952c875e43baa709d9001b1d",
+        "passed": 672,
+        "seconds": 16.42,
+        "skipped": 0,
+        "tests": 672,
+        "xml": "/tmp/sprintctl-2805-after-pg.xml",
+        "xml_sha256": "1fdccc9214a19c1eb837cf3d779b87d57b932beadc14ca22c86fce244c1f7481"
+      },
+      "before-local": {
+        "errors": 0,
+        "failures": 0,
+        "log": "/tmp/sprintctl-2805-before-local.txt",
+        "log_sha256": "6f904805a495026ffabe76b9bafc41335975dba2bc275fe0c42bb22d9f85fa48",
+        "passed": 418,
+        "seconds": 67.657,
+        "skipped": 0,
+        "tests": 418,
+        "xml": "/tmp/sprintctl-2805-before-local.xml",
+        "xml_sha256": "3d867c6d3e3e51b630de56e1e1335390445f50ab04d5b763e30004a8da3e765f"
+      },
+      "before-pg": {
+        "errors": 0,
+        "failures": 0,
+        "log": "/tmp/sprintctl-2805-before-pg.txt",
+        "log_sha256": "82feb74b86017959ad3aa7513c1ea611f0360c511cb4633713249c4cf1666e13",
+        "passed": 672,
+        "seconds": 18.679,
+        "skipped": 0,
+        "tests": 672,
+        "xml": "/tmp/sprintctl-2805-before-pg.xml",
+        "xml_sha256": "31b8860c973eb937b2d67c8ab237480c80144534aaf72b32ab8c3e1fe53f0242"
+      },
+      "full-local": {
+        "errors": 0,
+        "failures": 0,
+        "log": "/tmp/sprintctl-2805-full-local.txt",
+        "log_sha256": "5422a09192b61e7d18c96b77077bc1399996c8250c36d4427b690da25ce655b9",
+        "passed": 3043,
+        "seconds": 345.738,
+        "skipped": 4,
+        "tests": 3047,
+        "xml": "/tmp/sprintctl-2805-full-local.xml",
+        "xml_sha256": "e89123a4cd5bc44739af5a4a2f941a62be2d21ac728102162d2fd514546249e9"
+      },
+      "full-pg": {
+        "errors": 0,
+        "failures": 0,
+        "log": "/tmp/sprintctl-2805-full-pg.txt",
+        "log_sha256": "3cbfaa0b1755ff851fa294a67333e093760ca7e9b2e61858e020df8045f19a41",
+        "passed": 1711,
+        "seconds": 84.649,
+        "skipped": 0,
+        "tests": 1711,
+        "xml": "/tmp/sprintctl-2805-full-pg.xml",
+        "xml_sha256": "db3594fabfd41fb24c5de88573973cd73c0f5679192d8599e0c42e47f2e84c2e"
+      }
+    }
+  },
+  "implementation_sha": "9e55ebe01f5085c54c436a54180f4227173a415f",
+  "notes": [
+    "Native5785/5803/5804 bound this private extraction. Seven historical controls plus new successor-reread controls are finite seeded wrong implementations; no actual product defect asserted.",
+    "All467adjacent existing top-level ASTs and6oraclefiles unchanged; both helper signatures and10actualSQLliteral values identical. Actual owner/body/nineDecisioncallers+two separate siblingrelease bindings protected. SQL literal equality alone is not behavior proof; direct actualSQL/effect ordering and existing callers supply bounded evidence.",
+    "32sequential observations and4reused two-key-actor races per before/full capture. No new concurrency primitive or guarantee. Separate traces retain actual IDs/times, never invented minimized schedules.",
+    "Initial developmentPG expectation wrongly allowed earlydecodefaultcommit; existing deferredconstraint rejects23514 and leavesIDLE. SQLite actualtrigger trace repeats ownerSQL; replaced invalidcount observation with transparent actualexecute proxy. Earlier captures preserved in/tmp; qualification uses unchanged accepted-source oracles.",
+    "Initial artifactreader used file instead of classname for inherited test classification, aborted withoutartifact; corrected reader verifies55/71direct cases. Formatting script originally aborted before PGwrite on multilineSQLindentation; fixed preserving exactoriginalSQLtoken. Product ASTs unchanged across readability-only formatting; finalfull runs use currenthashes.",
+    "Independent original55/71oracle/source reviews clear; dedicated post-extraction55SQLite12.08s. Finalpacket/exactheadcanonicalCI/merge-tree comparison remain publication gates at packet creation.",
+    "implementation_sha names accepted base, with exactcandidatebytehashes below to avoid self-referential futurecommit. No deployment/globalinstall/release/schema/API/IDL/profile/parent2150 completion.",
+    "Required staged scanner initially flagged86synthetic advisory claim/idempotency UUIDs in unchanged raw before/full trace captures. All are authored direct-UUID / direct-UUID-a / direct-UUID-c / direct-settlement-UUID fixtures. Exact file/rule/line fingerprints added; each of two trace files has actual0/1/1 scanner controls: reviewed match ignored, same pattern elsewhere detected, credential field at another line in same file detected. Fingerprints are location-scoped, not content-bound; all artifact hashes require review on future same-line edits. No hook/rule/file scanning disabled."
+  ],
+  "schema_version": "verification-result/v1"
+}

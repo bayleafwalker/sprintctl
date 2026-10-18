@@ -2448,49 +2448,72 @@ def _decide_locked(conn: sqlite3.Connection, item: dict, decision: dict) -> dict
     The decision row is written first and a terminal kind then closes the item
     in one statement that binds it, which is the order the triggers require.
     """
-    item_id = int(item["id"])
-    error = _decisions.decision_error(item, decision)
-    if error is not None:
-        raise InvalidTransition(error)
-    remark = _decisions.is_legacy_remark_target(item)
-    superseded_by = decision["superseded_by_item_id"]
-    if superseded_by is not None:
-        if superseded_by == item_id:
-            raise ValueError("an item cannot supersede itself")
-        if conn.execute("SELECT 1 FROM work_item WHERE id = ?", (superseded_by,)).fetchone() is None:
-            raise ValueError(f"Superseding item #{superseded_by} not found")
-    release_digest = _decision_release(conn, item_id, decision["release_digest"])
-    cur = conn.execute(
-        "INSERT INTO work_decision (kind, work_item_id, release_digest, evidence_digests, "
-        "rationale, actor, superseded_by_item_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (
-            decision["kind"],
-            item_id,
-            release_digest,
-            json.dumps(decision["evidence_digests"]),
-            decision["rationale"],
-            decision["actor"],
-            superseded_by,
-        ),
-    )
-    decision_id = cur.lastrowid
-    resolution = _decisions.resolution_for(decision["kind"])
-    if remark:
-        # A re-mark binds the closure that already happened: the item stays
-        # done and keeps its updated_at, the only record of when it closed.
+
+    def successor_exists(superseded_by):
+        return (
+            conn.execute("SELECT 1 FROM work_item WHERE id = ?", (superseded_by,)).fetchone()
+            is not None
+        )
+
+    def resolve_release(item_id, requested_digest):
+        return _decision_release(conn, item_id, requested_digest)
+
+    def insert(item_id, decision, release_digest, superseded_by):
+        cur = conn.execute(
+            "INSERT INTO work_decision (kind, work_item_id, release_digest, evidence_digests, "
+            "rationale, actor, superseded_by_item_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                decision["kind"],
+                item_id,
+                release_digest,
+                json.dumps(decision["evidence_digests"]),
+                decision["rationale"],
+                decision["actor"],
+                superseded_by,
+            ),
+        )
+        decision_id = cur.lastrowid
+        return decision_id
+
+    def stamp_reports(item_id, handle):
+        pass  # SQLite has no awaiting-report store.
+
+    def bind_legacy(item_id, resolution, handle):
+        # Bind the historical closure without rewriting its status or close time.
         conn.execute(
             "UPDATE work_item SET resolution = ?, terminal_decision_id = ? WHERE id = ?",
-            (resolution, decision_id, item_id),
+            (resolution, handle, item_id),
         )
-    elif resolution is not None:
+
+    def close_terminal(item_id, resolution, handle):
         conn.execute(
             "UPDATE work_item SET status = 'done', resolution = ?, terminal_decision_id = ?, "
             "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
-            (resolution, decision_id, item_id),
+            (resolution, handle, item_id),
         )
-    return _decision_rows(
-        conn.execute("SELECT * FROM work_decision WHERE id = ?", (decision_id,))
-    )[0]
+
+    def settle_active_leases(item_id, resolution):
+        pass  # SQLite has no work-lease store.
+
+    def result(handle):
+        return _decision_rows(
+            conn.execute("SELECT * FROM work_decision WHERE id = ?", (handle,))
+        )[0]
+
+    participant = _workitemcore._DecisionWriteParticipant(
+        successor_exists=successor_exists,
+        resolve_release=resolve_release,
+        insert=insert,
+        stamp_reports=stamp_reports,
+        bind_legacy=bind_legacy,
+        close_terminal=close_terminal,
+        settle_active_leases=settle_active_leases,
+        result=result,
+    )
+
+    return _workitemcore._write_decision_locked(
+        participant, item, decision, invalid_transition=InvalidTransition,
+    )
 
 
 def record_decision(
