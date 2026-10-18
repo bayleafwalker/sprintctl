@@ -1,0 +1,62 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.local-migration-safety",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:55c28eedf135d0210aa377cc2bcb0bf46d766f58"
+  },
+  "implementation_sha": "55c28eedf135d0210aa377cc2bcb0bf46d766f58",
+  "depth": 1,
+  "environment": {
+    "backend": "temporary SQLite files",
+    "isolation": "isolated files, BEGIN IMMEDIATE"
+  },
+  "execution": {
+    "histories": 0,
+    "bounds": {
+      "new_cases": 3,
+      "foreign_key_modes": 2
+    },
+    "faults_exercised": [
+      "exception after DDL and backfill"
+    ]
+  },
+  "claims": [
+    {
+      "property": "DDL, backfill and schema version roll back together on injected exception",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_local_migration_safety.py"
+      ]
+    },
+    {
+      "property": "retry commits once and completed version skips callback",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_local_migration_safety.py"
+      ]
+    },
+    {
+      "property": "backup candidate restores pre-upgrade rows, schema and version without changing migrated source",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_local_migration_safety.py"
+      ]
+    },
+    {
+      "property": "historical binary compatibility, shared PostgreSQL migration, deployed restore, or rollout flags",
+      "result": "unknown",
+      "evidence": [
+        "docs/reference/migration-guide.md"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "No production implementation or schema/version changes. implementation_sha pins unchanged runner source. Synthetic target is current initialized version plus one in disposable files only.",
+    "Focused new tests plus documentation integrity:18 passed. Existing migration/schema/upgrade/concurrent-opener regressions:60 passed,202 deselected. Independent review:18 focused and47 core edge cases passed, no findings.",
+    "Changed document SHA256:e8f358e025648292d1f556310ad982d826ca0c8f1e78e06db6f4d0fd07fb6699",
+    "New test SHA256:6967675c54971cf676ee8b7ec334707316122a3b785479fcb8370cc8c0f5803f",
+    "Item914 rollout pattern and1132-1135 retired pilot qualifications remain separate."
+  ]
+}

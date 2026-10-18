@@ -1,0 +1,66 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.local-migration-safety",
+  "owner_repo": "sprintctl",
+  "subject": "existing local SQLite migration failure, retry, and separate backup restore candidate",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:55c28eedf135d0210aa377cc2bcb0bf46d766f58"
+  },
+  "source_of_truth": "sprintctl#912 frozen Release e0c8363b7d66d888a70a2073fb52f6a47a48b81251b88f7f67bafcbb06ac2a37 and existing db._run_migration",
+  "depth": 1,
+  "backends": [
+    "temporary SQLite files"
+  ],
+  "actors": [
+    "local migration runner"
+  ],
+  "initial_state": [
+    "initialized disposable local database with committed probe row"
+  ],
+  "operations": [
+    {
+      "name": "apply synthetic numbered migration",
+      "actors": [
+        "local migration runner"
+      ]
+    },
+    {
+      "name": "restore backup into separate candidate",
+      "actors": [
+        "local migration runner"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one local migration transaction"
+  },
+  "assumptions": {
+    "isolation": "BEGIN IMMEDIATE; isolated temporary files",
+    "clock": "no clock assumptions",
+    "fairness": "none"
+  },
+  "bounds": {
+    "new_cases": 3,
+    "foreign_key_modes": 2
+  },
+  "invariants": [
+    "DDL, backfill and schema version roll back together on injected exception",
+    "retry commits once and completed version skips callback",
+    "backup candidate restores pre-upgrade rows, schema and version without changing migrated source"
+  ],
+  "faults": [
+    "exception after DDL and backfill"
+  ],
+  "oracles": [
+    "tests/test_local_migration_safety.py"
+  ],
+  "implementation_anchors": [
+    "sprintctl/db.py::_run_migration"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "fault-scenario"
+  ]
+}

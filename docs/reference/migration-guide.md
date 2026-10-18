@@ -1,227 +1,150 @@
-# Schema migration guide
+# Local SQLite schema migration and rollback
 
-> This guide governs local SQLite authority. It is not the target procedure for
-> the shared PostgreSQL authority. Shared-schema migrations are moving to a
-> deployment-controlled job under
-> [`vuoro-served-authority-alignment.md`](../plans/vuoro-served-authority-alignment.md);
-> network clients must not run them.
+This guide governs the local SQLite authority. Shared PostgreSQL deployment
+migrations follow [served authority alignment](../plans/vuoro-served-authority-alignment.md)
+and their deployment owner. Use an explicit local database path for backup and
+restore; a served project continues through its configured authority.
 
-sprintctl uses a sequential, numbered migration system backed by a
-`schema_version` table in the SQLite database. Migrations run automatically on
-`init_db()` — every CLI invocation calls this before any other DB operation,
-so no manual migration step is needed for normal upgrades.
+## Existing runner and version source
 
----
+`db.init_db()` registers numbered migration functions and calls
+`_run_migration` in order. Normal commands that open a local store use that
+path. Help and file-only commands do not need a database. There is no separate
+migration runner to install. Call it before application writes, with no active
+caller transaction; the runner owns commit and rollback.
 
-## How migrations work
+For each migration, `_run_migration`:
 
-`db.py` maintains a `_MIGRATIONS` list and an `init_db()` function that applies
-each migration in order, guarded by the current `schema_version`:
+1. Opens `BEGIN IMMEDIATE` before checking the stored version.
+2. Skips a version already committed.
+3. Runs its callback and updates `schema_version` in the same transaction.
+4. Commits success, or rolls back on an exception.
+5. Restores foreign-key checking when its `foreign_keys_off` option was used.
+
+The source's `db.CURRENT_SCHEMA_VERSION` and `init_db()` registration are the
+current target and complete migration chain. Query them directly:
+
+```sh
+python -c 'from sprintctl import db; print(db.CURRENT_SCHEMA_VERSION)'
+sqlite3 -readonly /absolute/path/to/local/sprintctl.db 'SELECT version FROM schema_version'
+```
+
+This is version gating: successfully committed versions do not rerun. It does
+not prove that an older binary understands a newer schema, and it does not
+repair arbitrary manually modified schemas.
+
+## Selected historical milestones
+
+| Version | Change |
+|---|---|
+|1–4|Initial work tables, sprint kinds, dates and item metadata|
+|5–6|Historical exclusive claims and claim credentials|
+|7–10|Refs, dependencies, takeup index and portable aggregate UUIDs|
+|11–13|Item priority and historical claim status/epoch|
+|14–15|File/glob/manifest and command refs|
+|16–17|Maintenance capability and observable-resource ledgers|
+|18–20|Advisory reservations, credential-free claim history, removal of the live claim relation|
+|21–22|Repository recovery records and advisory reservation roles|
+|23|Terminal work Decisions and legacy evidence handling|
+|24|Immutable work Releases and reservation Release bindings|
+|25|One-shot legacy done-item re-marking|
+
+The claim fields are historical. Current work uses advisory reservations and
+terminal Decisions. This table is an overview; inspect the source registration
+for subsequent versions.
+
+## Add a migration within the existing pattern
+
+Choose the next unused explicit version after reconciling concurrent branches.
+Add `_migration_N`, register that exact version in `init_db()`, and update
+`CURRENT_SCHEMA_VERSION` in the same change. Keep earlier registrations bound
+to their original numbers.
+
+Prefer additive changes and compatible readers before enabling new writers.
+Backfill existing rows in the same transaction and check their invariants.
+SQLite permits an added column without an explicit default; required columns
+on populated tables need a suitable constant default or a table rebuild.
+A computed value generally requires a separate backfill statement.
+
+Callbacks must use the existing transaction. They must not commit, open a nested
+transaction, or call `executescript`, which can change transaction boundaries.
+A failed callback must leave both schema/data and stored version unchanged.
+After fixing the cause, rerun through the runner; do not manually stamp a newer
+schema version. `IF NOT EXISTS` alone cannot validate an existing table's shape
+or make an arbitrary partial migration safe.
+
+When rebuilding referenced tables, use the runner's `foreign_keys_off=True`
+option, as existing rebuild migrations do. Verify referential integrity after
+the migration. Database atomicity does not roll back external files, network
+operations or protected effects; keep those outside migration callbacks.
+
+Removing a table or changing constraints requires an explicit compatibility,
+history-preservation and restore plan. Existing migrations have removed live
+claims after preserving their credential-free history. The schema is therefore
+not universally additive, and opening it with an older binary is not a general
+rollback mechanism. Release/version decisions follow the governing rollout
+plan; this guide does not invent a major-version-only removal policy.
+
+## Failure rollback and committed-upgrade rollback
+
+SQLite DDL such as `CREATE TABLE` and `DROP TABLE` participates in an explicit
+transaction. A callback exception inside `_run_migration` rolls those statements
+back together with data and the version update. A completed migration has
+already committed; rolling it back requires its declared recovery procedure.
+There are no automatic down-migrations.
+
+Use SQLite's backup API or `.backup` for a consistent snapshot, including
+committed WAL data. Copying only a live `.db` file can omit its WAL. This example
+requires an existing source and a fresh, private backup path:
 
 ```python
-def init_db(conn):
-    _run_migration(conn, 1, _migration_1)
-    _run_migration(conn, 2, _migration_2)
-    # ...
-    _run_migration(conn, 8, _migration_8)
+from contextlib import closing
+from pathlib import Path
+import os
+import sqlite3
+
+source = Path('/absolute/path/to/local/sprintctl.db').resolve(strict=True)
+backup = Path('/absolute/path/to/backups/before-upgrade.sqlite')
+os.close(os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+with closing(sqlite3.connect(source.as_uri() + '?mode=ro', uri=True)) as original:
+    with closing(sqlite3.connect(backup)) as snapshot:
+        original.backup(snapshot)
+        assert snapshot.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+        assert not snapshot.execute('PRAGMA foreign_key_check').fetchall()
 ```
 
-Each `_run_migration` call:
+Use a backup only after validation succeeds. Record the database identity,
+source binary revision, stored schema version and expected work/evidence counts.
+Stop local writers for the upgrade/restore boundary and account for writes made
+after the snapshot; they are absent from a restored copy.
 
-1. Opens a `BEGIN IMMEDIATE` transaction (prevents concurrent migration races)
-2. Reads the current schema version
-3. Skips if the DB is already at or beyond the target version
-4. Applies the migration function
-5. Updates `schema_version` and commits — or rolls back on error
+For a rollback drill, restore into a separate candidate path. Verify schema,
+work IDs, data counts, `integrity_check` and `foreign_key_check`, then run the
+intended previous binary against that candidate. A passing SQLite restore test
+does not establish compatibility with an untested older binary. Preserve the
+migrated source while deciding whether to switch to the validated candidate.
+Do not merge two divergent authoritative databases.
 
-**The migration is idempotent for the caller**: running `init_db` on an
-already-migrated database is a no-op for every version already applied.
+Per-repository flags can disable a compatible new read path before a cutover;
+existing projection reads are one example. A flag does not reverse a committed
+schema change, restore removed data, or authorize a shared-authority migration.
+Each rollout phase must name its own fallback and evidence, as required by the
+[canonical ADR](../plans/adr-outbox-sync-model.md#migration-and-rollback).
 
-Current SQLite schema version: **13**.
+## Verification and limits
 
-> Historical note: migrations 6 and 13 introduced `claim_token` and
-> `lease_epoch` for the legacy claim model. The v3 reservation model retired
-> those concepts; they remain in the table below as historical record only.
+`tests/test_local_migration_safety.py` injects a real failure after table creation,
+backfill and drop, reopens the file to check unchanged rows/schema/version,
+retries successfully, and verifies an already committed version does not rerun.
+Both foreign-key modes are exercised. A separate test restores pre-migration
+rows, schema and version from a SQLite backup after a successful destructive
+synthetic migration. All files and version increments are disposable fixtures.
 
----
+These tests qualify the existing local runner and recovery pattern. They do not
+establish every historical migration's business correctness, old-binary
+compatibility, PostgreSQL deployment readiness or estate-wide recovery.
 
-## Migration history
-
-| Version | What changed |
-|---------|-------------|
-| 1 | Initial schema: sprint, track, work_item, event tables |
-| 2 | Added `updated_at` to work_item; added `assignee` column |
-| 3 | Added `goal` to sprint; added `kind` column |
-| 4 | Added `start_date`, `end_date` to sprint |
-| 5 | Added `claim` table (exclusive ownership with TTL); rebuilt work_item constraints |
-| 6 | Added `claim_token`, `runtime_session_id`, `instance_id`, `hostname`, `pid` to claim |
-| 7 | Added `ref` table (typed external references on items) |
-| 8 | Added `dep` table (item-to-item blocking dependencies) |
-| 9 | Added the sprint takeup event lookup index |
-| 10 | Added portable aggregate UUIDs to sprints and work items |
-| 11 | Added native work item priority (1–9, nullable) |
-| 12 | Added claim `status` (`active|expired`) with a parity default |
-| 13 | Added claim `lease_epoch` with an initial value of 1 |
-| 14 | Added explicit scope-ref kinds (`file`, `glob`, `manifest`) to `ref.ref_type` |
-| 15 | Added the `command` ref kind (validation-command refs) |
-| 16 | Installed the exact-plan-bound maintenance capability ledger |
-| 17 | Installed the maintenance observable-resource owner ledger |
-| 18 | Added the v0.3 advisory `reservation` ledger beside legacy claims |
-| 19 | Archived credential-bearing claims into `claim_history` before removal |
-| 20 | Dropped the live `claim` relation; `claim_history` is the only survivor |
-| 21 | Added the repo-level `recovery_record` |
-| 22 | Dropped the reservation exclusivity index; roles became `execution`/`verification`/`observation` |
-
----
-
-## Adding a new migration
-
-1. Write the migration function in `db.py`:
-
-   ```python
-   def _migration_9(conn: sqlite3.Connection) -> None:
-       conn.execute("""
-           ALTER TABLE work_item ADD COLUMN priority INTEGER NOT NULL DEFAULT 0
-       """)
-   ```
-
-2. Register it in `init_db()`:
-
-   ```python
-   def init_db(conn: sqlite3.Connection) -> None:
-       # ... existing migrations ...
-       _run_migration(conn, 9, _migration_9)
-   ```
-
-3. Add a test in `test_maintain.py` asserting the new schema state:
-
-   ```python
-   def test_schema_version_is_9(self, conn):
-       version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-       assert version == 9
-   ```
-
-### Rules for safe migrations
-
-- **Additive only**: add columns, add tables, add indexes. Never drop or rename
-  in the same migration as existing data.
-- **Default values required for new columns**: SQLite's `ALTER TABLE ADD COLUMN`
-  requires a constant or `NULL` default. Computed defaults need a follow-up
-  UPDATE statement inside the migration.
-- **Foreign key constraints on new tables**: disable foreign keys before the
-  migration if restructuring existing tables. `_run_migration` accepts
-  `foreign_keys_off=True` for this case (used in migration 5).
-- **No destructive changes in patch releases**: removing a column or changing a
-  constraint requires a major version bump and explicit operator communication.
-- **BEGIN IMMEDIATE**: `_run_migration` already wraps each migration in
-  `BEGIN IMMEDIATE` — do not add your own transaction inside a migration function.
-
----
-
-## Migration safety framework (design checklist)
-
-Use this sequence when introducing a new schema version:
-
-1. Preflight
-   - take a timestamped DB backup (`cp ...sprintctl.db ...bak-YYYYMMDD`)
-   - run `sprintctl maintain check --json` and save the output for comparison
-   - run a full local test pass before changing migration code
-2. Apply
-   - implement an additive migration (`ALTER TABLE ... ADD COLUMN` or new table)
-   - register it in `init_db()` as the next sequential version
-   - run targeted migration tests plus full suite
-3. Verify
-   - reopen DB with current CLI (`init_db()` path) and confirm schema version
-   - run smoke commands: `sprintctl sprint list --json`, `sprintctl usage --context --json`
-   - check no data-loss regressions on `item`, `claim`, `ref`, `dep` paths
-4. Rollback drill (before release)
-   - restore the backup DB into a temp path
-   - run previous sprintctl version against restored DB
-   - verify baseline commands still succeed
-
-This keeps migration safety explicit without introducing a separate migration
-runner or distributed upgrade coordinator.
-
----
-
-## Backward compatibility
-
-### Adding a column with a default
-
-Safe. Existing rows get the default; existing code that doesn't know about the
-new column continues to work. Historical example: migration 6 added the legacy
-`claim_token` column with a `NULL` default; that column was retired by the v3
-reservation model and is preserved only for audit history.
-
-### Adding a new table
-
-Safe. Existing queries are unaffected. Always use `CREATE TABLE IF NOT EXISTS`
-so partial migrations don't fail on re-run.
-
-### Changing a CHECK constraint on an existing table
-
-Requires rebuilding the table (copy-alter-drop). Use `foreign_keys_off=True`
-and the copy-table pattern from migration 5 as a reference.
-
-### Removing a column or table
-
-Not supported in patch releases. Plan:
-
-1. Deprecate: stop writing to the column; mark it in a comment
-2. In the next major bump: migrate data away, then drop in a new migration
-
----
-
-## Rollback strategy
-
-SQLite does not support transactional DDL for all operations (e.g. `DROP TABLE`
-in a `BEGIN` is committed immediately on SQLite). The practical rollback strategy
-is:
-
-**Before running a new version of sprintctl on a production database, back up
-the database file:**
-
-```bash
-cp ~/.sprintctl/sprintctl.db ~/.sprintctl/sprintctl.db.bak-$(date +%Y%m%d)
-```
-
-Or with a per-project database:
-
-```bash
-cp .sprintctl/sprintctl.db .sprintctl/sprintctl.db.bak-$(date +%Y%m%d)
-```
-
-To roll back to the previous version:
-
-1. Restore the backup: `cp sprintctl.db.bak sprintctl.db`
-2. Pin to the previous version of sprintctl
-
-Since migrations are purely additive (new columns/tables only), a rolled-back
-binary will simply ignore the new schema elements — existing columns and tables
-are unaffected.
-
----
-
-## Checking the current schema version
-
-```bash
-sqlite3 ~/.sprintctl/sprintctl.db "SELECT version FROM schema_version"
-```
-
-Or via the Python API:
-
-```python
-from sprintctl import db
-conn = db.get_connection()
-version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-```
-
----
-
-## Concurrent migration safety
-
-`_run_migration` uses `BEGIN IMMEDIATE` which acquires a write lock before
-reading the current version. Two processes starting simultaneously will serialize
-at this point — one will apply the migration and commit, the other will read the
-updated version and skip. This is safe for local-first use where at most two CLI
-processes run against the same database concurrently.
+Concurrent local startup is serialized at the migration's write lock. A caller
+can still hit its configured lock timeout; the runner does not promise unlimited
+concurrency or automatic retries. Existing concurrency verification remains
+separate from these failure and restore examples.
