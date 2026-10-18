@@ -1,200 +1,139 @@
-# Knowledge review flow
+# Knowledge events, legacy review, and the current Workspace owner
 
-sprintctl records structured events during work. The companion tool
-[kctl](https://github.com/bayleafwalker/kctl) reads these events and extracts
-durable knowledge — decisions, patterns, lessons, and risks — into a separate
-reviewed store. It also preserves handoff and ownership events in a separate
-coordination review stream. This document describes the full pipeline from event
-recording through extraction, review, and use of those artifacts when deciding
-later sprintctl actions.
+Sprintctl owns work items and their structured events. The retained
+[kctl implementation](https://github.com/bayleafwalker/kctl/blob/dcd82ee520f2ec53377c54c29b0bb3de9d228666/README.md)
+reads Sprintctl events and maintains a separate local candidate/review store.
+It never writes back to Sprintctl. Kctl is retiring; the deployed `knowledge`
+domain now belongs to Workspace, with different operations and no kctl bridge.
+See the pinned
+[owner reconciliation](https://github.com/bayleafwalker/kctl/blob/dcd82ee520f2ec53377c54c29b0bb3de9d228666/docs/evidence/2026-10-18-legacy-knowledge-owner-reconciliation.md).
 
-sprintctl is the write side. kctl is the read/review/publish side. They share
-a read path but not a write path — kctl never modifies the sprintctl database.
+The local workflow below documents retained behavior for existing local data.
+It is not an onboarding path into Workspace and does not import legacy records,
+grant knowledge authority or establish acceptance of a served intake request.
+Workspace contribution and review require their respective credential authorities
+and current membership. Proposal authors cannot review their own proposals;
+agents are capped at contributor. Follow the
+[Workspace owner contract](https://github.com/bayleafwalker/vuoro/blob/aa5af4de351f011c1d4f795eaa72b692c5dfcb47/docs/architecture/knowledge-workspace-composition.md)
+for that separate lifecycle. Repository-authored governing documents remain
+Git-owned; Workspace does not replace their source authority.
 
----
+## Record and read Sprintctl knowledge events
 
-## Step 1 — Record knowledge-bearing events in sprintctl
+In a configured served repository, record a structured note on the scoped item:
 
-During work, record events that kctl should pick up:
-
-```bash
+```sh
 sprintctl item note \
-  --id <item-id> \
+  --id sprintctl#42 \
   --type decision \
-  --summary "Chose RS256 over HS256 for cross-service JWT verification" \
-  --detail "HS256 requires symmetric key distribution; RS256 allows public-key verify" \
-  --tags auth,security \
-  --git-branch feat/auth --git-sha abc1234 \
-  --evidence-item-id <related-item-id> \
-  --actor claude-session-1
+  --summary "Chose public-key verification for cross-service tokens" \
+  --detail "Recipients can verify without receiving the signing secret" \
+  --tags auth,security
 ```
 
-kctl recognizes these durable knowledge event types:
+Replace the example repository and item with the intended target. Served mode
+uses the authenticated actor. Optional `--git-branch`, `--git-sha`,
+`--evidence-item-id` and `--evidence-event-id` attach declared provenance;
+recording them does not verify source bytes or approve a knowledge proposal.
 
-| Type | Meaning |
-|------|---------|
-| `decision` | Architectural or process decision with rationale |
-| `pattern-noted` | Reusable pattern identified during work |
-| `lesson-learned` | Retrospective insight — what would you do differently? |
-| `risk-accepted` | Explicit risk acceptance with reasoning and owner |
+Kctl's default durable extraction event types are `decision`, `blocker-resolved`,
+`pattern-noted`, `lesson-learned` and `risk-accepted`. Sprintctl's raw
+`--knowledge` and backlog-seeding filter uses its own four-type set, excluding
+`blocker-resolved`; the two filters are not identical. Retained coordination
+extraction also
+recognizes `claim-handoff`, `claim-ownership-corrected`,
+`claim-ambiguity-detected` and `coordination-failure`. The `claim-*` names are
+historical event labels, not current CLI claim commands or proof requirements.
+New reservation events should not be assumed to enter that legacy filter.
+Custom extraction filters may select other event types explicitly.
 
-These coordination event types are also extracted by kctl, but they stay in a
-separate non-publishable review stream. The `claim-*` labels are frozen
-historical event-type names from the legacy claim model; the v3 reservation
-model records the same coordination signals without claim tokens or ownership
-proof.
+Read the raw durable events through the owning Sprintctl interface:
 
-| Type | Meaning |
-|------|---------|
-| `claim-handoff` | Reservation/ownership changed intentionally between sessions |
-| `claim-ownership-corrected` | Legacy or ambiguous ownership was repaired |
-| `claim-ambiguity-detected` | Ownership proof was unclear or insufficient (historical) |
-| `coordination-failure` | A reservation or ownership rule blocked an attempted action |
-
-Events outside these sets are ignored by kctl's default extraction pipeline
-unless kctl is configured with a custom event-type filter.
-
-The `--git-branch`, `--git-sha`, `--evidence-item-id`, and `--evidence-event-id`
-fields attach provenance so extracted knowledge entries carry their origin.
-
----
-
-## Step 2 — Pre-flight check (kctl does this automatically)
-
-Before extraction, kctl follows sprintctl's own `maintain check` semantics as a
-pre-flight. This ensures the sprint is not in a degraded state that would
-produce misleading knowledge candidates. If check reports problems, resolve them
-first:
-
-```bash
-sprintctl maintain check [--sprint-id N]
-sprintctl maintain sweep [--sprint-id N]   # if stale items need to be blocked
+```sh
+sprintctl event list --sprint-id sprintctl#7 --knowledge --json
+sprintctl usage --context --json
 ```
 
----
+These are raw event candidates, not reviewed knowledge. A successful source
+read or `kctl doctor` check does not prove that the deployed catalog supports
+legacy kctl intake or review.
 
-## Step 3 — Extract knowledge candidates
+## Retained local extraction and review
 
-View candidates directly in sprintctl to understand what kctl will see:
+Use an established local repository or a separate marker-free recovery directory,
+an explicitly selected local Sprintctl database, and the intended Kctl database.
+Do not repoint a shared checkout at stale local state. See
+[backend and recovery guidance](../guides/remote-mode.md).
 
-```bash
-# List durable knowledge-bearing events in the current sprint
-sprintctl event list --sprint-id N --knowledge
-
-# Or via usage context (surfaces the last 5 durable candidates)
-sprintctl usage --context --json | jq '.recent_decisions'
+```sh
+export SPRINTCTL_BACKEND=local
+unset SPRINTCTL_URL SPRINTCTL_VUORO_PROFILE
+export SPRINTCTL_DB=/path/to/local-sprintctl.db
+export KCTL_DB=/path/to/local-kctl.db
+kctl extract --sprintctl-db /path/to/local-sprintctl.db --sprint-id 7
+kctl review list --kind durable --json
+kctl review show --id 42
 ```
 
-kctl reads the same events from the sprintctl database in read-only mode and
-produces candidates in its own store. Durable and coordination items share the
-same extraction path, but are reviewed separately on the kctl side. The
-sprintctl side requires no action beyond recording events with the types listed
-above.
+Extraction normally runs Sprintctl's health preflight before reading events.
+For local diagnostics, `sprintctl maintain check --sprint-id 7 --json` is
+read-only; it has no `--fix` option. `maintain sweep` changes stale item status
+and can interrupt stale reservations across the selected database, even with a
+sprint filter. It is a separate intended mutation, not an automatic preflight
+repair.
+Neither CLI maintenance command is available in served mode. The retained
+served Kctl source requests its own catalog diagnostic and fails on a missing
+operation; it does not reconstruct that diagnostic from local state.
+`--no-preflight` explicitly skips the check and does not fix a diagnostic or
+supply missing authority.
 
----
+Local review uses these commands:
 
-## Step 4 — Review and approve in kctl
-
-kctl's review workflow presents extracted entries for human or agent review.
-Each entry is approved, edited, or discarded. This is entirely within kctl —
-sprintctl is not involved.
-
-Typical review actions in kctl:
-- Approve with optional annotation
-- Edit the summary or detail before approval
-- Mark as superseded by a newer entry
-- Discard (noisy signal, not durable knowledge)
-
-Coordination items are reviewable in kctl too, but they are intentionally not
-publishable into the durable knowledge base.
-
----
-
-## Step 5 — Use kctl artifacts when deciding sprintctl backlog actions
-
-kctl never writes back into sprintctl. sprintctl remains the only tool that owns
-backlog and sprint mutation.
-
-After review, agents or operators can use kctl artifacts to decide which
-sprintctl actions to run next. There are two common paths:
-
-1. Use kctl's reviewed outputs (`kctl status --json`, `kctl review list --json`,
-   `kctl render`) to decide what items or sprint changes to create explicitly in
-   sprintctl.
-2. Use sprintctl's own raw-event-driven seeding command when you want backlog
-   items directly from sprintctl's durable event stream:
-
-```bash
-# Seed sprintctl's durable event candidates from sprint 1 into sprint 2
-sprintctl sprint backlog-seed \
-  --from-sprint-id 1 \
-  --to-sprint-id 2 \
-  --actor operator
-
-# The operation is idempotent — re-running is safe
-sprintctl sprint backlog-seed \
-  --from-sprint-id 1 \
-  --to-sprint-id 2
+```sh
+kctl review approve --id 42 --reviewer operator
+kctl review reject --id 43 --reason "Insufficient reusable evidence" --reviewer operator
 ```
 
-`sprint backlog-seed` is owned entirely by sprintctl. It seeds from sprintctl's
-durable knowledge event set, not from kctl's reviewed store. kctl artifacts can
-inform the decision to run this command, but kctl never invokes it or mutates
-sprint state on its own.
+Approval may include `--title`, `--detail` or `--tags` overrides; there is no
+separate `review edit` or `review discard` command. Rejection records a rejected
+candidate rather than deleting its history. Approval alone does not publish.
+Local publication is a separate `kctl publish --id 42 --category decision
+--body "Reviewed text"` operation. Supersession is supplied with `--supersedes`
+on publication, not as a review subcommand.
 
----
+Coordination candidates are listed with `kctl review list --kind coordination`.
+They stay separate from the default durable publication stream. The retained
+local publisher has an explicit `--coordination` option; this does not turn
+coordination records into durable knowledge or a Workspace import.
 
-## Step 6 — Render and commit a snapshot
+## Use reviewed records to inform explicit work changes
 
-After backlog changes, update the sprint snapshot:
+Kctl output can inform a person's or agent's decision to create Sprintctl items.
+It does not authorize or issue those writes. In local mode, `kctl status --json`,
+`kctl review list --json` and `kctl render` inspect the local pipeline and its
+derived publication view.
 
-```bash
-sprintctl render --sprint-id 2 > docs/sprint-snapshots/backlog.txt
-git add docs/sprint-snapshots/backlog.txt
-git commit -m "chore: backlog snapshot after knowledge seed"
+The retained local `sprint backlog-seed` command consumes raw Sprintctl durable
+events, not Kctl's approved store:
+
+```sh
+sprintctl sprint backlog-seed --from-sprint-id 7 --to-sprint-id 8 --actor operator
 ```
 
----
+This is a local mutation, unavailable in served mode. It creates backlog items;
+it is not knowledge review or publication. Shared work changes use supported
+served item/sprint commands explicitly, with the normal owner checks.
 
-## Pipeline summary
+## Snapshots and authority
 
-```
-sprintctl event store
-  durable + coordination signals
-        │
-        │  kctl reads (never writes)
-        ▼
-kctl extract
-        │
-        ├── durable review -> publish -> render knowledge.md
-        │
-        └── coordination review -> JSON / audit context
-        │
-        ▼
-agents decide sprintctl commands
-        │
-        ├── explicit item / sprint mutations
-        └── optional sprint backlog-seed
-        │
-        ▼
-sprintctl render -> committed snapshot
-```
+For local work, `sprintctl render --sprint-id 8` produces a derived snapshot that
+can be reviewed and committed. Inspect successful output before replacing an
+existing snapshot. The current served CLI refuses `render`; preserve an existing
+snapshot and record that limitation instead of generating a local substitute or
+redirecting a failed command over the committed file.
 
----
-
-## Current-state vs source-of-truth
-
-The sprintctl database is live state — always current, never committed.
-
-The committed `sprintctl render` output is the reviewable, portable snapshot —
-what you share, diff, and review in PRs.
-
-kctl's own store is the reviewed knowledge record — separate from sprintctl,
-owned by kctl.
-
-When these sources disagree:
-
-1. `sprintctl` live DB — authoritative for item status, claims, recent events
-2. committed `sprintctl render` output — authoritative for sprint snapshots
-3. kctl store — authoritative for reviewed, approved knowledge entries
-4. repo docs — reference only; may lag behind live state
+Authoritative shared item state remains in the served owner. A local database is
+an authority only for its own local work; committed renders are historical views.
+Kctl's retained local store owns its local candidate/review history, while
+Workspace owns its separate served lifecycle. None of these derived views
+confers another owner's acceptance or credentials.

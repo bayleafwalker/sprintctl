@@ -5,6 +5,15 @@
 > steps below are no longer executable and are kept only as a record of what
 > Phase 28 set out to prove. `sprintctl sync` replaced `pilot sync`.
 
+**Current routing note (2026-10-18, sprintctl#2082).** The historical commands
+and claims below are preserved as evidence, including the former promotion and
+rollback procedures. They are not a current served cutover runbook. The surviving
+`sync` command is not a replacement for the complete pilot workflow or proof of
+promotion readiness. Normal shared work uses a validated Vuoro served profile;
+see [current backend guidance](../guides/remote-mode.md). Do not execute the
+archived mode/projection changes as a way around a missing served operation.
+Current deployment and migration procedures belong to their deployment owner.
+
 Phase 28 built three independent per-repository opt-in flags:
 
 - the observation-only **shadow pilot** (`sprintctl/pilot.py`) — mirrors
