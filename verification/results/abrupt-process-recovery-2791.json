@@ -1,0 +1,114 @@
+{
+  "claims": [
+    {
+      "evidence": [
+        "tests/test_abrupt_process_recovery.py",
+        "tests/_process_recovery_worker.py",
+        "verification/traces/abrupt-process-recovery-2791.json"
+      ],
+      "property": "actual child SIGKILL before COMMIT or mid cache batch retains exact seed-only recovered local state, while SIGKILL after API return retains the exact complete committed operation",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/test_abrupt_process_recovery.py",
+        "tests/_process_recovery_worker.py",
+        "verification/traces/abrupt-process-recovery-2791.json"
+      ],
+      "property": "committed producer event identity and stream sequence survive the tested process death; fixed-event retry is idempotent and a subsequent append uses the next sequence",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/test_abrupt_process_recovery.py",
+        "tests/_process_recovery_worker.py",
+        "verification/traces/abrupt-process-recovery-2791.json"
+      ],
+      "property": "cached records and their own watermark recover together; sparse authority offsets and the independent other cursor are preserved",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/test_abrupt_process_recovery.py",
+        "tests/_process_recovery_worker.py",
+        "verification/traces/abrupt-process-recovery-2791.json"
+      ],
+      "property": "the same raw recovery checker rejects deliberately persisted next-sequence/cursor violations and a logically consistent partial new batch",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/test_abrupt_process_recovery.py",
+        "tests/_process_recovery_worker.py",
+        "verification/traces/abrupt-process-recovery-2791.json"
+      ],
+      "property": "a deliberate trace checkpoint guard exception exits73 before commit rather than returning into SQLite; invalid or missing readiness never counts as a successful kill history",
+      "result": "example-tested"
+    },
+    {
+      "property": "observed fsync boundaries, during-COMMIT termination, dirty-page spill/torn-journal recovery, kernel/power/storage failure, network partition/remote authority, formal refinement, trusted snapshot install and full1131 qualification",
+      "result": "unknown"
+    }
+  ],
+  "context_id": "sprintctl.abrupt-process-recovery",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2791",
+    "revision": "native:release:a21c24e082f37d24624334530f8a21206f7830d8173a30d73267a938aa520240"
+  },
+  "counterexamples": [],
+  "depth": 2,
+  "environment": {
+    "backend": "actual temporary local SQLite; POSIX own-child processes",
+    "isolation": "single child writer, no seed/observer connection held during termination; fresh normal raw observer after reap",
+    "measured_journal_and_sync": [
+      "delete/2",
+      "wal/2"
+    ],
+    "pytest": "9.0.2",
+    "python": "3.13.16",
+    "sqlite": "3.53.1"
+  },
+  "execution": {
+    "bounds": {
+      "actual_sigkill_cases": 8,
+      "cache_seed_records_per_domain": 1,
+      "child_ready_max_bytes": 65536,
+      "new_records_per_cache_batch": 2,
+      "persisted_state_negative_controls": 4,
+      "producer_appended_records": 1,
+      "producer_seed_records": 1,
+      "ready_deadline_seconds": 15,
+      "reap_deadline_seconds": 10,
+      "total_retained_observations_per_capture": 13,
+      "trace_guard_negative_controls": 1
+    },
+    "faults_exercised": [
+      "own-child SIGKILL before COMMIT after actual writes",
+      "own-child SIGKILL before second cache INSERT after first pending INSERT",
+      "own-child SIGKILL after actual API return before connection close",
+      "deliberately persisted next-sequence and separate watermark mismatches",
+      "deliberately persisted partial new batch with internally matching cursor",
+      "injected trace checkpoint guard error with unswallowable child exit73"
+    ],
+    "histories": 13
+  },
+  "implementation_sha": "d27985bc872f0fe8efcead9c25befef139ed623d",
+  "notes": [
+    "Verification assets only; production source and existing test bytes unchanged. Current full goal and parent1131 remain open. Native No doc5754 and harness freeze5756 bind the bounded action, not a new architecture decision.",
+    "Initial accepted source4718 campaign passed74tests23.08s, including13newcases. Independent harness runs13pass5.45s and13pass5.55s; engineering and dedicated review CLEAR. Two reviewed harness files remained byte-identical through final qualification.",
+    "Eight histories have actual exact-child PID readiness followed by parent SIGKILL and reaped exit-9. Five separate controls comprise3stored metadata corruptions,1persisted logically consistent partial batch and1guard-error child exit73. These controls are not claimed crash outcomes or product defects.",
+    "Before-SQLite-COMMIT and before-second-INSERT are trace BEFORE-statement boundaries. Markers validate actual owner transaction, pending rows and cursor/sequence state. Post-return markers validate idle owner and returned result. There is no claim of terminating during a commit or observing an OS fsync syscall.",
+    "The first fresh normal raw SQLite open performs automatic recovery when necessary; it is not an unrecovered disk image or proof that a particular hot journal/WAL replay occurred. No sidecar files were removed and no product helper reopened the DB before that observation.",
+    "Fixed seed and complete-operation manifests distinguish exact allowed recovery states; a partial new batch is never accepted as an arbitrary prefix. Authored assert_manifest validates retries; check_recovered(kind,final,final) supplies structural checks only and is not independent expected-state proof.",
+    "The valid-first persisted controls invoke the same raw reader/checker as actual killed cases and catch specific RecoveryInvariantFailure messages. Sparse authority gaps are legal; authority and ingest cursor domains are separate. Local disposable cache data is not remote authoritative state.",
+    "F01 receives application-boundary process-death evidence only, not fsync/power-loss qualification. F02 receives local retained-pending/retry evidence, not a live network outage. F06/I01/I04 receive the declared bounded process examples. F14, formal refinement and other original requirements are unchanged; no whole-row or parent closure is inferred.",
+    "Final accepted-source campaign: 74 tests passed, no skips/failures/errors; JUnit 973e578740064738145e6d154909255a4e2459453429cf8d1344228c531499e4. Imported child paths, runtime settings, actual owner snapshots, exact exit codes and recovered/retry states are retained in the final trace.",
+    "Initial13observations remain a separate capture from final13observations. Neither source hashes nor JUnit authenticate external origin or deployed runtime; declared local source/run provenance is the scope.",
+    "Literal executed verification commands: {\"docs\": \"UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-abrupt-process-2791-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/test_docs_integrity.py -q > /tmp/sprintctl-2791-docs.txt 2>&1\", \"final_campaign\": \"UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-abrupt-process-2791-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/test_abrupt_process_recovery.py tests/test_outbox.py tests/test_projection.py tests/test_sync.py tests/test_authority_outbox.py -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2791-final.xml > /tmp/sprintctl-2791-final.txt 2>&1\", \"initial_campaign\": \"UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-abrupt-process-2791-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/test_abrupt_process_recovery.py tests/test_outbox.py tests/test_projection.py tests/test_sync.py tests/test_authority_outbox.py -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2791-targeted.xml > /tmp/sprintctl-2791-targeted.txt 2>&1\", \"validator\": \"python /projects/dev/agentops/scripts/validate_verification_artifacts.py --root . > /tmp/sprintctl-2791-validation.txt\"}",
+    "Raw actual capture hashes: {\"/tmp/sprintctl-2791-final.txt\": \"1c021acf7e23675f8dcfcb727be8ce800a740fc6f6ea1874c6c04f8a73e16d91\", \"/tmp/sprintctl-2791-final.xml\": \"973e578740064738145e6d154909255a4e2459453429cf8d1344228c531499e4\", \"/tmp/sprintctl-2791-targeted.txt\": \"1dfbb4bdcb606f8925f04a0d7e404e219e2a12686cb88be8ca3944d13fdf2189\", \"/tmp/sprintctl-2791-targeted.xml\": \"a5084fdf5454dee1f738212a5b91a366a1b4ace27c7768720fdba4bcad619b6c\"}",
+    "Candidate verification artifact hashes: {\"tests/_process_recovery_worker.py\": \"3e514298a274bbb866ae4c080afa51debf0595542d0ca568bde12a4bed0bc12f\", \"tests/test_abrupt_process_recovery.py\": \"13d7b39a330a9f7f69ba906e671e089d355cfe1c62be02a5973fb70d60234d28\", \"verification/contexts/abrupt-process-recovery.json\": \"0666128ff26a1cbf7fa0be8ea3d671f722cd33422ff1f709c5d643fc00813a0e\", \"verification/fixtures/process-recovery-harness-freeze-2791.json\": \"18b4d7c6b81f2f6618a160e60c6d80af6c33097e7b96be6a39be7e525ffa754f\", \"verification/fixtures/process-recovery-initial-observations-2791.json\": \"9b8cef0d774d33b6803b8f29eae48467cf673ff96d44851679200621d6781881\", \"verification/fixtures/process-recovery-scope-2791.json\": \"3bbe1edce613424bdd9e7686cb61ef69d7bc7aaf9700e17b9d2fe290f1c90ac2\", \"verification/traces/abrupt-process-recovery-2791.json\": \"0cc4d9e60fde4dc0a199afaafa6e03c6840d9e989a91f2b9dc28b53cdcd0f6bc\", \"verification/traces/extract-abrupt-process-recovery.py\": \"d1b9b0756931e8eb900e0ea24973cc3b09d89209e118ea0eeed0db1930116f21\"}",
+    "Production/existing test byte freeze: {\"sprintctl/outbox.py\": \"aac1bf2b9131ade3c83d36ef0b8d66486677d98b6cebcbc1f0bdf2c85da84444\", \"sprintctl/projection.py\": \"0a267ff5c85b93d033f3d1055ceb21db7598e52582f16c96d7208b0be03ff7b1\", \"tests/test_outbox.py\": \"7c63b715bf56be3acb4dadbeb0f26b59fbae0371c9f49c28df11051477a4c694\", \"tests/test_projection.py\": \"1180ac72665e34565a62cea032295196a5283e5188c2e6abfedad7ef0700e8d3\"}",
+    "Final packet review and exact-head canonical CI remain publication gates. No product repair, public provider/API/schema/IDL, deployment, grant, reader or parent acceptance is performed."
+  ],
+  "schema_version": "verification-result/v1"
+}
