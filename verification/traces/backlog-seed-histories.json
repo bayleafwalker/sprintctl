@@ -1,0 +1,465 @@
+{
+  "captures": [
+    {
+      "cleanup_summary": [],
+      "full_run_summary": [
+        "2711 passed, 4 skipped, 14 deselected in 278.47s (0:04:38)"
+      ],
+      "log": "/tmp/sprintctl-2778-full-local.txt",
+      "log_sha256": "e1217b254b9916e5f2ce9ce2d8a700b2c789da7a75e05f09863f1d27dea08fbf",
+      "selection": "local",
+      "source_base": "a5d79985e66c61bf6a8a569ca7b0b3cf857ae3a2",
+      "xml": "/tmp/sprintctl-2778-full-local.xml",
+      "xml_sha256": "ecfb1f571be8c7af28903b6c61855cd7cfc65c8e2a5e5c7b6320186bad14d09c"
+    },
+    {
+      "cleanup_summary": [
+        "pg-cleanup-report-check: foreign_scope_cleanup: 1 fixture cleanup(s) completed with zero remaining rows",
+        "pg-cleanup-report-check: maintenance_resource_transactional_pg_factory: 21 fixture cleanup(s) completed with zero remaining rows",
+        "pg-cleanup-report-check: pg_test_scope: 58 fixture cleanup(s) completed with zero remaining rows",
+        "pg-cleanup-report-check: store_factory: 1 fixture cleanup(s) completed with zero remaining rows",
+        "pg-cleanup-report-check: ok: 81 fixture cleanup(s) across 4 fixture name(s)"
+      ],
+      "full_run_summary": [
+        "1385 passed in 79.94s (0:01:19)"
+      ],
+      "log": "/tmp/sprintctl-2778-full-pg.txt",
+      "log_sha256": "b1838be0bf63e0acfa8f83f3d917b2b81393758682d34422bc297af0b0c6d4db",
+      "selection": "pg",
+      "source_base": "a5d79985e66c61bf6a8a569ca7b0b3cf857ae3a2",
+      "xml": "/tmp/sprintctl-2778-full-pg.xml",
+      "xml_sha256": "b1c0d6b98c839804957837e987ed67aab9b7b4e8b579efe36ea7791544314972"
+    }
+  ],
+  "histories": [
+    {
+      "backend": "sprintctl.db",
+      "history": "same-target-winner-loser",
+      "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+      "node": "tests/test_backlog_seed_atomicity.py::TestSQLiteBacklogSeedAtomicity::test_actual_waiting_seed_rechecks_winner_link",
+      "observations": [
+        {
+          "item_id": 2,
+          "step": "winner-link-insert-returned"
+        },
+        {
+          "evidence": "SQLite BEGIN IMMEDIATE attempted while winner uncommitted",
+          "step": "loser-wait-observed"
+        },
+        {
+          "item_ids": [
+            2
+          ],
+          "step": "winner-call-returned"
+        },
+        {
+          "item_ids": [],
+          "step": "loser-call-returned"
+        },
+        {
+          "items": 1,
+          "links": 1,
+          "step": "final-independent-read"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.db",
+      "history": "selected-event-deleted",
+      "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+      "node": "tests/test_backlog_seed_atomicity.py::TestSQLiteBacklogSeedAtomicity::test_selected_event_rechecked_after_actual_lock_wait[deleted]",
+      "observations": [
+        {
+          "evidence": "SQLite BEGIN IMMEDIATE attempted",
+          "step": "selected-reader-wait-observed"
+        },
+        {
+          "change": "deleted",
+          "event_id": 1,
+          "step": "holder-event-change-before-commit"
+        },
+        {
+          "result": [],
+          "step": "waiter-returned"
+        },
+        {
+          "items": 0,
+          "links": 0,
+          "step": "final-independent-read",
+          "tracks": 0
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.db",
+      "history": "selected-event-moved",
+      "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+      "node": "tests/test_backlog_seed_atomicity.py::TestSQLiteBacklogSeedAtomicity::test_selected_event_rechecked_after_actual_lock_wait[moved]",
+      "observations": [
+        {
+          "evidence": "SQLite BEGIN IMMEDIATE attempted",
+          "step": "selected-reader-wait-observed"
+        },
+        {
+          "change": "moved",
+          "event_id": 1,
+          "step": "holder-event-change-before-commit"
+        },
+        {
+          "result": [],
+          "step": "waiter-returned"
+        },
+        {
+          "items": 0,
+          "links": 0,
+          "step": "final-independent-read",
+          "tracks": 0
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.db",
+      "history": "selected-event-reclassified",
+      "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+      "node": "tests/test_backlog_seed_atomicity.py::TestSQLiteBacklogSeedAtomicity::test_selected_event_rechecked_after_actual_lock_wait[reclassified]",
+      "observations": [
+        {
+          "evidence": "SQLite BEGIN IMMEDIATE attempted",
+          "step": "selected-reader-wait-observed"
+        },
+        {
+          "change": "reclassified",
+          "event_id": 1,
+          "step": "holder-event-change-before-commit"
+        },
+        {
+          "result": [],
+          "step": "waiter-returned"
+        },
+        {
+          "items": 0,
+          "links": 0,
+          "step": "final-independent-read",
+          "tracks": 0
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.db",
+      "history": "opposite-directions",
+      "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+      "node": "tests/test_backlog_seed_atomicity.py::TestSQLiteBacklogSeedAtomicity::test_opposite_sprint_directions_finish_without_lock_cycle",
+      "observations": [
+        {
+          "source": 1,
+          "step": "caller-at-barrier",
+          "target": 2
+        },
+        {
+          "source": 2,
+          "step": "caller-at-barrier",
+          "target": 1
+        },
+        {
+          "item_ids": [
+            2
+          ],
+          "source": 1,
+          "step": "call-returned",
+          "target": 2
+        },
+        {
+          "item_ids": [
+            3
+          ],
+          "source": 2,
+          "step": "call-returned",
+          "target": 1
+        },
+        {
+          "sprints": [
+            {
+              "link_count": 1,
+              "seeded_item_count": 1,
+              "sprint": 1
+            },
+            {
+              "link_count": 1,
+              "seeded_item_count": 1,
+              "sprint": 2
+            }
+          ],
+          "step": "final-independent-link-counts"
+        }
+      ],
+      "scope": "actual calls finish; exact sorted lock statement separately source-inspected"
+    },
+    {
+      "backend": "sprintctl.db",
+      "history": "source-sprint-disappeared",
+      "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+      "node": "tests/test_backlog_seed_atomicity.py::TestSQLiteBacklogSeedAtomicity::test_selected_sprint_disappearance_revalidated_after_wait[Source]",
+      "observations": [
+        {
+          "evidence": "SQLite BEGIN IMMEDIATE attempted",
+          "step": "selected-reader-wait-observed"
+        },
+        {
+          "label": "Source",
+          "step": "holder-deleted-sprint-before-commit"
+        },
+        {
+          "error": "Source sprint #1 not found",
+          "step": "waiter-refused",
+          "target_items": 0,
+          "target_links": 0,
+          "target_tracks": 0
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.db",
+      "history": "target-sprint-disappeared",
+      "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+      "node": "tests/test_backlog_seed_atomicity.py::TestSQLiteBacklogSeedAtomicity::test_selected_sprint_disappearance_revalidated_after_wait[Target]",
+      "observations": [
+        {
+          "evidence": "SQLite BEGIN IMMEDIATE attempted",
+          "step": "selected-reader-wait-observed"
+        },
+        {
+          "label": "Target",
+          "step": "holder-deleted-sprint-before-commit"
+        },
+        {
+          "error": "Target sprint #2 not found",
+          "step": "waiter-refused",
+          "target_items": 0,
+          "target_links": 0,
+          "target_tracks": 0
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "same-target-winner-loser",
+      "isolation": "read committed",
+      "node": "tests/pg/test_backlog_seed_atomicity.py::TestPostgresBacklogSeedAtomicity::test_actual_waiting_seed_rechecks_winner_link",
+      "observations": [
+        {
+          "item_id": 84,
+          "step": "winner-link-insert-returned"
+        },
+        {
+          "evidence": "pg_blocking_pids includes winner",
+          "loser_pid": 2044283,
+          "step": "loser-wait-observed",
+          "winner_pid": 2044281
+        },
+        {
+          "item_ids": [
+            84
+          ],
+          "step": "winner-call-returned"
+        },
+        {
+          "item_ids": [],
+          "step": "loser-call-returned"
+        },
+        {
+          "items": 1,
+          "links": 1,
+          "step": "final-independent-read"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "selected-event-deleted",
+      "isolation": "read committed",
+      "node": "tests/pg/test_backlog_seed_atomicity.py::TestPostgresBacklogSeedAtomicity::test_selected_event_rechecked_after_actual_lock_wait[deleted]",
+      "observations": [
+        {
+          "evidence": "pg_blocking_pids includes holder",
+          "step": "selected-reader-wait-observed"
+        },
+        {
+          "change": "deleted",
+          "event_id": 41,
+          "step": "holder-event-change-before-commit"
+        },
+        {
+          "result": [],
+          "step": "waiter-returned"
+        },
+        {
+          "items": 0,
+          "links": 0,
+          "step": "final-independent-read",
+          "tracks": 0
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "selected-event-moved",
+      "isolation": "read committed",
+      "node": "tests/pg/test_backlog_seed_atomicity.py::TestPostgresBacklogSeedAtomicity::test_selected_event_rechecked_after_actual_lock_wait[moved]",
+      "observations": [
+        {
+          "evidence": "pg_blocking_pids includes holder",
+          "step": "selected-reader-wait-observed"
+        },
+        {
+          "change": "moved",
+          "event_id": 42,
+          "step": "holder-event-change-before-commit"
+        },
+        {
+          "result": [],
+          "step": "waiter-returned"
+        },
+        {
+          "items": 0,
+          "links": 0,
+          "step": "final-independent-read",
+          "tracks": 0
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "selected-event-reclassified",
+      "isolation": "read committed",
+      "node": "tests/pg/test_backlog_seed_atomicity.py::TestPostgresBacklogSeedAtomicity::test_selected_event_rechecked_after_actual_lock_wait[reclassified]",
+      "observations": [
+        {
+          "evidence": "pg_blocking_pids includes holder",
+          "step": "selected-reader-wait-observed"
+        },
+        {
+          "change": "reclassified",
+          "event_id": 43,
+          "step": "holder-event-change-before-commit"
+        },
+        {
+          "result": [],
+          "step": "waiter-returned"
+        },
+        {
+          "items": 0,
+          "links": 0,
+          "step": "final-independent-read",
+          "tracks": 0
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "opposite-directions",
+      "isolation": "read committed",
+      "node": "tests/pg/test_backlog_seed_atomicity.py::TestPostgresBacklogSeedAtomicity::test_opposite_sprint_directions_finish_without_lock_cycle",
+      "observations": [
+        {
+          "source": 95,
+          "step": "caller-at-barrier",
+          "target": 96
+        },
+        {
+          "source": 96,
+          "step": "caller-at-barrier",
+          "target": 95
+        },
+        {
+          "item_ids": [
+            94
+          ],
+          "source": 95,
+          "step": "call-returned",
+          "target": 96
+        },
+        {
+          "item_ids": [
+            95
+          ],
+          "source": 96,
+          "step": "call-returned",
+          "target": 95
+        },
+        {
+          "sprints": [
+            {
+              "link_count": 1,
+              "seeded_item_count": 1,
+              "sprint": 95
+            },
+            {
+              "link_count": 1,
+              "seeded_item_count": 1,
+              "sprint": 96
+            }
+          ],
+          "step": "final-independent-link-counts"
+        }
+      ],
+      "scope": "actual calls finish; exact sorted lock statement separately source-inspected"
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "source-sprint-disappeared",
+      "isolation": "read committed",
+      "node": "tests/pg/test_backlog_seed_atomicity.py::TestPostgresBacklogSeedAtomicity::test_selected_sprint_disappearance_revalidated_after_wait[Source]",
+      "observations": [
+        {
+          "evidence": "pg_blocking_pids includes holder",
+          "step": "selected-reader-wait-observed"
+        },
+        {
+          "label": "Source",
+          "step": "holder-deleted-sprint-before-commit"
+        },
+        {
+          "error": "Source sprint #99 not found",
+          "step": "waiter-refused",
+          "target_items": 0,
+          "target_links": 0,
+          "target_tracks": 0
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "target-sprint-disappeared",
+      "isolation": "read committed",
+      "node": "tests/pg/test_backlog_seed_atomicity.py::TestPostgresBacklogSeedAtomicity::test_selected_sprint_disappearance_revalidated_after_wait[Target]",
+      "observations": [
+        {
+          "evidence": "pg_blocking_pids includes holder",
+          "step": "selected-reader-wait-observed"
+        },
+        {
+          "label": "Target",
+          "step": "holder-deleted-sprint-before-commit"
+        },
+        {
+          "error": "Target sprint #102 not found",
+          "step": "waiter-refused",
+          "target_items": 0,
+          "target_links": 0,
+          "target_tracks": 0
+        }
+      ]
+    }
+  ],
+  "histories_per_backend": 7,
+  "kind": "actual pytest record_property ordered histories for sprintctl#2778",
+  "limits": [
+    "Only this child's node identifiers are selected from completed full-suite XML.",
+    "Observations retain actual per-run event/item identifiers, PIDs and order.",
+    "SQLite attempted BEGIN and measured PostgreSQL blocking are distinct observations.",
+    "Opposite-direction completion does not prove all lock orders; sorted SQL is separately source-inspected.",
+    "Deduplication qualification is limited to conforming SQLite writers and measured PostgreSQL READ COMMITTED.",
+    "No focused capture from the earlier 191fc9e base is relabelled as the a5d7998 full run."
+  ],
+  "source_base": "a5d79985e66c61bf6a8a569ca7b0b3cf857ae3a2"
+}
