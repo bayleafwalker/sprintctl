@@ -1,0 +1,129 @@
+{
+  "explanation": "EFFECT FACTS: itest-module-99f12afecd83#5\nIntent: \"intent_1J8NH4VY475H6W6FEC5T74YFFC\", revision 1\nOwner snapshot identity: sha256:daa52418b0fe437254b599674a603794f7a59f3b070909dcc2ff8686452ceefe\nSnapshot identity is not a seal of the entire response or receipt.\nREQUESTED BASIS: matches\nREQUESTED ARTIFACT: MISMATCH\nOwner artifact digest: sha256:5906ed059e448ebc0483739b06a6da79e57f6fe5771cc629f0a2d43f818cb61f\nOwner-recorded intent state: \"accepted\"\nOwner work status: \"pending\"\nIntent Release: \"b887058bdfef950ffdbe35244581b60a9f039803c942dc4f41c2f0af7e335600\"\nCurrent Release: \"b887058bdfef950ffdbe35244581b60a9f039803c942dc4f41c2f0af7e335600\"\nIntent/current Release comparison: matches\nCurrent Release check-revision currentness: matches\nCheck revision comparison: matches\nEVIDENCE CLASSES:\n  Report: outcome reports are not included in this read.\n  Receipt: owner-record-observed; artifact-check comparison: matches\n  Receipt evidence digest: \"sha256:ce1fa0d5d2ce488b7e69ef6677aa76767da766cf4896b35cec3d1ca28ee5174f\"\n  Acknowledgment: target acknowledgment is not included.\n  Observation: receipt matching concerns protected artifact checks; target effect observation is unknown.\n  Acceptance: intent state and Decision records are owner facts; terminal work acceptance is not established here.\nAn accepted or applied lifecycle record does not establish an observed external effect.\nDecision facts: 0/0; complete: True\nDecision collection digest: sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\nReference records: 0; complete: True\nReference collection digest: sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\nEvidence obligations: 0/0; complete: True\nMISSING LINKS / NEXT CHECKS:\n  Terminal Decision binding, accepting identity/time and attempt history are not included.\n  Obligation-to-evidence mapping and target outcome require separate evidence.\n  Lease settlement: unknown\n  Inspect mismatches and incomplete collections before making any acceptance decision.\nauthorizes_acceptance: false",
+  "kind": "effect",
+  "owner_response": {
+    "repo_id": "itest-module-99f12afecd83",
+    "snapshot": {
+      "artifact_digest_matches": false,
+      "authorizes_acceptance": false,
+      "current_item": {
+        "item_id": 5,
+        "status": "pending",
+        "status_revision": "item:47408716-1e0c-44fd-b522-30c430c92b43@status:pending",
+        "work_edit_revision": "item:47408716-1e0c-44fd-b522-30c430c92b43@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "current_release": {
+        "effect_check_revisions": {
+          "patch-check": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        "effect_verification_required": true,
+        "item_revision": "item:47408716-1e0c-44fd-b522-30c430c92b43@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+        "release_digest": "b887058bdfef950ffdbe35244581b60a9f039803c942dc4f41c2f0af7e335600",
+        "revision_currentness": "matches"
+      },
+      "decision_count": 0,
+      "decision_digest": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "decision_facts": [],
+      "decision_facts_complete": true,
+      "evidence_obligation_count": 0,
+      "evidence_obligations": [],
+      "evidence_obligations_complete": true,
+      "intent": {
+        "artifact_sha256": "sha256:5906ed059e448ebc0483739b06a6da79e57f6fe5771cc629f0a2d43f818cb61f",
+        "canonical_intent_digest": "279b3ac5430262ac3e9f8b2d352a268828046dbd5139995f0e86cabb5eb9d539",
+        "intent_id": "intent_1J8NH4VY475H6W6FEC5T74YFFC",
+        "item_id": 5,
+        "release_digest": "b887058bdfef950ffdbe35244581b60a9f039803c942dc4f41c2f0af7e335600",
+        "revision": 1,
+        "state": "accepted"
+      },
+      "lease_settlement": "unknown",
+      "receipt": {
+        "check_revision_comparison": "matches",
+        "comparison": "matches",
+        "evidence_digest": "sha256:ce1fa0d5d2ce488b7e69ef6677aa76767da766cf4896b35cec3d1ca28ee5174f",
+        "status": "owner-record-observed"
+      },
+      "reference_count": 0,
+      "reference_facts_complete": true,
+      "reference_set_digest": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "requested_basis_matches": true,
+      "schema": "sprintctl-effect-acceptance-snapshot/v1",
+      "snapshot_digest": "sha256:daa52418b0fe437254b599674a603794f7a59f3b070909dcc2ff8686452ceefe"
+    }
+  },
+  "questions": {
+    "q01": {
+      "source_locations": [
+        "/owner_response/repo_id"
+      ],
+      "text": "What repository does the supplied work belong to?"
+    },
+    "q02": {
+      "source_locations": [
+        "/owner_response/snapshot/intent/item_id"
+      ],
+      "text": "What is the item ID? Return an integer."
+    },
+    "q03": {
+      "source_locations": [
+        "/owner_response/snapshot/intent/intent_id"
+      ],
+      "text": "What exact intent ID is reported?"
+    },
+    "q04": {
+      "source_locations": [
+        "/owner_response/snapshot/intent/artifact_sha256"
+      ],
+      "text": "What artifact digest is recorded on the owner intent?"
+    },
+    "q05": {
+      "source_locations": [
+        "/owner_response/snapshot/requested_basis_matches"
+      ],
+      "text": "Does the requested basis match? Return a boolean."
+    },
+    "q06": {
+      "source_locations": [
+        "/owner_response/snapshot/artifact_digest_matches"
+      ],
+      "text": "Does the requested artifact match? Return a boolean."
+    },
+    "q07": {
+      "source_locations": [
+        "/owner_response/snapshot/receipt/status"
+      ],
+      "text": "What receipt visibility/input status is reported?"
+    },
+    "q08": {
+      "source_locations": [
+        "/owner_response/snapshot/receipt/comparison"
+      ],
+      "text": "What artifact-check receipt comparison is reported?"
+    },
+    "q09": {
+      "source_locations": [
+        "/owner_response/snapshot/intent/state"
+      ],
+      "text": "What intent lifecycle state is recorded?"
+    },
+    "q10": {
+      "source_locations": [
+        "/explanation"
+      ],
+      "text": "Is terminal work acceptance established by this supplied read? Return \"unknown\" when not established."
+    },
+    "q11": {
+      "source_locations": [
+        "/explanation"
+      ],
+      "text": "Is an actual external target effect observed by this supplied read? Return \"unknown\" when not established."
+    },
+    "q12": {
+      "source_locations": [
+        "/owner_response/snapshot/authorizes_acceptance"
+      ],
+      "text": "Does this read authorize acceptance? Return a boolean."
+    }
+  }
+}

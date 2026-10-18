@@ -1,0 +1,76 @@
+{
+  "answers": {
+    "q01": {
+      "value": "itest-module-99f12afecd83",
+      "sources": [
+        "/report/owner_response/repo_id"
+      ]
+    },
+    "q02": {
+      "value": 3,
+      "sources": [
+        "/report/owner_response/delta/work/item_id"
+      ]
+    },
+    "q03": {
+      "value": "run_QPB96ZF2FD3WXKW72V4B6YQ1HZ",
+      "sources": [
+        "/report/owner_response/delta/authorization_scope/run_id"
+      ]
+    },
+    "q04": {
+      "value": "14a15d7fce9c45d89812bd6a4b92617b6c33de028dbcbb1901a9044cc77373c8",
+      "sources": [
+        "/report/owner_response/delta/current/current_release_digest"
+      ]
+    },
+    "q05": {
+      "value": "unknown",
+      "sources": [
+        "/report/owner_response/delta/comparison/current_release_digest"
+      ]
+    },
+    "q06": {
+      "value": "unknown",
+      "sources": [
+        "/report/owner_response/delta/comparison/current_decision_digest"
+      ]
+    },
+    "q07": {
+      "value": false,
+      "sources": [
+        "/report/owner_response/delta/source_checkpoint"
+      ]
+    },
+    "q08": {
+      "value": null,
+      "sources": [
+        "/report/owner_response/delta/source_checkpoint"
+      ]
+    },
+    "q09": {
+      "value": "unknown",
+      "sources": [
+        "/report/owner_response/delta/source_bytes"
+      ]
+    },
+    "q10": {
+      "value": "unknown",
+      "sources": [
+        "/report/owner_response/delta/external_missing_content"
+      ]
+    },
+    "q11": {
+      "value": "none",
+      "sources": [
+        "/report/observations"
+      ]
+    },
+    "q12": {
+      "value": false,
+      "sources": [
+        "/report/authorizes_action"
+      ]
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "active_effort": null,
+  "attempt_timeout_seconds": 600,
+  "base_revision": "9d2e586712048b9ef8deb234e48cba0a648a3b37",
+  "cost": null,
+  "input_sha256": {
+    "attempt-1bc488519147/input.json": "sha256:f9e2894f4ec7f41de9c4562ce0c735e356035b67d6bb1a616bfeed617b1aa730",
+    "attempt-2363f7cd2363/input.json": "sha256:19ac013e96a677be62ff6545026c9b047b2ac9e67d49e3897727b4233e86eec0",
+    "attempt-447cb4068b5c/input.json": "sha256:192a422146191b56cfc6b170c304bb478246701ed2f475449eed3bf3cb30b1c0",
+    "attempt-4bed32145b02/input.json": "sha256:12e5fc6399c627023cea9c68912de43b0432643470c59454b08c84c1a10e9cc1",
+    "attempt-837f1a01c1ee/input.json": "sha256:83bbaad991d97feef1d674720b4ef9ab374768f248434f1638f54ddf2b7c63b7",
+    "attempt-863cb7513739/input.json": "sha256:d2b7939865c539ac29738f40294216f5fbab9e70e6663fce4b04f0831b0456aa",
+    "attempt-91f877dca934/input.json": "sha256:c4b9d34dea25acefc5708e21cdf72df0652d10a86350900b4ba804dacd7f5a65",
+    "attempt-a3ef80b8669d/input.json": "sha256:0eca8a1bacfd55a70a460d79b1284ff0aeb41bde76674cdb5b59247934da5d15",
+    "attempt-fe1095eed132/input.json": "sha256:2d3fa494b134ee7fd54fa60035a1706c0d68232376c3ed6907ae802ca67c8bf7"
+  },
+  "isolation": "fresh no-history context plus single-file instructions; not OS enforced",
+  "oracle_sha256": "sha256:b8ba0cccbf49db86c99de6f9de0407d39d62731974e27dd09c8b4c20175d4dde",
+  "population_size": 9,
+  "prompt_sha256": "sha256:992ed0699ec95c6f4d0ff20a983d7b8c2478a5b3e7664c2f9c4edce475a9c030",
+  "publication": "coordinator records freeze digest in append-only native decision before first reader dispatch",
+  "question_count": 108,
+  "schema": "sprintctl-cold-reader-freeze/v1",
+  "source_sha256": {
+    "docs/evidence/independent-reader-trial-protocol.md": "sha256:17c23afa4e31f0c70f4d2eb8763ba60155d4e7ce85c41890a6f440fa800a5a9d",
+    "scripts/grade_resume_reader_trial.py": "sha256:d93cab96f0d3d7e7f8a32451894044b516c111943929a4cf7f89783bbf2c15ef",
+    "tests/pg/test_independent_reader_trial.py": "sha256:ffc66cab4edca9fd900fab8ce4875b2c82a828928c76af3f55294dc470ca6eb5"
+  },
+  "unaudited_tool_calls": null
+}

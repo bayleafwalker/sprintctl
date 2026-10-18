@@ -1,0 +1,153 @@
+{
+  "schema": "sprintctl-cold-reader-descriptive-result/v1",
+  "native_item": "sprintctl#2715",
+  "native_freeze_event": 5214,
+  "freeze_sha256": "sha256:c474a753474fc7e57341a07330ebc53466f2628810402a58b624792e34964093",
+  "attempts_assigned": 9,
+  "attempts_completed": 9,
+  "questions": 108,
+  "correct_known": 74,
+  "correct_unknown": 34,
+  "incorrect": 0,
+  "unanswered": 0,
+  "timeouts": 0,
+  "tool_call_compliance": null,
+  "cost": null,
+  "active_effort": null,
+  "exact_model_revision": null,
+  "rows": [
+    {
+      "attempt_id": "attempt-4bed32145b02",
+      "case": {
+        "attempt_id": "attempt-4bed32145b02",
+        "condition": "before",
+        "family": "checkpoint"
+      },
+      "questions": 12,
+      "correct_known": 7,
+      "correct_unknown": 5,
+      "incorrect": 0,
+      "unanswered": 0,
+      "elapsed_seconds": 194.854596
+    },
+    {
+      "attempt_id": "attempt-863cb7513739",
+      "case": {
+        "attempt_id": "attempt-863cb7513739",
+        "condition": "after",
+        "family": "checkpoint"
+      },
+      "questions": 12,
+      "correct_known": 8,
+      "correct_unknown": 4,
+      "incorrect": 0,
+      "unanswered": 0,
+      "elapsed_seconds": 194.854889
+    },
+    {
+      "attempt_id": "attempt-2363f7cd2363",
+      "case": {
+        "attempt_id": "attempt-2363f7cd2363",
+        "condition": "before",
+        "family": "baseline"
+      },
+      "questions": 12,
+      "correct_known": 7,
+      "correct_unknown": 5,
+      "incorrect": 0,
+      "unanswered": 0,
+      "elapsed_seconds": 194.855158
+    },
+    {
+      "attempt_id": "attempt-fe1095eed132",
+      "case": {
+        "attempt_id": "attempt-fe1095eed132",
+        "condition": "after",
+        "family": "baseline"
+      },
+      "questions": 12,
+      "correct_known": 9,
+      "correct_unknown": 3,
+      "incorrect": 0,
+      "unanswered": 0,
+      "elapsed_seconds": 37.857372
+    },
+    {
+      "attempt_id": "attempt-91f877dca934",
+      "case": {
+        "attempt_id": "attempt-91f877dca934",
+        "condition": "before",
+        "family": "access-report"
+      },
+      "questions": 12,
+      "correct_known": 7,
+      "correct_unknown": 5,
+      "incorrect": 0,
+      "unanswered": 0,
+      "elapsed_seconds": 37.857655
+    },
+    {
+      "attempt_id": "attempt-1bc488519147",
+      "case": {
+        "attempt_id": "attempt-1bc488519147",
+        "condition": "after",
+        "family": "access-report"
+      },
+      "questions": 12,
+      "correct_known": 7,
+      "correct_unknown": 5,
+      "incorrect": 0,
+      "unanswered": 0,
+      "elapsed_seconds": 37.858014
+    },
+    {
+      "attempt_id": "attempt-837f1a01c1ee",
+      "case": {
+        "attempt_id": "attempt-837f1a01c1ee",
+        "condition": "matching",
+        "family": "effect"
+      },
+      "questions": 12,
+      "correct_known": 10,
+      "correct_unknown": 2,
+      "incorrect": 0,
+      "unanswered": 0,
+      "elapsed_seconds": 37.937136
+    },
+    {
+      "attempt_id": "attempt-a3ef80b8669d",
+      "case": {
+        "attempt_id": "attempt-a3ef80b8669d",
+        "condition": "changed-artifact",
+        "family": "effect"
+      },
+      "questions": 12,
+      "correct_known": 10,
+      "correct_unknown": 2,
+      "incorrect": 0,
+      "unanswered": 0,
+      "elapsed_seconds": 37.937455
+    },
+    {
+      "attempt_id": "attempt-447cb4068b5c",
+      "case": {
+        "attempt_id": "attempt-447cb4068b5c",
+        "condition": "omitted-receipt",
+        "family": "effect"
+      },
+      "questions": 12,
+      "correct_known": 9,
+      "correct_unknown": 3,
+      "incorrect": 0,
+      "unanswered": 0,
+      "elapsed_seconds": 37.937735
+    }
+  ],
+  "limitations": [
+    "One host and Codex collaboration harness; model revision unavailable.",
+    "Instructed isolation, not OS isolation; tool-call compliance unaudited.",
+    "Elapsed time includes orchestration and root observation delay; first batch persisted after context boundary.",
+    "Questions disclose source navigation. No human, recovery-effort, causal, provider or general portability claim.",
+    "Broader sprintctl#2661/#2663 and agentops#2654 remain open."
+  ]
+}

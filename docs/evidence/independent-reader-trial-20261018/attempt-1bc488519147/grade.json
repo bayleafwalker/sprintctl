@@ -1,0 +1,168 @@
+{
+  "questions": 12,
+  "correct_known": 7,
+  "correct_unknown": 5,
+  "incorrect": 0,
+  "unanswered": 0,
+  "unsupported_extra_question_ids": [],
+  "unsupported_extra_answers": [],
+  "total_incorrect_claims": 0,
+  "rows": [
+    {
+      "question_id": "q01",
+      "answer_class": "known",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": "itest-module-99f12afecd83",
+        "sources": [
+          "/report/owner_response/repo_id"
+        ]
+      }
+    },
+    {
+      "question_id": "q02",
+      "answer_class": "known",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": 3,
+        "sources": [
+          "/report/owner_response/delta/work/item_id"
+        ]
+      }
+    },
+    {
+      "question_id": "q03",
+      "answer_class": "known",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": "run_QPB96ZF2FD3WXKW72V4B6YQ1HZ",
+        "sources": [
+          "/report/owner_response/delta/authorization_scope/run_id"
+        ]
+      }
+    },
+    {
+      "question_id": "q04",
+      "answer_class": "known",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": "14a15d7fce9c45d89812bd6a4b92617b6c33de028dbcbb1901a9044cc77373c8",
+        "sources": [
+          "/report/owner_response/delta/current/current_release_digest"
+        ]
+      }
+    },
+    {
+      "question_id": "q05",
+      "answer_class": "unknown",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": "unknown",
+        "sources": [
+          "/report/owner_response/delta/comparison/current_release_digest"
+        ]
+      }
+    },
+    {
+      "question_id": "q06",
+      "answer_class": "unknown",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": "unknown",
+        "sources": [
+          "/report/owner_response/delta/comparison/current_decision_digest"
+        ]
+      }
+    },
+    {
+      "question_id": "q07",
+      "answer_class": "known",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": false,
+        "sources": [
+          "/report/owner_response/delta/source_checkpoint"
+        ]
+      }
+    },
+    {
+      "question_id": "q08",
+      "answer_class": "unknown",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": null,
+        "sources": [
+          "/report/owner_response/delta/source_checkpoint"
+        ]
+      }
+    },
+    {
+      "question_id": "q09",
+      "answer_class": "unknown",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": "unknown",
+        "sources": [
+          "/report/owner_response/delta/source_bytes"
+        ]
+      }
+    },
+    {
+      "question_id": "q10",
+      "answer_class": "unknown",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": "unknown",
+        "sources": [
+          "/report/owner_response/delta/external_missing_content"
+        ]
+      }
+    },
+    {
+      "question_id": "q11",
+      "answer_class": "known",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": "inaccessible",
+        "sources": [
+          "/report/observations"
+        ]
+      }
+    },
+    {
+      "question_id": "q12",
+      "answer_class": "known",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": false,
+        "sources": [
+          "/report/authorizes_action"
+        ]
+      }
+    }
+  ]
+}

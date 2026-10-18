@@ -1,0 +1,846 @@
+{
+  "case_id_seed": "cold-reader-v1 (owner IDs/times are native generated values bound by input hashes)",
+  "cases": [
+    {
+      "attempt_id": "attempt-4bed32145b02",
+      "condition": "before",
+      "family": "checkpoint",
+      "input_file": "attempt-4bed32145b02/input.json",
+      "input_sha256": "sha256:12e5fc6399c627023cea9c68912de43b0432643470c59454b08c84c1a10e9cc1",
+      "oracle": {
+        "q01": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/repo_id"
+          ],
+          "value": "itest-module-99f12afecd83"
+        },
+        "q02": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/work/item_id"
+          ],
+          "value": 1
+        },
+        "q03": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/authorization_scope/run_id"
+          ],
+          "value": "run_MDE4GXVTPATDFFKZK97HR5R73X"
+        },
+        "q04": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/current/current_release_digest"
+          ],
+          "value": "0dd3045e8aa0a950192d468ac96b387a7d495ba1cc7b1ec378a403d8a7a430ef"
+        },
+        "q05": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/comparison/current_release_digest"
+          ],
+          "value": "unknown"
+        },
+        "q06": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/comparison/current_decision_digest"
+          ],
+          "value": "unknown"
+        },
+        "q07": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/source_checkpoint"
+          ],
+          "value": false
+        },
+        "q08": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/source_checkpoint"
+          ],
+          "value": null
+        },
+        "q09": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/source_bytes"
+          ],
+          "value": "unknown"
+        },
+        "q10": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/external_missing_content"
+          ],
+          "value": "unknown"
+        },
+        "q11": {
+          "answer_class": "known",
+          "paths": [
+            "/report/observations"
+          ],
+          "value": "none"
+        },
+        "q12": {
+          "answer_class": "known",
+          "paths": [
+            "/report/authorizes_action"
+          ],
+          "value": false
+        }
+      }
+    },
+    {
+      "attempt_id": "attempt-863cb7513739",
+      "condition": "after",
+      "family": "checkpoint",
+      "input_file": "attempt-863cb7513739/input.json",
+      "input_sha256": "sha256:d2b7939865c539ac29738f40294216f5fbab9e70e6663fce4b04f0831b0456aa",
+      "oracle": {
+        "q01": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/repo_id"
+          ],
+          "value": "itest-module-99f12afecd83"
+        },
+        "q02": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/work/item_id"
+          ],
+          "value": 1
+        },
+        "q03": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/authorization_scope/run_id"
+          ],
+          "value": "run_MDE4GXVTPATDFFKZK97HR5R73X"
+        },
+        "q04": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/current/current_release_digest"
+          ],
+          "value": "0dd3045e8aa0a950192d468ac96b387a7d495ba1cc7b1ec378a403d8a7a430ef"
+        },
+        "q05": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/comparison/current_release_digest"
+          ],
+          "value": "unknown"
+        },
+        "q06": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/comparison/current_decision_digest"
+          ],
+          "value": "unknown"
+        },
+        "q07": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/source_checkpoint"
+          ],
+          "value": true
+        },
+        "q08": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/source_checkpoint/declared_git_sha"
+          ],
+          "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "q09": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/source_bytes"
+          ],
+          "value": "unknown"
+        },
+        "q10": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/external_missing_content"
+          ],
+          "value": "unknown"
+        },
+        "q11": {
+          "answer_class": "known",
+          "paths": [
+            "/report/observations"
+          ],
+          "value": "none"
+        },
+        "q12": {
+          "answer_class": "known",
+          "paths": [
+            "/report/authorizes_action"
+          ],
+          "value": false
+        }
+      }
+    },
+    {
+      "attempt_id": "attempt-2363f7cd2363",
+      "condition": "before",
+      "family": "baseline",
+      "input_file": "attempt-2363f7cd2363/input.json",
+      "input_sha256": "sha256:19ac013e96a677be62ff6545026c9b047b2ac9e67d49e3897727b4233e86eec0",
+      "oracle": {
+        "q01": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/repo_id"
+          ],
+          "value": "itest-module-99f12afecd83"
+        },
+        "q02": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/work/item_id"
+          ],
+          "value": 2
+        },
+        "q03": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/authorization_scope/run_id"
+          ],
+          "value": "run_4AW7T2QCCACWE8Q65NVJ7AMB4C"
+        },
+        "q04": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/current/current_release_digest"
+          ],
+          "value": "f616392a3d82aeba4974eed50ab0d75a751ecf8a3620437b740579a3e4ee7b79"
+        },
+        "q05": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/comparison/current_release_digest"
+          ],
+          "value": "unknown"
+        },
+        "q06": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/comparison/current_decision_digest"
+          ],
+          "value": "unknown"
+        },
+        "q07": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/source_checkpoint"
+          ],
+          "value": false
+        },
+        "q08": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/source_checkpoint"
+          ],
+          "value": null
+        },
+        "q09": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/source_bytes"
+          ],
+          "value": "unknown"
+        },
+        "q10": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/external_missing_content"
+          ],
+          "value": "unknown"
+        },
+        "q11": {
+          "answer_class": "known",
+          "paths": [
+            "/report/observations"
+          ],
+          "value": "none"
+        },
+        "q12": {
+          "answer_class": "known",
+          "paths": [
+            "/report/authorizes_action"
+          ],
+          "value": false
+        }
+      }
+    },
+    {
+      "attempt_id": "attempt-fe1095eed132",
+      "condition": "after",
+      "family": "baseline",
+      "input_file": "attempt-fe1095eed132/input.json",
+      "input_sha256": "sha256:2d3fa494b134ee7fd54fa60035a1706c0d68232376c3ed6907ae802ca67c8bf7",
+      "oracle": {
+        "q01": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/repo_id"
+          ],
+          "value": "itest-module-99f12afecd83"
+        },
+        "q02": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/work/item_id"
+          ],
+          "value": 2
+        },
+        "q03": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/authorization_scope/run_id"
+          ],
+          "value": "run_4AW7T2QCCACWE8Q65NVJ7AMB4C"
+        },
+        "q04": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/current/current_release_digest"
+          ],
+          "value": "f616392a3d82aeba4974eed50ab0d75a751ecf8a3620437b740579a3e4ee7b79"
+        },
+        "q05": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/comparison/current_release_digest"
+          ],
+          "value": "changed"
+        },
+        "q06": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/comparison/current_decision_digest"
+          ],
+          "value": "changed"
+        },
+        "q07": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/source_checkpoint"
+          ],
+          "value": false
+        },
+        "q08": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/source_checkpoint"
+          ],
+          "value": null
+        },
+        "q09": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/source_bytes"
+          ],
+          "value": "unknown"
+        },
+        "q10": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/external_missing_content"
+          ],
+          "value": "unknown"
+        },
+        "q11": {
+          "answer_class": "known",
+          "paths": [
+            "/report/observations"
+          ],
+          "value": "none"
+        },
+        "q12": {
+          "answer_class": "known",
+          "paths": [
+            "/report/authorizes_action"
+          ],
+          "value": false
+        }
+      }
+    },
+    {
+      "attempt_id": "attempt-91f877dca934",
+      "condition": "before",
+      "family": "access-report",
+      "input_file": "attempt-91f877dca934/input.json",
+      "input_sha256": "sha256:c4b9d34dea25acefc5708e21cdf72df0652d10a86350900b4ba804dacd7f5a65",
+      "oracle": {
+        "q01": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/repo_id"
+          ],
+          "value": "itest-module-99f12afecd83"
+        },
+        "q02": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/work/item_id"
+          ],
+          "value": 3
+        },
+        "q03": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/authorization_scope/run_id"
+          ],
+          "value": "run_QPB96ZF2FD3WXKW72V4B6YQ1HZ"
+        },
+        "q04": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/current/current_release_digest"
+          ],
+          "value": "14a15d7fce9c45d89812bd6a4b92617b6c33de028dbcbb1901a9044cc77373c8"
+        },
+        "q05": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/comparison/current_release_digest"
+          ],
+          "value": "unknown"
+        },
+        "q06": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/comparison/current_decision_digest"
+          ],
+          "value": "unknown"
+        },
+        "q07": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/source_checkpoint"
+          ],
+          "value": false
+        },
+        "q08": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/source_checkpoint"
+          ],
+          "value": null
+        },
+        "q09": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/source_bytes"
+          ],
+          "value": "unknown"
+        },
+        "q10": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/external_missing_content"
+          ],
+          "value": "unknown"
+        },
+        "q11": {
+          "answer_class": "known",
+          "paths": [
+            "/report/observations"
+          ],
+          "value": "none"
+        },
+        "q12": {
+          "answer_class": "known",
+          "paths": [
+            "/report/authorizes_action"
+          ],
+          "value": false
+        }
+      }
+    },
+    {
+      "attempt_id": "attempt-1bc488519147",
+      "condition": "after",
+      "family": "access-report",
+      "input_file": "attempt-1bc488519147/input.json",
+      "input_sha256": "sha256:f9e2894f4ec7f41de9c4562ce0c735e356035b67d6bb1a616bfeed617b1aa730",
+      "oracle": {
+        "q01": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/repo_id"
+          ],
+          "value": "itest-module-99f12afecd83"
+        },
+        "q02": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/work/item_id"
+          ],
+          "value": 3
+        },
+        "q03": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/authorization_scope/run_id"
+          ],
+          "value": "run_QPB96ZF2FD3WXKW72V4B6YQ1HZ"
+        },
+        "q04": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/current/current_release_digest"
+          ],
+          "value": "14a15d7fce9c45d89812bd6a4b92617b6c33de028dbcbb1901a9044cc77373c8"
+        },
+        "q05": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/comparison/current_release_digest"
+          ],
+          "value": "unknown"
+        },
+        "q06": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/comparison/current_decision_digest"
+          ],
+          "value": "unknown"
+        },
+        "q07": {
+          "answer_class": "known",
+          "paths": [
+            "/report/owner_response/delta/source_checkpoint"
+          ],
+          "value": false
+        },
+        "q08": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/source_checkpoint"
+          ],
+          "value": null
+        },
+        "q09": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/source_bytes"
+          ],
+          "value": "unknown"
+        },
+        "q10": {
+          "answer_class": "unknown",
+          "paths": [
+            "/report/owner_response/delta/external_missing_content"
+          ],
+          "value": "unknown"
+        },
+        "q11": {
+          "answer_class": "known",
+          "paths": [
+            "/report/observations"
+          ],
+          "value": "inaccessible"
+        },
+        "q12": {
+          "answer_class": "known",
+          "paths": [
+            "/report/authorizes_action"
+          ],
+          "value": false
+        }
+      }
+    },
+    {
+      "attempt_id": "attempt-837f1a01c1ee",
+      "condition": "matching",
+      "family": "effect",
+      "input_file": "attempt-837f1a01c1ee/input.json",
+      "input_sha256": "sha256:83bbaad991d97feef1d674720b4ef9ab374768f248434f1638f54ddf2b7c63b7",
+      "oracle": {
+        "q01": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/repo_id"
+          ],
+          "value": "itest-module-99f12afecd83"
+        },
+        "q02": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/intent/item_id"
+          ],
+          "value": 4
+        },
+        "q03": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/intent/intent_id"
+          ],
+          "value": "intent_2HQF51HBPWWAR02B7REM39NRVB"
+        },
+        "q04": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/intent/artifact_sha256"
+          ],
+          "value": "sha256:5906ed059e448ebc0483739b06a6da79e57f6fe5771cc629f0a2d43f818cb61f"
+        },
+        "q05": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/requested_basis_matches"
+          ],
+          "value": true
+        },
+        "q06": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/artifact_digest_matches"
+          ],
+          "value": true
+        },
+        "q07": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/receipt/status"
+          ],
+          "value": "owner-record-observed"
+        },
+        "q08": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/receipt/comparison"
+          ],
+          "value": "matches"
+        },
+        "q09": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/intent/state"
+          ],
+          "value": "accepted"
+        },
+        "q10": {
+          "answer_class": "unknown",
+          "paths": [
+            "/explanation"
+          ],
+          "value": "unknown"
+        },
+        "q11": {
+          "answer_class": "unknown",
+          "paths": [
+            "/explanation"
+          ],
+          "value": "unknown"
+        },
+        "q12": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/authorizes_acceptance"
+          ],
+          "value": false
+        }
+      }
+    },
+    {
+      "attempt_id": "attempt-a3ef80b8669d",
+      "condition": "changed-artifact",
+      "family": "effect",
+      "input_file": "attempt-a3ef80b8669d/input.json",
+      "input_sha256": "sha256:0eca8a1bacfd55a70a460d79b1284ff0aeb41bde76674cdb5b59247934da5d15",
+      "oracle": {
+        "q01": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/repo_id"
+          ],
+          "value": "itest-module-99f12afecd83"
+        },
+        "q02": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/intent/item_id"
+          ],
+          "value": 5
+        },
+        "q03": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/intent/intent_id"
+          ],
+          "value": "intent_1J8NH4VY475H6W6FEC5T74YFFC"
+        },
+        "q04": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/intent/artifact_sha256"
+          ],
+          "value": "sha256:5906ed059e448ebc0483739b06a6da79e57f6fe5771cc629f0a2d43f818cb61f"
+        },
+        "q05": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/requested_basis_matches"
+          ],
+          "value": true
+        },
+        "q06": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/artifact_digest_matches"
+          ],
+          "value": false
+        },
+        "q07": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/receipt/status"
+          ],
+          "value": "owner-record-observed"
+        },
+        "q08": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/receipt/comparison"
+          ],
+          "value": "matches"
+        },
+        "q09": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/intent/state"
+          ],
+          "value": "accepted"
+        },
+        "q10": {
+          "answer_class": "unknown",
+          "paths": [
+            "/explanation"
+          ],
+          "value": "unknown"
+        },
+        "q11": {
+          "answer_class": "unknown",
+          "paths": [
+            "/explanation"
+          ],
+          "value": "unknown"
+        },
+        "q12": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/authorizes_acceptance"
+          ],
+          "value": false
+        }
+      }
+    },
+    {
+      "attempt_id": "attempt-447cb4068b5c",
+      "condition": "omitted-receipt",
+      "family": "effect",
+      "input_file": "attempt-447cb4068b5c/input.json",
+      "input_sha256": "sha256:192a422146191b56cfc6b170c304bb478246701ed2f475449eed3bf3cb30b1c0",
+      "oracle": {
+        "q01": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/repo_id"
+          ],
+          "value": "itest-module-99f12afecd83"
+        },
+        "q02": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/intent/item_id"
+          ],
+          "value": 6
+        },
+        "q03": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/intent/intent_id"
+          ],
+          "value": "intent_PYHW0K99JGNBADC4ABPAGTAJFQ"
+        },
+        "q04": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/intent/artifact_sha256"
+          ],
+          "value": "sha256:5906ed059e448ebc0483739b06a6da79e57f6fe5771cc629f0a2d43f818cb61f"
+        },
+        "q05": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/requested_basis_matches"
+          ],
+          "value": true
+        },
+        "q06": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/artifact_digest_matches"
+          ],
+          "value": true
+        },
+        "q07": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/receipt/status"
+          ],
+          "value": "not-supplied"
+        },
+        "q08": {
+          "answer_class": "unknown",
+          "paths": [
+            "/owner_response/snapshot/receipt/comparison"
+          ],
+          "value": "unknown"
+        },
+        "q09": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/intent/state"
+          ],
+          "value": "accepted"
+        },
+        "q10": {
+          "answer_class": "unknown",
+          "paths": [
+            "/explanation"
+          ],
+          "value": "unknown"
+        },
+        "q11": {
+          "answer_class": "unknown",
+          "paths": [
+            "/explanation"
+          ],
+          "value": "unknown"
+        },
+        "q12": {
+          "answer_class": "known",
+          "paths": [
+            "/owner_response/snapshot/authorizes_acceptance"
+          ],
+          "value": false
+        }
+      }
+    }
+  ],
+  "fixture_source_sha256": "sha256:ffc66cab4edca9fd900fab8ce4875b2c82a828928c76af3f55294dc470ca6eb5",
+  "population_size": 9,
+  "question_count": 108,
+  "schema": "sprintctl-cold-reader-trial/v1"
+}

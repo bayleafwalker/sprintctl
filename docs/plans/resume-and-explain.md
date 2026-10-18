@@ -171,9 +171,9 @@ in the live ledger.
 | Slice | Source outcome | Remaining qualification |
 | --- | --- | --- |
 | R1 | Briefing, handoff evidence and consistent owner snapshot implemented | Deployed acceptance is owned by the deployment session |
-| R2 | Three native-owner to fresh-process continuation cases passed | Independent human/LLM recovery, measured effort and provider/host swap |
+| R2 | Three native software cases plus six actual fresh-agent paired readings passed | Cross-host/model qualification, audited calls and measured recovery effort |
 | E1 | Bounded effect explanation implemented | Complete request, actor, attempt, target and terminal-acceptance reconstruction |
-| E2 | Three native effect-reader mismatch/missing-input cases passed | General packet closure/versioning and supported export/import |
+| E2 | Native software cases, three actual fresh-agent result readings and bounded offline read packets passed | Full historical closure, source authenticity and supported owner export/import |
 | H1 | Diagnostic checklist and bounded caller-observation protocol implemented | External observation quality remains caller responsibility; no measured burden ranking |
 | H2 | Three paired native fixtures passed with explicit read/check counts | Independent-reader recovery effort and demonstrated improvement |
 | L1 | Existing Vuoro learning model reused with supplied-record intake | Source authentication and representative accepted-outcome samples |
@@ -199,6 +199,12 @@ general archival portability or an authenticated chain of external effects.
 | `sprintctl#2663` | H2 measured recovery-effort field comparison |
 | `sprintctl#2664` | Executable scoped reservation commands and runtime-session detection |
 | `vuoro#2665` | L1 supplied-record intake into the existing learning model |
+| `sprintctl#2714` | Bounded offline owner-read packet creation and inspection |
+| `sprintctl#2715` | Frozen nine-reader trial:108/108 correct, effort unknown |
+
+See the [retained reader results](../evidence/independent-reader-trial-results.md)
+and [remaining qualification handoff](resume-explain-qualification-handoff.md).
+The trial does not close the broader parent qualifications.
 
 Landed source:
 [R1](https://github.com/bayleafwalker/sprintctl/commit/48f95090dd85587bbce062e4b537b661bd601e97),

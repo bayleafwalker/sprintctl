@@ -1,0 +1,58 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.independent-reader-trial",
+  "contract_ref": {
+    "doc_id": "independent-reader-trial-protocol",
+    "revision": "sha256:c474a753474fc7e57341a07330ebc53466f2628810402a58b624792e34964093"
+  },
+  "implementation_sha": "9d2e586712048b9ef8deb234e48cba0a648a3b37",
+  "depth": 1,
+  "environment": {
+    "backend": "native disposable PostgreSQL16.15 and one-host Codex collaboration readers",
+    "isolation": "instructed fresh context, not OS sandbox; unaudited tool compliance unknown",
+    "tool_versions": {
+      "Python": "3.13.16",
+      "PostgreSQL": "16.15"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 9,
+    "bounds": {
+      "attempts": 9,
+      "questions": 108,
+      "timeout_seconds": 600
+    },
+    "faults_exercised": [
+      "wrong JSON type",
+      "missing answers",
+      "fabricated citation",
+      "extra answer",
+      "freeze/oracle/prompt tampering"
+    ]
+  },
+  "claims": [
+    {
+      "property": "Nine retained fresh-reader attempts answered108fixed fixture questions with74correct known and34correct unknown answers",
+      "result": "example-tested",
+      "evidence": [
+        "docs/evidence/independent-reader-trial-20261018/results.json"
+      ]
+    },
+    {
+      "property": "Comparable recovery effort or cross-host/model portability",
+      "result": "unknown",
+      "evidence": [
+        "docs/evidence/independent-reader-trial-results.md"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "Source base above; exact pre-dispatch generator/grader/protocol SHA256s are in freeze.json and native event5214, not a claim that uncommitted trial source was already in base.",
+    "Native generation1passed1096deselected,fixturecleanup zero remaining rows.",
+    "Full source run2325passed1101skipped14deselected in420.06s; collected before final opt-in collection rule. Final focused25passed on Python3.13 and3.11, including two actual collection regressions; native ordinary-collection6passed zero skips. Combined-head CI checked before acceptance.",
+    "No source oracle mutations after freeze. Actual tool compliance, exact model revision, cost and active effort unknown.",
+    "Normal zero-skip PG collection:6existing resume/result reader cases passed1090deselected,clean fixture; frozen opt-in generator excluded by explicit collection rule, two real collection regressions pass."
+  ]
+}

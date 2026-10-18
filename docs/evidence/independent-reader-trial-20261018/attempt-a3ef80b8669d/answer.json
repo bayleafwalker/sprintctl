@@ -1,0 +1,76 @@
+{
+  "answers": {
+    "q01": {
+      "value": "itest-module-99f12afecd83",
+      "sources": [
+        "/owner_response/repo_id"
+      ]
+    },
+    "q02": {
+      "value": 5,
+      "sources": [
+        "/owner_response/snapshot/intent/item_id"
+      ]
+    },
+    "q03": {
+      "value": "intent_1J8NH4VY475H6W6FEC5T74YFFC",
+      "sources": [
+        "/owner_response/snapshot/intent/intent_id"
+      ]
+    },
+    "q04": {
+      "value": "sha256:5906ed059e448ebc0483739b06a6da79e57f6fe5771cc629f0a2d43f818cb61f",
+      "sources": [
+        "/owner_response/snapshot/intent/artifact_sha256"
+      ]
+    },
+    "q05": {
+      "value": true,
+      "sources": [
+        "/owner_response/snapshot/requested_basis_matches"
+      ]
+    },
+    "q06": {
+      "value": false,
+      "sources": [
+        "/owner_response/snapshot/artifact_digest_matches"
+      ]
+    },
+    "q07": {
+      "value": "owner-record-observed",
+      "sources": [
+        "/owner_response/snapshot/receipt/status"
+      ]
+    },
+    "q08": {
+      "value": "matches",
+      "sources": [
+        "/owner_response/snapshot/receipt/comparison"
+      ]
+    },
+    "q09": {
+      "value": "accepted",
+      "sources": [
+        "/owner_response/snapshot/intent/state"
+      ]
+    },
+    "q10": {
+      "value": "unknown",
+      "sources": [
+        "/explanation"
+      ]
+    },
+    "q11": {
+      "value": "unknown",
+      "sources": [
+        "/explanation"
+      ]
+    },
+    "q12": {
+      "value": false,
+      "sources": [
+        "/owner_response/snapshot/authorizes_acceptance"
+      ]
+    }
+  }
+}

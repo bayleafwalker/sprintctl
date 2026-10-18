@@ -1,0 +1,168 @@
+{
+  "questions": 12,
+  "correct_known": 10,
+  "correct_unknown": 2,
+  "incorrect": 0,
+  "unanswered": 0,
+  "unsupported_extra_question_ids": [],
+  "unsupported_extra_answers": [],
+  "total_incorrect_claims": 0,
+  "rows": [
+    {
+      "question_id": "q01",
+      "answer_class": "known",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": "itest-module-99f12afecd83",
+        "sources": [
+          "/owner_response/repo_id"
+        ]
+      }
+    },
+    {
+      "question_id": "q02",
+      "answer_class": "known",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": 5,
+        "sources": [
+          "/owner_response/snapshot/intent/item_id"
+        ]
+      }
+    },
+    {
+      "question_id": "q03",
+      "answer_class": "known",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": "intent_1J8NH4VY475H6W6FEC5T74YFFC",
+        "sources": [
+          "/owner_response/snapshot/intent/intent_id"
+        ]
+      }
+    },
+    {
+      "question_id": "q04",
+      "answer_class": "known",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": "sha256:5906ed059e448ebc0483739b06a6da79e57f6fe5771cc629f0a2d43f818cb61f",
+        "sources": [
+          "/owner_response/snapshot/intent/artifact_sha256"
+        ]
+      }
+    },
+    {
+      "question_id": "q05",
+      "answer_class": "known",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": true,
+        "sources": [
+          "/owner_response/snapshot/requested_basis_matches"
+        ]
+      }
+    },
+    {
+      "question_id": "q06",
+      "answer_class": "known",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": false,
+        "sources": [
+          "/owner_response/snapshot/artifact_digest_matches"
+        ]
+      }
+    },
+    {
+      "question_id": "q07",
+      "answer_class": "known",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": "owner-record-observed",
+        "sources": [
+          "/owner_response/snapshot/receipt/status"
+        ]
+      }
+    },
+    {
+      "question_id": "q08",
+      "answer_class": "known",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": "matches",
+        "sources": [
+          "/owner_response/snapshot/receipt/comparison"
+        ]
+      }
+    },
+    {
+      "question_id": "q09",
+      "answer_class": "known",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": "accepted",
+        "sources": [
+          "/owner_response/snapshot/intent/state"
+        ]
+      }
+    },
+    {
+      "question_id": "q10",
+      "answer_class": "unknown",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": "unknown",
+        "sources": [
+          "/explanation"
+        ]
+      }
+    },
+    {
+      "question_id": "q11",
+      "answer_class": "unknown",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": "unknown",
+        "sources": [
+          "/explanation"
+        ]
+      }
+    },
+    {
+      "question_id": "q12",
+      "answer_class": "known",
+      "value_correct": true,
+      "sources_valid": true,
+      "result": "correct",
+      "supplied": {
+        "value": false,
+        "sources": [
+          "/owner_response/snapshot/authorizes_acceptance"
+        ]
+      }
+    }
+  ]
+}

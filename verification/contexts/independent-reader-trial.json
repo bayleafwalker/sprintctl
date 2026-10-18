@@ -1,0 +1,79 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.independent-reader-trial",
+  "owner_repo": "sprintctl",
+  "subject": "frozen nine-attempt cold-reader fixture grading",
+  "contract_ref": {
+    "doc_id": "independent-reader-trial-protocol",
+    "revision": "sha256:c474a753474fc7e57341a07330ebc53466f2628810402a58b624792e34964093"
+  },
+  "source_of_truth": "native event5214 freeze and retained exact input/oracle/answer bytes",
+  "depth": 1,
+  "backends": [
+    "disposable PostgreSQL source",
+    "Codex fresh-session readers"
+  ],
+  "actors": [
+    "coordinator",
+    "nine independent readers"
+  ],
+  "initial_state": [
+    "frozen population and oracle before dispatch",
+    "no inherited conversation"
+  ],
+  "operations": [
+    {
+      "name": "read one supplied artifact",
+      "actors": [
+        "nine independent readers"
+      ]
+    },
+    {
+      "name": "grade exact facts and citations against frozen oracle",
+      "actors": [
+        "coordinator"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "fixed question denominator and retained failed/unknown answers"
+  },
+  "assumptions": {
+    "isolation": "instructed fresh context, not OS sandbox; unaudited tool compliance unknown",
+    "clock": "UTC dispatch request through observed completion including orchestration delay",
+    "fairness": "none"
+  },
+  "bounds": {
+    "attempts": 9,
+    "questions": 108,
+    "timeout_seconds": 600
+  },
+  "invariants": [
+    "frozen source/oracle/prompt/input bytes checked before grading",
+    "wrong JSON type or fabricated extra citation fails",
+    "unknown cannot replace an available fact",
+    "extra answers remain unsupported claims",
+    "elapsed orchestration time never becomes active effort"
+  ],
+  "faults": [
+    "wrong JSON type",
+    "missing answers",
+    "fabricated citation",
+    "extra answer",
+    "freeze/oracle/prompt tampering"
+  ],
+  "oracles": [
+    "tests/test_reader_trial_grading.py",
+    "retained per-question grades and input pointers"
+  ],
+  "implementation_anchors": [
+    "scripts/grade_resume_reader_trial.py",
+    "tests/pg/test_independent_reader_trial.py",
+    "docs/evidence/independent-reader-trial-20261018/results.json"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "fault-scenario"
+  ]
+}

@@ -1,0 +1,248 @@
+{
+  "kind": "continuation",
+  "questions": {
+    "q01": {
+      "source_locations": [
+        "/report/owner_response/repo_id"
+      ],
+      "text": "What repository does the supplied work belong to?"
+    },
+    "q02": {
+      "source_locations": [
+        "/report/owner_response/delta/work/item_id"
+      ],
+      "text": "What is the current item ID? Return an integer."
+    },
+    "q03": {
+      "source_locations": [
+        "/report/owner_response/delta/authorization_scope/run_id"
+      ],
+      "text": "What is this read's authorized successor/current run ID?"
+    },
+    "q04": {
+      "source_locations": [
+        "/report/owner_response/delta/current/current_release_digest"
+      ],
+      "text": "What is the current Release digest? Return null if unavailable."
+    },
+    "q05": {
+      "source_locations": [
+        "/report/owner_response/delta/comparison/current_release_digest"
+      ],
+      "text": "Is the Release record changed, unchanged or unknown against the supplied comparison basis?"
+    },
+    "q06": {
+      "source_locations": [
+        "/report/owner_response/delta/comparison/current_decision_digest"
+      ],
+      "text": "Is the Decision record changed, unchanged or unknown against the supplied comparison basis?"
+    },
+    "q07": {
+      "source_locations": [
+        "/report/owner_response/delta/source_checkpoint"
+      ],
+      "text": "Is a current continuation checkpoint supplied? Return a boolean."
+    },
+    "q08": {
+      "source_locations": [
+        "/report/owner_response/delta/source_checkpoint/declared_git_sha"
+      ],
+      "text": "What Git SHA is declared in that checkpoint? Return null if unavailable."
+    },
+    "q09": {
+      "source_locations": [
+        "/report/owner_response/delta/source_bytes"
+      ],
+      "text": "What assurance is supplied for source bytes? Return the explicit assurance value."
+    },
+    "q10": {
+      "source_locations": [
+        "/report/owner_response/delta/external_missing_content"
+      ],
+      "text": "What assurance is supplied for external content availability?"
+    },
+    "q11": {
+      "source_locations": [
+        "/report/observations"
+      ],
+      "text": "What eligible caller-reported access status is present? Return \"none\" if no eligible report."
+    },
+    "q12": {
+      "source_locations": [
+        "/report/authorizes_action"
+      ],
+      "text": "Does this report authorize an action? Return a boolean."
+    }
+  },
+  "report": {
+    "authorizes_action": false,
+    "clock_source": "caller-UTC",
+    "coverage": {
+      "artifact_checks_performed": 0,
+      "caller_observation_count": 0,
+      "decision_page_complete": true,
+      "eligible_caller_observations": 0,
+      "owner_read_count": 1,
+      "reference_page_complete": true
+    },
+    "findings": [
+      {
+        "next_check": "Supply a saved owner delta.current checkpoint for a comparison.",
+        "provenance": "caller-input",
+        "reason_code": "comparison-baseline-absent",
+        "review_order": 3,
+        "subject": "comparison"
+      },
+      {
+        "next_check": "Perform and record the required content check separately.",
+        "provenance": "owner-unknown",
+        "reason_code": "external-content-unchecked",
+        "review_order": 4,
+        "subject": "external_missing_content"
+      },
+      {
+        "next_check": "Resolve the missing baseline or unavailable collection digest; do not infer equality.",
+        "provenance": "owner-comparison",
+        "reason_code": "owner-record-comparison-unknown",
+        "review_order": 4,
+        "subject": "current_decision_digest"
+      },
+      {
+        "next_check": "Resolve the missing baseline or unavailable collection digest; do not infer equality.",
+        "provenance": "owner-comparison",
+        "reason_code": "owner-record-comparison-unknown",
+        "review_order": 4,
+        "subject": "current_reference_set_digest"
+      },
+      {
+        "next_check": "Resolve the missing baseline or unavailable collection digest; do not infer equality.",
+        "provenance": "owner-comparison",
+        "reason_code": "owner-record-comparison-unknown",
+        "review_order": 4,
+        "subject": "current_release_digest"
+      },
+      {
+        "next_check": "Resolve the missing baseline or unavailable collection digest; do not infer equality.",
+        "provenance": "owner-comparison",
+        "reason_code": "owner-record-comparison-unknown",
+        "review_order": 4,
+        "subject": "status_revision"
+      },
+      {
+        "next_check": "Resolve the missing baseline or unavailable collection digest; do not infer equality.",
+        "provenance": "owner-comparison",
+        "reason_code": "owner-record-comparison-unknown",
+        "review_order": 4,
+        "subject": "work_edit_revision"
+      },
+      {
+        "next_check": "Perform and record the required content check separately.",
+        "provenance": "owner-unknown",
+        "reason_code": "reference-correspondence-unchecked",
+        "review_order": 4,
+        "subject": "reference_git_correspondence"
+      },
+      {
+        "next_check": "Perform and record the required content check separately.",
+        "provenance": "owner-unknown",
+        "reason_code": "source-content-unchecked",
+        "review_order": 4,
+        "subject": "source_bytes"
+      },
+      {
+        "next_check": "Use effect evidence and independent target observations to assess outcomes.",
+        "provenance": "read-scope",
+        "reason_code": "outcome-not-assessed",
+        "review_order": 5,
+        "subject": "effect-outcome"
+      }
+    ],
+    "generated_at": "2026-10-18T12:00:00+00:00",
+    "observations": [],
+    "owner_response": {
+      "delta": {
+        "authorization_scope": {
+          "repo_id": "itest-module-99f12afecd83",
+          "run_id": "run_MDE4GXVTPATDFFKZK97HR5R73X",
+          "run_owned": true
+        },
+        "authorizes_action": false,
+        "comparison": {
+          "current_decision_digest": "unknown",
+          "current_reference_set_digest": "unknown",
+          "current_release_digest": "unknown",
+          "status_revision": "unknown",
+          "work_edit_revision": "unknown"
+        },
+        "current": {
+          "current_decision_digest": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "current_reference_set_digest": "sha256:863d7f6b835fc0043defb447d0e3235dc3e4d141011f89ed7a44cd80b1479f4c",
+          "current_release_digest": "0dd3045e8aa0a950192d468ac96b387a7d495ba1cc7b1ec378a403d8a7a430ef",
+          "item_id": 1,
+          "repo_id": "itest-module-99f12afecd83",
+          "status_revision": "item:7c457e10-7d68-4f79-91f0-08408d49980c@status:pending",
+          "work_edit_revision": "item:7c457e10-7d68-4f79-91f0-08408d49980c@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "current_release": {
+          "item_revision": "item:7c457e10-7d68-4f79-91f0-08408d49980c@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+          "release_digest": "0dd3045e8aa0a950192d468ac96b387a7d495ba1cc7b1ec378a403d8a7a430ef"
+        },
+        "decision_count": 0,
+        "decision_page": [],
+        "decision_page_complete": true,
+        "external_missing_content": "unknown",
+        "latest_decision": null,
+        "latest_decision_id": null,
+        "next_after_chain_seq": null,
+        "next_after_note_id": null,
+        "next_reference_cursor": null,
+        "predecessor_evidence": [],
+        "predecessor_notes": [],
+        "predecessor_run_id": null,
+        "reference_digest_domain": "owner-reference-records/v1",
+        "reference_git_correspondence": "unknown",
+        "reference_page": [
+          {
+            "label": "fixture",
+            "label_sha256": "sha256:f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+            "label_truncated": false,
+            "ref_type": "doc",
+            "reference_id": 1,
+            "url": "docs/fixture-not-fetched.md",
+            "url_is_complete": true,
+            "url_sha256": "sha256:be579253c732fab6f19940820d80dfaa97858679ac901ca43a367dfd2b3f43d8",
+            "url_truncated": false
+          }
+        ],
+        "reference_page_complete": true,
+        "schema": "sprintctl-work-continuation-delta/v1",
+        "snapshot_digest": "sha256:93876026f3c9b3d6b19ec310717d5e1cab91d3a341f44db6e9b0da133bb155d5",
+        "source_bytes": "unknown",
+        "source_checkpoint": {
+          "acknowledgement": "unacknowledged",
+          "created_at": "2026-10-18T09:20:27.868539Z",
+          "declared_git_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "git_currentness": "unknown",
+          "item_id": 1,
+          "note_id": 2,
+          "release_digest": null
+        },
+        "work": {
+          "description_excerpt": "",
+          "description_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "description_truncated": false,
+          "item_id": 1,
+          "status": "pending",
+          "status_revision": "item:7c457e10-7d68-4f79-91f0-08408d49980c@status:pending",
+          "title": "item 0",
+          "title_truncated": false,
+          "work_edit_revision": "item:7c457e10-7d68-4f79-91f0-08408d49980c@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "repo_id": "itest-module-99f12afecd83"
+    },
+    "ranking_basis": "declared-checklist-order",
+    "recovery_effort": null,
+    "schema": "sprintctl-resume-diagnostic/v1"
+  }
+}
