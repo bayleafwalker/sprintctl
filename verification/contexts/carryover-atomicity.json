@@ -1,0 +1,115 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.carryover-atomicity",
+  "owner_repo": "sprintctl",
+  "subject": "one source item copy, supersede Decision and events",
+  "contract_ref": {
+    "doc_id": "sprintctl.carryover",
+    "revision": "sha256:884d299a151cfcd0adc352bf1c665e08ce46021c20070de011433ef3f946083d"
+  },
+  "source_of_truth": "native2768 Release6093199e2ec833606e42d7a3e6cd4a227cdd4d563368bcc10fa32ba445c51526 and docs/protocols/carryover.md",
+  "depth": 2,
+  "backends": [
+    "temporary SQLite WAL",
+    "disposable PostgreSQL16.15"
+  ],
+  "actors": [
+    "carryover caller",
+    "competing caller",
+    "independent durable reader"
+  ],
+  "initial_state": [
+    "pending/active/blocked source and target sprint",
+    "target track absent or preexisting",
+    "source Release absent or preexisting"
+  ],
+  "operations": [
+    {
+      "name": "carry one selected source item",
+      "actors": [
+        "carryover caller"
+      ],
+      "synchronization": "SQLite BEGIN IMMEDIATE or PostgreSQL source row FOR UPDATE before target creation"
+    },
+    {
+      "name": "compete for same source and same/different target",
+      "actors": [
+        "carryover caller",
+        "competing caller"
+      ],
+      "synchronization": "both select open source before transaction; separate held-source actual lock wait"
+    },
+    {
+      "name": "observe durable rollback and retry",
+      "actors": [
+        "independent durable reader"
+      ],
+      "synchronization": "independent connection after failed owned transaction"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one source carryover transaction"
+  },
+  "assumptions": {
+    "isolation": "SQLite serialized writer; PostgreSQL READ COMMITTED with source row lock",
+    "clock": "none; existing timestamps restored by rollback",
+    "fairness": "none; bounded waits only",
+    "caller_transactions": "owned committing mutation API, not transaction composition; documented SQLite/PG differences"
+  },
+  "bounds": {
+    "shared_cases_per_backend": 43,
+    "participant_and_event_fault_cases_per_backend": 28,
+    "source_states": 3,
+    "stale_selection_cases": 4,
+    "competing_target_histories_per_backend": 2,
+    "held_source_histories_per_backend": 1,
+    "connections_per_history": 2,
+    "postgresql_consequence_cases": 2,
+    "postgresql_caller_transaction_cases": 3,
+    "sqlite_caller_transaction_cases": 1
+  },
+  "invariants": [
+    "no target object before source lock and current eligibility check",
+    "failed item leaves no partial copy, Decision, event or PG lease/report consequences",
+    "earlier items remain committed if a later one fails",
+    "concurrent same-source carries produce one linked copy",
+    "missing/moved/terminal selections skip without writes",
+    "existing creation/Decision/event validation stays shared",
+    "response loss does not imply rollback or cached result replay",
+    "caller-owned transaction semantics remain explicitly bounded"
+  ],
+  "faults": [
+    "after target track creation",
+    "after target item creation",
+    "after each of three audit event inserts",
+    "after source Decision consequences",
+    "result construction",
+    "generic-event admission refusal",
+    "stale source selection",
+    "later item failure",
+    "lost response represented by subsequent terminal-source skip"
+  ],
+  "oracles": [
+    "same shared real-backend snapshot/fault/retry contract",
+    "independent durable reader",
+    "barrier-synchronized competing commands",
+    "SQLite traced blocked BEGIN and PostgreSQL pg_blocking_pids",
+    "actual PG active lease/report rows",
+    "managed and two-phase pending-write observations"
+  ],
+  "implementation_anchors": [
+    "sprintctl/maintain.py:carryover",
+    "sprintctl/maintaincore.py:carryover_item",
+    "sprintctl/db.py:_carryover_transaction",
+    "sprintctl/pg.py:_carryover_transaction",
+    "tests/_carryover_atomicity_contract.py",
+    "tests/test_carryover_atomicity.py",
+    "tests/pg/test_carryover_atomicity.py"
+  ],
+  "expansions": [
+    "stateful-test",
+    "fault-scenario",
+    "semantic-doc"
+  ]
+}

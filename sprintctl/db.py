@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from . import contracts as _contracts
+from . import maintaincore as _maintaincore
 from . import decisions as _decisions
 from . import depcore as _depcore
 from . import eventcore as _eventcore
@@ -1368,8 +1369,9 @@ class _TrackSqlite:
 
     ph = "?"
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: sqlite3.Connection, *, commit_insert: bool = True) -> None:
         self._conn = conn
+        self._commit_insert = commit_insert
 
     def tenant_params(self) -> tuple:
         return ()
@@ -1390,7 +1392,8 @@ class _TrackSqlite:
             f"INSERT OR IGNORE INTO track ({col_list}) VALUES ({placeholders})",
             values,
         )
-        self._conn.commit()
+        if self._commit_insert:
+            self._conn.commit()
 
 
 def get_or_create_track(
@@ -1433,8 +1436,9 @@ class _WorkItemSqlite:
     ph = "?"
     updated_at_sql = "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: sqlite3.Connection, *, commit_insert: bool = True) -> None:
         self._conn = conn
+        self._commit_insert = commit_insert
 
     def tenant_params(self) -> tuple:
         return ()
@@ -1448,7 +1452,8 @@ class _WorkItemSqlite:
 
     def insert_id(self, sql: str, params: tuple) -> int:
         cur = self._conn.execute(sql, params)
-        self._conn.commit()
+        if self._commit_insert:
+            self._conn.commit()
         return cur.lastrowid
 
     def update_one(self, sql: str, params: tuple) -> bool:
@@ -1515,6 +1520,31 @@ def create_work_item(
     return _workitemcore.create_work_item(
         _WorkItemSqlite(conn), sprint_id, track_id, title, description, assignee, priority
     )
+
+
+@contextmanager
+def _carryover_transaction(conn: sqlite3.Connection):
+    """Own exactly one carryover item; public CRUD keeps committing normally."""
+    if conn.in_transaction:
+        raise ValueError("carryover requires an idle SQLite connection")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        wi = _WorkItemSqlite(conn, commit_insert=False)
+        track = _TrackSqlite(conn, commit_insert=False)
+        yield _maintaincore.CarryoverParticipant(
+            get_sprint=lambda sid: get_sprint(conn, sid),
+            lock_item=lambda iid: wi.lock_for_update("work_item", iid),
+            get_track=lambda tid: get_track(conn, tid),
+            create_track=lambda sid, name: _trackcore.get_or_create_track(track, sid, name),
+            create_item=lambda *args, **kwargs: _workitemcore.create_work_item(wi, *args, **kwargs),
+            insert_event=lambda *args, **kwargs: _insert_event(conn, *args, **kwargs),
+            decide=lambda item, decision: _decide_locked(conn, item, decision),
+            get_item=lambda iid: get_work_item(conn, iid),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def set_work_item_priority(
