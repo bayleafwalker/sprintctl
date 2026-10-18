@@ -1,0 +1,91 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.repo-read-retry-classification",
+  "owner_repo": "sprintctl",
+  "subject": "repository-read-recovery-classification",
+  "contract_ref": {
+    "doc_id": "resume-and-explain",
+    "revision": "git:2e001841e9786e7e77f7dad2d23a67ccebeeec0d"
+  },
+  "source_of_truth": "owner operation catalog and separately audited SELECT-only repository handlers",
+  "depth": 2,
+  "backends": [
+    "postgresql",
+    "unit dispatcher fixture"
+  ],
+  "actors": [
+    "caller",
+    "work application",
+    "disposable PostgreSQL administrator"
+  ],
+  "initial_state": [
+    "runtime holds a live connection",
+    "read catalog contracts forbid idempotency keys"
+  ],
+  "operations": [
+    {
+      "name": "invoke audited read",
+      "actors": [
+        "caller"
+      ],
+      "synchronization": "connection lost during first dispatch; retry once on replacement"
+    },
+    {
+      "name": "terminate backend or close socket",
+      "actors": [
+        "disposable PostgreSQL administrator"
+      ]
+    },
+    {
+      "name": "invoke write",
+      "actors": [
+        "caller"
+      ],
+      "synchronization": "retain exact keyed-write replay allowlist; other writes never replay"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "read classification and bounded runtime recovery"
+  },
+  "assumptions": {
+    "isolation": "guarded disposable PostgreSQL scopes only",
+    "clock": "no timing oracle",
+    "fairness": "replacement connection is available in successful examples"
+  },
+  "bounds": {
+    "additional_reads": 10,
+    "handler_histories": 20,
+    "native_new_histories": 2,
+    "retries_per_invocation": 1,
+    "keyed_write_allowlist": 8
+  },
+  "invariants": [
+    "every nonproject catalog read is classified as a pure read",
+    "each eligible read retries at most once",
+    "second loss gives read-specific503 without write/idempotency advice",
+    "no new mutation replay or key exemption",
+    "five project aggregates remain under ProjectWorkApplication failure handling"
+  ],
+  "faults": [
+    "SQLSTATE57P01 backend termination",
+    "socket loss without SQLSTATE",
+    "second loss on replacement"
+  ],
+  "oracles": [
+    "exhaustive owner catalog classification test",
+    "dispatcher call histories stale then fresh",
+    "real accepted-effect-list read after native faults",
+    "exact eight-operation keyed-write allowlist"
+  ],
+  "implementation_anchors": [
+    "sprintctl/application_common.py:_ADMIN_SHUTDOWN_READ_OPERATIONS",
+    "sprintctl/work_application.py:WorkApplication.invoke",
+    "tests/test_work_application.py",
+    "tests/pg/test_runtime_recovery.py"
+  ],
+  "expansions": [
+    "fault-scenario",
+    "semantic-doc"
+  ]
+}

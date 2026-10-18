@@ -89,6 +89,9 @@ _ADMIN_SHUTDOWN_READ_OPERATIONS = frozenset(
         "work.validate.item-status-mutation",
         "work.run.resolve-v1",
         "work.run.resolve-v2",
+        "work.run.invocation-receipt-get-v1",
+        "work.run.continuation-delta-v1",
+        "work.run.delegation-get-v1",
         "work.approval.get-v1",
         "work.run.predecessor-context-v1",
         "work.evidence.tail-v1",
@@ -97,6 +100,13 @@ _ADMIN_SHUTDOWN_READ_OPERATIONS = frozenset(
         # Reads: a replay on a fresh connection only selects.
         "work.effect.get-v1",
         "work.effect.list-proposed-v1",
+        "work.effect.list-accepted-v1",
+        "work.effect.export-proposal-v2",
+        "work.effect.export-proposal-v3",
+        "work.effect.basis-v1",
+        "work.effect.acceptance-snapshot-v1",
+        "work.effect.preview-v1",
+        "work.effect.attempt-get-v1",
         # Agent directory and inbox reads only select.
         "work.agent.list-v1",
         "work.agent.describe-v1",

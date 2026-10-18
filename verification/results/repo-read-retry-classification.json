@@ -1,0 +1,66 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.repo-read-retry-classification",
+  "contract_ref": {
+    "doc_id": "resume-and-explain",
+    "revision": "git:2e001841e9786e7e77f7dad2d23a67ccebeeec0d"
+  },
+  "implementation_sha": "2e001841e9786e7e77f7dad2d23a67ccebeeec0d",
+  "depth": 2,
+  "environment": {
+    "backend": "disposable PostgreSQL16.15 plus dispatcher unit fixtures",
+    "isolation": "temporary private cluster and repository-scoped cleanup",
+    "tool_versions": {
+      "Python": "3.13.16",
+      "PostgreSQL": "16.15",
+      "pytest": "9.0.2"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 22,
+    "bounds": {
+      "additional_reads": 10,
+      "handler_histories": 20,
+      "native_new_histories": 2,
+      "retries_per_invocation": 1,
+      "keyed_write_allowlist": 8
+    },
+    "faults_exercised": [
+      "SQLSTATE57P01 backend termination",
+      "socket loss without SQLSTATE",
+      "second loss on replacement"
+    ]
+  },
+  "claims": [
+    {
+      "property": "Ten audited repository reads retry once and never receive unknown-write guidance",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_work_application.py",
+        "tests/pg/test_runtime_recovery.py"
+      ]
+    },
+    {
+      "property": "Existing keyed-write allowlist and mutation no-replay boundary preserved",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_work_application.py",
+        "tests/pg/test_runtime_recovery.py"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Before repair catalog gate fails on work.run.invocation-receipt-get-v1: catalog read classified False",
+      "trace_ref": "verification/fixtures/repo-read-retry-counterexample.json"
+    }
+  ],
+  "notes": [
+    "Base implementation SHA plus candidate source SHA256s: {\"sprintctl/application_common.py\": \"1538a8ebf7114036a9b3a247ae010cab969b0db1fb5c53c8534b31294dc0125b\", \"tests/pg/test_runtime_recovery.py\": \"bdf60aadca71182f31c909bdb61461da646523c5ade1c3892e0d8db05f70450c\", \"tests/test_work_application.py\": \"48e01d79a01113b0c55a5132762a5828019011af24635e349a73e9f75edb2621\"}",
+    "Focused application suite:124 passed. Disposable recovery suite:14 passed,1079 deselected; cleanup checker zero fixture rows.",
+    "Initial new PostgreSQL test caller omitted effect-specific authority; corrected test fixture before native fault cases passed.",
+    "No project aggregate recovery, broader concurrency, deployment, lease or authority claim.",
+    "Full frozen source suite:2280 passed,1097 skipped,14 deselected. Native PostgreSQL cases verified separately in the disposable harness."
+  ]
+}

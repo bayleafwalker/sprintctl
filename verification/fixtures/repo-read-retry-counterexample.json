@@ -1,0 +1,11 @@
+{
+  "schema": "sprintctl-retry-counterexample/v1",
+  "base_sha": "2e001841e9786e7e77f7dad2d23a67ccebeeec0d",
+  "operation": "work.run.invocation-receipt-get-v1",
+  "catalog_execution_semantics": "read",
+  "before_is_pure_read": false,
+  "expected_is_pure_read": true,
+  "test": "tests/test_work_application.py:test_repository_read_retry_classification_matches_the_owner_catalog",
+  "before_result": "1 failed,123 deselected; AssertionError on operation above",
+  "after_result": "covered by124 passing application tests; native accepted-list faults separately pass"
+}

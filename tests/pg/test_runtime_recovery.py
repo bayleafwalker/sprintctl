@@ -372,3 +372,23 @@ def test_get_connection_adds_liveness_defaults_the_dsn_does_not_set(monkeypatch,
         assert store.conn.info.get_parameters()["connect_timeout"] == "9"
     finally:
         store.conn.close()
+
+
+@pytest.mark.parametrize("loss", ["backend-termination", "socket-loss"])
+def test_accepted_effect_list_retries_a_real_read_after_connection_loss(runtime, loss):
+    # This SELECT shared list-proposed's handler but was omitted from the
+    # recovery allowlist. No effect rows or idempotency key are needed.
+    if loss == "backend-termination":
+        _terminate_backend(runtime.store.conn)
+    else:
+        dead = socket.socket(fileno=os.dup(runtime.store.conn.pgconn.socket))
+        dead.shutdown(socket.SHUT_RDWR)
+        dead.close()
+    context = _context()
+    context.identity.authorities = frozenset({"work.effect.list-accepted"})
+    result = runtime.app.invoke("work.effect.list-accepted-v1", {}, context)
+    assert result == {"repo_id": runtime.store.repo_id, "intents": []}
+    assert runtime.factory_calls == [True]
+    assert runtime.original.closed
+    assert runtime.store.conn is not runtime.original
+    assert runtime.app.served_runtime_ready() is True

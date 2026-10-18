@@ -2306,3 +2306,80 @@ def test_effect_basis_request_is_exact_frozen_utf8_200_not_legacy_ascii_id():
     jsonschema.validate({"intent_id":"é"*200, "intent_revision":1}, contract.input_schema)
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate({"intent_id":"é"*201, "intent_revision":1}, contract.input_schema)
+
+
+# Repository handlers audited as SELECT/pure computation; project reads use a
+# different application and are intentionally outside this retry boundary.
+_ADDITIONAL_READ_HANDLERS = {
+    "work.run.invocation-receipt-get-v1": "_run_invocation_receipt_get",
+    "work.run.continuation-delta-v1": "_read_run_continuation_delta",
+    "work.effect.export-proposal-v2": "_export_effect_proposal",
+    "work.effect.export-proposal-v3": "_export_effect_proposal_v3",
+    "work.effect.basis-v1": "_read_effect_basis",
+    "work.effect.acceptance-snapshot-v1": "_read_effect_acceptance_snapshot",
+    "work.effect.preview-v1": "_effect_preview",
+    "work.effect.list-accepted-v1": "_effect_list_accepted",
+    "work.effect.attempt-get-v1": "_effect_attempt_get",
+    "work.run.delegation-get-v1": "_run_delegation_get",
+}
+
+
+def test_repository_read_retry_classification_matches_the_owner_catalog():
+    project_reads = {
+        "work.project.context", "work.project.sprints", "work.project.items",
+        "work.project.next-work", "work.project.next-work-explain",
+    }
+    assert {c.name for c in WORK_OPERATION_CONTRACTS
+            if c.name.startswith("work.project.") and c.execution_semantics == "read"} == project_reads
+    for contract in WORK_OPERATION_CONTRACTS:
+        if contract.name.startswith("work.project."):
+            continue  # ProjectWorkApplication owns aggregate failure handling.
+        assert WorkApplication._is_pure_read(contract.name) == (
+            contract.execution_semantics == "read"), contract.name
+
+
+@pytest.mark.parametrize("operation,handler_name", _ADDITIONAL_READ_HANDLERS.items())
+@pytest.mark.parametrize("replacement_fails", [False, True])
+def test_added_read_handlers_retry_once_and_never_report_unknown_write_outcome(
+        monkeypatch, operation, handler_name, replacement_fails):
+    stale = _RuntimeConnection("stale")
+    fresh = _RuntimeConnection("fresh")
+    app = _runtime_application(_RuntimeBackend(stale), lambda: fresh)
+    app.store.remote_schema_version = 27
+    calls = []
+
+    def read(self, arguments, context):
+        calls.append(self.store.conn)
+        if self.store.conn is stale or replacement_fails:
+            raise _AdminShutdown("administrative shutdown")
+        return {"owner": "read-only-result"}
+
+    monkeypatch.setattr(WorkApplication, handler_name, read)
+    context = _context()
+    contract = next(c for c in WORK_OPERATION_CONTRACTS if c.name == operation)
+    context.identity.authorities = frozenset({contract.required_authority})
+    if replacement_fails:
+        with pytest.raises(ApplicationRejection) as rejected:
+            app.invoke(operation, {}, context)
+        assert rejected.value.http_status == 503
+        assert "during this read; retry it" in rejected.value.message
+        assert "idempotency" not in rejected.value.message
+        assert app.store.conn is None
+    else:
+        assert app.invoke(operation, {}, context) == {"owner": "read-only-result"}
+        assert app.store.conn is fresh
+    assert calls == [stale, fresh]
+
+
+def test_existing_write_retry_allowlist_remains_exact_and_requires_a_key():
+    expected = {
+        "work.lifecycle.arbitrate", "work.decision.record", "work.evidence.ingest",
+        "work.batch.apply", "work.maintenance.prepare", "work.maintenance.transition",
+        "work.maintenance.recovery-record", "work.maintenance.resource.prepare",
+    }
+    writes = {c.name for c in WORK_OPERATION_CONTRACTS
+              if not c.name.startswith("work.project.") and c.execution_semantics != "read"}
+    for operation in writes:
+        assert WorkApplication._can_retry_after_admin_shutdown(
+            operation, _context(idempotency_key="durable-key")) == (operation in expected), operation
+        assert not WorkApplication._can_retry_after_admin_shutdown(operation, _context()), operation
