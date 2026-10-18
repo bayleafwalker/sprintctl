@@ -1636,6 +1636,35 @@ def list_work_items(
     return _workitemcore.list_work_items(_WorkItemSqlite(conn), sprint_id, track_name, status)
 
 
+class _SessionReleaseSqlite:
+    """Caller-owned release SQL; construction performs no reads or writes."""
+
+    def __init__(self, conn):
+        self.conn = conn
+
+    def select_active(self, item_id: int, session_id: str) -> list[dict]:
+        return [
+            dict(row) for row in self.conn.execute(
+                "SELECT * FROM reservation WHERE work_item_id = ? AND session_id = ? AND state = 'active'",
+                (item_id, session_id),
+            ).fetchall()
+        ]
+
+    def release_active(self, item_id: int, session_id: str, now: str) -> None:
+        self.conn.execute(
+            "UPDATE reservation SET state = 'released', released_at = ?, last_activity_at = ? "
+            "WHERE work_item_id = ? AND session_id = ? AND state = 'active'",
+            (now, now, item_id, session_id),
+        )
+
+    def insert_released_event(self, sprint_id: int, item_id: int, reservation_id: int, actor: str) -> None:
+        _insert_event(
+            self.conn, sprint_id, actor, "reservation.released",
+            source_type="system", work_item_id=item_id,
+            payload={"reservation_id": reservation_id},
+        )
+
+
 def _release_caller_reservations_locked(
     conn: sqlite3.Connection, item: dict, *, session_id: str | None, actor: str
 ) -> list[int]:
@@ -1646,30 +1675,9 @@ def _release_caller_reservations_locked(
     error: the caller may hold no reservation at all, and the transition
     still succeeds.
     """
-    if not session_id:
-        return []
-    item_id = int(item["id"])
-    rows = [
-        dict(row) for row in conn.execute(
-            "SELECT * FROM reservation WHERE work_item_id = ? AND session_id = ? AND state = 'active'",
-            (item_id, session_id),
-        ).fetchall()
-    ]
-    if not rows:
-        return []
-    now = _reservation.now_text()
-    conn.execute(
-        "UPDATE reservation SET state = 'released', released_at = ?, last_activity_at = ? "
-        "WHERE work_item_id = ? AND session_id = ? AND state = 'active'",
-        (now, now, item_id, session_id),
+    return _reservationcore._release_caller_reservations(
+        _SessionReleaseSqlite(conn), item, session_id=session_id, actor=actor,
     )
-    for row in rows:
-        _insert_event(
-            conn, int(item["sprint_id"]), actor, "reservation.released",
-            source_type="system", work_item_id=item_id,
-            payload={"reservation_id": row["id"]},
-        )
-    return [row["id"] for row in rows]
 
 
 def set_work_item_status(

@@ -1,0 +1,128 @@
+{
+  "item": "sprintctl#2804",
+  "release": "615e721a0d50e54056edd38fb2ddd3af0a2eb09d74a6a7a9166d03462d5ebb76",
+  "source_base": "7af2f81f7f6b4ab50da4eb16fb62505a4fd0e3d2",
+  "product_edits": false,
+  "plan_sha256": "eba6a64d37f6947641e180d9d2b7eda8c9eb54a044a5791c40b1f1e932fc3107",
+  "scope_note": 5778,
+  "review": "Final primary and dedicated revised-oracle reviews CLEAR. Primary independently passed five changed SQLite cases in 1.12s, verified all source/oracle/baseline/control hashes and 132local/399PG/23empty. Dedicated independently passed five changed cases in 1.13s. Four actual wrong-implementation controls fail as intended. Prospective extraction script independently reviewed CLEAR without product writes.",
+  "cases": {
+    "shared_per_backend": 16,
+    "additional_pg": 2,
+    "held_owner_wait_histories": 4
+  },
+  "actual_before": {
+    "local_passed": 132,
+    "local_seconds": 17.87,
+    "pg_passed": 399,
+    "pg_seconds": 13.06,
+    "pg_deselected": 1241,
+    "pg_cleanup_zero": 23
+  },
+  "test_sha256": {
+    "tests/_session_release_contract.py": "df9645d2ac613ac1b2786c39e25af2150862f9807f995c0cf1a8c079a116253f",
+    "tests/test_session_release.py": "13aa22b6b7d537c5bfa0d1183d1f23019b7b7864f7f518d8cff9ce20fd7101e8",
+    "tests/pg/test_session_release.py": "6b535a343616e3439b0dbd6d89f5c511049ef819e90cf0c2b8af0f0507afd3fe"
+  },
+  "source_sha256": {
+    "sprintctl/db.py": "d8ea4fd6795bf99064a098e601809580835060a5ec22547cf43cbc634b5ab3e6",
+    "sprintctl/pg.py": "8619997e37d247f425c4ff1954a0fabed93069a42f6f8f3f4e36d54acffe0cc3",
+    "sprintctl/reservationcore.py": "8ae9a2f4373b079a2f417612746279281719c157bd419e93ebddcbfdfa93cd16"
+  },
+  "log_sha256": {
+    "/tmp/sprintctl-session-release-refined-before-local.txt": "977b8d8ce3fa596ea0e1fd811e40ba4269001cf20a0e955aac87c8ae47f2b7b9",
+    "/tmp/sprintctl-session-release-refined-before-local.xml": "24ab3dc0d03ce2d02d0efd3ed32b444515577cde1423ac07c06f16b496842c13",
+    "/tmp/sprintctl-session-release-refined-before-pg.txt": "65540e868e68bd887f1ba2b10413749af117a7bcc604eb66bab345b9f975782b",
+    "/tmp/sprintctl-session-release-refined-before-pg.xml": "dc44260295e6b1e952dccc637122dc11681d1e748b6a03f452db09f420be1d24"
+  },
+  "limits": [
+    "Separate pinned localserved/PGenvs; actual PG primary/independent/worker isolation preflight before caller writes",
+    "Held waits come from explicit owning item/writer locks, not a lock newly owned by release helper",
+    "Late raw inserted row is valid observation/NULLRelease on SAME owner only, a deliberate population probe not normal concurrency or product repair",
+    "No whole-provider/arbitrarycaller/isolation/fairness/runtimeidentity/deployment/parent2150 proof"
+  ],
+  "supersedes": "/tmp/sprintctl-full-backlog-audit/session-release-before-extraction-2804.json",
+  "correction_note": 5793,
+  "negative_controls": [
+    {
+      "mode": "commit",
+      "exit": 1,
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--no-sync",
+        "pytest",
+        "tests/test_session_release.py",
+        "-k",
+        "falsey_session",
+        "-p",
+        "session_release_oracle_controls",
+        "-q",
+        "--tb=short"
+      ],
+      "log": "/tmp/sprintctl-session-release-control-commit.txt",
+      "log_sha256": "2016070ad5ccb490caee1c06c66e9292463afc6e82857fae42c7c504d364070e"
+    },
+    {
+      "mode": "rollback",
+      "exit": 1,
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--no-sync",
+        "pytest",
+        "tests/test_session_release.py",
+        "-k",
+        "falsey_session",
+        "-p",
+        "session_release_oracle_controls",
+        "-q",
+        "--tb=short"
+      ],
+      "log": "/tmp/sprintctl-session-release-control-rollback.txt",
+      "log_sha256": "cee38ba2d79b4b0c4d0039f42e1e6dc7027cc28b6f10cfa3832f982664db4fa4"
+    },
+    {
+      "mode": "ascending",
+      "exit": 1,
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--no-sync",
+        "pytest",
+        "tests/test_session_release.py",
+        "-k",
+        "mixed_roles",
+        "-p",
+        "session_release_oracle_controls",
+        "-q",
+        "--tb=short"
+      ],
+      "log": "/tmp/sprintctl-session-release-control-ascending.txt",
+      "log_sha256": "5a82824ead263ad383e5acef555b2be72863dbff5225c4be28e37d112b7166d6"
+    },
+    {
+      "mode": "descending",
+      "exit": 1,
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--no-sync",
+        "pytest",
+        "tests/test_session_release.py",
+        "-k",
+        "mixed_roles",
+        "-p",
+        "session_release_oracle_controls",
+        "-q",
+        "--tb=short"
+      ],
+      "log": "/tmp/sprintctl-session-release-control-descending.txt",
+      "log_sha256": "f0992e18aeae15bd5b5f5dd019c91d376cd43925c4dae0d238085501b400147f"
+    }
+  ]
+}

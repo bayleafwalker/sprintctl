@@ -1,0 +1,129 @@
+{
+  "claims": [
+    {
+      "evidence": [
+        "tests/_session_release_contract.py",
+        "tests/test_session_release.py",
+        "tests/pg/test_session_release.py",
+        "verification/traces/session-release-histories-2804.json"
+      ],
+      "property": "Falsey sessions avoid item, SQL and clock access and preserve actual pending caller work without transaction cleanup",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_session_release_contract.py",
+        "tests/test_session_release.py",
+        "tests/pg/test_session_release.py",
+        "verification/traces/session-release-histories-2804.json"
+      ],
+      "property": "Active exact-session rows of all roles release regardless of actor; supplied nonmonotonic selected order drives returned IDs and event order",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_session_release_contract.py",
+        "tests/test_session_release.py",
+        "tests/pg/test_session_release.py",
+        "verification/traces/session-release-histories-2804.json"
+      ],
+      "property": "Clock runs once only after nonempty selection; UPDATE retains its original active-session predicate while selected snapshot alone drives events and IDs",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_session_release_contract.py",
+        "tests/test_session_release.py",
+        "tests/pg/test_session_release.py",
+        "verification/traces/session-release-histories-2804.json"
+      ],
+      "property": "Late sprint conversion and actual event exceptions leave prior writes and effects provisional for caller cleanup; native SQL fault leaves SQLite ACTIVE versus PostgreSQL INERROR",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_session_release_contract.py",
+        "tests/test_session_release.py",
+        "tests/pg/test_session_release.py",
+        "verification/traces/session-release-histories-2804.json"
+      ],
+      "property": "PG tenant predicate and SELECT-exit/clock/UPDATE-exit/event ordering remain unchanged",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_session_release_contract.py",
+        "tests/test_session_release.py",
+        "tests/pg/test_session_release.py",
+        "verification/traces/session-release-histories-2804.json"
+      ],
+      "property": "Independent durable observer sees original state before owner commit; owner rollback restores original state",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_session_release_contract.py",
+        "tests/test_session_release.py",
+        "tests/pg/test_session_release.py",
+        "verification/traces/session-release-histories-2804.json"
+      ],
+      "property": "Concurrent public admission waits for existing owner-held writer/item lock and observes the tested commit or rollback outcome",
+      "result": "concurrency-tested"
+    },
+    {
+      "property": "Arbitrary callers/isolation, physical crash durability, fairness, whole-provider parity, runtime identity, deployed behavior and parent2150 completion",
+      "result": "unknown"
+    }
+  ],
+  "context_id": "sprintctl.session-release",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2804",
+    "revision": "native:release:615e721a0d50e54056edd38fb2ddd3af0a2eb09d74a6a7a9166d03462d5ebb76"
+  },
+  "counterexamples": [],
+  "depth": 2,
+  "environment": {
+    "backend": "actual temporary SQLite and registered disposable PostgreSQL16.15",
+    "isolation": "SQLite writer ownership and actual measured PG READ COMMITTED on primary and independent oracle connections",
+    "tool_versions": {
+      "psycopg": "3.3.3",
+      "pytest": "9.0.2",
+      "python": "3.13.16",
+      "sqlite": "3.53.1"
+    }
+  },
+  "execution": {
+    "bounds": {
+      "additional_pg_cases": 2,
+      "held_owner_wait_histories_per_capture": 4,
+      "retained_observations_per_capture": 20,
+      "sequential_observations_per_capture": 16,
+      "shared_cases_per_backend": 16,
+      "workers_per_wait": 2
+    },
+    "faults_exercised": [
+      "actual AFTER UPDATE trigger abort",
+      "Python exception after first or second actual event",
+      "missing or invalid sprint_id after actual UPDATE",
+      "test-only early commit/rollback and ASC/DESC return-sort negative controls"
+    ],
+    "histories": 20
+  },
+  "implementation_sha": "7af2f81f7f6b4ab50da4eb16fb62505a4fd0e3d2",
+  "notes": [
+    "Private refactor only; no confirmed product defect or semantic repair. Source-only publication; deployment remains separately owned.",
+    "No doc5778 and refined freeze5794. Initial qualification superseded via5793 after two test discrimination findings. Original captures remain historical, not the qualifying baseline; final revised oracle unchanged across extraction. Primary and dedicated final oracle reviews CLEAR; primary independently ran five changed cases1.12s and dedicated five1.13s. Dedicated actual source review CLEAR and independently passed16SQLite2.11s.",
+    "Actual refined baseline132local17.87s/399PG13.06s1241deselected23empty. Same unchanged after selection132local18.69s/399PG13.53s1241deselected23empty. Baseline20 observations and full20 observations are separate captures, each16 sequential and4 actual existing-owner lock-wait histories. Existing adjacent histories are not counted as new observations.",
+    "Four deliberate wrong implementation controls actually fail: earlycommit3, earlyrollback3, ascending sort2, descending sort2. Test-only temporary monkeypatch plugin; no product poisoning. Controls provide bounded discriminator evidence, not exhaustive equivalence.",
+    "Initial sandboxed refined-development uv invocation exited2 before collection due read-only normal uv cache; same invocation escalated passed16in3.11s. Separate retained diagnostic /tmp/sprintctl-session-release-refined-development-sandbox-error.txt. No failed product case inferred; no source repair. Local served+remote+dev and PG remote+dev environments remain separate.",
+    "396 existing adjacent named functions/classes unchanged by AST comparison. All selected reservation SELECT/UPDATE literal multisets unchanged. Constructors one assignment; no transaction owner operations. PG SELECT cursor exits before clock and UPDATE cursor before direct dynamic event insertion.",
+    "SQLite actual AFTER UPDATE RAISE(ABORT) leaves transaction ACTIVE; PG actual trigger exception leaves INERROR and actual InFailedSqlTransaction read refusal until caller rollback. Pending observations occur before fixture owner cleanup. No imposed uniform transaction-abort semantics.",
+    "Nonmonotonic order is supplied by an actual-query cursor proxy and independently authored expected IDs, not a new database ORDER BY guarantee. Same-owner clock-hook raw INSERT is a deliberate valid observation/NULLRelease population probe, not ordinary concurrent publication; returned/event IDs stay selected while original UPDATE predicate also releases that late row.",
+    "Full terminal results: {\"local\": {\"errors\": 0, \"failures\": 0, \"log_sha256\": \"1d3943abfba5aaa7df21bfb3fdbdc612bb1bac2a758a81e7c95e33dcd76f006b\", \"passed\": 2988, \"seconds\": 458.732, \"skipped\": 4, \"tests\": 2992, \"xml_sha256\": \"22641b45f582ca43f46ff9558699c29343ab147196e22b01436d0186d68861a6\"}, \"pg\": {\"errors\": 0, \"failures\": 0, \"log_sha256\": \"1d282f78948c52981dd86e6c3df6e9ac45bc3e684027a0b321648e971ee5c185\", \"passed\": 1640, \"seconds\": 85.812, \"skipped\": 0, \"tests\": 1640, \"xml_sha256\": \"225f3f1a38d94f558c5c32e0997d8650183f199b2cf8e0e3366fb6a55a741462\"}, \"pg_cleanup_instances_zero\": 87}",
+    "Full local gate excludes performance cases with -m not perf; actual terminal reports14deselected. Actual skip reasons remain in the captured JUnit rather than inferred as successes.",
+    "Exact executed commands (run from isolated candidate checkout): {\"after_local\": \"UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-session-release-local-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/test_session_release.py tests/test_locked_item_status.py tests/test_item_release.py tests/test_sqlite_item_reserve_caller.py tests/test_reservations.py -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-session-release-after-local.xml > /tmp/sprintctl-session-release-after-local.txt 2>&1\", \"after_pg\": \"PATH=/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-session-release-pg-env UV_OFFLINE=1 timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh -k 'session_release or locked_item_status or item_release or work_lease or authority or native_reserve_owner or reserve_admission' --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-session-release-after-pg.xml > /tmp/sprintctl-session-release-after-pg.txt 2>&1\", \"before_local\": \"UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-session-release-local-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/test_session_release.py tests/test_locked_item_status.py tests/test_item_release.py tests/test_sqlite_item_reserve_caller.py tests/test_reservations.py -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-session-release-refined-before-local.xml > /tmp/sprintctl-session-release-refined-before-local.txt 2>&1\", \"before_pg\": \"PATH=/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-session-release-pg-env UV_OFFLINE=1 timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh -k 'session_release or locked_item_status or item_release or work_lease or authority or native_reserve_owner or reserve_admission' --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-session-release-refined-before-pg.xml > /tmp/sprintctl-session-release-refined-before-pg.txt 2>&1\", \"docs\": \"UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-session-release-local-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/test_docs_integrity.py -q > /tmp/sprintctl-session-release-docs.txt 2>&1\", \"full_local\": \"UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-session-release-local-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests --ignore=tests/pg --ignore=tests/test_work_application_pg.py -m 'not perf' -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-session-release-full-local.xml > /tmp/sprintctl-session-release-full-local.txt 2>&1\", \"full_pg\": \"PATH=/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-session-release-pg-env UV_OFFLINE=1 timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-session-release-full-pg.xml > /tmp/sprintctl-session-release-full-pg.txt 2>&1\", \"validator\": \"python /projects/dev/agentops/scripts/validate_verification_artifacts.py --root . > /tmp/sprintctl-session-release-validation.txt\", \"whitespace\": \"git diff --check\"}",
+    "Candidate/oracle/evidence SHA256 bytes: {\"sprintctl/db.py\": \"e4adfddb82f10a623d675f86c658a8cb221424016b99130b5e7a26c7f811a6ac\", \"sprintctl/pg.py\": \"91384366bc96a7815e2218e22a3b9c76700ec22b50a069c3b7cfb4a17c6a08d5\", \"sprintctl/reservationcore.py\": \"96a34ed2cf6040c56b470e0094812400a92a8b8045c36caf15fe24c2146f44b2\", \"tests/_session_release_contract.py\": \"df9645d2ac613ac1b2786c39e25af2150862f9807f995c0cf1a8c079a116253f\", \"tests/pg/test_session_release.py\": \"6b535a343616e3439b0dbd6d89f5c511049ef819e90cf0c2b8af0f0507afd3fe\", \"tests/test_session_release.py\": \"13aa22b6b7d537c5bfa0d1183d1f23019b7b7864f7f518d8cff9ce20fd7101e8\", \"verification/contexts/session-release.json\": \"9677bc5ab082239932b324664ad718d5d62611bc074d0210ec938d592b1b2d1e\", \"verification/fixtures/session-release-baseline-2804.json\": \"dcab4887cc4a7ed2a40c1a3f20835659f12e74e353d19a3fb522e26a3b818062\", \"verification/fixtures/session-release-histories-before-2804.json\": \"d9e86ed60758006aac02b5d394927f19d6900558d3e792fb1d9ae511c30fecdb\", \"verification/fixtures/session-release-negative-controls-2804.json\": \"9d52ce649ccd2f176c2037b18fd16e7a266ce96c9f8303691cadb10eeb963189\", \"verification/fixtures/session-release-protected-asts-2804.json\": \"73f300011a16ea74d958fa05e7fc4cbcb8ec0db762cece5349aa5f934daf2828\", \"verification/traces/extract-session-release-histories.py\": \"119fbe47578f19749862a27740eed581e7ba0d26863f0d4d4d6a780b70d5b2f8\", \"verification/traces/session-release-histories-2804.json\": \"1abd4a2d5fee8e5313dc6b2acd01d229256710950bf03c305cff87620e3417b1\"}",
+    "implementation_sha names accepted source base plus pinned candidate byte hashes; it avoids a self-referential future commit and does not attest a deployed runtime. Exact-head canonical CI and independent final packet review remain publication gates."
+  ],
+  "schema_version": "verification-result/v1"
+}

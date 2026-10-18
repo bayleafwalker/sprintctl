@@ -3842,6 +3842,37 @@ def list_work_items(
     return _workitemcore.list_work_items(_WorkItemPg(store), sprint_id, track_name, status)
 
 
+class _SessionReleasePg:
+    """Caller-owned release SQL; construction performs no reads or writes."""
+
+    def __init__(self, store):
+        self.store = store
+
+    def select_active(self, item_id: int, session_id: str) -> list[dict]:
+        with self.store.conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM reservation WHERE repo_id = %s AND work_item_id = %s "
+                "AND session_id = %s AND state = 'active'",
+                (self.store.repo_id, item_id, session_id),
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+    def release_active(self, item_id: int, session_id: str, now: str) -> None:
+        with self.store.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE reservation SET state = 'released', released_at = %s, last_activity_at = %s "
+                "WHERE repo_id = %s AND work_item_id = %s AND session_id = %s AND state = 'active'",
+                (now, now, self.store.repo_id, item_id, session_id),
+            )
+
+    def insert_released_event(self, sprint_id: int, item_id: int, reservation_id: int, actor: str) -> None:
+        _insert_event(
+            self.store, sprint_id, actor, "reservation.released",
+            source_type="system", work_item_id=item_id,
+            payload={"reservation_id": reservation_id},
+        )
+
+
 def _release_caller_reservations_locked(
     store: PgStore, item: Any, *, session_id: str | None, actor: str
 ) -> list[int]:
@@ -3851,32 +3882,9 @@ def _release_caller_reservations_locked(
     session named by ``session_id`` matches, and no session held is not an
     error -- the transition still succeeds.
     """
-    if not session_id:
-        return []
-    item_id = int(item["id"])
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM reservation WHERE repo_id = %s AND work_item_id = %s "
-            "AND session_id = %s AND state = 'active'",
-            (store.repo_id, item_id, session_id),
-        )
-        rows = [dict(row) for row in cur.fetchall()]
-    if not rows:
-        return []
-    now = _reservation.now_text()
-    with store.conn.cursor() as cur:
-        cur.execute(
-            "UPDATE reservation SET state = 'released', released_at = %s, last_activity_at = %s "
-            "WHERE repo_id = %s AND work_item_id = %s AND session_id = %s AND state = 'active'",
-            (now, now, store.repo_id, item_id, session_id),
-        )
-    for row in rows:
-        _insert_event(
-            store, int(item["sprint_id"]), actor, "reservation.released",
-            source_type="system", work_item_id=item_id,
-            payload={"reservation_id": row["id"]},
-        )
-    return [row["id"] for row in rows]
+    return _reservationcore._release_caller_reservations(
+        _SessionReleasePg(store), item, session_id=session_id, actor=actor,
+    )
 
 
 def _end_item_lease_on_release(

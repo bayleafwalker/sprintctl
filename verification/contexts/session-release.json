@@ -1,0 +1,90 @@
+{
+  "actors": [
+    "caller owning pending transaction",
+    "private release participant",
+    "independent durable observer",
+    "concurrent public admission caller"
+  ],
+  "assumptions": {
+    "clock": "one capture after nonempty selection; deliberate same-owner late raw insertion is a population characterization",
+    "fairness": "none",
+    "identity": "existing repository/item/session values; no new credential or live identity qualification",
+    "isolation": "SQLite writer ownership and actual measured PG READ COMMITTED on primary and independent oracle connections"
+  },
+  "backends": [
+    "temporary SQLite",
+    "registered disposable PostgreSQL16.15 READ COMMITTED"
+  ],
+  "bounds": {
+    "additional_pg_cases": 2,
+    "held_owner_wait_histories_per_capture": 4,
+    "retained_observations_per_capture": 20,
+    "sequential_observations_per_capture": 16,
+    "shared_cases_per_backend": 16,
+    "workers_per_wait": 2
+  },
+  "consistency": {
+    "object": "caller-owned session release ordering and exact effects",
+    "target": "application-invariant"
+  },
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2804",
+    "revision": "native:release:615e721a0d50e54056edd38fb2ddd3af0a2eb09d74a6a7a9166d03462d5ebb76"
+  },
+  "depth": 2,
+  "expansions": [
+    "fault-scenario",
+    "backend-parity"
+  ],
+  "faults": [
+    "actual AFTER UPDATE trigger abort",
+    "Python exception after first or second actual event",
+    "missing or invalid sprint_id after actual UPDATE",
+    "test-only early commit/rollback and ASC/DESC return-sort negative controls"
+  ],
+  "id": "sprintctl.session-release",
+  "implementation_anchors": [
+    "sprintctl/reservationcore.py:_SessionReleaseParticipant",
+    "sprintctl/reservationcore.py:_release_caller_reservations",
+    "sprintctl/db.py:_SessionReleaseSqlite",
+    "sprintctl/db.py:_release_caller_reservations_locked",
+    "sprintctl/pg.py:_SessionReleasePg",
+    "sprintctl/pg.py:_release_caller_reservations_locked"
+  ],
+  "initial_state": [
+    "pending caller write with falsey session or empty selection",
+    "mixed active roles and exact/foreign sessions plus terminal reservation",
+    "existing owner-held SQLite writer lock or PG item lock with admission contender"
+  ],
+  "invariants": [
+    "Falsey sessions avoid item, SQL and clock access and preserve actual pending caller work without transaction cleanup",
+    "Active exact-session rows of all roles release regardless of actor; supplied nonmonotonic selected order drives returned IDs and event order",
+    "Clock runs once only after nonempty selection; UPDATE retains its original active-session predicate while selected snapshot alone drives events and IDs",
+    "Late sprint conversion and actual event exceptions leave prior writes and effects provisional for caller cleanup; native SQL fault leaves SQLite ACTIVE versus PostgreSQL INERROR",
+    "PG tenant predicate and SELECT-exit/clock/UPDATE-exit/event ordering remain unchanged",
+    "Independent durable observer sees original state before owner commit; owner rollback restores original state",
+    "Concurrent public admission waits for existing owner-held writer/item lock and observes the tested commit or rollback outcome"
+  ],
+  "operations": [
+    {
+      "actors": [
+        "caller owning pending transaction"
+      ],
+      "name": "_release_caller_reservations_locked",
+      "synchronization": "helper adds no lock or transaction; owning workflow holds existing SQLite writer or PG item lock when required"
+    }
+  ],
+  "oracles": [
+    "tests/_session_release_contract.py",
+    "tests/test_session_release.py",
+    "tests/pg/test_session_release.py",
+    "tests/test_locked_item_status.py",
+    "tests/test_item_release.py",
+    "tests/pg/test_work_lease.py",
+    "tests/pg/test_native_reserve_owner.py"
+  ],
+  "owner_repo": "sprintctl",
+  "schema_version": "test-context/v1",
+  "source_of_truth": "Native No doc5778; corrected reviewed freeze5794 supersedes premature qualification via5793",
+  "subject": "private caller-session reservation release sequence with unchanged native SQL and caller ownership"
+}
