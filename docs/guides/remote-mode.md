@@ -66,8 +66,13 @@ repository identity contract, not a shortcut around those prerequisites.
 ## Command availability and current work
 
 A command appearing in `--help` does not establish that its served operation is
-available or authorized. The current CLI routes `maintain check`, `maintain
-sweep`, `sprint backlog-seed` and `render` as unavailable in served mode. They
+available or authorized. `maintain check [--sprint-id N] [--json]` invokes the
+existing read-only `work.maintain.check` operation. With no active sprint it
+returns an empty diagnostic; an unknown explicit sprint remains an error. Its
+thresholds come from server policy; `--threshold` is local-only.
+
+The CLI routes `maintain sweep`, `maintain carryover`, `sprint backlog-seed` and
+`render` as unavailable in served mode. They
 fail with `served-operation-unavailable`; do not switch a shared checkout to a
 local database to work around that refusal.
 

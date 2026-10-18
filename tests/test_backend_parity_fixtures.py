@@ -400,7 +400,8 @@ class TestServedUnavailableParity:
         [
             ["sprint", "kind", "--id", "1", "--kind", "backlog"],
             ["db", "vacuum"],
-            ["maintain", "check"],
+            ["maintain", "sweep"],
+            ["maintain", "carryover", "--from-sprint", "1", "--to-sprint", "2"],
             ["render"],
         ],
     )
