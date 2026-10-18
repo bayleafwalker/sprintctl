@@ -1,0 +1,280 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.current-pg-protocol-evidence",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:d27985bc872f0fe8efcead9c25befef139ed623d"
+  },
+  "implementation_sha": "d27985bc872f0fe8efcead9c25befef139ed623d",
+  "depth": 2,
+  "environment": {
+    "backend": "disposable PostgreSQL16.15 and temporary SQLite files",
+    "python": "3.13.16",
+    "pytest": "9.0.2",
+    "psycopg": "3.3.3",
+    "isolation": "READ COMMITTED observed on one independent metadata connection; existing fixture/actor setup retained, not every actor newly measured."
+  },
+  "execution": {
+    "histories": 0,
+    "bounds": {
+      "logical_test_anchors": 21,
+      "executed_cases": 26,
+      "mapped_historical_rows": 16,
+      "excluded_historical_rows": 7,
+      "independent_writer_cases": 2,
+      "retained_state_histories": 0
+    },
+    "faults_exercised": [
+      "actual SQL authority Decision insert trigger abort",
+      "native proposal reply exception after actual owner commit",
+      "stale basis, gap, retired command and required receipt refusal in existing bounded tests"
+    ]
+  },
+  "claims": [
+    {
+      "property": "F03: Repeated committed batch returns duplicate/original offsets; independent concurrent same-stream callers retain one record.",
+      "result": "concurrency-tested",
+      "evidence": [
+        "verification/fixtures/pg-protocol-reconciliation-2803.json",
+        "verification/traces/pg-protocol-junit-2803.xml",
+        "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_retry_returns_original_offset_and_cursor_orders_new_records",
+        "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_concurrent_same_stream_retry_admits_once"
+      ]
+    },
+    {
+      "property": "F04: Sequential retry after committed admission preserves original repository cursor; no actual HTTP drop.",
+      "result": "example-tested",
+      "evidence": [
+        "verification/fixtures/pg-protocol-reconciliation-2803.json",
+        "verification/traces/pg-protocol-junit-2803.xml",
+        "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_lost_response_retry_does_not_advance_repository_cursor"
+      ]
+    },
+    {
+      "property": "F05: Missing-sequence batch refuses without retained new records; corrected contiguous batch is accepted.",
+      "result": "example-tested",
+      "evidence": [
+        "verification/fixtures/pg-protocol-reconciliation-2803.json",
+        "verification/traces/pg-protocol-junit-2803.xml",
+        "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_gap_rejects_whole_batch_without_advancing_stream"
+      ]
+    },
+    {
+      "property": "F08: Explicit advisory takeover rejects old-session touch; separate expired/superseded hosted leases retain reports without settlement. No real network partition.",
+      "result": "example-tested",
+      "evidence": [
+        "verification/fixtures/pg-protocol-reconciliation-2803.json",
+        "verification/traces/pg-protocol-junit-2803.xml",
+        "tests/pg/test_authority.py::TestAuthorityFaultHistories::test_partition_reassignment_then_stale_touch_is_rejected",
+        "tests/pg/test_work_lease.py::TestHeartbeat::test_an_expired_lease_cannot_heartbeat_even_when_nobody_took_it",
+        "tests/pg/test_work_lease.py::TestOperatorLeaseContract::test_inv_l1_a_superseded_lease_keeps_its_result_but_not_its_authority"
+      ]
+    },
+    {
+      "property": "F09: Exact authority command replay and stale-basis refusal; successful close retains one boundary linked to owner Decision. No injected close-event failure in this anchor.",
+      "result": "example-tested",
+      "evidence": [
+        "verification/fixtures/pg-protocol-reconciliation-2803.json",
+        "verification/traces/pg-protocol-junit-2803.xml",
+        "tests/pg/test_authority.py::TestAuthorityCommandArbitration::test_item_transition_retry_and_stale_rejection_are_durable",
+        "tests/pg/test_authority.py::TestAuthorityCommandArbitration::test_sprint_close_boundary_and_decision_commit_atomically"
+      ]
+    },
+    {
+      "property": "F10: Retired capability command types refuse construction; omitted required protected receipt refuses acceptance without mutation. External artifact availability remains unknown.",
+      "result": "example-tested",
+      "evidence": [
+        "verification/fixtures/pg-protocol-reconciliation-2803.json",
+        "verification/traces/pg-protocol-junit-2803.xml",
+        "tests/pg/test_authority.py::TestAuthorityCommandArbitration::test_retired_capability_receipt_commands_are_refused",
+        "tests/pg/test_protected_artifact_acceptance.py::test_required_receipt_cannot_be_omitted"
+      ]
+    },
+    {
+      "property": "F11: Successor cannot resolve/write predecessor run or evidence tail; old holder is told superseded on retry. No actual killed-session recovery.",
+      "result": "example-tested",
+      "evidence": [
+        "verification/fixtures/pg-protocol-reconciliation-2803.json",
+        "verification/traces/pg-protocol-junit-2803.xml",
+        "tests/pg/test_run_continuation.py::TestPredecessorContext::test_continuation_transfers_context_not_authority",
+        "tests/pg/test_work_lease.py::TestResume::test_a_restarted_holder_whose_lease_was_taken_over_is_told_so"
+      ]
+    },
+    {
+      "property": "F12: Native effect same-key replay/content conflict and two independent producer reconciliation; not general refinement of the retired proposal model.",
+      "result": "concurrency-tested",
+      "evidence": [
+        "verification/fixtures/pg-protocol-reconciliation-2803.json",
+        "verification/traces/pg-protocol-junit-2803.xml",
+        "tests/pg/test_effect_intent.py::TestPropose::test_the_same_key_replays_one_proposal",
+        "tests/pg/test_effect_intent.py::TestPropose::test_the_same_key_with_other_content_is_an_idempotency_conflict",
+        "tests/pg/test_native_proposal_intake.py::test_independent_producers_reconcile_one_owner_proposal"
+      ]
+    },
+    {
+      "property": "F13: Actual PG ingest envelopes apply to fresh SQLite cache and reach expected offsets/event IDs. Does not call rebuild_cached_projection or upgrade cache schema.",
+      "result": "example-tested",
+      "evidence": [
+        "verification/fixtures/pg-protocol-reconciliation-2803.json",
+        "verification/traces/pg-protocol-junit-2803.xml",
+        "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_disposable_remote_history_rebuilds_projection"
+      ]
+    },
+    {
+      "property": "I02: Repository-scoped same-stream concurrent retry admits one; changed timestamp under same origin identity conflicts.",
+      "result": "concurrency-tested",
+      "evidence": [
+        "verification/fixtures/pg-protocol-reconciliation-2803.json",
+        "verification/traces/pg-protocol-junit-2803.xml",
+        "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_concurrent_same_stream_retry_admits_once",
+        "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_changed_producer_timestamp_conflicts_with_existing_origin_tuple"
+      ]
+    },
+    {
+      "property": "I03: Actual PG gap refusal plus later valid contiguous admission; no implicit missing-prefix seed.",
+      "result": "example-tested",
+      "evidence": [
+        "verification/fixtures/pg-protocol-reconciliation-2803.json",
+        "verification/traces/pg-protocol-junit-2803.xml",
+        "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_gap_rejects_whole_batch_without_advancing_stream"
+      ]
+    },
+    {
+      "property": "I05: Injected authority Decision insert failure rolls back request admission and item effect. No universal remote-only authority invariant.",
+      "result": "example-tested",
+      "evidence": [
+        "verification/fixtures/pg-protocol-reconciliation-2803.json",
+        "verification/traces/pg-protocol-junit-2803.xml",
+        "tests/pg/test_authority.py::TestAuthorityCommandArbitration::test_decision_insert_failure_rolls_back_request_and_effect"
+      ]
+    },
+    {
+      "property": "I06: Stale exact item basis records rejection while item stays active; original command replay retains decision identity.",
+      "result": "example-tested",
+      "evidence": [
+        "verification/fixtures/pg-protocol-reconciliation-2803.json",
+        "verification/traces/pg-protocol-junit-2803.xml",
+        "tests/pg/test_authority.py::TestAuthorityCommandArbitration::test_item_transition_retry_and_stale_rejection_are_durable"
+      ]
+    },
+    {
+      "property": "I07: Separate hosted lease expiry/supersession rejects settlement while retaining report; advisory reservations have no expiry grant.",
+      "result": "example-tested",
+      "evidence": [
+        "verification/fixtures/pg-protocol-reconciliation-2803.json",
+        "verification/traces/pg-protocol-junit-2803.xml",
+        "tests/pg/test_work_lease.py::TestHeartbeat::test_an_expired_lease_cannot_heartbeat_even_when_nobody_took_it",
+        "tests/pg/test_work_lease.py::TestOperatorLeaseContract::test_inv_l1_a_stale_lease_nobody_took_keeps_its_result_but_cannot_settle"
+      ]
+    },
+    {
+      "property": "I08: Protocol-specific native proposal lost-reply injection after actual commit and current proposed/accepted/rejected/applied replay; no generic model or target-effect exactly-once claim.",
+      "result": "example-tested",
+      "evidence": [
+        "verification/fixtures/pg-protocol-reconciliation-2803.json",
+        "verification/traces/pg-protocol-junit-2803.xml",
+        "tests/pg/test_effect_intent.py::TestPropose::test_the_same_key_with_other_content_is_an_idempotency_conflict",
+        "tests/pg/test_native_proposal_intake.py::test_actual_commit_lost_reply_replays_current_state",
+        "tests/pg/test_authority.py::TestAuthorityCommandArbitration::test_item_transition_retry_and_stale_rejection_are_durable"
+      ]
+    },
+    {
+      "property": "I09: Fresh-cache event identity/cursor correspondence from actual PG ingest; not whole-business-state shadow parity or future migration qualification.",
+      "result": "example-tested",
+      "evidence": [
+        "verification/fixtures/pg-protocol-reconciliation-2803.json",
+        "verification/traces/pg-protocol-junit-2803.xml",
+        "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_disposable_remote_history_rebuilds_projection"
+      ]
+    },
+    {
+      "property": "All14failure9invariant contexts qualified; physical fsync/power/storage failure, real transport partition, trusted snapshot install, generic model refinement, whole-business shadow parity, provider/EC20/deployment qualification and parent1131 completion",
+      "result": "unknown"
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "Bounded child2803 Release0e928472647fbede0b93a411e716af2959e3bc5d64c2d979549a8f18e851aaf7 under unfinished1131; prior23row audit and all existing verification packets unchanged. Source head clean before campaign; actual pytest runtime approved HEAD, nine module paths/hashes and tracked status rechecked unchanged at session finish. These observations establish declared run provenance, not external source authenticity.",
+    "Exactly26selected passed1596deselected3.07s, exit0;7registered fixture cleanups had zero remaining rows. Literal JUnit node set equals all26 planned IDs without extra/missing/skip/fail. This is not a new fullsuite run.",
+    "Two independent-writer testcases executed, but no separate state_history properties or full concurrent history traces were produced. execution.histories=0 deliberately; concurrency-tested labels are bounded existing multiwriter tests, not observed held-lock schedules or formal linearizability.",
+    "Historical1586passPG112.33s/85cleanupzero and historical072d033audit remain attributed to their original source. New run qualifies accepted d279 source;102historical file identities compared,21test function-source/fullfile identities unchanged. Only db.py/pg.py/reservationcore.py file hashes changed through separatelyaccepted2787; mapped db.reserve source segment changed. Accepted native342/341 and independent source/paired oracle reviews supply separate semantic evidence.",
+    "F04 is sequential committed ingest retry, not actual HTTP failure. Native proposal I08 does inject Python reply loss after actual owner commit. F13/I09 apply PG-ingested envelopes into a fresh cache; they do not call rebuild_cached_projection or install snapshots/schema upgrades. Hosted lease expiry/supersession is distinct from advisory reservation takeover.",
+    "Seven excluded rows F01,F02,F06,F07,F14,I01,I04 receive no newPGclaim. Separate2791 qualifies selected process SIGKILL boundaries, never fsync/power failure. No product/test source change or parent1131 closure.",
+    "AST source segment hash method is SHA256(ast.get_source_segment) under ambientPython3.14.7, not ast.dump. Execution Python3.13.16. Runtime plugin only imports, observes disposable metadata and writes public fields; no URL/environment/credential serialization. Independent metadata isolation does not measure every test actor.",
+    "Exact-head accepted-source CI39146073970 independently passed2860Py311/2956Py312/1622PG/91producer with64cleanupzero. New packet validation/docs checks and review remain required; source CI does not validate artifacts created afterward.",
+    "Independent optimistic finalpacket review CLEAR:9artifact hashes,26exactJUnit invocations, unchanged historicalmap/21testidentities, runtimeapprovedHEAD/stablefinish and16mapped/7excludedbounds. No reviewer rerun; acceptance remains gated on publication checks.",
+    "Staged scanner identified one false positive at frozen historical-map line409: SHA256 of source module sprintctl/vuoro_credentials.py, not a credential value. Added one exact file/rule/line fingerprint to existing .gitleaksignore, preserving all frozen mapping bytes and default scanner rules; no rule/file exclusions or hook bypass.",
+    "Independent scanner-addendum review CLEAR after3actualstagedgit controls0/1/1. Fingerprint is location-scoped, not content-bound; a future edit at historical-map line409 needs renewed review. Frozen historical-map SHA256 supplies the current content check. No campaign rerun for this reviewed metadata-only exception.",
+    "Publication refreshed onto sibling2791 merged base cc316d1561ff20a298d316079ad308f32124d28a. Exact diff from qualified d279 contains10new tests/evidence files only; all product modules, existing/selectedPGtests, fixtures, scripts, package metadata/lock and scanner baseline unchanged. All9original packet artifact hashes remained unchanged before adding this explicit publication note. Campaign runtime/JUnit stay attributed to d279; no redundant rerun for additive tests/evidence. New exact-head CI qualifies final publication tree separately.",
+    "All102recorded final campaign file hashes rechecked unchanged after additive sibling base refresh; current10artifact hashes match. Source comparison is byte-level, not merely AST identity."
+  ],
+  "commands": [
+    {
+      "argv": [
+        "timeout",
+        "--foreground",
+        "-k",
+        "30s",
+        "900s",
+        "scripts/pg-disposable-tests.sh",
+        "-k",
+        "test_a_restarted_holder_whose_lease_was_taken_over_is_told_so or test_actual_commit_lost_reply_replays_current_state or test_an_expired_lease_cannot_heartbeat_even_when_nobody_took_it or test_changed_producer_timestamp_conflicts_with_existing_origin_tuple or test_concurrent_same_stream_retry_admits_once or test_continuation_transfers_context_not_authority or test_decision_insert_failure_rolls_back_request_and_effect or test_disposable_remote_history_rebuilds_projection or test_gap_rejects_whole_batch_without_advancing_stream or test_independent_producers_reconcile_one_owner_proposal or test_inv_l1_a_stale_lease_nobody_took_keeps_its_result_but_cannot_settle or test_inv_l1_a_superseded_lease_keeps_its_result_but_not_its_authority or test_item_transition_retry_and_stale_rejection_are_durable or test_lost_response_retry_does_not_advance_repository_cursor or test_partition_reassignment_then_stale_touch_is_rejected or test_required_receipt_cannot_be_omitted or test_retired_capability_receipt_commands_are_refused or test_retry_returns_original_offset_and_cursor_orders_new_records or test_sprint_close_boundary_and_decision_commit_atomically or test_the_same_key_replays_one_proposal or test_the_same_key_with_other_content_is_an_idempotency_conflict",
+        "--junitxml=/tmp/sprintctl-1131-final-source-pg.xml",
+        "--tb=short",
+        "-o",
+        "junit_family=legacy",
+        "-p",
+        "sprintctl_2803_capture"
+      ],
+      "cwd": "/tmp/sprintctl-pg-protocol-2803",
+      "environment_overrides": {
+        "UV_PROJECT_ENVIRONMENT": "/tmp/sprintctl-pg-protocol-2803-env",
+        "UV_OFFLINE": "1",
+        "PYTHONPATH": "/tmp",
+        "postgresql_bin": "/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin"
+      },
+      "result": "26passed1596deselected3.07s;7cleanupzero;exit0"
+    },
+    {
+      "command": "python /projects/dev/agentops/scripts/validate_verification_artifacts.py --root . > /tmp/sprintctl-2803-validation.txt",
+      "result": "passed;exit0"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed;exit0"
+    },
+    {
+      "command": "/tmp/sprintctl-keyed-decision-2789-env/bin/python -m pytest tests/test_docs_integrity.py -x -q --tb=short",
+      "result": "15 passed0.03s;exit0"
+    },
+    {
+      "command": "python /tmp/sprintctl-2803-detector-controls.py",
+      "result": "3 actual staged-git scanner controls pass0/1/1: exact sourcehash fingerprint allowed, same pattern elsewhere and credential field other line in same namedfile detected"
+    },
+    {
+      "command": "/tmp/sprintctl-pg-protocol-2803-env/bin/python -m pytest tests/test_docs_integrity.py -x -q --tb=short",
+      "result": "15 passed0.03s;exit0 after publication-base/docs update"
+    },
+    {
+      "command": "python /projects/dev/agentops/scripts/validate_verification_artifacts.py --root . > /tmp/sprintctl-2803-final-validation.txt",
+      "result": "passed;exit0 after publication-base update"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed;exit0 after publication-base update"
+    }
+  ],
+  "artifact_hashes": {
+    "docs/evidence/pg-protocol-qualification-2803.md": "6e0795fa51a8c8499fb2b29f0a9b09466a0b54d239158bd02df6e270fa91ab8f",
+    "verification/contexts/current-pg-protocol-evidence.json": "de394d867fed6bab93ba7de977836b03d4985c29e965eb15eeff5330c069e072",
+    "verification/fixtures/pg-protocol-historical-map-2803.json": "5a0f637ec99d69f16761afbd746aaf98f5cf82679bb08e9f793753c6d7a284de",
+    "verification/fixtures/pg-protocol-runtime-2803.json": "06cdcb4a0e942e1c0ccb89cbb4099c0fddfa06cf44ee5cb2914dae27d517abce",
+    "verification/fixtures/pg-protocol-command-2803.json": "26a4a044db8a629ac7e07dc5e9b5e74365986c0c7341e5d6089ce113508e1f28",
+    "verification/fixtures/pg-protocol-reconciliation-2803.json": "c59a30ab12d6adbb2c4e2ceb6f1494d60495bda448a6f55423b9b19e230535d1",
+    "verification/traces/capture_pg_protocol_runtime.py": "73e2588a04ba0a2f953c934d6b14af8d20a3ce468d722bd3b6ccfb16239aca96",
+    "verification/traces/pg-protocol-junit-2803.xml": "2b7e4ee97b4006fb6a3012d2d235f0d00d8ae1cad3cfd30d21c23328671daaed",
+    "verification/traces/pg-protocol-stdout-2803.txt": "6b5ebdac3fe1d7ed2a6b7102f06ce74faae269c53680784708860966046c5efd",
+    ".gitleaksignore": "7a98f8a22830ae7010bddac38df3fa202fb7bdf798afccca64df50880eacf76a"
+  },
+  "publication_base": "cc316d1561ff20a298d316079ad308f32124d28a"
+}

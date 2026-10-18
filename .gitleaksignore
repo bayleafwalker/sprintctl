@@ -18,3 +18,5 @@ verification/fixtures/keyed-decision-before-histories-2789.json:generic-api-key:
 verification/fixtures/keyed-decision-before-histories-2789.json:generic-api-key:2191
 verification/fixtures/keyed-decision-before-histories-2789.json:generic-api-key:2218
 verification/fixtures/keyed-decision-before-histories-2789.json:generic-api-key:2249
+# Reviewed #2803 historical-map SHA-256 of a source module, not a credential.
+verification/fixtures/pg-protocol-historical-map-2803.json:generic-api-key:409

@@ -1,0 +1,84 @@
+{
+  "python": "3.13.16",
+  "pytest": "9.0.2",
+  "psycopg": "3.3.3",
+  "modules": {
+    "sprintctl": {
+      "path": "/tmp/sprintctl-pg-protocol-2803/sprintctl/__init__.py",
+      "sha256": "10faecc13525f49b36cff448ceeac96591ea5dd372c02b2a9654a92f4b5f033d"
+    },
+    "sprintctl.pg": {
+      "path": "/tmp/sprintctl-pg-protocol-2803/sprintctl/pg.py",
+      "sha256": "8619997e37d247f425c4ff1954a0fabed93069a42f6f8f3f4e36d54acffe0cc3"
+    },
+    "sprintctl.db": {
+      "path": "/tmp/sprintctl-pg-protocol-2803/sprintctl/db.py",
+      "sha256": "d8ea4fd6795bf99064a098e601809580835060a5ec22547cf43cbc634b5ab3e6"
+    },
+    "sprintctl.authority": {
+      "path": "/tmp/sprintctl-pg-protocol-2803/sprintctl/authority.py",
+      "sha256": "02ecde048c010160d1d0f8fc8e84442cf02f6b375ead03f0308a1b3d142eecc4"
+    },
+    "sprintctl.outbox": {
+      "path": "/tmp/sprintctl-pg-protocol-2803/sprintctl/outbox.py",
+      "sha256": "aac1bf2b9131ade3c83d36ef0b8d66486677d98b6cebcbc1f0bdf2c85da84444"
+    },
+    "sprintctl.projection": {
+      "path": "/tmp/sprintctl-pg-protocol-2803/sprintctl/projection.py",
+      "sha256": "0a267ff5c85b93d033f3d1055ceb21db7598e52582f16c96d7208b0be03ff7b1"
+    },
+    "sprintctl.reservationcore": {
+      "path": "/tmp/sprintctl-pg-protocol-2803/sprintctl/reservationcore.py",
+      "sha256": "8ae9a2f4373b079a2f417612746279281719c157bd419e93ebddcbfdfa93cd16"
+    },
+    "sprintctl.workitemcore": {
+      "path": "/tmp/sprintctl-pg-protocol-2803/sprintctl/workitemcore.py",
+      "sha256": "e56448a3d9b14004f8123322affd3239aa8bf858203318c93a84d4f81d8498b4"
+    },
+    "sprintctl.proposal_intake": {
+      "path": "/tmp/sprintctl-pg-protocol-2803/sprintctl/proposal_intake.py",
+      "sha256": "6972282ad0141558e22cc997064b0bf843e313be80cfd65c9fbb2604c2f0386e"
+    }
+  },
+  "postgresql": {
+    "server_version": "16.15",
+    "observer_isolation": "read committed",
+    "limit": "Independent metadata connection; not a new measurement of every test actor."
+  },
+  "head": "d27985bc872f0fe8efcead9c25befef139ed623d",
+  "tracked_status": "",
+  "argv": [
+    "-q",
+    "-m",
+    "pg",
+    "-rs",
+    "tests/pg/",
+    "tests/test_work_application_pg.py",
+    "-k",
+    "test_a_restarted_holder_whose_lease_was_taken_over_is_told_so or test_actual_commit_lost_reply_replays_current_state or test_an_expired_lease_cannot_heartbeat_even_when_nobody_took_it or test_changed_producer_timestamp_conflicts_with_existing_origin_tuple or test_concurrent_same_stream_retry_admits_once or test_continuation_transfers_context_not_authority or test_decision_insert_failure_rolls_back_request_and_effect or test_disposable_remote_history_rebuilds_projection or test_gap_rejects_whole_batch_without_advancing_stream or test_independent_producers_reconcile_one_owner_proposal or test_inv_l1_a_stale_lease_nobody_took_keeps_its_result_but_cannot_settle or test_inv_l1_a_superseded_lease_keeps_its_result_but_not_its_authority or test_item_transition_retry_and_stale_rejection_are_durable or test_lost_response_retry_does_not_advance_repository_cursor or test_partition_reassignment_then_stale_touch_is_rejected or test_required_receipt_cannot_be_omitted or test_retired_capability_receipt_commands_are_refused or test_retry_returns_original_offset_and_cursor_orders_new_records or test_sprint_close_boundary_and_decision_commit_atomically or test_the_same_key_replays_one_proposal or test_the_same_key_with_other_content_is_an_idempotency_conflict",
+    "--junitxml=/tmp/sprintctl-1131-final-source-pg.xml",
+    "--tb=short",
+    "-o",
+    "junit_family=legacy",
+    "-p",
+    "sprintctl_2803_capture"
+  ],
+  "plugin_sha256": "73e2588a04ba0a2f953c934d6b14af8d20a3ce468d722bd3b6ccfb16239aca96",
+  "finish_identity": {
+    "head": "d27985bc872f0fe8efcead9c25befef139ed623d",
+    "tracked_status": "",
+    "modules": {
+      "sprintctl": "10faecc13525f49b36cff448ceeac96591ea5dd372c02b2a9654a92f4b5f033d",
+      "sprintctl.pg": "8619997e37d247f425c4ff1954a0fabed93069a42f6f8f3f4e36d54acffe0cc3",
+      "sprintctl.db": "d8ea4fd6795bf99064a098e601809580835060a5ec22547cf43cbc634b5ab3e6",
+      "sprintctl.authority": "02ecde048c010160d1d0f8fc8e84442cf02f6b375ead03f0308a1b3d142eecc4",
+      "sprintctl.outbox": "aac1bf2b9131ade3c83d36ef0b8d66486677d98b6cebcbc1f0bdf2c85da84444",
+      "sprintctl.projection": "0a267ff5c85b93d033f3d1055ceb21db7598e52582f16c96d7208b0be03ff7b1",
+      "sprintctl.reservationcore": "8ae9a2f4373b079a2f417612746279281719c157bd419e93ebddcbfdfa93cd16",
+      "sprintctl.workitemcore": "e56448a3d9b14004f8123322affd3239aa8bf858203318c93a84d4f81d8498b4",
+      "sprintctl.proposal_intake": "6972282ad0141558e22cc997064b0bf843e313be80cfd65c9fbb2604c2f0386e"
+    },
+    "pytest_exitstatus": 0
+  },
+  "source_stable_through_campaign": true
+}
