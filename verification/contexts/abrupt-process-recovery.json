@@ -1,0 +1,111 @@
+{
+  "actors": [
+    "exact own Popen child writer",
+    "parent process controller",
+    "fresh raw SQLite observer after child reap",
+    "replacement writer with fresh product connection"
+  ],
+  "assumptions": {
+    "clock": "fixed fixture event time and cache advancement time; no lease/clock-admission claim",
+    "fairness": "none; readiness/reap deadlines are test guards, never passing outcomes",
+    "identity": "only temporary fixture records and exact owned child PID; no runtime credential/provider identity qualification",
+    "isolation": "one active SQLite writer; parent raw observer opens only after killed child is reaped",
+    "storage": "actual engine automatic recovery; filesystem/kernel/power-loss behavior outside the tested scope"
+  },
+  "backends": [
+    "actual temporary SQLite producer outbox",
+    "actual temporary SQLite disposable ingest and authority read-side caches"
+  ],
+  "bounds": {
+    "actual_sigkill_cases": 8,
+    "cache_seed_records_per_domain": 1,
+    "child_ready_max_bytes": 65536,
+    "new_records_per_cache_batch": 2,
+    "persisted_state_negative_controls": 4,
+    "producer_appended_records": 1,
+    "producer_seed_records": 1,
+    "ready_deadline_seconds": 15,
+    "reap_deadline_seconds": 10,
+    "total_retained_observations_per_capture": 13,
+    "trace_guard_negative_controls": 1
+  },
+  "consistency": {
+    "object": "exact committed local state after declared process-death boundary, not a physical storage or distributed-system guarantee",
+    "target": "application-invariant"
+  },
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2791",
+    "revision": "native:release:a21c24e082f37d24624334530f8a21206f7830d8173a30d73267a938aa520240"
+  },
+  "depth": 2,
+  "expansions": [
+    "fault-scenario"
+  ],
+  "faults": [
+    "own-child SIGKILL before COMMIT after actual writes",
+    "own-child SIGKILL before second cache INSERT after first pending INSERT",
+    "own-child SIGKILL after actual API return before connection close",
+    "deliberately persisted next-sequence and separate watermark mismatches",
+    "deliberately persisted partial new batch with internally matching cursor",
+    "injected trace checkpoint guard error with unswallowable child exit73"
+  ],
+  "id": "sprintctl.abrupt-process-recovery",
+  "implementation_anchors": [
+    "sprintctl/outbox.py:open_outbox",
+    "sprintctl/outbox.py:append_observation",
+    "sprintctl/projection.py:open_cached_projection",
+    "sprintctl/projection.py:apply_ingested_records",
+    "sprintctl/projection.py:apply_authority_decisions"
+  ],
+  "initial_state": [
+    "one committed producer record with stable stream and next sequence",
+    "one contiguous ingest record and one sparse authority record with separately nonzero cursors",
+    "no open seed/observer connection during the kill; child owns its connection"
+  ],
+  "invariants": [
+    "before COMMIT or mid-batch process death recovers exact seed-only state; after actual API return it recovers the exact complete committed operation",
+    "producer committed event IDs/sequence survive process death, same-event retry stays idempotent and next append uses the next sequence",
+    "cached rows and the corresponding watermark recover together; sparse authority offsets remain legal and separate from ingest cursor order",
+    "the exact committed-manifest oracle rejects a deliberately persisted, logically consistent partial new batch",
+    "one-shot trace marker/guard errors terminate the child without returning to SQLite; missing/error/wrong markers or timeouts never pass",
+    "the same raw reader/checker rejects actual stored sequence/watermark violations after valid fixtures first pass"
+  ],
+  "operations": [
+    {
+      "actors": [
+        "exact own Popen child writer",
+        "replacement writer with fresh product connection"
+      ],
+      "name": "append_observation",
+      "synchronization": "existing single-database SQLite transaction; test-only one-shot trace pause or actual API return"
+    },
+    {
+      "actors": [
+        "exact own Popen child writer",
+        "replacement writer with fresh product connection"
+      ],
+      "name": "apply_ingested_records",
+      "synchronization": "existing single-database SQLite transaction; test-only one-shot trace pause or actual API return"
+    },
+    {
+      "actors": [
+        "exact own Popen child writer",
+        "replacement writer with fresh product connection"
+      ],
+      "name": "apply_authority_decisions",
+      "synchronization": "existing single-database SQLite transaction; test-only one-shot trace pause or actual API return"
+    }
+  ],
+  "oracles": [
+    "tests/test_abrupt_process_recovery.py",
+    "tests/_process_recovery_worker.py",
+    "tests/test_outbox.py",
+    "tests/test_projection.py",
+    "tests/test_sync.py",
+    "tests/test_authority_outbox.py"
+  ],
+  "owner_repo": "sprintctl",
+  "schema_version": "test-context/v1",
+  "source_of_truth": "Native No doc5754, reviewed plan0c74a64ff752f744cbc0bdcc2ed671d61cdcca06221bec125530d5be769ec401 and immutable observed ADR at accepted4718; no new architecture ratification",
+  "subject": "actual own-child process termination and local SQLite automatic recovery at existing application transaction boundaries"
+}

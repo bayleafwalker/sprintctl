@@ -1,0 +1,34 @@
+{
+  "actual_targeted": {
+    "passed": 74,
+    "seconds": 23.08,
+    "selected": "new process cases plus existing outbox/projection/sync/authority_outbox"
+  },
+  "cases": {
+    "actual_sigkill": 8,
+    "guard_error_control": 1,
+    "persisted_state_controls": 4,
+    "total": 13
+  },
+  "harness_review": "Primary engineering and dedicated independent harness reviews CLEAR; independent runs13pass5.45s and13pass5.55s",
+  "item": "sprintctl#2791",
+  "limits": "Exact raw seeded/whole-batch manifest and actualSIGKILL only; no physicalfsync/power/storage/network/remoteauthority or full1131 proof. Retry authored assert_manifest is distinct from structural self-comparison checks. Final source/publication after2789 acceptance.",
+  "log_sha256": {
+    "/tmp/sprintctl-2791-targeted.txt": "1dfbb4bdcb606f8925f04a0d7e404e219e2a12686cb88be8ca3944d13fdf2189",
+    "/tmp/sprintctl-2791-targeted.xml": "a5084fdf5454dee1f738212a5b91a366a1b4ace27c7768720fdba4bcad619b6c"
+  },
+  "product_edits": false,
+  "release": "a21c24e082f37d24624334530f8a21206f7830d8173a30d73267a938aa520240",
+  "scope_note": 5754,
+  "source_base": "4718d49467234e9362fe1ec6430da77456b7dca8",
+  "source_sha256": {
+    "sprintctl/outbox.py": "aac1bf2b9131ade3c83d36ef0b8d66486677d98b6cebcbc1f0bdf2c85da84444",
+    "sprintctl/projection.py": "0a267ff5c85b93d033f3d1055ceb21db7598e52582f16c96d7208b0be03ff7b1",
+    "tests/test_outbox.py": "7c63b715bf56be3acb4dadbeb0f26b59fbae0371c9f49c28df11051477a4c694",
+    "tests/test_projection.py": "1180ac72665e34565a62cea032295196a5283e5188c2e6abfedad7ef0700e8d3"
+  },
+  "test_sha256": {
+    "tests/_process_recovery_worker.py": "3e514298a274bbb866ae4c080afa51debf0595542d0ca568bde12a4bed0bc12f",
+    "tests/test_abrupt_process_recovery.py": "13d7b39a330a9f7f69ba906e671e089d355cfe1c62be02a5973fb70d60234d28"
+  }
+}

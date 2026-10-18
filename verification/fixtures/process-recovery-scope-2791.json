@@ -1,0 +1,107 @@
+{
+  "base": "4718d49467234e9362fe1ec6430da77456b7dca8",
+  "governing_adr": {
+    "execution_rule": "Before build freeze immutable accepted-base doc ref or explicit native No doc scope; old mutable parent refs do not silently ratify execution.",
+    "path": "docs/plans/adr-outbox-sync-model.md",
+    "sha256": "bbfb30b9d7b7c5802dc2852529464d6ccd79ccf9567f241b5d06778a4ef4fa1d"
+  },
+  "governing_native_scope": "1131 refinement1008: verification assets only, each14scenario runnable, invariant assertions and seeded violations detected; product repair and protocol implementation out of scope. This bounded child addresses selected actual abrupt-process evidence, not full parent closure.",
+  "harness_constraints": [
+    "temporary paths only; explicit DB arguments, no workspace/home outbox or shared artifacts",
+    "child creates and owns its SQLite connection; project sys.executable/current source import path recorded",
+    "arm pause only after existing schema/seed setup; signal parent through pipes with finite deadlines; SIGKILL target is exact own Popen child only",
+    "always reap child; fail on missing readiness, wrong boundary, non-SIGKILL exit or leaked process; do not infer success from a timeout",
+    "do not close/rollback child connection before kill; raw observer runs before product helper reopen",
+    "hold fixed event_id/occurred_at/actor/payload on retries; retain actual marker/exit/raw-recovery/retry history in JUnit",
+    "test-only instrumentation through existing trace callback; no product hooks, SQLite method replacement, fake durability implementation or shared-state writes"
+  ],
+  "kind": "read-only proposed verification child of1131; not a new product contract or registration",
+  "limits": [
+    "Python COMMIT trace/return are application boundaries, not observed fsync entry/return",
+    "SIGKILL is process termination, not kernel/power/storage fault; no physical durability guarantee",
+    "no live network outage, PG or deployment qualification from local tests",
+    "F14 trusted snapshot/base-offset restore, formal refinement and remaining1131 rows remain unresolved",
+    "classify authored abrupt-process examples within bounds; do not call this universal crash safety/linearizability/full1131 completion"
+  ],
+  "negative_controls": {
+    "cases": [
+      "Separate actual temporary outbox fixture sets a persisted next_origin_seq inconsistent with retained records; raw-state oracle must reject before normal helper reopen",
+      "Separate actual temporary ingest/authority cache fixture advances the appropriate persisted watermark beyond/mismatching retained rows; raw-state oracle must reject and keep cursor domains distinct"
+    ],
+    "governing_requirement": "Native1131refinement1008 requires seeded invariant violations detected, and verification assets only.",
+    "limits": [
+      "Seeded fixtures are deliberate stored-state violations, not claimed outcomes of SIGKILL or a product defect",
+      "No production code repair, immutable history rewrite outside disposable fixtures, or copying production validation logic into a packet",
+      "Negative controls must exercise actual stored raw state through the same recovery observation/oracle, not merely assert a mutated Python value differs"
+    ],
+    "oracle_requirements": [
+      "First prove each valid persisted fixture passes the SAME raw-reader/invariant checker; then deliberately corrupt its stored cursor/sequence, close/reopen raw and catch a specific invariant failure, never an arbitrary setup exception",
+      "Bind expected states to fixed scenario inputs and immutable seed snapshots; never infer expected truth from the mutated stored metadata",
+      "Sparse authority offsets are legal. Seed cursor above maximum retained/expected manifest rather than assuming integer contiguity or ordering across authority/ingest domains"
+    ]
+  },
+  "objective": "Exercise actual abrupt producer/cache process termination at explicit application transaction boundaries and verify recovered authoritative SQLite state before helper cleanup; strengthen existing F01/F02/F06/I01/I04 evidence without claiming fsync/power-loss or network-partition proof.",
+  "product_changes": false,
+  "proposed_cases": [
+    {
+      "assertions": [
+        "parent receives bounded child readiness marker with actual owner transaction/row/sequence state",
+        "parent SIGKILLs only its own child, reaps it and checks actual -SIGKILL exit",
+        "fresh raw SQLite connection observes recovered committed records and next sequence before open_outbox migration/cleanup",
+        "previously committed seed survives; before-COMMIT append absent, after-return append present; same fixed event retry and next append preserve ID/idempotency/sequence"
+      ],
+      "boundaries": [
+        "before actual COMMIT via armed SQLite trace callback",
+        "after append returns but before connection close"
+      ],
+      "owner": "outbox"
+    },
+    {
+      "assertions": [
+        "fresh raw recovered cached rows and ingest watermark match committed prefix or complete committed suffix at declared boundary",
+        "retry contiguous suffix converges without duplicate/replaced event IDs; no skipped prefix acceptance"
+      ],
+      "boundaries": [
+        "mid batch after first actual insert and before next insert",
+        "before COMMIT after writes",
+        "after apply returns before connection close"
+      ],
+      "owner": "ingest cache"
+    },
+    {
+      "assertions": [
+        "sparse authority rows and its cursor remain atomic together",
+        "ingest cursor domain remains independent; retry converges"
+      ],
+      "boundaries": [
+        "mid sparse batch after first actual insert",
+        "before COMMIT after writes",
+        "after apply returns before connection close"
+      ],
+      "owner": "authority decision cache"
+    }
+  ],
+  "publication": "Separate test/evidence-only worktree; coordinate with2789 source owner. No source edits, API/schema/IDL, release/install/deployment, credential or reader actions.",
+  "review_refinements": {
+    "callback_fail_closed": "One-shot callback disarms recursive trace before owner reads. Any marker/guard exception must emit explicit error and terminate child nonzero, never allow SQLite to swallow it and continue COMMIT. Add a deliberate callback guard-error harness control.",
+    "child_and_observer": "No parent seed/observer connection held during kill. Parent kills/reaps exact own Popen child before NORMAL writable raw sqlite connection; never immutable/readonly recovery shortcuts or sidecar cleanup. Missing/error/wrong readiness or timeout is test failure, not success.",
+    "expected_recovery": "Before COMMIT and mid-batch must recover EXACT seed-only state; after return must recover EXACT complete committed batch. Never accept a partial new batch as a permissible prefix.",
+    "fixtures": "Fixed contiguous ingest suffix; sparse authority suffix with a separately seeded other-domain cursor unchanged. Current cache is disposable local read-side state, not remote authority.",
+    "raw_open_semantics": "First normal raw connection performs SQLite automatic RECOVERY; it is not an unrecovered disk image. All recovery observation occurs before product-helper reopen and without sidecar manipulation.",
+    "runtime_measurement": "Record actual Python/SQLite, child module import paths and per-connection PRAGMA journal_mode/synchronous. Do not force cache journal settings to match WAL outbox.",
+    "trace_boundaries": "Trace is BEFORE a statement: mid-batch pauses before SECOND matching INSERT after confirming only first pending row and old cursor; pre-COMMIT confirms in_transaction plus full pending batch and updated cursor/next-seq; after-return confirms idle connection and actual returned result."
+  },
+  "source_hashes": {
+    "sprintctl/outbox.py": "aac1bf2b9131ade3c83d36ef0b8d66486677d98b6cebcbc1f0bdf2c85da84444",
+    "sprintctl/projection.py": "0a267ff5c85b93d033f3d1055ceb21db7598e52582f16c96d7208b0be03ff7b1",
+    "tests/test_outbox.py": "7c63b715bf56be3acb4dadbeb0f26b59fbae0371c9f49c28df11051477a4c694",
+    "tests/test_projection.py": "1180ac72665e34565a62cea032295196a5283e5188c2e6abfedad7ef0700e8d3"
+  },
+  "verification": [
+    "review exact source/current1131 before registration and freeze native No doc scope",
+    "independent optimistic and engineering review before tests/build",
+    "run targeted real subprocess cases and unchanged outbox/projection/sync regressions",
+    "source files stay byte-identical; context/result/evidence and exact commands/versions/classified limits required",
+    "independent final harness/packet review, required appropriate project gates and exact-headCI before merge; no mirrored low-impact implementation tests"
+  ]
+}
