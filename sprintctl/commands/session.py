@@ -121,6 +121,13 @@ def handoff_cmd(obj, sprint_id, output_path, events_limit, fmt) -> None:
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 def agent_protocol_cmd(as_json) -> None:
     """Print the credential-free reservation protocol for agent consumption."""
+    local_status_command = (
+        "sprintctl item status --id <item_id> --status active|done|blocked "
+        "--actor <name> --expected-revision <revision>"
+    )
+    served_status_command = (
+        "sprintctl item status --id <item_id> --status active|done|blocked --json"
+    )
     protocol = {
         "sprintctl_agent_protocol_version": "3",
         "reservation_model": {
@@ -173,10 +180,19 @@ def agent_protocol_cmd(as_json) -> None:
                 "command": "sprintctl reservation touch --id <reservation_id> [--session-id <id>]",
             },
             "3_status_transition": {
-                "description": "Transition item status using the current revision CAS basis.",
-                "command": (
-                    "sprintctl item status --id <item_id> --status active|done|blocked "
-                    "--actor <name> --expected-revision <revision>"
+                "description": "Transition item status using the command for the selected backend.",
+                # Keep the v3 command field as the existing direct-local alias.
+                "command": local_status_command,
+                "command_backend": "local",
+                "backend_commands": {
+                    "local": local_status_command,
+                    "served": served_status_command,
+                },
+                "note": (
+                    "Direct local mode requires the current status_revision through "
+                    "--expected-revision. Served mode uses the authenticated actor "
+                    "and carries its immutable basis; do not pass --expected-revision "
+                    "or an actor override. Neither command gains authority from a reservation."
                 ),
             },
             "4_handoff": {
@@ -220,7 +236,11 @@ def agent_protocol_cmd(as_json) -> None:
     click.echo("Lifecycle steps:")
     for step, info in protocol["lifecycle"].items():
         click.echo(f"\n  {step}: {info['description']}")
-        click.echo(f"    $ {info['command']}")
+        if "backend_commands" in info:
+            for backend, command in info["backend_commands"].items():
+                click.echo(f"    [{backend}] $ {command}")
+        else:
+            click.echo(f"    $ {info['command']}")
         for key in ("store", "frequency", "note", "coordinator_note"):
             if key in info:
                 click.echo(f"    [{key}] {info[key]}")
