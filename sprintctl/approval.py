@@ -201,7 +201,10 @@ def record(
         raise ApprovalRefused(
             "run-superseded", f"run {run_id!r} is superseded by {successor['run_id']!r}", 409
         )
-    now = _now(cur)
+    # PostgreSQL may return a DST-aware session zone. Use elapsed UTC time:
+    # adding seven local calendar days can span 167 or 169 hours.
+    now = _now(cur).astimezone(timezone.utc)
+    expires_at = expires_at.astimezone(timezone.utc)
     if expires_at <= now:
         raise ApprovalRefused("invalid-expiry", "expires_at must be in the future", 422)
     if expires_at > now + timedelta(seconds=MAX_LIFETIME_SECONDS):
@@ -255,5 +258,7 @@ def get(cur: Any, store: Any, *, workspace_id: str, approval_id: str) -> dict[st
     return {
         **_record(row),
         "evaluated_at": iso_timestamp(row["evaluated_at"]),
-        "expired": row["evaluated_at"] >= row["expires_at"],
+        # Equal ZoneInfo objects compare wall time, including a repeated hour.
+        "expired": row["evaluated_at"].astimezone(timezone.utc)
+        >= row["expires_at"].astimezone(timezone.utc),
     }

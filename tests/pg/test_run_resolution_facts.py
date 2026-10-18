@@ -395,6 +395,31 @@ class TestApprovalRecordAndGet:
         error = _rejection(lambda: _approve(app, _run(app)["run_id"], expires_at=expires_at()))
         assert (error.code, error.http_status) == ("invalid-expiry", 422)
 
+    @pytest.mark.parametrize("zone", ["UTC", "Europe/Helsinki"])
+    @pytest.mark.parametrize("instant", ["2026-03-25T12:00:00Z", "2026-10-21T12:00:00Z"])
+    @pytest.mark.parametrize("seconds", [0, 604799, 604800, 604801])
+    def test_lifetime_is_elapsed_seconds_across_dst(self, store, monkeypatch, zone, instant, seconds):
+        app = _app(store)
+        run_id = _run(app)["run_id"]
+        store.conn.execute("SELECT set_config('TimeZone', %s, false)", (zone,))
+        now = store.conn.execute("SELECT %s::timestamptz AS now", (instant,)).fetchone()["now"]
+        monkeypatch.setattr(approval, "_now", lambda cur: now)
+        expiry = now.astimezone(timezone.utc) + timedelta(seconds=seconds)
+        try:
+            if seconds == 0 or seconds > approval_schema.MAX_LIFETIME_SECONDS:
+                error = _rejection(lambda: _approve(app, run_id, expires_at=expiry.isoformat()))
+                assert (error.code, error.http_status) == ("invalid-expiry", 422)
+                assert _approvals(store, run_id) == 0
+            else:
+                result = _approve(app, run_id, expires_at=expiry.isoformat())
+                recorded = datetime.fromisoformat(result["recorded_at"].replace("Z", "+00:00"))
+                expires = datetime.fromisoformat(result["expires_at"].replace("Z", "+00:00"))
+                assert (expires - recorded).total_seconds() == seconds
+        finally:
+            store.conn.rollback()
+            store.conn.execute("RESET TimeZone")
+            store.conn.commit()
+
     @pytest.mark.parametrize("arguments", [
         dict(expires_at="tomorrow"), dict(expires_at="2026-10-14T10:00:00"),
         dict(transition="Rollout Resume"), dict(unexpected="x"), dict(rationale="x" * 2049),

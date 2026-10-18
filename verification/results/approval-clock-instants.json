@@ -1,0 +1,64 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.approval-clock-instants",
+  "contract_ref": {
+    "doc_id": "sprintctl.approval-lifetime",
+    "revision": "git:16f121f1fc527f3238953b6f203b32530cdfb5bc"
+  },
+  "implementation_sha": "16f121f1fc527f3238953b6f203b32530cdfb5bc",
+  "depth": 1,
+  "environment": {
+    "backend": "disposable PostgreSQL16.15 and golden row fixtures",
+    "isolation": "temporary private cluster/repository scopes; no shared owner mutation",
+    "tool_versions": {
+      "Python": "3.13.16",
+      "pytest": "9.0.2",
+      "PostgreSQL": "16.15"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": null,
+    "bounds": {
+      "golden_read_cases": 4,
+      "database_lifetime_cases": 16,
+      "zones": 2,
+      "seasonal_boundaries": 2
+    },
+    "faults_exercised": [
+      "spring-forward loses one calendar hour",
+      "fall-back repeats one calendar hour",
+      "maximum elapsed lifetime plus one second",
+      "expiry equals recording instant"
+    ]
+  },
+  "claims": [
+    {
+      "property": "Lifetime is bounded by elapsed UTC seconds across spring/fall DST",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_run_resolution_facts.py:TestApprovalRecordAndGet.test_lifetime_is_elapsed_seconds_across_dst"
+      ]
+    },
+    {
+      "property": "Read expiry orders instants across the repeated hour",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_approval_clock.py"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Unchanged16f121f baseline real database maximum-lifetime case raises raw work_approval_check; seasonal matrix3failed13passed; repeated-hour golden reads2failed2passed",
+      "trace_ref": "tests/pg/test_run_resolution_facts.py:TestApprovalRecordAndGet.test_lifetime_is_elapsed_seconds_across_dst"
+    }
+  ],
+  "notes": [
+    "Base implementation SHA plus candidate file SHA256: {\"sprintctl/approval.py\": \"7ba176465cc50530ef180375a6b43e337bb49eadbcc4a6624e6f103c8c197486\", \"tests/pg/test_run_resolution_facts.py\": \"8df30b4bb05ac5808d3ff12b594bd971db829fb9e5d95b5cadde67d705c67614\", \"tests/test_approval_clock.py\": \"795afc6bdbdfb92094aa5cb38548d628df7d18902f97f3dd86be2c67b977ec6a\"}",
+    "Approval record/read PG class plus seasonal boundaries38passed; repeated-hour golden4passed; surrounding application unit138passed. Complete disposable PG16.15 gate1115passed80.55s;71 fixture cleanups across4 fixture names, zero remaining rows.",
+    "Independent findings-first and optimistic source review clear; reviewer did not rerun owner tests.",
+    "Existing SQL604800-second constraint unchanged; no migration, operation, authority, grant, catalog or deployment change.",
+    "Scope authorized by current owner; explicit No doc decision event5370 on sprintctl#2756."
+  ]
+}
