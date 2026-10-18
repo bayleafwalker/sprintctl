@@ -1,0 +1,79 @@
+{
+  "source_artifact": "verification/traces/release-policy-histories-2806.json",
+  "source_sha256": "deb4ceb2bd135c7a2cfa6427b627066c2b8a584355d30118d4a8cebd687cdfee",
+  "normalization": "SQL split/join whitespace only. Only fixture-generated bound repo/item IDs are replaced in parameters; values/types/order retained. Actual query observations are retained in source artifact.",
+  "comparisons": [
+    {
+      "backend": "local",
+      "route": "query-boundary-basis",
+      "normalized_parameters": [
+        "item-edited",
+        "<item>"
+      ],
+      "parameter_types": [
+        "str",
+        "int"
+      ],
+      "before_after_equal": true,
+      "sql_sha256": "3525550582addf72dbbd11ee8b1af807078515fa48a9e350778076aeb766a8eb"
+    },
+    {
+      "backend": "local",
+      "route": "query-boundary-current",
+      "normalized_parameters": [
+        "<item>"
+      ],
+      "parameter_types": [
+        "int"
+      ],
+      "before_after_equal": true,
+      "sql_sha256": "0a9ef6c2b622f883814a3e0094f5845ce198e385faa59cd6c80232ffa9a59bbd"
+    },
+    {
+      "backend": "pg",
+      "route": "query-boundary-basis",
+      "normalized_parameters": [
+        "item-edited",
+        "<repo>",
+        "<item>"
+      ],
+      "parameter_types": [
+        "str",
+        "str",
+        "int"
+      ],
+      "before_after_equal": true,
+      "sql_sha256": "400ee61a3d3a27fdffcf5d07eccf54f0b05b139ef7d975663e9e0c9233b28760"
+    },
+    {
+      "backend": "pg",
+      "route": "query-boundary-current",
+      "normalized_parameters": [
+        "<repo>",
+        "<item>"
+      ],
+      "parameter_types": [
+        "str",
+        "int"
+      ],
+      "before_after_equal": true,
+      "sql_sha256": "5dd31b965a48bfdfa96ad40cd8c25191380d2ad32eb370b1800368a093127fe9"
+    },
+    {
+      "backend": "pg",
+      "route": "query-boundary-basis-readonly",
+      "normalized_parameters": [
+        "item-edited",
+        "<repo>",
+        "<item>"
+      ],
+      "parameter_types": [
+        "str",
+        "str",
+        "int"
+      ],
+      "before_after_equal": true,
+      "sql_sha256": "432dd2f4f45d1be949fccf642cbd8b05495bad3f4030f0eb4631087ef3f54f36"
+    }
+  ]
+}

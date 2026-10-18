@@ -19,6 +19,7 @@ from . import depcore as _depcore
 from . import eventcore as _eventcore
 from . import refcore as _refcore
 from . import releases as _releases
+from . import releasecore as _releasecore
 from . import rows as _rows
 from . import sprintcore as _sprintcore
 from . import trackcore as _trackcore
@@ -2674,27 +2675,16 @@ def list_unbound(
 
 
 def _release_basis(conn: sqlite3.Connection, item_id: int) -> tuple[dict, str, int]:
-    """Return an item with its release revision and revise count.
-
-    Callers inside a write transaction hold SQLite's database lock, which
-    serializes this read with edits and decisions.
-    """
+    """Read the basis inside the caller's SQLite transaction."""
     row = conn.execute(
-        "SELECT wi.*, "
-        "(SELECT COUNT(*) FROM event e WHERE e.work_item_id = wi.id "
-        " AND e.event_type = ?) AS edit_version, "
-        "(SELECT COUNT(*) FROM work_decision d WHERE d.work_item_id = wi.id "
-        " AND d.kind = 'revise') AS revise_count "
-        "FROM work_item wi WHERE wi.id = ?",
+        _releasecore._basis_query(ph="?", tenant_scoped=False, lock_item=False),
         (_contracts.ITEM_EDITED_EVENT_TYPE, item_id),
     ).fetchone()
-    if row is None:
-        raise ValueError(f"Work item #{item_id} not found")
-    item = dict(row)
-    edit_version = int(item.pop("edit_version"))
-    revise_count = int(item.pop("revise_count"))
-    edit_revision = _description_revision(item, edit_version)
-    return item, _releases.release_revision(edit_revision, revise_count), revise_count
+    return _releasecore._basis_from_item(
+        dict(row) if row is not None else None,
+        item_id,
+        description_revision=lambda item, version: _description_revision(item, version),
+    )
 
 
 def _freeze_release(
@@ -2713,41 +2703,26 @@ def _freeze_release(
             "SELECT ref_type, url, label FROM ref WHERE work_item_id = ?", (item["id"],)
         ).fetchall()
     ]
-    context_refs = _releases.canonical_context_refs(refs)
-    digest = _releases.release_digest(
-        item["aggregate_uuid"], revision, acceptance_contract, context_refs
+    canonicalize_refs = _releases.canonical_context_refs
+
+    def insert(values_supplier):
+        conn.execute(
+            "INSERT OR IGNORE INTO work_release (work_item_id, item_revision, revise_count, "
+            "release_digest, acceptance_contract, context_refs, actor) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            values_supplier(),
+        )
+
+    return _releasecore._freeze(
+        item, revision, revise_count, actor=actor,
+        acceptance_contract=acceptance_contract, refs=refs,
+        canonicalize_refs=canonicalize_refs, insert=insert,
     )
-    conn.execute(
-        "INSERT OR IGNORE INTO work_release (work_item_id, item_revision, revise_count, "
-        "release_digest, acceptance_contract, context_refs, actor) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (
-            item["id"],
-            revision,
-            revise_count,
-            digest,
-            _releases.canonical_json(acceptance_contract),
-            _releases.canonical_json(context_refs),
-            actor,
-        ),
-    )
-    return digest
 
 
 def _current_release_row(conn: sqlite3.Connection, item_id: int) -> dict | None:
     row = conn.execute(
-        """
-        SELECT wr.* FROM work_release wr
-        WHERE wr.work_item_id = ?
-          AND wr.revise_count = (
-              SELECT COUNT(*) FROM work_decision d
-              WHERE d.work_item_id = wr.work_item_id AND d.kind = 'revise'
-          )
-        ORDER BY (
-            SELECT MAX(r.id) FROM reservation r WHERE r.release_digest = wr.release_digest
-        ) DESC NULLS LAST, wr.id DESC
-        LIMIT 1
-        """,
+        _releasecore._current_release_query(ph="?", tenant_scoped=False),
         (item_id,),
     ).fetchone()
     return _releases.release_row(dict(row)) if row else None
@@ -2757,17 +2732,16 @@ def _decision_release(
     conn: sqlite3.Connection, item_id: int, release_digest: str | None
 ) -> str | None:
     """Default a decision's release to the current one; refuse a foreign one."""
-    if release_digest is None:
-        current = _current_release_row(conn, item_id)
-        return current["release_digest"] if current else None
-    if conn.execute(
-        "SELECT 1 FROM work_release WHERE release_digest = ? AND work_item_id = ?",
-        (release_digest, item_id),
-    ).fetchone() is None:
-        raise _releases.ReleaseMismatch(
-            f"release {release_digest} is not a release of item #{item_id}"
-        )
-    return release_digest
+    def member(digest):
+        return conn.execute(
+            "SELECT 1 FROM work_release WHERE release_digest = ? AND work_item_id = ?",
+            (digest, item_id),
+        ).fetchone() is not None
+
+    return _releasecore._resolve_decision_release(
+        item_id, release_digest,
+        current=lambda: _current_release_row(conn, item_id), member=member,
+    )
 
 
 def get_release(conn: sqlite3.Connection, digest: str) -> dict | None:

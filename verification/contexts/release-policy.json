@@ -1,0 +1,91 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.release-policy",
+  "subject": "Private Release basis, freeze, selection and Decision membership inside backend-owned transactions",
+  "owner_repo": "sprintctl",
+  "depth": 2,
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2806",
+    "revision": "native:release:05fb546d4db82292afa789983d54e047bfd4779af730dd14ad8f5e03024bf338"
+  },
+  "source_of_truth": "Native No doc5812 and final oracle freeze5822; reviewed plan5743 plus binding addendumc17ff; parent2150 remains open",
+  "actors": [
+    "backend transaction owner",
+    "private releasecore helpers",
+    "independent committed-state observer",
+    "PG item-lock holder and contender"
+  ],
+  "backends": [
+    "temporary SQLite3.53.1",
+    "disposable PostgreSQL16.15 READ COMMITTED"
+  ],
+  "bounds": {
+    "shared_cases": 46,
+    "extra_pg_cases": 9,
+    "direct_observations_sqlite": 19,
+    "direct_observations_pg": 25,
+    "negative_wrong_implementations": 31
+  },
+  "assumptions": {
+    "clock": "Native clocks retained; deliberately old fixture timestamps discriminate reservation ID ordering",
+    "fairness": "none; PG waits bounded by fixture deadlines",
+    "identity": "Local fixtures only; no deployed credential/identity qualification",
+    "isolation": "Actual direct PG primary/observer READ COMMITTED"
+  },
+  "operations": [
+    {
+      "name": "_release_basis / _release_basis_locked",
+      "synchronization": "Caller retains SQLite writer/PG optional item lock and transaction; helper adds no lock/commit"
+    },
+    {
+      "name": "_freeze_release / _freeze_release_locked",
+      "synchronization": "Caller retains SQLite writer/PG optional item lock and transaction; helper adds no lock/commit"
+    },
+    {
+      "name": "_current_release_row / _current_release_locked",
+      "synchronization": "Caller retains SQLite writer/PG optional item lock and transaction; helper adds no lock/commit"
+    },
+    {
+      "name": "_decision_release / _decision_release_locked",
+      "synchronization": "Caller retains SQLite writer/PG optional item lock and transaction; helper adds no lock/commit"
+    }
+  ],
+  "faults": [
+    "Real SQL INSERT trigger abort",
+    "Python serialization and execute-getter faults",
+    "Deliberate metadata conversion faults",
+    "Finite in-memory wrong helper implementations"
+  ],
+  "invariants": [
+    "Basis count and revision sequencing preserve item scope and dynamic description helper",
+    "Freeze canonical bytes and first actor remain idempotent; execute binds before late insertion values",
+    "PG ref canonicalizer binds after SELECT before fetch; SQLite binds after dict materialization",
+    "Current Release uses current revise count then highest referencing reservation ID then Release ID",
+    "None alone selects default; explicit historical same-item membership remains separate",
+    "Caller pending writes, savepoints and native failed transaction states remain owned by caller",
+    "PG lock=False reads remain read-only beside actual held item lock; default lock waits on exact holder"
+  ],
+  "consistency": {
+    "object": "Release snapshots and private caller-owned policy execution",
+    "target": "application-invariant"
+  },
+  "implementation_anchors": [
+    "sprintctl/releasecore.py:_basis_query",
+    "sprintctl/releasecore.py:_basis_from_item",
+    "sprintctl/releasecore.py:_freeze",
+    "sprintctl/releasecore.py:_current_release_query",
+    "sprintctl/releasecore.py:_resolve_decision_release",
+    "sprintctl/db.py:_freeze_release",
+    "sprintctl/pg.py:_freeze_release_locked"
+  ],
+  "oracles": [
+    "tests/_release_policy_contract.py",
+    "tests/test_release_policy.py",
+    "tests/pg/test_release_policy.py"
+  ],
+  "limits": [
+    "Finite actual-backend examples and lock histories, not universal provider/transaction equivalence",
+    "No physical crash/fsync/power or deployed compatibility proof",
+    "No schema/API/IDL/credential/runtime changes; parent2150 and add_dep/peer-import followups remain open"
+  ]
+}

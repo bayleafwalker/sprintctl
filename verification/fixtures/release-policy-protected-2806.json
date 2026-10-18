@@ -1,0 +1,44 @@
+{
+  "AST_compiler": "SHA256 UTF8 ast.dump(include_attributes=False) and get_source_segment; compiler 3.14.7 (main, Aug  5 2026, 10:29:49) [GCC 16.2.0]",
+  "allowed_changed_symbols": [
+    [
+      "sprintctl/db.py",
+      "_release_basis"
+    ],
+    [
+      "sprintctl/db.py",
+      "_freeze_release"
+    ],
+    [
+      "sprintctl/db.py",
+      "_current_release_row"
+    ],
+    [
+      "sprintctl/db.py",
+      "_decision_release"
+    ],
+    [
+      "sprintctl/pg.py",
+      "_release_basis_locked"
+    ],
+    [
+      "sprintctl/pg.py",
+      "_freeze_release_locked"
+    ],
+    [
+      "sprintctl/pg.py",
+      "_current_release_locked"
+    ],
+    [
+      "sprintctl/pg.py",
+      "_decision_release_locked"
+    ]
+  ],
+  "global_statements": "identical except new private releasecore import in db/pg",
+  "oracles_unchanged": {
+    "tests/_release_policy_contract.py": "b437f2bc6ae3a8b734174c519d21b18f8253c26685d331706c9c8b0f620d0303",
+    "tests/pg/test_release_policy.py": "7195887ebbfb491baa2f1ee6326f0c93ce250b6996b42af6b0b284924889009b",
+    "tests/test_release_policy.py": "52fc1d549bb9a1f3c766b26c3f8f4974160a28455ef63925f8b2282f0c736b76"
+  },
+  "unchanged_named_symbols": 533
+}
