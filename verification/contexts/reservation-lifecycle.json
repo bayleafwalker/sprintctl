@@ -1,0 +1,97 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.reservation-lifecycle",
+  "owner_repo": "sprintctl",
+  "subject": "atomic advisory reservation transitions and finite stale sweep",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2772",
+    "revision": "native:release:685464d2233c6bb2f1d6459359804ed49c05a0f8d4d3b39a3e8b0c46e74c9b43"
+  },
+  "source_of_truth": "Sprintctl#2772 frozen plan event5537 and execution Release",
+  "depth": 2,
+  "backends": [
+    "temporary SQLite",
+    "disposable PostgreSQL16.15"
+  ],
+  "actors": [
+    "reservation operator",
+    "competing independent operator",
+    "independent durable reader"
+  ],
+  "initial_state": [
+    "active reservation with stable Release",
+    "stale and fresh reservations on open and done items",
+    "idle connection, implicit caller writes, or managed/two-phase transaction"
+  ],
+  "operations": [
+    {
+      "name": "touch",
+      "actors": [
+        "reservation operator"
+      ]
+    },
+    {
+      "name": "reassign",
+      "actors": [
+        "reservation operator"
+      ]
+    },
+    {
+      "name": "release",
+      "actors": [
+        "reservation operator"
+      ]
+    },
+    {
+      "name": "sweep selected stale reservations",
+      "actors": [
+        "reservation operator"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one lifecycle transaction or selected sweep batch"
+  },
+  "assumptions": {
+    "isolation": "SQLite BEGIN IMMEDIATE; PostgreSQL finite candidate IDs then ascending item locks then ascending reservation locks",
+    "clock": "touch/reassign/release sample after locks; sweep uses explicit operator time",
+    "fairness": "none"
+  },
+  "bounds": {
+    "shared_cases_per_backend": 25,
+    "sqlite_caller_cases": 4,
+    "postgres_additional_cases": 25,
+    "competing_histories_per_backend": 7,
+    "sweep_failure_positions": 2
+  },
+  "invariants": [
+    "row, canonical lifecycle event and constructed response commit together",
+    "touch emits no lifecycle event; repeated terminal release adds none",
+    "locked predecessor and session determine transition and event attribution",
+    "sweep updates only frozen selected locked eligible IDs; done/fresh/new arrivals preserved",
+    "caller ownership matches explicit backend public policy"
+  ],
+  "faults": [
+    "exception after actual lifecycle event insertion",
+    "exception after first or second sweep event",
+    "exception constructing public result",
+    "independent handoff between initial peek and lock",
+    "independent refresh/completion/new arrival after PG candidate selection"
+  ],
+  "oracles": [
+    "tests/_reservation_lifecycle_contract.py",
+    "tests/test_reservation_lifecycle.py",
+    "tests/pg/test_reservation_lifecycle.py"
+  ],
+  "implementation_anchors": [
+    "sprintctl/reservationcore.py",
+    "sprintctl/db.py::_ReservationLifecycleSqlite",
+    "sprintctl/pg.py::_ReservationLifecyclePg"
+  ],
+  "expansions": [
+    "fault-scenario",
+    "backend-parity",
+    "concurrent-history"
+  ]
+}
