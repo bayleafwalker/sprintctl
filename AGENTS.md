@@ -24,7 +24,8 @@ echo $SPRINTCTL_DB   # for project-scoped work, must contain the project path, n
 
 > Using the home-directory default (`~/`) silently operates on the wrong database when working within a project that has its own `.sprintctl/` directory.
 
-No cluster context — sprintctl is a local-first CLI tool.
+Local SQLite needs no cluster context. Shared work uses the validated Vuoro
+served profile; see [backend guidance](docs/guides/remote-mode.md).
 
 ## Development workflow
 
@@ -143,13 +144,14 @@ work lease is a separate mechanism".
 ```bash
 sprintctl item status \
   --id <item_id> --status active|done|blocked \
-  --actor <your-name> \
-  --expected-revision <revision>
+  --json
 ```
 
-Status transitions are protected by expected-revision compare-and-swap, not by
-reservation proof. Read the current `status_revision` from `item show --json`
-before mutating.
+This example is for served mode: the authenticated identity supplies the actor,
+and the lifecycle operation carries its immutable basis. Do not pass
+`--expected-revision` in served mode; it is refused. Direct local status changes
+require `--expected-revision <revision>` read from `item show --json` and may
+name an actor. Neither path uses reservation proof.
 
 ### 4. Handoff — reassign when work continues
 
@@ -222,7 +224,7 @@ Before terminating:
   are advisory metadata only.
 - The reservation model is advisory: conflicting reservations are detected and
   surfaced, not prevented.
-- Status transitions are gated by expected-revision CAS (`item:<uuid>@status:<status>`).
+- Direct local status transitions require expected-revision CAS (`item:<uuid>@status:<status>`); served lifecycle commands carry their immutable basis without the CLI option.
 
 ---
 
@@ -309,10 +311,12 @@ sprintctl item note --id <item-id> --type decision \
 
 ## Sprint close
 
-For an intentional sprint close, first run the close gate, read the current
-`sprint show --json` `status_revision`, then close explicitly with
-`sprintctl sprint status --id <id> --status closed --actor <actor> --expected-revision <revision> --json`.
-The status change and one local `sprint-close-boundary` event commit atomically;
+For an intentional sprint close, inspect the current sprint and applicable
+owner close conditions, then close explicitly in served mode with
+`sprintctl sprint status --id <id> --status closed --json`. Served mode binds
+the authenticated actor and immutable basis; do not pass `--expected-revision`.
+For direct local closure, read `sprint show --json` `status_revision` and also pass `--actor <actor> --expected-revision <revision>`.
+The local status change and one local `sprint-close-boundary` event commit atomically;
 the JSON response returns `boundary_event_id` and its database-local
 `boundary_revision` (`event:<id>`). That reference depends on preserving the
 database, event row, and project/sprint mapping; it is not migration-stable.

@@ -5,19 +5,20 @@ accepts only these modes:
 
 | Mode | Use |
 | --- | --- |
-| `local` (default) | A repository-local SQLite database. |
+| `local` (ordinary default) | A repository-local SQLite database. |
 | `served` | Shared work through the Vuoro service catalog. |
 
 A stale `SPRINTCTL_BACKEND=remote` or `.sprintctl/backend.json` marker with
 `"backend": "remote"` fails before Sprintctl imports `psycopg` or opens
-PostgreSQL. `SPRINTCTL_URL` **on its own does not select a backend**: normal
-resolution remains local and never reads that URL. The stable failure message
+PostgreSQL. `SPRINTCTL_URL` **on its own does not select a backend**. A resolved local
+client ignores it; a served client refuses it. The stable failure message
 names the migration path; it is intentionally a circuit breaker rather than a
 best-effort fallback.
 
 ## Shared work: use served mode
 
-Use a validated Vuoro profile and no PostgreSQL URL:
+Install `sprintctl[served]` with Python 3.12 or newer. Use a validated Vuoro
+profile and no PostgreSQL URL:
 
 ```sh
 export SPRINTCTL_BACKEND=served
@@ -26,26 +27,64 @@ unset SPRINTCTL_URL
 sprintctl usage --context --json
 ```
 
-The repository marker must likewise name `served` and retain its immutable
+An explicit profile takes precedence over a protected adapter handoff. Without
+an explicit backend or profile, a served marker can select served mode only
+when the exact worktree has a valid protected delegated handoff. An invalid
+handoff refuses resolution; it does not authorize a local fallback. A marker
+alone does not select served mode. See the
+[delegated workspace contract](../reference/vuoro-work-adapter.md).
+
+`SPRINTCTL_BACKEND=served` combined with `SPRINTCTL_URL` is refused. The
+repository marker must likewise name `served` and retain its immutable
 `repo_id`. `sprintctl doctor` validates the profile and catalog using the
 served client; it does not probe a legacy database. A server catalog gap fails
 as `served-operation-unavailable` rather than falling back to PostgreSQL.
 
 ## Local recovery
 
-For a standalone local database, leave `SPRINTCTL_BACKEND` unset (an inherited
-`SPRINTCTL_URL` is ignored by the normal client), point `SPRINTCTL_DB` at the
-intended SQLite file if necessary, and use the normal local commands:
+For a standalone local database, work from a separate directory with no served
+or remote repository marker in its ancestry, or from an established local
+repository. Set local mode explicitly and select the intended SQLite file:
 
 ```sh
-unset SPRINTCTL_BACKEND
+cd /path/to/marker-free-recovery-directory
+export SPRINTCTL_BACKEND=local
+unset SPRINTCTL_URL SPRINTCTL_VUORO_PROFILE
 export SPRINTCTL_DB=/path/to/recovery.db
 sprintctl doctor
 ```
 
+`SPRINTCTL_DB` selects the SQLite file; it does not override backend selection
+or a repository marker. Unsetting the backend inside a protected delegated
+worktree can select served mode, while selecting local mode in a served
+repository is refused. Do not edit the shared marker to force recovery.
+
 Do not change a repository marker to `served` until the matching profile,
 backfill/cutover evidence, and operator approval exist. A marker is a
 repository identity contract, not a shortcut around those prerequisites.
+
+## Command availability and current work
+
+A command appearing in `--help` does not establish that its served operation is
+available or authorized. The current CLI routes `maintain check`, `maintain
+sweep`, `sprint backlog-seed` and `render` as unavailable in served mode. They
+fail with `served-operation-unavailable`; do not switch a shared checkout to a
+local database to work around that refusal.
+
+For local work, `maintain check --sprint-id N --json` is read-only. It has no
+`--fix` option. `maintain sweep --sprint-id N` mutates stale item status and can
+also close sprints when `--auto-close` is explicitly supplied. It also interrupts
+eligible stale reservations across the selected database: that reservation sweep
+has no sprint filter. Run it only when those changes are intended. A local `render` is a derived snapshot of the selected
+local authority, never a substitute for a shared served snapshot.
+
+Advisory reservations record coordination, not permission or claim proof.
+Served item and sprint status commands carry their immutable basis through the
+owner lifecycle operation; omit `--expected-revision` and `--actor` overrides.
+Direct local status commands instead require the current `status_revision`
+through `--expected-revision`. Hosted protected work claims and their heartbeats
+are a separate protocol, not a prerequisite for ordinary CLI reservations or
+status changes. See [reservation discipline](../advanced/reservation-discipline.md).
 
 ## Explicit legacy administration only
 
