@@ -1,0 +1,9 @@
+{
+  "schema": "sprintctl-cli-counterexample/v1",
+  "base_sha": "6f8b5870381236ac3da78a6cce8cdd871147ed0d",
+  "command": "reservation reserve --item-id test-repo#2103 --session-id reader --json",
+  "before_exit_code": 2,
+  "before_error": "Invalid value for --item-id: test-repo#2103 is not a valid integer.",
+  "test": "tests/test_reservations.py:test_scoped_reservation_recommendation_preserves_owner_integer_and_scope",
+  "after_oracle": "generated production recommendation reaches owner with item_id integer2103 and repo scope test-repo"
+}

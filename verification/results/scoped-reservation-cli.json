@@ -1,0 +1,64 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.scoped-reservation-cli",
+  "contract_ref": {
+    "doc_id": "sprintctl.reservation-model",
+    "revision": "git:6f8b5870381236ac3da78a6cce8cdd871147ed0d"
+  },
+  "implementation_sha": "6f8b5870381236ac3da78a6cce8cdd871147ed0d",
+  "depth": 1,
+  "environment": {
+    "backend": "CLI/temporary repository marker fixtures",
+    "isolation": "no live database or owner writes",
+    "tool_versions": {
+      "Python": "3.13.16",
+      "pytest": "9.0.2"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": null,
+    "bounds": {
+      "owner_payload_item_id_type": "integer",
+      "session_sources": 4,
+      "new_owner_operations": 0
+    },
+    "faults_exercised": [
+      "scoped reference rejected by old INTEGER parser",
+      "conflicting explicit scope",
+      "real marker mismatch",
+      "CODEX_THREAD_ID without runtime override"
+    ]
+  },
+  "claims": [
+    {
+      "property": "Recommended scoped commands preserve owner integer/scope and session attribution",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_reservations.py"
+      ]
+    },
+    {
+      "property": "Scope conflicts refuse before owner/identity/SQLite I/O",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_reservations.py"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Before repair generated-shape reservation command failed Click INTEGER parsing",
+      "trace_ref": "verification/fixtures/scoped-reservation-cli-counterexample.json"
+    }
+  ],
+  "notes": [
+    "Base implementation SHA plus candidate SHA256s:{\"sprintctl/commands/reservation.py\": \"a41a69ad2c4a69ce53e4990314de9ee1d34fdc70186ca6e342efe9a23868f516\", \"tests/test_reservations.py\": \"2677fe1045a8a0d13f2697ab660e50eb345ec70c83ad7bcb6aa7bf13fd9fb15f\"}",
+    "Final focused suite includes production command generator, scope, session, actor and docs checks.",
+    "No new owner operation, database schema, credential semantics, reservation lifecycle or replay policy; existing native owner histories run in main CI.",
+    "Initial real-marker negative test exposed raw BackendConfigError; existing shared served-config helper now renders ordinary refusal without fallback.",
+    "Final focused scope/session/actor/routing/docs suite:81 passed. Independent review final36 tests plus generated recommendation targeted1 passed.",
+    "Full frozen source suite:2317 passed,1100 skipped,14 deselected; existing native PostgreSQL histories are part of main CI.",
+    "The production command-generator assertion was strengthened after full-suite collection; final81-test focused run exercises the stronger test against unchanged product source."
+  ]
+}

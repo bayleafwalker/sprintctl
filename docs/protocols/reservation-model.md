@@ -53,6 +53,20 @@ that both are accepted and then reported as conflicts. This is
 `concurrency-tested` visibility evidence, not a fencing-token or distributed
 lease claim.
 
+## CLI references and session context
+
+`reservation reserve --item-id` and `reservation list --item-id` accept an
+integer or a repository-scoped reference such as `sprintctl#2655`. The prefix
+selects the existing repository scope; a conflicting explicit scope or repository
+marker is refused before owner calls or local database access. The owner still
+receives an integer item ID. A recommendation is not authority to cross scopes.
+
+For `reserve` and `touch`, an explicit `--session-id` takes precedence over
+`SPRINTCTL_RUNTIME_SESSION_ID`, then `CODEX_THREAD_ID`. With none of those set,
+the interactive fallback is `interactive`. These are advisory session labels,
+not credentials or ownership proof. Actor binding remains the authenticated
+identity in served mode and an explicit actor in local mode.
+
 ## Conflict policy
 
 A reservation is a detector, not a lease. `reserve` therefore always records

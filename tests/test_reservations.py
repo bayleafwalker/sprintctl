@@ -402,3 +402,110 @@ def test_local_reservation_reserve_still_requires_an_actor(monkeypatch):
 
     assert result.exit_code == 2
     assert "--actor is required outside served mode" in result.output
+
+
+def test_scoped_reservation_recommendation_preserves_owner_integer_and_scope(monkeypatch):
+    from click.testing import CliRunner
+    from sprintctl.cli import cli
+    from sprintctl import backend
+
+    identity_calls, sent = _served_reservation_cli(monkeypatch)
+    scopes = []
+    def config(**kwargs):
+        scopes.append(kwargs['explicit_repo_id'])
+        return SimpleNamespace(mode='served', served_profile='profile.json', repo_id='test-repo')
+    monkeypatch.setattr(backend, 'load_backend_config', config)
+    import shlex
+    from sprintctl.application_common import _next_work_commands
+    command = _next_work_commands(539, {'kind': 'start-ready-item', 'item_id': 2103}, 'test-repo')[0]
+    assert 'test-repo#2103' in command
+    argv = shlex.split(command.replace('<name>', 'workstation-vuoro').replace('<session-id>', 'reader'))
+    result = CliRunner().invoke(cli, argv[1:])
+    assert result.exit_code == 0, result.output
+    assert scopes and all(scope == 'test-repo' for scope in scopes)
+    assert identity_calls == [('profile.json', 'test-repo')]
+    assert sent[0][1]['item_id'] == 2103
+    assert type(sent[0][1]['item_id']) is int
+    assert sent[0][1]['session_id'] == 'reader'
+
+
+@pytest.mark.parametrize('argv', [
+    ['reservation', 'reserve', '--item-id', 'test-repo#2103'],
+    ['reservation', 'list', '--item-id', 'test-repo#2103'],
+])
+def test_scoped_reservation_explicit_scope_conflict_fails_before_backend(monkeypatch, argv):
+    from click.testing import CliRunner
+    from sprintctl.cli import cli
+    from sprintctl import backend
+    monkeypatch.setattr(backend, 'load_backend_config', lambda **kw: pytest.fail('backend reached'))
+    result = CliRunner().invoke(cli, ['--repo-id', 'other', *argv])
+    assert result.exit_code == 1
+    assert 'repo scope mismatch' in result.output
+
+
+@pytest.mark.parametrize('runtime,codex,explicit,expected', [
+    (None, 'codex-session', None, 'codex-session'),
+    ('runtime-session', 'codex-session', None, 'runtime-session'),
+    ('runtime-session', 'codex-session', 'explicit-session', 'explicit-session'),
+    (None, None, None, 'interactive'),
+])
+def test_reservation_uses_shared_runtime_session_precedence(monkeypatch, runtime, codex, explicit, expected):
+    from sprintctl.commands.reservation import _session
+    for name, value in [('SPRINTCTL_RUNTIME_SESSION_ID', runtime), ('CODEX_THREAD_ID', codex)]:
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    assert _session(explicit) == expected
+
+
+@pytest.mark.parametrize('command', ['reserve', 'list'])
+def test_scoped_reservations_reject_real_marker_mismatch_before_io(tmp_path, monkeypatch, command):
+    from click.testing import CliRunner
+    from sprintctl.cli import cli
+    from sprintctl import served
+    from tests.test_served_routes import _configure_served_repo
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(served, 'identity_current', lambda *a, **kw: pytest.fail('identity read'))
+    monkeypatch.setattr(served, 'reservation_operation', lambda *a, **kw: pytest.fail('owner call'))
+    monkeypatch.setattr(db, 'get_connection', lambda *a, **kw: pytest.fail('local fallback'))
+    result = CliRunner().invoke(cli, ['reservation', command, '--item-id', 'other#1'])
+    assert result.exit_code == 1
+    assert 'repo scope mismatch' in result.output
+
+
+def test_scoped_reservation_list_uses_native_integer_filter(monkeypatch):
+    from click.testing import CliRunner
+    from sprintctl.cli import cli
+    from sprintctl import backend, served
+    scopes, sent = [], []
+    def config(**kwargs):
+        scopes.append(kwargs['explicit_repo_id'])
+        return SimpleNamespace(mode='served', served_profile='profile.json', repo_id='test-repo')
+    monkeypatch.setattr(backend, 'load_backend_config', config)
+    def operation(profile, name, arguments, **kwargs):
+        sent.append((name, arguments, kwargs))
+        return {'reservations': []}
+    monkeypatch.setattr(served, 'reservation_operation', operation)
+    result = CliRunner().invoke(cli, ['reservation', 'list', '--item-id', 'test-repo#2103', '--json'])
+    assert result.exit_code == 0, result.output
+    assert scopes and all(scope == 'test-repo' for scope in scopes)
+    assert sent == [('work.read.reservations', {'item_id': 2103, 'active_only': True}, {'repo_id': 'test-repo'})]
+
+
+@pytest.mark.parametrize('command', ['reserve', 'touch'])
+def test_reservation_commands_send_codex_session_without_explicit_override(monkeypatch, command):
+    from click.testing import CliRunner
+    from sprintctl.cli import cli
+    from sprintctl import served
+    _identity_calls, sent = _served_reservation_cli(monkeypatch)
+    monkeypatch.delenv('SPRINTCTL_RUNTIME_SESSION_ID', raising=False)
+    monkeypatch.setenv('CODEX_THREAD_ID', 'codex-resume-session')
+    def operation(profile, name, arguments, **kwargs):
+        sent.append((name, arguments))
+        return {'reservation': {'id': 7, 'session_id': arguments['session_id']}}
+    monkeypatch.setattr(served, 'reservation_operation', operation)
+    option = '--item-id' if command == 'reserve' else '--id'
+    result = CliRunner().invoke(cli, ['reservation', command, option, '1', '--json'])
+    assert result.exit_code == 0, result.output
+    assert sent[0][1]['session_id'] == 'codex-resume-session'

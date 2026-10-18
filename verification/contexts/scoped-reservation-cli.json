@@ -1,0 +1,96 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.scoped-reservation-cli",
+  "owner_repo": "sprintctl",
+  "subject": "scoped reservation command and runtime session translation",
+  "contract_ref": {
+    "doc_id": "sprintctl.reservation-model",
+    "revision": "git:6f8b5870381236ac3da78a6cce8cdd871147ed0d"
+  },
+  "source_of_truth": "existing backend scoped-reference resolver, runtime-session resolver and advisory reservation protocol",
+  "depth": 1,
+  "backends": [
+    "CLI transport fixture",
+    "actual repository marker fixture"
+  ],
+  "actors": [
+    "caller",
+    "CLI translator"
+  ],
+  "initial_state": [
+    "next-work recommends repo#item reference",
+    "owner accepts repository-local integer item ID",
+    "CODEX_THREAD_ID may be the only ambient session label"
+  ],
+  "operations": [
+    {
+      "name": "execute generated reservation recommendation",
+      "actors": [
+        "caller"
+      ]
+    },
+    {
+      "name": "list scoped reservations",
+      "actors": [
+        "caller"
+      ]
+    },
+    {
+      "name": "reserve or touch with ambient Codex session",
+      "actors": [
+        "caller"
+      ]
+    },
+    {
+      "name": "refuse conflicting explicit scope or repository marker",
+      "actors": [
+        "CLI translator"
+      ],
+      "synchronization": "before identity, owner or SQLite I/O"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "CLI translation into existing owner invocation"
+  },
+  "assumptions": {
+    "isolation": "temporary marker and deterministic transport fixtures; no live work modified by tests",
+    "clock": "none",
+    "fairness": "none"
+  },
+  "bounds": {
+    "owner_payload_item_id_type": "integer",
+    "session_sources": 4,
+    "new_owner_operations": 0
+  },
+  "invariants": [
+    "production recommendation parses and retains correct repository/item identity",
+    "scope mismatch refuses before I/O with ordinary CLI error",
+    "explicit then runtime then Codex then interactive session precedence",
+    "authenticated actor binding and local actor requirement unchanged",
+    "owner reservation lifecycle, replay, compatibility and authority contracts unchanged"
+  ],
+  "faults": [
+    "scoped reference rejected by old INTEGER parser",
+    "conflicting explicit scope",
+    "real marker mismatch",
+    "CODEX_THREAD_ID without runtime override"
+  ],
+  "oracles": [
+    "actual _next_work_commands output passed through Click",
+    "captured integer payload and repository scope",
+    "fail-on-I/O marker tests",
+    "reserve/touch captured session labels"
+  ],
+  "implementation_anchors": [
+    "sprintctl/commands/reservation.py",
+    "sprintctl/cli_runtime.py:_apply_scoped_id",
+    "sprintctl/cli_runtime.py:_detect_runtime_session_id",
+    "sprintctl/cli_runtime.py:_served_config_or_none",
+    "tests/test_reservations.py"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "fault-scenario"
+  ]
+}

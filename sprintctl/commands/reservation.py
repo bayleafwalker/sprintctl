@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
 import click
 
 from .. import db as _db
-from .. import backend as _backend
 from .. import served as _served
 
 
 def _session(value: str | None) -> str:
-    return value or os.environ.get("SPRINTCTL_RUNTIME_SESSION_ID") or "interactive"
+    from ..cli_runtime import _detect_runtime_session_id
+
+    return _detect_runtime_session_id(value) or "interactive"
 
 
 @click.group("reservation")
@@ -27,7 +27,7 @@ _ACTOR_HELP = ("Reservation actor. Served mode always records the authenticated 
 
 
 @reservation.command("reserve")
-@click.option("--item-id", type=int, required=True)
+@click.option("--item-id", type=str, required=True, help="Item ID or repo#id")
 @click.option("--actor", default=None, help=_ACTOR_HELP)
 @click.option("--session-id", default=None)
 @click.option("--role", type=click.Choice(_db.RESERVATION_ROLES), default=_db.DEFAULT_RESERVATION_ROLE,
@@ -37,13 +37,16 @@ _ACTOR_HELP = ("Reservation actor. Served mode always records the authenticated 
               help="Deliberately interrupt the item's active execution reservations first")
 @click.option("--json", "as_json", is_flag=True, default=False)
 @click.pass_obj
-def reserve(obj: dict[str, Any], item_id: int, actor: str | None, session_id: str | None, role: str,
+def reserve(obj: dict[str, Any], item_id: str, actor: str | None, session_id: str | None, role: str,
             correlation_ref: str | None, interrupt_existing: bool, as_json: bool) -> None:
     """Register a reservation on a work item.
 
     Overlapping reservations are allowed and reported, not refused: a
     reservation is a coordination signal, not a lease.
     """
+    from ..cli_runtime import _apply_scoped_id
+
+    item_id = _apply_scoped_id(obj, item_id, field="item")
     served = _served_result(obj, "work.reservation.reserve", {"item_id": item_id, "actor": actor, "session_id": _session(session_id), "role": role, "correlation_ref": correlation_ref, "interrupt_existing": interrupt_existing}, bind_actor=True)
     if served is not None:
         _echo(served["reservation"], as_json)
@@ -118,11 +121,15 @@ def release(obj, reservation_id, actor, as_json) -> None:
 
 
 @reservation.command("list")
-@click.option("--item-id", type=int, default=None)
+@click.option("--item-id", type=str, default=None, help="Item ID or repo#id")
 @click.option("--active-only/--all", default=True)
 @click.option("--json", "as_json", is_flag=True, default=False)
 @click.pass_obj
 def list_(obj, item_id, active_only, as_json) -> None:
+    from ..cli_runtime import _apply_scoped_id
+
+    if item_id is not None:
+        item_id = _apply_scoped_id(obj, item_id, field="item")
     served = _served_result(obj, "work.read.reservations", {"item_id": item_id, "active_only": active_only})
     if served is not None:
         _echo(served["reservations"], as_json)
@@ -166,11 +173,10 @@ def _require_local_actor(actor: str | None) -> str:
 def _served_result(obj: dict[str, Any], operation: str, arguments: dict[str, Any], *,
                    bind_actor: bool = False) -> dict | None:
     """Keep served reservation commands out of SQLite and direct PostgreSQL."""
-    config = _backend.load_backend_config(
-        explicit_repo_id=obj.get("explicit_repo_id"),
-        allow_markerless_nonlocal=obj.get("allow_markerless_nonlocal", False),
-    )
-    if config.mode != "served":
+    from ..cli_runtime import _served_config_or_none
+
+    config = _served_config_or_none(obj)
+    if config is None:
         return None
     assert config.served_profile is not None and config.repo_id is not None
     # Reservation commands are registered without the runtime table the other
