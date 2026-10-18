@@ -75,6 +75,14 @@ The pure presentation proof is example-tested, not a fresh-reader user trial or
 deployed acceptance. Existing disposable owner-snapshot tests establish separate
 owner behavior; a current deployed success requires the deployment owner's gates.
 
+R2 and the bounded E2 software reader proof are specified in
+[reader qualification](../evidence/resume-result-reader-qualification.md).
+Six native-owner cases cross a fresh-process boundary: three continuation cases
+and three effect-evidence cases. This qualifies serialization and interpretation
+against the recorded assertions. A fresh LLM/human recovery trial, measured
+recovery effort and provider/host swap remain separate field qualification;
+passing software cases does not manufacture those measurements.
+
 ## E1 decisions and acceptance
 
 Inventory existing owner operations and facts before adding a surface. In

@@ -1,0 +1,57 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.resume-result.reader-proofs",
+  "contract_ref": {
+    "doc_id": "resume-and-explain",
+    "revision": "git:d729b27b91abb5bf3c537640f4a5f110f5dced8c"
+  },
+  "implementation_sha": "d729b27b91abb5bf3c537640f4a5f110f5dced8c",
+  "depth": 1,
+  "environment": {
+    "backend": "disposable PostgreSQL16.15 plus fresh Python processes",
+    "isolation": "owner read-only repeatable-read snapshots",
+    "tool_versions": {
+      "Python": "3.13.16",
+      "PostgreSQL": "16.15",
+      "pytest": "9.0.2"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 6,
+    "bounds": {
+      "resume_cases": 3,
+      "effect_cases": 3,
+      "reader_processes": 6
+    },
+    "faults_exercised": [
+      "changed requested artifact digest",
+      "omitted receipt input",
+      "absent comparison baseline"
+    ]
+  },
+  "claims": [
+    {
+      "property": "Serialized continuation and effect facts expose specified changes and unknowns in fresh processes",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_resume_result_readers.py",
+        "docs/evidence/resume-result-reader-qualification.md"
+      ]
+    },
+    {
+      "property": "Actual fresh-human/LLM recovery effort and cross-provider portability",
+      "result": "unknown",
+      "evidence": [
+        "docs/evidence/resume-result-reader-qualification.md"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "Native owner plus fresh-process cases:6 passed; cleanup completed with zero remaining fixture rows.",
+    "Test source SHA256:e24e855218138dabf44e619f59c34f16b919fff90b2d145784bacecdb94468b4",
+    "Protected receipts are synthetic fixture assertions; no target execution or observation claim.",
+    "Six deterministic cases are not a general archival, model-swap, human-effort or deployment qualification."
+  ]
+}

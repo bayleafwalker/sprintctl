@@ -1,0 +1,78 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.resume-result.reader-proofs",
+  "owner_repo": "sprintctl",
+  "subject": "owner-records-to-fresh-process-reader",
+  "contract_ref": {
+    "doc_id": "resume-and-explain",
+    "revision": "git:d729b27b91abb5bf3c537640f4a5f110f5dced8c"
+  },
+  "source_of_truth": "disposable PostgreSQL owner records",
+  "depth": 1,
+  "backends": [
+    "postgresql16"
+  ],
+  "actors": [
+    "predecessor",
+    "successor",
+    "independent-reader"
+  ],
+  "initial_state": [
+    "one scoped native work item per case",
+    "synthetic protected artifact assertions in effect fixtures"
+  ],
+  "operations": [
+    {
+      "name": "read-continuation-delta",
+      "actors": [
+        "successor"
+      ]
+    },
+    {
+      "name": "read-effect-acceptance-snapshot",
+      "actors": [
+        "independent-reader"
+      ]
+    },
+    {
+      "name": "render-serialized-owner-response",
+      "actors": [
+        "independent-reader"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one owner response and its fresh-process presentation"
+  },
+  "bounds": {
+    "resume_cases": 3,
+    "effect_cases": 3,
+    "reader_processes": 6
+  },
+  "invariants": [
+    "changed Release or Decision records remain identifiable",
+    "missing baseline or receipt stays explicit",
+    "matching artifact-check receipt cannot override requested artifact mismatch",
+    "owner lifecycle does not establish terminal work acceptance or target observation"
+  ],
+  "faults": [
+    "changed requested artifact digest",
+    "omitted receipt input",
+    "absent comparison baseline"
+  ],
+  "oracles": [
+    "native owner field comparisons",
+    "fresh-process rendered facts",
+    "owner intent unchanged by read"
+  ],
+  "implementation_anchors": [
+    "sprintctl/briefing.py:render_run_brief",
+    "sprintctl/effect_explanation.py:render_effect_explanation",
+    "sprintctl/work_application.py:WorkApplication._read_run_continuation_delta",
+    "sprintctl/work_application.py:WorkApplication._read_effect_acceptance_snapshot"
+  ],
+  "expansions": [
+    "stateful-test"
+  ]
+}
