@@ -1,0 +1,92 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.recovery-provenance-1234",
+  "owner_repo": "sprintctl",
+  "subject": "existing-recovery-provenance-criterion-verification",
+  "contract_ref": {
+    "doc_id": "sprintctl.recovery-provenance-1234",
+    "revision": "sha256:1e727f992922edfd8f3e1d80cf3e049904eb4a3e4470f9dd5856a81fc21fc7ba"
+  },
+  "source_of_truth": "native1234 criteria and existing destination recovery_record transaction",
+  "depth": 1,
+  "backends": [
+    "temporary-sqlite",
+    "disposable-postgresql16"
+  ],
+  "actors": [
+    "recovery-reader",
+    "local-recovery-writer",
+    "auditor"
+  ],
+  "initial_state": [
+    "current fresh local schema",
+    "temporary source snapshot with IDs/reservations/history",
+    "provenance supplied or intentionally omitted"
+  ],
+  "operations": [
+    {
+      "name": "read-source-snapshot",
+      "actors": [
+        "recovery-reader"
+      ]
+    },
+    {
+      "name": "write-recovery-snapshot",
+      "actors": [
+        "local-recovery-writer"
+      ]
+    },
+    {
+      "name": "doctor-provenance",
+      "actors": [
+        "auditor"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "destination-data-and-provenance-transaction"
+  },
+  "assumptions": {
+    "atomicity": "only restored destination rows and provenance share one SQLite transaction; no source/destination distributed atomicity",
+    "history": "archival claim columns remain, tokens cleared and active reservations interrupted",
+    "scope": "verification evidence, not closure of1238 or adoption of a new recovery contract"
+  },
+  "bounds": {
+    "recovery_doctor_local_checks": 43,
+    "disposable_pg_recovery_checks": 2,
+    "extra_final_insert_fault_examples": 1
+  },
+  "invariants": [
+    "production recovery CLI always supplies one destination provenance row",
+    "failed destination write leaves no data or provenance",
+    "new recovery preserves source events without synthetic per-sprint markers",
+    "source ownership is invalidated rather than restored",
+    "doctor exposes local recovery provenance",
+    "maintenance recovery observations remain distinct and nonauthoritative"
+  ],
+  "faults": [
+    "source/local schema mismatch",
+    "final provenance INSERT source_repo_id NOT NULL violation",
+    "old schema without provenance table"
+  ],
+  "oracles": [
+    "existing recovery/doctor tests",
+    "disposable PG snapshot-to-SQLite integrity and row assertions",
+    "zero restored/provenance/gate rows after final insert failure",
+    "exact recovery source unchanged across tested baselines"
+  ],
+  "implementation_anchors": [
+    "sprintctl/db.py:write_recovery_snapshot",
+    "sprintctl/db.py:_migration_21",
+    "sprintctl/pg.py:recover_repo_snapshot",
+    "tests/test_db_recover.py:TestProvenance",
+    "tests/pg/test_remote_recovery.py:TestRecoverFromRemote",
+    "docs/evidence/recovery-provenance-1234-20261018.md"
+  ],
+  "expansions": [
+    "stateful-test",
+    "fault-scenario",
+    "semantic-doc"
+  ]
+}
