@@ -1,0 +1,77 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.claim-archive-criteria-1238",
+  "owner_repo": "sprintctl",
+  "subject": "live-claim-removal-versus-archival-schema-observation",
+  "contract_ref": {
+    "doc_id": "sprintctl.claim-archive-criteria-1238",
+    "revision": "sha256:8257feb7e4160ed7ea95f00a0abb1c1cc7e4d559d34e895db44822e282856ee2"
+  },
+  "source_of_truth": "fresh disposable layout, existing SQLite archive/drop test and native pending criteria",
+  "depth": 1,
+  "backends": [
+    "temporary-sqlite",
+    "disposable-postgresql16"
+  ],
+  "actors": [
+    "schema-observer"
+  ],
+  "initial_state": [
+    "fresh schemas atSprintctl e31124de724e4716ffbe71ca021394f742b3ec39",
+    "historical pending1238 criteria and current advisory protocol (draft)"
+  ],
+  "operations": [
+    {
+      "name": "inspect-table-column-trigger-metadata",
+      "actors": [
+        "schema-observer"
+      ]
+    },
+    {
+      "name": "run-existing-local-cutover-example",
+      "actors": [
+        "schema-observer"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "criterion-evidence-without-new-archive-policy"
+  },
+  "assumptions": {
+    "schema": "retained archival columns do not imply live credential authority",
+    "history": "fresh layout does not qualify nonempty historical PG migration",
+    "scope": "no archive mutation, deletion, retention/drop decision or terminal disposition"
+  },
+  "bounds": {
+    "schema_probe_cases": 1,
+    "shared_local_cases": 83,
+    "shared_native_pg_cases": 49
+  },
+  "invariants": [
+    "fresh schemas contain no live claim relation",
+    "observed archival columns and guards remain explicit",
+    "old exclusive-admission criterion is not asserted as current advisory behavior",
+    "pending prerequisites remain untouched"
+  ],
+  "faults": [
+    "literal all-storage absence criterion contradicted by retained archival fields",
+    "historical exclusivity criterion conflicts with current advisory overlap"
+  ],
+  "oracles": [
+    "fresh SQLite table/column introspection",
+    "fresh PostgreSQL information_schema/pg_trigger metadata",
+    "existing local archive/drop migration example",
+    "native dependency readback"
+  ],
+  "implementation_anchors": [
+    "docs/evidence/claim-archive-criteria-1238-20261018.md",
+    "docs/evidence/claim-archive-schema-observation-20261018.json",
+    "sprintctl/pg.py:_apply_schema_version_5",
+    "tests/test_core.py:TestEdgeCases.test_upgrade_across_the_cutover_archives_then_drops_the_claim_relation"
+  ],
+  "expansions": [
+    "stateful-test",
+    "semantic-doc"
+  ]
+}
