@@ -1,0 +1,79 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.approval-clock-instants",
+  "owner_repo": "sprintctl",
+  "subject": "approval-lifetime-and-read-expiry",
+  "contract_ref": {
+    "doc_id": "sprintctl.approval-lifetime",
+    "revision": "git:16f121f1fc527f3238953b6f203b32530cdfb5bc"
+  },
+  "source_of_truth": "PostgreSQL work_approval and approval_schema.MAX_LIFETIME_SECONDS; native No doc decision event5370",
+  "depth": 1,
+  "backends": [
+    "postgresql16"
+  ],
+  "actors": [
+    "operator",
+    "reader"
+  ],
+  "initial_state": [
+    "registered run owned by another principal",
+    "session timezone UTC or Europe/Helsinki"
+  ],
+  "operations": [
+    {
+      "name": "record-approval",
+      "actors": [
+        "operator"
+      ]
+    },
+    {
+      "name": "get-approval",
+      "actors": [
+        "reader"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "elapsed-time-admissibility"
+  },
+  "assumptions": {
+    "clock": "one database-observed instant; supplied expiry has explicit offset",
+    "isolation": "existing owner transaction and immutable approval rows unchanged"
+  },
+  "bounds": {
+    "golden_read_cases": 4,
+    "database_lifetime_cases": 16,
+    "zones": 2,
+    "seasonal_boundaries": 2
+  },
+  "invariants": [
+    "approval lifetime is greater than zero and at most604800 elapsed seconds",
+    "exact maximum boundary is accepted",
+    "invalid expiry returns structured invalid-expiry422 before INSERT",
+    "expired read orders instants across a repeated hour"
+  ],
+  "faults": [
+    "spring-forward loses one calendar hour",
+    "fall-back repeats one calendar hour",
+    "maximum elapsed lifetime plus one second",
+    "expiry equals recording instant"
+  ],
+  "oracles": [
+    "existing SQL CHECK uses interval604800seconds",
+    "stored expires_at-recorded_at elapsed duration",
+    "fixed UTC golden instant ordering"
+  ],
+  "implementation_anchors": [
+    "sprintctl/approval.py:record",
+    "sprintctl/approval.py:get",
+    "sprintctl/approval_schema.py:MAX_LIFETIME_SECONDS",
+    "tests/pg/test_run_resolution_facts.py:test_lifetime_is_elapsed_seconds_across_dst",
+    "tests/test_approval_clock.py"
+  ],
+  "expansions": [
+    "stateful-test",
+    "fault-scenario"
+  ]
+}
