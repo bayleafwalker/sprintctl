@@ -1,0 +1,117 @@
+{
+  "actors": [
+    "kind writer",
+    "status writer",
+    "same-basis competitor",
+    "independent durable reader",
+    "caller transaction owner",
+    "fixture fault holder"
+  ],
+  "assumptions": {
+    "clock": "existing timestamps only; no temporal admission rule",
+    "fairness": "none",
+    "isolation": "SQLite writer serialization; actual measured PostgreSQL READ COMMITTED including independent workers"
+  },
+  "backends": [
+    "temporary SQLite",
+    "registered disposable PostgreSQL16.15 READ COMMITTED"
+  ],
+  "bounds": {
+    "pg_additional_cases": 10,
+    "representative_managed_kind_cases": 1,
+    "representative_tpc_status_cases": 1,
+    "retained_concurrent_histories": 6,
+    "retained_ordered_histories": 22,
+    "shared_cases_per_backend": 28,
+    "workers_per_competing_history": 2
+  },
+  "consistency": {
+    "object": "preserved kind/status decision, returned shape, bounded CAS and ordinary rollback behavior",
+    "target": "application-invariant"
+  },
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2785",
+    "revision": "native:release:56e0b36efecb24043b5036bf1a8b28a47298f950a41f893c6265ac2334bf33ae"
+  },
+  "depth": 2,
+  "expansions": [
+    "fault-scenario"
+  ],
+  "faults": [
+    "actual BEFORE UPDATE trigger abort",
+    "actual AFTER UPDATE trigger abort",
+    "exception during kind_revision result construction after actual UPDATE",
+    "stale state-basis request under actual held writer wait",
+    "invalid pure request before owned handler",
+    "representative managed-kind and TPC-status explicit commit/rollback refusal"
+  ],
+  "id": "sprintctl.sprint-kind-status",
+  "implementation_anchors": [
+    "sprintctl/sprintcore.py:_set_sprint_kind_locked",
+    "sprintctl/sprintcore.py:_set_sprint_status_locked",
+    "sprintctl/db.py:_SprintKindSqlite",
+    "sprintctl/db.py:_SprintStatusSqlite",
+    "sprintctl/pg.py:_SprintKindPg",
+    "sprintctl/pg.py:_SprintStatusPg"
+  ],
+  "initial_state": [
+    "planned target, or active/closed target for selected examples",
+    "current, stale or absent existing state-basis token",
+    "idle or explicitly tested pending/managed/TPC caller state"
+  ],
+  "invariants": [
+    "kind CAS retains validation order, current basis comparison, actual same-kind UPDATE and original row overlay plus prepared kind_revision",
+    "generic status retains basis/transition/archive ordering, None return and no event even on close",
+    "ordinary BEFORE/AFTER UPDATE and post-UPDATE result faults leave the owner transaction idle and target unchanged before fixture cleanup; retry succeeds",
+    "state-changing same-basis kind and status requests produce one success and one StatusConflict in the recorded schedule",
+    "two same-kind current-basis requests both succeed in the recorded schedule because their basis stays unchanged",
+    "kind basis includes lifecycle status while status basis excludes kind; current archive activation checks remain required",
+    "accepted SQLite caller refusal and representative existing PG implicit/managed/TPC caller effects are preserved without imposing cross-backend composition parity"
+  ],
+  "operations": [
+    {
+      "actors": [
+        "kind writer",
+        "same-basis competitor"
+      ],
+      "name": "set public sprint kind",
+      "synchronization": "existing SQLite BEGIN IMMEDIATE or PG tenant-scoped SELECT FOR UPDATE; wrapper commit/rollback unchanged"
+    },
+    {
+      "actors": [
+        "status writer",
+        "same-basis competitor"
+      ],
+      "name": "set generic sprint status",
+      "synchronization": "same backend owners; this operation emits no event"
+    },
+    {
+      "actors": [
+        "fixture fault holder",
+        "independent durable reader"
+      ],
+      "name": "observe rollback and retry",
+      "synchronization": "owner transaction and SQL rows checked before fixture cleanup"
+    },
+    {
+      "actors": [
+        "caller transaction owner"
+      ],
+      "name": "resolve managed caller state",
+      "synchronization": "caller-owned outer/TPC rollback after representative refused commit/rollback"
+    }
+  ],
+  "oracles": [
+    "tests/_sprint_kind_status_contract.py",
+    "tests/test_sprint_kind_status.py",
+    "tests/pg/test_sprint_kind_status.py",
+    "unchanged tests/test_sprint_kind.py shared kind and archive-activation helpers",
+    "unchanged tests/test_sqlite_sprint_caller.py and tests/test_sqlite_item_reserve_caller.py",
+    "actual owner/independent SQL snapshots before fault-fixture cleanup",
+    "actual JUnit state_history properties and registered PG cleanup checker"
+  ],
+  "owner_repo": "sprintctl",
+  "schema_version": "test-context/v1",
+  "source_of_truth": "Existing public semantics and frozen native No doc decision #5637; bounded private source reuse, not a provider contract",
+  "subject": "public kind CAS and generic status sequencing with distinct rules"
+}
