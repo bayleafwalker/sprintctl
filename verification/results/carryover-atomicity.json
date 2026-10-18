@@ -1,0 +1,103 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.carryover-atomicity",
+  "contract_ref": {
+    "doc_id": "sprintctl.carryover",
+    "revision": "sha256:884d299a151cfcd0adc352bf1c665e08ce46021c20070de011433ef3f946083d"
+  },
+  "implementation_sha": "3f9cc86122ed1a67572c7a6d0241ef805e30ed1e",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary SQLite WAL and disposable PostgreSQL16.15",
+    "isolation": "SQLite BEGIN IMMEDIATE; PostgreSQL READ COMMITTED source FOR UPDATE in owned transaction",
+    "tool_versions": {
+      "Python": "3.13.16",
+      "pytest": "9.0.2",
+      "PostgreSQL": "16.15"
+    }
+  },
+  "execution": {
+    "histories": 6,
+    "bounds": {
+      "shared_cases_per_backend": 43,
+      "participant_and_event_fault_cases_per_backend": 28,
+      "source_states": 3,
+      "stale_selection_cases": 4,
+      "competing_target_histories_per_backend": 2,
+      "held_source_histories_per_backend": 1,
+      "connections_per_history": 2,
+      "postgresql_consequence_cases": 2,
+      "postgresql_caller_transaction_cases": 3,
+      "sqlite_caller_transaction_cases": 1
+    },
+    "faults_exercised": [
+      "after target track creation",
+      "after target item creation",
+      "after each of three audit event inserts",
+      "after source Decision consequences",
+      "result construction",
+      "generic-event admission refusal",
+      "stale source selection",
+      "later item failure",
+      "lost response represented by subsequent terminal-source skip"
+    ]
+  },
+  "claims": [
+    {
+      "property": "Each failed carried item restores target/source/Decision/event state",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_carryover_atomicity_contract.py",
+        "independent snapshot comparisons across28fault cases/backend"
+      ]
+    },
+    {
+      "property": "Competing carries create one linked copy after source locking",
+      "result": "concurrency-tested",
+      "evidence": [
+        "test_competing_carries_have_one_linked_copy,2histories/backend",
+        "test_actual_blocked_writer_cannot_create_before_source_lock,1history/backend"
+      ]
+    },
+    {
+      "property": "Earlier commits survive later item failure and retry moves remaining work",
+      "result": "example-tested",
+      "evidence": [
+        "test_later_item_failure_preserves_earlier_commit_and_retry"
+      ]
+    },
+    {
+      "property": "PostgreSQL Decision lease/report consequences share rollback and commit",
+      "result": "example-tested",
+      "evidence": [
+        "test_carryover_transaction_retains_lease_and_report_consequences,2cases"
+      ]
+    },
+    {
+      "property": "Caller transaction behavior follows documented backend ownership boundaries",
+      "result": "example-tested",
+      "evidence": [
+        "SQLite active transaction refusal; PG pending-write commit convention, managed-outer and two-phase refusal"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Before repair, each of three audit event failures left durable partial state on SQLite and PostgreSQL; target-event failure plus retry duplicated the copy",
+      "trace_ref": "tests/_carryover_atomicity_contract.py:CarryoverAtomicityCases.test_event_failure_rolls_back_copy_and_retry_moves_once"
+    }
+  ],
+  "notes": [
+    "implementation_sha names the reviewed base; candidate file SHA256: {\"sprintctl/db.py\": \"4481bf4855cc16a7f56a2d799265fbced84402ab6d6935c9001b0acbdf45477b\", \"sprintctl/maintain.py\": \"55d11661497ad2d6ef6d52c45ec4988c719942f882593f1a2846ce3ce13510ef\", \"sprintctl/maintaincore.py\": \"84501265b40e439fcd138cb2817147c233a6db32d9fa0671911c45eef64b6fc9\", \"sprintctl/pg.py\": \"09df314e51adef0e1ca5bb9b6da2373ed4334fea92e29b6621ca0abbe5d966ac\", \"tests/_carryover_atomicity_contract.py\": \"6fc2657d11ca74946a7bf2a786481d889e16a8abb3aff35893ec8804f9bbee21\", \"tests/pg/test_carryover_atomicity.py\": \"d5f8c27967bb2a513b5db74ee9179839157199dc8696aee5e0b55181b7381f04\", \"tests/test_carryover_atomicity.py\": \"014f10c8da78674e848bd54153d9829c31d63477913ae36ed5eda02edf0939fe\"}",
+    "Baseline three failing cases/backend before source repair:SQLite1.44s,PostgreSQL1.53s.",
+    "Final focused SQLite44passed6.32s; final focused disposable PostgreSQL48passed1.07s, one cleanup with zero remaining rows.",
+    "Affected SQLite suite285passed47.72s before the final held-source case. Counts overlap and are not additive.",
+    "Parent reviewed workflow/lock/current-row/Decision/event reuse and approved explicit PG precommit ownership boundary.",
+    "No whole-command atomicity, idempotency key/cached result, power-loss/failover or distributed proof. Parent2150 remains open. No new served API/schema/catalog/IDL/grant/deployment.",
+    "Durable evidence:docs/evidence/carryover-atomicity-2768.md",
+    "Complete disposable PostgreSQL16.15 gate1246passed78.18s;76fixturecleanups across4names, all zero remaining rows.",
+    "Baseline three event-failure hooks refused before insertion; final expanded event cases raise after actual insertion against the same durable before-state oracle. Minimized exploratory trace:verification/fixtures/carryover-counterexample.json.",
+    "Full local frozen gate uses UV_OFFLINE=1 and prewarmed auxiliary PyYAML cache; no dependency/test relaxation or network-install qualification.",
+    "Complete final non-PostgreSQL/non-performance gate2601passed4skipped1260deselected367.09s using the cached-parser offline setting. Complete final PostgreSQL1246passed78.18s/76cleanupscopeszero. Source and tests unchanged after review/gates."
+  ]
+}

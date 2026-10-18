@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 
 from . import calc as _calc
 from . import db as _db
+from . import maintaincore as _maintaincore
 
 
 
@@ -351,55 +352,10 @@ def carryover(conn, from_sprint_id: int, to_sprint_id: int, *, _m=None) -> list[
 
     created = []
     for item in incomplete:
-        # Create matching item in target sprint (track created if absent)
-        track_id = m.get_or_create_track(conn, to_sprint_id, item["track_name"])
-        new_id = m.create_work_item(
-            conn,
-            to_sprint_id,
-            track_id,
-            item["title"],
-            description=item.get("description", ""),
-            assignee=item.get("assignee"),
-        )
-
-        # Emit carryover event on target sprint
-        m.create_event(
-            conn,
-            to_sprint_id,
-            actor="maintain-carryover",
-            event_type="carryover",
-            source_type="system",
-            work_item_id=new_id,
-            payload={
-                "from_sprint_id": from_sprint_id,
-                "original_item_id": item["id"],
-                "original_status": item["status"],
-            },
-        )
-
-        m.record_decision(
-            conn,
-            item["id"],
-            "supersede",
-            actor="maintain-carryover",
-            rationale=f"carried over to sprint #{to_sprint_id} as item #{new_id}",
-            superseded_by_item_id=new_id,
-        )
-        m.create_event(
-            conn,
-            from_sprint_id,
-            actor="maintain-carryover",
-            event_type="carried-out",
-            source_type="system",
-            work_item_id=item["id"],
-            payload={
-                "to_sprint_id": to_sprint_id,
-                "new_item_id": new_id,
-            },
-        )
-
-        created.append(m.get_work_item(conn, new_id))
-
-    if m is _db:
-        conn.commit()
+        with m._carryover_transaction(conn) as participant:
+            copied = _maintaincore.carryover_item(
+                participant, from_sprint_id, to_sprint_id, item["id"]
+            )
+        if copied is not None:
+            created.append(copied)
     return created

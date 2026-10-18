@@ -41,6 +41,7 @@ _logger = logging.getLogger(__name__)
 from . import reservation as _reservation
 from . import reservation_policy as _policy
 from . import contracts as _contracts
+from . import maintaincore as _maintaincore
 from . import decisions as _decisions
 from . import releases as _releases
 from . import depcore as _depcore
@@ -3576,8 +3577,9 @@ class _TrackPg:
 
     ph = "%s"
 
-    def __init__(self, store: PgStore) -> None:
+    def __init__(self, store: PgStore, *, commit_insert: bool = True) -> None:
         self._store = store
+        self._commit_insert = commit_insert
 
     def tenant_params(self) -> tuple:
         return (self._store.repo_id,)
@@ -3606,7 +3608,8 @@ class _TrackPg:
                 f" ON CONFLICT ({conflict_list}) DO NOTHING",
                 values,
             )
-        self._store.conn.commit()
+        if self._commit_insert:
+            self._store.conn.commit()
 
 
 def get_or_create_track(
@@ -3642,8 +3645,9 @@ class _WorkItemPg:
     ph = "%s"
     updated_at_sql = "now()"
 
-    def __init__(self, store: PgStore) -> None:
+    def __init__(self, store: PgStore, *, commit_insert: bool = True) -> None:
         self._store = store
+        self._commit_insert = commit_insert
 
     def tenant_params(self) -> tuple:
         return (self._store.repo_id,)
@@ -3664,7 +3668,8 @@ class _WorkItemPg:
         with self._store.conn.cursor() as cur:
             cur.execute(f"{sql} RETURNING id", params)
             row = cur.fetchone()
-        self._store.conn.commit()
+        if self._commit_insert:
+            self._store.conn.commit()
         return row["id"]
 
     def update_one(self, sql: str, params: tuple) -> bool:
@@ -3738,6 +3743,34 @@ def create_work_item(
     return _workitemcore.create_work_item(
         _WorkItemPg(store), sprint_id, track_id, title, description, assignee, priority
     )
+
+
+@contextmanager
+def _carryover_transaction(store: PgStore):
+    """Own one source row lock, copy, Decision and audit-event transaction."""
+    # Preserve this backend's committing public-mutation convention. Selection
+    # reads may have opened an implicit transaction. A managed outer context
+    # refuses this commit before any carryover writes, without rolling back
+    # the caller's work. This is not an outer-transaction composition API.
+    store.conn.commit()
+    try:
+        with store.conn.transaction():
+            wi = _WorkItemPg(store, commit_insert=False)
+            track = _TrackPg(store, commit_insert=False)
+            with store.conn.cursor() as cur:
+                yield _maintaincore.CarryoverParticipant(
+                    get_sprint=lambda sid: get_sprint(store, sid),
+                    lock_item=lambda iid: wi.lock_for_update("work_item", iid),
+                    get_track=lambda tid: get_track(store, tid),
+                    create_track=lambda sid, name: _trackcore.get_or_create_track(track, sid, name),
+                    create_item=lambda *args, **kwargs: _workitemcore.create_work_item(wi, *args, **kwargs),
+                    insert_event=lambda *args, **kwargs: _insert_event(store, *args, **kwargs),
+                    decide=lambda item, decision: _decide_locked(cur, store.repo_id, item, decision),
+                    get_item=lambda iid: get_work_item(store, iid),
+                )
+    except Exception:
+        store.conn.rollback()
+        raise
 
 
 def set_work_item_priority(

@@ -1,0 +1,21 @@
+{
+  "subject": "sprintctl#2768 per-item carryover",
+  "implementation_base": "3f9cc86122ed1a67572c7a6d0241ef805e30ed1e",
+  "classification": "example-tested counterexample before repair",
+  "initial": {"source_status": "pending", "target_copies": 0, "target_carryover_events": 0, "source_decisions": 0},
+  "history": [
+    "invoke carryover for the source and target sprints",
+    "target track and item creation commit",
+    "injected target carryover event INSERT raises before completion",
+    "independent connection observes source pending, one target copy and no target event",
+    "retry ordinary carryover after removing the injected failure",
+    "source becomes superseded while two target copies remain"
+  ],
+  "after_failed_call": {"source_status": "pending", "target_copies": 1, "target_carryover_events": 0, "source_decisions": 0},
+  "after_retry": {"source_resolution": "superseded", "target_copies": 2},
+  "replay_test": "tests/_carryover_atomicity_contract.py:CarryoverAtomicityCases.test_event_failure_rolls_back_copy_and_retry_moves_once",
+  "limits": [
+    "Exploratory trace reproduced on temporary SQLite; the retained three-event rollback regression also failed on disposable PostgreSQL before repair",
+    "Symbolic object counts, not a production-state capture or power-loss simulation"
+  ]
+}
