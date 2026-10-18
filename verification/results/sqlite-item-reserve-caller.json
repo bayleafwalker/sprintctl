@@ -1,0 +1,91 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.sqlite-item-reserve-caller",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2781",
+    "revision": "native:release:d28e692fdca133579c21836dfc2ce3a49593285c73a49136061d6c6ebbe9fca4"
+  },
+  "implementation_sha": "0b1f4ad11b52c5526443487e6cc5f90a84a5a8cb",
+  "depth": 2,
+  "environment": {
+    "backend": "actual temporary SQLite",
+    "python": "3.13.16",
+    "pytest": "9.0.2"
+  },
+  "execution": {
+    "histories": 0,
+    "bounds": {
+      "caller_cases": 6,
+      "uncommitted_target_cases": 2,
+      "validation_precedence_cases": 5,
+      "concurrent_histories": 0
+    },
+    "faults_exercised": [
+      "nested caller transaction refusal",
+      "invalid pre-handler inputs while caller has pending writes"
+    ]
+  },
+  "claims": [
+    {
+      "property": "refused public reserve/item-status calls preserve active caller writes, read transactions and nested savepoints without changing existing sprint/item/Release/Decision/reservation/event state",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_sqlite_item_reserve_caller.py",
+        "tests/test_sqlite_sprint_caller.py"
+      ]
+    },
+    {
+      "property": "preliminary reserve lookup neither commits nor rolls back a caller-created uncommitted target",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_sqlite_item_reserve_caller.py",
+        "tests/test_sqlite_sprint_caller.py"
+      ]
+    },
+    {
+      "property": "existing role, basis, contract and item-existence error precedence and status revision syntax errors precede caller refusal",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_sqlite_item_reserve_caller.py",
+        "tests/test_sqlite_sprint_caller.py"
+      ]
+    },
+    {
+      "property": "caller rollback and savepoint rollback/release remain usable and independent readers retain only committed state",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_sqlite_item_reserve_caller.py",
+        "tests/test_sqlite_sprint_caller.py"
+      ]
+    },
+    {
+      "property": "existing sprint guards retain their call positions and exact refusal message after private predicate factoring",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_sqlite_item_reserve_caller.py",
+        "tests/test_sqlite_sprint_caller.py"
+      ]
+    },
+    {
+      "property": "PostgreSQL caller ownership, keyed Decision composition, universal transactional equivalence, concurrency or physical crash recovery",
+      "result": "unknown"
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Actual reserve and item-status nested BEGIN failures roll back unrelated pending caller writes",
+      "trace_ref": "verification/fixtures/sqlite-item-reserve-caller-before.json"
+    }
+  ],
+  "notes": [
+    "Frozen optimistic-reviewed scope5602; parent2150 remains open. Current guard repair excludes broader workflow extraction, PG/keyedDecision semantics, API/schema/IDL/deployment.",
+    "Nested OperationalError plus caller rollback intentionally becomes ValueError requiring idle connection plus preserved caller state. Existing idle paths and pre-handler error order remain unchanged.",
+    "Coordinator-owned pre-repair oracle:8 failed,5 passed in1.83s. First development run had one extra test-only expectation mismatch (basis versus actual revision wording); corrected before product edits and reran actual RED. No product change or weakened behavior expectation was used to clear that mismatch.",
+    "Repaired13 new cases plus15 existing sprint caller cases:28 passed in3.37s. Independent13+15+10reservation atomicity cases:38 passed in4.67s, source review CLEAR.",
+    "Affected regression:607 passed in102.40s. Command: /tmp/sprintctl-item-reserve-caller-2781-env/bin/python -m pytest tests/test_sqlite_item_reserve_caller.py tests/test_sqlite_sprint_caller.py tests/test_reservations.py tests/test_reservation_atomicity.py tests/test_reservation_lifecycle.py tests/test_item_release.py tests/test_decisions.py tests/test_releases.py tests/test_maintain.py tests/test_authority_fault_protocol.py tests/test_core.py tests/test_work_application.py tests/test_carryover_atomicity.py tests/test_backlog_seed_atomicity.py -xq --tb=short.",
+    "implementation_sha is accepted base; candidate source/test and before-artifact hashes: {\"sprintctl/db.py\": \"d7b08d4479b93778859fa295fd59fe89b6dade398accffd8f0b3b371e2948667\", \"tests/test_sqlite_item_reserve_caller.py\": \"74fb8173546bc5107e8c70d2dcf4097c09d9521145b1086429ddbe49c1c1291a\", \"verification/fixtures/sqlite-item-reserve-caller-before.json\": \"ad687a028e4510f42892bca8dc4f1c7396f57199bb09051a0b0514484e540e97\", \"verification/fixtures/sqlite-item-reserve-caller-before.txt\": \"1353ec1e69abfa5349c4f0199a63dfd5dda4a400c08f609dddcb2aaf16b131d5\"}",
+    "Actual survey ran at a5d7998 with both target function bodies unchanged at accepted0b1f4ad. Sequential examples only; no concurrency histories, PG parity or source-authentication qualification.",
+    "Full local gate passed 2,739 tests, 4 skipped and 14 performance cases deselected in588.41s. Exact-head canonical CI remains pending.",
+    "Full local command: /tmp/sprintctl-item-reserve-caller-2781-env/bin/python -m pytest tests --ignore=tests/pg --ignore=tests/test_work_application_pg.py -m \"not perf\" -q --tb=short. This tree includes accepted2778 and2779 plus this repair; no rebase or source edit followed the full run."
+  ]
+}
