@@ -167,3 +167,28 @@ def _reserve_admitted(p: _AdmissionParticipant, work_item_id: int, *, actor: str
          'conflicting_reservation_ids': [old['id'] for old in remaining],
          'release_digest': row['release_digest']})
     return model.annotate_conflicts(model.display(row), remaining)
+
+
+class _SessionReleaseParticipant(Protocol):
+    """Distinct noncommitting participant; the surrounding caller owns cleanup."""
+
+    def select_active(self, item_id: int, session_id: str) -> list[dict]: ...
+    def release_active(self, item_id: int, session_id: str, now: str) -> None: ...
+    def insert_released_event(self, sprint_id: int, item_id: int, reservation_id: int, actor: str) -> None: ...
+
+
+def _release_caller_reservations(
+    participant: _SessionReleaseParticipant, item: dict, *, session_id: str | None, actor: str
+) -> list[int]:
+    """Release an exact session's active rows without owning its transaction."""
+    if not session_id:
+        return []
+    item_id = int(item["id"])
+    rows = participant.select_active(item_id, session_id)
+    if not rows:
+        return []
+    now = model.now_text()
+    participant.release_active(item_id, session_id, now)
+    for row in rows:
+        participant.insert_released_event(int(item["sprint_id"]), item_id, row["id"], actor)
+    return [row["id"] for row in rows]

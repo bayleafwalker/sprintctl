@@ -1,0 +1,3628 @@
+{
+  "histories": [
+    {
+      "before": {
+        "events": [
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:34:47Z",
+            "event_type": "reservation.reserved",
+            "id": 1,
+            "payload": "{\"reservation_id\": 1, \"session_id\": \" target-session \", \"role\": \"execution\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": \"75556ddfab5d118a4e05014ebaa808617d9d8b7c30d58ff81a43f456d6803255\"}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:34:47Z",
+            "event_type": "reservation.reserved",
+            "id": 2,
+            "payload": "{\"reservation_id\": 2, \"session_id\": \" target-session \", \"role\": \"verification\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:34:47Z",
+            "event_type": "reservation.reserved",
+            "id": 3,
+            "payload": "{\"reservation_id\": 3, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1, 2], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:34:47Z",
+            "event_type": "reservation.reserved",
+            "id": 4,
+            "payload": "{\"reservation_id\": 4, \"session_id\": \"target-session\", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1, 2, 3], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:47Z",
+            "event_type": "reservation.reserved",
+            "id": 5,
+            "payload": "{\"reservation_id\": 5, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1, 2, 3, 4], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "fixture",
+            "created_at": "2026-10-18T17:34:47Z",
+            "event_type": "reservation.released",
+            "id": 6,
+            "payload": "{\"reservation_id\": 5}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "ca6f9edb-9aac-48ac-b63b-ce572ac45370",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:34:47Z",
+          "description": "",
+          "id": 1,
+          "legacy": false,
+          "priority": null,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 1,
+          "updated_at": "2026-10-18T17:34:47Z"
+        },
+        "rows": [
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:47Z",
+            "id": 1,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:47Z",
+            "release_digest": "75556ddfab5d118a4e05014ebaa808617d9d8b7c30d58ff81a43f456d6803255",
+            "released_at": null,
+            "role": "execution",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 1
+          },
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:47Z",
+            "id": 2,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:47Z",
+            "release_digest": null,
+            "released_at": null,
+            "role": "verification",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 1
+          },
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:47Z",
+            "id": 3,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:47Z",
+            "release_digest": null,
+            "released_at": null,
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:47Z",
+            "id": 4,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:47Z",
+            "release_digest": null,
+            "released_at": null,
+            "role": "observation",
+            "session_id": "target-session",
+            "state": "active",
+            "work_item_id": 1
+          },
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:47Z",
+            "id": 5,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:47Z",
+            "release_digest": null,
+            "released_at": "2026-10-18T17:34:47Z",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          }
+        ]
+      },
+      "junit_case": {
+        "class": "tests.test_session_release.TestSQLiteSessionRelease",
+        "name": "test_mixed_roles_exact_session_clock_order_and_owner[commit]"
+      },
+      "name": "mixed-owner-commit",
+      "owner_state_before_cleanup": "ACTIVE",
+      "pending": {
+        "events": [
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:34:47Z",
+            "event_type": "reservation.reserved",
+            "id": 1,
+            "payload": "{\"reservation_id\": 1, \"session_id\": \" target-session \", \"role\": \"execution\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": \"75556ddfab5d118a4e05014ebaa808617d9d8b7c30d58ff81a43f456d6803255\"}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:34:47Z",
+            "event_type": "reservation.reserved",
+            "id": 2,
+            "payload": "{\"reservation_id\": 2, \"session_id\": \" target-session \", \"role\": \"verification\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:34:47Z",
+            "event_type": "reservation.reserved",
+            "id": 3,
+            "payload": "{\"reservation_id\": 3, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1, 2], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:34:47Z",
+            "event_type": "reservation.reserved",
+            "id": 4,
+            "payload": "{\"reservation_id\": 4, \"session_id\": \"target-session\", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1, 2, 3], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:47Z",
+            "event_type": "reservation.reserved",
+            "id": 5,
+            "payload": "{\"reservation_id\": 5, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1, 2, 3, 4], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "fixture",
+            "created_at": "2026-10-18T17:34:47Z",
+            "event_type": "reservation.released",
+            "id": 6,
+            "payload": "{\"reservation_id\": 5}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:34:47Z",
+            "event_type": "reservation.released",
+            "id": 7,
+            "payload": "{\"reservation_id\": 2}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:34:47Z",
+            "event_type": "reservation.released",
+            "id": 8,
+            "payload": "{\"reservation_id\": 3}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:34:47Z",
+            "event_type": "reservation.released",
+            "id": 9,
+            "payload": "{\"reservation_id\": 1}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "ca6f9edb-9aac-48ac-b63b-ce572ac45370",
+          "assignee": "pending caller",
+          "created_at": "2026-10-18T17:34:47Z",
+          "description": "",
+          "id": 1,
+          "legacy": false,
+          "priority": null,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 1,
+          "updated_at": "2026-10-18T17:34:47Z"
+        },
+        "rows": [
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:47Z",
+            "id": 1,
+            "interruption_reason": null,
+            "last_activity_at": "2026-01-02T03:04:05Z",
+            "release_digest": "75556ddfab5d118a4e05014ebaa808617d9d8b7c30d58ff81a43f456d6803255",
+            "released_at": "2026-01-02T03:04:05Z",
+            "role": "execution",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          },
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:47Z",
+            "id": 2,
+            "interruption_reason": null,
+            "last_activity_at": "2026-01-02T03:04:05Z",
+            "release_digest": null,
+            "released_at": "2026-01-02T03:04:05Z",
+            "role": "verification",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          },
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:47Z",
+            "id": 3,
+            "interruption_reason": null,
+            "last_activity_at": "2026-01-02T03:04:05Z",
+            "release_digest": null,
+            "released_at": "2026-01-02T03:04:05Z",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:47Z",
+            "id": 4,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:47Z",
+            "release_digest": null,
+            "released_at": null,
+            "role": "observation",
+            "session_id": "target-session",
+            "state": "active",
+            "work_item_id": 1
+          },
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:47Z",
+            "id": 5,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:47Z",
+            "release_digest": null,
+            "released_at": "2026-10-18T17:34:47Z",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          }
+        ]
+      },
+      "returned_ids": [
+        2,
+        3,
+        1
+      ]
+    },
+    {
+      "before": {
+        "events": [
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:34:48Z",
+            "event_type": "reservation.reserved",
+            "id": 1,
+            "payload": "{\"reservation_id\": 1, \"session_id\": \" target-session \", \"role\": \"execution\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": \"8ab86110e402bb0feacc4d5012e72fd6cc6db2ec683cda62a47948bcd9aa1476\"}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:34:48Z",
+            "event_type": "reservation.reserved",
+            "id": 2,
+            "payload": "{\"reservation_id\": 2, \"session_id\": \" target-session \", \"role\": \"verification\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:34:48Z",
+            "event_type": "reservation.reserved",
+            "id": 3,
+            "payload": "{\"reservation_id\": 3, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1, 2], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:34:48Z",
+            "event_type": "reservation.reserved",
+            "id": 4,
+            "payload": "{\"reservation_id\": 4, \"session_id\": \"target-session\", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1, 2, 3], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:48Z",
+            "event_type": "reservation.reserved",
+            "id": 5,
+            "payload": "{\"reservation_id\": 5, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1, 2, 3, 4], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "fixture",
+            "created_at": "2026-10-18T17:34:48Z",
+            "event_type": "reservation.released",
+            "id": 6,
+            "payload": "{\"reservation_id\": 5}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "e82c57a9-cc4f-41f8-bc79-de4c50c8bf35",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:34:48Z",
+          "description": "",
+          "id": 1,
+          "legacy": false,
+          "priority": null,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 1,
+          "updated_at": "2026-10-18T17:34:48Z"
+        },
+        "rows": [
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:48Z",
+            "id": 1,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:48Z",
+            "release_digest": "8ab86110e402bb0feacc4d5012e72fd6cc6db2ec683cda62a47948bcd9aa1476",
+            "released_at": null,
+            "role": "execution",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 1
+          },
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:48Z",
+            "id": 2,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:48Z",
+            "release_digest": null,
+            "released_at": null,
+            "role": "verification",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 1
+          },
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:48Z",
+            "id": 3,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:48Z",
+            "release_digest": null,
+            "released_at": null,
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:48Z",
+            "id": 4,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:48Z",
+            "release_digest": null,
+            "released_at": null,
+            "role": "observation",
+            "session_id": "target-session",
+            "state": "active",
+            "work_item_id": 1
+          },
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:48Z",
+            "id": 5,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:48Z",
+            "release_digest": null,
+            "released_at": "2026-10-18T17:34:48Z",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          }
+        ]
+      },
+      "junit_case": {
+        "class": "tests.test_session_release.TestSQLiteSessionRelease",
+        "name": "test_mixed_roles_exact_session_clock_order_and_owner[rollback]"
+      },
+      "name": "mixed-owner-rollback",
+      "owner_state_before_cleanup": "ACTIVE",
+      "pending": {
+        "events": [
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:34:48Z",
+            "event_type": "reservation.reserved",
+            "id": 1,
+            "payload": "{\"reservation_id\": 1, \"session_id\": \" target-session \", \"role\": \"execution\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": \"8ab86110e402bb0feacc4d5012e72fd6cc6db2ec683cda62a47948bcd9aa1476\"}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:34:48Z",
+            "event_type": "reservation.reserved",
+            "id": 2,
+            "payload": "{\"reservation_id\": 2, \"session_id\": \" target-session \", \"role\": \"verification\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:34:48Z",
+            "event_type": "reservation.reserved",
+            "id": 3,
+            "payload": "{\"reservation_id\": 3, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1, 2], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:34:48Z",
+            "event_type": "reservation.reserved",
+            "id": 4,
+            "payload": "{\"reservation_id\": 4, \"session_id\": \"target-session\", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1, 2, 3], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:48Z",
+            "event_type": "reservation.reserved",
+            "id": 5,
+            "payload": "{\"reservation_id\": 5, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1, 2, 3, 4], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "fixture",
+            "created_at": "2026-10-18T17:34:48Z",
+            "event_type": "reservation.released",
+            "id": 6,
+            "payload": "{\"reservation_id\": 5}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:34:48Z",
+            "event_type": "reservation.released",
+            "id": 7,
+            "payload": "{\"reservation_id\": 2}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:34:48Z",
+            "event_type": "reservation.released",
+            "id": 8,
+            "payload": "{\"reservation_id\": 3}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:34:48Z",
+            "event_type": "reservation.released",
+            "id": 9,
+            "payload": "{\"reservation_id\": 1}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "e82c57a9-cc4f-41f8-bc79-de4c50c8bf35",
+          "assignee": "pending caller",
+          "created_at": "2026-10-18T17:34:48Z",
+          "description": "",
+          "id": 1,
+          "legacy": false,
+          "priority": null,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 1,
+          "updated_at": "2026-10-18T17:34:48Z"
+        },
+        "rows": [
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:48Z",
+            "id": 1,
+            "interruption_reason": null,
+            "last_activity_at": "2026-01-02T03:04:05Z",
+            "release_digest": "8ab86110e402bb0feacc4d5012e72fd6cc6db2ec683cda62a47948bcd9aa1476",
+            "released_at": "2026-01-02T03:04:05Z",
+            "role": "execution",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          },
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:48Z",
+            "id": 2,
+            "interruption_reason": null,
+            "last_activity_at": "2026-01-02T03:04:05Z",
+            "release_digest": null,
+            "released_at": "2026-01-02T03:04:05Z",
+            "role": "verification",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          },
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:48Z",
+            "id": 3,
+            "interruption_reason": null,
+            "last_activity_at": "2026-01-02T03:04:05Z",
+            "release_digest": null,
+            "released_at": "2026-01-02T03:04:05Z",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:48Z",
+            "id": 4,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:48Z",
+            "release_digest": null,
+            "released_at": null,
+            "role": "observation",
+            "session_id": "target-session",
+            "state": "active",
+            "work_item_id": 1
+          },
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:48Z",
+            "id": 5,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:48Z",
+            "release_digest": null,
+            "released_at": "2026-10-18T17:34:48Z",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          }
+        ]
+      },
+      "returned_ids": [
+        2,
+        3,
+        1
+      ]
+    },
+    {
+      "durable": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:48Z",
+            "event_type": "reservation.reserved",
+            "id": 1,
+            "payload": "{\"reservation_id\": 1, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "744edd5e-1b80-48c8-a586-2c23d525e4cc",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:34:48Z",
+          "description": "",
+          "id": 1,
+          "legacy": false,
+          "priority": null,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 1,
+          "updated_at": "2026-10-18T17:34:48Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:48Z",
+            "id": 1,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:48Z",
+            "release_digest": null,
+            "released_at": null,
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 1
+          }
+        ]
+      },
+      "junit_case": {
+        "class": "tests.test_session_release.TestSQLiteSessionRelease",
+        "name": "test_late_sprint_conversion_error_leaves_actual_update_pending[True]"
+      },
+      "name": "late-sprint-conversion",
+      "owner_state_before_cleanup": "ACTIVE",
+      "pending": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:48Z",
+            "event_type": "reservation.reserved",
+            "id": 1,
+            "payload": "{\"reservation_id\": 1, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "744edd5e-1b80-48c8-a586-2c23d525e4cc",
+          "assignee": "pending caller",
+          "created_at": "2026-10-18T17:34:48Z",
+          "description": "",
+          "id": 1,
+          "legacy": false,
+          "priority": null,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 1,
+          "updated_at": "2026-10-18T17:34:48Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:48Z",
+            "id": 1,
+            "interruption_reason": null,
+            "last_activity_at": "2026-01-02T03:04:05Z",
+            "release_digest": null,
+            "released_at": "2026-01-02T03:04:05Z",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          }
+        ]
+      }
+    },
+    {
+      "durable": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:49Z",
+            "event_type": "reservation.reserved",
+            "id": 1,
+            "payload": "{\"reservation_id\": 1, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "25745121-4355-473a-a85e-7a09af1bfcef",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:34:49Z",
+          "description": "",
+          "id": 1,
+          "legacy": false,
+          "priority": null,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 1,
+          "updated_at": "2026-10-18T17:34:49Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:49Z",
+            "id": 1,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:49Z",
+            "release_digest": null,
+            "released_at": null,
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 1
+          }
+        ]
+      },
+      "junit_case": {
+        "class": "tests.test_session_release.TestSQLiteSessionRelease",
+        "name": "test_late_sprint_conversion_error_leaves_actual_update_pending[False]"
+      },
+      "name": "late-sprint-conversion",
+      "owner_state_before_cleanup": "ACTIVE",
+      "pending": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:49Z",
+            "event_type": "reservation.reserved",
+            "id": 1,
+            "payload": "{\"reservation_id\": 1, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "25745121-4355-473a-a85e-7a09af1bfcef",
+          "assignee": "pending caller",
+          "created_at": "2026-10-18T17:34:49Z",
+          "description": "",
+          "id": 1,
+          "legacy": false,
+          "priority": null,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 1,
+          "updated_at": "2026-10-18T17:34:49Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:49Z",
+            "id": 1,
+            "interruption_reason": null,
+            "last_activity_at": "2026-01-02T03:04:05Z",
+            "release_digest": null,
+            "released_at": "2026-01-02T03:04:05Z",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          }
+        ]
+      }
+    },
+    {
+      "durable": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:49Z",
+            "event_type": "reservation.reserved",
+            "id": 1,
+            "payload": "{\"reservation_id\": 1, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "7021f719-41f3-41b0-92ac-92ccdf9b1f4a",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:34:49Z",
+          "description": "",
+          "id": 1,
+          "legacy": false,
+          "priority": null,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 1,
+          "updated_at": "2026-10-18T17:34:49Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:49Z",
+            "id": 1,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:49Z",
+            "release_digest": null,
+            "released_at": null,
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 1
+          }
+        ]
+      },
+      "junit_case": {
+        "class": "tests.test_session_release.TestSQLiteSessionRelease",
+        "name": "test_clock_hook_added_matching_row_preserves_selected_vs_updated_population"
+      },
+      "late_raw_id": 2,
+      "name": "deliberate-same-owner-population-probe",
+      "pending": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:49Z",
+            "event_type": "reservation.reserved",
+            "id": 1,
+            "payload": "{\"reservation_id\": 1, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:34:49Z",
+            "event_type": "reservation.released",
+            "id": 2,
+            "payload": "{\"reservation_id\": 1}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "7021f719-41f3-41b0-92ac-92ccdf9b1f4a",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:34:49Z",
+          "description": "",
+          "id": 1,
+          "legacy": false,
+          "priority": null,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 1,
+          "updated_at": "2026-10-18T17:34:49Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:49Z",
+            "id": 1,
+            "interruption_reason": null,
+            "last_activity_at": "2026-01-02T03:04:05Z",
+            "release_digest": null,
+            "released_at": "2026-01-02T03:04:05Z",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          },
+          {
+            "actor": "late raw actor",
+            "correlation_ref": null,
+            "created_at": "2026-01-02T03:04:05Z",
+            "id": 2,
+            "interruption_reason": null,
+            "last_activity_at": "2026-01-02T03:04:05Z",
+            "release_digest": null,
+            "released_at": "2026-01-02T03:04:05Z",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          }
+        ]
+      },
+      "returned_ids": [
+        1
+      ]
+    },
+    {
+      "durable": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:50Z",
+            "event_type": "reservation.reserved",
+            "id": 1,
+            "payload": "{\"reservation_id\": 1, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:50Z",
+            "event_type": "reservation.reserved",
+            "id": 2,
+            "payload": "{\"reservation_id\": 2, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "7fed6eb6-8030-4b3e-aa0c-a6422f511552",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:34:49Z",
+          "description": "",
+          "id": 1,
+          "legacy": false,
+          "priority": null,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 1,
+          "updated_at": "2026-10-18T17:34:50Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:50Z",
+            "id": 1,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:50Z",
+            "release_digest": null,
+            "released_at": null,
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 1
+          },
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:50Z",
+            "id": 2,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:50Z",
+            "release_digest": null,
+            "released_at": null,
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 1
+          }
+        ]
+      },
+      "junit_case": {
+        "class": "tests.test_session_release.TestSQLiteSessionRelease",
+        "name": "test_after_actual_event_python_failure_leaves_cleanup_to_owner[1]"
+      },
+      "name": "after-event-1",
+      "owner_state_before_cleanup": "ACTIVE",
+      "pending": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:50Z",
+            "event_type": "reservation.reserved",
+            "id": 1,
+            "payload": "{\"reservation_id\": 1, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:50Z",
+            "event_type": "reservation.reserved",
+            "id": 2,
+            "payload": "{\"reservation_id\": 2, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:34:50Z",
+            "event_type": "reservation.released",
+            "id": 3,
+            "payload": "{\"reservation_id\": 1}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "7fed6eb6-8030-4b3e-aa0c-a6422f511552",
+          "assignee": "pending caller",
+          "created_at": "2026-10-18T17:34:49Z",
+          "description": "",
+          "id": 1,
+          "legacy": false,
+          "priority": null,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 1,
+          "updated_at": "2026-10-18T17:34:50Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:50Z",
+            "id": 1,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:50Z",
+            "release_digest": null,
+            "released_at": "2026-10-18T17:34:50Z",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          },
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:50Z",
+            "id": 2,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:50Z",
+            "release_digest": null,
+            "released_at": "2026-10-18T17:34:50Z",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          }
+        ]
+      }
+    },
+    {
+      "durable": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:50Z",
+            "event_type": "reservation.reserved",
+            "id": 1,
+            "payload": "{\"reservation_id\": 1, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:50Z",
+            "event_type": "reservation.reserved",
+            "id": 2,
+            "payload": "{\"reservation_id\": 2, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "1eeb0d69-9fa4-4a62-b0cd-75524d8f25d7",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:34:50Z",
+          "description": "",
+          "id": 1,
+          "legacy": false,
+          "priority": null,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 1,
+          "updated_at": "2026-10-18T17:34:50Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:50Z",
+            "id": 1,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:50Z",
+            "release_digest": null,
+            "released_at": null,
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 1
+          },
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:50Z",
+            "id": 2,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:50Z",
+            "release_digest": null,
+            "released_at": null,
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 1
+          }
+        ]
+      },
+      "junit_case": {
+        "class": "tests.test_session_release.TestSQLiteSessionRelease",
+        "name": "test_after_actual_event_python_failure_leaves_cleanup_to_owner[2]"
+      },
+      "name": "after-event-2",
+      "owner_state_before_cleanup": "ACTIVE",
+      "pending": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:50Z",
+            "event_type": "reservation.reserved",
+            "id": 1,
+            "payload": "{\"reservation_id\": 1, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:50Z",
+            "event_type": "reservation.reserved",
+            "id": 2,
+            "payload": "{\"reservation_id\": 2, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:34:50Z",
+            "event_type": "reservation.released",
+            "id": 3,
+            "payload": "{\"reservation_id\": 1}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:34:50Z",
+            "event_type": "reservation.released",
+            "id": 4,
+            "payload": "{\"reservation_id\": 2}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "1eeb0d69-9fa4-4a62-b0cd-75524d8f25d7",
+          "assignee": "pending caller",
+          "created_at": "2026-10-18T17:34:50Z",
+          "description": "",
+          "id": 1,
+          "legacy": false,
+          "priority": null,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 1,
+          "updated_at": "2026-10-18T17:34:50Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:50Z",
+            "id": 1,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:50Z",
+            "release_digest": null,
+            "released_at": "2026-10-18T17:34:50Z",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          },
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:50Z",
+            "id": 2,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:50Z",
+            "release_digest": null,
+            "released_at": "2026-10-18T17:34:50Z",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          }
+        ]
+      }
+    },
+    {
+      "durable": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:51Z",
+            "event_type": "reservation.reserved",
+            "id": 1,
+            "payload": "{\"reservation_id\": 1, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "d791fc40-f8fe-4b23-9da2-dd8233da514a",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:34:50Z",
+          "description": "",
+          "id": 1,
+          "legacy": false,
+          "priority": null,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 1,
+          "updated_at": "2026-10-18T17:34:50Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:51Z",
+            "id": 1,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:51Z",
+            "release_digest": null,
+            "released_at": null,
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 1
+          }
+        ]
+      },
+      "junit_case": {
+        "class": "tests.test_session_release.TestSQLiteSessionRelease",
+        "name": "test_real_update_sql_fault_does_not_rollback_owner"
+      },
+      "name": "actual-update-SQL-fault",
+      "owner_state_before_cleanup": "ACTIVE",
+      "primary_rows_unreadable_until_rollback": false
+    },
+    {
+      "admission": {
+        "activity_age_seconds": 0,
+        "actor": "contender",
+        "conflict": false,
+        "conflict_severity": "none",
+        "conflicting_reservations": [],
+        "correlation_ref": null,
+        "created_at": "2026-10-18T17:34:51Z",
+        "id": 2,
+        "interruption_reason": null,
+        "last_activity_at": "2026-10-18T17:34:51Z",
+        "release_digest": null,
+        "released_at": null,
+        "role": "observation",
+        "session_id": " target-session ",
+        "stale": false,
+        "state": "active",
+        "work_item_id": 1
+      },
+      "durable": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:51Z",
+            "event_type": "reservation.reserved",
+            "id": 1,
+            "payload": "{\"reservation_id\": 1, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:34:51Z",
+            "event_type": "reservation.released",
+            "id": 2,
+            "payload": "{\"reservation_id\": 1}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "contender",
+            "created_at": "2026-10-18T17:34:51Z",
+            "event_type": "reservation.reserved",
+            "id": 3,
+            "payload": "{\"reservation_id\": 2, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "77f51119-fcd0-40fb-be80-827b4820fd2b",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:34:51Z",
+          "description": "",
+          "id": 1,
+          "legacy": false,
+          "priority": null,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 1,
+          "updated_at": "2026-10-18T17:34:51Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:51Z",
+            "id": 1,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:51Z",
+            "release_digest": null,
+            "released_at": "2026-10-18T17:34:51Z",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          },
+          {
+            "actor": "contender",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:51Z",
+            "id": 2,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:51Z",
+            "release_digest": null,
+            "released_at": null,
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 1
+          }
+        ]
+      },
+      "junit_case": {
+        "class": "tests.test_session_release.TestSQLiteSessionRelease",
+        "name": "test_existing_owner_lock_gates_public_admission[commit]"
+      },
+      "name": "owner-lock-admission-commit",
+      "pending_before_owner_finish": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:51Z",
+            "event_type": "reservation.reserved",
+            "id": 1,
+            "payload": "{\"reservation_id\": 1, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:34:51Z",
+            "event_type": "reservation.released",
+            "id": 2,
+            "payload": "{\"reservation_id\": 1}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "77f51119-fcd0-40fb-be80-827b4820fd2b",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:34:51Z",
+          "description": "",
+          "id": 1,
+          "legacy": false,
+          "priority": null,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 1,
+          "updated_at": "2026-10-18T17:34:51Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:51Z",
+            "id": 1,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:51Z",
+            "release_digest": null,
+            "released_at": "2026-10-18T17:34:51Z",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          }
+        ]
+      },
+      "returned_ids": [
+        1
+      ],
+      "wait_observed": "SQLite attempted BEGIN"
+    },
+    {
+      "admission": {
+        "activity_age_seconds": 0,
+        "actor": "contender",
+        "conflict": true,
+        "conflict_severity": "informational",
+        "conflicting_reservations": [
+          {
+            "actor": "seed actor",
+            "id": 1,
+            "last_activity_at": "2026-10-18T17:34:51Z",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 1
+          }
+        ],
+        "correlation_ref": null,
+        "created_at": "2026-10-18T17:34:51Z",
+        "id": 2,
+        "interruption_reason": null,
+        "last_activity_at": "2026-10-18T17:34:51Z",
+        "release_digest": null,
+        "released_at": null,
+        "role": "observation",
+        "session_id": " target-session ",
+        "stale": false,
+        "state": "active",
+        "work_item_id": 1
+      },
+      "durable": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:51Z",
+            "event_type": "reservation.reserved",
+            "id": 1,
+            "payload": "{\"reservation_id\": 1, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": "contender",
+            "created_at": "2026-10-18T17:34:51Z",
+            "event_type": "reservation.reserved",
+            "id": 2,
+            "payload": "{\"reservation_id\": 2, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [1], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "f9e77207-df6f-4f58-99c8-99c3849a377c",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:34:51Z",
+          "description": "",
+          "id": 1,
+          "legacy": false,
+          "priority": null,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 1,
+          "updated_at": "2026-10-18T17:34:51Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:51Z",
+            "id": 1,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:51Z",
+            "release_digest": null,
+            "released_at": null,
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 1
+          },
+          {
+            "actor": "contender",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:51Z",
+            "id": 2,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:51Z",
+            "release_digest": null,
+            "released_at": null,
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 1
+          }
+        ]
+      },
+      "junit_case": {
+        "class": "tests.test_session_release.TestSQLiteSessionRelease",
+        "name": "test_existing_owner_lock_gates_public_admission[rollback]"
+      },
+      "name": "owner-lock-admission-rollback",
+      "pending_before_owner_finish": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:34:51Z",
+            "event_type": "reservation.reserved",
+            "id": 1,
+            "payload": "{\"reservation_id\": 1, \"session_id\": \" target-session \", \"role\": \"observation\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": null}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:34:51Z",
+            "event_type": "reservation.released",
+            "id": 2,
+            "payload": "{\"reservation_id\": 1}",
+            "source_type": "system",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "f9e77207-df6f-4f58-99c8-99c3849a377c",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:34:51Z",
+          "description": "",
+          "id": 1,
+          "legacy": false,
+          "priority": null,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 1,
+          "updated_at": "2026-10-18T17:34:51Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18T17:34:51Z",
+            "id": 1,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18T17:34:51Z",
+            "release_digest": null,
+            "released_at": "2026-10-18T17:34:51Z",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 1
+          }
+        ]
+      },
+      "returned_ids": [
+        1
+      ],
+      "wait_observed": "SQLite attempted BEGIN"
+    },
+    {
+      "before": {
+        "events": [
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:30:08.331284Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139407,
+            "payload": "{\"role\": \"execution\", \"session_id\": \" target-session \", \"release_digest\": \"f9f5ec450bc8b6211c45488d652c8d59ae8f3725dc4f54bf1aa798e0301b6dd0\", \"reservation_id\": 269, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973258,
+            "work_item_id": 412
+          },
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:30:08.333671Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139408,
+            "payload": "{\"role\": \"verification\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 270, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [269]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973258,
+            "work_item_id": 412
+          },
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:30:08.334736Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139409,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 271, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [269, 270]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973258,
+            "work_item_id": 412
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:30:08.335713Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139410,
+            "payload": "{\"role\": \"observation\", \"session_id\": \"target-session\", \"release_digest\": null, \"reservation_id\": 272, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [269, 270, 271]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973258,
+            "work_item_id": 412
+          },
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.336678Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139411,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 273, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [269, 270, 271, 272]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973258,
+            "work_item_id": 412
+          },
+          {
+            "actor": "fixture",
+            "created_at": "2026-10-18T17:30:08.337808Z",
+            "event_type": "reservation.released",
+            "id": 2013139412,
+            "payload": "{\"reservation_id\": 273}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973258,
+            "work_item_id": 412
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "978a84e6-7420-466f-94ec-2d43017a92c4",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:30:08.330041Z",
+          "description": "",
+          "id": 412,
+          "legacy": false,
+          "priority": null,
+          "repo_id": "itest-module-01a6d13b2ee3",
+          "resolution": null,
+          "sprint_id": 2013973258,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 338,
+          "updated_at": "2026-10-18T17:30:08.330414Z"
+        },
+        "rows": [
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 269,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": "f9f5ec450bc8b6211c45488d652c8d59ae8f3725dc4f54bf1aa798e0301b6dd0",
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "execution",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 412
+          },
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 270,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "verification",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 412
+          },
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 271,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 412
+          },
+          {
+            "actor": " releasing actor ",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 272,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": "target-session",
+            "state": "active",
+            "work_item_id": 412
+          },
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 273,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": "2026-10-18 20:30:08+03:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 412
+          }
+        ]
+      },
+      "junit_case": {
+        "class": "tests.pg.test_session_release.TestPostgresSessionRelease",
+        "name": "test_mixed_roles_exact_session_clock_order_and_owner[commit]"
+      },
+      "name": "mixed-owner-commit",
+      "owner_state_before_cleanup": "INTRANS",
+      "pending": {
+        "events": [
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:30:08.331284Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139407,
+            "payload": "{\"role\": \"execution\", \"session_id\": \" target-session \", \"release_digest\": \"f9f5ec450bc8b6211c45488d652c8d59ae8f3725dc4f54bf1aa798e0301b6dd0\", \"reservation_id\": 269, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973258,
+            "work_item_id": 412
+          },
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:30:08.333671Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139408,
+            "payload": "{\"role\": \"verification\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 270, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [269]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973258,
+            "work_item_id": 412
+          },
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:30:08.334736Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139409,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 271, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [269, 270]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973258,
+            "work_item_id": 412
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:30:08.335713Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139410,
+            "payload": "{\"role\": \"observation\", \"session_id\": \"target-session\", \"release_digest\": null, \"reservation_id\": 272, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [269, 270, 271]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973258,
+            "work_item_id": 412
+          },
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.336678Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139411,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 273, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [269, 270, 271, 272]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973258,
+            "work_item_id": 412
+          },
+          {
+            "actor": "fixture",
+            "created_at": "2026-10-18T17:30:08.337808Z",
+            "event_type": "reservation.released",
+            "id": 2013139412,
+            "payload": "{\"reservation_id\": 273}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973258,
+            "work_item_id": 412
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:30:08.344029Z",
+            "event_type": "reservation.released",
+            "id": 2013139413,
+            "payload": "{\"reservation_id\": 270}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973258,
+            "work_item_id": 412
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:30:08.344029Z",
+            "event_type": "reservation.released",
+            "id": 2013139414,
+            "payload": "{\"reservation_id\": 271}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973258,
+            "work_item_id": 412
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:30:08.344029Z",
+            "event_type": "reservation.released",
+            "id": 2013139415,
+            "payload": "{\"reservation_id\": 269}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973258,
+            "work_item_id": 412
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "978a84e6-7420-466f-94ec-2d43017a92c4",
+          "assignee": "pending caller",
+          "created_at": "2026-10-18T17:30:08.330041Z",
+          "description": "",
+          "id": 412,
+          "legacy": false,
+          "priority": null,
+          "repo_id": "itest-module-01a6d13b2ee3",
+          "resolution": null,
+          "sprint_id": 2013973258,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 338,
+          "updated_at": "2026-10-18T17:30:08.330414Z"
+        },
+        "rows": [
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 269,
+            "interruption_reason": null,
+            "last_activity_at": "2026-01-02 05:04:05+02:00",
+            "release_digest": "f9f5ec450bc8b6211c45488d652c8d59ae8f3725dc4f54bf1aa798e0301b6dd0",
+            "released_at": "2026-01-02 05:04:05+02:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "execution",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 412
+          },
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 270,
+            "interruption_reason": null,
+            "last_activity_at": "2026-01-02 05:04:05+02:00",
+            "release_digest": null,
+            "released_at": "2026-01-02 05:04:05+02:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "verification",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 412
+          },
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 271,
+            "interruption_reason": null,
+            "last_activity_at": "2026-01-02 05:04:05+02:00",
+            "release_digest": null,
+            "released_at": "2026-01-02 05:04:05+02:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 412
+          },
+          {
+            "actor": " releasing actor ",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 272,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": "target-session",
+            "state": "active",
+            "work_item_id": 412
+          },
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 273,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": "2026-10-18 20:30:08+03:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 412
+          }
+        ]
+      },
+      "returned_ids": [
+        270,
+        271,
+        269
+      ]
+    },
+    {
+      "before": {
+        "events": [
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:30:08.360833Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139416,
+            "payload": "{\"role\": \"execution\", \"session_id\": \" target-session \", \"release_digest\": \"95e58d30f933b2465053ec3edca8e5465721c6d4c4e12e5b6bcb88be175e193b\", \"reservation_id\": 274, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973259,
+            "work_item_id": 413
+          },
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:30:08.362975Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139417,
+            "payload": "{\"role\": \"verification\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 275, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [274]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973259,
+            "work_item_id": 413
+          },
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:30:08.363947Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139418,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 276, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [274, 275]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973259,
+            "work_item_id": 413
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:30:08.364930Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139419,
+            "payload": "{\"role\": \"observation\", \"session_id\": \"target-session\", \"release_digest\": null, \"reservation_id\": 277, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [274, 275, 276]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973259,
+            "work_item_id": 413
+          },
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.365891Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139420,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 278, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [274, 275, 276, 277]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973259,
+            "work_item_id": 413
+          },
+          {
+            "actor": "fixture",
+            "created_at": "2026-10-18T17:30:08.366968Z",
+            "event_type": "reservation.released",
+            "id": 2013139421,
+            "payload": "{\"reservation_id\": 278}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973259,
+            "work_item_id": 413
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "57aff71b-081f-47af-88c5-86a23e0c15f7",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:30:08.359344Z",
+          "description": "",
+          "id": 413,
+          "legacy": false,
+          "priority": null,
+          "repo_id": "itest-module-01a6d13b2ee3",
+          "resolution": null,
+          "sprint_id": 2013973259,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 339,
+          "updated_at": "2026-10-18T17:30:08.359819Z"
+        },
+        "rows": [
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 274,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": "95e58d30f933b2465053ec3edca8e5465721c6d4c4e12e5b6bcb88be175e193b",
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "execution",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 413
+          },
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 275,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "verification",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 413
+          },
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 276,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 413
+          },
+          {
+            "actor": " releasing actor ",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 277,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": "target-session",
+            "state": "active",
+            "work_item_id": 413
+          },
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 278,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": "2026-10-18 20:30:08+03:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 413
+          }
+        ]
+      },
+      "junit_case": {
+        "class": "tests.pg.test_session_release.TestPostgresSessionRelease",
+        "name": "test_mixed_roles_exact_session_clock_order_and_owner[rollback]"
+      },
+      "name": "mixed-owner-rollback",
+      "owner_state_before_cleanup": "INTRANS",
+      "pending": {
+        "events": [
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:30:08.360833Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139416,
+            "payload": "{\"role\": \"execution\", \"session_id\": \" target-session \", \"release_digest\": \"95e58d30f933b2465053ec3edca8e5465721c6d4c4e12e5b6bcb88be175e193b\", \"reservation_id\": 274, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973259,
+            "work_item_id": 413
+          },
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:30:08.362975Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139417,
+            "payload": "{\"role\": \"verification\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 275, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [274]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973259,
+            "work_item_id": 413
+          },
+          {
+            "actor": "other actor",
+            "created_at": "2026-10-18T17:30:08.363947Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139418,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 276, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [274, 275]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973259,
+            "work_item_id": 413
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:30:08.364930Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139419,
+            "payload": "{\"role\": \"observation\", \"session_id\": \"target-session\", \"release_digest\": null, \"reservation_id\": 277, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [274, 275, 276]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973259,
+            "work_item_id": 413
+          },
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.365891Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139420,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 278, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [274, 275, 276, 277]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973259,
+            "work_item_id": 413
+          },
+          {
+            "actor": "fixture",
+            "created_at": "2026-10-18T17:30:08.366968Z",
+            "event_type": "reservation.released",
+            "id": 2013139421,
+            "payload": "{\"reservation_id\": 278}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973259,
+            "work_item_id": 413
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:30:08.373138Z",
+            "event_type": "reservation.released",
+            "id": 2013139422,
+            "payload": "{\"reservation_id\": 275}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973259,
+            "work_item_id": 413
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:30:08.373138Z",
+            "event_type": "reservation.released",
+            "id": 2013139423,
+            "payload": "{\"reservation_id\": 276}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973259,
+            "work_item_id": 413
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:30:08.373138Z",
+            "event_type": "reservation.released",
+            "id": 2013139424,
+            "payload": "{\"reservation_id\": 274}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973259,
+            "work_item_id": 413
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "57aff71b-081f-47af-88c5-86a23e0c15f7",
+          "assignee": "pending caller",
+          "created_at": "2026-10-18T17:30:08.359344Z",
+          "description": "",
+          "id": 413,
+          "legacy": false,
+          "priority": null,
+          "repo_id": "itest-module-01a6d13b2ee3",
+          "resolution": null,
+          "sprint_id": 2013973259,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 339,
+          "updated_at": "2026-10-18T17:30:08.359819Z"
+        },
+        "rows": [
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 274,
+            "interruption_reason": null,
+            "last_activity_at": "2026-01-02 05:04:05+02:00",
+            "release_digest": "95e58d30f933b2465053ec3edca8e5465721c6d4c4e12e5b6bcb88be175e193b",
+            "released_at": "2026-01-02 05:04:05+02:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "execution",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 413
+          },
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 275,
+            "interruption_reason": null,
+            "last_activity_at": "2026-01-02 05:04:05+02:00",
+            "release_digest": null,
+            "released_at": "2026-01-02 05:04:05+02:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "verification",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 413
+          },
+          {
+            "actor": "other actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 276,
+            "interruption_reason": null,
+            "last_activity_at": "2026-01-02 05:04:05+02:00",
+            "release_digest": null,
+            "released_at": "2026-01-02 05:04:05+02:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 413
+          },
+          {
+            "actor": " releasing actor ",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 277,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": "target-session",
+            "state": "active",
+            "work_item_id": 413
+          },
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 278,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": "2026-10-18 20:30:08+03:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 413
+          }
+        ]
+      },
+      "returned_ids": [
+        275,
+        276,
+        274
+      ]
+    },
+    {
+      "durable": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.389773Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139425,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 279, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973260,
+            "work_item_id": 414
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "dab15b3f-b82e-47bb-9d8b-b14737110510",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:30:08.387893Z",
+          "description": "",
+          "id": 414,
+          "legacy": false,
+          "priority": null,
+          "repo_id": "itest-module-01a6d13b2ee3",
+          "resolution": null,
+          "sprint_id": 2013973260,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 340,
+          "updated_at": "2026-10-18T17:30:08.388428Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 279,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 414
+          }
+        ]
+      },
+      "junit_case": {
+        "class": "tests.pg.test_session_release.TestPostgresSessionRelease",
+        "name": "test_late_sprint_conversion_error_leaves_actual_update_pending[True]"
+      },
+      "name": "late-sprint-conversion",
+      "owner_state_before_cleanup": "INTRANS",
+      "pending": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.389773Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139425,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 279, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973260,
+            "work_item_id": 414
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "dab15b3f-b82e-47bb-9d8b-b14737110510",
+          "assignee": "pending caller",
+          "created_at": "2026-10-18T17:30:08.387893Z",
+          "description": "",
+          "id": 414,
+          "legacy": false,
+          "priority": null,
+          "repo_id": "itest-module-01a6d13b2ee3",
+          "resolution": null,
+          "sprint_id": 2013973260,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 340,
+          "updated_at": "2026-10-18T17:30:08.388428Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 279,
+            "interruption_reason": null,
+            "last_activity_at": "2026-01-02 05:04:05+02:00",
+            "release_digest": null,
+            "released_at": "2026-01-02 05:04:05+02:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 414
+          }
+        ]
+      }
+    },
+    {
+      "durable": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.412451Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139426,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 280, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973261,
+            "work_item_id": 415
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "1f764981-d928-473f-9470-a93518fa4c9f",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:30:08.410838Z",
+          "description": "",
+          "id": 415,
+          "legacy": false,
+          "priority": null,
+          "repo_id": "itest-module-01a6d13b2ee3",
+          "resolution": null,
+          "sprint_id": 2013973261,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 341,
+          "updated_at": "2026-10-18T17:30:08.411402Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 280,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 415
+          }
+        ]
+      },
+      "junit_case": {
+        "class": "tests.pg.test_session_release.TestPostgresSessionRelease",
+        "name": "test_late_sprint_conversion_error_leaves_actual_update_pending[False]"
+      },
+      "name": "late-sprint-conversion",
+      "owner_state_before_cleanup": "INTRANS",
+      "pending": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.412451Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139426,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 280, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973261,
+            "work_item_id": 415
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "1f764981-d928-473f-9470-a93518fa4c9f",
+          "assignee": "pending caller",
+          "created_at": "2026-10-18T17:30:08.410838Z",
+          "description": "",
+          "id": 415,
+          "legacy": false,
+          "priority": null,
+          "repo_id": "itest-module-01a6d13b2ee3",
+          "resolution": null,
+          "sprint_id": 2013973261,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 341,
+          "updated_at": "2026-10-18T17:30:08.411402Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 280,
+            "interruption_reason": null,
+            "last_activity_at": "2026-01-02 05:04:05+02:00",
+            "release_digest": null,
+            "released_at": "2026-01-02 05:04:05+02:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 415
+          }
+        ]
+      }
+    },
+    {
+      "durable": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.434453Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139427,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 281, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973262,
+            "work_item_id": 416
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "f199f4f8-30aa-4bd7-b11b-27b48f093a70",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:30:08.432900Z",
+          "description": "",
+          "id": 416,
+          "legacy": false,
+          "priority": null,
+          "repo_id": "itest-module-01a6d13b2ee3",
+          "resolution": null,
+          "sprint_id": 2013973262,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 342,
+          "updated_at": "2026-10-18T17:30:08.433443Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 281,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 416
+          }
+        ]
+      },
+      "junit_case": {
+        "class": "tests.pg.test_session_release.TestPostgresSessionRelease",
+        "name": "test_clock_hook_added_matching_row_preserves_selected_vs_updated_population"
+      },
+      "late_raw_id": 282,
+      "name": "deliberate-same-owner-population-probe",
+      "pending": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.434453Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139427,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 281, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973262,
+            "work_item_id": 416
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:30:08.441052Z",
+            "event_type": "reservation.released",
+            "id": 2013139428,
+            "payload": "{\"reservation_id\": 281}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973262,
+            "work_item_id": 416
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "f199f4f8-30aa-4bd7-b11b-27b48f093a70",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:30:08.432900Z",
+          "description": "",
+          "id": 416,
+          "legacy": false,
+          "priority": null,
+          "repo_id": "itest-module-01a6d13b2ee3",
+          "resolution": null,
+          "sprint_id": 2013973262,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 342,
+          "updated_at": "2026-10-18T17:30:08.433443Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 281,
+            "interruption_reason": null,
+            "last_activity_at": "2026-01-02 05:04:05+02:00",
+            "release_digest": null,
+            "released_at": "2026-01-02 05:04:05+02:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 416
+          },
+          {
+            "actor": "late raw actor",
+            "correlation_ref": null,
+            "created_at": "2026-01-02 05:04:05+02:00",
+            "id": 282,
+            "interruption_reason": null,
+            "last_activity_at": "2026-01-02 05:04:05+02:00",
+            "release_digest": null,
+            "released_at": "2026-01-02 05:04:05+02:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 416
+          }
+        ]
+      },
+      "returned_ids": [
+        281
+      ]
+    },
+    {
+      "durable": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.451265Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139429,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 283, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973263,
+            "work_item_id": 417
+          },
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.452381Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139430,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 284, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [283]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973263,
+            "work_item_id": 417
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "5646f90f-8bff-4c66-bdc7-3350ad8dbbdc",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:30:08.449904Z",
+          "description": "",
+          "id": 417,
+          "legacy": false,
+          "priority": null,
+          "repo_id": "itest-module-01a6d13b2ee3",
+          "resolution": null,
+          "sprint_id": 2013973263,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 343,
+          "updated_at": "2026-10-18T17:30:08.450396Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 283,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 417
+          },
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 284,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 417
+          }
+        ]
+      },
+      "junit_case": {
+        "class": "tests.pg.test_session_release.TestPostgresSessionRelease",
+        "name": "test_after_actual_event_python_failure_leaves_cleanup_to_owner[1]"
+      },
+      "name": "after-event-1",
+      "owner_state_before_cleanup": "INTRANS",
+      "pending": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.451265Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139429,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 283, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973263,
+            "work_item_id": 417
+          },
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.452381Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139430,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 284, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [283]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973263,
+            "work_item_id": 417
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:30:08.458982Z",
+            "event_type": "reservation.released",
+            "id": 2013139431,
+            "payload": "{\"reservation_id\": 283}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973263,
+            "work_item_id": 417
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "5646f90f-8bff-4c66-bdc7-3350ad8dbbdc",
+          "assignee": "pending caller",
+          "created_at": "2026-10-18T17:30:08.449904Z",
+          "description": "",
+          "id": 417,
+          "legacy": false,
+          "priority": null,
+          "repo_id": "itest-module-01a6d13b2ee3",
+          "resolution": null,
+          "sprint_id": 2013973263,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 343,
+          "updated_at": "2026-10-18T17:30:08.450396Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 283,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": "2026-10-18 20:30:08+03:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 417
+          },
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 284,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": "2026-10-18 20:30:08+03:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 417
+          }
+        ]
+      }
+    },
+    {
+      "durable": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.475343Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139434,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 285, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973264,
+            "work_item_id": 418
+          },
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.476279Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139435,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 286, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [285]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973264,
+            "work_item_id": 418
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "dc09a44c-90ac-4244-ac3e-e66b81071f3f",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:30:08.473897Z",
+          "description": "",
+          "id": 418,
+          "legacy": false,
+          "priority": null,
+          "repo_id": "itest-module-01a6d13b2ee3",
+          "resolution": null,
+          "sprint_id": 2013973264,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 344,
+          "updated_at": "2026-10-18T17:30:08.474376Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 285,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 418
+          },
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 286,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 418
+          }
+        ]
+      },
+      "junit_case": {
+        "class": "tests.pg.test_session_release.TestPostgresSessionRelease",
+        "name": "test_after_actual_event_python_failure_leaves_cleanup_to_owner[2]"
+      },
+      "name": "after-event-2",
+      "owner_state_before_cleanup": "INTRANS",
+      "pending": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.475343Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139434,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 285, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973264,
+            "work_item_id": 418
+          },
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.476279Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139435,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 286, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [285]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973264,
+            "work_item_id": 418
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:30:08.482572Z",
+            "event_type": "reservation.released",
+            "id": 2013139436,
+            "payload": "{\"reservation_id\": 285}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973264,
+            "work_item_id": 418
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:30:08.482572Z",
+            "event_type": "reservation.released",
+            "id": 2013139437,
+            "payload": "{\"reservation_id\": 286}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973264,
+            "work_item_id": 418
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "dc09a44c-90ac-4244-ac3e-e66b81071f3f",
+          "assignee": "pending caller",
+          "created_at": "2026-10-18T17:30:08.473897Z",
+          "description": "",
+          "id": 418,
+          "legacy": false,
+          "priority": null,
+          "repo_id": "itest-module-01a6d13b2ee3",
+          "resolution": null,
+          "sprint_id": 2013973264,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 344,
+          "updated_at": "2026-10-18T17:30:08.474376Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 285,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": "2026-10-18 20:30:08+03:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 418
+          },
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 286,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": "2026-10-18 20:30:08+03:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 418
+          }
+        ]
+      }
+    },
+    {
+      "durable": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.498798Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139440,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 287, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973265,
+            "work_item_id": 419
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "5572d73c-b6ff-4eda-8c4c-7bd8236fbba3",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:30:08.497405Z",
+          "description": "",
+          "id": 419,
+          "legacy": false,
+          "priority": null,
+          "repo_id": "itest-module-01a6d13b2ee3",
+          "resolution": null,
+          "sprint_id": 2013973265,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 345,
+          "updated_at": "2026-10-18T17:30:08.497877Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 287,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 419
+          }
+        ]
+      },
+      "junit_case": {
+        "class": "tests.pg.test_session_release.TestPostgresSessionRelease",
+        "name": "test_real_update_sql_fault_does_not_rollback_owner"
+      },
+      "name": "actual-update-SQL-fault",
+      "owner_state_before_cleanup": "INERROR",
+      "primary_rows_unreadable_until_rollback": true
+    },
+    {
+      "admission": {
+        "activity_age_seconds": 0,
+        "actor": "contender",
+        "conflict": false,
+        "conflict_severity": "none",
+        "conflicting_reservations": [],
+        "correlation_ref": null,
+        "created_at": "2026-10-18 20:30:08+03:00",
+        "id": 289,
+        "interruption_reason": null,
+        "last_activity_at": "2026-10-18 20:30:08+03:00",
+        "release_digest": null,
+        "released_at": null,
+        "repo_id": "itest-module-01a6d13b2ee3",
+        "role": "observation",
+        "session_id": " target-session ",
+        "stale": false,
+        "state": "active",
+        "work_item_id": 420
+      },
+      "durable": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.521345Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139441,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 288, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973266,
+            "work_item_id": 420
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:30:08.522327Z",
+            "event_type": "reservation.released",
+            "id": 2013139442,
+            "payload": "{\"reservation_id\": 288}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973266,
+            "work_item_id": 420
+          },
+          {
+            "actor": "contender",
+            "created_at": "2026-10-18T17:30:08.526807Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139443,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 289, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973266,
+            "work_item_id": 420
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "69c49c01-ca94-4442-9d7a-268310349141",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:30:08.520092Z",
+          "description": "",
+          "id": 420,
+          "legacy": false,
+          "priority": null,
+          "repo_id": "itest-module-01a6d13b2ee3",
+          "resolution": null,
+          "sprint_id": 2013973266,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 346,
+          "updated_at": "2026-10-18T17:30:08.520495Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 288,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": "2026-10-18 20:30:08+03:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 420
+          },
+          {
+            "actor": "contender",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 289,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 420
+          }
+        ]
+      },
+      "junit_case": {
+        "class": "tests.pg.test_session_release.TestPostgresSessionRelease",
+        "name": "test_existing_owner_lock_gates_public_admission[commit]"
+      },
+      "name": "owner-lock-admission-commit",
+      "pending_before_owner_finish": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.521345Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139441,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 288, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973266,
+            "work_item_id": 420
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:30:08.522327Z",
+            "event_type": "reservation.released",
+            "id": 2013139442,
+            "payload": "{\"reservation_id\": 288}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973266,
+            "work_item_id": 420
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "69c49c01-ca94-4442-9d7a-268310349141",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:30:08.520092Z",
+          "description": "",
+          "id": 420,
+          "legacy": false,
+          "priority": null,
+          "repo_id": "itest-module-01a6d13b2ee3",
+          "resolution": null,
+          "sprint_id": 2013973266,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 346,
+          "updated_at": "2026-10-18T17:30:08.520495Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 288,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": "2026-10-18 20:30:08+03:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 420
+          }
+        ]
+      },
+      "returned_ids": [
+        288
+      ],
+      "wait_observed": "PG exact blocking PID"
+    },
+    {
+      "admission": {
+        "activity_age_seconds": 0,
+        "actor": "contender",
+        "conflict": true,
+        "conflict_severity": "informational",
+        "conflicting_reservations": [
+          {
+            "actor": "seed actor",
+            "id": 290,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 421
+          }
+        ],
+        "correlation_ref": null,
+        "created_at": "2026-10-18 20:30:08+03:00",
+        "id": 291,
+        "interruption_reason": null,
+        "last_activity_at": "2026-10-18 20:30:08+03:00",
+        "release_digest": null,
+        "released_at": null,
+        "repo_id": "itest-module-01a6d13b2ee3",
+        "role": "observation",
+        "session_id": " target-session ",
+        "stale": false,
+        "state": "active",
+        "work_item_id": 421
+      },
+      "durable": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.544445Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139444,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 290, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973267,
+            "work_item_id": 421
+          },
+          {
+            "actor": "contender",
+            "created_at": "2026-10-18T17:30:08.550361Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139446,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 291, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [290]}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973267,
+            "work_item_id": 421
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "41098e36-34a7-4968-90f3-5901ae59d4ac",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:30:08.542939Z",
+          "description": "",
+          "id": 421,
+          "legacy": false,
+          "priority": null,
+          "repo_id": "itest-module-01a6d13b2ee3",
+          "resolution": null,
+          "sprint_id": 2013973267,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 347,
+          "updated_at": "2026-10-18T17:30:08.543394Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 290,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 421
+          },
+          {
+            "actor": "contender",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 291,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": null,
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "active",
+            "work_item_id": 421
+          }
+        ]
+      },
+      "junit_case": {
+        "class": "tests.pg.test_session_release.TestPostgresSessionRelease",
+        "name": "test_existing_owner_lock_gates_public_admission[rollback]"
+      },
+      "name": "owner-lock-admission-rollback",
+      "pending_before_owner_finish": {
+        "events": [
+          {
+            "actor": "seed actor",
+            "created_at": "2026-10-18T17:30:08.544445Z",
+            "event_type": "reservation.reserved",
+            "id": 2013139444,
+            "payload": "{\"role\": \"observation\", \"session_id\": \" target-session \", \"release_digest\": null, \"reservation_id\": 290, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973267,
+            "work_item_id": 421
+          },
+          {
+            "actor": " releasing actor ",
+            "created_at": "2026-10-18T17:30:08.545435Z",
+            "event_type": "reservation.released",
+            "id": 2013139445,
+            "payload": "{\"reservation_id\": 290}",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "source_type": "system",
+            "sprint_id": 2013973267,
+            "work_item_id": 421
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "41098e36-34a7-4968-90f3-5901ae59d4ac",
+          "assignee": "original",
+          "created_at": "2026-10-18T17:30:08.542939Z",
+          "description": "",
+          "id": 421,
+          "legacy": false,
+          "priority": null,
+          "repo_id": "itest-module-01a6d13b2ee3",
+          "resolution": null,
+          "sprint_id": 2013973267,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "session release",
+          "track_id": 347,
+          "updated_at": "2026-10-18T17:30:08.543394Z"
+        },
+        "rows": [
+          {
+            "actor": "seed actor",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 20:30:08+03:00",
+            "id": 290,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 20:30:08+03:00",
+            "release_digest": null,
+            "released_at": "2026-10-18 20:30:08+03:00",
+            "repo_id": "itest-module-01a6d13b2ee3",
+            "role": "observation",
+            "session_id": " target-session ",
+            "state": "released",
+            "work_item_id": 421
+          }
+        ]
+      },
+      "returned_ids": [
+        290
+      ],
+      "wait_observed": "PG exact blocking PID"
+    }
+  ],
+  "runs": [
+    {
+      "file": "sprintctl-session-release-full-local.xml",
+      "sha256": "22641b45f582ca43f46ff9558699c29343ab147196e22b01436d0186d68861a6",
+      "suites": [
+        {
+          "errors": "0",
+          "failures": "0",
+          "hostname": "workstation",
+          "name": "pytest",
+          "skipped": "4",
+          "tests": "2992",
+          "time": "458.732",
+          "timestamp": "2026-10-18T20:28:49.187561+03:00"
+        }
+      ]
+    },
+    {
+      "file": "sprintctl-session-release-full-pg.xml",
+      "sha256": "225f3f1a38d94f558c5c32e0997d8650183f199b2cf8e0e3366fb6a55a741462",
+      "suites": [
+        {
+          "errors": "0",
+          "failures": "0",
+          "hostname": "workstation",
+          "name": "pytest",
+          "skipped": "0",
+          "tests": "1640",
+          "time": "85.812",
+          "timestamp": "2026-10-18T20:28:55.093926+03:00"
+        }
+      ]
+    }
+  ],
+  "source": "actual completed JUnit record_property observations"
+}

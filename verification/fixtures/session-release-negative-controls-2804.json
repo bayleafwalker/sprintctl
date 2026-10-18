@@ -1,0 +1,119 @@
+{
+  "controls": [
+    {
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--no-sync",
+        "pytest",
+        "tests/test_session_release.py",
+        "-k",
+        "falsey_session",
+        "-p",
+        "session_release_oracle_controls",
+        "-q",
+        "--tb=short"
+      ],
+      "environment": {
+        "PYTHONPATH": "/tmp",
+        "SESSION_RELEASE_CONTROL": "commit",
+        "UV_OFFLINE": "1",
+        "UV_PROJECT_ENVIRONMENT": "/tmp/sprintctl-session-release-local-env"
+      },
+      "exit": 1,
+      "log": "/tmp/sprintctl-session-release-control-commit.txt",
+      "log_sha256": "2016070ad5ccb490caee1c06c66e9292463afc6e82857fae42c7c504d364070e",
+      "mode": "commit",
+      "scope": "SQLite test-only monkeypatch of existing helper; no product file mutation",
+      "terminal_summary": " ============================\nFAILED tests/test_session_release.py::TestSQLiteSessionRelease::test_falsey_session_precedes_item_access_sql_and_clock[None]\nFAILED tests/test_session_release.py::TestSQLiteSessionRelease::test_falsey_session_precedes_item_access_sql_and_clock[]\nFAILED tests/test_session_release.py::TestSQLiteSessionRelease::test_falsey_session_precedes_item_access_sql_and_clock[0]\n3 failed, 13 deselected in 0.38s\n"
+    },
+    {
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--no-sync",
+        "pytest",
+        "tests/test_session_release.py",
+        "-k",
+        "falsey_session",
+        "-p",
+        "session_release_oracle_controls",
+        "-q",
+        "--tb=short"
+      ],
+      "environment": {
+        "PYTHONPATH": "/tmp",
+        "SESSION_RELEASE_CONTROL": "rollback",
+        "UV_OFFLINE": "1",
+        "UV_PROJECT_ENVIRONMENT": "/tmp/sprintctl-session-release-local-env"
+      },
+      "exit": 1,
+      "log": "/tmp/sprintctl-session-release-control-rollback.txt",
+      "log_sha256": "cee38ba2d79b4b0c4d0039f42e1e6dc7027cc28b6f10cfa3832f982664db4fa4",
+      "mode": "rollback",
+      "scope": "SQLite test-only monkeypatch of existing helper; no product file mutation",
+      "terminal_summary": " ============================\nFAILED tests/test_session_release.py::TestSQLiteSessionRelease::test_falsey_session_precedes_item_access_sql_and_clock[None]\nFAILED tests/test_session_release.py::TestSQLiteSessionRelease::test_falsey_session_precedes_item_access_sql_and_clock[]\nFAILED tests/test_session_release.py::TestSQLiteSessionRelease::test_falsey_session_precedes_item_access_sql_and_clock[0]\n3 failed, 13 deselected in 0.39s\n"
+    },
+    {
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--no-sync",
+        "pytest",
+        "tests/test_session_release.py",
+        "-k",
+        "mixed_roles",
+        "-p",
+        "session_release_oracle_controls",
+        "-q",
+        "--tb=short"
+      ],
+      "environment": {
+        "PYTHONPATH": "/tmp",
+        "SESSION_RELEASE_CONTROL": "ascending",
+        "UV_OFFLINE": "1",
+        "UV_PROJECT_ENVIRONMENT": "/tmp/sprintctl-session-release-local-env"
+      },
+      "exit": 1,
+      "log": "/tmp/sprintctl-session-release-control-ascending.txt",
+      "log_sha256": "5a82824ead263ad383e5acef555b2be72863dbff5225c4be28e37d112b7166d6",
+      "mode": "ascending",
+      "scope": "SQLite test-only monkeypatch of existing helper; no product file mutation",
+      "terminal_summary": " ============================\nFAILED tests/test_session_release.py::TestSQLiteSessionRelease::test_mixed_roles_exact_session_clock_order_and_owner[commit]\nFAILED tests/test_session_release.py::TestSQLiteSessionRelease::test_mixed_roles_exact_session_clock_order_and_owner[rollback]\n2 failed, 14 deselected in 0.32s\n"
+    },
+    {
+      "command": [
+        "uv",
+        "run",
+        "--frozen",
+        "--no-sync",
+        "pytest",
+        "tests/test_session_release.py",
+        "-k",
+        "mixed_roles",
+        "-p",
+        "session_release_oracle_controls",
+        "-q",
+        "--tb=short"
+      ],
+      "environment": {
+        "PYTHONPATH": "/tmp",
+        "SESSION_RELEASE_CONTROL": "descending",
+        "UV_OFFLINE": "1",
+        "UV_PROJECT_ENVIRONMENT": "/tmp/sprintctl-session-release-local-env"
+      },
+      "exit": 1,
+      "log": "/tmp/sprintctl-session-release-control-descending.txt",
+      "log_sha256": "f0992e18aeae15bd5b5f5dd019c91d376cd43925c4dae0d238085501b400147f",
+      "mode": "descending",
+      "scope": "SQLite test-only monkeypatch of existing helper; no product file mutation",
+      "terminal_summary": " ============================\nFAILED tests/test_session_release.py::TestSQLiteSessionRelease::test_mixed_roles_exact_session_clock_order_and_owner[commit]\nFAILED tests/test_session_release.py::TestSQLiteSessionRelease::test_mixed_roles_exact_session_clock_order_and_owner[rollback]\n2 failed, 14 deselected in 0.30s\n"
+    }
+  ],
+  "limits": "Checks discriminate these four deliberate wrong implementations; no mutation score or exhaustive implementation equivalence claim.",
+  "plugin": "import os\nimport pytest\nfrom sprintctl import db\n\n@pytest.fixture(autouse=True)\ndef inject_release_control(monkeypatch):\n    mode = os.environ['SESSION_RELEASE_CONTROL']\n    original = db._release_caller_reservations_locked\n    def wrong(conn, item, *, session_id, actor):\n        if mode in ('commit', 'rollback') and not session_id:\n            getattr(conn, mode)()\n        result = original(conn, item, session_id=session_id, actor=actor)\n        if mode in ('ascending', 'descending'):\n            return sorted(result, reverse=mode == 'descending')\n        return result\n    monkeypatch.setattr(db, '_release_caller_reservations_locked', wrong)\n",
+  "plugin_sha256": "070646499c8ff6f2e47b9a64055b8a68b947fd6a474166ea9d369301109048aa"
+}
