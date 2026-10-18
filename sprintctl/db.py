@@ -1329,6 +1329,12 @@ def list_active_sprints(conn: sqlite3.Connection) -> list[dict]:
     return _sprintcore.list_active_sprints(_SprintSqlite(conn))
 
 
+def _require_idle_sprint_connection(conn: sqlite3.Connection) -> None:
+    """Protect caller work before the three owned sprint rollback handlers."""
+    if conn.in_transaction:
+        raise ValueError("sprint mutation requires an idle SQLite connection")
+
+
 def set_sprint_kind(
     conn: sqlite3.Connection, sprint_id: int, kind: str, *,
     expected_revision: str | None = None,
@@ -1338,6 +1344,7 @@ def set_sprint_kind(
         raise ValueError(f"Invalid kind '{kind}'")
     if expected_revision is not None:
         _sprintcore.validate_kind_revision(expected_revision)
+    _require_idle_sprint_connection(conn)
     try:
         conn.execute("BEGIN IMMEDIATE")
         sprint = get_sprint(conn, sprint_id)
@@ -1785,6 +1792,7 @@ def set_sprint_status(
 ) -> None:
     if expected_revision is not None:
         expected_revision = validate_sprint_status_revision(expected_revision)
+    _require_idle_sprint_connection(conn)
     try:
         conn.execute("BEGIN IMMEDIATE")
         sprint = get_sprint(conn, sprint_id)
@@ -1928,6 +1936,7 @@ def close_sprint_with_boundary_event(
         raise ValueError("actor must be a non-empty string")
     if expected_revision is not None:
         expected_revision = validate_sprint_status_revision(expected_revision)
+    _require_idle_sprint_connection(conn)
     try:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT * FROM sprint WHERE id = ?", (sprint_id,)).fetchone()

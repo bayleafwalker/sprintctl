@@ -1,0 +1,82 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.sqlite-sprint-caller",
+  "owner_repo": "sprintctl",
+  "subject": "caller ownership at three SQLite sprint mutation entrypoints",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2779",
+    "revision": "native:release:2c729967ab238bf3a00541cdd3c9930584b820f36b8b4b6eca23ac5316eb3685"
+  },
+  "source_of_truth": "Frozen No doc native decision5586 and existing public SQLite functions; bounded correctness repair",
+  "depth": 2,
+  "backends": [
+    "temporary SQLite"
+  ],
+  "actors": [
+    "caller with pending transaction",
+    "independent durable reader"
+  ],
+  "initial_state": [
+    "planned or active target sprint and separate caller-owned sprint",
+    "pending write, explicit read transaction, or savepoint with inner/outer writes"
+  ],
+  "operations": [
+    {
+      "name": "set_sprint_kind",
+      "actors": [
+        "caller with pending transaction"
+      ],
+      "synchronization": "idle precondition before owned BEGIN IMMEDIATE try/rollback handler"
+    },
+    {
+      "name": "set_sprint_status",
+      "actors": [
+        "caller with pending transaction"
+      ],
+      "synchronization": "idle precondition before owned BEGIN IMMEDIATE try/rollback handler"
+    },
+    {
+      "name": "close_sprint_with_boundary_event",
+      "actors": [
+        "caller with pending transaction"
+      ],
+      "synchronization": "idle precondition before owned BEGIN IMMEDIATE try/rollback handler"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "preservation of caller transaction on nested mutation refusal"
+  },
+  "assumptions": {
+    "isolation": "actual SQLite independent connections; no concurrent writers in these cases",
+    "clock": "existing fixture timestamps; no timing guarantee",
+    "fairness": "none"
+  },
+  "bounds": {
+    "nested_cases": 9,
+    "pure_validation_cases": 6,
+    "concurrent_histories": 0
+  },
+  "invariants": [
+    "active caller write/read/savepoint transactions remain usable after refusal, with no target sprint or lifecycle-event change",
+    "caller pending values remain isolated from an independent durable reader and remain rollbackable",
+    "savepoint rollback and release remain usable, preserving the enclosing caller write",
+    "existing pure input, actor and revision errors precede idle-connection refusal"
+  ],
+  "faults": [
+    "nested caller transaction",
+    "invalid argument/actor/revision with active caller writes"
+  ],
+  "oracles": [
+    "tests/test_sqlite_sprint_caller.py"
+  ],
+  "implementation_anchors": [
+    "sprintctl/db.py:_require_idle_sprint_connection",
+    "sprintctl/db.py:set_sprint_kind",
+    "sprintctl/db.py:set_sprint_status",
+    "sprintctl/db.py:close_sprint_with_boundary_event"
+  ],
+  "expansions": [
+    "fault-scenario"
+  ]
+}
