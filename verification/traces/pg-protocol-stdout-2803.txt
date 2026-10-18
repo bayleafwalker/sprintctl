@@ -1,0 +1,10 @@
+pg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)
+Using CPython 3.13.16
+Creating virtual environment at: /tmp/sprintctl-pg-protocol-2803-env
+   Building sprintctl @ file:///tmp/sprintctl-pg-protocol-2803
+      Built sprintctl @ file:///tmp/sprintctl-pg-protocol-2803
+Installed 15 packages in 14ms
+..........................                                               [100%]
+26 passed, 1596 deselected in 3.07s
+pg-cleanup-report-check: pg_test_scope: 7 fixture cleanup(s) completed with zero remaining rows
+pg-cleanup-report-check: ok: 7 fixture cleanup(s) across 1 fixture name(s)

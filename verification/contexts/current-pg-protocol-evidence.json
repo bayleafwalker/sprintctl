@@ -1,0 +1,124 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.current-pg-protocol-evidence",
+  "owner_repo": "sprintctl",
+  "subject": "bounded current PostgreSQL owner evidence supplement to historical23row protocol audit",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:d27985bc872f0fe8efcead9c25befef139ed623d"
+  },
+  "source_of_truth": "Ratified ADR and native1131refinement1008; bounded child2803 NoDoc5761 Release0e928472647fbede0b93a411e716af2959e3bc5d64c2d979549a8f18e851aaf7",
+  "depth": 2,
+  "backends": [
+    "registered disposable PostgreSQL16.15",
+    "temporary SQLite producer/cache in selected realPG tests"
+  ],
+  "actors": [
+    "producer",
+    "remote domain owner",
+    "independent competing producer",
+    "read-only runtime observer"
+  ],
+  "initial_state": [
+    "disposable repository scopes and fresh producer files from existing fixtures"
+  ],
+  "operations": [
+    {
+      "name": "run exact26 reviewed cases",
+      "actors": [
+        "producer",
+        "remote domain owner",
+        "independent competing producer"
+      ],
+      "synchronization": "Existing transaction/lock ownership; two selected tests use independent writer connections behind start barriers."
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "only assertions named by16 mapped audit rows within26 executed cases"
+  },
+  "assumptions": {
+    "isolation": "READ COMMITTED observed on one independent metadata connection; existing fixture/actor setup retained, not every actor newly measured.",
+    "clock": "existing owner/test clocks; no new cross-host clock guarantee",
+    "fairness": "none"
+  },
+  "bounds": {
+    "logical_test_anchors": 21,
+    "executed_cases": 26,
+    "mapped_historical_rows": 16,
+    "excluded_historical_rows": 7,
+    "independent_writer_cases": 2,
+    "retained_state_histories": 0
+  },
+  "invariants": [
+    "F03: Repeated committed batch returns duplicate/original offsets; independent concurrent same-stream callers retain one record.",
+    "F04: Sequential retry after committed admission preserves original repository cursor; no actual HTTP drop.",
+    "F05: Missing-sequence batch refuses without retained new records; corrected contiguous batch is accepted.",
+    "F08: Explicit advisory takeover rejects old-session touch; separate expired/superseded hosted leases retain reports without settlement. No real network partition.",
+    "F09: Exact authority command replay and stale-basis refusal; successful close retains one boundary linked to owner Decision. No injected close-event failure in this anchor.",
+    "F10: Retired capability command types refuse construction; omitted required protected receipt refuses acceptance without mutation. External artifact availability remains unknown.",
+    "F11: Successor cannot resolve/write predecessor run or evidence tail; old holder is told superseded on retry. No actual killed-session recovery.",
+    "F12: Native effect same-key replay/content conflict and two independent producer reconciliation; not general refinement of the retired proposal model.",
+    "F13: Actual PG ingest envelopes apply to fresh SQLite cache and reach expected offsets/event IDs. Does not call rebuild_cached_projection or upgrade cache schema.",
+    "I02: Repository-scoped same-stream concurrent retry admits one; changed timestamp under same origin identity conflicts.",
+    "I03: Actual PG gap refusal plus later valid contiguous admission; no implicit missing-prefix seed.",
+    "I05: Injected authority Decision insert failure rolls back request admission and item effect. No universal remote-only authority invariant.",
+    "I06: Stale exact item basis records rejection while item stays active; original command replay retains decision identity.",
+    "I07: Separate hosted lease expiry/supersession rejects settlement while retaining report; advisory reservations have no expiry grant.",
+    "I08: Protocol-specific native proposal lost-reply injection after actual commit and current proposed/accepted/rejected/applied replay; no generic model or target-effect exactly-once claim.",
+    "I09: Fresh-cache event identity/cursor correspondence from actual PG ingest; not whole-business-state shadow parity or future migration qualification."
+  ],
+  "faults": [
+    "actual SQL authority Decision insert trigger abort",
+    "native proposal reply exception after actual owner commit",
+    "stale basis, gap, retired command and required receipt refusal in existing bounded tests"
+  ],
+  "oracles": [
+    "tests/pg/test_authority.py::TestAuthorityCommandArbitration::test_decision_insert_failure_rolls_back_request_and_effect",
+    "tests/pg/test_authority.py::TestAuthorityCommandArbitration::test_item_transition_retry_and_stale_rejection_are_durable",
+    "tests/pg/test_authority.py::TestAuthorityCommandArbitration::test_retired_capability_receipt_commands_are_refused",
+    "tests/pg/test_authority.py::TestAuthorityCommandArbitration::test_sprint_close_boundary_and_decision_commit_atomically",
+    "tests/pg/test_authority.py::TestAuthorityFaultHistories::test_partition_reassignment_then_stale_touch_is_rejected",
+    "tests/pg/test_effect_intent.py::TestPropose::test_the_same_key_replays_one_proposal",
+    "tests/pg/test_effect_intent.py::TestPropose::test_the_same_key_with_other_content_is_an_idempotency_conflict",
+    "tests/pg/test_native_proposal_intake.py::test_actual_commit_lost_reply_replays_current_state",
+    "tests/pg/test_native_proposal_intake.py::test_independent_producers_reconcile_one_owner_proposal",
+    "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_changed_producer_timestamp_conflicts_with_existing_origin_tuple",
+    "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_concurrent_same_stream_retry_admits_once",
+    "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_disposable_remote_history_rebuilds_projection",
+    "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_gap_rejects_whole_batch_without_advancing_stream",
+    "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_lost_response_retry_does_not_advance_repository_cursor",
+    "tests/pg/test_outbox.py::TestProducerOutboxIngestion::test_retry_returns_original_offset_and_cursor_orders_new_records",
+    "tests/pg/test_protected_artifact_acceptance.py::test_required_receipt_cannot_be_omitted",
+    "tests/pg/test_run_continuation.py::TestPredecessorContext::test_continuation_transfers_context_not_authority",
+    "tests/pg/test_work_lease.py::TestHeartbeat::test_an_expired_lease_cannot_heartbeat_even_when_nobody_took_it",
+    "tests/pg/test_work_lease.py::TestOperatorLeaseContract::test_inv_l1_a_stale_lease_nobody_took_keeps_its_result_but_cannot_settle",
+    "tests/pg/test_work_lease.py::TestOperatorLeaseContract::test_inv_l1_a_superseded_lease_keeps_its_result_but_not_its_authority",
+    "tests/pg/test_work_lease.py::TestResume::test_a_restarted_holder_whose_lease_was_taken_over_is_told_so"
+  ],
+  "implementation_anchors": [
+    "sprintctl/pg.py:ingest_records",
+    "sprintctl/sync.py:synchronize_outbox",
+    "sprintctl/pg.py:_admit_sequence",
+    "sprintctl/db.py:reserve",
+    "sprintctl/db.py:touch_reservation",
+    "sprintctl/pg.py:heartbeat_lease",
+    "sprintctl/pg.py:complete_lease",
+    "sprintctl/db.py:set_work_item_status",
+    "sprintctl/db.py:close_sprint_with_boundary_event",
+    "sprintctl/authority.py:arbitrate_command",
+    "sprintctl/resume_diagnostics.py:diagnose_resume",
+    "sprintctl/effect_explanation.py:render_effect_explanation",
+    "sprintctl/handoff.py:_last_recorded_checkpoint",
+    "sprintctl/handoff.py:record_handoff_generated",
+    "sprintctl/pg.py:resume_lease",
+    "tests/test_authority_fault_protocol.py:_ProposalAcceptanceReferenceModel",
+    "sprintctl/proposal_intake.py:synchronize",
+    "sprintctl/projection.py:rebuild_cached_projection",
+    "sprintctl/sync.py:rebuild_ingest_projection",
+    "sprintctl/projection.py:apply_ingested_records"
+  ],
+  "expansions": [
+    "fault-scenario"
+  ]
+}
