@@ -38,6 +38,7 @@ except ImportError:  # pragma: no cover
 
 _logger = logging.getLogger(__name__)
 
+from . import reservationcore as _reservationcore
 from . import reservation as _reservation
 from . import reservation_policy as _policy
 from . import contracts as _contracts
@@ -4934,80 +4935,105 @@ def note_session_activity(store: PgStore, work_item_id: int, *, session_id: str 
     return [_reservation.display(row) for row in rows]
 
 
-def touch_reservation(store: PgStore, reservation_id: int, *, session_id: str, correlation_ref: str | None = None) -> dict:
-    row = _reservation_row(store, reservation_id)
-    if row is None:
-        raise ValueError(f"Reservation #{reservation_id} not found")
-    if row["state"] != "active":
-        raise ValueError(f"Reservation #{reservation_id} is {row['state']}")
-    if row["session_id"] != session_id:
-        raise ValueError(f"Reservation #{reservation_id} belongs to another session")
-    with store.conn.cursor() as cur:
-        cur.execute("UPDATE reservation SET last_activity_at = %s, correlation_ref = COALESCE(%s, correlation_ref) WHERE repo_id = %s AND id = %s", (_reservation.now_text(), correlation_ref, store.repo_id, reservation_id))
-    store.conn.commit()
-    return get_reservation(store, reservation_id)  # type: ignore[return-value]
+class _ReservationLifecyclePg:
+    """Private SQL participant for the shared reservation lifecycle workflow."""
+
+    def __init__(self, store: PgStore) -> None:
+        self.store = store
+
+    def peek(self, ident: int) -> dict | None:
+        return _reservation_row(self.store, ident)
+
+    def event(self, item: dict, row: dict, kind: str, actor: str, payload: dict) -> None:
+        _reservation_event_in_transaction(self.store, item, row, kind, actor, payload)
+
+    @contextmanager
+    def transaction(self):
+        # Public PG mutations commit implicit caller work, as carryover does.
+        # A managed outer/two-phase transaction refuses this before our handler.
+        self.store.conn.commit()
+        try:
+            with self.store.conn.transaction():
+                yield
+        except Exception:
+            self.store.conn.rollback()
+            raise
+
+    def lock_one(self, ident: int) -> tuple[dict, dict] | None:
+        with self.store.conn.cursor() as cur:
+            cur.execute("SELECT work_item_id FROM reservation WHERE repo_id = %s AND id = %s", (self.store.repo_id, ident))
+            parent = cur.fetchone()
+            if parent is None:
+                return None
+            cur.execute("SELECT * FROM work_item WHERE repo_id = %s AND id = %s FOR UPDATE", (self.store.repo_id, parent['work_item_id']))
+            item = cur.fetchone()
+            if item is None:
+                return None
+            cur.execute("SELECT * FROM reservation WHERE repo_id = %s AND id = %s AND work_item_id = %s FOR UPDATE", (self.store.repo_id, ident, parent['work_item_id']))
+            row = cur.fetchone()
+        return (dict(item), dict(row)) if row else None
+
+    def lock_stale(self, cutoff: str) -> list[tuple[dict, dict]]:
+        with self.store.conn.cursor() as cur:
+            # Freeze IDs first. New candidates wait for the next explicit sweep.
+            cur.execute(
+                "SELECT r.id, r.work_item_id FROM reservation r JOIN work_item i "
+                "ON i.repo_id = r.repo_id AND i.id = r.work_item_id "
+                "WHERE r.repo_id = %s AND r.state = 'active' AND r.last_activity_at <= %s "
+                "AND i.status <> 'done' ORDER BY r.id", (self.store.repo_id, cutoff))
+            candidates = cur.fetchall()
+            if not candidates:
+                return []
+            item_ids = sorted({r['work_item_id'] for r in candidates})
+            cur.execute("SELECT * FROM work_item WHERE repo_id = %s AND id = ANY(%s) ORDER BY id FOR UPDATE", (self.store.repo_id, item_ids))
+            items = {r['id']: dict(r) for r in cur.fetchall() if r['status'] != 'done'}
+            cur.execute(
+                "SELECT * FROM reservation WHERE repo_id = %s AND id = ANY(%s) "
+                "AND work_item_id = ANY(%s) AND state = 'active' AND last_activity_at <= %s "
+                "ORDER BY id FOR UPDATE", (self.store.repo_id, [r['id'] for r in candidates], list(items), cutoff))
+            rows = cur.fetchall()
+        return [(items[r['work_item_id']], dict(r)) for r in rows]
+
+    def _update(self, row: dict, assignment: str, params: tuple) -> dict:
+        with self.store.conn.cursor() as cur:
+            cur.execute(f"UPDATE reservation SET {assignment} WHERE repo_id = %s AND id = %s RETURNING *", (*params, self.store.repo_id, row['id']))
+            updated = cur.fetchone()
+        assert updated is not None
+        return dict(updated)
+
+    def touch(self, row: dict, now: str, correlation: str | None) -> dict:
+        return self._update(row, "last_activity_at = %s, correlation_ref = COALESCE(%s, correlation_ref)", (now, correlation))
+
+    def reassign(self, row: dict, now: str, actor: str, session: str, correlation: str | None) -> dict:
+        return self._update(row, "actor = %s, session_id = %s, last_activity_at = %s, correlation_ref = COALESCE(%s, correlation_ref)", (actor, session, now, correlation))
+
+    def release(self, row: dict, now: str) -> dict:
+        return self._update(row, "state = 'released', released_at = %s, last_activity_at = %s", (now, now))
+
+    def interrupt(self, row: dict, now: str, reason: str) -> dict:
+        return self._update(row, "state = 'interrupted', released_at = %s, interruption_reason = %s", (now, reason))
 
 
-def reassign_reservation(store: PgStore, reservation_id: int, *, actor: str, session_id: str, correlation_ref: str | None = None) -> dict:
-    row = _reservation_row(store, reservation_id)
-    if row is None or row["state"] != "active":
-        raise ValueError(f"Reservation #{reservation_id} is not active")
-    with store.conn.cursor() as cur:
-        cur.execute("UPDATE reservation SET actor = %s, session_id = %s, last_activity_at = %s, correlation_ref = COALESCE(%s, correlation_ref) WHERE repo_id = %s AND id = %s", (actor, session_id, _reservation.now_text(), correlation_ref, store.repo_id, reservation_id))
-    store.conn.commit()
-    updated = _reservation_row(store, reservation_id)
-    assert updated is not None
-    _reservation_event(store, updated, "reservation.reassigned", actor,
-                       {"reservation_id": reservation_id, "previous_actor": row["actor"],
-                        "previous_session_id": row["session_id"]})
-    return _reservation.display(updated)
+def touch_reservation(store: PgStore, reservation_id: int, *, session_id: str,
+                      correlation_ref: str | None = None) -> dict:
+    return _reservationcore.touch(_ReservationLifecyclePg(store), reservation_id,
+        session_id=session_id, correlation_ref=correlation_ref)
+
+
+def reassign_reservation(store: PgStore, reservation_id: int, *, actor: str, session_id: str,
+                         correlation_ref: str | None = None) -> dict:
+    return _reservationcore.reassign(_ReservationLifecyclePg(store), reservation_id,
+        actor=actor, session_id=session_id, correlation_ref=correlation_ref)
 
 
 def release_reservation(store: PgStore, reservation_id: int, *, actor: str | None = None) -> dict:
-    row = _reservation_row(store, reservation_id)
-    if row is None:
-        raise ValueError(f"Reservation #{reservation_id} not found")
-    if row["state"] == "active":
-        now = _reservation.now_text()
-        with store.conn.cursor() as cur:
-            cur.execute("UPDATE reservation SET state = 'released', released_at = %s, last_activity_at = %s WHERE repo_id = %s AND id = %s", (now, now, store.repo_id, reservation_id))
-        store.conn.commit()
-        updated = _reservation_row(store, reservation_id)
-        assert updated is not None
-        _reservation_event(store, updated, "reservation.released", actor or row["actor"],
-                           {"reservation_id": reservation_id})
-    return get_reservation(store, reservation_id)  # type: ignore[return-value]
+    return _reservationcore.release(_ReservationLifecyclePg(store), reservation_id, actor=actor)
 
 
 def sweep_stale_reservations(store: PgStore, *, now: str | None = None,
                              interrupt_after: timedelta | None = None) -> list[dict]:
-    """Interrupt long-idle reservations of open items.  Only an explicit sweep calls this.
-
-    Nothing expires in the background: the threshold is operator policy
-    (:mod:`sprintctl.reservation_policy`) applied when a sweep runs.
-    Reservations of done items are never touched.
-    """
-    window = _policy.interrupt_after() if interrupt_after is None else interrupt_after
-    reason = _policy.sweep_reason(window)
-    now = now or _reservation.now_text()
-    cutoff = (_reservation.parse_time(now) - window).strftime("%Y-%m-%dT%H:%M:%SZ")
-    with store.conn.cursor() as cur:
-        # A sweep only touches open work: a done item's history belongs to
-        # the decision that closed it, and nothing sweeps it afterwards.
-        cur.execute(
-            "UPDATE reservation r SET state = 'interrupted', released_at = %s, "
-            "interruption_reason = %s WHERE r.repo_id = %s AND r.state = 'active' "
-            "AND r.last_activity_at <= %s AND EXISTS (SELECT 1 FROM work_item wi "
-            "WHERE wi.repo_id = r.repo_id AND wi.id = r.work_item_id "
-            "AND wi.status <> 'done') RETURNING r.*",
-            (now, reason, store.repo_id, cutoff),
-        )
-        rows = cur.fetchall()
-    store.conn.commit()
-    for row in rows:
-        _reservation_event(store, dict(row), "reservation.interrupted", "maintenance",
-                           {"reservation_id": row["id"], "reason": reason})
-    return [_reservation.display(row, now=now) for row in rows]
+    """Atomically interrupt the selected idle reservations of open items."""
+    return _reservationcore.sweep(_ReservationLifecyclePg(store), now=now, interrupt_after=interrupt_after)
 
 
 # ---------------------------------------------------------------------------

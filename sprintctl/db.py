@@ -23,6 +23,7 @@ from . import sprintcore as _sprintcore
 from . import trackcore as _trackcore
 from . import unbound as _unbound
 from . import workitemcore as _workitemcore
+from . import reservationcore as _reservationcore
 from . import reservation as _reservation
 from . import reservation_policy as _policy
 from .eventcore import (
@@ -2156,87 +2157,86 @@ def note_session_activity(conn: sqlite3.Connection, work_item_id: int, *, sessio
     return [_reservation.display(dict(_reservation_row(conn, row["id"]))) for row in rows]
 
 
+class _ReservationLifecycleSqlite:
+    """Private SQL participant for the shared reservation lifecycle workflow."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self.conn = conn
+
+    def peek(self, ident: int) -> dict | None:
+        return _reservation_row(self.conn, ident)
+
+    def event(self, item: dict, row: dict, kind: str, actor: str, payload: dict) -> None:
+        _reservation_event_in_transaction(self.conn, item, row, kind, actor, payload)
+
+    @contextmanager
+    def transaction(self):
+        # Refuse composition before entering our rollback handler.
+        if self.conn.in_transaction:
+            raise ValueError("reservation lifecycle requires an idle SQLite connection")
+        try:
+            self.conn.execute("BEGIN IMMEDIATE")
+            yield
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def lock_one(self, ident: int) -> tuple[dict, dict] | None:
+        # BEGIN IMMEDIATE excludes other writers before this revalidation.
+        row = self.peek(ident)
+        if row is None:
+            return None
+        item = self.conn.execute("SELECT * FROM work_item WHERE id = ?", (row['work_item_id'],)).fetchone()
+        return (dict(item), row) if item else None
+
+    def lock_stale(self, cutoff: str) -> list[tuple[dict, dict]]:
+        rows = self.conn.execute(
+            "SELECT r.* FROM reservation r JOIN work_item i ON i.id = r.work_item_id "
+            "WHERE r.state = 'active' AND r.last_activity_at <= ? AND i.status <> 'done' ORDER BY r.id",
+            (cutoff,),
+        ).fetchall()
+        return [(dict(self.conn.execute("SELECT * FROM work_item WHERE id = ?", (r['work_item_id'],)).fetchone()), dict(r)) for r in rows]
+
+    def _update(self, row: dict, assignment: str, params: tuple) -> dict:
+        self.conn.execute(f"UPDATE reservation SET {assignment} WHERE id = ?", (*params, row['id']))
+        updated = self.peek(row['id'])
+        assert updated is not None
+        return updated
+
+    def touch(self, row: dict, now: str, correlation: str | None) -> dict:
+        return self._update(row, "last_activity_at = ?, correlation_ref = COALESCE(?, correlation_ref)", (now, correlation))
+
+    def reassign(self, row: dict, now: str, actor: str, session: str, correlation: str | None) -> dict:
+        return self._update(row, "actor = ?, session_id = ?, last_activity_at = ?, correlation_ref = COALESCE(?, correlation_ref)", (actor, session, now, correlation))
+
+    def release(self, row: dict, now: str) -> dict:
+        return self._update(row, "state = 'released', released_at = ?, last_activity_at = ?", (now, now))
+
+    def interrupt(self, row: dict, now: str, reason: str) -> dict:
+        return self._update(row, "state = 'interrupted', released_at = ?, interruption_reason = ?", (now, reason))
+
+
 def touch_reservation(conn: sqlite3.Connection, reservation_id: int, *, session_id: str,
                       correlation_ref: str | None = None) -> dict:
-    row = _reservation_row(conn, reservation_id)
-    if row is None:
-        raise ValueError(f"Reservation #{reservation_id} not found")
-    if row["state"] != "active":
-        raise ValueError(f"Reservation #{reservation_id} is {row['state']}")
-    if row["session_id"] != session_id:
-        raise ValueError(f"Reservation #{reservation_id} belongs to another session")
-    now = _reservation.now_text()
-    conn.execute("UPDATE reservation SET last_activity_at = ?, correlation_ref = COALESCE(?, correlation_ref) WHERE id = ?", (now, correlation_ref, reservation_id))
-    conn.commit()
-    updated = _reservation_row(conn, reservation_id)
-    assert updated is not None
-    return _reservation.display(updated)
+    return _reservationcore.touch(_ReservationLifecycleSqlite(conn), reservation_id,
+        session_id=session_id, correlation_ref=correlation_ref)
 
 
 def reassign_reservation(conn: sqlite3.Connection, reservation_id: int, *, actor: str, session_id: str,
                          correlation_ref: str | None = None) -> dict:
-    row = _reservation_row(conn, reservation_id)
-    if row is None or row["state"] != "active":
-        raise ValueError(f"Reservation #{reservation_id} is not active")
-    now = _reservation.now_text()
-    conn.execute("UPDATE reservation SET actor = ?, session_id = ?, last_activity_at = ?, correlation_ref = COALESCE(?, correlation_ref) WHERE id = ?",
-                 (actor, session_id, now, correlation_ref, reservation_id))
-    conn.commit()
-    updated = _reservation_row(conn, reservation_id)
-    assert updated is not None
-    _reservation_event(conn, updated, "reservation.reassigned", actor,
-                       {"reservation_id": reservation_id, "previous_actor": row["actor"], "previous_session_id": row["session_id"]})
-    return _reservation.display(updated)
+    return _reservationcore.reassign(_ReservationLifecycleSqlite(conn), reservation_id,
+        actor=actor, session_id=session_id, correlation_ref=correlation_ref)
 
 
 def release_reservation(conn: sqlite3.Connection, reservation_id: int, *, actor: str | None = None) -> dict:
-    row = _reservation_row(conn, reservation_id)
-    if row is None:
-        raise ValueError(f"Reservation #{reservation_id} not found")
-    if row["state"] != "active":
-        return _reservation.display(row)
-    now = _reservation.now_text()
-    conn.execute("UPDATE reservation SET state = 'released', released_at = ?, last_activity_at = ? WHERE id = ?", (now, now, reservation_id))
-    conn.commit()
-    updated = _reservation_row(conn, reservation_id)
-    assert updated is not None
-    _reservation_event(conn, updated, "reservation.released", actor or row["actor"], {"reservation_id": reservation_id})
-    return _reservation.display(updated)
+    return _reservationcore.release(_ReservationLifecycleSqlite(conn), reservation_id, actor=actor)
 
 
 def sweep_stale_reservations(conn: sqlite3.Connection, *, now: str | None = None,
                              interrupt_after: timedelta | None = None) -> list[dict]:
-    """Interrupt long-idle reservations of open items.  Only an explicit sweep calls this.
-
-    Nothing expires in the background: the threshold is operator policy
-    (:mod:`sprintctl.reservation_policy`), and it takes effect when an
-    operator runs the sweep, not when the clock passes it.  Reservations of
-    done items are never touched.
-    """
-    window = _policy.interrupt_after() if interrupt_after is None else interrupt_after
-    reason = _policy.sweep_reason(window)
-    now = now or _reservation.now_text()
-    cutoff = (_reservation.parse_time(now) - window).strftime("%Y-%m-%dT%H:%M:%SZ")
-    # A sweep only touches open work: a done item's history belongs to the
-    # decision that closed it, and nothing sweeps it afterwards.
-    stale = (
-        "state = 'active' AND last_activity_at <= ? AND work_item_id IN "
-        "(SELECT id FROM work_item WHERE status <> 'done')"
-    )
-    rows = conn.execute(f"SELECT * FROM reservation WHERE {stale}", (cutoff,)).fetchall()
-    conn.execute(
-        f"UPDATE reservation SET state = 'interrupted', released_at = ?, "
-        f"interruption_reason = ? WHERE {stale}",
-        (now, reason, cutoff),
-    )
-    conn.commit()
-    result = []
-    for row in rows:
-        updated = _reservation_row(conn, row["id"])
-        assert updated is not None
-        _reservation_event(conn, updated, "reservation.interrupted", "maintenance", {"reservation_id": row["id"], "reason": reason})
-        result.append(_reservation.display(updated, now=now))
-    return result
+    """Atomically interrupt the selected idle reservations of open items."""
+    return _reservationcore.sweep(_ReservationLifecycleSqlite(conn), now=now, interrupt_after=interrupt_after)
 
 
 # --- Ref ---

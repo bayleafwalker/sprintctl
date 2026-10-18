@@ -1,0 +1,153 @@
+{
+  "source_revision": "e816d907fc1a803cbcfc4c112133a2f3c955e7d7",
+  "faults": [
+    {
+      "operation": "reassign",
+      "before": {
+        "rows": [
+          {
+            "id": 1,
+            "actor": "one",
+            "session_id": "one",
+            "state": "active",
+            "released_at": null,
+            "last_activity_at": "2026-10-18T12:02:35Z"
+          }
+        ],
+        "events": [
+          "reservation.reserved"
+        ]
+      },
+      "after_event_failure": {
+        "rows": [
+          {
+            "id": 1,
+            "actor": "new",
+            "session_id": "new",
+            "state": "active",
+            "released_at": null,
+            "last_activity_at": "2026-10-18T12:02:35Z"
+          }
+        ],
+        "events": [
+          "reservation.reserved"
+        ]
+      },
+      "atomicity_preserved": false
+    },
+    {
+      "operation": "release",
+      "before": {
+        "rows": [
+          {
+            "id": 1,
+            "actor": "one",
+            "session_id": "one",
+            "state": "active",
+            "released_at": null,
+            "last_activity_at": "2026-10-18T12:02:36Z"
+          }
+        ],
+        "events": [
+          "reservation.reserved"
+        ]
+      },
+      "after_event_failure": {
+        "rows": [
+          {
+            "id": 1,
+            "actor": "one",
+            "session_id": "one",
+            "state": "released",
+            "released_at": "2026-10-18T12:02:36Z",
+            "last_activity_at": "2026-10-18T12:02:36Z"
+          }
+        ],
+        "events": [
+          "reservation.reserved"
+        ]
+      },
+      "atomicity_preserved": false
+    },
+    {
+      "operation": "sweep",
+      "before": {
+        "rows": [
+          {
+            "id": 2,
+            "actor": "two",
+            "session_id": "two",
+            "state": "active",
+            "released_at": null,
+            "last_activity_at": "2000-01-01T00:00:00Z"
+          },
+          {
+            "id": 1,
+            "actor": "one",
+            "session_id": "one",
+            "state": "active",
+            "released_at": null,
+            "last_activity_at": "2000-01-01T00:00:00Z"
+          }
+        ],
+        "events": [
+          "reservation.reserved",
+          "reservation.reserved"
+        ]
+      },
+      "after_event_failure": {
+        "rows": [
+          {
+            "id": 2,
+            "actor": "two",
+            "session_id": "two",
+            "state": "interrupted",
+            "released_at": "2026-10-18T12:00:00Z",
+            "last_activity_at": "2000-01-01T00:00:00Z"
+          },
+          {
+            "id": 1,
+            "actor": "one",
+            "session_id": "one",
+            "state": "interrupted",
+            "released_at": "2026-10-18T12:00:00Z",
+            "last_activity_at": "2000-01-01T00:00:00Z"
+          }
+        ],
+        "events": [
+          "reservation.interrupted",
+          "reservation.reserved",
+          "reservation.reserved"
+        ]
+      },
+      "atomicity_preserved": false
+    }
+  ],
+  "interleavings": {
+    "source_revision": "e816d907fc1a803cbcfc4c112133a2f3c955e7d7",
+    "backend": "temporary SQLite, independent connections",
+    "bounds": "two explicit interleavings; no general concurrency/linearizability claim",
+    "histories": [
+      {
+        "scenario": "old-session-touch-after-reassign",
+        "old_touch_accepted": true,
+        "final_session": "new",
+        "final_correlation": "stale-touch",
+        "violation": "old-session touch changed already-reassigned row"
+      },
+      {
+        "scenario": "sweep-after-selected-row-became-fresh",
+        "final_state": "active",
+        "returned_states": [
+          "active"
+        ],
+        "events": [
+          "reservation.interrupted",
+          "reservation.reserved"
+        ],
+        "violation": "sweep emitted interruption event for fresh reservation not interrupted by its UPDATE"
+      }
+    ]
+  },
+  "limits": "Actual temporary SQLite counterexamples retained before repair. Additional disposable PG RED faults recorded in native plan event5537; no physical crash qualification."
+}

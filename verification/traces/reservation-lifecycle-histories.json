@@ -1,0 +1,283 @@
+{
+  "source_base": "bbb35db081532b5c973f32f0bf9e672765005ca9",
+  "limits": "Seven chosen lock-held competing-operation histories per backend. SQLite traces BEGIN IMMEDIATE attempt while first writer holds lock; PostgreSQL uses actual pg_blocking_pids observation. No global linearizability, fairness or power-loss claim.",
+  "histories": [
+    {
+      "backend": "sprintctl.db",
+      "event_types": [
+        "reservation.reserved",
+        "reservation.reassigned"
+      ],
+      "final_session": "new",
+      "final_state": "active",
+      "first": "touch",
+      "observations": [
+        "first-invoked",
+        "first-locked",
+        "second-invoked",
+        "second-wait-observed",
+        "first-completed",
+        "second-completed"
+      ],
+      "second": "reassign",
+      "second_error": null
+    },
+    {
+      "backend": "sprintctl.db",
+      "event_types": [
+        "reservation.reserved",
+        "reservation.reassigned"
+      ],
+      "final_session": "new",
+      "final_state": "active",
+      "first": "reassign",
+      "observations": [
+        "first-invoked",
+        "first-locked",
+        "second-invoked",
+        "second-wait-observed",
+        "first-completed",
+        "second-completed"
+      ],
+      "second": "touch",
+      "second_error": "ValueError"
+    },
+    {
+      "backend": "sprintctl.db",
+      "event_types": [
+        "reservation.reserved",
+        "reservation.released"
+      ],
+      "final_session": "session",
+      "final_state": "released",
+      "first": "release",
+      "observations": [
+        "first-invoked",
+        "first-locked",
+        "second-invoked",
+        "second-wait-observed",
+        "first-completed",
+        "second-completed"
+      ],
+      "second": "release",
+      "second_error": null
+    },
+    {
+      "backend": "sprintctl.db",
+      "event_types": [
+        "reservation.reserved",
+        "reservation.interrupted"
+      ],
+      "final_session": "session",
+      "final_state": "interrupted",
+      "first": "sweep",
+      "observations": [
+        "first-invoked",
+        "first-locked",
+        "second-invoked",
+        "second-wait-observed",
+        "first-completed",
+        "second-completed"
+      ],
+      "second": "touch",
+      "second_error": "ValueError"
+    },
+    {
+      "backend": "sprintctl.db",
+      "event_types": [
+        "reservation.reserved"
+      ],
+      "final_session": "session",
+      "final_state": "active",
+      "first": "touch",
+      "observations": [
+        "first-invoked",
+        "first-locked",
+        "second-invoked",
+        "second-wait-observed",
+        "first-completed",
+        "second-completed"
+      ],
+      "second": "sweep",
+      "second_error": null
+    },
+    {
+      "backend": "sprintctl.db",
+      "event_types": [
+        "reservation.reserved",
+        "reservation.interrupted"
+      ],
+      "final_session": "session",
+      "final_state": "interrupted",
+      "first": "sweep",
+      "observations": [
+        "first-invoked",
+        "first-locked",
+        "second-invoked",
+        "second-wait-observed",
+        "first-completed",
+        "second-completed"
+      ],
+      "second": "completion",
+      "second_error": null
+    },
+    {
+      "backend": "sprintctl.db",
+      "event_types": [
+        "reservation.reserved"
+      ],
+      "final_session": "session",
+      "final_state": "active",
+      "first": "completion",
+      "observations": [
+        "first-invoked",
+        "first-locked",
+        "second-invoked",
+        "second-wait-observed",
+        "first-completed",
+        "second-completed"
+      ],
+      "second": "sweep",
+      "second_error": null
+    },
+    {
+      "backend": "sprintctl.pg",
+      "event_types": [
+        "reservation.reserved",
+        "reservation.reassigned"
+      ],
+      "final_session": "new",
+      "final_state": "active",
+      "first": "touch",
+      "observations": [
+        "first-invoked",
+        "first-locked",
+        "second-invoked",
+        "second-wait-observed",
+        "first-completed",
+        "second-completed"
+      ],
+      "second": "reassign",
+      "second_error": null
+    },
+    {
+      "backend": "sprintctl.pg",
+      "event_types": [
+        "reservation.reserved",
+        "reservation.reassigned"
+      ],
+      "final_session": "new",
+      "final_state": "active",
+      "first": "reassign",
+      "observations": [
+        "first-invoked",
+        "first-locked",
+        "second-invoked",
+        "second-wait-observed",
+        "first-completed",
+        "second-completed"
+      ],
+      "second": "touch",
+      "second_error": "ValueError"
+    },
+    {
+      "backend": "sprintctl.pg",
+      "event_types": [
+        "reservation.reserved",
+        "reservation.released"
+      ],
+      "final_session": "session",
+      "final_state": "released",
+      "first": "release",
+      "observations": [
+        "first-invoked",
+        "first-locked",
+        "second-invoked",
+        "second-wait-observed",
+        "first-completed",
+        "second-completed"
+      ],
+      "second": "release",
+      "second_error": null
+    },
+    {
+      "backend": "sprintctl.pg",
+      "event_types": [
+        "reservation.reserved",
+        "reservation.interrupted"
+      ],
+      "final_session": "session",
+      "final_state": "interrupted",
+      "first": "sweep",
+      "observations": [
+        "first-invoked",
+        "first-locked",
+        "second-invoked",
+        "second-wait-observed",
+        "first-completed",
+        "second-completed"
+      ],
+      "second": "touch",
+      "second_error": "ValueError"
+    },
+    {
+      "backend": "sprintctl.pg",
+      "event_types": [
+        "reservation.reserved"
+      ],
+      "final_session": "session",
+      "final_state": "active",
+      "first": "touch",
+      "observations": [
+        "first-invoked",
+        "first-locked",
+        "second-invoked",
+        "second-wait-observed",
+        "first-completed",
+        "second-completed"
+      ],
+      "second": "sweep",
+      "second_error": null
+    },
+    {
+      "backend": "sprintctl.pg",
+      "event_types": [
+        "reservation.reserved",
+        "reservation.interrupted"
+      ],
+      "final_session": "session",
+      "final_state": "interrupted",
+      "first": "sweep",
+      "observations": [
+        "first-invoked",
+        "first-locked",
+        "second-invoked",
+        "second-wait-observed",
+        "first-completed",
+        "second-completed"
+      ],
+      "second": "completion",
+      "second_error": null
+    },
+    {
+      "backend": "sprintctl.pg",
+      "event_types": [
+        "reservation.reserved"
+      ],
+      "final_session": "session",
+      "final_state": "active",
+      "first": "completion",
+      "observations": [
+        "first-invoked",
+        "first-locked",
+        "second-invoked",
+        "second-wait-observed",
+        "first-completed",
+        "second-completed"
+      ],
+      "second": "sweep",
+      "second_error": null
+    }
+  ],
+  "postgres_combined_base": "01ad6656864571d79bf482e7731e8606bb22303a"
+}

@@ -1,0 +1,116 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.reservation-lifecycle",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2772",
+    "revision": "native:release:685464d2233c6bb2f1d6459359804ed49c05a0f8d4d3b39a3e8b0c46e74c9b43"
+  },
+  "implementation_sha": "01ad6656864571d79bf482e7731e8606bb22303a",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary SQLite and disposable PostgreSQL16.15",
+    "isolation": "independent connections; registered disposable repository scopes",
+    "python": "3.13.16",
+    "pytest": "9.0.2",
+    "uv": "0.13.0",
+    "postgresql": "16.15"
+  },
+  "execution": {
+    "histories": 14,
+    "bounds": {
+      "shared_cases_per_backend": 25,
+      "sqlite_caller_cases": 4,
+      "postgres_additional_cases": 25,
+      "competing_histories_per_backend": 7,
+      "sweep_failure_positions": 2
+    },
+    "faults_exercised": [
+      "exception after actual lifecycle event insertion",
+      "exception after first or second sweep event",
+      "exception constructing public result",
+      "independent handoff between initial peek and lock",
+      "independent refresh/completion/new arrival after PG candidate selection"
+    ]
+  },
+  "claims": [
+    {
+      "property": "row, canonical lifecycle event and constructed response commit together",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_reservation_lifecycle_contract.py",
+        "tests/test_reservation_lifecycle.py",
+        "tests/pg/test_reservation_lifecycle.py"
+      ]
+    },
+    {
+      "property": "touch emits no lifecycle event; repeated terminal release adds none",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_reservation_lifecycle_contract.py",
+        "tests/test_reservation_lifecycle.py",
+        "tests/pg/test_reservation_lifecycle.py"
+      ]
+    },
+    {
+      "property": "locked predecessor and session determine transition and event attribution",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_reservation_lifecycle_contract.py",
+        "tests/test_reservation_lifecycle.py",
+        "tests/pg/test_reservation_lifecycle.py"
+      ]
+    },
+    {
+      "property": "sweep updates only frozen selected locked eligible IDs; done/fresh/new arrivals preserved",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_reservation_lifecycle_contract.py",
+        "tests/test_reservation_lifecycle.py",
+        "tests/pg/test_reservation_lifecycle.py"
+      ]
+    },
+    {
+      "property": "caller ownership matches explicit backend public policy",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_reservation_lifecycle_contract.py",
+        "tests/test_reservation_lifecycle.py",
+        "tests/pg/test_reservation_lifecycle.py"
+      ]
+    },
+    {
+      "property": "seven chosen paired lifecycle histories per backend preserve locked winner and exact event cardinality",
+      "result": "concurrency-tested",
+      "evidence": [
+        "verification/traces/reservation-lifecycle-histories.json"
+      ]
+    },
+    {
+      "property": "global linearizability, fairness, power-loss, automatic retries, whole maintenance sweep atomicity or hosted durable work lease qualification",
+      "result": "unknown"
+    }
+  ],
+  "counterexamples": [
+    "verification/traces/reservation-lifecycle-before.json"
+  ],
+  "notes": [
+    "implementation_sha is pre-change base; source content hashes below pin the reviewed implementation.",
+    "SQLite observes attempted BEGIN IMMEDIATE under held writer lock; PostgreSQL verifies actual blockers through pg_blocking_pids.",
+    "Public PostgreSQL precommit may commit pending caller writes; initial invalid/noop calls avoid it. SQLite refuses active caller transactions. These are intentionally distinct existing public conventions.",
+    "No new public API, schema, keyed replay, IDL, deployment or broad parent2150 completion.",
+    "SQLite focused29passed; final complete PostgreSQL lifecycle module50passed,1246deselected,one registered fixture cleanup with zero rows. Earlier full disposablePG1292passed before native timestamp preservation; exact-head canonical CI remains pending.",
+    "Commands: python -m pytest tests/test_reservation_lifecycle.py -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2772-sqlite-histories.xml; UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-reservation-lifecycle-2772-env timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh -k reservation_lifecycle -o junit_family=legacy --junitxml=/tmp/sprintctl-2772-pg-latest.xml",
+    "Initial broad local run under restricted sandbox:2643passed,4skipped,1failed in506.16s. Sole failure test_ci_yaml_parses_with_safe_load was uv cache creation on read-only filesystem. Exact same test passed with required environment access (1passed in0.13s); no product/test weakening. The separate normal CI selection subsequently passed; its result is retained below.",
+    "Required-access full local CI selection:2630passed,4skipped,14performance cases deselected in452.58s. Command: /tmp/sprintctl-reservation-lifecycle-2772-env/bin/python -m pytest tests --ignore=tests/pg --ignore=tests/test_work_application_pg.py -m \"not perf\" -q --tb=short. This resolves the sole initial sandbox harness failure without source changes.",
+    "Clean nonsemantic rebase onto01ad665 after pre-rebase local gate. Joint final-base local regression:400passed,1skipped in44.26s, covering lifecycle/reservations/Release/maintenance/application plus carryover and stale-item atomicity. Final full disposablePG result is recorded below; exact-head canonical CI remains pending.",
+    "Joint local command: /tmp/sprintctl-reservation-lifecycle-2772-env/bin/python -m pytest tests/test_reservation_lifecycle.py tests/test_reservations.py tests/test_reservation_atomicity.py tests/test_releases.py tests/test_release_integrity.py tests/test_release_contract.py tests/test_maintain.py tests/test_item_release.py tests/test_work_application.py tests/test_served_maintain_check.py tests/test_stale_item_atomicity.py tests/test_carryover_atomicity.py -q --tb=short",
+    "sprintctl/reservationcore.py SHA256:22bb8385e53be827dba9204b4d93e877a9ad2f94c2c5e766b32a1c3817e7d422",
+    "sprintctl/db.py SHA256:d2593323790112fcd421311bf5648bfdafb4ae92281ef3dfd66df247b28a70cc",
+    "sprintctl/pg.py SHA256:e4cac8fddbbf4fba320bd92d82b9ad876230e6b592baf7083618ef4b3571308c",
+    "tests/_reservation_lifecycle_contract.py SHA256:667d38b63305e75e2a25f2e0ec790a6802feef585f8e8c69ddf6f268c08cc2a1",
+    "tests/test_reservation_lifecycle.py SHA256:853e1f859604006033366a00f52ec5f47980b13a161ca72d963be49f093a5c59",
+    "tests/pg/test_reservation_lifecycle.py SHA256:351870a9c886b8cfc5037724deea48ff36006ddef3ea58760bbbd551520b740e",
+    "Final combined-base full disposable PostgreSQL16.15:1314passed in78.49s;78fixture cleanup instances across4fixture names all report zero remaining rows. Command: UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-reservation-lifecycle-2772-env timeout --foreground -k30s 900s scripts/pg-disposable-tests.sh -o junit_family=legacy --junitxml=/tmp/sprintctl-2772-combined-pg.xml.",
+    "Independent final source and bounded packet reviews clear. Parent2150 remains open; broader source workflow refactors and deployed qualification are separate work."
+  ]
+}
