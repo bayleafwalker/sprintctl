@@ -252,6 +252,9 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     "db recover-from-remote": "unavailable",
     "export": "unavailable",
     "import": "unavailable",
+    # Offline supplied read artifacts never resolve a backend.
+    "result packet create": "local",
+    "result packet inspect": "local",
     "reservation reserve": "catalog",
     "reservation touch": "catalog",
     "reservation reassign": "catalog",

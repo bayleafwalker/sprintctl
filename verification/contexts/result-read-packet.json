@@ -1,0 +1,97 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.result-read-packet",
+  "owner_repo": "sprintctl",
+  "subject": "offline owner-read packet integrity and missing-link preservation",
+  "contract_ref": {
+    "doc_id": "result-read-packet",
+    "revision": "git:9f854d22c1ea56c4e3fd1f248bf69e6f2fafe46b"
+  },
+  "source_of_truth": "supported owner read schemas and caller-supplied read responses",
+  "depth": 1,
+  "backends": [
+    "local files",
+    "disposable PostgreSQL source plus fresh offline Python process"
+  ],
+  "actors": [
+    "packager",
+    "independent offline reader"
+  ],
+  "initial_state": [
+    "supplied owner acceptance response",
+    "optional same-item continuation response",
+    "independent expected digest may be absent"
+  ],
+  "operations": [
+    {
+      "name": "create offline read packet",
+      "actors": [
+        "packager"
+      ]
+    },
+    {
+      "name": "inspect packet with caller expectation",
+      "actors": [
+        "independent offline reader"
+      ]
+    },
+    {
+      "name": "tamper and rehash supplied response",
+      "actors": [
+        "packager"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "canonical packet content integrity, not owner authenticity"
+  },
+  "assumptions": {
+    "isolation": "no database/network access in packet utilities; native fixtures use private temporary PostgreSQL",
+    "clock": "caller UTC packaging timestamp only",
+    "fairness": "none"
+  },
+  "bounds": {
+    "raw_input_and_packet_bytes": 2097152,
+    "nesting_levels": 64,
+    "native_cases": 3,
+    "owner_calls_from_packet_tools": 0
+  },
+  "invariants": [
+    "complete supplied responses preserved unchanged",
+    "supported schema/version and same repository/item required",
+    "self digest cannot replace independent expectation or owner authenticity",
+    "receipt match cannot hide requested artifact mismatch",
+    "unknown terminal/actor/attempt/target and cross-read atomicity remain unknown",
+    "exclusive publication never overwrites existing evidence",
+    "no archival guard, import, credential or authority change"
+  ],
+  "faults": [
+    "tamper plus rehash",
+    "missing receipt input",
+    "changed requested artifact",
+    "duplicate keys",
+    "nonfinite or5000digit JSON number",
+    "invalid Unicode",
+    "deep/oversized input",
+    "scope conflict",
+    "failed file publication"
+  ],
+  "oracles": [
+    "exact source response equality after native fresh-process inspection",
+    "independent expected digest mismatch after tamper/rehash",
+    "fail-on-network/database local utility fixture",
+    "strict malformed input rejection",
+    "existing-file and temporary-cleanup checks"
+  ],
+  "implementation_anchors": [
+    "sprintctl/result_packet.py",
+    "sprintctl/commands/result.py",
+    "tests/test_result_packet.py",
+    "tests/pg/test_result_read_packet.py"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "fault-scenario"
+  ]
+}

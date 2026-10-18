@@ -3,6 +3,9 @@
 Sprintctl keeps work identifiable, resumable, and explainable as people and
 agents change.
 
+For offline inspection of supplied owner facts, see
+[result read packets](docs/guides/inspect-result-packets.md).
+
 It records work items, advisory reservations, releases, decisions, evidence,
 dependencies, and continuation points. The CLI supports local SQLite work and
 a served Vuoro authority. Served capabilities also include durable inboxes,

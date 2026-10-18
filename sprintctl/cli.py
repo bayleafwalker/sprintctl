@@ -133,6 +133,9 @@ repo_list = _commands.repo_list
 
 # Served-only agent directory, inbox and run continuation verbs; registered
 # before repo/remote-schema, which keep the root's final insertion positions.
+from .commands.result import result as result_group
+cli.add_command(result_group)
+
 _commands.register_inbox_commands(cli)
 _commands.register_commands(cli, get_store=lambda obj: _get_store(obj))
 

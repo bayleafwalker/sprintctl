@@ -1,0 +1,71 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.result-read-packet",
+  "contract_ref": {
+    "doc_id": "result-read-packet",
+    "revision": "git:9f854d22c1ea56c4e3fd1f248bf69e6f2fafe46b"
+  },
+  "implementation_sha": "9d2e586712048b9ef8deb234e48cba0a648a3b37",
+  "depth": 1,
+  "environment": {
+    "backend": "offline files and native disposable PostgreSQL16.15",
+    "isolation": "fresh reader receives packet only; private source fixture cleans all rows",
+    "tool_versions": {
+      "Python": "3.13.16/3.11",
+      "PostgreSQL": "16.15"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 3,
+    "bounds": {
+      "raw_input_and_packet_bytes": 2097152,
+      "nesting_levels": 64,
+      "native_cases": 3,
+      "owner_calls_from_packet_tools": 0
+    },
+    "faults_exercised": [
+      "tamper plus rehash",
+      "missing receipt input",
+      "changed requested artifact",
+      "duplicate keys",
+      "nonfinite or5000digit JSON number",
+      "invalid Unicode",
+      "deep/oversized input",
+      "scope conflict",
+      "failed file publication"
+    ]
+  },
+  "claims": [
+    {
+      "property": "Complete supplied owner responses survive bounded offline packet transport with missing links explicit",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_result_read_packet.py",
+        "tests/test_result_packet.py"
+      ]
+    },
+    {
+      "property": "Independent expected canonical digest detects changed content even after self rehash",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_result_packet.py"
+      ]
+    },
+    {
+      "property": "General historical accepted-result transfer or source authenticity",
+      "result": "unknown",
+      "evidence": [
+        "docs/plans/result-read-packet.md"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "Candidate source SHA256s:{\"sprintctl/commands/result.py\": \"eca65ade42a87f1dfc3c4b45a60a2a00a9028cfa5f748e4c69c4dd0797971724\", \"sprintctl/result_packet.py\": \"fc64258bc8f3e31d6bf34a8d140a03c871e29b1c16a2cc543f03210281219b05\", \"tests/pg/test_result_read_packet.py\": \"5419f8b6fa210e529c9b68e6c67447f6dd2d9b290222862fba627aa4386c10b0\", \"tests/test_result_packet.py\": \"f1fb6aa16e30814098999505ba18653c5a07bc913130c1a58f61c71ebff5edc0\"}",
+    "Final focused67passed;Python3.11 61passed6skipped. Native source-to-fresh-reader3passed; fixturecleanup zero remaining rows.",
+    "Final full source run:2354passed1103skipped14deselected in497.47s after final parser changes; no failures.",
+    "Independent review found5000digit parse gap; normalized without global digitlimit changes. Existing archival guard files unchanged; no production export/import or broader portability claim.",
+    "Optional inspection extra reuses existing locked jsonschema version; only project optional-extra lock metadata changes, no existing dependency/artifact version changes."
+  ]
+}

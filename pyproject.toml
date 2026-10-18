@@ -17,6 +17,8 @@ sprintctl-volatile-hook = "sprintctl.volatile_hook:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "jsonschema>=4.23,<5"]
+# Offline owner-read packet validation; reuse the already locked validator.
+inspection = ["jsonschema>=4.23,<5"]
 remote = [
     "psycopg[binary]>=3.1",
 ]

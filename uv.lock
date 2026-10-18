@@ -529,6 +529,9 @@ dev = [
     { name = "jsonschema" },
     { name = "pytest" },
 ]
+inspection = [
+    { name = "jsonschema" },
+]
 remote = [
     { name = "psycopg", extra = ["binary"] },
 ]
@@ -540,12 +543,13 @@ served = [
 requires-dist = [
     { name = "click", specifier = ">=8.1" },
     { name = "jsonschema", marker = "extra == 'dev'", specifier = ">=4.23,<5" },
+    { name = "jsonschema", marker = "extra == 'inspection'", specifier = ">=4.23,<5" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'remote'", specifier = ">=3.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "vuoro-adapter-kit", url = "https://github.com/bayleafwalker/vuoro/releases/download/vuoro-adapter-kit-v0.2.2/vuoro_adapter_kit-0.2.2-py3-none-any.whl" },
     { name = "vuoro-client", marker = "python_full_version >= '3.12' and extra == 'served'", url = "https://github.com/bayleafwalker/vuoro/releases/download/vuoro-client-v0.1.1/vuoro_client-0.1.1-py3-none-any.whl" },
 ]
-provides-extras = ["dev", "remote", "served"]
+provides-extras = ["dev", "inspection", "remote", "served"]
 
 [[package]]
 name = "typing-extensions"
