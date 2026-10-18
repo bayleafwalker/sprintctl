@@ -3460,6 +3460,28 @@ def list_active_sprints(store: PgStore) -> list[dict]:
     return _sprintcore.list_active_sprints(_SprintPg(store))
 
 
+class _SprintKindPg:
+    def __init__(self, store: PgStore):
+        self.store = store
+
+    @contextmanager
+    def locked_sprint(self, sprint_id: int):
+        with self.store.conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM sprint WHERE repo_id = %s AND id = %s FOR UPDATE",
+                (self.store.repo_id, sprint_id),
+            )
+            row = cur.fetchone()
+
+            def write_value(value: str):
+                cur.execute(
+                    "UPDATE sprint SET kind = %s WHERE repo_id = %s AND id = %s",
+                    (value, self.store.repo_id, sprint_id),
+                )
+
+            yield (_norm(row) if row is not None else None), write_value
+
+
 def set_sprint_kind(
     store: PgStore, sprint_id: int, kind: str, *,
     expected_revision: str | None = None,
@@ -3470,18 +3492,9 @@ def set_sprint_kind(
     if expected_revision is not None:
         _sprintcore.validate_kind_revision(expected_revision)
     try:
-        with store.conn.cursor() as cur:
-            cur.execute("SELECT * FROM sprint WHERE repo_id = %s AND id = %s FOR UPDATE", (store.repo_id, sprint_id))
-            row = cur.fetchone()
-            if row is None:
-                raise ValueError(f"Sprint #{sprint_id} not found")
-            sprint = _norm(row)
-            current = _sprintcore.sprint_kind_revision(sprint)
-            if expected_revision is not None and expected_revision != current:
-                raise StatusConflict(f"Sprint #{sprint_id} kind revision mismatch: expected {expected_revision}, current {current}")
-            cur.execute("UPDATE sprint SET kind = %s WHERE repo_id = %s AND id = %s", (kind, store.repo_id, sprint_id))
-            result = {**sprint, "kind": kind}
-            result["kind_revision"] = _sprintcore.sprint_kind_revision(result)
+        result = _sprintcore._set_sprint_kind_locked(
+            _SprintKindPg(store), sprint_id, kind, expected_revision,
+        )
         store.conn.commit()
         return result
     except Exception:
@@ -3491,6 +3504,42 @@ def set_sprint_kind(
 
 def list_sprints(store: PgStore) -> list[dict]:
     return _sprintcore.list_sprints(_SprintPg(store))
+
+
+class _SprintStatusPg:
+    def __init__(self, store: PgStore):
+        self.store = store
+
+    @contextmanager
+    def locked_sprint(self, sprint_id: int):
+        with self.store.conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM sprint WHERE repo_id = %s AND id = %s FOR UPDATE",
+                (self.store.repo_id, sprint_id),
+            )
+            row = cur.fetchone()
+
+            def write_value(value: str):
+                cur.execute(
+                    "UPDATE sprint SET status = %s WHERE repo_id = %s AND id = %s",
+                    (value, self.store.repo_id, sprint_id),
+                )
+
+            yield (_norm(row) if row is not None else None), write_value
+
+    def revision(self, sprint: dict) -> str:
+        return sprint_status_revision(sprint)
+
+    @property
+    def invalid_transition(self) -> type[ValueError]:
+        return InvalidTransition
+
+    def validate_transition(self, current: str, target: str) -> None:
+        if target not in SPRINT_TRANSITIONS[current]:
+            allowed = sorted(SPRINT_TRANSITIONS[current]) or "none (terminal)"
+            raise InvalidTransition(
+                f"cannot transition sprint {current} -> {target}. Allowed: {allowed}"
+            )
 
 
 def set_sprint_status(
@@ -3503,35 +3552,9 @@ def set_sprint_status(
     if expected_revision is not None:
         expected_revision = validate_sprint_status_revision(expected_revision)
     try:
-        with store.conn.cursor() as cur:
-            # The row lock makes the status comparison and update one
-            # single-object CAS operation across independent connections.
-            cur.execute(
-                "SELECT * FROM sprint WHERE repo_id = %s AND id = %s FOR UPDATE",
-                (store.repo_id, sprint_id),
-            )
-            row = cur.fetchone()
-            if row is None:
-                raise ValueError(f"Sprint #{sprint_id} not found")
-            sprint = _norm(row)
-            current = sprint["status"]
-            current_revision = sprint_status_revision(sprint)
-            if expected_revision is not None and expected_revision != current_revision:
-                raise StatusConflict(
-                    f"Sprint #{sprint_id} status revision mismatch: "
-                    f"expected {expected_revision}, current {current_revision}"
-                )
-            if new_status not in SPRINT_TRANSITIONS[current]:
-                allowed = sorted(SPRINT_TRANSITIONS[current]) or "none (terminal)"
-                raise InvalidTransition(
-                    f"cannot transition sprint {current} -> {new_status}. Allowed: {allowed}"
-                )
-            if new_status == "active" and sprint["kind"] == "archive":
-                raise InvalidTransition(f"cannot activate sprint {sprint_id}: kind is archive")
-            cur.execute(
-                "UPDATE sprint SET status = %s WHERE repo_id = %s AND id = %s",
-                (new_status, store.repo_id, sprint_id),
-            )
+        _sprintcore._set_sprint_status_locked(
+            _SprintStatusPg(store), sprint_id, new_status, expected_revision,
+        )
         store.conn.commit()
     except Exception:
         store.conn.rollback()

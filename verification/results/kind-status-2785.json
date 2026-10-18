@@ -1,0 +1,118 @@
+{
+  "claims": [
+    {
+      "evidence": [
+        "tests/_sprint_kind_status_contract.py",
+        "tests/pg/test_sprint_kind_status.py"
+      ],
+      "property": "kind CAS retains validation order, current basis comparison, actual same-kind UPDATE and original row overlay plus prepared kind_revision",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_sprint_kind_status_contract.py",
+        "tests/pg/test_sprint_kind_status.py"
+      ],
+      "property": "generic status retains basis/transition/archive ordering, None return and no event even on close",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "verification/traces/kind-status-histories-2785.json"
+      ],
+      "property": "ordinary BEFORE/AFTER UPDATE and post-UPDATE result faults leave the owner transaction idle and target unchanged before fixture cleanup; retry succeeds",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "verification/traces/kind-status-histories-2785.json"
+      ],
+      "property": "state-changing same-basis kind and status requests produce one success and one StatusConflict in the recorded schedule",
+      "result": "concurrency-tested"
+    },
+    {
+      "evidence": [
+        "verification/traces/kind-status-histories-2785.json"
+      ],
+      "property": "two same-kind current-basis requests both succeed in the recorded schedule because their basis stays unchanged",
+      "result": "concurrency-tested"
+    },
+    {
+      "evidence": [
+        "tests/_sprint_kind_status_contract.py",
+        "tests/pg/test_sprint_kind_status.py"
+      ],
+      "property": "kind basis includes lifecycle status while status basis excludes kind; current archive activation checks remain required",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_sprint_kind_status_contract.py",
+        "tests/pg/test_sprint_kind_status.py",
+        "tests/test_sqlite_sprint_caller.py",
+        "tests/test_sqlite_item_reserve_caller.py"
+      ],
+      "property": "accepted SQLite caller refusal and representative existing PG implicit/managed/TPC caller effects are preserved without imposing cross-backend composition parity",
+      "result": "example-tested"
+    },
+    {
+      "property": "universal caller composition, arbitrary isolation, exhaustive interleavings, monotonic/ABA revisions, physical crash or acknowledgement loss, whole provider parity and rollout",
+      "result": "unknown"
+    }
+  ],
+  "context_id": "sprintctl.sprint-kind-status",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2785",
+    "revision": "native:release:56e0b36efecb24043b5036bf1a8b28a47298f950a41f893c6265ac2334bf33ae"
+  },
+  "counterexamples": [],
+  "depth": 2,
+  "environment": {
+    "backend": "actual temporary SQLite and disposable PostgreSQL16.15",
+    "isolation": "SQLite BEGIN IMMEDIATE; PostgreSQL READ COMMITTED",
+    "tool_versions": {
+      "psycopg": "3.3.3",
+      "pytest": "9.0.2",
+      "python": "3.13.16",
+      "sqlite": "3.53.1"
+    }
+  },
+  "execution": {
+    "bounds": {
+      "pg_additional_cases": 10,
+      "representative_managed_kind_cases": 1,
+      "representative_tpc_status_cases": 1,
+      "retained_concurrent_histories": 6,
+      "retained_ordered_histories": 22,
+      "shared_cases_per_backend": 28,
+      "workers_per_competing_history": 2
+    },
+    "faults_exercised": [
+      "actual BEFORE UPDATE trigger abort",
+      "actual AFTER UPDATE trigger abort",
+      "exception during kind_revision result construction after actual UPDATE",
+      "stale state-basis request under actual held writer wait",
+      "invalid pure request before owned handler",
+      "representative managed-kind and TPC-status explicit commit/rollback refusal"
+    ],
+    "histories": 22
+  },
+  "implementation_sha": "9d2add58002047990948dd4f270917f2e53eda6c",
+  "notes": [
+    "implementation_sha identifies the accepted baseline. Candidate file byte hashes identify the precommit source without a self-referential future Git SHA; declared run provenance and hashes do not authenticate external origins.",
+    "Frozen native scope5637 and plan SHA256cc88a4f85d7b6bf1dff3196da4c4bff9432ed1f123d1d9f72f6404747197b803. Actual paired baseline28SQLite/38PG passed before product extraction; three oracle files stayed byte-identical afterward.",
+    "Independent source review CLEAR; existing close, hosted activation, CRUD kind helper and SQLite idle helpers independently AST-compared unchanged. PG cursor lifetime, fixed SQL, tenant parameters and normalization separately source-reviewed.",
+    "Focused post-extraction local oracle/caller/kind selection76passed8.39s; focused disposable PG oracle/kind/sprint/authority/maintenance131passed4.46s,21cleanup instances zero. These are separate runs from the full captures below.",
+    "Three recorded concurrent schedules per backend: changing kind and changing status each one success/one StatusConflict; same-kind current-basis both succeed. This is state-basis comparison, not monotonic revision, ABA protection, general linearizability or arbitrary-isolation qualification.",
+    "SQLite observation is attempted BEGIN IMMEDIATE while the first writer holds its lock; PG observation is actual blocking PID. Six retained concurrent histories are separate from14 ordinary fault/retry observations and2 representative PG caller observations. Existing archive/activation helper also runs unchanged; its passing assertions are not relabeled as an additional retained history.",
+    "Representative managed-kind/TPC-status failures leave target/caller changes pending while an independent connection sees durable original rows; explicit caller-owned rollback removes pending effects. No whole caller-composition matrix, seed-style early refusal or safe-composition guarantee is claimed.",
+    "Full local command: UV_OFFLINE=1 uv run --frozen --no-sync pytest tests --ignore=tests/pg --ignore=tests/test_work_application_pg.py -m \"not perf\" -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2785-full-local.xml.",
+    "Full PG: cached PostgreSQL16.15 PATH, timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2785-full-pg.xml.",
+    "Current candidate hashes {\"sprintctl/db.py\": \"b259e61d0690cef5d0c26f844c99687aba84ee90590e00f3dde85a814902088a\", \"sprintctl/pg.py\": \"6187c0731712d72ac59a3f091c1b8f3257d394c8274fb153dd27f9d5878583e9\", \"sprintctl/sprintcore.py\": \"50bfb5bdf754832fe8ba70c206a4ab35fd83aa0b4f8a8ceac0289cfed137d3c3\", \"tests/_sprint_kind_status_contract.py\": \"5ca91dc4c34ec963f31603213a727d7882a78b4512c396fcaf2be6a6475fb50d\", \"tests/pg/test_sprint_kind_status.py\": \"c8150af2bc99b50a305cadf943d14d9da583188c63abfeb9970f419794c9aa1c\", \"tests/test_sprint_kind_status.py\": \"27f14b7ffdda77236ada2a864d1894068efce0da10f9c30ea79b40fb5e96d1fe\", \"verification/fixtures/kind-status-before-2785.json\": \"3a84860f8f286c9fb02b25f03f00d09113de9ffecea38844f1048798b144ef8e\", \"verification/traces/extract-sprint-kind-status-histories.py\": \"8ea51474621c0bdf020307ecc8e7489c492bd50fb11aacef1e41ba84069d670b\", \"verification/traces/kind-status-histories-2785.json\": \"b5d4776a760e0fcbde39792ba352526951d3ecd6fb0d95930e27303a37de0c2f\"}",
+    "Full capture hashes {\"sprintctl-2785-full-local.txt\": \"118a0287efe68b26abc2cda38677ed3ecf36f943c0e62de8a85b3a6ae55898c3\", \"sprintctl-2785-full-local.xml\": \"31794c4a8a3e6c90727e080973288ccf5c111c8f2bbfd009b144029dd2367325\", \"sprintctl-2785-full-pg.txt\": \"d206389d84410569e350ec45c0915c4e62e6947f2cf9492572aba28732fe92e3\", \"sprintctl-2785-full-pg.xml\": \"2f1c646d3c3bc72efc5135d682fc3bc1a2e927bb4b4afb2cfb0b7db041e56dbf\"}",
+    "No new validator/class ownership, public API/schema/IDL/provider contract, lifecycle/activation/maintenance policy or service deployment. Parent #2150 stays open. Exact-head canonical CI remains a publication gate.",
+    "sprintctl-2785-full-local.txt: 2830 passed, 4 skipped, 14 deselected in 389.91s (0:06:29)",
+    "sprintctl-2785-full-pg.txt: 1447 passed in 87.11s (0:01:27) | pg-cleanup-report-check: foreign_scope_cleanup: 1 fixture cleanup(s) completed with zero remaining rows | pg-cleanup-report-check: maintenance_resource_transactional_pg_factory: 21 fixture cleanup(s) completed with zero remaining rows | pg-cleanup-report-check: pg_test_scope: 60 fixture cleanup(s) completed with zero remaining rows | pg-cleanup-report-check: store_factory: 1 fixture cleanup(s) completed with zero remaining rows | pg-cleanup-report-check: ok: 83 fixture cleanup(s) across 4 fixture name(s)"
+  ],
+  "schema_version": "verification-result/v1"
+}

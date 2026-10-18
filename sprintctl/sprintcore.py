@@ -203,3 +203,67 @@ def _close_sprint_with_boundary_event(
         source_type="actor",
         payload={"previous_status": current, "status": "closed"},
     )
+
+
+class _ValueParticipant(Protocol):
+    """Private locked-row I/O for the two distinct sprint value workflows."""
+
+    def locked_sprint(
+        self, sprint_id: int,
+    ) -> AbstractContextManager[tuple[dict | None, Callable[[str], None]]]: ...
+
+
+class _StatusParticipant(_ValueParticipant, Protocol):
+    def revision(self, sprint: dict) -> str: ...
+
+    def validate_transition(self, current: str, target: str) -> None: ...
+
+    @property
+    def invalid_transition(self) -> type[ValueError]: ...
+
+
+def _set_sprint_kind_locked(
+    participant: _ValueParticipant,
+    sprint_id: int,
+    kind: str,
+    expected_revision: str | None,
+) -> dict:
+    """Keep kind CAS, the actual UPDATE and result construction together."""
+    with participant.locked_sprint(sprint_id) as (sprint, write_kind):
+        if sprint is None:
+            raise ValueError(f"Sprint #{sprint_id} not found")
+        current = sprint_kind_revision(sprint)
+        if expected_revision is not None and expected_revision != current:
+            raise StatusConflict(
+                f"Sprint #{sprint_id} kind revision mismatch: "
+                f"expected {expected_revision}, current {current}"
+            )
+        # A same-kind request still writes; its state basis remains unchanged.
+        write_kind(kind)
+        result = {**sprint, "kind": kind}
+        result["kind_revision"] = sprint_kind_revision(result)
+        return result
+
+
+def _set_sprint_status_locked(
+    participant: _StatusParticipant,
+    sprint_id: int,
+    new_status: str,
+    expected_revision: str | None,
+) -> None:
+    """Generic status mutation emits no explicit-close or maintenance event."""
+    with participant.locked_sprint(sprint_id) as (sprint, write_status):
+        if sprint is None:
+            raise ValueError(f"Sprint #{sprint_id} not found")
+        current_revision = participant.revision(sprint)
+        if expected_revision is not None and expected_revision != current_revision:
+            raise StatusConflict(
+                f"Sprint #{sprint_id} status revision mismatch: "
+                f"expected {expected_revision}, current {current_revision}"
+            )
+        participant.validate_transition(sprint["status"], new_status)
+        if new_status == "active" and sprint["kind"] == "archive":
+            raise participant.invalid_transition(
+                f"cannot activate sprint {sprint_id}: kind is archive"
+            )
+        write_status(new_status)

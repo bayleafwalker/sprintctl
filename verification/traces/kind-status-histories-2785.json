@@ -1,0 +1,1936 @@
+{
+  "histories": [
+    {
+      "backend": "sprintctl.db",
+      "history": "kind-backlog-before-update-abort-retry",
+      "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+      "junit_case": {
+        "class": "tests.test_sprint_kind_status.TestSQLiteSprintKindStatus",
+        "name": "test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[BEFORE-kind-backlog]"
+      },
+      "node": "tests/test_sprint_kind_status.py::TestSQLiteSprintKindStatus::test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[BEFORE-kind-backlog]",
+      "observations": [
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "7e0475d9-b94e-4248-b496-92030ca6e411",
+              "created_at": "2026-10-18T14:41:39Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "before"
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "7e0475d9-b94e-4248-b496-92030ca6e411",
+              "created_at": "2026-10-18T14:41:39Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "7e0475d9-b94e-4248-b496-92030ca6e411",
+              "created_at": "2026-10-18T14:41:39Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "after-product-error-before-fixture-cleanup",
+          "transaction": {
+            "in_transaction": false
+          }
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "7e0475d9-b94e-4248-b496-92030ca6e411",
+              "created_at": "2026-10-18T14:41:39Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "backlog",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "result": {
+            "aggregate_uuid": "7e0475d9-b94e-4248-b496-92030ca6e411",
+            "created_at": "2026-10-18T14:41:39Z",
+            "end_date": null,
+            "goal": "",
+            "id": 1,
+            "kind": "backlog",
+            "kind_revision": "sprint:7e0475d9-b94e-4248-b496-92030ca6e411@kind:backlog@status:planned",
+            "name": "kind/status baseline",
+            "start_date": null,
+            "status": "planned"
+          },
+          "step": "retry-returned"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.db",
+      "history": "kind-active_sprint-before-update-abort-retry",
+      "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+      "junit_case": {
+        "class": "tests.test_sprint_kind_status.TestSQLiteSprintKindStatus",
+        "name": "test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[BEFORE-kind-active_sprint]"
+      },
+      "node": "tests/test_sprint_kind_status.py::TestSQLiteSprintKindStatus::test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[BEFORE-kind-active_sprint]",
+      "observations": [
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "8f520ef7-d851-442e-a7c2-110ff07c4926",
+              "created_at": "2026-10-18T14:41:40Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "before"
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "8f520ef7-d851-442e-a7c2-110ff07c4926",
+              "created_at": "2026-10-18T14:41:40Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "8f520ef7-d851-442e-a7c2-110ff07c4926",
+              "created_at": "2026-10-18T14:41:40Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "after-product-error-before-fixture-cleanup",
+          "transaction": {
+            "in_transaction": false
+          }
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "8f520ef7-d851-442e-a7c2-110ff07c4926",
+              "created_at": "2026-10-18T14:41:40Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "result": {
+            "aggregate_uuid": "8f520ef7-d851-442e-a7c2-110ff07c4926",
+            "created_at": "2026-10-18T14:41:40Z",
+            "end_date": null,
+            "goal": "",
+            "id": 1,
+            "kind": "active_sprint",
+            "kind_revision": "sprint:8f520ef7-d851-442e-a7c2-110ff07c4926@kind:active_sprint@status:planned",
+            "name": "kind/status baseline",
+            "start_date": null,
+            "status": "planned"
+          },
+          "step": "retry-returned"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.db",
+      "history": "status-active-before-update-abort-retry",
+      "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+      "junit_case": {
+        "class": "tests.test_sprint_kind_status.TestSQLiteSprintKindStatus",
+        "name": "test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[BEFORE-status-active]"
+      },
+      "node": "tests/test_sprint_kind_status.py::TestSQLiteSprintKindStatus::test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[BEFORE-status-active]",
+      "observations": [
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "f2e4557a-bbd7-4353-bd80-395ae8e243a4",
+              "created_at": "2026-10-18T14:41:40Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "before"
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "f2e4557a-bbd7-4353-bd80-395ae8e243a4",
+              "created_at": "2026-10-18T14:41:40Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "f2e4557a-bbd7-4353-bd80-395ae8e243a4",
+              "created_at": "2026-10-18T14:41:40Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "after-product-error-before-fixture-cleanup",
+          "transaction": {
+            "in_transaction": false
+          }
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "f2e4557a-bbd7-4353-bd80-395ae8e243a4",
+              "created_at": "2026-10-18T14:41:40Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "result": null,
+          "step": "retry-returned"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.db",
+      "history": "kind-backlog-after-update-abort-retry",
+      "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+      "junit_case": {
+        "class": "tests.test_sprint_kind_status.TestSQLiteSprintKindStatus",
+        "name": "test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[AFTER-kind-backlog]"
+      },
+      "node": "tests/test_sprint_kind_status.py::TestSQLiteSprintKindStatus::test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[AFTER-kind-backlog]",
+      "observations": [
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "b8b3d836-c9c6-4c1f-9a98-e8347cc6a6e0",
+              "created_at": "2026-10-18T14:41:40Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "before"
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "b8b3d836-c9c6-4c1f-9a98-e8347cc6a6e0",
+              "created_at": "2026-10-18T14:41:40Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "b8b3d836-c9c6-4c1f-9a98-e8347cc6a6e0",
+              "created_at": "2026-10-18T14:41:40Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "after-product-error-before-fixture-cleanup",
+          "transaction": {
+            "in_transaction": false
+          }
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "b8b3d836-c9c6-4c1f-9a98-e8347cc6a6e0",
+              "created_at": "2026-10-18T14:41:40Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "backlog",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "result": {
+            "aggregate_uuid": "b8b3d836-c9c6-4c1f-9a98-e8347cc6a6e0",
+            "created_at": "2026-10-18T14:41:40Z",
+            "end_date": null,
+            "goal": "",
+            "id": 1,
+            "kind": "backlog",
+            "kind_revision": "sprint:b8b3d836-c9c6-4c1f-9a98-e8347cc6a6e0@kind:backlog@status:planned",
+            "name": "kind/status baseline",
+            "start_date": null,
+            "status": "planned"
+          },
+          "step": "retry-returned"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.db",
+      "history": "kind-active_sprint-after-update-abort-retry",
+      "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+      "junit_case": {
+        "class": "tests.test_sprint_kind_status.TestSQLiteSprintKindStatus",
+        "name": "test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[AFTER-kind-active_sprint]"
+      },
+      "node": "tests/test_sprint_kind_status.py::TestSQLiteSprintKindStatus::test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[AFTER-kind-active_sprint]",
+      "observations": [
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "ee603db5-bc8e-4ab4-a48e-ed150959e0e2",
+              "created_at": "2026-10-18T14:41:40Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "before"
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "ee603db5-bc8e-4ab4-a48e-ed150959e0e2",
+              "created_at": "2026-10-18T14:41:40Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "ee603db5-bc8e-4ab4-a48e-ed150959e0e2",
+              "created_at": "2026-10-18T14:41:40Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "after-product-error-before-fixture-cleanup",
+          "transaction": {
+            "in_transaction": false
+          }
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "ee603db5-bc8e-4ab4-a48e-ed150959e0e2",
+              "created_at": "2026-10-18T14:41:40Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "result": {
+            "aggregate_uuid": "ee603db5-bc8e-4ab4-a48e-ed150959e0e2",
+            "created_at": "2026-10-18T14:41:40Z",
+            "end_date": null,
+            "goal": "",
+            "id": 1,
+            "kind": "active_sprint",
+            "kind_revision": "sprint:ee603db5-bc8e-4ab4-a48e-ed150959e0e2@kind:active_sprint@status:planned",
+            "name": "kind/status baseline",
+            "start_date": null,
+            "status": "planned"
+          },
+          "step": "retry-returned"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.db",
+      "history": "status-active-after-update-abort-retry",
+      "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+      "junit_case": {
+        "class": "tests.test_sprint_kind_status.TestSQLiteSprintKindStatus",
+        "name": "test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[AFTER-status-active]"
+      },
+      "node": "tests/test_sprint_kind_status.py::TestSQLiteSprintKindStatus::test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[AFTER-status-active]",
+      "observations": [
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "45cc0868-4b8a-4e27-8d0b-41b6873cc4fa",
+              "created_at": "2026-10-18T14:41:40Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "before"
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "45cc0868-4b8a-4e27-8d0b-41b6873cc4fa",
+              "created_at": "2026-10-18T14:41:40Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "45cc0868-4b8a-4e27-8d0b-41b6873cc4fa",
+              "created_at": "2026-10-18T14:41:40Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "after-product-error-before-fixture-cleanup",
+          "transaction": {
+            "in_transaction": false
+          }
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "45cc0868-4b8a-4e27-8d0b-41b6873cc4fa",
+              "created_at": "2026-10-18T14:41:40Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "result": null,
+          "step": "retry-returned"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.db",
+      "history": "kind-result-construction-fault",
+      "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+      "junit_case": {
+        "class": "tests.test_sprint_kind_status.TestSQLiteSprintKindStatus",
+        "name": "test_kind_result_fault_after_actual_update_rolls_back"
+      },
+      "node": "tests/test_sprint_kind_status.py::TestSQLiteSprintKindStatus::test_kind_result_fault_after_actual_update_rolls_back",
+      "observations": [
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "97e5b46f-67ba-4e82-8a60-d10e365f30be",
+              "created_at": "2026-10-18T14:41:41Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "before"
+        },
+        {
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "97e5b46f-67ba-4e82-8a60-d10e365f30be",
+              "created_at": "2026-10-18T14:41:41Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "backlog",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "actual-update-before-result-exception",
+          "transaction": {
+            "in_transaction": true
+          }
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "97e5b46f-67ba-4e82-8a60-d10e365f30be",
+              "created_at": "2026-10-18T14:41:41Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "97e5b46f-67ba-4e82-8a60-d10e365f30be",
+              "created_at": "2026-10-18T14:41:41Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "after-product-rollback",
+          "transaction": {
+            "in_transaction": false
+          }
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "97e5b46f-67ba-4e82-8a60-d10e365f30be",
+              "created_at": "2026-10-18T14:41:41Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "backlog",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "result": {
+            "aggregate_uuid": "97e5b46f-67ba-4e82-8a60-d10e365f30be",
+            "created_at": "2026-10-18T14:41:41Z",
+            "end_date": null,
+            "goal": "",
+            "id": 1,
+            "kind": "backlog",
+            "kind_revision": "sprint:97e5b46f-67ba-4e82-8a60-d10e365f30be@kind:backlog@status:planned",
+            "name": "kind/status baseline",
+            "start_date": null,
+            "status": "planned"
+          },
+          "step": "retry-returned"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.db",
+      "basis_unchanged_same_kind": false,
+      "history": "kind-backlog-competing-current-basis",
+      "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+      "junit_case": {
+        "class": "tests.test_sprint_kind_status.TestSQLiteSprintKindStatus",
+        "name": "test_observable_competing_cas_and_same_kind_basis[kind-backlog]"
+      },
+      "limits": "State basis only, no monotonic or ABA guarantee",
+      "node": "tests/test_sprint_kind_status.py::TestSQLiteSprintKindStatus::test_observable_competing_cas_and_same_kind_basis[kind-backlog]",
+      "observations": [
+        {
+          "basis": "sprint:bcb29efe-6b2c-48d9-bf63-fdcd5b29af19@kind:active_sprint@status:planned",
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "bcb29efe-6b2c-48d9-bf63-fdcd5b29af19",
+              "created_at": "2026-10-18T14:41:41Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "winner-locked-basis-read"
+        },
+        {
+          "evidence": "SQLite BEGIN IMMEDIATE attempted while first holds writer lock",
+          "step": "second-caller-wait-observed"
+        },
+        {
+          "result": {
+            "aggregate_uuid": "bcb29efe-6b2c-48d9-bf63-fdcd5b29af19",
+            "created_at": "2026-10-18T14:41:41Z",
+            "end_date": null,
+            "goal": "",
+            "id": 1,
+            "kind": "backlog",
+            "kind_revision": "sprint:bcb29efe-6b2c-48d9-bf63-fdcd5b29af19@kind:backlog@status:planned",
+            "name": "kind/status baseline",
+            "start_date": null,
+            "status": "planned"
+          },
+          "step": "winner-returned"
+        },
+        {
+          "error": "Sprint #1 kind revision mismatch: expected sprint:bcb29efe-6b2c-48d9-bf63-fdcd5b29af19@kind:active_sprint@status:planned, current sprint:bcb29efe-6b2c-48d9-bf63-fdcd5b29af19@kind:backlog@status:planned",
+          "step": "loser-refused",
+          "type": "StatusConflict"
+        },
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "bcb29efe-6b2c-48d9-bf63-fdcd5b29af19",
+              "created_at": "2026-10-18T14:41:41Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "backlog",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "final-independent-read"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.db",
+      "basis_unchanged_same_kind": true,
+      "history": "kind-active_sprint-competing-current-basis",
+      "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+      "junit_case": {
+        "class": "tests.test_sprint_kind_status.TestSQLiteSprintKindStatus",
+        "name": "test_observable_competing_cas_and_same_kind_basis[kind-active_sprint]"
+      },
+      "limits": "State basis only, no monotonic or ABA guarantee",
+      "node": "tests/test_sprint_kind_status.py::TestSQLiteSprintKindStatus::test_observable_competing_cas_and_same_kind_basis[kind-active_sprint]",
+      "observations": [
+        {
+          "basis": "sprint:b6ad75ec-b15e-4281-98cb-e9eabe7b18d7@kind:active_sprint@status:planned",
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "b6ad75ec-b15e-4281-98cb-e9eabe7b18d7",
+              "created_at": "2026-10-18T14:41:41Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "winner-locked-basis-read"
+        },
+        {
+          "evidence": "SQLite BEGIN IMMEDIATE attempted while first holds writer lock",
+          "step": "second-caller-wait-observed"
+        },
+        {
+          "result": {
+            "aggregate_uuid": "b6ad75ec-b15e-4281-98cb-e9eabe7b18d7",
+            "created_at": "2026-10-18T14:41:41Z",
+            "end_date": null,
+            "goal": "",
+            "id": 1,
+            "kind": "active_sprint",
+            "kind_revision": "sprint:b6ad75ec-b15e-4281-98cb-e9eabe7b18d7@kind:active_sprint@status:planned",
+            "name": "kind/status baseline",
+            "start_date": null,
+            "status": "planned"
+          },
+          "step": "winner-returned"
+        },
+        {
+          "result": {
+            "aggregate_uuid": "b6ad75ec-b15e-4281-98cb-e9eabe7b18d7",
+            "created_at": "2026-10-18T14:41:41Z",
+            "end_date": null,
+            "goal": "",
+            "id": 1,
+            "kind": "active_sprint",
+            "kind_revision": "sprint:b6ad75ec-b15e-4281-98cb-e9eabe7b18d7@kind:active_sprint@status:planned",
+            "name": "kind/status baseline",
+            "start_date": null,
+            "status": "planned"
+          },
+          "step": "loser-returned"
+        },
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "b6ad75ec-b15e-4281-98cb-e9eabe7b18d7",
+              "created_at": "2026-10-18T14:41:41Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "final-independent-read"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.db",
+      "basis_unchanged_same_kind": false,
+      "history": "status-active-competing-current-basis",
+      "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+      "junit_case": {
+        "class": "tests.test_sprint_kind_status.TestSQLiteSprintKindStatus",
+        "name": "test_observable_competing_cas_and_same_kind_basis[status-active]"
+      },
+      "limits": "State basis only, no monotonic or ABA guarantee",
+      "node": "tests/test_sprint_kind_status.py::TestSQLiteSprintKindStatus::test_observable_competing_cas_and_same_kind_basis[status-active]",
+      "observations": [
+        {
+          "basis": "sprint:85b6d248-cd49-48b7-aad9-09fbd24c9380@status:planned",
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "85b6d248-cd49-48b7-aad9-09fbd24c9380",
+              "created_at": "2026-10-18T14:41:41Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "winner-locked-basis-read"
+        },
+        {
+          "evidence": "SQLite BEGIN IMMEDIATE attempted while first holds writer lock",
+          "step": "second-caller-wait-observed"
+        },
+        {
+          "result": null,
+          "step": "winner-returned"
+        },
+        {
+          "error": "Sprint #1 status revision mismatch: expected sprint:85b6d248-cd49-48b7-aad9-09fbd24c9380@status:planned, current sprint:85b6d248-cd49-48b7-aad9-09fbd24c9380@status:active",
+          "step": "loser-refused",
+          "type": "StatusConflict"
+        },
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "85b6d248-cd49-48b7-aad9-09fbd24c9380",
+              "created_at": "2026-10-18T14:41:41Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "kind/status baseline",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "step": "final-independent-read"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "kind-backlog-before-update-abort-retry",
+      "isolation": "read committed",
+      "junit_case": {
+        "class": "tests.pg.test_sprint_kind_status.TestPostgresSprintKindStatus",
+        "name": "test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[BEFORE-kind-backlog]"
+      },
+      "node": "tests/pg/test_sprint_kind_status.py::TestPostgresSprintKindStatus::test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[BEFORE-kind-backlog]",
+      "observations": [
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "5d8bc7e2-e16e-4818-9f56-a8e7ba47f2a8",
+              "created_at": "2026-10-18T14:37:33.392829Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186053,
+              "kind": "active_sprint",
+              "name": "kind/status baseline e955f096b4ec4eb9b135558d158a7686",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "before"
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "5d8bc7e2-e16e-4818-9f56-a8e7ba47f2a8",
+              "created_at": "2026-10-18T14:37:33.392829Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186053,
+              "kind": "active_sprint",
+              "name": "kind/status baseline e955f096b4ec4eb9b135558d158a7686",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "5d8bc7e2-e16e-4818-9f56-a8e7ba47f2a8",
+              "created_at": "2026-10-18T14:37:33.392829Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186053,
+              "kind": "active_sprint",
+              "name": "kind/status baseline e955f096b4ec4eb9b135558d158a7686",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "after-product-error-before-fixture-cleanup",
+          "transaction": {
+            "transaction_status": "IDLE"
+          }
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "5d8bc7e2-e16e-4818-9f56-a8e7ba47f2a8",
+              "created_at": "2026-10-18T14:37:33.392829Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186053,
+              "kind": "backlog",
+              "name": "kind/status baseline e955f096b4ec4eb9b135558d158a7686",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "result": {
+            "aggregate_uuid": "5d8bc7e2-e16e-4818-9f56-a8e7ba47f2a8",
+            "created_at": "2026-10-18T14:37:33.392829Z",
+            "end_date": null,
+            "goal": "",
+            "id": 2015186053,
+            "kind": "backlog",
+            "kind_revision": "sprint:5d8bc7e2-e16e-4818-9f56-a8e7ba47f2a8@kind:backlog@status:planned",
+            "name": "kind/status baseline e955f096b4ec4eb9b135558d158a7686",
+            "repo_id": "itest-module-097542dae0ff",
+            "start_date": null,
+            "status": "planned"
+          },
+          "step": "retry-returned"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "kind-active_sprint-before-update-abort-retry",
+      "isolation": "read committed",
+      "junit_case": {
+        "class": "tests.pg.test_sprint_kind_status.TestPostgresSprintKindStatus",
+        "name": "test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[BEFORE-kind-active_sprint]"
+      },
+      "node": "tests/pg/test_sprint_kind_status.py::TestPostgresSprintKindStatus::test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[BEFORE-kind-active_sprint]",
+      "observations": [
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "31a51c9a-b647-4195-859b-b9b62e913e9b",
+              "created_at": "2026-10-18T14:37:33.408202Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186054,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 5d29a109c048496d8ff5bd086c90c9bc",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "before"
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "31a51c9a-b647-4195-859b-b9b62e913e9b",
+              "created_at": "2026-10-18T14:37:33.408202Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186054,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 5d29a109c048496d8ff5bd086c90c9bc",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "31a51c9a-b647-4195-859b-b9b62e913e9b",
+              "created_at": "2026-10-18T14:37:33.408202Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186054,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 5d29a109c048496d8ff5bd086c90c9bc",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "after-product-error-before-fixture-cleanup",
+          "transaction": {
+            "transaction_status": "IDLE"
+          }
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "31a51c9a-b647-4195-859b-b9b62e913e9b",
+              "created_at": "2026-10-18T14:37:33.408202Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186054,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 5d29a109c048496d8ff5bd086c90c9bc",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "result": {
+            "aggregate_uuid": "31a51c9a-b647-4195-859b-b9b62e913e9b",
+            "created_at": "2026-10-18T14:37:33.408202Z",
+            "end_date": null,
+            "goal": "",
+            "id": 2015186054,
+            "kind": "active_sprint",
+            "kind_revision": "sprint:31a51c9a-b647-4195-859b-b9b62e913e9b@kind:active_sprint@status:planned",
+            "name": "kind/status baseline 5d29a109c048496d8ff5bd086c90c9bc",
+            "repo_id": "itest-module-097542dae0ff",
+            "start_date": null,
+            "status": "planned"
+          },
+          "step": "retry-returned"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "status-active-before-update-abort-retry",
+      "isolation": "read committed",
+      "junit_case": {
+        "class": "tests.pg.test_sprint_kind_status.TestPostgresSprintKindStatus",
+        "name": "test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[BEFORE-status-active]"
+      },
+      "node": "tests/pg/test_sprint_kind_status.py::TestPostgresSprintKindStatus::test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[BEFORE-status-active]",
+      "observations": [
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "1f5bd09f-4c46-4a8d-81fd-9e753c1d6dac",
+              "created_at": "2026-10-18T14:37:33.420800Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186055,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 7d35b01783a44cf1b91e049247a88c27",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "before"
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "1f5bd09f-4c46-4a8d-81fd-9e753c1d6dac",
+              "created_at": "2026-10-18T14:37:33.420800Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186055,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 7d35b01783a44cf1b91e049247a88c27",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "1f5bd09f-4c46-4a8d-81fd-9e753c1d6dac",
+              "created_at": "2026-10-18T14:37:33.420800Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186055,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 7d35b01783a44cf1b91e049247a88c27",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "after-product-error-before-fixture-cleanup",
+          "transaction": {
+            "transaction_status": "IDLE"
+          }
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "1f5bd09f-4c46-4a8d-81fd-9e753c1d6dac",
+              "created_at": "2026-10-18T14:37:33.420800Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186055,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 7d35b01783a44cf1b91e049247a88c27",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "result": null,
+          "step": "retry-returned"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "kind-backlog-after-update-abort-retry",
+      "isolation": "read committed",
+      "junit_case": {
+        "class": "tests.pg.test_sprint_kind_status.TestPostgresSprintKindStatus",
+        "name": "test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[AFTER-kind-backlog]"
+      },
+      "node": "tests/pg/test_sprint_kind_status.py::TestPostgresSprintKindStatus::test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[AFTER-kind-backlog]",
+      "observations": [
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "3150ccbd-a4e2-4d4f-97e5-711ef975908f",
+              "created_at": "2026-10-18T14:37:33.434965Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186056,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 281f40cf6b1c432bb9388b11054ef854",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "before"
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "3150ccbd-a4e2-4d4f-97e5-711ef975908f",
+              "created_at": "2026-10-18T14:37:33.434965Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186056,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 281f40cf6b1c432bb9388b11054ef854",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "3150ccbd-a4e2-4d4f-97e5-711ef975908f",
+              "created_at": "2026-10-18T14:37:33.434965Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186056,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 281f40cf6b1c432bb9388b11054ef854",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "after-product-error-before-fixture-cleanup",
+          "transaction": {
+            "transaction_status": "IDLE"
+          }
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "3150ccbd-a4e2-4d4f-97e5-711ef975908f",
+              "created_at": "2026-10-18T14:37:33.434965Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186056,
+              "kind": "backlog",
+              "name": "kind/status baseline 281f40cf6b1c432bb9388b11054ef854",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "result": {
+            "aggregate_uuid": "3150ccbd-a4e2-4d4f-97e5-711ef975908f",
+            "created_at": "2026-10-18T14:37:33.434965Z",
+            "end_date": null,
+            "goal": "",
+            "id": 2015186056,
+            "kind": "backlog",
+            "kind_revision": "sprint:3150ccbd-a4e2-4d4f-97e5-711ef975908f@kind:backlog@status:planned",
+            "name": "kind/status baseline 281f40cf6b1c432bb9388b11054ef854",
+            "repo_id": "itest-module-097542dae0ff",
+            "start_date": null,
+            "status": "planned"
+          },
+          "step": "retry-returned"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "kind-active_sprint-after-update-abort-retry",
+      "isolation": "read committed",
+      "junit_case": {
+        "class": "tests.pg.test_sprint_kind_status.TestPostgresSprintKindStatus",
+        "name": "test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[AFTER-kind-active_sprint]"
+      },
+      "node": "tests/pg/test_sprint_kind_status.py::TestPostgresSprintKindStatus::test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[AFTER-kind-active_sprint]",
+      "observations": [
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "34c40f5d-e38c-4bd0-ba92-89ae27f94be0",
+              "created_at": "2026-10-18T14:37:33.448840Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186057,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 8dc183eb87f84c419513ced3bc8102e3",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "before"
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "34c40f5d-e38c-4bd0-ba92-89ae27f94be0",
+              "created_at": "2026-10-18T14:37:33.448840Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186057,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 8dc183eb87f84c419513ced3bc8102e3",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "34c40f5d-e38c-4bd0-ba92-89ae27f94be0",
+              "created_at": "2026-10-18T14:37:33.448840Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186057,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 8dc183eb87f84c419513ced3bc8102e3",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "after-product-error-before-fixture-cleanup",
+          "transaction": {
+            "transaction_status": "IDLE"
+          }
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "34c40f5d-e38c-4bd0-ba92-89ae27f94be0",
+              "created_at": "2026-10-18T14:37:33.448840Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186057,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 8dc183eb87f84c419513ced3bc8102e3",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "result": {
+            "aggregate_uuid": "34c40f5d-e38c-4bd0-ba92-89ae27f94be0",
+            "created_at": "2026-10-18T14:37:33.448840Z",
+            "end_date": null,
+            "goal": "",
+            "id": 2015186057,
+            "kind": "active_sprint",
+            "kind_revision": "sprint:34c40f5d-e38c-4bd0-ba92-89ae27f94be0@kind:active_sprint@status:planned",
+            "name": "kind/status baseline 8dc183eb87f84c419513ced3bc8102e3",
+            "repo_id": "itest-module-097542dae0ff",
+            "start_date": null,
+            "status": "planned"
+          },
+          "step": "retry-returned"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "status-active-after-update-abort-retry",
+      "isolation": "read committed",
+      "junit_case": {
+        "class": "tests.pg.test_sprint_kind_status.TestPostgresSprintKindStatus",
+        "name": "test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[AFTER-status-active]"
+      },
+      "node": "tests/pg/test_sprint_kind_status.py::TestPostgresSprintKindStatus::test_real_update_fault_rolls_back_before_fixture_cleanup_and_retry[AFTER-status-active]",
+      "observations": [
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "7ce90252-b321-4bb7-ac86-8df349de7d5e",
+              "created_at": "2026-10-18T14:37:33.462895Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186058,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 65dcbd1a56294cc1b54886fbb8357946",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "before"
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "7ce90252-b321-4bb7-ac86-8df349de7d5e",
+              "created_at": "2026-10-18T14:37:33.462895Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186058,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 65dcbd1a56294cc1b54886fbb8357946",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "7ce90252-b321-4bb7-ac86-8df349de7d5e",
+              "created_at": "2026-10-18T14:37:33.462895Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186058,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 65dcbd1a56294cc1b54886fbb8357946",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "after-product-error-before-fixture-cleanup",
+          "transaction": {
+            "transaction_status": "IDLE"
+          }
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "7ce90252-b321-4bb7-ac86-8df349de7d5e",
+              "created_at": "2026-10-18T14:37:33.462895Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186058,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 65dcbd1a56294cc1b54886fbb8357946",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "result": null,
+          "step": "retry-returned"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "kind-result-construction-fault",
+      "isolation": "read committed",
+      "junit_case": {
+        "class": "tests.pg.test_sprint_kind_status.TestPostgresSprintKindStatus",
+        "name": "test_kind_result_fault_after_actual_update_rolls_back"
+      },
+      "node": "tests/pg/test_sprint_kind_status.py::TestPostgresSprintKindStatus::test_kind_result_fault_after_actual_update_rolls_back",
+      "observations": [
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "60c5c0a3-f3ab-490f-afae-abf655b97d70",
+              "created_at": "2026-10-18T14:37:33.475750Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186059,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 1769fef1d3ab4947b9dda20731c9d084",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "before"
+        },
+        {
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "60c5c0a3-f3ab-490f-afae-abf655b97d70",
+              "created_at": "2026-10-18T14:37:33.475750Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186059,
+              "kind": "backlog",
+              "name": "kind/status baseline 1769fef1d3ab4947b9dda20731c9d084",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "actual-update-before-result-exception",
+          "transaction": {
+            "transaction_status": "INTRANS"
+          }
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "60c5c0a3-f3ab-490f-afae-abf655b97d70",
+              "created_at": "2026-10-18T14:37:33.475750Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186059,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 1769fef1d3ab4947b9dda20731c9d084",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "60c5c0a3-f3ab-490f-afae-abf655b97d70",
+              "created_at": "2026-10-18T14:37:33.475750Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186059,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 1769fef1d3ab4947b9dda20731c9d084",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "after-product-rollback",
+          "transaction": {
+            "transaction_status": "IDLE"
+          }
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "60c5c0a3-f3ab-490f-afae-abf655b97d70",
+              "created_at": "2026-10-18T14:37:33.475750Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186059,
+              "kind": "backlog",
+              "name": "kind/status baseline 1769fef1d3ab4947b9dda20731c9d084",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "result": {
+            "aggregate_uuid": "60c5c0a3-f3ab-490f-afae-abf655b97d70",
+            "created_at": "2026-10-18T14:37:33.475750Z",
+            "end_date": null,
+            "goal": "",
+            "id": 2015186059,
+            "kind": "backlog",
+            "kind_revision": "sprint:60c5c0a3-f3ab-490f-afae-abf655b97d70@kind:backlog@status:planned",
+            "name": "kind/status baseline 1769fef1d3ab4947b9dda20731c9d084",
+            "repo_id": "itest-module-097542dae0ff",
+            "start_date": null,
+            "status": "planned"
+          },
+          "step": "retry-returned"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "basis_unchanged_same_kind": false,
+      "history": "kind-backlog-competing-current-basis",
+      "isolation": "read committed",
+      "junit_case": {
+        "class": "tests.pg.test_sprint_kind_status.TestPostgresSprintKindStatus",
+        "name": "test_observable_competing_cas_and_same_kind_basis[kind-backlog]"
+      },
+      "limits": "State basis only, no monotonic or ABA guarantee",
+      "node": "tests/pg/test_sprint_kind_status.py::TestPostgresSprintKindStatus::test_observable_competing_cas_and_same_kind_basis[kind-backlog]",
+      "observations": [
+        {
+          "basis": "sprint:d8a86347-95a7-4369-816c-3c155c0f598e@kind:active_sprint@status:planned",
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "d8a86347-95a7-4369-816c-3c155c0f598e",
+              "created_at": "2026-10-18T14:37:33.488662Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186060,
+              "kind": "active_sprint",
+              "name": "kind/status baseline b0787ff726b3487e98493b5a2e061f2a",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "winner-locked-basis-read"
+        },
+        {
+          "evidence": "pg_blocking_pids includes first caller",
+          "first_pid": 2167790,
+          "second_pid": 2167792,
+          "step": "second-caller-wait-observed"
+        },
+        {
+          "result": {
+            "aggregate_uuid": "d8a86347-95a7-4369-816c-3c155c0f598e",
+            "created_at": "2026-10-18T14:37:33.488662Z",
+            "end_date": null,
+            "goal": "",
+            "id": 2015186060,
+            "kind": "backlog",
+            "kind_revision": "sprint:d8a86347-95a7-4369-816c-3c155c0f598e@kind:backlog@status:planned",
+            "name": "kind/status baseline b0787ff726b3487e98493b5a2e061f2a",
+            "repo_id": "itest-module-097542dae0ff",
+            "start_date": null,
+            "status": "planned"
+          },
+          "step": "winner-returned"
+        },
+        {
+          "error": "Sprint #2015186060 kind revision mismatch: expected sprint:d8a86347-95a7-4369-816c-3c155c0f598e@kind:active_sprint@status:planned, current sprint:d8a86347-95a7-4369-816c-3c155c0f598e@kind:backlog@status:planned",
+          "step": "loser-refused",
+          "type": "StatusConflict"
+        },
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "d8a86347-95a7-4369-816c-3c155c0f598e",
+              "created_at": "2026-10-18T14:37:33.488662Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186060,
+              "kind": "backlog",
+              "name": "kind/status baseline b0787ff726b3487e98493b5a2e061f2a",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "final-independent-read"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "basis_unchanged_same_kind": true,
+      "history": "kind-active_sprint-competing-current-basis",
+      "isolation": "read committed",
+      "junit_case": {
+        "class": "tests.pg.test_sprint_kind_status.TestPostgresSprintKindStatus",
+        "name": "test_observable_competing_cas_and_same_kind_basis[kind-active_sprint]"
+      },
+      "limits": "State basis only, no monotonic or ABA guarantee",
+      "node": "tests/pg/test_sprint_kind_status.py::TestPostgresSprintKindStatus::test_observable_competing_cas_and_same_kind_basis[kind-active_sprint]",
+      "observations": [
+        {
+          "basis": "sprint:8cd10011-c34f-4600-8700-9f623800a854@kind:active_sprint@status:planned",
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "8cd10011-c34f-4600-8700-9f623800a854",
+              "created_at": "2026-10-18T14:37:33.489296Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186061,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 7e10aba416cd4509b5be6bbc644c9c47",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "winner-locked-basis-read"
+        },
+        {
+          "evidence": "pg_blocking_pids includes first caller",
+          "first_pid": 2167795,
+          "second_pid": 2167797,
+          "step": "second-caller-wait-observed"
+        },
+        {
+          "result": {
+            "aggregate_uuid": "8cd10011-c34f-4600-8700-9f623800a854",
+            "created_at": "2026-10-18T14:37:33.489296Z",
+            "end_date": null,
+            "goal": "",
+            "id": 2015186061,
+            "kind": "active_sprint",
+            "kind_revision": "sprint:8cd10011-c34f-4600-8700-9f623800a854@kind:active_sprint@status:planned",
+            "name": "kind/status baseline 7e10aba416cd4509b5be6bbc644c9c47",
+            "repo_id": "itest-module-097542dae0ff",
+            "start_date": null,
+            "status": "planned"
+          },
+          "step": "winner-returned"
+        },
+        {
+          "result": {
+            "aggregate_uuid": "8cd10011-c34f-4600-8700-9f623800a854",
+            "created_at": "2026-10-18T14:37:33.489296Z",
+            "end_date": null,
+            "goal": "",
+            "id": 2015186061,
+            "kind": "active_sprint",
+            "kind_revision": "sprint:8cd10011-c34f-4600-8700-9f623800a854@kind:active_sprint@status:planned",
+            "name": "kind/status baseline 7e10aba416cd4509b5be6bbc644c9c47",
+            "repo_id": "itest-module-097542dae0ff",
+            "start_date": null,
+            "status": "planned"
+          },
+          "step": "loser-returned"
+        },
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "8cd10011-c34f-4600-8700-9f623800a854",
+              "created_at": "2026-10-18T14:37:33.489296Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186061,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 7e10aba416cd4509b5be6bbc644c9c47",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "final-independent-read"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "basis_unchanged_same_kind": false,
+      "history": "status-active-competing-current-basis",
+      "isolation": "read committed",
+      "junit_case": {
+        "class": "tests.pg.test_sprint_kind_status.TestPostgresSprintKindStatus",
+        "name": "test_observable_competing_cas_and_same_kind_basis[status-active]"
+      },
+      "limits": "State basis only, no monotonic or ABA guarantee",
+      "node": "tests/pg/test_sprint_kind_status.py::TestPostgresSprintKindStatus::test_observable_competing_cas_and_same_kind_basis[status-active]",
+      "observations": [
+        {
+          "basis": "sprint:3bef3190-bb37-4264-8ebb-14c8b7fcec92@status:planned",
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "3bef3190-bb37-4264-8ebb-14c8b7fcec92",
+              "created_at": "2026-10-18T14:37:33.512579Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186062,
+              "kind": "active_sprint",
+              "name": "kind/status baseline f50ea70789a74a27ae133bdb0da0db77",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "winner-locked-basis-read"
+        },
+        {
+          "evidence": "pg_blocking_pids includes first caller",
+          "first_pid": 2167800,
+          "second_pid": 2167802,
+          "step": "second-caller-wait-observed"
+        },
+        {
+          "result": null,
+          "step": "winner-returned"
+        },
+        {
+          "error": "Sprint #2015186062 status revision mismatch: expected sprint:3bef3190-bb37-4264-8ebb-14c8b7fcec92@status:planned, current sprint:3bef3190-bb37-4264-8ebb-14c8b7fcec92@status:active",
+          "step": "loser-refused",
+          "type": "StatusConflict"
+        },
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "3bef3190-bb37-4264-8ebb-14c8b7fcec92",
+              "created_at": "2026-10-18T14:37:33.512579Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186062,
+              "kind": "active_sprint",
+              "name": "kind/status baseline f50ea70789a74a27ae133bdb0da0db77",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "step": "final-independent-read"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "managed-kind-caller",
+      "isolation": "read committed",
+      "junit_case": {
+        "class": "tests.pg.test_sprint_kind_status",
+        "name": "test_managed_kind_caller_keeps_target_pending_until_caller_rollback"
+      },
+      "node": "tests/pg/test_sprint_kind_status.py::test_managed_kind_caller_keeps_target_pending_until_caller_rollback",
+      "observations": [
+        {
+          "error": "Explicit rollback() forbidden within a Transaction context. (Either raise Rollback() or allow an exception to propagate out of the context.)",
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "b3c438f7-bd1d-4965-9641-c2b71d57c5b4",
+              "created_at": "2026-10-18T14:37:33.606083Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186076,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 8f83c94b628a4c57afd9081aaf182bd9",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "pending": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "b3c438f7-bd1d-4965-9641-c2b71d57c5b4",
+              "created_at": "2026-10-18T14:37:33.606083Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186076,
+              "kind": "backlog",
+              "name": "kind/status baseline 8f83c94b628a4c57afd9081aaf182bd9",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "managed-kind-error-before-caller-cleanup"
+        },
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "b3c438f7-bd1d-4965-9641-c2b71d57c5b4",
+              "created_at": "2026-10-18T14:37:33.606083Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186076,
+              "kind": "active_sprint",
+              "name": "kind/status baseline 8f83c94b628a4c57afd9081aaf182bd9",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "caller-context-rollback"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "two-phase-status-caller",
+      "isolation": "read committed",
+      "junit_case": {
+        "class": "tests.pg.test_sprint_kind_status",
+        "name": "test_two_phase_status_caller_keeps_target_pending_until_caller_rollback"
+      },
+      "node": "tests/pg/test_sprint_kind_status.py::test_two_phase_status_caller_keeps_target_pending_until_caller_rollback",
+      "observations": [
+        {
+          "error": "rollback() cannot be used during a two-phase transaction",
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "94fa5487-a694-4a76-b2f4-891f5be03e57",
+              "created_at": "2026-10-18T14:37:33.613373Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186078,
+              "kind": "active_sprint",
+              "name": "kind/status baseline afc0d32c5adc48998a6f509fcc3eb04f",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "pending": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "94fa5487-a694-4a76-b2f4-891f5be03e57",
+              "created_at": "2026-10-18T14:37:33.613373Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186078,
+              "kind": "active_sprint",
+              "name": "kind/status baseline afc0d32c5adc48998a6f509fcc3eb04f",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "step": "two-phase-status-error-before-caller-cleanup"
+        },
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "94fa5487-a694-4a76-b2f4-891f5be03e57",
+              "created_at": "2026-10-18T14:37:33.613373Z",
+              "end_date": null,
+              "goal": "",
+              "id": 2015186078,
+              "kind": "active_sprint",
+              "name": "kind/status baseline afc0d32c5adc48998a6f509fcc3eb04f",
+              "repo_id": "itest-module-097542dae0ff",
+              "start_date": null,
+              "status": "planned"
+            }
+          },
+          "step": "caller-tpc-rollback"
+        }
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "file": "sprintctl-2785-full-local.xml",
+      "sha256": "31794c4a8a3e6c90727e080973288ccf5c111c8f2bbfd009b144029dd2367325",
+      "suites": [
+        {
+          "errors": "0",
+          "failures": "0",
+          "hostname": "workstation",
+          "name": "pytest",
+          "skipped": "4",
+          "tests": "2834",
+          "time": "389.840",
+          "timestamp": "2026-10-18T17:36:16.871264+03:00"
+        }
+      ]
+    },
+    {
+      "file": "sprintctl-2785-full-pg.xml",
+      "sha256": "2f1c646d3c3bc72efc5135d682fc3bc1a2e927bb4b4afb2cfb0b7db041e56dbf",
+      "suites": [
+        {
+          "errors": "0",
+          "failures": "0",
+          "hostname": "workstation",
+          "name": "pytest",
+          "skipped": "0",
+          "tests": "1447",
+          "time": "87.085",
+          "timestamp": "2026-10-18T17:36:19.815310+03:00"
+        }
+      ]
+    }
+  ],
+  "source": "actual completed JUnit record_property observations"
+}

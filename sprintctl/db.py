@@ -1340,6 +1340,22 @@ def _require_idle_sprint_connection(conn: sqlite3.Connection) -> None:
     _require_idle_connection(conn, operation="sprint mutation")
 
 
+class _SprintKindSqlite:
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    @contextmanager
+    def locked_sprint(self, sprint_id: int):
+        sprint = get_sprint(self.conn, sprint_id)
+
+        def write_value(value: str):
+            self.conn.execute(
+                "UPDATE sprint SET kind = ? WHERE id = ?", (value, sprint_id),
+            )
+
+        yield sprint, write_value
+
+
 def set_sprint_kind(
     conn: sqlite3.Connection, sprint_id: int, kind: str, *,
     expected_revision: str | None = None,
@@ -1352,15 +1368,9 @@ def set_sprint_kind(
     _require_idle_sprint_connection(conn)
     try:
         conn.execute("BEGIN IMMEDIATE")
-        sprint = get_sprint(conn, sprint_id)
-        if sprint is None:
-            raise ValueError(f"Sprint #{sprint_id} not found")
-        current = _sprintcore.sprint_kind_revision(sprint)
-        if expected_revision is not None and expected_revision != current:
-            raise StatusConflict(f"Sprint #{sprint_id} kind revision mismatch: expected {expected_revision}, current {current}")
-        conn.execute("UPDATE sprint SET kind = ? WHERE id = ?", (kind, sprint_id))
-        result = {**sprint, "kind": kind}
-        result["kind_revision"] = _sprintcore.sprint_kind_revision(result)
+        result = _sprintcore._set_sprint_kind_locked(
+            _SprintKindSqlite(conn), sprint_id, kind, expected_revision,
+        )
         conn.commit()
         return result
     except Exception:
@@ -1789,6 +1799,32 @@ def _validate_sprint_transition(current: str, new_status: str) -> None:
         )
 
 
+class _SprintStatusSqlite:
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    @contextmanager
+    def locked_sprint(self, sprint_id: int):
+        sprint = get_sprint(self.conn, sprint_id)
+
+        def write_value(value: str):
+            self.conn.execute(
+                "UPDATE sprint SET status = ? WHERE id = ?", (value, sprint_id),
+            )
+
+        yield sprint, write_value
+
+    def revision(self, sprint: dict) -> str:
+        return sprint_status_revision(sprint)
+
+    @property
+    def invalid_transition(self) -> type[ValueError]:
+        return InvalidTransition
+
+    def validate_transition(self, current: str, target: str) -> None:
+        _validate_sprint_transition(current, target)
+
+
 def set_sprint_status(
     conn: sqlite3.Connection,
     sprint_id: int,
@@ -1801,19 +1837,9 @@ def set_sprint_status(
     _require_idle_sprint_connection(conn)
     try:
         conn.execute("BEGIN IMMEDIATE")
-        sprint = get_sprint(conn, sprint_id)
-        if sprint is None:
-            raise ValueError(f"Sprint #{sprint_id} not found")
-        current_revision = sprint_status_revision(sprint)
-        if expected_revision is not None and expected_revision != current_revision:
-            raise StatusConflict(
-                f"Sprint #{sprint_id} status revision mismatch: "
-                f"expected {expected_revision}, current {current_revision}"
-            )
-        _validate_sprint_transition(sprint["status"], new_status)
-        if new_status == "active" and sprint["kind"] == "archive":
-            raise InvalidTransition(f"cannot activate sprint {sprint_id}: kind is archive")
-        conn.execute("UPDATE sprint SET status = ? WHERE id = ?", (new_status, sprint_id))
+        _sprintcore._set_sprint_status_locked(
+            _SprintStatusSqlite(conn), sprint_id, new_status, expected_revision,
+        )
         conn.commit()
     except Exception:
         conn.rollback()
