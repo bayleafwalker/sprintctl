@@ -46,6 +46,7 @@ from . import backlogcore as _backlogcore
 from . import maintaincore as _maintaincore
 from . import decisions as _decisions
 from . import releases as _releases
+from . import releasecore as _releasecore
 from . import depcore as _depcore
 from . import effect_intent as _effect_intent
 from . import effect_verification as _effect_verification
@@ -4332,29 +4333,17 @@ def _release_row(row: Any) -> dict:
 def _release_basis_locked(
     cur: Any, repo_id: str, item_id: int, *, lock: bool = True
 ) -> tuple[dict, str, int]:
-    """Lock an item and return it with its release revision and revise count.
-
-    The row lock serializes this read with description edits and decisions,
-    which both lock the item first.
-    """
+    """Read the basis, retaining the caller's optional PostgreSQL item lock."""
     cur.execute(
-        "SELECT wi.*, "
-        "(SELECT COUNT(*) FROM event e WHERE e.repo_id = wi.repo_id "
-        " AND e.work_item_id = wi.id AND e.event_type = %s) AS edit_version, "
-        "(SELECT COUNT(*) FROM work_decision d WHERE d.repo_id = wi.repo_id "
-        " AND d.work_item_id = wi.id AND d.kind = 'revise') AS revise_count "
-        "FROM work_item wi WHERE wi.repo_id = %s AND wi.id = %s"
-        + (" FOR UPDATE OF wi" if lock else ""),
+        _releasecore._basis_query(ph="%s", tenant_scoped=True, lock_item=lock),
         (_contracts.ITEM_EDITED_EVENT_TYPE, repo_id, item_id),
     )
     row = cur.fetchone()
-    if row is None:
-        raise ValueError(f"Work item #{item_id} not found")
-    item = _norm(row)
-    edit_version = int(item.pop("edit_version"))
-    revise_count = int(item.pop("revise_count"))
-    edit_revision = _workitemcore._description_revision(item, edit_version)
-    return item, _releases.release_revision(edit_revision, revise_count), revise_count
+    return _releasecore._basis_from_item(
+        _norm(row) if row is not None else None,
+        item_id,
+        description_revision=lambda item, version: _workitemcore._description_revision(item, version),
+    )
 
 
 def _freeze_release_locked(
@@ -4372,49 +4361,32 @@ def _freeze_release_locked(
         "SELECT ref_type, url, label FROM ref WHERE repo_id = %s AND work_item_id = %s",
         (repo_id, item["id"]),
     )
-    context_refs = _releases.canonical_context_refs(cur.fetchall())
-    digest = _releases.release_digest(
-        item["aggregate_uuid"], revision, acceptance_contract, context_refs
+    canonicalize_refs = _releases.canonical_context_refs
+    refs = cur.fetchall()
+
+    def insert(values_supplier):
+        cur.execute(
+            """
+            INSERT INTO work_release (
+                repo_id, work_item_id, item_revision, revise_count, release_digest,
+                acceptance_contract, context_refs, actor
+            ) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s)
+            ON CONFLICT (repo_id, release_digest) DO NOTHING
+            """,
+            (repo_id,) + values_supplier(),
+        )
+
+    return _releasecore._freeze(
+        item, revision, revise_count, actor=actor,
+        acceptance_contract=acceptance_contract, refs=refs,
+        canonicalize_refs=canonicalize_refs, insert=insert,
     )
-    cur.execute(
-        """
-        INSERT INTO work_release (
-            repo_id, work_item_id, item_revision, revise_count, release_digest,
-            acceptance_contract, context_refs, actor
-        ) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s)
-        ON CONFLICT (repo_id, release_digest) DO NOTHING
-        """,
-        (
-            repo_id,
-            item["id"],
-            revision,
-            revise_count,
-            digest,
-            _releases.canonical_json(acceptance_contract),
-            _releases.canonical_json(context_refs),
-            actor,
-        ),
-    )
-    return digest
 
 
 def _current_release_locked(cur: Any, repo_id: str, item_id: int) -> dict | None:
     """The release frozen most recently since the item's latest revise decision."""
     cur.execute(
-        """
-        SELECT wr.* FROM work_release wr
-        WHERE wr.repo_id = %s AND wr.work_item_id = %s
-          AND wr.revise_count = (
-              SELECT COUNT(*) FROM work_decision d
-              WHERE d.repo_id = wr.repo_id AND d.work_item_id = wr.work_item_id
-                AND d.kind = 'revise'
-          )
-        ORDER BY (
-            SELECT MAX(r.id) FROM reservation r
-            WHERE r.repo_id = wr.repo_id AND r.release_digest = wr.release_digest
-        ) DESC NULLS LAST, wr.id DESC
-        LIMIT 1
-        """,
+        _releasecore._current_release_query(ph="%s", tenant_scoped=True),
         (repo_id, item_id),
     )
     row = cur.fetchone()
@@ -4425,19 +4397,18 @@ def _decision_release_locked(
     cur: Any, repo_id: str, item_id: int, release_digest: str | None
 ) -> str | None:
     """Default a decision's release to the current one; refuse a foreign one."""
-    if release_digest is None:
-        current = _current_release_locked(cur, repo_id, item_id)
-        return current["release_digest"] if current else None
-    cur.execute(
-        "SELECT 1 FROM work_release WHERE repo_id = %s AND release_digest = %s "
-        "AND work_item_id = %s",
-        (repo_id, release_digest, item_id),
-    )
-    if cur.fetchone() is None:
-        raise _releases.ReleaseMismatch(
-            f"release {release_digest} is not a release of item #{item_id}"
+    def member(digest):
+        cur.execute(
+            "SELECT 1 FROM work_release WHERE repo_id = %s AND release_digest = %s "
+            "AND work_item_id = %s",
+            (repo_id, digest, item_id),
         )
-    return release_digest
+        return cur.fetchone() is not None
+
+    return _releasecore._resolve_decision_release(
+        item_id, release_digest,
+        current=lambda: _current_release_locked(cur, repo_id, item_id), member=member,
+    )
 
 
 def get_release(store: PgStore, digest: str) -> dict | None:

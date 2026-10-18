@@ -1,0 +1,788 @@
+{
+  "binding3": {
+    "oracle_hashes": {
+      "tests/_release_policy_contract.py": "b437f2bc6ae3a8b734174c519d21b18f8253c26685d331706c9c8b0f620d0303",
+      "tests/pg/test_release_policy.py": "7195887ebbfb491baa2f1ee6326f0c93ce250b6996b42af6b0b284924889009b",
+      "tests/test_release_policy.py": "52fc1d549bb9a1f3c766b26c3f8f4974160a28455ef63925f8b2282f0c736b76"
+    },
+    "plugin": "/tmp/release_ref_binding_controls_2806.py",
+    "plugin_sha256": "b44149a07a9d4cda4f74388d58fe5fd2ae413571ebf7e20400dbd25e0ea82d94",
+    "prior_control_applicability": {
+      "archive_recovery": "Old bytes reconstructed by removing only appended new method, then FULL SHA matched prior independently recorded oracle hash; not claimed prior archival.",
+      "method": "Remove only new ref-canonicalizer test AST from current module; all remaining module AST including imports/helpers/classes/oldtests equals recorded old module. Adapter files unchanged. Prior28mutants selected no new ref test; their original whole-file hashes/counts remain explicitly attributed.",
+      "old_shared_sha256": "f9d3d49b641272159214d5f17f1c24afe6aa563a62a547041eb6b035e00100cc",
+      "prior_packet_sha256": "1322a63385c28138fa65e19e58cc7e32aeefe94cd1f693c0b646bbe1e904d810",
+      "unchanged_ast": true
+    },
+    "runs": [
+      {
+        "actual_terminal_output": ".                                                                        [100%]\n1 passed, 45 deselected in 0.13s\n",
+        "argv": [
+          "/tmp/sprintctl-release-policy-local-env/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_release_policy.py",
+          "-k",
+          "ref_canonicalizer_binding",
+          "-q",
+          "--tb=short",
+          "-p",
+          "release_ref_binding_controls_2806"
+        ],
+        "backend": "sqlite",
+        "exit": 0,
+        "log": "/tmp/sprintctl-2806-refcapture-sqlite-baseline.txt",
+        "log_sha256": "59e15cc5632269a4c309bc8fe3acd4e8d75f158337de9365c3b4b67dcbcc868a",
+        "mode": "baseline",
+        "summary": "1 passed, 45 deselected in 0.13s"
+      },
+      {
+        "actual_terminal_output": "F                                                                        [100%]\n=================================== FAILURES ===================================\n_ TestSqliteReleasePolicy.test_ref_canonicalizer_binding_keeps_backend_fetch_timing _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:682: in test_ref_canonicalizer_binding_keeps_backend_fetch_timing\n    assert trace==['actual-ref-select','actual-fetch','select-rebound-canonicalizer' if d.is_pg else 'fetch-rebound-canonicalizer']\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_release_policy.py::TestSqliteReleasePolicy::test_ref_canonicalizer_binding_keeps_backend_fetch_timing\n1 failed, 45 deselected in 0.15s\n",
+        "argv": [
+          "/tmp/sprintctl-release-policy-local-env/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_release_policy.py",
+          "-k",
+          "ref_canonicalizer_binding",
+          "-q",
+          "--tb=short",
+          "-p",
+          "release_ref_binding_controls_2806"
+        ],
+        "backend": "sqlite",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-refcapture-sqlite-sqlite-early.txt",
+        "log_sha256": "fcbe8d997335556112335b03feab081444a4034f839bcf4af1d5577775906fd4",
+        "mode": "sqlite-early",
+        "summary": "1 failed, 45 deselected in 0.15s"
+      },
+      {
+        "actual_terminal_output": "pg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)\n.                                                                        [100%]\n1 passed, 1765 deselected in 0.39s\npg-cleanup-report-check: pg_test_scope: 1 fixture cleanup(s) completed with zero remaining rows\npg-cleanup-report-check: ok: 1 fixture cleanup(s) across 1 fixture name(s)\n",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "release_policy and ref_canonicalizer_binding",
+          "--tb=short",
+          "-p",
+          "release_ref_binding_controls_2806"
+        ],
+        "backend": "pg",
+        "exit": 0,
+        "log": "/tmp/sprintctl-2806-refcapture-pg-baseline.txt",
+        "log_sha256": "086096b4cec5ed438f8adafc72792b5b459d3c64a28a9a8db5f1a122d006a334",
+        "mode": "baseline",
+        "summary": "1 passed, 1765 deselected in 0.39s"
+      },
+      {
+        "actual_terminal_output": "pg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)\nF                                                                        [100%]\n=================================== FAILURES ===================================\n_ TestPostgresReleasePolicy.test_ref_canonicalizer_binding_keeps_backend_fetch_timing _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:682: in test_ref_canonicalizer_binding_keeps_backend_fetch_timing\n    assert trace==['actual-ref-select','actual-fetch','select-rebound-canonicalizer' if d.is_pg else 'fetch-rebound-canonicalizer']\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n1 failed, 1765 deselected in 0.40s\npg-disposable-tests: server log (exit 1):\n2026-10-18 21:44:53.332 EEST [3098283] LOG:  starting PostgreSQL 16.15 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit\n2026-10-18 21:44:53.332 EEST [3098283] LOG:  listening on IPv4 address \"127.0.0.1\", port 34605\n2026-10-18 21:44:53.332 EEST [3098283] LOG:  listening on Unix socket \"/tmp/sprintctl-pg.AtVY6W/sock/.s.PGSQL.34605\"\n2026-10-18 21:44:53.333 EEST [3098286] LOG:  database system was shut down at 2026-10-18 21:44:49 EEST\n2026-10-18 21:44:53.336 EEST [3098283] LOG:  database system is ready to accept connections\n",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "release_policy and ref_canonicalizer_binding",
+          "--tb=short",
+          "-p",
+          "release_ref_binding_controls_2806"
+        ],
+        "backend": "pg",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-refcapture-pg-pg-early.txt",
+        "log_sha256": "fb45891595c7b7b180b078cfa2e5f4c786a1e6e0030b24b30994145b7495ab87",
+        "mode": "pg-early",
+        "summary": "1 failed, 1765 deselected in 0.40s"
+      },
+      {
+        "actual_terminal_output": "pg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)\nF                                                                        [100%]\n=================================== FAILURES ===================================\n_ TestPostgresReleasePolicy.test_ref_canonicalizer_binding_keeps_backend_fetch_timing _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:682: in test_ref_canonicalizer_binding_keeps_backend_fetch_timing\n    assert trace==['actual-ref-select','actual-fetch','select-rebound-canonicalizer' if d.is_pg else 'fetch-rebound-canonicalizer']\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n1 failed, 1765 deselected in 0.40s\npg-disposable-tests: server log (exit 1):\n2026-10-18 21:44:57.567 EEST [3098484] LOG:  starting PostgreSQL 16.15 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit\n2026-10-18 21:44:57.567 EEST [3098484] LOG:  listening on IPv4 address \"127.0.0.1\", port 58799\n2026-10-18 21:44:57.567 EEST [3098484] LOG:  listening on Unix socket \"/tmp/sprintctl-pg.DkkGPk/sock/.s.PGSQL.58799\"\n2026-10-18 21:44:57.568 EEST [3098487] LOG:  database system was shut down at 2026-10-18 21:44:54 EEST\n2026-10-18 21:44:57.570 EEST [3098484] LOG:  database system is ready to accept connections\n",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "release_policy and ref_canonicalizer_binding",
+          "--tb=short",
+          "-p",
+          "release_ref_binding_controls_2806"
+        ],
+        "backend": "pg",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-refcapture-pg-pg-late.txt",
+        "log_sha256": "f79b67a4d8c92aeb6361cef1ea4f336f7e3b38a38f062814ae055604e17b17f0",
+        "mode": "pg-late",
+        "summary": "1 failed, 1765 deselected in 0.40s"
+      }
+    ],
+    "source": "1ec78fa9a2f1dbacc4d5ec832c14b961e09abc12"
+  },
+  "historical28": {
+    "kind": "finite pre-extraction wrong implementations; no product files modified",
+    "oracle_hashes": {
+      "tests/_release_policy_contract.py": "f9d3d49b641272159214d5f17f1c24afe6aa563a62a547041eb6b035e00100cc",
+      "tests/pg/test_release_policy.py": "7195887ebbfb491baa2f1ee6326f0c93ce250b6996b42af6b0b284924889009b",
+      "tests/test_release_policy.py": "52fc1d549bb9a1f3c766b26c3f8f4974160a28455ef63925f8b2282f0c736b76"
+    },
+    "plugin": "/tmp/release_policy_controls_v2_2806.py",
+    "plugin_sha256": "d03d26c58e2b427c5c2c97af21c6dfaefd55f3739d3f80d1892bdc32694fde91",
+    "runs": [
+      {
+        "actual_terminal_output": ".............................................                            [100%]\n45 passed in 5.43s\n",
+        "argv": [
+          "/tmp/sprintctl-release-policy-local-env/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_release_policy.py",
+          "-k",
+          "release_policy",
+          "-q",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "sqlite",
+        "exit": 0,
+        "log": "/tmp/sprintctl-2806-v2-control-sqlite-baseline.txt",
+        "log_sha256": "0e8145111b04e1ffe73c58c4ac7b5fe3d8b1ad72f5b99be72be7cb62328ec1a4",
+        "mode": "baseline",
+        "pytest_summary": "45 passed in 5.43s"
+      },
+      {
+        "actual_terminal_output": "FFFF                                                                     [100%]\n=================================== FAILURES ===================================\n_ TestSqliteReleasePolicy.test_actual_execute_binding_surrounds_late_values[document] _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:338: in test_actual_execute_binding_surrounds_late_values\n    assert trace == ['bind:execute','item:id','original:SELECT','item:aggregate_uuid',\nE   AssertionError\n_ TestSqliteReleasePolicy.test_actual_execute_binding_surrounds_late_values[contract] _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:338: in test_actual_execute_binding_surrounds_late_values\n    assert trace == ['bind:execute','item:id','original:SELECT','item:aggregate_uuid',\nE   AssertionError\n_ TestSqliteReleasePolicy.test_actual_execute_binding_surrounds_late_values[refs] _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:338: in test_actual_execute_binding_surrounds_late_values\n    assert trace == ['bind:execute','item:id','original:SELECT','item:aggregate_uuid',\nE   AssertionError\n_ TestSqliteReleasePolicy.test_insert_method_lookup_fault_prevents_late_values _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:371: in test_insert_method_lookup_fault_prevents_late_values\n    assert phases == ['document']\n           ^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_release_policy.py::TestSqliteReleasePolicy::test_actual_execute_binding_surrounds_late_values[document]\nFAILED tests/test_release_policy.py::TestSqliteReleasePolicy::test_actual_execute_binding_surrounds_late_values[contract]\nFAILED tests/test_release_policy.py::TestSqliteReleasePolicy::test_actual_execute_binding_surrounds_late_values[refs]\nFAILED tests/test_release_policy.py::TestSqliteReleasePolicy::test_insert_method_lookup_fault_prevents_late_values\n4 failed, 41 deselected in 0.53s\n",
+        "argv": [
+          "/tmp/sprintctl-release-policy-local-env/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_release_policy.py",
+          "-k",
+          "release_policy and (actual_execute_binding or insert_method_lookup_fault)",
+          "-q",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "sqlite",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-sqlite-eager-values.txt",
+        "log_sha256": "a18f277fbaac14b58a7012d7e8e5f70d4f4e1cb67f1329cf99f11dd1b01b5f42",
+        "mode": "sqlite-eager-values",
+        "pytest_summary": "4 failed, 41 deselected in 0.53s"
+      },
+      {
+        "actual_terminal_output": ".F.                                                                      [100%]\n=================================== FAILURES ===================================\n______ TestSqliteReleasePolicy.test_missing_default_and_explicit_branch[] ______\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:237: in test_missing_default_and_explicit_branch\n    with pytest.raises(releases.ReleaseMismatch,match=f'release {supplied} is not a release of item #{iid}'):\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   Failed: DID NOT RAISE <class 'sprintctl.releases.ReleaseMismatch'>\n=========================== short test summary info ============================\nFAILED tests/test_release_policy.py::TestSqliteReleasePolicy::test_missing_default_and_explicit_branch[]\n1 failed, 2 passed, 42 deselected in 0.38s\n",
+        "argv": [
+          "/tmp/sprintctl-release-policy-local-env/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_release_policy.py",
+          "-k",
+          "release_policy and (missing_default_and_explicit_branch)",
+          "-q",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "sqlite",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-sqlite-falsey-default.txt",
+        "log_sha256": "0324eac49aca25af4e5867ed715b36614dcc353dfd36df067aff47accfa3140f",
+        "mode": "sqlite-falsey-default",
+        "pytest_summary": "1 failed, 2 passed, 42 deselected in 0.38s"
+      },
+      {
+        "actual_terminal_output": "F..                                                                      [100%]\n=================================== FAILURES ===================================\n____ TestSqliteReleasePolicy.test_missing_default_and_explicit_branch[None] ____\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:240: in test_missing_default_and_explicit_branch\n    assert len(sqls)==1\n           ^^^^^^^^^^^^\nE   AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_release_policy.py::TestSqliteReleasePolicy::test_missing_default_and_explicit_branch[None]\n1 failed, 2 passed, 42 deselected in 0.40s\n",
+        "argv": [
+          "/tmp/sprintctl-release-policy-local-env/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_release_policy.py",
+          "-k",
+          "release_policy and (missing_default_and_explicit_branch)",
+          "-q",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "sqlite",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-sqlite-extra-member-default.txt",
+        "log_sha256": "38d9f0c42a88a5cfe3418b56c283e166b3c619071986667e7c489116e16c0ba8",
+        "mode": "sqlite-extra-member-default",
+        "pytest_summary": "1 failed, 2 passed, 42 deselected in 0.40s"
+      },
+      {
+        "actual_terminal_output": "F                                                                        [100%]\n=================================== FAILURES ===================================\n_ TestSqliteReleasePolicy.test_omitted_uses_current_and_explicit_historical_remains_member _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:252: in test_omitted_uses_current_and_explicit_historical_remains_member\n    assert p.current(iid) is None and p.resolve(iid,None) is None\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_release_policy.py::TestSqliteReleasePolicy::test_omitted_uses_current_and_explicit_historical_remains_member\n1 failed, 44 deselected in 0.16s\n",
+        "argv": [
+          "/tmp/sprintctl-release-policy-local-env/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_release_policy.py",
+          "-k",
+          "release_policy and (omitted_uses_current_and_explicit_historical)",
+          "-q",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "sqlite",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-sqlite-omit-revise.txt",
+        "log_sha256": "41f9dfaf309fbf93311fe49bcf22946159eeb4c70fed692c0e1bbab0a4e5bafd",
+        "mode": "sqlite-omit-revise",
+        "pytest_summary": "1 failed, 44 deselected in 0.16s"
+      },
+      {
+        "actual_terminal_output": "F                                                                        [100%]\n=================================== FAILURES ===================================\n_ TestSqliteReleasePolicy.test_current_prioritizes_referencing_reservation_ids_even_when_released _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:282: in test_current_prioritizes_referencing_reservation_ids_even_when_released\n    assert d.backend.current_release(d.store,iid)['release_digest'] == first\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_release_policy.py::TestSqliteReleasePolicy::test_current_prioritizes_referencing_reservation_ids_even_when_released\n1 failed, 44 deselected in 0.15s\n",
+        "argv": [
+          "/tmp/sprintctl-release-policy-local-env/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_release_policy.py",
+          "-k",
+          "release_policy and (current_prioritizes_referencing)",
+          "-q",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "sqlite",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-sqlite-newest-release.txt",
+        "log_sha256": "5ebbb50ff4142bf1f438845b63603c1adf32764fe2d1da13dd03f15e001608c5",
+        "mode": "sqlite-newest-release",
+        "pytest_summary": "1 failed, 44 deselected in 0.15s"
+      },
+      {
+        "actual_terminal_output": "F                                                                        [100%]\n=================================== FAILURES ===================================\n_ TestSqliteReleasePolicy.test_current_prioritizes_referencing_reservation_ids_even_when_released _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:298: in test_current_prioritizes_referencing_reservation_ids_even_when_released\n    assert p.current(iid)['release_digest'] == first\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_release_policy.py::TestSqliteReleasePolicy::test_current_prioritizes_referencing_reservation_ids_even_when_released\n1 failed, 44 deselected in 0.17s\n",
+        "argv": [
+          "/tmp/sprintctl-release-policy-local-env/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_release_policy.py",
+          "-k",
+          "release_policy and (current_prioritizes_referencing)",
+          "-q",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "sqlite",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-sqlite-reservation-time.txt",
+        "log_sha256": "f62822b8d0ae8f864bb80bfa91bab5974b2422e455d7f1f3f04c55329f11bdb0",
+        "mode": "sqlite-reservation-time",
+        "pytest_summary": "1 failed, 44 deselected in 0.17s"
+      },
+      {
+        "actual_terminal_output": "FFFF                                                                     [100%]\n=================================== FAILURES ===================================\n_ TestSqliteReleasePolicy.test_private_freeze_and_unrelated_owner_write_stay_pending[False] _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:204: in test_private_freeze_and_unrelated_owner_write_stay_pending\n    assert_pending(d)\n/tmp/sprintctl-release-policy-2806/tests/_locked_decision_writing_contract.py:55: in assert_pending\n    assert d.transaction() == ('INTRANS' if d.is_pg else 'ACTIVE')\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n_ TestSqliteReleasePolicy.test_private_freeze_and_unrelated_owner_write_stay_pending[True] _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:204: in test_private_freeze_and_unrelated_owner_write_stay_pending\n    assert_pending(d)\n/tmp/sprintctl-release-policy-2806/tests/_locked_decision_writing_contract.py:55: in assert_pending\n    assert d.transaction() == ('INTRANS' if d.is_pg else 'ACTIVE')\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n_ TestSqliteReleasePolicy.test_caller_savepoint_survives_private_release_helpers[False] _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:608: in test_caller_savepoint_survives_private_release_helpers\n    assert d.snapshot(iid,observer)==before\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n_ TestSqliteReleasePolicy.test_caller_savepoint_survives_private_release_helpers[True] _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:608: in test_caller_savepoint_survives_private_release_helpers\n    assert d.snapshot(iid,observer)==before\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_release_policy.py::TestSqliteReleasePolicy::test_private_freeze_and_unrelated_owner_write_stay_pending[False]\nFAILED tests/test_release_policy.py::TestSqliteReleasePolicy::test_private_freeze_and_unrelated_owner_write_stay_pending[True]\nFAILED tests/test_release_policy.py::TestSqliteReleasePolicy::test_caller_savepoint_survives_private_release_helpers[False]\nFAILED tests/test_release_policy.py::TestSqliteReleasePolicy::test_caller_savepoint_survives_private_release_helpers[True]\n4 failed, 41 deselected in 0.54s\n",
+        "argv": [
+          "/tmp/sprintctl-release-policy-local-env/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_release_policy.py",
+          "-k",
+          "release_policy and (private_freeze_and_unrelated_owner_write or caller_savepoint_survives)",
+          "-q",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "sqlite",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-sqlite-commit.txt",
+        "log_sha256": "970cbe68af8c7cb5d17667a6206f5311308496fe6489d03e80b26f46725b8086",
+        "mode": "sqlite-commit",
+        "pytest_summary": "4 failed, 41 deselected in 0.54s"
+      },
+      {
+        "actual_terminal_output": "F                                                                        [100%]\n=================================== FAILURES ===================================\n_ TestSqliteReleasePolicy.test_canonical_ref_bytes_digest_and_repeat_keep_first_actor _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:153: in test_canonical_ref_bytes_digest_and_repeat_keep_first_actor\n    assert digest == expected and seen == [document, contract_json, refs_json]\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_release_policy.py::TestSqliteReleasePolicy::test_canonical_ref_bytes_digest_and_repeat_keep_first_actor\n1 failed, 44 deselected in 0.16s\n",
+        "argv": [
+          "/tmp/sprintctl-release-policy-local-env/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_release_policy.py",
+          "-k",
+          "release_policy and (canonical_ref_bytes_digest)",
+          "-q",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "sqlite",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-sqlite-digest-refs.txt",
+        "log_sha256": "edfc0503c15e0004361a7f4b71afee56f99866f95026343ba8641d9684f3d01c",
+        "mode": "sqlite-digest-refs",
+        "pytest_summary": "1 failed, 44 deselected in 0.16s"
+      },
+      {
+        "actual_terminal_output": "F                                                                        [100%]\n=================================== FAILURES ===================================\n_ TestSqliteReleasePolicy.test_canonical_ref_bytes_digest_and_repeat_keep_first_actor _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:153: in test_canonical_ref_bytes_digest_and_repeat_keep_first_actor\n    assert digest == expected and seen == [document, contract_json, refs_json]\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_release_policy.py::TestSqliteReleasePolicy::test_canonical_ref_bytes_digest_and_repeat_keep_first_actor\n1 failed, 44 deselected in 0.16s\n",
+        "argv": [
+          "/tmp/sprintctl-release-policy-local-env/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_release_policy.py",
+          "-k",
+          "release_policy and (canonical_ref_bytes_digest)",
+          "-q",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "sqlite",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-sqlite-json-escape.txt",
+        "log_sha256": "edfc0503c15e0004361a7f4b71afee56f99866f95026343ba8641d9684f3d01c",
+        "mode": "sqlite-json-escape",
+        "pytest_summary": "1 failed, 44 deselected in 0.16s"
+      },
+      {
+        "actual_terminal_output": "F                                                                        [100%]\n=================================== FAILURES ===================================\n_ TestSqliteReleasePolicy.test_item_correlations_exclude_other_items[pristine] _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:578: in test_item_correlations_exclude_other_items\n    assert revision==expected_revision(item,edits,revisions) and count==revisions\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_release_policy.py::TestSqliteReleasePolicy::test_item_correlations_exclude_other_items[pristine]\n1 failed, 44 deselected in 0.17s\n",
+        "argv": [
+          "/tmp/sprintctl-release-policy-local-env/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_release_policy.py",
+          "-k",
+          "release_policy and (item_correlations and pristine)",
+          "-q",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "sqlite",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-sqlite-basis-event-item.txt",
+        "log_sha256": "d22591ecc1cd58ebc838beebb678248fda5c94fa83a36ce80d41fe27b09afd51",
+        "mode": "sqlite-basis-event-item",
+        "pytest_summary": "1 failed, 44 deselected in 0.17s"
+      },
+      {
+        "actual_terminal_output": "F                                                                        [100%]\n=================================== FAILURES ===================================\n_ TestSqliteReleasePolicy.test_item_correlations_exclude_other_items[pristine] _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:578: in test_item_correlations_exclude_other_items\n    assert revision==expected_revision(item,edits,revisions) and count==revisions\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_release_policy.py::TestSqliteReleasePolicy::test_item_correlations_exclude_other_items[pristine]\n1 failed, 44 deselected in 0.19s\n",
+        "argv": [
+          "/tmp/sprintctl-release-policy-local-env/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_release_policy.py",
+          "-k",
+          "release_policy and (item_correlations and pristine)",
+          "-q",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "sqlite",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-sqlite-basis-revise-item.txt",
+        "log_sha256": "853f64662c8abf7792875461c79d217c62a0b9bebd3cf1ebb6d6f071bc1f8a6c",
+        "mode": "sqlite-basis-revise-item",
+        "pytest_summary": "1 failed, 44 deselected in 0.19s"
+      },
+      {
+        "actual_terminal_output": "F                                                                        [100%]\n=================================== FAILURES ===================================\n_ TestSqliteReleasePolicy.test_item_correlations_exclude_other_items[pristine] _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:580: in test_item_correlations_exclude_other_items\n    assert current is not None\n           ^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_release_policy.py::TestSqliteReleasePolicy::test_item_correlations_exclude_other_items[pristine]\n1 failed, 44 deselected in 0.17s\n",
+        "argv": [
+          "/tmp/sprintctl-release-policy-local-env/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_release_policy.py",
+          "-k",
+          "release_policy and (item_correlations and pristine)",
+          "-q",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "sqlite",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-sqlite-current-revise-item.txt",
+        "log_sha256": "6f95f0050bfe3e8d4772b508f085ba4bb7d6f251e10875ee5af3d58485db65c0",
+        "mode": "sqlite-current-revise-item",
+        "pytest_summary": "1 failed, 44 deselected in 0.17s"
+      },
+      {
+        "actual_terminal_output": "F                                                                        [100%]\n=================================== FAILURES ===================================\n__ TestSqliteReleasePolicy.test_test_owned_falsey_current_row_avoids_decoder ___\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:646: in test_test_owned_falsey_current_row_avoids_decoder\n    assert Primitive(d,Proxy()).current(iid) is None\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:38: in current\n    return d.backend._current_release_row(self.handle, iid)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n<release-policy-control>:17: in _current_release_row\n    ???\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:643: in unexpected\n    def unexpected(*args):raise AssertionError('falsey current row reached decoder')\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError: falsey current row reached decoder\n=========================== short test summary info ============================\nFAILED tests/test_release_policy.py::TestSqliteReleasePolicy::test_test_owned_falsey_current_row_avoids_decoder\n1 failed, 44 deselected in 0.17s\n",
+        "argv": [
+          "/tmp/sprintctl-release-policy-local-env/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_release_policy.py",
+          "-k",
+          "release_policy and (test_owned_falsey_current_row)",
+          "-q",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "sqlite",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-sqlite-current-is-none.txt",
+        "log_sha256": "cc438ad6d295e79b40a131151bf116cd218f482f34c11a2c38d7be75a1a8f4b8",
+        "mode": "sqlite-current-is-none",
+        "pytest_summary": "1 failed, 44 deselected in 0.17s"
+      },
+      {
+        "actual_terminal_output": "pg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)\n......................................................                   [100%]\n54 passed, 1711 deselected in 0.83s\npg-cleanup-report-check: pg_test_scope: 1 fixture cleanup(s) completed with zero remaining rows\npg-cleanup-report-check: ok: 1 fixture cleanup(s) across 1 fixture name(s)\n",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "release_policy",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "pg",
+        "exit": 0,
+        "log": "/tmp/sprintctl-2806-v2-control-pg-baseline.txt",
+        "log_sha256": "880c65e155b3c55b4f7e76e8eaeb978295a4cf1973ed0f0fbc6d4573c91bd811",
+        "mode": "baseline",
+        "pytest_summary": "54 passed, 1711 deselected in 0.83s"
+      },
+      {
+        "actual_terminal_output": "pg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)\nFFFF                                                                     [100%]\n=================================== FAILURES ===================================\n_ TestPostgresReleasePolicy.test_actual_execute_binding_surrounds_late_values[document] _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:338: in test_actual_execute_binding_surrounds_late_values\n    assert trace == ['bind:execute','item:id','original:SELECT','item:aggregate_uuid',\nE   AssertionError\n_ TestPostgresReleasePolicy.test_actual_execute_binding_surrounds_late_values[contract] _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:338: in test_actual_execute_binding_surrounds_late_values\n    assert trace == ['bind:execute','item:id','original:SELECT','item:aggregate_uuid',\nE   AssertionError\n_ TestPostgresReleasePolicy.test_actual_execute_binding_surrounds_late_values[refs] _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:338: in test_actual_execute_binding_surrounds_late_values\n    assert trace == ['bind:execute','item:id','original:SELECT','item:aggregate_uuid',\nE   AssertionError\n_ TestPostgresReleasePolicy.test_insert_method_lookup_fault_prevents_late_values _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:371: in test_insert_method_lookup_fault_prevents_late_values\n    assert phases == ['document']\n           ^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n4 failed, 1761 deselected in 0.46s\npg-disposable-tests: server log (exit 1):\n2026-10-18 21:37:19.390 EEST [3073985] LOG:  starting PostgreSQL 16.15 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit\n2026-10-18 21:37:19.390 EEST [3073985] LOG:  listening on IPv4 address \"127.0.0.1\", port 37285\n2026-10-18 21:37:19.390 EEST [3073985] LOG:  listening on Unix socket \"/tmp/sprintctl-pg.V3ygpo/sock/.s.PGSQL.37285\"\n2026-10-18 21:37:19.391 EEST [3073988] LOG:  database system was shut down at 2026-10-18 21:37:14 EEST\n2026-10-18 21:37:19.393 EEST [3073985] LOG:  database system is ready to accept connections\n",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "release_policy and (actual_execute_binding or insert_method_lookup_fault)",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "pg",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-pg-eager-values.txt",
+        "log_sha256": "61b441290c7806e041c607fa4397d84be0de2f7e83ec689b0214b8ae8e9b62a3",
+        "mode": "pg-eager-values",
+        "pytest_summary": "4 failed, 1761 deselected in 0.46s"
+      },
+      {
+        "actual_terminal_output": "pg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)\n.F.                                                                      [100%]\n=================================== FAILURES ===================================\n_____ TestPostgresReleasePolicy.test_missing_default_and_explicit_branch[] _____\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:237: in test_missing_default_and_explicit_branch\n    with pytest.raises(releases.ReleaseMismatch,match=f'release {supplied} is not a release of item #{iid}'):\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   Failed: DID NOT RAISE <class 'sprintctl.releases.ReleaseMismatch'>\n1 failed, 2 passed, 1762 deselected in 0.42s\npg-disposable-tests: server log (exit 1):\n2026-10-18 21:37:21.578 EEST [3074131] LOG:  starting PostgreSQL 16.15 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit\n2026-10-18 21:37:21.578 EEST [3074131] LOG:  listening on IPv4 address \"127.0.0.1\", port 39633\n2026-10-18 21:37:21.578 EEST [3074131] LOG:  listening on Unix socket \"/tmp/sprintctl-pg.COsutw/sock/.s.PGSQL.39633\"\n2026-10-18 21:37:21.579 EEST [3074134] LOG:  database system was shut down at 2026-10-18 21:37:20 EEST\n2026-10-18 21:37:21.581 EEST [3074131] LOG:  database system is ready to accept connections\n",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "release_policy and (missing_default_and_explicit_branch)",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "pg",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-pg-falsey-default.txt",
+        "log_sha256": "38943a2daa574f5c87c950a1580dd3633d5a12ae8093a2069d735a854d4c6fbe",
+        "mode": "pg-falsey-default",
+        "pytest_summary": "1 failed, 2 passed, 1762 deselected in 0.42s"
+      },
+      {
+        "actual_terminal_output": "pg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)\nF..                                                                      [100%]\n=================================== FAILURES ===================================\n___ TestPostgresReleasePolicy.test_missing_default_and_explicit_branch[None] ___\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:240: in test_missing_default_and_explicit_branch\n    assert len(sqls)==1\n           ^^^^^^^^^^^^\nE   AssertionError\n1 failed, 2 passed, 1762 deselected in 0.43s\npg-disposable-tests: server log (exit 1):\n2026-10-18 21:37:26.870 EEST [3074648] LOG:  starting PostgreSQL 16.15 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit\n2026-10-18 21:37:26.870 EEST [3074648] LOG:  listening on IPv4 address \"127.0.0.1\", port 58329\n2026-10-18 21:37:26.870 EEST [3074648] LOG:  listening on Unix socket \"/tmp/sprintctl-pg.fjjW8m/sock/.s.PGSQL.58329\"\n2026-10-18 21:37:26.871 EEST [3074651] LOG:  database system was shut down at 2026-10-18 21:37:22 EEST\n2026-10-18 21:37:26.872 EEST [3074648] LOG:  database system is ready to accept connections\n",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "release_policy and (missing_default_and_explicit_branch)",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "pg",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-pg-extra-member-default.txt",
+        "log_sha256": "4ce51e72d07fe5ce4290b990f42af2ac186e5c6e734975ecac6ff17333d4dd52",
+        "mode": "pg-extra-member-default",
+        "pytest_summary": "1 failed, 2 passed, 1762 deselected in 0.43s"
+      },
+      {
+        "actual_terminal_output": "pg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)\nF                                                                        [100%]\n=================================== FAILURES ===================================\n_ TestPostgresReleasePolicy.test_omitted_uses_current_and_explicit_historical_remains_member _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:252: in test_omitted_uses_current_and_explicit_historical_remains_member\n    assert p.current(iid) is None and p.resolve(iid,None) is None\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n1 failed, 1764 deselected in 0.41s\npg-disposable-tests: server log (exit 1):\n2026-10-18 21:37:33.138 EEST [3074915] LOG:  starting PostgreSQL 16.15 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit\n2026-10-18 21:37:33.138 EEST [3074915] LOG:  listening on IPv4 address \"127.0.0.1\", port 54707\n2026-10-18 21:37:33.138 EEST [3074915] LOG:  listening on Unix socket \"/tmp/sprintctl-pg.PuOvXN/sock/.s.PGSQL.54707\"\n2026-10-18 21:37:33.139 EEST [3074918] LOG:  database system was shut down at 2026-10-18 21:37:28 EEST\n2026-10-18 21:37:33.141 EEST [3074915] LOG:  database system is ready to accept connections\n",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "release_policy and (omitted_uses_current_and_explicit_historical)",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "pg",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-pg-omit-revise.txt",
+        "log_sha256": "b78adc08a5c7605f6cce3afa08810a4b82658b8e0c2a1f03d00e972c9a4a3d7d",
+        "mode": "pg-omit-revise",
+        "pytest_summary": "1 failed, 1764 deselected in 0.41s"
+      },
+      {
+        "actual_terminal_output": "pg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)\nF                                                                        [100%]\n=================================== FAILURES ===================================\n_ TestPostgresReleasePolicy.test_current_prioritizes_referencing_reservation_ids_even_when_released _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:282: in test_current_prioritizes_referencing_reservation_ids_even_when_released\n    assert d.backend.current_release(d.store,iid)['release_digest'] == first\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n1 failed, 1764 deselected in 0.45s\npg-disposable-tests: server log (exit 1):\n2026-10-18 21:37:40.150 EEST [3075047] LOG:  starting PostgreSQL 16.15 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit\n2026-10-18 21:37:40.150 EEST [3075047] LOG:  listening on IPv4 address \"127.0.0.1\", port 41033\n2026-10-18 21:37:40.150 EEST [3075047] LOG:  listening on Unix socket \"/tmp/sprintctl-pg.HGRu3F/sock/.s.PGSQL.41033\"\n2026-10-18 21:37:40.151 EEST [3075050] LOG:  database system was shut down at 2026-10-18 21:37:34 EEST\n2026-10-18 21:37:40.153 EEST [3075047] LOG:  database system is ready to accept connections\n",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "release_policy and (current_prioritizes_referencing)",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "pg",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-pg-newest-release.txt",
+        "log_sha256": "0e0f6172845b768477eb7487e53871969fb1ae30429c0ff014502d8be9326a05",
+        "mode": "pg-newest-release",
+        "pytest_summary": "1 failed, 1764 deselected in 0.45s"
+      },
+      {
+        "actual_terminal_output": "pg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)\nF                                                                        [100%]\n=================================== FAILURES ===================================\n_ TestPostgresReleasePolicy.test_current_prioritizes_referencing_reservation_ids_even_when_released _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:298: in test_current_prioritizes_referencing_reservation_ids_even_when_released\n    assert p.current(iid)['release_digest'] == first\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n1 failed, 1764 deselected in 0.43s\npg-disposable-tests: server log (exit 1):\n2026-10-18 21:37:44.451 EEST [3075235] LOG:  starting PostgreSQL 16.15 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit\n2026-10-18 21:37:44.451 EEST [3075235] LOG:  listening on IPv4 address \"127.0.0.1\", port 45599\n2026-10-18 21:37:44.451 EEST [3075235] LOG:  listening on Unix socket \"/tmp/sprintctl-pg.jGgh1W/sock/.s.PGSQL.45599\"\n2026-10-18 21:37:44.452 EEST [3075238] LOG:  database system was shut down at 2026-10-18 21:37:41 EEST\n2026-10-18 21:37:44.454 EEST [3075235] LOG:  database system is ready to accept connections\n",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "release_policy and (current_prioritizes_referencing)",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "pg",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-pg-reservation-time.txt",
+        "log_sha256": "4e6d29502d5d637e90586be77a61c875a0dc86a7a6be2ac26d3f3464e2dab04d",
+        "mode": "pg-reservation-time",
+        "pytest_summary": "1 failed, 1764 deselected in 0.43s"
+      },
+      {
+        "actual_terminal_output": "pg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)\nFFFF                                                                     [100%]\n=================================== FAILURES ===================================\n_ TestPostgresReleasePolicy.test_private_freeze_and_unrelated_owner_write_stay_pending[False] _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:204: in test_private_freeze_and_unrelated_owner_write_stay_pending\n    assert_pending(d)\n/tmp/sprintctl-release-policy-2806/tests/_locked_decision_writing_contract.py:55: in assert_pending\n    assert d.transaction() == ('INTRANS' if d.is_pg else 'ACTIVE')\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n_ TestPostgresReleasePolicy.test_private_freeze_and_unrelated_owner_write_stay_pending[True] _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:204: in test_private_freeze_and_unrelated_owner_write_stay_pending\n    assert_pending(d)\n/tmp/sprintctl-release-policy-2806/tests/_locked_decision_writing_contract.py:55: in assert_pending\n    assert d.transaction() == ('INTRANS' if d.is_pg else 'ACTIVE')\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n_ TestPostgresReleasePolicy.test_caller_savepoint_survives_private_release_helpers[False] _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:608: in test_caller_savepoint_survives_private_release_helpers\n    assert d.snapshot(iid,observer)==before\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n_ TestPostgresReleasePolicy.test_caller_savepoint_survives_private_release_helpers[True] _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:608: in test_caller_savepoint_survives_private_release_helpers\n    assert d.snapshot(iid,observer)==before\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n4 failed, 1761 deselected in 0.49s\npg-disposable-tests: server log (exit 1):\n2026-10-18 21:37:48.621 EEST [3075323] LOG:  starting PostgreSQL 16.15 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit\n2026-10-18 21:37:48.622 EEST [3075323] LOG:  listening on IPv4 address \"127.0.0.1\", port 45891\n2026-10-18 21:37:48.622 EEST [3075323] LOG:  listening on Unix socket \"/tmp/sprintctl-pg.0O1vZc/sock/.s.PGSQL.45891\"\n2026-10-18 21:37:48.623 EEST [3075326] LOG:  database system was shut down at 2026-10-18 21:37:45 EEST\n2026-10-18 21:37:48.625 EEST [3075323] LOG:  database system is ready to accept connections\n",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "release_policy and (private_freeze_and_unrelated_owner_write or caller_savepoint_survives)",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "pg",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-pg-commit.txt",
+        "log_sha256": "a4855b849d34a43c4f78bb69fe4ecb3e28b2929f11e50faa7d0dfc2f6372fa26",
+        "mode": "pg-commit",
+        "pytest_summary": "4 failed, 1761 deselected in 0.49s"
+      },
+      {
+        "actual_terminal_output": "pg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)\nF                                                                        [100%]\n=================================== FAILURES ===================================\n_ TestPostgresReleasePolicy.test_canonical_ref_bytes_digest_and_repeat_keep_first_actor _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:153: in test_canonical_ref_bytes_digest_and_repeat_keep_first_actor\n    assert digest == expected and seen == [document, contract_json, refs_json]\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n1 failed, 1764 deselected in 0.40s\npg-disposable-tests: server log (exit 1):\n2026-10-18 21:37:53.001 EEST [3075552] LOG:  starting PostgreSQL 16.15 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit\n2026-10-18 21:37:53.001 EEST [3075552] LOG:  listening on IPv4 address \"127.0.0.1\", port 57593\n2026-10-18 21:37:53.001 EEST [3075552] LOG:  listening on Unix socket \"/tmp/sprintctl-pg.9AiGKx/sock/.s.PGSQL.57593\"\n2026-10-18 21:37:53.002 EEST [3075555] LOG:  database system was shut down at 2026-10-18 21:37:50 EEST\n2026-10-18 21:37:53.004 EEST [3075552] LOG:  database system is ready to accept connections\n",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "release_policy and (canonical_ref_bytes_digest)",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "pg",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-pg-digest-refs.txt",
+        "log_sha256": "f5dc0cfa07834285b744cebbbdad652ec2dba19dd75b3b1243ef172522cd8ffb",
+        "mode": "pg-digest-refs",
+        "pytest_summary": "1 failed, 1764 deselected in 0.40s"
+      },
+      {
+        "actual_terminal_output": "pg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)\nF                                                                        [100%]\n=================================== FAILURES ===================================\n_ TestPostgresReleasePolicy.test_canonical_ref_bytes_digest_and_repeat_keep_first_actor _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:153: in test_canonical_ref_bytes_digest_and_repeat_keep_first_actor\n    assert digest == expected and seen == [document, contract_json, refs_json]\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n1 failed, 1764 deselected in 0.54s\npg-disposable-tests: server log (exit 1):\n2026-10-18 21:37:57.241 EEST [3075694] LOG:  starting PostgreSQL 16.15 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit\n2026-10-18 21:37:57.241 EEST [3075694] LOG:  listening on IPv4 address \"127.0.0.1\", port 44071\n2026-10-18 21:37:57.241 EEST [3075694] LOG:  listening on Unix socket \"/tmp/sprintctl-pg.7XjdfX/sock/.s.PGSQL.44071\"\n2026-10-18 21:37:57.243 EEST [3075698] LOG:  database system was shut down at 2026-10-18 21:37:54 EEST\n2026-10-18 21:37:57.245 EEST [3075694] LOG:  database system is ready to accept connections\n",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "release_policy and (canonical_ref_bytes_digest)",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "pg",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-pg-json-escape.txt",
+        "log_sha256": "51e8973ea8af221273abed27601a330ede8b3cd2fd4f5bffbee7856998110657",
+        "mode": "pg-json-escape",
+        "pytest_summary": "1 failed, 1764 deselected in 0.54s"
+      },
+      {
+        "actual_terminal_output": "pg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)\nF                                                                        [100%]\n=================================== FAILURES ===================================\n_ TestPostgresReleasePolicy.test_item_correlations_exclude_other_items[pristine] _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:578: in test_item_correlations_exclude_other_items\n    assert revision==expected_revision(item,edits,revisions) and count==revisions\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n1 failed, 1764 deselected in 0.48s\npg-disposable-tests: server log (exit 1):\n2026-10-18 21:37:59.524 EEST [3079682] LOG:  starting PostgreSQL 16.15 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit\n2026-10-18 21:37:59.524 EEST [3079682] LOG:  listening on IPv4 address \"127.0.0.1\", port 36711\n2026-10-18 21:37:59.525 EEST [3079682] LOG:  listening on Unix socket \"/tmp/sprintctl-pg.vufxak/sock/.s.PGSQL.36711\"\n2026-10-18 21:37:59.526 EEST [3079762] LOG:  database system was shut down at 2026-10-18 21:37:58 EEST\n2026-10-18 21:37:59.527 EEST [3079682] LOG:  database system is ready to accept connections\n",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "release_policy and (item_correlations and pristine)",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "pg",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-pg-basis-event-item.txt",
+        "log_sha256": "c21423999ee168d4f7984d61f665fcac95057b57603321324026358bddf8a8a4",
+        "mode": "pg-basis-event-item",
+        "pytest_summary": "1 failed, 1764 deselected in 0.48s"
+      },
+      {
+        "actual_terminal_output": "pg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)\nF                                                                        [100%]\n=================================== FAILURES ===================================\n_ TestPostgresReleasePolicy.test_item_correlations_exclude_other_items[pristine] _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:578: in test_item_correlations_exclude_other_items\n    assert revision==expected_revision(item,edits,revisions) and count==revisions\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n1 failed, 1764 deselected in 0.41s\npg-disposable-tests: server log (exit 1):\n2026-10-18 21:38:03.997 EEST [3083916] LOG:  starting PostgreSQL 16.15 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit\n2026-10-18 21:38:03.997 EEST [3083916] LOG:  listening on IPv4 address \"127.0.0.1\", port 47961\n2026-10-18 21:38:03.997 EEST [3083916] LOG:  listening on Unix socket \"/tmp/sprintctl-pg.4XuwhP/sock/.s.PGSQL.47961\"\n2026-10-18 21:38:03.998 EEST [3083919] LOG:  database system was shut down at 2026-10-18 21:38:00 EEST\n2026-10-18 21:38:04.000 EEST [3083916] LOG:  database system is ready to accept connections\n",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "release_policy and (item_correlations and pristine)",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "pg",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-pg-basis-revise-item.txt",
+        "log_sha256": "0d25072a197cffd126230ff339adbf3533c774489205f36ed6abbc4c17925080",
+        "mode": "pg-basis-revise-item",
+        "pytest_summary": "1 failed, 1764 deselected in 0.41s"
+      },
+      {
+        "actual_terminal_output": "pg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)\nF                                                                        [100%]\n=================================== FAILURES ===================================\n_ TestPostgresReleasePolicy.test_item_correlations_exclude_other_items[pristine] _\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:580: in test_item_correlations_exclude_other_items\n    assert current is not None\n           ^^^^^^^^^^^^^^^^^^^\nE   AssertionError\n1 failed, 1764 deselected in 0.44s\npg-disposable-tests: server log (exit 1):\n2026-10-18 21:38:11.097 EEST [3085294] LOG:  starting PostgreSQL 16.15 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit\n2026-10-18 21:38:11.097 EEST [3085294] LOG:  listening on IPv4 address \"127.0.0.1\", port 47009\n2026-10-18 21:38:11.097 EEST [3085294] LOG:  listening on Unix socket \"/tmp/sprintctl-pg.ATikJN/sock/.s.PGSQL.47009\"\n2026-10-18 21:38:11.098 EEST [3085302] LOG:  database system was shut down at 2026-10-18 21:38:05 EEST\n2026-10-18 21:38:11.100 EEST [3085294] LOG:  database system is ready to accept connections\n",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "release_policy and (item_correlations and pristine)",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "pg",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-pg-current-revise-item.txt",
+        "log_sha256": "1eec9e7ad89ab6b3437bc9411b4b17663083f8c180fa19b2f8c1ebda75a7b4dd",
+        "mode": "pg-current-revise-item",
+        "pytest_summary": "1 failed, 1764 deselected in 0.44s"
+      },
+      {
+        "actual_terminal_output": "pg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)\nF                                                                        [100%]\n=================================== FAILURES ===================================\n_ TestPostgresReleasePolicy.test_test_owned_falsey_current_row_avoids_decoder __\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:646: in test_test_owned_falsey_current_row_avoids_decoder\n    assert Primitive(d,Proxy()).current(iid) is None\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:37: in current\n    return d.backend._current_release_locked(self.handle, d.store.repo_id, iid)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n<release-policy-control>:21: in _current_release_locked\n    ???\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:643: in unexpected\n    def unexpected(*args):raise AssertionError('falsey current row reached decoder')\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   AssertionError: falsey current row reached decoder\n1 failed, 1764 deselected in 0.42s\npg-disposable-tests: server log (exit 1):\n2026-10-18 21:38:23.922 EEST [3088546] LOG:  starting PostgreSQL 16.15 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit\n2026-10-18 21:38:23.922 EEST [3088546] LOG:  listening on IPv4 address \"127.0.0.1\", port 58685\n2026-10-18 21:38:23.922 EEST [3088546] LOG:  listening on Unix socket \"/tmp/sprintctl-pg.5nOvly/sock/.s.PGSQL.58685\"\n2026-10-18 21:38:23.923 EEST [3088549] LOG:  database system was shut down at 2026-10-18 21:38:12 EEST\n2026-10-18 21:38:23.925 EEST [3088546] LOG:  database system is ready to accept connections\n",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "release_policy and (test_owned_falsey_current_row)",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "pg",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-pg-current-is-none.txt",
+        "log_sha256": "05f6fc4440d4927ec6a53dc2919591fe89c0662fbd784c3e9a5eff026e706b42",
+        "mode": "pg-current-is-none",
+        "pytest_summary": "1 failed, 1764 deselected in 0.42s"
+      },
+      {
+        "actual_terminal_output": "pg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)\nF                                                                        [100%]\n=================================== FAILURES ===================================\n_________ test_actual_foreign_repository_basis_current_and_membership __________\n/tmp/sprintctl-release-policy-2806/tests/pg/test_release_policy.py:36: in test_actual_foreign_repository_basis_current_and_membership\n    with pytest.raises(d.backend._releases.ReleaseMismatch,match='not a release of item'):\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   Failed: DID NOT RAISE <class 'sprintctl.releases.ReleaseMismatch'>\n1 failed, 1764 deselected in 0.43s\npg-disposable-tests: server log (exit 1):\n2026-10-18 21:38:29.922 EEST [3089271] LOG:  starting PostgreSQL 16.15 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit\n2026-10-18 21:38:29.922 EEST [3089271] LOG:  listening on IPv4 address \"127.0.0.1\", port 52061\n2026-10-18 21:38:29.922 EEST [3089271] LOG:  listening on Unix socket \"/tmp/sprintctl-pg.D26aES/sock/.s.PGSQL.52061\"\n2026-10-18 21:38:29.923 EEST [3089278] LOG:  database system was shut down at 2026-10-18 21:38:25 EEST\n2026-10-18 21:38:29.925 EEST [3089271] LOG:  database system is ready to accept connections\n",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "release_policy and (actual_foreign_repository_basis)",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "pg",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-pg-foreign-member.txt",
+        "log_sha256": "0a78f470fb52fcebee84b08ce04b8a612bef66a8d22786318d2f5f75377ce5a8",
+        "mode": "pg-foreign-member",
+        "pytest_summary": "1 failed, 1764 deselected in 0.43s"
+      },
+      {
+        "actual_terminal_output": "pg-disposable-sweep: KEEP /tmp/sprintctl-pg.0rvjpU: owner pid 3089286 is alive\npg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)\nFFF.                                                                     [100%]\n=================================== FAILURES ===================================\n______ test_actual_readonly_basis_succeeds_beside_held_item_lock[direct] _______\n/tmp/sprintctl-release-policy-2806/tests/pg/test_release_policy.py:57: in test_actual_readonly_basis_succeeds_beside_held_item_lock\n    item, revision, count = Primitive(d,cur).basis(iid,lock=False)\n                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/tmp/sprintctl-release-policy-2806/tests/_release_policy_contract.py:21: in basis\n    return d.backend._release_basis_locked(self.handle, d.store.repo_id, iid, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n<release-policy-control>:9: in _release_basis_locked\n    ???\n/tmp/sprintctl-release-policy-pg-env/lib/python3.13/site-packages/psycopg/cursor.py:117: in execute\n    raise ex.with_traceback(None)\nE   psycopg.errors.ReadOnlySqlTransaction: cannot execute SELECT FOR UPDATE in a read-only transaction\n__ test_actual_readonly_basis_succeeds_beside_held_item_lock[public-revision] __\n/tmp/sprintctl-release-policy-2806/tests/pg/test_release_policy.py:59: in test_actual_readonly_basis_succeeds_beside_held_item_lock\n    elif route=='public-revision': revision=d.backend.item_release_revision(d.store,iid)\n                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/tmp/sprintctl-release-policy-2806/sprintctl/pg.py:4562: in item_release_revision\n    _, revision, _ = _release_basis_locked(\n<release-policy-control>:9: in _release_basis_locked\n    ???\n/tmp/sprintctl-release-policy-pg-env/lib/python3.13/site-packages/psycopg/cursor.py:117: in execute\n    raise ex.with_traceback(None)\nE   psycopg.errors.ReadOnlySqlTransaction: cannot execute SELECT FOR UPDATE in a read-only transaction\n_____ test_actual_readonly_basis_succeeds_beside_held_item_lock[proposal] ______\n/tmp/sprintctl-release-policy-2806/tests/pg/test_release_policy.py:64: in test_actual_readonly_basis_succeeds_beside_held_item_lock\n    item, revision, release = d.backend.effect_proposal_release_basis(d.store,iid)\n                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/tmp/sprintctl-release-policy-2806/sprintctl/pg.py:4472: in effect_proposal_release_basis\n    item, revision, _count = _release_basis_locked(\n<release-policy-control>:9: in _release_basis_locked\n    ???\n/tmp/sprintctl-release-policy-pg-env/lib/python3.13/site-packages/psycopg/cursor.py:117: in execute\n    raise ex.with_traceback(None)\nE   psycopg.errors.ReadOnlySqlTransaction: cannot execute SELECT FOR UPDATE in a read-only transaction\n3 failed, 1 passed, 1761 deselected in 0.54s\npg-disposable-tests: server log (exit 1):\n2026-10-18 21:38:42.971 EEST [3090579] LOG:  starting PostgreSQL 16.15 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit\n2026-10-18 21:38:42.971 EEST [3090579] LOG:  listening on IPv4 address \"127.0.0.1\", port 57629\n2026-10-18 21:38:42.971 EEST [3090579] LOG:  listening on Unix socket \"/tmp/sprintctl-pg.yD6ovm/sock/.s.PGSQL.57629\"\n2026-10-18 21:38:42.972 EEST [3090582] LOG:  database system was shut down at 2026-10-18 21:38:31 EEST\n2026-10-18 21:38:42.974 EEST [3090579] LOG:  database system is ready to accept connections\n2026-10-18 21:38:43.655 EEST [3090602] WARNING:  there is already a transaction in progress\n2026-10-18 21:38:43.655 EEST [3090602] ERROR:  cannot execute SELECT FOR UPDATE in a read-only transaction\n2026-10-18 21:38:43.655 EEST [3090602] STATEMENT:  SELECT wi.*, (SELECT COUNT(*) FROM event e WHERE e.repo_id = wi.repo_id  AND e.work_item_id = wi.id AND e.event_type = $1) AS edit_version, (SELECT COUNT(*) FROM work_decision d WHERE d.repo_id = wi.repo_id  AND d.work_item_id = wi.id AND d.kind = 'revise') AS revise_count FROM work_item wi WHERE wi.repo_id = $2 AND wi.id = $3 FOR UPDATE OF wi\n2026-10-18 21:38:43.687 EEST [3090602] WARNING:  there is already a transaction in progress\n2026-10-18 21:38:43.687 EEST [3090602] ERROR:  cannot execute SELECT FOR UPDATE in a read-only transaction\n2026-10-18 21:38:43.687 EEST [3090602] STATEMENT:  SELECT wi.*, (SELECT COUNT(*) FROM event e WHERE e.repo_id = wi.repo_id  AND e.work_item_id = wi.id AND e.event_type = $1) AS edit_version, (SELECT COUNT(*) FROM work_decision d WHERE d.repo_id = wi.repo_id  AND d.work_item_id = wi.id AND d.kind = 'revise') AS revise_count FROM work_item wi WHERE wi.repo_id = $2 AND wi.id = $3 FOR UPDATE OF wi\n2026-10-18 21:38:43.738 EEST [3090602] WARNING:  there is already a transaction in progress\n2026-10-18 21:38:43.739 EEST [3090602] ERROR:  cannot execute SELECT FOR UPDATE in a read-only transaction\n2026-10-18 21:38:43.739 EEST [3090602] STATEMENT:  SELECT wi.*, (SELECT COUNT(*) FROM event e WHERE e.repo_id = wi.repo_id  AND e.work_item_id = wi.id AND e.event_type = $1) AS edit_version, (SELECT COUNT(*) FROM work_decision d WHERE d.repo_id = wi.repo_id  AND d.work_item_id = wi.id AND d.kind = 'revise') AS revise_count FROM work_item wi WHERE wi.repo_id = $2 AND wi.id = $3 FOR UPDATE OF wi\n2026-10-18 21:38:43.787 EEST [3090602] WARNING:  there is already a transaction in progress\n",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "release_policy and (actual_readonly_basis_succeeds)",
+          "--tb=short",
+          "-p",
+          "release_policy_controls_v2_2806"
+        ],
+        "backend": "pg",
+        "exit": 1,
+        "log": "/tmp/sprintctl-2806-v2-control-pg-readonly-lock.txt",
+        "log_sha256": "61f5094842f74deded17a97aa466a8fcb3a5c2309398fe0b57602ad3e4cf3dc4",
+        "mode": "pg-readonly-lock",
+        "pytest_summary": "3 failed, 1 passed, 1761 deselected in 0.54s"
+      }
+    ],
+    "source": "1ec78fa9a2f1dbacc4d5ec832c14b961e09abc12"
+  }
+}

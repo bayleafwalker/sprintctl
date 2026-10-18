@@ -1,0 +1,281 @@
+{
+  "artifacts_sha256": {
+    "docs/evidence/release-policy-2806.md": "c8ca300e2556fb3c60f5627e0c586ec889d1af58fde488d7d3ed792f13a00525",
+    "sprintctl/db.py": "27a4e70f871f015df177a31501d7123dfd0414fe393259213ec09537705bde30",
+    "sprintctl/pg.py": "9f839d03935720758476ff707ecebcd0e3a73725e5919bf9b1957d2e898a2851",
+    "sprintctl/releasecore.py": "c5eceee134fdfb641c775048dbecf9a89e03e171f6929ce4322e56eaaf11ba08",
+    "tests/_release_policy_contract.py": "b437f2bc6ae3a8b734174c519d21b18f8253c26685d331706c9c8b0f620d0303",
+    "tests/pg/test_release_policy.py": "7195887ebbfb491baa2f1ee6326f0c93ce250b6996b42af6b0b284924889009b",
+    "tests/test_release_policy.py": "52fc1d549bb9a1f3c766b26c3f8f4974160a28455ef63925f8b2282f0c736b76",
+    "verification/contexts/release-policy.json": "d72efe59f3ff34299c6817a18338f8c9de0031d3df0cb5b63eadde1003da0fc4",
+    "verification/fixtures/release-policy-baseline-2806.json": "fabf4ee7a62fb583fac28172cf8f0a0b146cb9d983d5409e1ffae4d611d2bdbc",
+    "verification/fixtures/release-policy-binding-refinement-2806.md": "c17ff012bf5273fa6a190d2e561af28550e2f3f80be00822bff72dca860e51f0",
+    "verification/fixtures/release-policy-focused-runs-2806.json": "a639e8c85aadec95842bbcd6d65a6e0797f746959f7c249ef9d2335766bb83b6",
+    "verification/fixtures/release-policy-negative-controls-2806.json": "bb31c478c84d47272ca451a354494046b80c6abf11a4d4fa483bf2d8010716d3",
+    "verification/fixtures/release-policy-plan-2806.md": "5743f6adffcc407f468fe8670aa852b1da0b27c2733d02fec1335e54ec5a8299",
+    "verification/fixtures/release-policy-protected-2806.json": "2f3f7b124784381fefdb28fda156e97e36900a5a6caecf603207efebf414db60",
+    "verification/fixtures/release-policy-query-comparison-2806.json": "b325733e6fc61e7e588f3c0fbc3b0f3b0191f66d5188dd876015d6455b2708fb",
+    "verification/fixtures/release-policy-source-pins-2806.json": "a747856ea9dd311266946edc0e9405bb0a95f82932cf3135b6f55f5ee30392c8",
+    "verification/traces/extract-release-policy-histories.py": "dd204c39489b838bd1f49817511f731677f98216eebbd75bacb05f8af0a90c28",
+    "verification/traces/release-policy-histories-2806.json": "deb4ceb2bd135c7a2cfa6427b627066c2b8a584355d30118d4a8cebd687cdfee",
+    "verification/traces/release_policy_controls_v2_2806.py": "d03d26c58e2b427c5c2c97af21c6dfaefd55f3739d3f80d1892bdc32694fde91"
+  },
+  "claims": [
+    {
+      "evidence": [
+        "tests/_release_policy_contract.py",
+        "tests/test_release_policy.py",
+        "tests/pg/test_release_policy.py",
+        "verification/traces/release-policy-histories-2806.json"
+      ],
+      "property": "Basis count and revision sequencing preserve item scope and dynamic description helper",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_release_policy_contract.py",
+        "tests/test_release_policy.py",
+        "tests/pg/test_release_policy.py",
+        "verification/traces/release-policy-histories-2806.json"
+      ],
+      "property": "Freeze canonical bytes and first actor remain idempotent; execute binds before late insertion values",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_release_policy_contract.py",
+        "tests/test_release_policy.py",
+        "tests/pg/test_release_policy.py",
+        "verification/traces/release-policy-histories-2806.json"
+      ],
+      "property": "PG ref canonicalizer binds after SELECT before fetch; SQLite binds after dict materialization",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_release_policy_contract.py",
+        "tests/test_release_policy.py",
+        "tests/pg/test_release_policy.py",
+        "verification/traces/release-policy-histories-2806.json"
+      ],
+      "property": "Current Release uses current revise count then highest referencing reservation ID then Release ID",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_release_policy_contract.py",
+        "tests/test_release_policy.py",
+        "tests/pg/test_release_policy.py",
+        "verification/traces/release-policy-histories-2806.json"
+      ],
+      "property": "None alone selects default; explicit historical same-item membership remains separate",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_release_policy_contract.py",
+        "tests/test_release_policy.py",
+        "tests/pg/test_release_policy.py",
+        "verification/traces/release-policy-histories-2806.json"
+      ],
+      "property": "Caller pending writes, savepoints and native failed transaction states remain owned by caller",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_release_policy_contract.py",
+        "tests/test_release_policy.py",
+        "tests/pg/test_release_policy.py",
+        "verification/traces/release-policy-histories-2806.json"
+      ],
+      "property": "PG lock=False reads remain read-only beside actual held item lock; default lock waits on exact holder",
+      "result": "concurrency-tested"
+    }
+  ],
+  "context_id": "sprintctl.release-policy",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2806",
+    "revision": "native:release:05fb546d4db82292afa789983d54e047bfd4779af730dd14ad8f5e03024bf338"
+  },
+  "counterexamples": [],
+  "depth": 2,
+  "environment": {
+    "pg_isolation": "READ COMMITTED measured by direct primary and independent observer fixtures",
+    "postgresql": "16.15",
+    "psycopg": "3.3.3",
+    "pytest": "9.0.2",
+    "python": "3.13.16",
+    "scope": "Temporary SQLite and runner-owned disposable PG; no deployed or physical durability qualification",
+    "sqlite": "3.53.1"
+  },
+  "execution": {
+    "bounds": {
+      "direct_observations_pg": 25,
+      "direct_observations_sqlite": 19,
+      "extra_pg_cases": 9,
+      "negative_wrong_implementations": 31,
+      "shared_cases": 46
+    },
+    "commands": {
+      "after-local": "UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-release-policy-local-env UV_OFFLINE=1 uv run --frozen --no-sync pytest -q --tb=short tests/test_release_policy.py tests/test_releases.py tests/test_item_release.py tests/test_release_integrity.py tests/test_reserve_admission.py tests/test_reservation_atomicity.py tests/test_keyed_decision_workflow.py tests/test_locked_decision_writing.py tests/test_served_decisions.py tests/test_authority_fault_protocol.py tests/test_session_release.py -o junit_family=legacy --junitxml=/tmp/sprintctl-2806-final-after-local.xml > /tmp/sprintctl-2806-final-after-local.txt 2>&1",
+      "after-pg": "PATH=/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-release-policy-pg-env UV_OFFLINE=1 timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh -k 'release_policy or releases or release_integrity or item_release or reserve_admission or reservation_atomicity or keyed_decision_workflow or locked_decision_writing or effect or evidence or lease or authority or session_release' --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2806-final-after-pg.xml > /tmp/sprintctl-2806-final-after-pg.txt 2>&1",
+      "before-local": "UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-release-policy-local-env UV_OFFLINE=1 uv run --frozen --no-sync pytest -q --tb=short tests/test_release_policy.py tests/test_releases.py tests/test_item_release.py tests/test_release_integrity.py tests/test_reserve_admission.py tests/test_reservation_atomicity.py tests/test_keyed_decision_workflow.py tests/test_locked_decision_writing.py tests/test_served_decisions.py tests/test_authority_fault_protocol.py tests/test_session_release.py -o junit_family=legacy --junitxml=/tmp/sprintctl-2806-final-before-local.xml > /tmp/sprintctl-2806-final-before-local.txt 2>&1",
+      "before-pg": "PATH=/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-release-policy-pg-env UV_OFFLINE=1 timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh -k 'release_policy or releases or release_integrity or item_release or reserve_admission or reservation_atomicity or keyed_decision_workflow or locked_decision_writing or effect or evidence or lease or authority or session_release' --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2806-final-before-pg.xml > /tmp/sprintctl-2806-final-before-pg.txt 2>&1",
+      "full-local": "UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-release-policy-local-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests --ignore=tests/pg --ignore=tests/test_work_application_pg.py -q -m 'not perf' --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2806-full-local.xml > /tmp/sprintctl-2806-full-local.txt 2>&1",
+      "full-pg": "PATH=/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-release-policy-pg-env UV_OFFLINE=1 timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2806-full-pg.xml > /tmp/sprintctl-2806-full-pg.txt 2>&1"
+    },
+    "faults_exercised": [
+      "Real SQL INSERT trigger abort",
+      "Python serialization and execute-getter faults",
+      "Deliberate metadata conversion faults",
+      "Finite in-memory wrong helper implementations"
+    ],
+    "pg_cleanup_zero": {
+      "after": 52,
+      "before": 52,
+      "full": 89
+    },
+    "runs": {
+      "after-local": {
+        "cases": 326,
+        "log": "/tmp/sprintctl-2806-final-after-local.txt",
+        "log_sha256": "5f9c895b301da380e396244b2d1d3051901a44dcc6d39c47ea94299f41e7137e",
+        "passed": 326,
+        "skipped": 0,
+        "suites": [
+          {
+            "errors": "0",
+            "failures": "0",
+            "hostname": "workstation",
+            "name": "pytest",
+            "skipped": "0",
+            "tests": "326",
+            "time": "46.226",
+            "timestamp": "2026-10-18T21:50:16.155602+03:00"
+          }
+        ],
+        "xml": "/tmp/sprintctl-2806-final-after-local.xml",
+        "xml_sha256": "417ebb48da265863a401ca672435ec93b7c8a43fa1cb4fdda1381a92f33268f7"
+      },
+      "after-pg": {
+        "cases": 958,
+        "log": "/tmp/sprintctl-2806-final-after-pg.txt",
+        "log_sha256": "db842b4f090d01d3e4b16b86321cd2c72ce7c3d7f9033bf6527d1099a58d054a",
+        "passed": 958,
+        "skipped": 0,
+        "suites": [
+          {
+            "errors": "0",
+            "failures": "0",
+            "hostname": "workstation",
+            "name": "pytest",
+            "skipped": "0",
+            "tests": "958",
+            "time": "39.283",
+            "timestamp": "2026-10-18T21:50:22.785844+03:00"
+          }
+        ],
+        "xml": "/tmp/sprintctl-2806-final-after-pg.xml",
+        "xml_sha256": "a1e674603ebbe8aba3d7a0f4eaaaf64854925fb57e23c7a378727f2ab96ac037"
+      },
+      "before-local": {
+        "cases": 326,
+        "log": "/tmp/sprintctl-2806-final-before-local.txt",
+        "log_sha256": "23fc476e35bc1c165e9fa9442ba81243ea095364b47e8b11d319f93b7c6cbf43",
+        "passed": 326,
+        "skipped": 0,
+        "suites": [
+          {
+            "errors": "0",
+            "failures": "0",
+            "hostname": "workstation",
+            "name": "pytest",
+            "skipped": "0",
+            "tests": "326",
+            "time": "46.052",
+            "timestamp": "2026-10-18T21:47:57.791483+03:00"
+          }
+        ],
+        "xml": "/tmp/sprintctl-2806-final-before-local.xml",
+        "xml_sha256": "3e2761655dd731ebd1baf6eb37834ad89ef5b59535072f5057ca19c775740fa2"
+      },
+      "before-pg": {
+        "cases": 958,
+        "log": "/tmp/sprintctl-2806-final-before-pg.txt",
+        "log_sha256": "5b5b03cc73cc8efcb83720a4e11cc581f46c9ab0376847cedf9cc0a5288029a8",
+        "passed": 958,
+        "skipped": 0,
+        "suites": [
+          {
+            "errors": "0",
+            "failures": "0",
+            "hostname": "workstation",
+            "name": "pytest",
+            "skipped": "0",
+            "tests": "958",
+            "time": "39.587",
+            "timestamp": "2026-10-18T21:48:04.444448+03:00"
+          }
+        ],
+        "xml": "/tmp/sprintctl-2806-final-before-pg.xml",
+        "xml_sha256": "12991e5fa1b63729b5a60a6ae071b3d03d473e1ee5e8f8043c7a1829c8501584"
+      },
+      "full-local": {
+        "cases": 3093,
+        "log": "/tmp/sprintctl-2806-full-local.txt",
+        "log_sha256": "775950530970ac22a6e67b889ac443e46cca959fdde66396f8e04bfc7229d022",
+        "passed": 3089,
+        "skipped": 4,
+        "suites": [
+          {
+            "errors": "0",
+            "failures": "0",
+            "hostname": "workstation",
+            "name": "pytest",
+            "skipped": "4",
+            "tests": "3093",
+            "time": "454.886",
+            "timestamp": "2026-10-18T21:51:02.648198+03:00"
+          }
+        ],
+        "xml": "/tmp/sprintctl-2806-full-local.xml",
+        "xml_sha256": "206e6b5043632ef7d1babc4cc555beba420c8d4fe42b03cb6d83e39c978c3d3f"
+      },
+      "full-pg": {
+        "cases": 1766,
+        "log": "/tmp/sprintctl-2806-full-pg.txt",
+        "log_sha256": "1a68098e957604ebcc986a6db3d995c08dd316f0f497ba6b2e607ebd1c23efb4",
+        "passed": 1766,
+        "skipped": 0,
+        "suites": [
+          {
+            "errors": "0",
+            "failures": "0",
+            "hostname": "workstation",
+            "name": "pytest",
+            "skipped": "0",
+            "tests": "1766",
+            "time": "101.431",
+            "timestamp": "2026-10-18T21:51:10.362341+03:00"
+          }
+        ],
+        "xml": "/tmp/sprintctl-2806-full-pg.xml",
+        "xml_sha256": "413222631fdfff1c92bc63412c8ef6569b4c942d30203d36509b5548947efa8d"
+      }
+    }
+  },
+  "implementation_sha": "1ec78fa9a2f1dbacc4d5ec832c14b961e09abc12",
+  "notes": [
+    "implementation_sha identifies accepted predecessor; exact candidate byte hashes below avoid a self-referential future commit.",
+    "Native5812/5822 bind private source consolidation only; reviewed plan5743 and mandatory binding addendumc17ff are retained byte-identical despite historical proposed status in original plan.",
+    "Final unchanged46shared+9PG oracle ran BEFORE any product edit; 326/958 combined passed before and after. Earlier325/957 capture retained only as historical development.",
+    "28 original wrong controls retain earlier45/54oracle hashes and actual terminal failures. Final added binding case has2positive and3wrong-control runs. Exact prior bytes reconstructed by removing only appended method and matching independently recorded old SHA; whole-module AST comparison independently confirms unchanged old fixtures/helpers/tests. No claim that reconstruction was an earlier archive.",
+    "All533adjacent named ASTs, nonfunction globals except private imports and3oracle files unchanged. Five query captures preserve normalized tokens and parameter order/types; only fixture identities normalized.",
+    "Direct before/after captures each retain19SQLite+25PG observations, including actual held-lock wait with pg_blocking_pids; no broad linearizability, fairness or arbitrary transaction-composition claim.",
+    "Metadata None/empty/conversion tests use deliberate test-owned fetched rows where schema/public APIs exclude them. Final persisted labels are nonNULL, and historical blank descriptions use owned SQL without fictional edit event.",
+    "Independent source review CLEAR and reviewer46SQLite21.21s; final packet/exact-head CI/merge equality remain publication gates at packet generation.",
+    "Postcampaign independent packet review found extractor output required manual label projection despite equal observations. Fixed explicit LABEL=XML inputs and actual whole-object CLI replay exactly equals the published88observations; no product/oracle change or relabeled campaign.",
+    "No schema/API/IDL/deploy/globalinstall/version/runtime/credential changes or parent2150 acceptance. add_dep guard and backend-peer imports remain explicit separate work."
+  ],
+  "schema_version": "verification-result/v1"
+}
