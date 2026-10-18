@@ -337,15 +337,11 @@ PostgreSQL repository scopes.
 
 ## Hybrid dispatch
 
-Only `mechanical_bulk` packets are worker-eligible: low-risk implementation
-against frozen interfaces, a coordinator-owned oracle the worker cannot
-modify, and explicit registered gates that fail for each relevant incorrect
-behaviour. One rejected attempt returns to the coordinator.
-
-Parity fixtures, test-oracle construction, tests as the primary deliverable,
-SQLite/PostgreSQL behavioural proof, and reservation, authority, compatibility,
-migration, recovery, or credential semantics are coordinator-only regardless
-of diff size.
+Hybrid dispatch is retired under accepted TS-2 direction. Execution and worker
+selection belong to the native harness; do not revive the dispatcher, worker
+identity or actor-prefix convention. See the pinned sources and historical
+#2020 disposition in
+[`docs/evidence/2026-10-18-hybrid-actor-disposition-2020.md`](docs/evidence/2026-10-18-hybrid-actor-disposition-2020.md).
 
 ## Environment variables
 

@@ -7,6 +7,12 @@ date: 2026-07-28
 
 # Coordinator decisions: terminal-claim recovery and actor convention
 
+Current scope note (2026-10-18): the #2020 hybrid actor convention below is
+historical. Accepted TS-2 direction retires hybrid dispatch in favor of native
+harness execution; see the [disposition evidence](../evidence/2026-10-18-hybrid-actor-disposition-2020.md).
+The #2026 recovery design and this document's original ratification metadata
+are preserved. This note does not claim the historical actor fields shipped.
+
 This document records ratified architecture, not an identity grant or a
 deployed recovery endpoint. The first implementation layer freezes a
 transport-free request/result contract and depth-2 fixtures only. A later
