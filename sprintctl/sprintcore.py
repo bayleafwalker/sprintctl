@@ -16,9 +16,14 @@ production-authority behaviour):
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from typing import Protocol
 import re
 from uuid import uuid4
+
+from . import contracts as _contracts
+from .workitemcore import StatusConflict
 
 
 _KIND_REVISION = re.compile(
@@ -148,3 +153,53 @@ def set_sprint_kind(
         raise ValueError(f"Sprint #{sprint_id} not found")
     sql = f"UPDATE sprint SET kind = {conn.ph}{_where(conn, f'id = {conn.ph}')}"
     conn.mutate(sql, (kind,) + conn.tenant_params() + (sprint_id,))
+
+
+class _CloseParticipant(Protocol):
+    """Private close operations; backend wrappers retain transaction ownership."""
+
+    def locked_sprint(
+        self, sprint_id: int,
+    ) -> AbstractContextManager[tuple[dict | None, Callable[[], None]]]: ...
+
+    def revision(self, sprint: dict) -> str: ...
+
+    def validate_transition(self, current: str, target: str) -> None: ...
+
+    def insert_event(
+        self, sprint_id: int, actor: str, event_type: str, *,
+        source_type: str, payload: dict,
+    ) -> int: ...
+
+
+def _close_sprint_with_boundary_event(
+    participant: _CloseParticipant,
+    sprint_id: int,
+    actor: str,
+    expected_revision: str | None,
+) -> int:
+    """Sequence an explicit close inside the caller's existing transaction.
+
+    Request validation and commit/rollback stay in each public backend wrapper.
+    In particular, this adds no PostgreSQL caller-composition guarantee.
+    """
+    with participant.locked_sprint(sprint_id) as (sprint, mark_closed):
+        if sprint is None:
+            raise ValueError(f"Sprint #{sprint_id} not found")
+        current = sprint["status"]
+        current_revision = participant.revision(sprint)
+        if expected_revision is not None and expected_revision != current_revision:
+            raise StatusConflict(
+                f"Sprint #{sprint_id} status revision mismatch: "
+                f"expected {expected_revision}, current {current_revision}"
+            )
+        participant.validate_transition(current, "closed")
+        mark_closed()
+    # Preserve the PG SELECT/UPDATE cursor boundary before canonical insertion.
+    return participant.insert_event(
+        sprint_id,
+        actor.strip(),
+        _contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE,
+        source_type="actor",
+        payload={"previous_status": current, "status": "closed"},
+    )

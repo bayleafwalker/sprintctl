@@ -1,0 +1,52 @@
+{
+  "from_base": "0b1f4ad11b52c5526443487e6cc5f90a84a5a8cb",
+  "to_base": "777c19f161ca85586e7fd01b7313c8a95c33a9c5",
+  "symbol_hash_method": "SHA256 of UTF-8 ast.dump(FunctionDef or ClassDef, include_attributes=False), ambient Python3.14.7",
+  "before": {
+    "sprintctl/db.py": {
+      "file_sha256": "f97ba158b942c86b577c154946ceba4f6bfc45461a7ed05f1e61ceebf6c05152",
+      "symbols": {
+        "_SprintCloseSqlite": "4ef55f307827c46b21ee1771123d4f8a146f012761960595540431f2c022ea9d",
+        "close_sprint_with_boundary_event": "8afd4769ebb8062d46bbe0812da5b472aaec38ef09f6691311b40746b483a80b"
+      }
+    },
+    "sprintctl/pg.py": {
+      "file_sha256": "e4859b2032611ae72f3011dbd3c7dd95b1c4d9ac9d7d30a55c2453055f92f129",
+      "symbols": {
+        "_SprintClosePg": "e2d1368feae7d0f684e51b5aeb09f3abd268b77dd800f4cc69afd22b0d8412fb",
+        "close_sprint_with_boundary_event": "0c28895a11aea704033feb1777e795bb985d46c2ad8d3f35d3a0f1fc155d4cf3"
+      }
+    },
+    "sprintctl/sprintcore.py": {
+      "file_sha256": "ba73bdcebdb8f0570ec7adaef8485b7ce83c6b5ffb1e927b9a7d64ef706a0c91",
+      "symbols": {
+        "_CloseParticipant": "60a5950e1bc98124a3061b7a744e91815fd1865c6952091c4ebbf13c686d3a29",
+        "_close_sprint_with_boundary_event": "0e8f4a763c6cf39e5438ae77fdf1e1111798532a56d0c859edf42a94a348e228"
+      }
+    }
+  },
+  "after": {
+    "sprintctl/db.py": {
+      "file_sha256": "706b5d1726dd1b54d8ef882c7429a9bc335964a9331f1e226a49139952d3fd7c",
+      "symbols": {
+        "_SprintCloseSqlite": "4ef55f307827c46b21ee1771123d4f8a146f012761960595540431f2c022ea9d",
+        "close_sprint_with_boundary_event": "8afd4769ebb8062d46bbe0812da5b472aaec38ef09f6691311b40746b483a80b"
+      }
+    },
+    "sprintctl/pg.py": {
+      "file_sha256": "e4859b2032611ae72f3011dbd3c7dd95b1c4d9ac9d7d30a55c2453055f92f129",
+      "symbols": {
+        "_SprintClosePg": "e2d1368feae7d0f684e51b5aeb09f3abd268b77dd800f4cc69afd22b0d8412fb",
+        "close_sprint_with_boundary_event": "0c28895a11aea704033feb1777e795bb985d46c2ad8d3f35d3a0f1fc155d4cf3"
+      }
+    },
+    "sprintctl/sprintcore.py": {
+      "file_sha256": "ba73bdcebdb8f0570ec7adaef8485b7ce83c6b5ffb1e927b9a7d64ef706a0c91",
+      "symbols": {
+        "_CloseParticipant": "60a5950e1bc98124a3061b7a744e91815fd1865c6952091c4ebbf13c686d3a29",
+        "_close_sprint_with_boundary_event": "0e8f4a763c6cf39e5438ae77fdf1e1111798532a56d0c859edf42a94a348e228"
+      }
+    }
+  },
+  "meaning": "All six refactor-owned symbol ASTs unchanged; accepted upstream guard delegation and disjoint documentation/collector changes joined. Broad captures remain pre-base-refresh, not relabeled. Combined affected checks and exact-head CI qualify final combined source."
+}

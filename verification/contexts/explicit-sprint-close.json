@@ -1,0 +1,101 @@
+{
+  "actors": [
+    "explicit closer",
+    "competing same-basis closer",
+    "caller transaction owner",
+    "independent durable reader",
+    "fixture fault holder"
+  ],
+  "assumptions": {
+    "clock": "existing timestamps; no time-based close admission",
+    "fairness": "none",
+    "isolation": "SQLite writer serialization; measured PostgreSQL READ COMMITTED on actual worker connections"
+  },
+  "backends": [
+    "temporary SQLite",
+    "registered disposable PostgreSQL16.15 READ COMMITTED"
+  ],
+  "bounds": {
+    "actual_retained_histories": 8,
+    "concurrent_histories": 2,
+    "pg_additional_cases": 8,
+    "shared_cases_per_backend": 16,
+    "workers_per_competing_history": 2
+  },
+  "consistency": {
+    "object": "closed status and one typed boundary on a successful explicit close; preserved errors/caller effects",
+    "target": "application-invariant"
+  },
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2780",
+    "revision": "native:release:302f9ee474e60afeea2529154b02ac4361dbad656805599bf6fdf8b44d2a3c36"
+  },
+  "depth": 2,
+  "expansions": [
+    "fault-scenario"
+  ],
+  "faults": [
+    "actual SQL trigger abort before boundary insertion",
+    "exception after actual canonical insertion",
+    "stale same-basis close while holder is uncommitted",
+    "PG commit/rollback refusal inside managed/TPC caller",
+    "invalid actor or basis before transaction handler"
+  ],
+  "id": "sprintctl.explicit-sprint-close",
+  "implementation_anchors": [
+    "sprintctl/sprintcore.py:_close_sprint_with_boundary_event",
+    "sprintctl/db.py:_SprintCloseSqlite",
+    "sprintctl/db.py:close_sprint_with_boundary_event",
+    "sprintctl/pg.py:_SprintClosePg",
+    "sprintctl/pg.py:close_sprint_with_boundary_event"
+  ],
+  "initial_state": [
+    "active, planned, closed or missing sprint",
+    "optional current or stale state-basis token",
+    "idle SQLite or existing caller transactions as explicitly tested"
+  ],
+  "invariants": [
+    "successful explicit close returns integer ID and commits closed status with exact typed actor boundary",
+    "stale basis comparison precedes transition rejection; repeated close is refused without replay",
+    "ordinary event faults roll back target state before fixture cleanup, and retry closes once",
+    "SQLite2779 active caller refusal preserves caller state; PG existing caller success/failure and managed/TPC effects remain distinct",
+    "maintenance auto-close emits auto-closed-overdue and no explicit close boundary"
+  ],
+  "operations": [
+    {
+      "actors": [
+        "explicit closer",
+        "competing same-basis closer"
+      ],
+      "name": "close explicit sprint",
+      "synchronization": "existing SQLite BEGIN IMMEDIATE or PG scoped SELECT FOR UPDATE, original wrapper commit/rollback"
+    },
+    {
+      "actors": [
+        "independent durable reader",
+        "fixture fault holder"
+      ],
+      "name": "observe fault and retry",
+      "synchronization": "before fixture cleanup and after actual boundary insertion/fault"
+    },
+    {
+      "actors": [
+        "caller transaction owner"
+      ],
+      "name": "resolve caller transaction",
+      "synchronization": "existing PG implicit success/failure or explicit caller managed/TPC rollback"
+    }
+  ],
+  "oracles": [
+    "tests/_explicit_sprint_close_contract.py",
+    "tests/test_explicit_sprint_close.py",
+    "tests/pg/test_explicit_sprint_close.py",
+    "tests/test_sqlite_sprint_caller.py",
+    "actual owner and independent SQL snapshots before fault fixture cleanup",
+    "actual JUnit state_history observations and registered PG cleanup checker"
+  ],
+  "owner_repo": "sprintctl",
+  "schema_version": "test-context/v1",
+  "source_of_truth": "Existing explicit close semantics and frozen native No doc decision5600; bounded private extraction, not a new provider contract",
+  "subject": "explicit close status and typed local boundary event sequencing"
+}

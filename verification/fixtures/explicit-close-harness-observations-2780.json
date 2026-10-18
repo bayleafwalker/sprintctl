@@ -1,0 +1,50 @@
+{
+  "exact-yaml-case-normal-cache": {
+    "sha256": "e8c2ebdecc6c68bd31c948de0b0c1dd4c57dd47d093194a6c1d241c65727824d",
+    "summary": "1 passed in 0.07s",
+    "terminal_log": "sprintctl-2780-yaml-cache-correction.txt"
+  },
+  "initial-local-cache-failure": {
+    "junit": "sprintctl-2780-initial-local-cache-failure.xml",
+    "junit_sha256": "5c58d1f5fc5ca12a6c97630a2696518578daf9c184bcbf61c435332b701eccd0",
+    "observed_summary": [
+      "FAILED tests/test_pg_disposable_harness_contract.py::test_ci_yaml_parses_with_safe_load",
+      "1 failed, 2741 passed, 4 skipped, 14 deselected in 620.63s (0:10:20)"
+    ],
+    "sha256": "228831ed8b9e979e1932ad055851dd92a12f390aac02bb9933e9b9c8c27fd9dc",
+    "suites": [
+      {
+        "errors": "0",
+        "failures": "1",
+        "hostname": "workstation",
+        "name": "pytest",
+        "skipped": "4",
+        "tests": "2746",
+        "time": "620.553",
+        "timestamp": "2026-10-18T16:54:50.849679+03:00"
+      }
+    ],
+    "terminal_log": "sprintctl-2780-initial-local-cache-failure.txt"
+  },
+  "initial-pg-summary-checker-failure": {
+    "junit": "sprintctl-2780-after-pg.xml",
+    "junit_sha256": "99897ac8661f056df5c731c9185f4d0e64a3f1f17f97fbd16f3df1c8c0474772",
+    "observed_summary": [
+      "pg-cleanup-report-check: FAIL: pytest output shows no passed tests"
+    ],
+    "sha256": "9c4a4a3456c6025f58a732cc59eac368be8592d2551569b0349ae7cf78ff2c48",
+    "suites": [
+      {
+        "errors": "0",
+        "failures": "0",
+        "hostname": "workstation",
+        "name": "pytest",
+        "skipped": "0",
+        "tests": "1409",
+        "time": "75.487",
+        "timestamp": "2026-10-18T16:53:52.380997+03:00"
+      }
+    ],
+    "terminal_log": "sprintctl-2780-after-pg.txt"
+  }
+}

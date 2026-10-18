@@ -1,0 +1,107 @@
+{
+  "claims": [
+    {
+      "evidence": [
+        "tests/_explicit_sprint_close_contract.py"
+      ],
+      "property": "successful explicit close returns integer ID and commits closed status with exact typed actor boundary",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_explicit_sprint_close_contract.py"
+      ],
+      "property": "stale basis comparison precedes transition rejection; repeated close is refused without replay",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "verification/traces/explicit-close-histories-2780.json"
+      ],
+      "property": "ordinary event faults roll back target state before fixture cleanup, and retry closes once",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "verification/traces/explicit-close-histories-2780.json"
+      ],
+      "property": "two same-basis explicit closers produce one committed boundary and one StatusConflict in the recorded schedule on each backend",
+      "result": "concurrency-tested"
+    },
+    {
+      "evidence": [
+        "tests/test_sqlite_sprint_caller.py",
+        "tests/pg/test_explicit_sprint_close.py"
+      ],
+      "property": "SQLite2779 active caller refusal preserves caller state; PG existing caller success/failure and managed/TPC effects remain distinct",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "tests/_explicit_sprint_close_contract.py"
+      ],
+      "property": "maintenance auto-close emits auto-closed-overdue and no explicit close boundary",
+      "result": "example-tested"
+    },
+    {
+      "property": "universal caller composition, arbitrary isolation levels, physical crash/commit acknowledgement loss, ABA protection, full provider parity or rollout",
+      "result": "unknown"
+    }
+  ],
+  "context_id": "sprintctl.explicit-sprint-close",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2780",
+    "revision": "native:release:302f9ee474e60afeea2529154b02ac4361dbad656805599bf6fdf8b44d2a3c36"
+  },
+  "counterexamples": [],
+  "depth": 2,
+  "environment": {
+    "backend": "actual temporary SQLite and disposable PostgreSQL16.15",
+    "isolation": "SQLite BEGIN IMMEDIATE; PostgreSQL READ COMMITTED",
+    "tool_versions": {
+      "psycopg": "3.3.3",
+      "pytest": "9.0.2",
+      "python": "3.13.16"
+    }
+  },
+  "execution": {
+    "bounds": {
+      "actual_retained_histories": 8,
+      "concurrent_histories": 2,
+      "pg_additional_cases": 8,
+      "shared_cases_per_backend": 16,
+      "workers_per_competing_history": 2
+    },
+    "faults_exercised": [
+      "actual SQL trigger abort before boundary insertion",
+      "exception after actual canonical insertion",
+      "stale same-basis close while holder is uncommitted",
+      "PG commit/rollback refusal inside managed/TPC caller",
+      "invalid actor or basis before transaction handler"
+    ],
+    "histories": 8
+  },
+  "implementation_sha": "777c19f161ca85586e7fd01b7313c8a95c33a9c5",
+  "notes": [
+    "Final base refresh from0b1f4ad to777c19f161ca85586e7fd01b7313c8a95c33a9c5 after accepted2781, onboardingdocs and passivecollector2783. All six refactor-owned symbol ASTs unchanged, three oracle byte hashes unchanged. Earlier full local/PG captures are historical pre-refresh; combined affected checks plus exact-head CI qualify final combined source.",
+    "Initial full local with separate offline UV_CACHE_DIR failed only test_ci_yaml_parses_with_safe_load because pyyaml was not cached:2741passed/1failed/4skipped/14deselected620.63s. Original log/XML retained as initial-local-cache-failure artifacts. Exact case passed under normal populated cache without source/test changes; full corrected rerun is the qualified gate below.",
+    "implementation_sha is the final accepted combined base; the original baseline and broad captures remain separately attributed to0b1f4ad; candidate byte hashes identify this qualified source without a self-referential future commit SHA. Declared run provenance and hashes do not authenticate external origins.",
+    "Native frozen decision5600; optimistic and separate native source owner reviewed source independently CLEAR. Paired actual baseline passed16SQLite/24PG before extraction; tests remained byte-identical after extraction.",
+    "Targeted post-extraction local oracle plus2779 caller cases31passed7.21s.",
+    "First post-PG invocation accidentally duplicated -q via runner args: XML records1409tests/0failures/0errors/0skips, but no terminal passed-summary and cleanup checker rejected run. It is historical harness failure, not a qualified gate or cleanup-zero claim. Standard-verbosity full rerun below is the qualification.",
+    "Full local corrected standard cache: UV_OFFLINE=1 uv run --frozen --no-sync pytest tests --ignore=tests/pg --ignore=tests/test_work_application_pg.py -m \"not perf\" -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2780-full-local.xml.",
+    "Full PG: PATH=<cached PostgreSQL16.15>/bin:$PATH timeout --foreground -k30s900s scripts/pg-disposable-tests.sh --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2780-full-pg.xml.",
+    "Actual full-run artifacts {\"sprintctl-2780-full-local.txt\": \"c1b509228c25dca4602bc732f88552a5a3d26644f896a2378620d58e92d8a67e\", \"sprintctl-2780-full-local.xml\": \"ac35ec2f02bf3fc70fc3f68c3366959ae454dd2ede79265d23a8374f13863ad5\", \"sprintctl-2780-full-pg.txt\": \"6223c62925e2e07fb80646c2ce755bc102753b90c589dd2983487ea46cf597ae\", \"sprintctl-2780-full-pg.xml\": \"6cd62bffaad0d3121f79e10ae17a007a1ed906f7751bb69a1e5841bce6238314\"}",
+    "Candidate files {\"sprintctl/db.py\": \"706b5d1726dd1b54d8ef882c7429a9bc335964a9331f1e226a49139952d3fd7c\", \"sprintctl/pg.py\": \"e4859b2032611ae72f3011dbd3c7dd95b1c4d9ac9d7d30a55c2453055f92f129\", \"sprintctl/sprintcore.py\": \"ba73bdcebdb8f0570ec7adaef8485b7ce83c6b5ffb1e927b9a7d64ef706a0c91\", \"tests/_explicit_sprint_close_contract.py\": \"0e6169e98ee681cdd8c18cbffa952f7b68b14f10bd94cf26dbbb3fa0ff9c5b88\", \"tests/pg/test_explicit_sprint_close.py\": \"59a7b56947b7b696c929c9cad5a9710f28fd4c2f3d7f94ce9877c5908a5f82ff\", \"tests/test_explicit_sprint_close.py\": \"3bbc6926154801f2653616a1af0b8c059fe7ba962e6ce9d2057fdcfbdcc1dec9\", \"verification/fixtures/explicit-close-base-refresh-2780.json\": \"c7991796c2c2b6c46a7c29d12944f47de88c8cf78f12b7995992836492942920\", \"verification/fixtures/explicit-close-before-2780.json\": \"c22543c5c982d9bc3f4831ad5bced63e4c02c0ffdd7212771c2a7ea95aac6eea\", \"verification/fixtures/explicit-close-harness-observations-2780.json\": \"07b5f82a72bbe5607402d2820bbed0f192274ad8ae1e2311bc60ae60848bd98e\", \"verification/traces/explicit-close-histories-2780.json\": \"eea0c27ba49645898ee80052109c48bc7fa38bb1472064ae0e7be715370351e7\", \"verification/traces/extract-explicit-close-histories.py\": \"eb664cffef00d0ed7096a04304fdfc92a5e0d1db174f46959da1ede55cddd40e\"}",
+    "PG SELECT/UPDATE cursor lifetime, exact SQL/tenant/decoding, and unchanged wrapper transaction ownership separately source-reviewed; bounded tests do not establish all cursor internals.",
+    "SQLite observed attempted BEGIN while holder remains uncommitted; PG observed blocker PID. Two recorded competing schedules are concurrency-tested, not exhaustive interleavings, fairness, general linearizability or ABA protection.",
+    "PG managed/TPC ordinary close first writes pending status/boundary then explicit commit is forbidden; explicit rollback failure replaces commit error. Owner pending state differs from independent durable state until fixture-owned outer/TPC rollback. Preserved existing behavior, not safe composition or a repaired transaction policy.",
+    "No generic event admission for owner typed boundary; no maintenance rewire, new schema/API/IDL/provider contract, deployment or parent2150 completion. Exact-head canonical CI remains a publication gate.",
+    "sprintctl-2780-full-local.txt: 2742 passed, 4 skipped, 14 deselected in 259.93s (0:04:19)",
+    "sprintctl-2780-full-pg.txt: 1409 passed in 101.18s (0:01:41) | pg-cleanup-report-check: foreign_scope_cleanup: 1 fixture cleanup(s) completed with zero remaining rows | pg-cleanup-report-check: maintenance_resource_transactional_pg_factory: 21 fixture cleanup(s) completed with zero remaining rows | pg-cleanup-report-check: pg_test_scope: 59 fixture cleanup(s) completed with zero remaining rows | pg-cleanup-report-check: store_factory: 1 fixture cleanup(s) completed with zero remaining rows | pg-cleanup-report-check: ok: 82 fixture cleanup(s) across 4 fixture name(s)",
+    "post-base-refresh combined local: 351 passed in 28.63s; raw SHA256 c985399d3ec910e2a4b949f06421da03d23ebb12233dfc700f728864ddd0cfd4",
+    "post-base-refresh combined disposable PG: 112 passed, 1297 deselected in 5.65s | pg-cleanup-report-check: pg_test_scope: 21 fixture cleanup(s) completed with zero remaining rows | pg-cleanup-report-check: ok: 21 fixture cleanup(s) across 1 fixture name(s); raw SHA256 6ee85ebd2729dca8c17a5445988271528ad427a7b499a401817c4421b02f7cca",
+    "Combined local command: UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/test_explicit_sprint_close.py tests/test_sqlite_sprint_caller.py tests/test_sqlite_item_reserve_caller.py tests/test_sprint_kind.py tests/test_sprint_activate_handler.py tests/test_maintain.py tests/test_authority_fault_protocol.py tests/test_failure_modes.py tests/test_work_application.py tests/test_install_workflow_contract.py tests/test_reader_event_collector.py tests/test_docs_integrity.py -q --tb=short. Combined PG uses the standard disposable runner with -k \"explicit_sprint_close or sprint_track or authority or maintain\" --tb=short."
+  ],
+  "schema_version": "verification-result/v1"
+}
