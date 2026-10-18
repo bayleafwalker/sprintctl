@@ -1,0 +1,64 @@
+{
+  "source_base": "191fc9e0398b0aab8b5fb8001adca1ceede1597f",
+  "backend": "actual temporary SQLite, explicit database path",
+  "limits": "three nested-caller transaction refusal examples only; no PostgreSQL or hosted composition claim",
+  "records": [
+    {
+      "operation": "set_sprint_kind",
+      "function_sha256": "e21ccdfcfee6f81703c2ee5e67da44dd7358ea9e941256ee5f5a748a73404066",
+      "before": {
+        "in_transaction": true,
+        "goal": "caller pending write"
+      },
+      "failure": {
+        "type": "OperationalError",
+        "message": "cannot start a transaction within a transaction"
+      },
+      "after": {
+        "in_transaction": false,
+        "goal": "original",
+        "status": "planned",
+        "events": []
+      },
+      "caller_write_rolled_back": true
+    },
+    {
+      "operation": "set_sprint_status",
+      "function_sha256": "48d75fa546f05bbc41dbc90dcb848b637e6bdcb8ca61c5bcb4e5b9370d178e7c",
+      "before": {
+        "in_transaction": true,
+        "goal": "caller pending write"
+      },
+      "failure": {
+        "type": "OperationalError",
+        "message": "cannot start a transaction within a transaction"
+      },
+      "after": {
+        "in_transaction": false,
+        "goal": "original",
+        "status": "planned",
+        "events": []
+      },
+      "caller_write_rolled_back": true
+    },
+    {
+      "operation": "close_sprint_with_boundary_event",
+      "function_sha256": "61d3502b0f5175e30ea24dc3b5e7b6b1ad63bc8c9ba42b01a1b286e3a7669973",
+      "before": {
+        "in_transaction": true,
+        "goal": "caller pending write"
+      },
+      "failure": {
+        "type": "OperationalError",
+        "message": "cannot start a transaction within a transaction"
+      },
+      "after": {
+        "in_transaction": false,
+        "goal": "original",
+        "status": "active",
+        "events": []
+      },
+      "caller_write_rolled_back": true
+    }
+  ]
+}

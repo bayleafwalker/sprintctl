@@ -1,0 +1,91 @@
+FFFFFFFFF......                                                          [100%]
+=================================== FAILURES ===================================
+_______ test_nested_refusal_leaves_caller_transaction_usable[write-kind] _______
+/tmp/sprintctl-sprint-caller-2779/tests/test_sqlite_sprint_caller.py:49: in test_nested_refusal_leaves_caller_transaction_usable
+    invoke(conn, operation, target)
+/tmp/sprintctl-sprint-caller-2779/tests/test_sqlite_sprint_caller.py:21: in invoke
+    return db.set_sprint_kind(conn, target, 'archive',
+/tmp/sprintctl-sprint-caller-2779/sprintctl/db.py:1341: in set_sprint_kind
+    conn.execute("BEGIN IMMEDIATE")
+E   sqlite3.OperationalError: cannot start a transaction within a transaction
+______ test_nested_refusal_leaves_caller_transaction_usable[write-status] ______
+/tmp/sprintctl-sprint-caller-2779/tests/test_sqlite_sprint_caller.py:49: in test_nested_refusal_leaves_caller_transaction_usable
+    invoke(conn, operation, target)
+/tmp/sprintctl-sprint-caller-2779/tests/test_sqlite_sprint_caller.py:25: in invoke
+    return db.set_sprint_status(conn, target, 'active', expected_revision=revision)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/tmp/sprintctl-sprint-caller-2779/sprintctl/db.py:1788: in set_sprint_status
+    conn.execute("BEGIN IMMEDIATE")
+E   sqlite3.OperationalError: cannot start a transaction within a transaction
+______ test_nested_refusal_leaves_caller_transaction_usable[write-close] _______
+/tmp/sprintctl-sprint-caller-2779/tests/test_sqlite_sprint_caller.py:49: in test_nested_refusal_leaves_caller_transaction_usable
+    invoke(conn, operation, target)
+/tmp/sprintctl-sprint-caller-2779/tests/test_sqlite_sprint_caller.py:26: in invoke
+    return db.close_sprint_with_boundary_event(conn, target, 'oracle', expected_revision=revision)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/tmp/sprintctl-sprint-caller-2779/sprintctl/db.py:1931: in close_sprint_with_boundary_event
+    conn.execute("BEGIN IMMEDIATE")
+E   sqlite3.OperationalError: cannot start a transaction within a transaction
+_______ test_nested_refusal_leaves_caller_transaction_usable[read-kind] ________
+/tmp/sprintctl-sprint-caller-2779/tests/test_sqlite_sprint_caller.py:49: in test_nested_refusal_leaves_caller_transaction_usable
+    invoke(conn, operation, target)
+/tmp/sprintctl-sprint-caller-2779/tests/test_sqlite_sprint_caller.py:21: in invoke
+    return db.set_sprint_kind(conn, target, 'archive',
+/tmp/sprintctl-sprint-caller-2779/sprintctl/db.py:1341: in set_sprint_kind
+    conn.execute("BEGIN IMMEDIATE")
+E   sqlite3.OperationalError: cannot start a transaction within a transaction
+______ test_nested_refusal_leaves_caller_transaction_usable[read-status] _______
+/tmp/sprintctl-sprint-caller-2779/tests/test_sqlite_sprint_caller.py:49: in test_nested_refusal_leaves_caller_transaction_usable
+    invoke(conn, operation, target)
+/tmp/sprintctl-sprint-caller-2779/tests/test_sqlite_sprint_caller.py:25: in invoke
+    return db.set_sprint_status(conn, target, 'active', expected_revision=revision)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/tmp/sprintctl-sprint-caller-2779/sprintctl/db.py:1788: in set_sprint_status
+    conn.execute("BEGIN IMMEDIATE")
+E   sqlite3.OperationalError: cannot start a transaction within a transaction
+_______ test_nested_refusal_leaves_caller_transaction_usable[read-close] _______
+/tmp/sprintctl-sprint-caller-2779/tests/test_sqlite_sprint_caller.py:49: in test_nested_refusal_leaves_caller_transaction_usable
+    invoke(conn, operation, target)
+/tmp/sprintctl-sprint-caller-2779/tests/test_sqlite_sprint_caller.py:26: in invoke
+    return db.close_sprint_with_boundary_event(conn, target, 'oracle', expected_revision=revision)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/tmp/sprintctl-sprint-caller-2779/sprintctl/db.py:1931: in close_sprint_with_boundary_event
+    conn.execute("BEGIN IMMEDIATE")
+E   sqlite3.OperationalError: cannot start a transaction within a transaction
+_____ test_nested_refusal_leaves_caller_transaction_usable[savepoint-kind] _____
+/tmp/sprintctl-sprint-caller-2779/tests/test_sqlite_sprint_caller.py:49: in test_nested_refusal_leaves_caller_transaction_usable
+    invoke(conn, operation, target)
+/tmp/sprintctl-sprint-caller-2779/tests/test_sqlite_sprint_caller.py:21: in invoke
+    return db.set_sprint_kind(conn, target, 'archive',
+/tmp/sprintctl-sprint-caller-2779/sprintctl/db.py:1341: in set_sprint_kind
+    conn.execute("BEGIN IMMEDIATE")
+E   sqlite3.OperationalError: cannot start a transaction within a transaction
+____ test_nested_refusal_leaves_caller_transaction_usable[savepoint-status] ____
+/tmp/sprintctl-sprint-caller-2779/tests/test_sqlite_sprint_caller.py:49: in test_nested_refusal_leaves_caller_transaction_usable
+    invoke(conn, operation, target)
+/tmp/sprintctl-sprint-caller-2779/tests/test_sqlite_sprint_caller.py:25: in invoke
+    return db.set_sprint_status(conn, target, 'active', expected_revision=revision)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/tmp/sprintctl-sprint-caller-2779/sprintctl/db.py:1788: in set_sprint_status
+    conn.execute("BEGIN IMMEDIATE")
+E   sqlite3.OperationalError: cannot start a transaction within a transaction
+____ test_nested_refusal_leaves_caller_transaction_usable[savepoint-close] _____
+/tmp/sprintctl-sprint-caller-2779/tests/test_sqlite_sprint_caller.py:49: in test_nested_refusal_leaves_caller_transaction_usable
+    invoke(conn, operation, target)
+/tmp/sprintctl-sprint-caller-2779/tests/test_sqlite_sprint_caller.py:26: in invoke
+    return db.close_sprint_with_boundary_event(conn, target, 'oracle', expected_revision=revision)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/tmp/sprintctl-sprint-caller-2779/sprintctl/db.py:1931: in close_sprint_with_boundary_event
+    conn.execute("BEGIN IMMEDIATE")
+E   sqlite3.OperationalError: cannot start a transaction within a transaction
+=========================== short test summary info ============================
+FAILED tests/test_sqlite_sprint_caller.py::test_nested_refusal_leaves_caller_transaction_usable[write-kind]
+FAILED tests/test_sqlite_sprint_caller.py::test_nested_refusal_leaves_caller_transaction_usable[write-status]
+FAILED tests/test_sqlite_sprint_caller.py::test_nested_refusal_leaves_caller_transaction_usable[write-close]
+FAILED tests/test_sqlite_sprint_caller.py::test_nested_refusal_leaves_caller_transaction_usable[read-kind]
+FAILED tests/test_sqlite_sprint_caller.py::test_nested_refusal_leaves_caller_transaction_usable[read-status]
+FAILED tests/test_sqlite_sprint_caller.py::test_nested_refusal_leaves_caller_transaction_usable[read-close]
+FAILED tests/test_sqlite_sprint_caller.py::test_nested_refusal_leaves_caller_transaction_usable[savepoint-kind]
+FAILED tests/test_sqlite_sprint_caller.py::test_nested_refusal_leaves_caller_transaction_usable[savepoint-status]
+FAILED tests/test_sqlite_sprint_caller.py::test_nested_refusal_leaves_caller_transaction_usable[savepoint-close]
+9 failed, 6 passed in 3.09s

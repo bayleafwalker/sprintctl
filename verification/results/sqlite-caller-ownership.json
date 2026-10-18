@@ -1,0 +1,79 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.sqlite-sprint-caller",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2779",
+    "revision": "native:release:2c729967ab238bf3a00541cdd3c9930584b820f36b8b4b6eca23ac5316eb3685"
+  },
+  "implementation_sha": "5ad7354cb274e9cbf2e1c75855c98f4e044a7bea",
+  "depth": 2,
+  "environment": {
+    "backend": "actual temporary SQLite",
+    "python": "3.13.16",
+    "pytest": "9.0.2"
+  },
+  "execution": {
+    "histories": 0,
+    "bounds": {
+      "nested_cases": 9,
+      "pure_validation_cases": 6,
+      "concurrent_histories": 0
+    },
+    "faults_exercised": [
+      "nested caller transaction",
+      "invalid argument/actor/revision with active caller writes"
+    ]
+  },
+  "claims": [
+    {
+      "property": "active caller write/read/savepoint transactions remain usable after refusal, with no target sprint or lifecycle-event change",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_sqlite_sprint_caller.py"
+      ]
+    },
+    {
+      "property": "caller pending values remain isolated from an independent durable reader and remain rollbackable",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_sqlite_sprint_caller.py"
+      ]
+    },
+    {
+      "property": "savepoint rollback and release remain usable, preserving the enclosing caller write",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_sqlite_sprint_caller.py"
+      ]
+    },
+    {
+      "property": "existing pure input, actor and revision errors precede idle-connection refusal",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_sqlite_sprint_caller.py"
+      ]
+    },
+    {
+      "property": "universal transaction composition, PostgreSQL caller ownership, physical crash recovery, or broader repository unification",
+      "result": "unknown"
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Three actual nested-BEGIN failures roll back unrelated pending caller writes on the original implementation",
+      "trace_ref": "verification/fixtures/sqlite-sprint-caller-before.json"
+    }
+  ],
+  "notes": [
+    "Frozen No doc scope5586; parent2150 remains open. No schema, API, IDL, deployment or PostgreSQL source change.",
+    "Nested refusal intentionally changes from OperationalError plus caller rollback to ValueError requiring idle SQLite connection while preserving caller state. Valid idle-path locking, CAS, transition/event behavior is unchanged.",
+    "Actual coordinator-owned oracle executed before source changes:9failed/6passed in3.09s; repaired15passed in1.68s. Expected RED is retained as counterexample, not a passing gate.",
+    "Affected regression command: /tmp/sprintctl-sprint-caller-2779-env/bin/python -m pytest tests/test_sqlite_sprint_caller.py tests/test_sprint_kind.py tests/test_sprint_activate_handler.py tests/test_maintain.py tests/test_authority_fault_protocol.py tests/test_failure_modes.py tests/test_work_application.py -xq --tb=short;257passed in20.98s.",
+    "Independent review clear; separate42test selection passed in4.30s. Full local gate passed2697tests,4skipped,14performance cases deselected in255.21s. Exact-head canonical CI remains pending.",
+    "implementation_sha denotes the qualified combined base; exact candidate and before-artifact byte hashes: {\"sprintctl/db.py\": \"d467a664d87e5874c6bc90e4543c8079a3cd11ee8f2979f31a0336af0977e24d\", \"tests/test_sqlite_sprint_caller.py\": \"c85af11d931625a0523abc4644bb65b2cf8bc33b71d8f6073e84fee0f3be7799\", \"verification/fixtures/sqlite-sprint-caller-before.json\": \"79720d5513bb1da78623afa7ec85df635d9daf3f2a0971b30684d9aee5b598d7\", \"verification/fixtures/sqlite-sprint-caller-before.txt\": \"4182f388e5a69d37e8150fc3a43d0cfc20c692d134174c40cde834e2a96272d2\"}",
+    "Before survey ran at191fc9e with unchanged target functions. It is three sequential examples, not a concurrency history or cross-backend qualification.",
+    "Full local command: /tmp/sprintctl-sprint-caller-2779-env/bin/python -m pytest tests --ignore=tests/pg --ignore=tests/test_work_application_pg.py -m \"not perf\" -q --tb=short. Completed before clean rebase onto2778.",
+    "Clean rebase onto accepted2778 merge5ad7354. New helper, all three guard placements and oracle bodies unchanged; combined local regression and exact-head CI gates follow.",
+    "After clean rebase onto5ad7354, combined guard/kind/activation/maintain/authority-fault/failure/application/backlog-seed/docs selection:301passed in27.04s. Command adds tests/test_backlog_seed_atomicity.py tests/test_docs_integrity.py to the earlier affected regression command. Artifact validator passed. No product/oracle edits followed."
+  ]
+}
