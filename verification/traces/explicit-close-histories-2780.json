@@ -1,0 +1,753 @@
+{
+  "histories": [
+    {
+      "backend": "sprintctl.db",
+      "history": "real-boundary-insert-abort-and-retry",
+      "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+      "junit_case": {
+        "class": "tests.test_explicit_sprint_close.TestSQLiteExplicitSprintClose",
+        "name": "test_actual_boundary_insert_failure_rolls_back_and_retry_closes_once"
+      },
+      "node": "tests/test_explicit_sprint_close.py::TestSQLiteExplicitSprintClose::test_actual_boundary_insert_failure_rolls_back_and_retry_closes_once",
+      "observations": [
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "ad298f9a-9594-4d5c-a723-4da414949470",
+              "created_at": "2026-10-18T14:07:34Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "explicit close oracle",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "step": "before"
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "ad298f9a-9594-4d5c-a723-4da414949470",
+              "created_at": "2026-10-18T14:07:34Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "explicit close oracle",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "ad298f9a-9594-4d5c-a723-4da414949470",
+              "created_at": "2026-10-18T14:07:34Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "explicit close oracle",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "step": "after-aborted-insert-before-fixture-cleanup",
+          "transaction": {
+            "in_transaction": false
+          }
+        },
+        {
+          "event_id": 1,
+          "state": {
+            "events": [
+              {
+                "actor": "operator",
+                "created_at": "2026-10-18T14:07:34Z",
+                "event_type": "sprint-close-boundary",
+                "id": 1,
+                "payload": "{\"previous_status\": \"active\", \"status\": \"closed\"}",
+                "source_type": "actor",
+                "sprint_id": 1,
+                "work_item_id": null
+              }
+            ],
+            "sprint": {
+              "aggregate_uuid": "ad298f9a-9594-4d5c-a723-4da414949470",
+              "created_at": "2026-10-18T14:07:34Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "explicit close oracle",
+              "start_date": null,
+              "status": "closed"
+            }
+          },
+          "step": "retry-returned"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.db",
+      "history": "after-real-boundary-insert-fault-and-retry",
+      "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+      "junit_case": {
+        "class": "tests.test_explicit_sprint_close.TestSQLiteExplicitSprintClose",
+        "name": "test_after_actual_boundary_insert_failure_rolls_back"
+      },
+      "node": "tests/test_explicit_sprint_close.py::TestSQLiteExplicitSprintClose::test_after_actual_boundary_insert_failure_rolls_back",
+      "observations": [
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "c4ad3a48-f022-4a6e-82cc-d00d344ba0fd",
+              "created_at": "2026-10-18T14:07:34Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "explicit close oracle",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "step": "before"
+        },
+        {
+          "event_id": 1,
+          "owner": {
+            "events": [
+              {
+                "actor": "operator",
+                "created_at": "2026-10-18T14:07:34Z",
+                "event_type": "sprint-close-boundary",
+                "id": 1,
+                "payload": "{\"previous_status\": \"active\", \"status\": \"closed\"}",
+                "source_type": "actor",
+                "sprint_id": 1,
+                "work_item_id": null
+              }
+            ],
+            "sprint": {
+              "aggregate_uuid": "c4ad3a48-f022-4a6e-82cc-d00d344ba0fd",
+              "created_at": "2026-10-18T14:07:34Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "explicit close oracle",
+              "start_date": null,
+              "status": "closed"
+            }
+          },
+          "step": "actual-insert-before-injected-exception",
+          "transaction": {
+            "in_transaction": true
+          }
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "c4ad3a48-f022-4a6e-82cc-d00d344ba0fd",
+              "created_at": "2026-10-18T14:07:34Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "explicit close oracle",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "c4ad3a48-f022-4a6e-82cc-d00d344ba0fd",
+              "created_at": "2026-10-18T14:07:34Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "explicit close oracle",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "step": "after-product-rollback",
+          "transaction": {
+            "in_transaction": false
+          }
+        },
+        {
+          "event_id": 1,
+          "state": {
+            "events": [
+              {
+                "actor": "operator",
+                "created_at": "2026-10-18T14:07:34Z",
+                "event_type": "sprint-close-boundary",
+                "id": 1,
+                "payload": "{\"previous_status\": \"active\", \"status\": \"closed\"}",
+                "source_type": "actor",
+                "sprint_id": 1,
+                "work_item_id": null
+              }
+            ],
+            "sprint": {
+              "aggregate_uuid": "c4ad3a48-f022-4a6e-82cc-d00d344ba0fd",
+              "created_at": "2026-10-18T14:07:34Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "explicit close oracle",
+              "start_date": null,
+              "status": "closed"
+            }
+          },
+          "step": "retry-returned"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.db",
+      "history": "same-basis-close-winner-loser",
+      "isolation": "SQLite BEGIN IMMEDIATE writer serialization",
+      "junit_case": {
+        "class": "tests.test_explicit_sprint_close.TestSQLiteExplicitSprintClose",
+        "name": "test_actual_waiting_same_basis_close_has_one_winner"
+      },
+      "node": "tests/test_explicit_sprint_close.py::TestSQLiteExplicitSprintClose::test_actual_waiting_same_basis_close_has_one_winner",
+      "observations": [
+        {
+          "event_id": 1,
+          "step": "winner-boundary-inserted-uncommitted"
+        },
+        {
+          "evidence": "SQLite BEGIN IMMEDIATE attempted while winner uncommitted",
+          "step": "loser-wait-observed"
+        },
+        {
+          "event_id": 1,
+          "step": "winner-returned"
+        },
+        {
+          "error": "Sprint #1 status revision mismatch: expected sprint:bb6f02cb-8bf3-423c-8ae3-0875065d7792@status:active, current sprint:bb6f02cb-8bf3-423c-8ae3-0875065d7792@status:closed",
+          "step": "loser-refused",
+          "type": "StatusConflict"
+        },
+        {
+          "state": {
+            "events": [
+              {
+                "actor": "operator",
+                "created_at": "2026-10-18T14:07:34Z",
+                "event_type": "sprint-close-boundary",
+                "id": 1,
+                "payload": "{\"previous_status\": \"active\", \"status\": \"closed\"}",
+                "source_type": "actor",
+                "sprint_id": 1,
+                "work_item_id": null
+              }
+            ],
+            "sprint": {
+              "aggregate_uuid": "bb6f02cb-8bf3-423c-8ae3-0875065d7792",
+              "created_at": "2026-10-18T14:07:34Z",
+              "end_date": null,
+              "goal": "",
+              "id": 1,
+              "kind": "active_sprint",
+              "name": "explicit close oracle",
+              "start_date": null,
+              "status": "closed"
+            }
+          },
+          "step": "final-independent-read"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "real-boundary-insert-abort-and-retry",
+      "isolation": "read committed",
+      "junit_case": {
+        "class": "tests.pg.test_explicit_sprint_close.TestPostgresExplicitSprintClose",
+        "name": "test_actual_boundary_insert_failure_rolls_back_and_retry_closes_once"
+      },
+      "node": "tests/pg/test_explicit_sprint_close.py::TestPostgresExplicitSprintClose::test_actual_boundary_insert_failure_rolls_back_and_retry_closes_once",
+      "observations": [
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "0cb9f903-b6c5-4754-aaaa-c728ecb52819",
+              "created_at": "2026-10-18T13:55:58.644546Z",
+              "end_date": null,
+              "goal": "",
+              "id": 476,
+              "kind": "active_sprint",
+              "name": "explicit close 2aa67d9354594c59b3fb8904cf1065ad",
+              "repo_id": "itest-module-c7ef7865b839",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "step": "before"
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "0cb9f903-b6c5-4754-aaaa-c728ecb52819",
+              "created_at": "2026-10-18T13:55:58.644546Z",
+              "end_date": null,
+              "goal": "",
+              "id": 476,
+              "kind": "active_sprint",
+              "name": "explicit close 2aa67d9354594c59b3fb8904cf1065ad",
+              "repo_id": "itest-module-c7ef7865b839",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "0cb9f903-b6c5-4754-aaaa-c728ecb52819",
+              "created_at": "2026-10-18T13:55:58.644546Z",
+              "end_date": null,
+              "goal": "",
+              "id": 476,
+              "kind": "active_sprint",
+              "name": "explicit close 2aa67d9354594c59b3fb8904cf1065ad",
+              "repo_id": "itest-module-c7ef7865b839",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "step": "after-aborted-insert-before-fixture-cleanup",
+          "transaction": {
+            "transaction_status": "IDLE"
+          }
+        },
+        {
+          "event_id": 454,
+          "state": {
+            "events": [
+              {
+                "actor": "operator",
+                "created_at": "2026-10-18T13:55:58.652334Z",
+                "event_type": "sprint-close-boundary",
+                "id": 454,
+                "payload": "{\"status\": \"closed\", \"previous_status\": \"active\"}",
+                "repo_id": "itest-module-c7ef7865b839",
+                "source_type": "actor",
+                "sprint_id": 476,
+                "work_item_id": null
+              }
+            ],
+            "sprint": {
+              "aggregate_uuid": "0cb9f903-b6c5-4754-aaaa-c728ecb52819",
+              "created_at": "2026-10-18T13:55:58.644546Z",
+              "end_date": null,
+              "goal": "",
+              "id": 476,
+              "kind": "active_sprint",
+              "name": "explicit close 2aa67d9354594c59b3fb8904cf1065ad",
+              "repo_id": "itest-module-c7ef7865b839",
+              "start_date": null,
+              "status": "closed"
+            }
+          },
+          "step": "retry-returned"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "after-real-boundary-insert-fault-and-retry",
+      "isolation": "read committed",
+      "junit_case": {
+        "class": "tests.pg.test_explicit_sprint_close.TestPostgresExplicitSprintClose",
+        "name": "test_after_actual_boundary_insert_failure_rolls_back"
+      },
+      "node": "tests/pg/test_explicit_sprint_close.py::TestPostgresExplicitSprintClose::test_after_actual_boundary_insert_failure_rolls_back",
+      "observations": [
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "3972d102-6d4a-4f62-9ee4-41dd84ef6d92",
+              "created_at": "2026-10-18T13:55:58.659078Z",
+              "end_date": null,
+              "goal": "",
+              "id": 477,
+              "kind": "active_sprint",
+              "name": "explicit close 070930fd32a148a0bb77645ae9163617",
+              "repo_id": "itest-module-c7ef7865b839",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "step": "before"
+        },
+        {
+          "event_id": 455,
+          "owner": {
+            "events": [
+              {
+                "actor": "operator",
+                "created_at": "2026-10-18T13:55:58.659660Z",
+                "event_type": "sprint-close-boundary",
+                "id": 455,
+                "payload": "{\"status\": \"closed\", \"previous_status\": \"active\"}",
+                "repo_id": "itest-module-c7ef7865b839",
+                "source_type": "actor",
+                "sprint_id": 477,
+                "work_item_id": null
+              }
+            ],
+            "sprint": {
+              "aggregate_uuid": "3972d102-6d4a-4f62-9ee4-41dd84ef6d92",
+              "created_at": "2026-10-18T13:55:58.659078Z",
+              "end_date": null,
+              "goal": "",
+              "id": 477,
+              "kind": "active_sprint",
+              "name": "explicit close 070930fd32a148a0bb77645ae9163617",
+              "repo_id": "itest-module-c7ef7865b839",
+              "start_date": null,
+              "status": "closed"
+            }
+          },
+          "step": "actual-insert-before-injected-exception",
+          "transaction": {
+            "transaction_status": "INTRANS"
+          }
+        },
+        {
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "3972d102-6d4a-4f62-9ee4-41dd84ef6d92",
+              "created_at": "2026-10-18T13:55:58.659078Z",
+              "end_date": null,
+              "goal": "",
+              "id": 477,
+              "kind": "active_sprint",
+              "name": "explicit close 070930fd32a148a0bb77645ae9163617",
+              "repo_id": "itest-module-c7ef7865b839",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "owner": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "3972d102-6d4a-4f62-9ee4-41dd84ef6d92",
+              "created_at": "2026-10-18T13:55:58.659078Z",
+              "end_date": null,
+              "goal": "",
+              "id": 477,
+              "kind": "active_sprint",
+              "name": "explicit close 070930fd32a148a0bb77645ae9163617",
+              "repo_id": "itest-module-c7ef7865b839",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "step": "after-product-rollback",
+          "transaction": {
+            "transaction_status": "IDLE"
+          }
+        },
+        {
+          "event_id": 456,
+          "state": {
+            "events": [
+              {
+                "actor": "operator",
+                "created_at": "2026-10-18T13:55:58.660719Z",
+                "event_type": "sprint-close-boundary",
+                "id": 456,
+                "payload": "{\"status\": \"closed\", \"previous_status\": \"active\"}",
+                "repo_id": "itest-module-c7ef7865b839",
+                "source_type": "actor",
+                "sprint_id": 477,
+                "work_item_id": null
+              }
+            ],
+            "sprint": {
+              "aggregate_uuid": "3972d102-6d4a-4f62-9ee4-41dd84ef6d92",
+              "created_at": "2026-10-18T13:55:58.659078Z",
+              "end_date": null,
+              "goal": "",
+              "id": 477,
+              "kind": "active_sprint",
+              "name": "explicit close 070930fd32a148a0bb77645ae9163617",
+              "repo_id": "itest-module-c7ef7865b839",
+              "start_date": null,
+              "status": "closed"
+            }
+          },
+          "step": "retry-returned"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "same-basis-close-winner-loser",
+      "isolation": "read committed",
+      "junit_case": {
+        "class": "tests.pg.test_explicit_sprint_close.TestPostgresExplicitSprintClose",
+        "name": "test_actual_waiting_same_basis_close_has_one_winner"
+      },
+      "node": "tests/pg/test_explicit_sprint_close.py::TestPostgresExplicitSprintClose::test_actual_waiting_same_basis_close_has_one_winner",
+      "observations": [
+        {
+          "event_id": 459,
+          "step": "winner-boundary-inserted-uncommitted"
+        },
+        {
+          "evidence": "pg_blocking_pids includes winner",
+          "loser_pid": 2097053,
+          "step": "loser-wait-observed",
+          "winner_pid": 2097051
+        },
+        {
+          "event_id": 459,
+          "step": "winner-returned"
+        },
+        {
+          "error": "Sprint #481 status revision mismatch: expected sprint:1439e6ac-7c70-4551-97cc-3d7e6f4eae6b@status:active, current sprint:1439e6ac-7c70-4551-97cc-3d7e6f4eae6b@status:closed",
+          "step": "loser-refused",
+          "type": "StatusConflict"
+        },
+        {
+          "state": {
+            "events": [
+              {
+                "actor": "operator",
+                "created_at": "2026-10-18T13:55:58.682986Z",
+                "event_type": "sprint-close-boundary",
+                "id": 459,
+                "payload": "{\"status\": \"closed\", \"previous_status\": \"active\"}",
+                "repo_id": "itest-module-c7ef7865b839",
+                "source_type": "actor",
+                "sprint_id": 481,
+                "work_item_id": null
+              }
+            ],
+            "sprint": {
+              "aggregate_uuid": "1439e6ac-7c70-4551-97cc-3d7e6f4eae6b",
+              "created_at": "2026-10-18T13:55:58.676765Z",
+              "end_date": null,
+              "goal": "",
+              "id": 481,
+              "kind": "active_sprint",
+              "name": "explicit close 728ea054a09b44bc8067261a1575d59a",
+              "repo_id": "itest-module-c7ef7865b839",
+              "start_date": null,
+              "status": "closed"
+            }
+          },
+          "step": "final-independent-read"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "managed-caller-pending-close",
+      "isolation": "read committed",
+      "junit_case": {
+        "class": "tests.pg.test_explicit_sprint_close",
+        "name": "test_managed_transaction_error_leaves_close_pending_until_caller_rollback"
+      },
+      "node": "tests/pg/test_explicit_sprint_close.py::test_managed_transaction_error_leaves_close_pending_until_caller_rollback",
+      "observations": [
+        {
+          "error": "Explicit rollback() forbidden within a Transaction context. (Either raise Rollback() or allow an exception to propagate out of the context.)",
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "b00b2cfd-d949-4c91-9ee3-91e6a3c95f19",
+              "created_at": "2026-10-18T13:55:58.739119Z",
+              "end_date": null,
+              "goal": "",
+              "id": 492,
+              "kind": "active_sprint",
+              "name": "explicit close 2da4bb81ff444b828762c04f6e298a1f",
+              "repo_id": "itest-module-c7ef7865b839",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "pending": {
+            "events": [
+              {
+                "actor": "operator",
+                "created_at": "2026-10-18T13:55:58.740049Z",
+                "event_type": "sprint-close-boundary",
+                "id": 462,
+                "payload": "{\"status\": \"closed\", \"previous_status\": \"active\"}",
+                "repo_id": "itest-module-c7ef7865b839",
+                "source_type": "actor",
+                "sprint_id": 492,
+                "work_item_id": null
+              }
+            ],
+            "sprint": {
+              "aggregate_uuid": "b00b2cfd-d949-4c91-9ee3-91e6a3c95f19",
+              "created_at": "2026-10-18T13:55:58.739119Z",
+              "end_date": null,
+              "goal": "",
+              "id": 492,
+              "kind": "active_sprint",
+              "name": "explicit close 2da4bb81ff444b828762c04f6e298a1f",
+              "repo_id": "itest-module-c7ef7865b839",
+              "start_date": null,
+              "status": "closed"
+            }
+          },
+          "step": "managed-refusal-before-caller-cleanup"
+        },
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "b00b2cfd-d949-4c91-9ee3-91e6a3c95f19",
+              "created_at": "2026-10-18T13:55:58.739119Z",
+              "end_date": null,
+              "goal": "",
+              "id": 492,
+              "kind": "active_sprint",
+              "name": "explicit close 2da4bb81ff444b828762c04f6e298a1f",
+              "repo_id": "itest-module-c7ef7865b839",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "step": "caller-context-rollback-completed"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "history": "two-phase-caller-pending-close",
+      "isolation": "read committed",
+      "junit_case": {
+        "class": "tests.pg.test_explicit_sprint_close",
+        "name": "test_two_phase_error_leaves_close_pending_until_tpc_rollback"
+      },
+      "node": "tests/pg/test_explicit_sprint_close.py::test_two_phase_error_leaves_close_pending_until_tpc_rollback",
+      "observations": [
+        {
+          "error": "rollback() cannot be used during a two-phase transaction",
+          "independent": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "4b381caa-cbd6-437a-ad2a-1b93c8c73cd2",
+              "created_at": "2026-10-18T13:55:58.746776Z",
+              "end_date": null,
+              "goal": "",
+              "id": 494,
+              "kind": "active_sprint",
+              "name": "explicit close ea863ca58f194df699892622334bb7b7",
+              "repo_id": "itest-module-c7ef7865b839",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "pending": {
+            "events": [
+              {
+                "actor": "operator",
+                "created_at": "2026-10-18T13:55:58.749422Z",
+                "event_type": "sprint-close-boundary",
+                "id": 463,
+                "payload": "{\"status\": \"closed\", \"previous_status\": \"active\"}",
+                "repo_id": "itest-module-c7ef7865b839",
+                "source_type": "actor",
+                "sprint_id": 494,
+                "work_item_id": null
+              }
+            ],
+            "sprint": {
+              "aggregate_uuid": "4b381caa-cbd6-437a-ad2a-1b93c8c73cd2",
+              "created_at": "2026-10-18T13:55:58.746776Z",
+              "end_date": null,
+              "goal": "",
+              "id": 494,
+              "kind": "active_sprint",
+              "name": "explicit close ea863ca58f194df699892622334bb7b7",
+              "repo_id": "itest-module-c7ef7865b839",
+              "start_date": null,
+              "status": "closed"
+            }
+          },
+          "step": "two-phase-refusal-before-caller-cleanup"
+        },
+        {
+          "state": {
+            "events": [],
+            "sprint": {
+              "aggregate_uuid": "4b381caa-cbd6-437a-ad2a-1b93c8c73cd2",
+              "created_at": "2026-10-18T13:55:58.746776Z",
+              "end_date": null,
+              "goal": "",
+              "id": 494,
+              "kind": "active_sprint",
+              "name": "explicit close ea863ca58f194df699892622334bb7b7",
+              "repo_id": "itest-module-c7ef7865b839",
+              "start_date": null,
+              "status": "active"
+            }
+          },
+          "step": "caller-tpc-rollback-completed"
+        }
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "file": "sprintctl-2780-full-local.xml",
+      "sha256": "ac35ec2f02bf3fc70fc3f68c3366959ae454dd2ede79265d23a8374f13863ad5",
+      "suites": [
+        {
+          "errors": "0",
+          "failures": "0",
+          "hostname": "workstation",
+          "name": "pytest",
+          "skipped": "4",
+          "tests": "2746",
+          "time": "259.864",
+          "timestamp": "2026-10-18T17:06:20.867725+03:00"
+        }
+      ]
+    },
+    {
+      "file": "sprintctl-2780-full-pg.xml",
+      "sha256": "6cd62bffaad0d3121f79e10ae17a007a1ed906f7751bb69a1e5841bce6238314",
+      "suites": [
+        {
+          "errors": "0",
+          "failures": "0",
+          "hostname": "workstation",
+          "name": "pytest",
+          "skipped": "0",
+          "tests": "1409",
+          "time": "101.157",
+          "timestamp": "2026-10-18T16:55:31.050459+03:00"
+        }
+      ]
+    }
+  ],
+  "source": "actual completed JUnit record_property observations"
+}

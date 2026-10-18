@@ -1930,6 +1930,33 @@ def create_archive_import_event(
         raise
 
 
+class _SprintCloseSqlite:
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    @contextmanager
+    def locked_sprint(self, sprint_id: int):
+        row = self.conn.execute(
+            "SELECT * FROM sprint WHERE id = ?", (sprint_id,),
+        ).fetchone()
+
+        def mark_closed():
+            self.conn.execute(
+                "UPDATE sprint SET status = 'closed' WHERE id = ?", (sprint_id,),
+            )
+
+        yield (dict(row) if row is not None else None), mark_closed
+
+    def revision(self, sprint: dict) -> str:
+        return sprint_status_revision(sprint)
+
+    def validate_transition(self, current: str, target: str) -> None:
+        _validate_sprint_transition(current, target)
+
+    def insert_event(self, *args, **kwargs) -> int:
+        return _insert_event(self.conn, *args, **kwargs)
+
+
 def close_sprint_with_boundary_event(
     conn: sqlite3.Connection,
     sprint_id: int,
@@ -1945,26 +1972,8 @@ def close_sprint_with_boundary_event(
     _require_idle_sprint_connection(conn)
     try:
         conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute("SELECT * FROM sprint WHERE id = ?", (sprint_id,)).fetchone()
-        if row is None:
-            raise ValueError(f"Sprint #{sprint_id} not found")
-        sprint = dict(row)
-        current = sprint["status"]
-        current_revision = sprint_status_revision(sprint)
-        if expected_revision is not None and expected_revision != current_revision:
-            raise StatusConflict(
-                f"Sprint #{sprint_id} status revision mismatch: "
-                f"expected {expected_revision}, current {current_revision}"
-            )
-        _validate_sprint_transition(current, "closed")
-        conn.execute("UPDATE sprint SET status = 'closed' WHERE id = ?", (sprint_id,))
-        event_id = _insert_event(
-            conn,
-            sprint_id,
-            actor.strip(),
-            _contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE,
-            source_type="actor",
-            payload={"previous_status": current, "status": "closed"},
+        event_id = _sprintcore._close_sprint_with_boundary_event(
+            _SprintCloseSqlite(conn), sprint_id, actor, expected_revision,
         )
         conn.commit()
         return event_id

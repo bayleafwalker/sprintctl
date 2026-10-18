@@ -4637,6 +4637,37 @@ def create_event(
         raise
 
 
+class _SprintClosePg:
+    def __init__(self, store: PgStore):
+        self.store = store
+
+    @contextmanager
+    def locked_sprint(self, sprint_id: int):
+        with self.store.conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM sprint WHERE repo_id = %s AND id = %s FOR UPDATE",
+                (self.store.repo_id, sprint_id),
+            )
+            row = cur.fetchone()
+
+            def mark_closed():
+                cur.execute(
+                    "UPDATE sprint SET status = 'closed' WHERE repo_id = %s AND id = %s",
+                    (self.store.repo_id, sprint_id),
+                )
+
+            yield (_norm(row) if row is not None else None), mark_closed
+
+    def revision(self, sprint: dict) -> str:
+        return sprint_status_revision(sprint)
+
+    def validate_transition(self, current: str, target: str) -> None:
+        _validate_sprint_transition(current, target)
+
+    def insert_event(self, *args, **kwargs) -> int:
+        return _insert_event(self.store, *args, **kwargs)
+
+
 def close_sprint_with_boundary_event(
     store: PgStore,
     sprint_id: int,
@@ -4650,34 +4681,8 @@ def close_sprint_with_boundary_event(
     if expected_revision is not None:
         expected_revision = validate_sprint_status_revision(expected_revision)
     try:
-        with store.conn.cursor() as cur:
-            cur.execute(
-                "SELECT * FROM sprint WHERE repo_id = %s AND id = %s FOR UPDATE",
-                (store.repo_id, sprint_id),
-            )
-            row = cur.fetchone()
-            if row is None:
-                raise ValueError(f"Sprint #{sprint_id} not found")
-            sprint = _norm(row)
-            current = sprint["status"]
-            current_revision = sprint_status_revision(sprint)
-            if expected_revision is not None and expected_revision != current_revision:
-                raise StatusConflict(
-                    f"Sprint #{sprint_id} status revision mismatch: "
-                    f"expected {expected_revision}, current {current_revision}"
-                )
-            _validate_sprint_transition(current, "closed")
-            cur.execute(
-                "UPDATE sprint SET status = 'closed' WHERE repo_id = %s AND id = %s",
-                (store.repo_id, sprint_id),
-            )
-        event_id = _insert_event(
-            store,
-            sprint_id,
-            actor.strip(),
-            _contracts.SPRINT_CLOSE_BOUNDARY_EVENT_TYPE,
-            source_type="actor",
-            payload={"previous_status": current, "status": "closed"},
+        event_id = _sprintcore._close_sprint_with_boundary_event(
+            _SprintClosePg(store), sprint_id, actor, expected_revision,
         )
         store.conn.commit()
         return event_id
