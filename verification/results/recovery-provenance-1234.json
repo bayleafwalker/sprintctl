@@ -1,0 +1,68 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.recovery-provenance-1234",
+  "contract_ref": {
+    "doc_id": "sprintctl.recovery-provenance-1234",
+    "revision": "sha256:1e727f992922edfd8f3e1d80cf3e049904eb4a3e4470f9dd5856a81fc21fc7ba"
+  },
+  "implementation_sha": "20e120fb54b51bef001e4d5d57437388e8b8bc58",
+  "depth": 1,
+  "environment": {
+    "backend": "temporary SQLite and private localhost PostgreSQL16.15",
+    "isolation": "no shared authority, live recovery, credential inspection, migration or deployment",
+    "tool_versions": {
+      "Python": "3.13.16",
+      "pytest": "9.0.2",
+      "PostgreSQL": "16.15"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": null,
+    "bounds": {
+      "recovery_doctor_local_checks": 43,
+      "disposable_pg_recovery_checks": 2,
+      "extra_final_insert_fault_examples": 1
+    },
+    "faults_exercised": [
+      "source/local schema mismatch",
+      "final provenance INSERT source_repo_id NOT NULL violation",
+      "old schema without provenance table"
+    ]
+  },
+  "claims": [
+    {
+      "property": "Existing destination recovery data/provenance is committed or rolled back together in the exercised examples",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_db_recover.py:TestProvenance",
+        "docs/evidence/recovery-provenance-1234-20261018.md"
+      ]
+    },
+    {
+      "property": "Existing local/PG recovery examples preserve IDs and source events, invalidate ownership and expose provenance",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_remote_recovery.py:TestRecoverFromRemote",
+        "tests/test_doctor.py"
+      ]
+    },
+    {
+      "property": "Current behavior is reconciled with native criteria without clearing the pending dependency",
+      "result": "documented-only",
+      "evidence": [
+        "docs/evidence/recovery-provenance-1234-20261018.md"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "Original implementation c2a36d27d3e54215c635110ac8bb9634abb5938a; existing native2741/2752 delivered/closure-withheld evidence preserved. Native1234 remains pending with1238 dependency; no terminal decision authorized.",
+    "At4a00d182 local43passed3.97s and disposablePG16.15 recovery2passed1.23s with1fixturecleanup/zero rows. At20e120f same43local checks passed in188-test cohort, other145checks belong to913audit.",
+    "Recovery function/migration exact source unchanged across4a/20e: write_recovery_snapshot SHA256851be4c781d07aa12ca704201ea0c7d82923dc9db16e281ba7772ac03b747de1; migration21 SHA25693b3b91f425ee1f3f246f5b3e457fd7676ca69ae5e322108c8b7487584df9473. pg.py, doctor.py andcommands/db.py unchanged.",
+    "Additional one-off final provenance INSERT NOTNULL fault at4a raisedIntegrityError; sprint/track/work_item/event/recovery_record/legacy_import_gate all0. This is a retained executed example, not a newly committed test or physical crash proof.",
+    "No whole estate/runtime/deployment, source/destination distributed atomicity, cryptographic source identity or archive-cleanup completion claim. Sourceidentity=repoID; schema_version=destination. Maintenance recovery observation is a separate no-authority record.",
+    "Independent findings-first/optimistic criterion review clear for evidence publication only; preserve1238/native pending state, attach evidence then releaseverification reservation354.",
+    "Documentation/install/lease-reference checks22passed; verification packets and whitespace checks pass."
+  ]
+}
