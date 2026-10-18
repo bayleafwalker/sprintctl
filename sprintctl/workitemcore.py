@@ -5,6 +5,10 @@ connection adapter implementing :class:`WorkItemConn`. The query shapes and
 tenant handling live here once so the two backends cannot drift apart in
 work-item behaviour. Mirrors the pattern established in ``sprintcore.py``.
 
+The private locked-status workflow also lives here. Backend wrappers retain
+their transaction policies and supply noncommitting SQL, reservation and
+lease/report participants; this adds no caller-composition guarantee.
+
 Also owns the pure, backend-agnostic validators that used to live in
 ``db.py`` and be imported into ``pg.py`` — that made ``pg.py`` depend on
 ``db.py`` for logic with no SQLite dependency at all. They live here now so
@@ -34,10 +38,12 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Protocol
+from dataclasses import dataclass
+from typing import Callable, Mapping, Protocol
 from uuid import uuid4
 
 from . import contracts as _contracts
+from . import decisions as _decisions
 
 PRIORITY_MIN = 1
 PRIORITY_MAX = 9
@@ -420,3 +426,74 @@ def update_work_item_description(
     except Exception:
         conn.rollback()
         raise
+
+
+@dataclass(frozen=True)
+class _LockedStatusParticipant:
+    """Noncommitting operations supplied by the current transaction owner."""
+
+    lock_item: Callable[[int], dict | None]
+    blockers: Callable[[int], list[dict]]
+    write_status: Callable[[int, str], None]
+    decide_accept: Callable[[dict, dict], object]
+    release_session_reservations: Callable[[dict, str | None, str], list[int]]
+    end_work_leases: Callable[[int, str | None], list[str] | None]
+    insert_item_released: Callable[[dict, str, dict], int]
+
+
+def _set_work_item_status_locked(
+    p: _LockedStatusParticipant, item_id: int, new_status: str,
+    actor: str | None = None, *, expected_revision: str | None = None,
+    reason: str | None = None, session_id: str | None = None,
+    transitions: Mapping[str, set[str]], release_reasons: tuple[str, ...],
+    invalid_transition: Callable[[str], Exception],
+) -> None:
+    """Apply one locked status workflow without owning its transaction.
+
+    Public wrappers and maintenance participants retain their distinct caller
+    policies. Lease/report consequences remain backend-owned operations.
+    """
+    item = p.lock_item(item_id)
+    if item is None:
+        raise ValueError(f"Item #{item_id} not found")
+    current = item["status"]
+    current_revision = item_status_revision(item)
+    if expected_revision is not None and expected_revision != current_revision:
+        raise StatusConflict(
+            f"Item #{item_id} status revision mismatch: "
+            f"expected {expected_revision}, current {current_revision}"
+        )
+    if new_status not in transitions[current]:
+        allowed = sorted(transitions[current]) or "none (terminal)"
+        raise invalid_transition(
+            f"cannot transition {current} -> {new_status}. Allowed: {allowed}"
+        )
+    if new_status == "pending":
+        if reason not in release_reasons:
+            raise invalid_transition(
+                f"cannot transition {current} -> pending without --reason in "
+                f"{sorted(release_reasons)}"
+            )
+    elif reason is not None:
+        raise invalid_transition("--reason is only accepted when the target status is pending")
+    if new_status == "active":
+        unresolved = [b for b in p.blockers(item_id) if b["blocker_status"] != "done"]
+        if unresolved:
+            raise invalid_transition(
+                f"cannot transition {current} -> active while blockers remain unresolved: "
+                f"{[b['item_id'] for b in unresolved]}"
+            )
+    if new_status == "done":
+        p.decide_accept(item, _decisions.normalize_decision("accept", actor=actor or "sprintctl"))
+    else:
+        p.write_status(item_id, new_status)
+    if new_status == "pending":
+        actor_value = actor or "sprintctl"
+        released_ids = p.release_session_reservations(item, session_id, actor_value)
+        released_lease_ids = p.end_work_leases(item_id, reason)
+        payload = {"reason": reason, "previous_status": current,
+                   "released_reservation_ids": released_ids}
+        # None is SQLite's absent capability, distinct from PG's empty list.
+        if released_lease_ids is not None:
+            payload["released_lease_ids"] = released_lease_ids
+        p.insert_item_released(item, actor_value, payload)

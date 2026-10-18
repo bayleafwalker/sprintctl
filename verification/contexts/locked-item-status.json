@@ -1,0 +1,94 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.locked-item-status",
+  "owner_repo": "sprintctl",
+  "subject": "private locked item-status domain sequence with backend-owned transactions and effects",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2784",
+    "revision": "native:release:d24c6b3f1760b18c774af9c342b3d7b5f89c9cd7db07342e862e6aa8f88b8949"
+  },
+  "source_of_truth": "Frozen native No doc5624, source refresh5639 and actual pre-extraction oracle freeze5644",
+  "depth": 2,
+  "backends": [
+    "temporary SQLite",
+    "registered disposable PostgreSQL16.15 READ COMMITTED"
+  ],
+  "actors": [
+    "public status caller",
+    "stale-item transaction owner",
+    "independent durable reader"
+  ],
+  "initial_state": [
+    "pending/active/blocked/done items and resolved/unresolved blockers",
+    "execution/verification/observation reservations across sessions, bound/unbound Releases",
+    "PG active lease and legacy awaiting-verification report through established owner fixture",
+    "implicit caller writes, managed outer or two-phase transaction as specified"
+  ],
+  "operations": [
+    {
+      "name": "set_work_item_status",
+      "actors": [
+        "public status caller",
+        "stale-item transaction owner"
+      ],
+      "synchronization": "existing SQLite BEGIN IMMEDIATE or PG item FOR UPDATE, unchanged owning wrapper"
+    },
+    {
+      "name": "_set_work_item_status_locked",
+      "actors": [
+        "public status caller",
+        "stale-item transaction owner"
+      ],
+      "synchronization": "existing SQLite BEGIN IMMEDIATE or PG item FOR UPDATE, unchanged owning wrapper"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one existing locked status workflow, no new concurrency qualification"
+  },
+  "assumptions": {
+    "isolation": "existing SQLite writer ownership; measured PG READ COMMITTED on fixture and fresh observer connections",
+    "clock": "stored timestamps retained; derived age/stale excluded from durable equality with types checked",
+    "fairness": "none",
+    "identity": "existing item/repository/session bindings; no migration or external origin authentication"
+  },
+  "bounds": {
+    "shared_cases_per_backend": 53,
+    "additional_pg_cases": 17,
+    "accepted_sqlite_guard_regressions": 13,
+    "new_concurrent_histories": 0
+  },
+  "invariants": [
+    "locked status sequencing preserves missing/revision/transition/reason/blocker precedence and None return",
+    "activation retains existing done-status blocker semantics across terminal resolutions and backend callback order",
+    "pending release preserves session filtering, supplied reservation-ID ordering, Release bindings and PG-only lease-ID field including an empty list",
+    "done invokes the existing Decision primitive and preserves PostgreSQL lease/report consequences without inventing verification",
+    "ordinary after-write/Decision/release-event faults roll back actual effects before fixture cleanup and allow retry",
+    "private stale-item composition preserves preceding owner writes, stays noncommitting and rolls back with that owner",
+    "SQLite public caller guards and PostgreSQL existing implicit/managed/two-phase ownership policies remain distinct",
+    "PostgreSQL foreign-tenant target is missing without changing foreign state"
+  ],
+  "faults": [
+    "exception after real status UPDATE",
+    "exception after real done Decision/lease/report effects",
+    "exception after actual reservation release event",
+    "exception after actual final item release event and PG lease release",
+    "existing forbidden PG commit/rollback in managed/two-phase caller"
+  ],
+  "oracles": [
+    "tests/_locked_item_status_contract.py",
+    "tests/test_locked_item_status.py",
+    "tests/pg/test_locked_item_status.py",
+    "tests/test_sqlite_item_reserve_caller.py"
+  ],
+  "implementation_anchors": [
+    "sprintctl/workitemcore.py:_LockedStatusParticipant",
+    "sprintctl/workitemcore.py:_set_work_item_status_locked",
+    "sprintctl/db.py:_set_work_item_status_locked",
+    "sprintctl/pg.py:_set_work_item_status_locked"
+  ],
+  "expansions": [
+    "backend-parity",
+    "fault-scenario"
+  ]
+}
