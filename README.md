@@ -59,6 +59,7 @@ owner's acceptance facts from evidence of an external effect.
 
 This example uses local SQLite. For a served authority, follow the
 [resume guide](docs/guides/resume-work.md); snapshot rendering is local-only.
+The status-revision extraction below uses jq.
 
 ```sh
 # 1. Create a sprint and a few items
@@ -73,8 +74,12 @@ sprintctl item edit --id 1 --description "Document reservation reassignment, act
 sprintctl usage --context --json
 sprintctl next-work --json --explain
 
-# 3. Reserve or start work
+# 3. Reserve, then explicitly start work
 sprintctl reservation reserve --item-id 1 --actor codex-session-1 --json
+
+# Reservations are advisory; activation is a separate CAS transition.
+REV=$(sprintctl item show --id 1 --json | jq -r '.item.status_revision')
+sprintctl item status --id 1 --status active --actor codex-session-1 --expected-revision "$REV"
 
 # 4. Record durable history during work
 sprintctl item note --id 1 --type decision --summary "Use handoff as working-memory snapshot"
