@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import sys
 
 import pytest
 
@@ -459,6 +460,7 @@ def test_reservation_uses_shared_runtime_session_precedence(monkeypatch, runtime
     assert _session(explicit) == expected
 
 
+@pytest.mark.skipif(sys.version_info < (3, 12), reason='served mode requires Python 3.12+')
 @pytest.mark.parametrize('command', ['reserve', 'list'])
 def test_scoped_reservations_reject_real_marker_mismatch_before_io(tmp_path, monkeypatch, command):
     from click.testing import CliRunner

@@ -59,6 +59,8 @@
     "Initial real-marker negative test exposed raw BackendConfigError; existing shared served-config helper now renders ordinary refusal without fallback.",
     "Final focused scope/session/actor/routing/docs suite:81 passed. Independent review final36 tests plus generated recommendation targeted1 passed.",
     "Full frozen source suite:2317 passed,1100 skipped,14 deselected; existing native PostgreSQL histories are part of main CI.",
-    "The production command-generator assertion was strengthened after full-suite collection; final81-test focused run exercises the stronger test against unchanged product source."
+    "The production command-generator assertion was strengthened after full-suite collection; final81-test focused run exercises the stronger test against unchanged product source.",
+    "Supported-version followup: two real served-marker tests require Python3.12+ like the existing served tests; other scope/session tests still run on3.11. Product source unchanged.",
+    "Final interpreter checks:Python3.11 73passed8skipped;Python3.13 81passed. Tests source after guard SHA256:b9c148c5c15ee0b655d76243014e167f2c8a0725dca2f6279a4cd8ce434e6e7b"
   ]
 }
