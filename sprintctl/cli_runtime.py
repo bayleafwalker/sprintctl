@@ -35,6 +35,7 @@ from . import context_candidates as _context_candidates
 from . import context_contract as _context_contract
 from . import contracts as _contracts
 from . import db as _db
+from . import debug_diagnostics as _debug_diagnostics
 from . import maintain as _maintain
 from . import observations as _observations
 from . import outbox as _outbox
@@ -192,12 +193,14 @@ def _get_store(obj: dict):
 
     if config.mode == "local":
         conn = obj.get("conn")
+        db_path = None
         if conn is None:
             db_path = _db.get_db_path()
             conn = _db.get_connection(db_path)
             _db.init_db(conn)
             obj["conn"] = conn
             click.get_current_context().call_on_close(conn.close)
+        _debug_diagnostics.capture_local(obj, conn, db_path)
         return conn, _db
 
     # Remote mode — lazy import so psycopg is optional for local-only use

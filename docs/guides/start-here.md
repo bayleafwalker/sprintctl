@@ -14,6 +14,15 @@ When available, refresh global installs before starting work:
 If source, package, extras, or backend capabilities may disagree, run
 `sprintctl doctor --json` first; it is read-only and emits remediation guidance.
 
+For optional timing/path/schema diagnostics on an ordinary local SQLite command,
+use `SPRINTCTL_DEBUG=1 sprintctl item show --id <id> --json` after creating an
+item. The human summary goes to stderr and preserves JSON stdout, exit status
+and normal command effects. This is command/context timing, not per-query or
+server timing; it collects no SQL text or values. Served, project and file-only
+paths are outside this mode. Use [authority preflight](authority-commands.md)
+for the existing selected-stream diagnostic rather than treating debug output
+as a stream-health or authorization check.
+
 ## 1. Create a sprint
 
 ```sh
