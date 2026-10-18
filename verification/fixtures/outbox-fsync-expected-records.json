@@ -1,0 +1,75 @@
+{
+  "schema": "authored-outbox-fsync-fixtures/v1",
+  "records": {
+    "seed": {
+      "schema_version": 1,
+      "record_class": "observation",
+      "event_type": "work.completed",
+      "actor": "verification",
+      "runtime_session_id": "fsync-format-probe",
+      "occurred_at": "2026-10-18T00:00:00Z",
+      "basis_revision": null,
+      "correlation_id": null,
+      "causation_id": null,
+      "event_id": "seed-event",
+      "origin_seq": 1,
+      "payload": "{\"phase\":\"seed\"}",
+      "payload_sha256": "32580c0df02ecbd62877ee669c50d54f3cb12ecb5afef05984e8635c64574c92",
+      "record_sha256": "85959a1bc7dc7236da0ff7e70becd42b74b037f8e37f269d698f460b1845b191"
+    },
+    "observation": {
+      "schema_version": 1,
+      "record_class": "observation",
+      "event_type": "work.completed",
+      "actor": "verification",
+      "runtime_session_id": "fsync-format-probe",
+      "occurred_at": "2026-10-18T00:00:00Z",
+      "basis_revision": null,
+      "correlation_id": null,
+      "causation_id": null,
+      "event_id": "target-event",
+      "origin_seq": 2,
+      "payload": "{\"phase\":\"target\"}",
+      "payload_sha256": "fbf86c284706395fe63f86ed36b9d186416cca4a3d3270365f24c52222cbb49a",
+      "record_sha256": "9008eafcc8c873fec3225152a9c1a1674c43ad2732d0974bcaf74d89b8cc22e6"
+    },
+    "authority-command": {
+      "schema_version": 1,
+      "record_class": "authority-command",
+      "event_type": "item.done",
+      "actor": "verification",
+      "runtime_session_id": "fsync-format-probe",
+      "occurred_at": "2026-10-18T00:00:00Z",
+      "basis_revision": "item:revision:7",
+      "correlation_id": null,
+      "causation_id": null,
+      "event_id": "00000000-0000-4000-8000-000000000002",
+      "origin_seq": 2,
+      "payload": "{\"actor\":\"verification\",\"artifact_digest\":null,\"authored_at\":\"2026-10-18T00:00:00Z\",\"basis_revision\":\"item:revision:7\",\"causation_id\":null,\"correlation_id\":null,\"event_id\":\"00000000-0000-4000-8000-000000000002\",\"payload\":{\"to_status\":\"done\"},\"payload_digest\":null,\"record_class\":\"authority-command\",\"record_type\":\"item.done\",\"refs\":{\"aggregate_type\":\"item\",\"aggregate_uuid\":\"00000000-0000-4000-8000-000000000011\",\"repo_id\":\"00000000-0000-4000-8000-000000000010\"},\"schema_version\":\"sprintctl-record/v1\"}",
+      "payload_sha256": "8906714faebcb56af71d83731fc4d92302c2c452b1fbeea7f07059fffcede46a",
+      "record_sha256": "50998bb49793371da5e6d475fb7ae958078a8c0f575171297d726c34a718f43c"
+    }
+  },
+  "command_envelope": {
+    "event_id": "00000000-0000-4000-8000-000000000002",
+    "record_type": "item.done",
+    "record_class": "authority-command",
+    "schema_version": "sprintctl-record/v1",
+    "actor": "verification",
+    "authored_at": "2026-10-18T00:00:00Z",
+    "refs": {
+      "repo_id": "00000000-0000-4000-8000-000000000010",
+      "aggregate_type": "item",
+      "aggregate_uuid": "00000000-0000-4000-8000-000000000011"
+    },
+    "payload": {
+      "to_status": "done"
+    },
+    "basis_revision": "item:revision:7",
+    "correlation_id": null,
+    "causation_id": null,
+    "payload_digest": null,
+    "artifact_digest": null
+  },
+  "derivation": "Fixed independent authored canonical input/known-answer hashes. No product fingerprint or validator is an oracle. UUID and created_at are checked dynamically against seed identity and actual process interval."
+}

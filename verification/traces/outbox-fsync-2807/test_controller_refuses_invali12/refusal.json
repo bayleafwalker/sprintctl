@@ -1,0 +1,37 @@
+{
+  "variant": "duplicate_entry",
+  "cleanup": [
+    {
+      "pid": 3133149,
+      "raw_wait_status": 9,
+      "returncode": -9,
+      "actual_sigkill": true,
+      "cleanup_fault_injected": false,
+      "stderr_prefix": "",
+      "cleanup_errors": [],
+      "observed_sync_events": [
+        {
+          "phase": "entry",
+          "syscall": 74,
+          "fd": 3,
+          "ordinal": 1,
+          "path": "/tmp/sprintctl-ptrace-owned-5hay76li/owned-file",
+          "device": 42,
+          "inode": 95659567,
+          "eligible": true
+        }
+      ],
+      "raw_sync_entries": [
+        {
+          "ordinal": 1,
+          "syscall": 74,
+          "fd": 3,
+          "path": "/tmp/sprintctl-ptrace-owned-5hay76li/owned-file",
+          "device": 42,
+          "inode": 95659567,
+          "regular": true
+        }
+      ]
+    }
+  ]
+}

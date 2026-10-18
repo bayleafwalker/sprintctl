@@ -1,0 +1,129 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.outbox-fsync-boundaries",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:1ec78fa9a2f1dbacc4d5ec832c14b961e09abc12"
+  },
+  "implementation_sha": "1ec78fa9a2f1dbacc4d5ec832c14b961e09abc12",
+  "depth": 2,
+  "environment": {
+    "backend": "Actual disposable SQLite producer outbox; Linux x86_64 btrfs; own producer and independent copied-read/retry subprocesses",
+    "isolation": "One traced task/writer; stopped-point raw snapshots; no original SQLite open until actual terminal reap",
+    "tool_versions": {
+      "python": "3.13.16",
+      "sqlite": "3.53.1",
+      "sqlite_source_id": "2026-05-05 10:34:17 c88b22011a54b4f6fbd149e9f8e4de77658ce58143a1af0e3785e4e6475127e9",
+      "kernel": "6.18.56",
+      "architecture": "x86_64",
+      "pytest": "9.0.2",
+      "journal_mode": "wal",
+      "synchronous": "2",
+      "VFS": "unknown"
+    }
+  },
+  "execution": {
+    "histories": 14,
+    "seed": "Fixed authored fixtures; generated stream UUID and created_at constrained independently",
+    "bounds": {
+      "record_classes": 2,
+      "outbox_actual_kill_histories": 4,
+      "normal_outbox_histories": 2,
+      "generic_positive_histories": 6,
+      "generic_refusal_controls": 32,
+      "raw_file_max_bytes": 2097152,
+      "wal_max_frames": 512,
+      "trace_max_syscall_stops": 10000,
+      "trace_deadline_seconds": 10,
+      "trace_reap_deadline_seconds": 3,
+      "observer_deadline_seconds": 3,
+      "observer_reap_deadline_seconds": 2,
+      "observer_combined_output_max_bytes": 65536,
+      "query_progress_deadline_milliseconds": 500,
+      "sqlite_busy_timeout_milliseconds": 200,
+      "pre_boot_startup_stall_controls": 1,
+      "mount_escape_controls": 1,
+      "stall_marker_falsifiers": 4,
+      "stall_marker_max_bytes": 1024,
+      "startup_stall_deadline_seconds": 3,
+      "new_tests": 70,
+      "focused_tests": 144,
+      "outbox_histories": 8,
+      "generic_histories": 6,
+      "actual_outbox_sigkill_histories": 4,
+      "raw_capture_objects": 51,
+      "raw_stall_marker_objects": 6
+    },
+    "faults_exercised": [
+      "Actual producer SIGKILL at qualified kernel sync entry and matching successful exit for both record classes",
+      "Actual old-prefix and repeated-prefix sync controls, valid unrelated regular FD refusal",
+      "Real generic fsync/fdatasync before/after histories and O_PATH EBADF kernel error",
+      "Explicitly labelled synthetic syscall observations and one-shot cleanup ESRCH/EINTR injections",
+      "Malformed or out-of-order marker, unsupported topology, descriptor replacement and finite wait refusal",
+      "Checksum/header/salt/generation/uncommitted/two-commit classifier falsifiers including valid independently SQLite-readable altered copies",
+      "Persisted wrong event, immutable record hash and next sequence fixture mutations",
+      "Stalled COPY while producer stopped, stalled retry after producer reap, output flood and recursive-query timeout"
+    ]
+  },
+  "claims": [
+    {
+      "property": "Observation and authority-command local request survive tested producer death after the matching successful kernel sync of the uniquely new complete commit prefix; returned seed survives all four actual killed histories",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_outbox_fsync.py",
+        "verification/traces/outbox-fsync-2807/manifest.json"
+      ]
+    },
+    {
+      "property": "Actual before-sync death recovers a complete immutable target in both observed cases, within allowed seed-or-complete contract; idempotent exact-input retry preserves recovered records and stream",
+      "result": "example-tested",
+      "evidence": [
+        "verification/traces/outbox-fsync-2807/manifest.json",
+        "verification/fixtures/outbox-fsync-expected-records.json"
+      ]
+    },
+    {
+      "property": "Same stopped mainDB plus candidate WAL gives exact target, seed WAL gives exact seed and no WAL omits target; full checksums/salts and full persisted manifest tie qualification to actual target content",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_outbox_fsync_probe.py",
+        "verification/traces/outbox-fsync-2807/manifest.json"
+      ]
+    },
+    {
+      "property": "Old or repeated completed prefixes do not qualify as a new commit; actual valid wrong-file FD is refused; generic sync, controller, classifier, persisted-manifest and separately owned observer liveness controls reject their discriminating faults",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_outbox_fsync.py",
+        "verification/traces/outbox-fsync-2807/focused.xml"
+      ]
+    },
+    {
+      "property": "A timeout control qualifies only after actual owned child death and a child-written marker proving the intended stall PID/role/freshnonce; missing or mismatched proof is rejected for its discriminating reason",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_outbox_fsync_worker.py",
+        "tests/_outbox_fsync_probe.py",
+        "tests/test_outbox_fsync.py",
+        "verification/traces/outbox-fsync-2807/manifest.json"
+      ]
+    },
+    {
+      "property": "Physical device/power persistence, named VFS, arbitrary kernel/filesystem/runtime, actual SQLite fdatasync, observed big-endian WAL writer, before-sync seed-only branch in this campaign, remote arbitration/authority effects, formal refinement, other1131 scenarios and full parent completion",
+      "result": "unknown"
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "144 focused tests passed in24.06s;70 new tests passed, no skips. Current amended-source canonical CI remains a separate gate; earlier7ba9ef0 candidate had all4jobs green but does not qualify this source.",
+    "Accepted product base is1ec78fa9a2f1dbacc4d5ec832c14b961e09abc12; runtime source_head7ba9ef0 identifies the preceding source publication candidate. Exact current helper/fixture/context bytes are separately frozen by v3 SHA25685dc9de3cbc1b3f2be448f7a5ef08810c1f0d6130ff26dfe3f6dfefa0649917d and imported-source hashes. All101 protected product files remain unchanged; releasecore absent at base.",
+    "14 successful retained histories =8 outbox (6 normal/boundary+2classification) and6 generic; four actual outboxSIGKILL raw9/reap-9. Other56 new cases are controls/metadata checks, not additional successful recovery histories.",
+    "51 retained rawDB/WAL objects include refused cases;6 additional rawchildmarker JSON files prove deliberate stall branches reached. Marker PID/role/freshnonce checked only after terminal reap, separately from parent invocation tags. Four real-worker marker falsifiers reject missing/wrongPID/role/nonce proof for their exact reason.",
+    "Actual producer sync syscall74/fsync, WALmagic0x377f0682, synchronous2/FULL, wal_autocheckpoint1000. Generic controls also exercise75/fdatasync. VFS name explicitlyunknown; no power/device/whole1131 qualification or local command authority effect.",
+    "Frozen context reader busy timeout200ms/query progress500ms apply ONLY to independent raw readers. Product outbox keeps30000ms busy timeout; normal producer deadline10s, deliberate preBOOT stall3s, retryobserver3s; generic timeout variant0.3s. All are process guards, not successful timeout outcomes.",
+    "Exact actual invocation, cwd, node/log/XML/extractor/manifest/freeze hashes and three-source-epoch chronology are in verification/fixtures/outbox-fsync-publication-provenance-2807.json.",
+    "Historical v1freeze2d8e49af/native5821 and v2freeze9313864c/native5826 remain unchanged. V2 fixed surplus EOFnewlines and had140passes. A later source review correctly withdrew stall-injection proof based solely on parent role tags; v3 adds child markers and4falsifiers, repeats actual144case campaign. Prior source/raw captures retained separately and never relabelled as v3.",
+    "Three exact path/rule/line scanner exceptions cover the unchanged public vuoro_credentials.py sourceSHA in historicalv1/v2 and finalv3 freezes. Independent0/1/1 location controls and active hook required; no broad suppression.",
+    "Final independent v3 source/raw/packet review CLEAR:122 indexed manifest objects,6rawchildmarkers,3positive markers/4intendedfalsifiers,30WALchecksumchains/24boundedCOPYreads. Native correction5837 records the new epoch. Amended-headCI/merge/nativeacceptance remain separate."
+  ]
+}

@@ -1,0 +1,23 @@
+[
+  {
+    "pid": 3133097,
+    "raw_wait_status": 9,
+    "returncode": -9,
+    "actual_sigkill": true,
+    "cleanup_fault_injected": false,
+    "stderr_prefix": "",
+    "cleanup_errors": [],
+    "observed_sync_events": [],
+    "raw_sync_entries": [
+      {
+        "ordinal": 1,
+        "syscall": 74,
+        "fd": 6,
+        "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_valid_unrelated_regular_f0/other-regular",
+        "device": 42,
+        "inode": 95659464,
+        "regular": true
+      }
+    ]
+  }
+]

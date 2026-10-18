@@ -1,0 +1,110 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.outbox-fsync-boundaries",
+  "owner_repo": "sprintctl",
+  "subject": "Owned producer death before kernel execution and after matching successful return of a new content-qualified WAL commit sync",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:1ec78fa9a2f1dbacc4d5ec832c14b961e09abc12"
+  },
+  "source_of_truth": "Ratified ADR F01/I01; sprintctl#2807 frozen Release9ea503a871eef7c4fd3fc6e22ea8fee2e342fd1903cf66bd67ef502862758171; independently reviewed build plan v2 SHA2565a47a12c9bc972f92164e0912973d8ca78eb26655c1ba2e74388c99b96bbdaf5. This child does not close parent1131.",
+  "depth": 2,
+  "backends": [
+    "actual disposable SQLite producer outbox on Linux x86_64"
+  ],
+  "actors": [
+    "exact own producer subprocess",
+    "single raw trace wait owner",
+    "separately owned bounded COPY observer",
+    "post-reap recovery observer",
+    "post-reap exact-input retry worker"
+  ],
+  "initial_state": [
+    "One returned seed observation in one producer stream",
+    "No original SQLite observer connection held during producer trace",
+    "Fixture authority commands are requests only, never accepted effects"
+  ],
+  "operations": [
+    {
+      "name": "append_observation or append_authority_command",
+      "actors": [
+        "exact own producer subprocess"
+      ],
+      "synchronization": "typed ptrace syscall entry and matching exit of the actual checksum-valid new WAL commit prefix"
+    },
+    {
+      "name": "recover and retry exact original request",
+      "actors": [
+        "post-reap recovery observer",
+        "post-reap exact-input retry worker"
+      ],
+      "synchronization": "First normal original open occurs after actual producer terminal wait/reap; each observer has a separate finite owner"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "Returned seed and after-successful-qualified-sync target survive the tested producer death; before-sync unreturned target may be absent or complete"
+  },
+  "assumptions": {
+    "isolation": "One producer writer, one task; fork/clone/exec, FD lifetime changes, unsupported ABI and ambiguous protocol fail qualification",
+    "clock": "Fixed authored time; generated created_at constrained to actual process interval; no lease or distributed clock claim",
+    "fairness": "None; deadlines are refusal guards, never successful recovery"
+  },
+  "bounds": {
+    "record_classes": 2,
+    "outbox_actual_kill_histories": 4,
+    "normal_outbox_histories": 2,
+    "generic_positive_histories": 6,
+    "generic_refusal_controls": 32,
+    "raw_file_max_bytes": 2097152,
+    "wal_max_frames": 512,
+    "trace_max_syscall_stops": 10000,
+    "trace_deadline_seconds": 10,
+    "trace_reap_deadline_seconds": 3,
+    "observer_deadline_seconds": 3,
+    "observer_reap_deadline_seconds": 2,
+    "observer_combined_output_max_bytes": 65536,
+    "query_progress_deadline_milliseconds": 500,
+    "sqlite_busy_timeout_milliseconds": 200,
+    "pre_boot_startup_stall_controls": 1,
+    "mount_escape_controls": 1,
+    "stall_marker_falsifiers": 4,
+    "stall_marker_max_bytes": 1024,
+    "startup_stall_deadline_seconds": 3
+  },
+  "invariants": [
+    "All16 persisted record and4 stream columns match independently authored known answers, canonical UUID/time rules and seed identity",
+    "Successful sync eligibility requires stable header/generation/exact seed prefix and exactly one new final checksum-valid commit",
+    "Same stopped mainDB with candidateWAL yields exact target; seedWAL yields exact seed; omitted WAL yields no target, possibly no schema",
+    "Before-sync death recovers seed or complete target; after successful matching sync recovers complete target; partial records or consumed sequence without record fail",
+    "Exact-input public retry yields one target at sequence2 and next sequence3 without changing existing immutable persisted fields",
+    "All tracee terminal statuses come from exact-PID raw waits; observer owners never consume tracee waits; every refused control must clean up its actual owned processes"
+  ],
+  "faults": [
+    "Actual producer SIGKILL at qualified kernel sync entry and matching successful exit for both record classes",
+    "Actual old-prefix and repeated-prefix sync controls, valid unrelated regular FD refusal",
+    "Real generic fsync/fdatasync before/after histories and O_PATH EBADF kernel error",
+    "Explicitly labelled synthetic syscall observations and one-shot cleanup ESRCH/EINTR injections",
+    "Malformed or out-of-order marker, unsupported topology, descriptor replacement and finite wait refusal",
+    "Checksum/header/salt/generation/uncommitted/two-commit classifier falsifiers including valid independently SQLite-readable altered copies",
+    "Persisted wrong event, immutable record hash and next sequence fixture mutations",
+    "Stalled COPY while producer stopped, stalled retry after producer reap, output flood and recursive-query timeout",
+    "Child-written PID/role/fresh-nonce reached-stall proof after actual terminal reap; missing/wrong PID/role/nonce proof fails the timeout control"
+  ],
+  "oracles": [
+    "tests/_syscall_sync_probe.py",
+    "tests/_outbox_fsync_probe.py",
+    "tests/_outbox_fsync_worker.py",
+    "tests/test_outbox_fsync.py",
+    "verification/fixtures/outbox-fsync-expected-records.json"
+  ],
+  "implementation_anchors": [
+    "sprintctl/outbox.py:open_outbox",
+    "sprintctl/outbox.py:append_observation",
+    "sprintctl/outbox.py:append_authority_command",
+    "sprintctl/contracts.py:AuthorityCommand"
+  ],
+  "expansions": [
+    "fault-scenario"
+  ]
+}

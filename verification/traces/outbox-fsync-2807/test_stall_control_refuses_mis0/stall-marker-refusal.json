@@ -1,0 +1,22 @@
+{
+  "fault": "missing",
+  "reason": "missing reached-stall marker",
+  "observer": {
+    "pid": 3133197,
+    "timeout": 0.5,
+    "output_limit": 65536,
+    "returncode": -9,
+    "elapsed": 0.5014407340058824,
+    "captured_bytes": 0,
+    "stdout": "",
+    "stderr": "",
+    "role": "stall-copy",
+    "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_stall_control_refuses_mis0/copy.db",
+    "phase": "marker-falsifier",
+    "expected_stall_marker": {
+      "pid": 3133197,
+      "role": "stall-copy",
+      "nonce": "17d44968acdfb2537bd6b3a881906ad6"
+    }
+  }
+}

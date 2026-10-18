@@ -1,0 +1,17 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.16, pytest-9.0.2, pluggy-1.6.0
+rootdir: /tmp/sprintctl-outbox-fsync-2807
+configfile: pyproject.toml
+plugins: anyio-4.14.2
+collected 144 items
+
+tests/test_outbox_fsync.py ............................................. [ 31%]
+.........................                                                [ 48%]
+tests/test_outbox.py .........                                           [ 54%]
+tests/test_authority_outbox.py ................................          [ 77%]
+tests/test_abrupt_process_recovery.py .............                      [ 86%]
+tests/test_sync.py ........                                              [ 91%]
+tests/test_projection.py ............                                    [100%]
+
+------- generated xml file: /tmp/sprintctl-outbox-fsync-marker-final.xml -------
+============================= 144 passed in 24.06s =============================

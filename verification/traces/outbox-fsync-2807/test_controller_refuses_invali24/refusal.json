@@ -1,0 +1,16 @@
+{
+  "variant": "missing_sync",
+  "cleanup": [
+    {
+      "pid": 3133161,
+      "raw_wait_status": 0,
+      "returncode": 0,
+      "actual_sigkill": false,
+      "cleanup_fault_injected": false,
+      "stderr_prefix": "",
+      "cleanup_errors": [],
+      "observed_sync_events": [],
+      "raw_sync_entries": []
+    }
+  ]
+}

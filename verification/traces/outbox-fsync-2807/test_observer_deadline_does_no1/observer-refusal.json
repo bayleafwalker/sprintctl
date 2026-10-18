@@ -1,0 +1,211 @@
+{
+  "fault": "stall-retry",
+  "observer": {
+    "pid": 3133185,
+    "timeout": 3,
+    "output_limit": 65536,
+    "returncode": -9,
+    "elapsed": 3.003169178002281,
+    "captured_bytes": 0,
+    "stdout": "",
+    "stderr": "",
+    "role": "stall-retry",
+    "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_observer_deadline_does_no1/outbox.db",
+    "phase": "post-terminal-post-recovery-retry",
+    "expected_stall_marker": {
+      "pid": 3133185,
+      "role": "stall-retry",
+      "nonce": "bd24964ca6ed3b82d94a19027c5acc8e"
+    },
+    "stall_marker": {
+      "pid": 3133185,
+      "role": "stall-retry",
+      "nonce": "bd24964ca6ed3b82d94a19027c5acc8e"
+    },
+    "stall_marker_identity": {
+      "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_observer_deadline_does_no1/.outbox.db.stall-retry.reached.json",
+      "device": 42,
+      "inode": 95659713,
+      "bytes": 84,
+      "sha256": "f14f05ceb9ac2b823c1ad775783d95361b974fd5fa84d5dae5bd19e93dad519f"
+    }
+  },
+  "tracee": [
+    {
+      "pid": 3133179,
+      "raw_wait_status": 9,
+      "returncode": -9,
+      "actual_sigkill": true,
+      "cleanup_fault_injected": false,
+      "stderr_prefix": "",
+      "cleanup_errors": [],
+      "observed_sync_events": [
+        {
+          "phase": "entry",
+          "syscall": 74,
+          "fd": 4,
+          "ordinal": 1,
+          "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_observer_deadline_does_no1/outbox.db-wal",
+          "device": 42,
+          "inode": 95659689,
+          "eligible": true,
+          "kind": "fresh-commit",
+          "wal_sha256": "50266e13afaadf866411a8fcd9e94293789d1317ae9a2405317c7ee3ebf1cfa7",
+          "candidate": {
+            "bytes": 74192,
+            "magic": 931071618,
+            "version": 3007000,
+            "page_size": 4096,
+            "generation": [
+              0,
+              2402498296,
+              2008019157
+            ],
+            "frames": [
+              {
+                "index": 1,
+                "offset": 32,
+                "page": 1,
+                "commit_db_pages": 0
+              },
+              {
+                "index": 2,
+                "offset": 4152,
+                "page": 2,
+                "commit_db_pages": 0
+              },
+              {
+                "index": 3,
+                "offset": 8272,
+                "page": 3,
+                "commit_db_pages": 3
+              },
+              {
+                "index": 4,
+                "offset": 12392,
+                "page": 1,
+                "commit_db_pages": 0
+              },
+              {
+                "index": 5,
+                "offset": 16512,
+                "page": 4,
+                "commit_db_pages": 0
+              },
+              {
+                "index": 6,
+                "offset": 20632,
+                "page": 5,
+                "commit_db_pages": 0
+              },
+              {
+                "index": 7,
+                "offset": 24752,
+                "page": 6,
+                "commit_db_pages": 6
+              },
+              {
+                "index": 8,
+                "offset": 28872,
+                "page": 1,
+                "commit_db_pages": 6
+              },
+              {
+                "index": 9,
+                "offset": 32992,
+                "page": 1,
+                "commit_db_pages": 6
+              },
+              {
+                "index": 10,
+                "offset": 37112,
+                "page": 2,
+                "commit_db_pages": 0
+              },
+              {
+                "index": 11,
+                "offset": 41232,
+                "page": 3,
+                "commit_db_pages": 0
+              },
+              {
+                "index": 12,
+                "offset": 45352,
+                "page": 4,
+                "commit_db_pages": 0
+              },
+              {
+                "index": 13,
+                "offset": 49472,
+                "page": 5,
+                "commit_db_pages": 0
+              },
+              {
+                "index": 14,
+                "offset": 53592,
+                "page": 6,
+                "commit_db_pages": 6
+              },
+              {
+                "index": 15,
+                "offset": 57712,
+                "page": 2,
+                "commit_db_pages": 0
+              },
+              {
+                "index": 16,
+                "offset": 61832,
+                "page": 4,
+                "commit_db_pages": 0
+              },
+              {
+                "index": 17,
+                "offset": 65952,
+                "page": 5,
+                "commit_db_pages": 0
+              },
+              {
+                "index": 18,
+                "offset": 70072,
+                "page": 6,
+                "commit_db_pages": 6
+              }
+            ],
+            "commits": [
+              3,
+              7,
+              8,
+              9,
+              14,
+              18
+            ],
+            "last_commit": 18,
+            "sha256": "50266e13afaadf866411a8fcd9e94293789d1317ae9a2405317c7ee3ebf1cfa7"
+          }
+        },
+        {
+          "phase": "exit",
+          "syscall": 74,
+          "fd": 4,
+          "return": 0,
+          "is_error": 0,
+          "observation_source": "kernel",
+          "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_observer_deadline_does_no1/outbox.db-wal",
+          "device": 42,
+          "inode": 95659689
+        }
+      ],
+      "raw_sync_entries": [
+        {
+          "ordinal": 1,
+          "syscall": 74,
+          "fd": 4,
+          "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_observer_deadline_does_no1/outbox.db-wal",
+          "device": 42,
+          "inode": 95659689,
+          "regular": true
+        }
+      ]
+    }
+  ]
+}
