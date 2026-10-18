@@ -1,0 +1,39 @@
+{
+  "item": "sprintctl#2784",
+  "release": "d24c6b3f1760b18c774af9c342b3d7b5f89c9cd7db07342e862e6aa8f88b8949",
+  "source_base": "9d2add58002047990948dd4f270917f2e53eda6c",
+  "product_edits": false,
+  "shared_cases_per_backend": 53,
+  "additional_pg_cases": 17,
+  "sqlite_accepted_guard_regressions": 13,
+  "results": {
+    "local_passed": 66,
+    "local_seconds": 11.82,
+    "pg_passed": 70,
+    "pg_seconds": 1.35,
+    "pg_deselected": 1409,
+    "pg_cleanup_instances_zero": 1
+  },
+  "test_files": {
+    "tests/_locked_item_status_contract.py": "554509449dbc8cd632fc4bfeee303696f6098d55685ec9a200842454c2dc75eb",
+    "tests/test_locked_item_status.py": "648534ec22e30ef9042dae717af0ee15e3ca6a45578d8ae92cdcade2c351f020",
+    "tests/pg/test_locked_item_status.py": "521b52bed2705752eee08e182fd7ea229e971b2ebeb16a047fb45c7b31548918"
+  },
+  "baseline_artifacts": {
+    "/tmp/sprintctl-2784-sqlite-frozen-baseline.txt": "ed35673ce6b3b6cf008173ea4958288a59e888e540349b5c113f391f4bf5e9e6",
+    "/tmp/sprintctl-2784-sqlite-frozen-baseline.xml": "3e4c77e06855305a09db65a31573ab60317f52f4b26ff1070834cc48dcd7e37e",
+    "/tmp/sprintctl-2784-pg-frozen-baseline.txt": "5709d91c31d702026223d5d9b55846c9a424ecb137971024aec34b01ff3465f1",
+    "/tmp/sprintctl-2784-pg-frozen-baseline.xml": "14bfdb783b060d496ae796f495c66791106f7db4b5d5f6170bdd0b06c2ff35de"
+  },
+  "review": "Independent read-only oracle review CLEAR after4test-only findings addressed, independent53SQLite passed. No product correction or new behavior claimed.",
+  "oracle_limits": "53shared and17PG sequential examples; no new concurrency schedules. Reservation age/stale display values excluded from durable equality while their types and stored timestamps retained. Blocker/released-ID callback permutation tests use real SQL with authored independent ordering, not timestamp-tie guarantees. PG managed/TPC pending effects characterized, not repaired.",
+  "development_corrections": [
+    "Timestamp-only event read ordering cannot imply append position",
+    "Nonaccept terminal fixture requires rationale",
+    "Exclude volatile derived reservation age/stale from equality",
+    "Use authored blocker callback order rather than timestamp tie ordering",
+    "Avoid alias between expected release order and implementation input",
+    "Assert primary PG caller state before any fixture rollback",
+    "Add pre-existing pending owner assignee to detect early helper commit"
+  ]
+}

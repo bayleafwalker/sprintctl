@@ -1,0 +1,77 @@
+{
+  "original_base": "9d2add58002047990948dd4f270917f2e53eda6c",
+  "final_base": "7c263b0f74afd67ba4215033a51e7ef78dac82de",
+  "protected_checks": [
+    {
+      "path": "sprintctl/db.py",
+      "function": "set_work_item_status",
+      "ast_unchanged": true
+    },
+    {
+      "path": "sprintctl/db.py",
+      "function": "_stale_item_transaction",
+      "ast_unchanged": true
+    },
+    {
+      "path": "sprintctl/db.py",
+      "function": "_decide_locked",
+      "ast_unchanged": true
+    },
+    {
+      "path": "sprintctl/db.py",
+      "function": "_release_caller_reservations_locked",
+      "ast_unchanged": true
+    },
+    {
+      "path": "sprintctl/pg.py",
+      "function": "set_work_item_status",
+      "ast_unchanged": true
+    },
+    {
+      "path": "sprintctl/pg.py",
+      "function": "_stale_item_transaction",
+      "ast_unchanged": true
+    },
+    {
+      "path": "sprintctl/pg.py",
+      "function": "_decide_locked",
+      "ast_unchanged": true
+    },
+    {
+      "path": "sprintctl/pg.py",
+      "function": "_release_caller_reservations_locked",
+      "ast_unchanged": true
+    },
+    {
+      "path": "sprintctl/pg.py",
+      "function": "_end_item_lease_on_release",
+      "ast_unchanged": true
+    },
+    {
+      "path": "sprintctl/db.py",
+      "function": "_set_work_item_status_locked",
+      "candidate_ast_unchanged_by_rebase": true
+    },
+    {
+      "path": "sprintctl/pg.py",
+      "function": "_set_work_item_status_locked",
+      "candidate_ast_unchanged_by_rebase": true
+    },
+    {
+      "path": "sprintctl/workitemcore.py",
+      "function": "_LockedStatusParticipant",
+      "candidate_ast_unchanged_by_rebase": true
+    },
+    {
+      "path": "sprintctl/workitemcore.py",
+      "function": "_set_work_item_status_locked",
+      "candidate_ast_unchanged_by_rebase": true
+    }
+  ],
+  "frozen_test_files": {
+    "tests/_locked_item_status_contract.py": "554509449dbc8cd632fc4bfeee303696f6098d55685ec9a200842454c2dc75eb",
+    "tests/test_locked_item_status.py": "648534ec22e30ef9042dae717af0ee15e3ca6a45578d8ae92cdcade2c351f020",
+    "tests/pg/test_locked_item_status.py": "521b52bed2705752eee08e182fd7ea229e971b2ebeb16a047fb45c7b31548918"
+  },
+  "meaning": "Original full runs precede final base. Owned symbol ASTs and frozen oracle bytes unchanged; combined checks and exact-head CI qualify combined source."
+}

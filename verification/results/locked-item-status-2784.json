@@ -1,0 +1,131 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.locked-item-status",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2784",
+    "revision": "native:release:d24c6b3f1760b18c774af9c342b3d7b5f89c9cd7db07342e862e6aa8f88b8949"
+  },
+  "implementation_sha": "7c263b0f74afd67ba4215033a51e7ef78dac82de",
+  "depth": 2,
+  "environment": {
+    "backend": "actual temporary SQLite and disposable PostgreSQL16.15",
+    "python": "3.13.16",
+    "pytest": "9.0.2",
+    "isolation": "measured PostgreSQL READ COMMITTED; SQLite BEGIN IMMEDIATE"
+  },
+  "execution": {
+    "histories": 14,
+    "bounds": {
+      "shared_cases_per_backend": 53,
+      "additional_pg_cases": 17,
+      "accepted_sqlite_guard_regressions": 13,
+      "new_concurrent_histories": 0,
+      "retained_sequential_observations": 14
+    },
+    "faults_exercised": [
+      "exception after real status UPDATE",
+      "exception after real done Decision/lease/report effects",
+      "exception after actual reservation release event",
+      "exception after actual final item release event and PG lease release",
+      "existing forbidden PG commit/rollback in managed/two-phase caller"
+    ]
+  },
+  "claims": [
+    {
+      "property": "locked status sequencing preserves missing/revision/transition/reason/blocker precedence and None return",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_locked_item_status_contract.py",
+        "tests/test_locked_item_status.py",
+        "tests/pg/test_locked_item_status.py"
+      ]
+    },
+    {
+      "property": "activation retains existing done-status blocker semantics across terminal resolutions and backend callback order",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_locked_item_status_contract.py",
+        "tests/test_locked_item_status.py",
+        "tests/pg/test_locked_item_status.py"
+      ]
+    },
+    {
+      "property": "pending release preserves session filtering, supplied reservation-ID ordering, Release bindings and PG-only lease-ID field including an empty list",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_locked_item_status_contract.py",
+        "tests/test_locked_item_status.py",
+        "tests/pg/test_locked_item_status.py"
+      ]
+    },
+    {
+      "property": "done invokes the existing Decision primitive and preserves PostgreSQL lease/report consequences without inventing verification",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_locked_item_status_contract.py",
+        "tests/test_locked_item_status.py",
+        "tests/pg/test_locked_item_status.py"
+      ]
+    },
+    {
+      "property": "ordinary after-write/Decision/release-event faults roll back actual effects before fixture cleanup and allow retry",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_locked_item_status_contract.py",
+        "tests/test_locked_item_status.py",
+        "tests/pg/test_locked_item_status.py"
+      ]
+    },
+    {
+      "property": "private stale-item composition preserves preceding owner writes, stays noncommitting and rolls back with that owner",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_locked_item_status_contract.py",
+        "tests/test_locked_item_status.py",
+        "tests/pg/test_locked_item_status.py"
+      ]
+    },
+    {
+      "property": "SQLite public caller guards and PostgreSQL existing implicit/managed/two-phase ownership policies remain distinct",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_locked_item_status_contract.py",
+        "tests/test_locked_item_status.py",
+        "tests/pg/test_locked_item_status.py"
+      ]
+    },
+    {
+      "property": "PostgreSQL foreign-tenant target is missing without changing foreign state",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_locked_item_status_contract.py",
+        "tests/test_locked_item_status.py",
+        "tests/pg/test_locked_item_status.py"
+      ]
+    },
+    {
+      "property": "universal caller composition, arbitrary isolation, new concurrent schedules, physical crash safety, whole provider parity, rollout or parent2150 completion",
+      "result": "unknown"
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "The source is the accepted base plus the candidate byte hashes below; implementation_sha is not a future self-referential commit. Native frozen scope5624 and oracle5644 precede product edits.",
+    "Final actual pre-extraction baseline:53shared SQLite cases plus13existing caller guard regressions=66passed in11.82s;70actualPG cases=53shared+17specific,1.35s, one registered cleanup with zero remaining rows. Three oracle files are frozen byte-identically through extraction.",
+    "Four independent oracle review findings corrected before final baseline: volatile display equality, timestamp-tie blocker ordering, aliased expected ordering and primary PG caller state hidden by cleanup. Initial nonaccept fixture rationale and event append-position assumptions were also corrected before product changes. Historical development runs are not qualification gates.",
+    "Snapshot equality compares stored reservation fields, retaining timestamps and native type metadata; derived age/stale values are excluded while their types remain checked. Callback permutation cases retain real SQL and use independent authored expectations. They do not impose a new public timestamp tie order.",
+    "The awaiting-report fixture reuses the established disposable legacy-contract owner fixture. Direct done rejects unverified reports with decided-accept-unverified rather than claiming a human/role was verified. Managed/TPC pending effects remain explicitly uncommitted until caller-owned cleanup.",
+    "No new transaction owner, precommit, generic event admission, authority arbitration, key replay, acceptance profile, API/schema/IDL or deployment. Nine adjacent/public owner function ASTs and the current wrapper signatures remain unchanged; parent2150 remains open.",
+    "Post-extraction unchanged local oracle plus guard selection:66passed in8.34s. Affected PG regression passed309tests in8.68s with7registered cleanup instances empty. Independent source review CLEAR and66local/caller cases independently passed7.89s. Full suite results follow; final packet review and exact-head canonical CI remain pending.",
+    "Completed full local command: /tmp/sprintctl-locked-item-status-2784-env/bin/python -m pytest tests --ignore=tests/pg --ignore=tests/test_work_application_pg.py -m \"not perf\" -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2784-full-local.xml. Actual2855passed/4skipped/14deselected305.90s.",
+    "Completed full PG command: PATH=<cached PostgreSQL16.15>/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-locked-item-status-2784-pg-env UV_OFFLINE=1 timeout --foreground -k30s900s scripts/pg-disposable-tests.sh --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2784-full-pg.xml. Actual1479passed92.87s;83registered cleanup instances across4fixture names empty.",
+    "Full captures above ran on9d2add58002047990948dd4f270917f2e53eda6c plus candidate.14retained sequential observations extracted from completed full JUnit runs;0new concurrent schedules. Shared snapshots retain native_types; PG lease/report extension timestamps serialize as strings and do not independently prove native-type preservation.",
+    "Actual full log/XML digests: {\"/tmp/sprintctl-2784-full-local.txt\": \"ba69af9e65e594fe275c052ea8eb5bd8c393ae1f69b56dd03771ac68764627a7\", \"/tmp/sprintctl-2784-full-local.xml\": \"a07e1399ffbe5d82195b603ac8b70aaed64f46b5c66e3020a57439fe1145cbca\", \"/tmp/sprintctl-2784-full-pg.txt\": \"8786035dbec9566cb47b5fce83275a4e10f6907835658fbce7810e91eca5fe88\", \"/tmp/sprintctl-2784-full-pg.xml\": \"3fb72024e4121a28335642b3f1833ce517bbd9559c9db6e8b861813b19cef380\"}",
+    "Final accepted base 7c263b0f74afd67ba4215033a51e7ef78dac82de after item2785. Nine protected adjacent/public owner ASTs and four candidate helper/class ASTs unchanged. Three oracle file bytes unchanged. Historical full runs remain attributed to original base; Joint regression results follow; exact-head CI required.",
+    "Combined final-base local command: /tmp/sprintctl-locked-item-status-2784-env/bin/python -m pytest tests/test_locked_item_status.py tests/test_sqlite_item_reserve_caller.py tests/test_sprint_kind_status.py tests/test_sqlite_sprint_caller.py tests/test_explicit_sprint_close.py tests/test_stale_item_atomicity.py tests/test_item_release.py tests/test_docs_integrity.py -q --tb=short.170passed22.75s.",
+    "Combined PG command: same disposable runner/environment as fullPG with -k \"locked_item_status or work_item or item_release or stale_item_atomicity or work_lease or sprint_kind_status or explicit_sprint_close\" --tb=short.371passed/1146deselected10.31s,9registeredcleanupinstancesempty.",
+    "Initial combined local command named nonexistent tests/test_work_item.py: collection refused,0tests ran. Corrected command above passed without test/product edits. Original invocation log overwritten by correction; no failed product test or missing coverage is claimed.",
+    "Combined terminal log digests {\"/tmp/sprintctl-2784-combined-local.txt\": \"d080469a01a97d99062f7b9df33c82c1f5768ed22eb4ed3fbda9fe0ebe869ae2\", \"/tmp/sprintctl-2784-combined-pg.txt\": \"e8ec7f72b0293622e8d4ea69d68f7ed8bdaba72dd869f8e54d994606a30eb01f\"}",
+    "Final candidate/oracle/trace/baseline byte hashes: {\"sprintctl/db.py\": \"af898261c65bc15800f53342f3457de68692c73329848369b1847c791957ce52\", \"sprintctl/pg.py\": \"98f459a357054075359cb32d2c915d59e434184fd81a7016f5b045272eadf2cc\", \"sprintctl/workitemcore.py\": \"7a0ff3febdaf3c4fd62027fc195079379c20ff670c1fd5545524aa449d1e0597\", \"tests/_locked_item_status_contract.py\": \"554509449dbc8cd632fc4bfeee303696f6098d55685ec9a200842454c2dc75eb\", \"tests/pg/test_locked_item_status.py\": \"521b52bed2705752eee08e182fd7ea229e971b2ebeb16a047fb45c7b31548918\", \"tests/test_locked_item_status.py\": \"648534ec22e30ef9042dae717af0ee15e3ca6a45578d8ae92cdcade2c351f020\", \"verification/fixtures/locked-item-status-base-refresh-2784.json\": \"511e5ff28dd6a01cd046de1d30f9b060c50b057cd5c4c7fb45b776a8a229e4ad\", \"verification/fixtures/locked-item-status-baseline-2784.json\": \"a8c0d53c570343c198b83027024e2a15a83a60bdd85b5c6a8be9fd8918512eca\", \"verification/traces/extract-locked-item-status-histories.py\": \"3888ace3f0db5e7051750fa14a9c83cd32812ed715f5325ba476e7e481646a4e\", \"verification/traces/locked-item-status-histories-2784.json\": \"22ac9c690fc546cb9ed27553bb12985ff05470150db2eb29b2f497998c06f69a\"}"
+  ]
+}

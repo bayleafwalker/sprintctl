@@ -1707,67 +1707,27 @@ def _set_work_item_status_locked(
     reason: str | None = None, session_id: str | None = None,
 ) -> None:
     """Apply the existing transition inside the caller's owned write transaction."""
-    item = wi.lock_for_update("work_item", item_id)
-    if item is None:
-        raise ValueError(f"Item #{item_id} not found")
-    current = item["status"]
-    current_revision = item_status_revision(item)
-    if expected_revision is not None and expected_revision != current_revision:
-        raise StatusConflict(
-            f"Item #{item_id} status revision mismatch: "
-            f"expected {expected_revision}, current {current_revision}"
-        )
-    if new_status not in VALID_TRANSITIONS[current]:
-        allowed = sorted(VALID_TRANSITIONS[current]) or "none (terminal)"
-        raise InvalidTransition(
-            f"cannot transition {current} -> {new_status}. Allowed: {allowed}"
-        )
-    if new_status == "pending":
-        if reason not in RELEASE_REASONS:
-            raise InvalidTransition(
-                f"cannot transition {current} -> pending without --reason in "
-                f"{sorted(RELEASE_REASONS)}"
-            )
-    elif reason is not None:
-        raise InvalidTransition(
-            "--reason is only accepted when the target status is pending"
-        )
-    if new_status == "active":
-        unresolved = [
-            blocker for blocker in list_deps_blocking(conn, item_id)
-            if blocker["blocker_status"] != "done"
-        ]
-        if unresolved:
-            blocker_ids = [blocker["item_id"] for blocker in unresolved]
-            raise InvalidTransition(
-                f"cannot transition {current} -> active while blockers remain unresolved: {blocker_ids}"
-            )
-    if new_status == "done":
-        # ``done`` is an alias for an accept decision (TS-5).
-        _decide_locked(
-            conn,
-            item,
-            _decisions.normalize_decision("accept", actor=actor or "sprintctl"),
-        )
-    else:
-        wi.execute(
+    p = _workitemcore._LockedStatusParticipant(
+        lock_item=lambda iid: wi.lock_for_update("work_item", iid),
+        blockers=lambda iid: list_deps_blocking(conn, iid),
+        write_status=lambda iid, status: wi.execute(
             f"UPDATE work_item SET status = ?, updated_at = {wi.updated_at_sql} WHERE id = ?",
-            (new_status, item_id),
-        )
-    if new_status == "pending":
-        actor_value = actor or "sprintctl"
-        released_ids = _release_caller_reservations_locked(
-            conn, item, session_id=session_id, actor=actor_value
-        )
-        _insert_event(
+            (status, iid),
+        ),
+        decide_accept=lambda item, decision: _decide_locked(conn, item, decision),
+        release_session_reservations=lambda item, session, actor_value:
+            _release_caller_reservations_locked(conn, item, session_id=session, actor=actor_value),
+        end_work_leases=lambda iid, release_reason: None,
+        insert_item_released=lambda item, actor_value, payload: _insert_event(
             conn, int(item["sprint_id"]), actor_value, "item-released",
-            source_type="system", work_item_id=item_id,
-            payload={
-                "reason": reason,
-                "previous_status": current,
-                "released_reservation_ids": released_ids,
-            },
-        )
+            source_type="system", work_item_id=item_id, payload=payload,
+        ),
+    )
+    _workitemcore._set_work_item_status_locked(
+        p, item_id, new_status, actor, expected_revision=expected_revision,
+        reason=reason, session_id=session_id, transitions=VALID_TRANSITIONS,
+        release_reasons=RELEASE_REASONS, invalid_transition=InvalidTransition,
+    )
 
 
 @contextmanager
