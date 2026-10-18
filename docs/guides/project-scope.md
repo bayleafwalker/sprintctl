@@ -62,6 +62,26 @@ forms use `contract_version = "project-1"`. They contain:
 The repository-local contracts are not redefined. Project scope wraps and
 attributes them.
 
+## Graph readiness and dispatch context
+
+Repository and project next-work operations suggest items from the dependency
+graph. A nonempty ready list reports `graph_ready: true`,
+`dispatch_admissible: "unknown"` and
+`dispatch_reason: "dispatch-context-required"`. These requests carry sprint
+selection, without a dispatch intent, operation, authority or evidence context;
+the graph cannot establish positive dispatch admissibility.
+
+An empty graph reports `graph_ready: false`, `dispatch_admissible: "inadmissible"`
+and `dispatch_reason: "no-ready-items"`. A project with an unavailable member
+keeps available suggestions but reports `graph_ready: false`,
+`dispatch_admissible: "unknown"` and `dispatch_reason: "member-unavailable"`.
+Member results retain their own graph and dispatch fields.
+
+The CLI's plain `next-work --json` output remains the suggestion list. Before
+dispatch, check the item's current restrictions, authority, operation support,
+basis and referenced artifacts. These graph reads do not implement the full
+contextual dispatch assessment tracked by sprintctl#2095.
+
 ## Backend boundary
 
 Remote mode creates one read store per member over the same PostgreSQL

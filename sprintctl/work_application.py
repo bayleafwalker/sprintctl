@@ -3725,12 +3725,12 @@ class WorkApplication:
             "repo_id": self.repo_id,
             "sprint": sprint,
             "ready_items": ready,
-            # These fields are deliberately advisory dispatch facts, not
-            # authority.  Consumers can distinguish a known empty graph from
-            # an unavailable member without reinterpreting an empty list.
+            # Graph suggestions lack the intent, operation, authority and
+            # evidence context needed to establish dispatch admissibility.
+            # A known empty graph still establishes no ready candidate.
             "graph_ready": graph_ready,
-            "dispatch_admissible": "admissible" if graph_ready else "inadmissible",
-            "dispatch_reason": "ready-items-available" if graph_ready else "no-ready-items",
+            "dispatch_admissible": "unknown" if graph_ready else "inadmissible",
+            "dispatch_reason": "dispatch-context-required" if graph_ready else "no-ready-items",
         }
 
     def _read_records(

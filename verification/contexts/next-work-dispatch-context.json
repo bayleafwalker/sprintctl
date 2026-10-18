@@ -1,0 +1,92 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.next-work-dispatch-context",
+  "owner_repo": "sprintctl",
+  "subject": "next-work-graph-projection-without-dispatch-context",
+  "contract_ref": {
+    "doc_id": "sprintctl.project-scope",
+    "revision": "sha256:0ffc1f0119ec3fcab9e097d57e6136318490004dc0146f7a16770b5a5eb5654d"
+  },
+  "source_of_truth": "repository-scoped ready-item dependency projection; no contextual dispatch assessor",
+  "depth": 1,
+  "backends": [
+    "sqlite",
+    "postgresql16",
+    "served-cli-facade"
+  ],
+  "actors": [
+    "reader"
+  ],
+  "initial_state": [
+    "temporary sprint with zero or one graph-ready item",
+    "project with available or unavailable members"
+  ],
+  "operations": [
+    {
+      "name": "work.read.next-work",
+      "actors": [
+        "reader"
+      ]
+    },
+    {
+      "name": "work.project.next-work",
+      "actors": [
+        "reader"
+      ]
+    },
+    {
+      "name": "work.project.next-work-explain",
+      "actors": [
+        "reader"
+      ]
+    },
+    {
+      "name": "served-cli-next-work",
+      "actors": [
+        "reader"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "graph-readiness-and-dispatch-uncertainty"
+  },
+  "assumptions": {
+    "input": "existing optional sprint_id only; no intent, operation, authority or evidence context",
+    "isolation": "existing read/snapshot behavior unchanged"
+  },
+  "bounds": {
+    "sqlite_application_cases": 6,
+    "unavailable_project_cases": 2,
+    "served_cli_cases": 2,
+    "postgresql_application_cases": 6
+  },
+  "invariants": [
+    "nonempty graph suggestions cannot imply positive dispatch admissibility",
+    "graph-ready means unknown with dispatch-context-required",
+    "empty graph remains inadmissible with no-ready-items",
+    "unavailable member remains unknown with member-unavailable and preserves other suggestions",
+    "existing closed result schemas admit corrected values",
+    "served CLI JSON remains a list without local-store access"
+  ],
+  "faults": [
+    "graph-ready candidate without contextual authority or effect evidence",
+    "member unavailable while another member has ready items"
+  ],
+  "oracles": [
+    "actual WorkApplication and ProjectWorkApplication invocation",
+    "existing JSON result schema validation",
+    "served CLI facade through actual owner applications",
+    "unchanged graph suggestion item identity"
+  ],
+  "implementation_anchors": [
+    "sprintctl/work_application.py:WorkApplication.next_work",
+    "sprintctl/project_application.py:ProjectWorkApplication._next_work",
+    "tests/test_next_work_dispatch_context.py",
+    "tests/test_work_application_pg.py:test_next_work_graph_cannot_establish_dispatch_context"
+  ],
+  "expansions": [
+    "stateful-test",
+    "semantic-doc"
+  ]
+}
