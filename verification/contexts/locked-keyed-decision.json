@@ -1,0 +1,98 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.locked-keyed-decision",
+  "owner_repo": "sprintctl",
+  "subject": "private locked keyed Decision sequence with unchanged backend transaction and replay owners",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2789",
+    "revision": "native:release:3e5a3d56bb0338a7aaf960ab0e0f1cfe77661af15d1737b6901926407d6d233b"
+  },
+  "source_of_truth": "Frozen native No doc5697 and actual pre-product oracle freeze5707 at accepted0c53a5b86ff8e9d17282e5c1dad074acdf597e6f",
+  "depth": 2,
+  "backends": [
+    "temporary SQLite",
+    "registered disposable PostgreSQL16.15 READ COMMITTED"
+  ],
+  "actors": [
+    "Decision caller",
+    "pending caller transaction owner",
+    "competing same-key writer",
+    "independent durable observer"
+  ],
+  "initial_state": [
+    "pending/active/blocked/legacy done items",
+    "optional existing keyed Decision and default/explicit/foreign Release",
+    "active lease or legacy awaiting-verification/superseded report",
+    "implicit/managed/two-phase pending caller writes as tested"
+  ],
+  "operations": [
+    {
+      "name": "record_decision_keyed",
+      "actors": [
+        "Decision caller",
+        "competing same-key writer"
+      ],
+      "synchronization": "existing SQLite BEGIN IMMEDIATE or PG advisory key then scoped item row lock; existing wrapper commit/rollback"
+    },
+    {
+      "name": "observe faults and caller effects",
+      "actors": [
+        "pending caller transaction owner",
+        "independent durable observer"
+      ],
+      "synchronization": "observe primary pending state and independent durable rows before any fixture cleanup"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one stored Decision/event for tested keyed retries; existing owner semantics, not global linearizability"
+  },
+  "assumptions": {
+    "isolation": "measured PG READ COMMITTED on test actor/observer connections; SQLite existing writer ownership",
+    "clock": "stored timestamps retained; no time-based Decision admission",
+    "fairness": "none",
+    "identity": "existing item/repository/key/Release binding; no external origin authentication"
+  },
+  "bounds": {
+    "shared_cases_per_backend": 46,
+    "additional_pg_cases": 23,
+    "new_concurrent_histories": 4,
+    "workers_per_race": 2,
+    "actual_pre_product_observations": 18
+  },
+  "invariants": [
+    "normalization/key/basis syntax precede owner effects; missing target precedes keyed replay and replay precedes revision/fresh admission",
+    "fresh Decision and canonical event preserve kind/resolution/Release/successor/legacy bindings and native row representation",
+    "matching replay returns the actual stored lookup object and never evaluates fresh-only callbacks; repeated unkeyed revise remains two writes",
+    "ordinary after-Decision/payload/event faults roll back actual rows and PostgreSQL report/lease effects before fixture cleanup; same-key retry writes once",
+    "SQLite implicit caller joining and PG implicit/managed/two-phase transaction consequences remain unchanged",
+    "PG key advisory lock precedes target lock; replay rollback stays inside item cursor and fresh event/commit follows cursor exit",
+    "same-key equal requests produce one fresh and one replay, different-item requests one fresh and one conflict, in recorded held-writer schedules",
+    "response-discard reconnect returns original committed Decision without another event; this is not physical crash proof",
+    "PostgreSQL target/key/successor/Release lookups remain repository scoped and unverified/superseded reports never gain invented verification"
+  ],
+  "faults": [
+    "exception after real Decision writes",
+    "exception inside fresh event payload callback after actual payload computation",
+    "exception after canonical event insertion",
+    "PG commit/rollback forbidden in managed/two-phase caller",
+    "discard committed response and reconnect (no crash)"
+  ],
+  "oracles": [
+    "tests/_keyed_decision_contract.py",
+    "tests/test_keyed_decision_workflow.py",
+    "tests/pg/test_keyed_decision_workflow.py",
+    "existing Decision/retirement/legacy/Release/work-lease owner suites"
+  ],
+  "implementation_anchors": [
+    "sprintctl/workitemcore.py:_KeyedDecisionParticipant",
+    "sprintctl/workitemcore.py:_KeyedDecisionOutcome",
+    "sprintctl/workitemcore.py:_record_decision_keyed_locked",
+    "sprintctl/db.py:record_decision_keyed",
+    "sprintctl/pg.py:record_decision_keyed"
+  ],
+  "expansions": [
+    "backend-parity",
+    "fault-scenario"
+  ]
+}

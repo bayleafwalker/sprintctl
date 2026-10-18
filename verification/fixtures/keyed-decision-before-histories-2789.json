@@ -1,0 +1,3278 @@
+{
+  "histories": [
+    {
+      "after_retry": {
+        "decisions": [
+          {
+            "actor": "reviewer",
+            "created_at": "2026-10-18T15:55:51Z",
+            "evidence_digests": [],
+            "id": 1,
+            "kind": "accept",
+            "legacy_source": null,
+            "rationale": "",
+            "release_digest": null,
+            "sprint_id": null,
+            "superseded_by_item_id": null,
+            "work_item_id": 1
+          }
+        ],
+        "events": [
+          {
+            "actor": "reviewer",
+            "created_at": "2026-10-18T15:55:51Z",
+            "event_type": "item-decided",
+            "id": 1,
+            "payload": "{\"decision_id\": 1, \"kind\": \"accept\", \"resolution\": \"accepted\", \"release_digest\": null, \"idempotency_key\": \"b38f3e4e5234443a990f65431d4af856\"}",
+            "source_type": "actor",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "5d64e609-cc7a-4020-9f88-374aa2e8aa48",
+          "assignee": "owner",
+          "created_at": "2026-10-18T15:55:50Z",
+          "description": "preserved scope",
+          "id": 1,
+          "legacy": false,
+          "priority": 3,
+          "resolution": "accepted",
+          "sprint_id": 1,
+          "status": "done",
+          "terminal_decision_id": 1,
+          "title": "status oracle",
+          "track_id": 1,
+          "updated_at": "2026-10-18T15:55:51Z"
+        },
+        "native_types": {
+          "decisions": [
+            {
+              "actor": "str",
+              "created_at": "str",
+              "evidence_digests": "list",
+              "id": "int",
+              "kind": "str",
+              "legacy_source": "NoneType",
+              "rationale": "str",
+              "release_digest": "NoneType",
+              "sprint_id": "NoneType",
+              "superseded_by_item_id": "NoneType",
+              "work_item_id": "int"
+            }
+          ],
+          "events": [
+            {
+              "actor": "str",
+              "created_at": "str",
+              "event_type": "str",
+              "id": "int",
+              "payload": "str",
+              "source_type": "str",
+              "sprint_id": "int",
+              "work_item_id": "int"
+            }
+          ],
+          "item": {
+            "aggregate_uuid": "str",
+            "assignee": "str",
+            "created_at": "str",
+            "description": "str",
+            "id": "int",
+            "legacy": "bool",
+            "priority": "int",
+            "resolution": "str",
+            "sprint_id": "int",
+            "status": "str",
+            "terminal_decision_id": "int",
+            "title": "str",
+            "track_id": "int",
+            "updated_at": "str"
+          },
+          "releases": [],
+          "reservations": []
+        },
+        "releases": [],
+        "reservations": []
+      },
+      "backend": "sprintctl.db",
+      "before": {
+        "decisions": [],
+        "events": [],
+        "item": {
+          "aggregate_uuid": "5d64e609-cc7a-4020-9f88-374aa2e8aa48",
+          "assignee": "owner",
+          "created_at": "2026-10-18T15:55:50Z",
+          "description": "preserved scope",
+          "id": 1,
+          "legacy": false,
+          "priority": 3,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "status oracle",
+          "track_id": 1,
+          "updated_at": "2026-10-18T15:55:51Z"
+        },
+        "native_types": {
+          "decisions": [],
+          "events": [],
+          "item": {
+            "aggregate_uuid": "str",
+            "assignee": "str",
+            "created_at": "str",
+            "description": "str",
+            "id": "int",
+            "legacy": "bool",
+            "priority": "int",
+            "resolution": "NoneType",
+            "sprint_id": "int",
+            "status": "str",
+            "terminal_decision_id": "NoneType",
+            "title": "str",
+            "track_id": "int",
+            "updated_at": "str"
+          },
+          "releases": [],
+          "reservations": []
+        },
+        "releases": [],
+        "reservations": []
+      },
+      "history": "keyed-fault-decision",
+      "inside_fault": [
+        {
+          "pending": {
+            "decisions": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:51Z",
+                "evidence_digests": [],
+                "id": 1,
+                "kind": "accept",
+                "legacy_source": null,
+                "rationale": "",
+                "release_digest": null,
+                "sprint_id": null,
+                "superseded_by_item_id": null,
+                "work_item_id": 1
+              }
+            ],
+            "events": [],
+            "item": {
+              "aggregate_uuid": "5d64e609-cc7a-4020-9f88-374aa2e8aa48",
+              "assignee": "owner",
+              "created_at": "2026-10-18T15:55:50Z",
+              "description": "preserved scope",
+              "id": 1,
+              "legacy": false,
+              "priority": 3,
+              "resolution": "accepted",
+              "sprint_id": 1,
+              "status": "done",
+              "terminal_decision_id": 1,
+              "title": "status oracle",
+              "track_id": 1,
+              "updated_at": "2026-10-18T15:55:51Z"
+            },
+            "native_types": {
+              "decisions": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "evidence_digests": "list",
+                  "id": "int",
+                  "kind": "str",
+                  "legacy_source": "NoneType",
+                  "rationale": "str",
+                  "release_digest": "NoneType",
+                  "sprint_id": "NoneType",
+                  "superseded_by_item_id": "NoneType",
+                  "work_item_id": "int"
+                }
+              ],
+              "events": [],
+              "item": {
+                "aggregate_uuid": "str",
+                "assignee": "str",
+                "created_at": "str",
+                "description": "str",
+                "id": "int",
+                "legacy": "bool",
+                "priority": "int",
+                "resolution": "str",
+                "sprint_id": "int",
+                "status": "str",
+                "terminal_decision_id": "int",
+                "title": "str",
+                "track_id": "int",
+                "updated_at": "str"
+              },
+              "releases": [],
+              "reservations": []
+            },
+            "releases": [],
+            "reservations": []
+          },
+          "transaction": "ACTIVE"
+        }
+      ],
+      "junit_case": {
+        "class": "tests.test_keyed_decision_workflow.TestSqliteKeyedDecision",
+        "name": "test_after_real_effect_fault_rollback_and_same_key_retry[decision]"
+      }
+    },
+    {
+      "after_retry": {
+        "decisions": [
+          {
+            "actor": "reviewer",
+            "created_at": "2026-10-18T15:55:51Z",
+            "evidence_digests": [],
+            "id": 1,
+            "kind": "accept",
+            "legacy_source": null,
+            "rationale": "",
+            "release_digest": null,
+            "sprint_id": null,
+            "superseded_by_item_id": null,
+            "work_item_id": 1
+          }
+        ],
+        "events": [
+          {
+            "actor": "reviewer",
+            "created_at": "2026-10-18T15:55:51Z",
+            "event_type": "item-decided",
+            "id": 1,
+            "payload": "{\"decision_id\": 1, \"kind\": \"accept\", \"resolution\": \"accepted\", \"release_digest\": null, \"idempotency_key\": \"57987943fc4b40eda0a15b0055ed415b\"}",
+            "source_type": "actor",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "8f35b802-6020-4960-8752-949ae61ad47d",
+          "assignee": "owner",
+          "created_at": "2026-10-18T15:55:51Z",
+          "description": "preserved scope",
+          "id": 1,
+          "legacy": false,
+          "priority": 3,
+          "resolution": "accepted",
+          "sprint_id": 1,
+          "status": "done",
+          "terminal_decision_id": 1,
+          "title": "status oracle",
+          "track_id": 1,
+          "updated_at": "2026-10-18T15:55:51Z"
+        },
+        "native_types": {
+          "decisions": [
+            {
+              "actor": "str",
+              "created_at": "str",
+              "evidence_digests": "list",
+              "id": "int",
+              "kind": "str",
+              "legacy_source": "NoneType",
+              "rationale": "str",
+              "release_digest": "NoneType",
+              "sprint_id": "NoneType",
+              "superseded_by_item_id": "NoneType",
+              "work_item_id": "int"
+            }
+          ],
+          "events": [
+            {
+              "actor": "str",
+              "created_at": "str",
+              "event_type": "str",
+              "id": "int",
+              "payload": "str",
+              "source_type": "str",
+              "sprint_id": "int",
+              "work_item_id": "int"
+            }
+          ],
+          "item": {
+            "aggregate_uuid": "str",
+            "assignee": "str",
+            "created_at": "str",
+            "description": "str",
+            "id": "int",
+            "legacy": "bool",
+            "priority": "int",
+            "resolution": "str",
+            "sprint_id": "int",
+            "status": "str",
+            "terminal_decision_id": "int",
+            "title": "str",
+            "track_id": "int",
+            "updated_at": "str"
+          },
+          "releases": [],
+          "reservations": []
+        },
+        "releases": [],
+        "reservations": []
+      },
+      "backend": "sprintctl.db",
+      "before": {
+        "decisions": [],
+        "events": [],
+        "item": {
+          "aggregate_uuid": "8f35b802-6020-4960-8752-949ae61ad47d",
+          "assignee": "owner",
+          "created_at": "2026-10-18T15:55:51Z",
+          "description": "preserved scope",
+          "id": 1,
+          "legacy": false,
+          "priority": 3,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "status oracle",
+          "track_id": 1,
+          "updated_at": "2026-10-18T15:55:51Z"
+        },
+        "native_types": {
+          "decisions": [],
+          "events": [],
+          "item": {
+            "aggregate_uuid": "str",
+            "assignee": "str",
+            "created_at": "str",
+            "description": "str",
+            "id": "int",
+            "legacy": "bool",
+            "priority": "int",
+            "resolution": "NoneType",
+            "sprint_id": "int",
+            "status": "str",
+            "terminal_decision_id": "NoneType",
+            "title": "str",
+            "track_id": "int",
+            "updated_at": "str"
+          },
+          "releases": [],
+          "reservations": []
+        },
+        "releases": [],
+        "reservations": []
+      },
+      "history": "keyed-fault-payload",
+      "inside_fault": [
+        {
+          "pending": {
+            "decisions": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:51Z",
+                "evidence_digests": [],
+                "id": 1,
+                "kind": "accept",
+                "legacy_source": null,
+                "rationale": "",
+                "release_digest": null,
+                "sprint_id": null,
+                "superseded_by_item_id": null,
+                "work_item_id": 1
+              }
+            ],
+            "events": [],
+            "item": {
+              "aggregate_uuid": "8f35b802-6020-4960-8752-949ae61ad47d",
+              "assignee": "owner",
+              "created_at": "2026-10-18T15:55:51Z",
+              "description": "preserved scope",
+              "id": 1,
+              "legacy": false,
+              "priority": 3,
+              "resolution": "accepted",
+              "sprint_id": 1,
+              "status": "done",
+              "terminal_decision_id": 1,
+              "title": "status oracle",
+              "track_id": 1,
+              "updated_at": "2026-10-18T15:55:51Z"
+            },
+            "native_types": {
+              "decisions": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "evidence_digests": "list",
+                  "id": "int",
+                  "kind": "str",
+                  "legacy_source": "NoneType",
+                  "rationale": "str",
+                  "release_digest": "NoneType",
+                  "sprint_id": "NoneType",
+                  "superseded_by_item_id": "NoneType",
+                  "work_item_id": "int"
+                }
+              ],
+              "events": [],
+              "item": {
+                "aggregate_uuid": "str",
+                "assignee": "str",
+                "created_at": "str",
+                "description": "str",
+                "id": "int",
+                "legacy": "bool",
+                "priority": "int",
+                "resolution": "str",
+                "sprint_id": "int",
+                "status": "str",
+                "terminal_decision_id": "int",
+                "title": "str",
+                "track_id": "int",
+                "updated_at": "str"
+              },
+              "releases": [],
+              "reservations": []
+            },
+            "releases": [],
+            "reservations": []
+          },
+          "transaction": "ACTIVE"
+        }
+      ],
+      "junit_case": {
+        "class": "tests.test_keyed_decision_workflow.TestSqliteKeyedDecision",
+        "name": "test_after_real_effect_fault_rollback_and_same_key_retry[payload]"
+      }
+    },
+    {
+      "after_retry": {
+        "decisions": [
+          {
+            "actor": "reviewer",
+            "created_at": "2026-10-18T15:55:51Z",
+            "evidence_digests": [],
+            "id": 1,
+            "kind": "accept",
+            "legacy_source": null,
+            "rationale": "",
+            "release_digest": null,
+            "sprint_id": null,
+            "superseded_by_item_id": null,
+            "work_item_id": 1
+          }
+        ],
+        "events": [
+          {
+            "actor": "reviewer",
+            "created_at": "2026-10-18T15:55:51Z",
+            "event_type": "item-decided",
+            "id": 1,
+            "payload": "{\"decision_id\": 1, \"kind\": \"accept\", \"resolution\": \"accepted\", \"release_digest\": null, \"idempotency_key\": \"9a40fd401e334164b9265806a7bbf9f3\"}",
+            "source_type": "actor",
+            "sprint_id": 1,
+            "work_item_id": 1
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "0ade8ebd-b45b-4645-91b8-c94c9c201e11",
+          "assignee": "owner",
+          "created_at": "2026-10-18T15:55:51Z",
+          "description": "preserved scope",
+          "id": 1,
+          "legacy": false,
+          "priority": 3,
+          "resolution": "accepted",
+          "sprint_id": 1,
+          "status": "done",
+          "terminal_decision_id": 1,
+          "title": "status oracle",
+          "track_id": 1,
+          "updated_at": "2026-10-18T15:55:51Z"
+        },
+        "native_types": {
+          "decisions": [
+            {
+              "actor": "str",
+              "created_at": "str",
+              "evidence_digests": "list",
+              "id": "int",
+              "kind": "str",
+              "legacy_source": "NoneType",
+              "rationale": "str",
+              "release_digest": "NoneType",
+              "sprint_id": "NoneType",
+              "superseded_by_item_id": "NoneType",
+              "work_item_id": "int"
+            }
+          ],
+          "events": [
+            {
+              "actor": "str",
+              "created_at": "str",
+              "event_type": "str",
+              "id": "int",
+              "payload": "str",
+              "source_type": "str",
+              "sprint_id": "int",
+              "work_item_id": "int"
+            }
+          ],
+          "item": {
+            "aggregate_uuid": "str",
+            "assignee": "str",
+            "created_at": "str",
+            "description": "str",
+            "id": "int",
+            "legacy": "bool",
+            "priority": "int",
+            "resolution": "str",
+            "sprint_id": "int",
+            "status": "str",
+            "terminal_decision_id": "int",
+            "title": "str",
+            "track_id": "int",
+            "updated_at": "str"
+          },
+          "releases": [],
+          "reservations": []
+        },
+        "releases": [],
+        "reservations": []
+      },
+      "backend": "sprintctl.db",
+      "before": {
+        "decisions": [],
+        "events": [],
+        "item": {
+          "aggregate_uuid": "0ade8ebd-b45b-4645-91b8-c94c9c201e11",
+          "assignee": "owner",
+          "created_at": "2026-10-18T15:55:51Z",
+          "description": "preserved scope",
+          "id": 1,
+          "legacy": false,
+          "priority": 3,
+          "resolution": null,
+          "sprint_id": 1,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "status oracle",
+          "track_id": 1,
+          "updated_at": "2026-10-18T15:55:51Z"
+        },
+        "native_types": {
+          "decisions": [],
+          "events": [],
+          "item": {
+            "aggregate_uuid": "str",
+            "assignee": "str",
+            "created_at": "str",
+            "description": "str",
+            "id": "int",
+            "legacy": "bool",
+            "priority": "int",
+            "resolution": "NoneType",
+            "sprint_id": "int",
+            "status": "str",
+            "terminal_decision_id": "NoneType",
+            "title": "str",
+            "track_id": "int",
+            "updated_at": "str"
+          },
+          "releases": [],
+          "reservations": []
+        },
+        "releases": [],
+        "reservations": []
+      },
+      "history": "keyed-fault-event",
+      "inside_fault": [
+        {
+          "pending": {
+            "decisions": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:51Z",
+                "evidence_digests": [],
+                "id": 1,
+                "kind": "accept",
+                "legacy_source": null,
+                "rationale": "",
+                "release_digest": null,
+                "sprint_id": null,
+                "superseded_by_item_id": null,
+                "work_item_id": 1
+              }
+            ],
+            "events": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:51Z",
+                "event_type": "item-decided",
+                "id": 1,
+                "payload": "{\"decision_id\": 1, \"kind\": \"accept\", \"resolution\": \"accepted\", \"release_digest\": null, \"idempotency_key\": \"9a40fd401e334164b9265806a7bbf9f3\"}",
+                "source_type": "actor",
+                "sprint_id": 1,
+                "work_item_id": 1
+              }
+            ],
+            "item": {
+              "aggregate_uuid": "0ade8ebd-b45b-4645-91b8-c94c9c201e11",
+              "assignee": "owner",
+              "created_at": "2026-10-18T15:55:51Z",
+              "description": "preserved scope",
+              "id": 1,
+              "legacy": false,
+              "priority": 3,
+              "resolution": "accepted",
+              "sprint_id": 1,
+              "status": "done",
+              "terminal_decision_id": 1,
+              "title": "status oracle",
+              "track_id": 1,
+              "updated_at": "2026-10-18T15:55:51Z"
+            },
+            "native_types": {
+              "decisions": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "evidence_digests": "list",
+                  "id": "int",
+                  "kind": "str",
+                  "legacy_source": "NoneType",
+                  "rationale": "str",
+                  "release_digest": "NoneType",
+                  "sprint_id": "NoneType",
+                  "superseded_by_item_id": "NoneType",
+                  "work_item_id": "int"
+                }
+              ],
+              "events": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "event_type": "str",
+                  "id": "int",
+                  "payload": "str",
+                  "source_type": "str",
+                  "sprint_id": "int",
+                  "work_item_id": "int"
+                }
+              ],
+              "item": {
+                "aggregate_uuid": "str",
+                "assignee": "str",
+                "created_at": "str",
+                "description": "str",
+                "id": "int",
+                "legacy": "bool",
+                "priority": "int",
+                "resolution": "str",
+                "sprint_id": "int",
+                "status": "str",
+                "terminal_decision_id": "int",
+                "title": "str",
+                "track_id": "int",
+                "updated_at": "str"
+              },
+              "releases": [],
+              "reservations": []
+            },
+            "releases": [],
+            "reservations": []
+          },
+          "transaction": "ACTIVE"
+        }
+      ],
+      "junit_case": {
+        "class": "tests.test_keyed_decision_workflow.TestSqliteKeyedDecision",
+        "name": "test_after_real_effect_fault_rollback_and_same_key_retry[event]"
+      }
+    },
+    {
+      "backend": "sprintctl.db",
+      "decisions": [
+        [
+          {
+            "actor": "reviewer",
+            "created_at": "2026-10-18T15:55:55Z",
+            "evidence_digests": [],
+            "id": 1,
+            "kind": "revise",
+            "legacy_source": null,
+            "rationale": "",
+            "release_digest": null,
+            "sprint_id": null,
+            "superseded_by_item_id": null,
+            "work_item_id": 1
+          }
+        ],
+        []
+      ],
+      "events": [
+        {
+          "actor": "reviewer",
+          "created_at": "2026-10-18T15:55:55Z",
+          "event_type": "item-decided",
+          "id": 1,
+          "payload": "{\"decision_id\": 1, \"kind\": \"revise\", \"resolution\": null, \"release_digest\": null, \"idempotency_key\": \"a7d7e443bc364367b98ef17703a23e35\"}",
+          "source_type": "actor",
+          "sprint_id": 1,
+          "work_item_id": 1
+        }
+      ],
+      "history": "two-key-actors-False",
+      "junit_case": {
+        "class": "tests.test_keyed_decision_workflow.TestSqliteKeyedDecision",
+        "name": "test_two_actual_actors_share_one_key[False]"
+      },
+      "operations": [
+        {
+          "actor": 0,
+          "phase": "invoke"
+        },
+        {
+          "actor": 1,
+          "phase": "invoke"
+        },
+        {
+          "observation": "SQLite attempted BEGIN IMMEDIATE",
+          "phase": "contender-waits-before-holder-commit"
+        },
+        {
+          "actor": 0,
+          "decision_id": 1,
+          "phase": "complete",
+          "replayed": false
+        },
+        {
+          "actor": 1,
+          "decision_id": 1,
+          "phase": "complete",
+          "replayed": true
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.db",
+      "decisions": [
+        [
+          {
+            "actor": "reviewer",
+            "created_at": "2026-10-18T15:55:55Z",
+            "evidence_digests": [],
+            "id": 1,
+            "kind": "revise",
+            "legacy_source": null,
+            "rationale": "",
+            "release_digest": null,
+            "sprint_id": null,
+            "superseded_by_item_id": null,
+            "work_item_id": 1
+          }
+        ],
+        []
+      ],
+      "events": [
+        {
+          "actor": "reviewer",
+          "created_at": "2026-10-18T15:55:55Z",
+          "event_type": "item-decided",
+          "id": 1,
+          "payload": "{\"decision_id\": 1, \"kind\": \"revise\", \"resolution\": null, \"release_digest\": null, \"idempotency_key\": \"bd38dfbc631f4cc78ef3958a11066b57\"}",
+          "source_type": "actor",
+          "sprint_id": 1,
+          "work_item_id": 1
+        }
+      ],
+      "history": "two-key-actors-True",
+      "junit_case": {
+        "class": "tests.test_keyed_decision_workflow.TestSqliteKeyedDecision",
+        "name": "test_two_actual_actors_share_one_key[True]"
+      },
+      "operations": [
+        {
+          "actor": 0,
+          "phase": "invoke"
+        },
+        {
+          "actor": 1,
+          "phase": "invoke"
+        },
+        {
+          "observation": "SQLite attempted BEGIN IMMEDIATE",
+          "phase": "contender-waits-before-holder-commit"
+        },
+        {
+          "actor": 0,
+          "decision_id": 1,
+          "phase": "complete",
+          "replayed": false
+        },
+        {
+          "actor": 1,
+          "error": "IdempotencyConflict",
+          "phase": "complete"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.db",
+      "decision": {
+        "actor": "reader",
+        "created_at": "2026-10-18T15:55:56Z",
+        "evidence_digests": [],
+        "id": 1,
+        "kind": "accept",
+        "legacy_source": null,
+        "rationale": "",
+        "release_digest": null,
+        "sprint_id": null,
+        "superseded_by_item_id": null,
+        "work_item_id": 1
+      },
+      "history": "response-discard-reconnect",
+      "junit_case": {
+        "class": "tests.test_keyed_decision_workflow.TestSqliteKeyedDecision",
+        "name": "test_discard_committed_response_reconnect_and_replay"
+      },
+      "replayed": true
+    },
+    {
+      "after_retry": {
+        "decisions": [
+          {
+            "actor": "reviewer",
+            "created_at": "2026-10-18T15:55:49.676210Z",
+            "evidence_digests": [],
+            "id": 52,
+            "kind": "accept",
+            "legacy_source": null,
+            "rationale": "",
+            "release_digest": null,
+            "repo_id": "itest-module-497438cd0ab1",
+            "sprint_id": null,
+            "superseded_by_item_id": null,
+            "work_item_id": 98
+          }
+        ],
+        "events": [
+          {
+            "actor": "reviewer",
+            "created_at": "2026-10-18T15:55:49.676210Z",
+            "event_type": "item-decided",
+            "id": 59,
+            "payload": "{\"kind\": \"accept\", \"resolution\": \"accepted\", \"decision_id\": 52, \"release_digest\": null, \"idempotency_key\": \"a7e1b8ab070547f6ab8181128d4fa4fa\"}",
+            "repo_id": "itest-module-497438cd0ab1",
+            "source_type": "actor",
+            "sprint_id": 70,
+            "work_item_id": 98
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "a9616b99-05e9-4528-b11c-e217b58f814a",
+          "assignee": "owner",
+          "created_at": "2026-10-18T15:55:49.661944Z",
+          "description": "preserved scope",
+          "id": 98,
+          "legacy": false,
+          "priority": 3,
+          "repo_id": "itest-module-497438cd0ab1",
+          "resolution": "accepted",
+          "sprint_id": 70,
+          "status": "done",
+          "terminal_decision_id": 52,
+          "title": "status oracle",
+          "track_id": 68,
+          "updated_at": "2026-10-18T15:55:49.676210Z"
+        },
+        "native_types": {
+          "decisions": [
+            {
+              "actor": "str",
+              "created_at": "str",
+              "evidence_digests": "list",
+              "id": "int",
+              "kind": "str",
+              "legacy_source": "NoneType",
+              "rationale": "str",
+              "release_digest": "NoneType",
+              "repo_id": "str",
+              "sprint_id": "NoneType",
+              "superseded_by_item_id": "NoneType",
+              "work_item_id": "int"
+            }
+          ],
+          "events": [
+            {
+              "actor": "str",
+              "created_at": "str",
+              "event_type": "str",
+              "id": "int",
+              "payload": "str",
+              "repo_id": "str",
+              "source_type": "str",
+              "sprint_id": "int",
+              "work_item_id": "int"
+            }
+          ],
+          "item": {
+            "aggregate_uuid": "str",
+            "assignee": "str",
+            "created_at": "str",
+            "description": "str",
+            "id": "int",
+            "legacy": "bool",
+            "priority": "int",
+            "repo_id": "str",
+            "resolution": "str",
+            "sprint_id": "int",
+            "status": "str",
+            "terminal_decision_id": "int",
+            "title": "str",
+            "track_id": "int",
+            "updated_at": "str"
+          },
+          "releases": [],
+          "reservations": []
+        },
+        "releases": [],
+        "reservations": []
+      },
+      "backend": "sprintctl.pg",
+      "before": {
+        "decisions": [],
+        "events": [],
+        "item": {
+          "aggregate_uuid": "a9616b99-05e9-4528-b11c-e217b58f814a",
+          "assignee": "owner",
+          "created_at": "2026-10-18T15:55:49.661944Z",
+          "description": "preserved scope",
+          "id": 98,
+          "legacy": false,
+          "priority": 3,
+          "repo_id": "itest-module-497438cd0ab1",
+          "resolution": null,
+          "sprint_id": 70,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "status oracle",
+          "track_id": 68,
+          "updated_at": "2026-10-18T15:55:49.662279Z"
+        },
+        "native_types": {
+          "decisions": [],
+          "events": [],
+          "item": {
+            "aggregate_uuid": "str",
+            "assignee": "str",
+            "created_at": "str",
+            "description": "str",
+            "id": "int",
+            "legacy": "bool",
+            "priority": "int",
+            "repo_id": "str",
+            "resolution": "NoneType",
+            "sprint_id": "int",
+            "status": "str",
+            "terminal_decision_id": "NoneType",
+            "title": "str",
+            "track_id": "int",
+            "updated_at": "str"
+          },
+          "releases": [],
+          "reservations": []
+        },
+        "releases": [],
+        "reservations": []
+      },
+      "history": "keyed-fault-decision",
+      "inside_fault": [
+        {
+          "pending": {
+            "decisions": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:49.662848Z",
+                "evidence_digests": [],
+                "id": 51,
+                "kind": "accept",
+                "legacy_source": null,
+                "rationale": "",
+                "release_digest": null,
+                "repo_id": "itest-module-497438cd0ab1",
+                "sprint_id": null,
+                "superseded_by_item_id": null,
+                "work_item_id": 98
+              }
+            ],
+            "events": [],
+            "item": {
+              "aggregate_uuid": "a9616b99-05e9-4528-b11c-e217b58f814a",
+              "assignee": "owner",
+              "created_at": "2026-10-18T15:55:49.661944Z",
+              "description": "preserved scope",
+              "id": 98,
+              "legacy": false,
+              "priority": 3,
+              "repo_id": "itest-module-497438cd0ab1",
+              "resolution": "accepted",
+              "sprint_id": 70,
+              "status": "done",
+              "terminal_decision_id": 51,
+              "title": "status oracle",
+              "track_id": 68,
+              "updated_at": "2026-10-18T15:55:49.662848Z"
+            },
+            "native_types": {
+              "decisions": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "evidence_digests": "list",
+                  "id": "int",
+                  "kind": "str",
+                  "legacy_source": "NoneType",
+                  "rationale": "str",
+                  "release_digest": "NoneType",
+                  "repo_id": "str",
+                  "sprint_id": "NoneType",
+                  "superseded_by_item_id": "NoneType",
+                  "work_item_id": "int"
+                }
+              ],
+              "events": [],
+              "item": {
+                "aggregate_uuid": "str",
+                "assignee": "str",
+                "created_at": "str",
+                "description": "str",
+                "id": "int",
+                "legacy": "bool",
+                "priority": "int",
+                "repo_id": "str",
+                "resolution": "str",
+                "sprint_id": "int",
+                "status": "str",
+                "terminal_decision_id": "int",
+                "title": "str",
+                "track_id": "int",
+                "updated_at": "str"
+              },
+              "releases": [],
+              "reservations": []
+            },
+            "releases": [],
+            "reservations": []
+          },
+          "transaction": "INTRANS"
+        }
+      ],
+      "junit_case": {
+        "class": "tests.pg.test_keyed_decision_workflow.TestPostgresKeyedDecision",
+        "name": "test_after_real_effect_fault_rollback_and_same_key_retry[decision]"
+      }
+    },
+    {
+      "after_retry": {
+        "decisions": [
+          {
+            "actor": "reviewer",
+            "created_at": "2026-10-18T15:55:49.700536Z",
+            "evidence_digests": [],
+            "id": 54,
+            "kind": "accept",
+            "legacy_source": null,
+            "rationale": "",
+            "release_digest": null,
+            "repo_id": "itest-module-497438cd0ab1",
+            "sprint_id": null,
+            "superseded_by_item_id": null,
+            "work_item_id": 99
+          }
+        ],
+        "events": [
+          {
+            "actor": "reviewer",
+            "created_at": "2026-10-18T15:55:49.700536Z",
+            "event_type": "item-decided",
+            "id": 60,
+            "payload": "{\"kind\": \"accept\", \"resolution\": \"accepted\", \"decision_id\": 54, \"release_digest\": null, \"idempotency_key\": \"602437275b204e03a248ccbc84cebb68\"}",
+            "repo_id": "itest-module-497438cd0ab1",
+            "source_type": "actor",
+            "sprint_id": 71,
+            "work_item_id": 99
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "e65bf632-c204-408e-abe2-3deb0b7b8e92",
+          "assignee": "owner",
+          "created_at": "2026-10-18T15:55:49.685753Z",
+          "description": "preserved scope",
+          "id": 99,
+          "legacy": false,
+          "priority": 3,
+          "repo_id": "itest-module-497438cd0ab1",
+          "resolution": "accepted",
+          "sprint_id": 71,
+          "status": "done",
+          "terminal_decision_id": 54,
+          "title": "status oracle",
+          "track_id": 69,
+          "updated_at": "2026-10-18T15:55:49.700536Z"
+        },
+        "native_types": {
+          "decisions": [
+            {
+              "actor": "str",
+              "created_at": "str",
+              "evidence_digests": "list",
+              "id": "int",
+              "kind": "str",
+              "legacy_source": "NoneType",
+              "rationale": "str",
+              "release_digest": "NoneType",
+              "repo_id": "str",
+              "sprint_id": "NoneType",
+              "superseded_by_item_id": "NoneType",
+              "work_item_id": "int"
+            }
+          ],
+          "events": [
+            {
+              "actor": "str",
+              "created_at": "str",
+              "event_type": "str",
+              "id": "int",
+              "payload": "str",
+              "repo_id": "str",
+              "source_type": "str",
+              "sprint_id": "int",
+              "work_item_id": "int"
+            }
+          ],
+          "item": {
+            "aggregate_uuid": "str",
+            "assignee": "str",
+            "created_at": "str",
+            "description": "str",
+            "id": "int",
+            "legacy": "bool",
+            "priority": "int",
+            "repo_id": "str",
+            "resolution": "str",
+            "sprint_id": "int",
+            "status": "str",
+            "terminal_decision_id": "int",
+            "title": "str",
+            "track_id": "int",
+            "updated_at": "str"
+          },
+          "releases": [],
+          "reservations": []
+        },
+        "releases": [],
+        "reservations": []
+      },
+      "backend": "sprintctl.pg",
+      "before": {
+        "decisions": [],
+        "events": [],
+        "item": {
+          "aggregate_uuid": "e65bf632-c204-408e-abe2-3deb0b7b8e92",
+          "assignee": "owner",
+          "created_at": "2026-10-18T15:55:49.685753Z",
+          "description": "preserved scope",
+          "id": 99,
+          "legacy": false,
+          "priority": 3,
+          "repo_id": "itest-module-497438cd0ab1",
+          "resolution": null,
+          "sprint_id": 71,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "status oracle",
+          "track_id": 69,
+          "updated_at": "2026-10-18T15:55:49.686100Z"
+        },
+        "native_types": {
+          "decisions": [],
+          "events": [],
+          "item": {
+            "aggregate_uuid": "str",
+            "assignee": "str",
+            "created_at": "str",
+            "description": "str",
+            "id": "int",
+            "legacy": "bool",
+            "priority": "int",
+            "repo_id": "str",
+            "resolution": "NoneType",
+            "sprint_id": "int",
+            "status": "str",
+            "terminal_decision_id": "NoneType",
+            "title": "str",
+            "track_id": "int",
+            "updated_at": "str"
+          },
+          "releases": [],
+          "reservations": []
+        },
+        "releases": [],
+        "reservations": []
+      },
+      "history": "keyed-fault-payload",
+      "inside_fault": [
+        {
+          "pending": {
+            "decisions": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:49.686668Z",
+                "evidence_digests": [],
+                "id": 53,
+                "kind": "accept",
+                "legacy_source": null,
+                "rationale": "",
+                "release_digest": null,
+                "repo_id": "itest-module-497438cd0ab1",
+                "sprint_id": null,
+                "superseded_by_item_id": null,
+                "work_item_id": 99
+              }
+            ],
+            "events": [],
+            "item": {
+              "aggregate_uuid": "e65bf632-c204-408e-abe2-3deb0b7b8e92",
+              "assignee": "owner",
+              "created_at": "2026-10-18T15:55:49.685753Z",
+              "description": "preserved scope",
+              "id": 99,
+              "legacy": false,
+              "priority": 3,
+              "repo_id": "itest-module-497438cd0ab1",
+              "resolution": "accepted",
+              "sprint_id": 71,
+              "status": "done",
+              "terminal_decision_id": 53,
+              "title": "status oracle",
+              "track_id": 69,
+              "updated_at": "2026-10-18T15:55:49.686668Z"
+            },
+            "native_types": {
+              "decisions": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "evidence_digests": "list",
+                  "id": "int",
+                  "kind": "str",
+                  "legacy_source": "NoneType",
+                  "rationale": "str",
+                  "release_digest": "NoneType",
+                  "repo_id": "str",
+                  "sprint_id": "NoneType",
+                  "superseded_by_item_id": "NoneType",
+                  "work_item_id": "int"
+                }
+              ],
+              "events": [],
+              "item": {
+                "aggregate_uuid": "str",
+                "assignee": "str",
+                "created_at": "str",
+                "description": "str",
+                "id": "int",
+                "legacy": "bool",
+                "priority": "int",
+                "repo_id": "str",
+                "resolution": "str",
+                "sprint_id": "int",
+                "status": "str",
+                "terminal_decision_id": "int",
+                "title": "str",
+                "track_id": "int",
+                "updated_at": "str"
+              },
+              "releases": [],
+              "reservations": []
+            },
+            "releases": [],
+            "reservations": []
+          },
+          "transaction": "INTRANS"
+        }
+      ],
+      "junit_case": {
+        "class": "tests.pg.test_keyed_decision_workflow.TestPostgresKeyedDecision",
+        "name": "test_after_real_effect_fault_rollback_and_same_key_retry[payload]"
+      }
+    },
+    {
+      "after_retry": {
+        "decisions": [
+          {
+            "actor": "reviewer",
+            "created_at": "2026-10-18T15:55:49.723738Z",
+            "evidence_digests": [],
+            "id": 56,
+            "kind": "accept",
+            "legacy_source": null,
+            "rationale": "",
+            "release_digest": null,
+            "repo_id": "itest-module-497438cd0ab1",
+            "sprint_id": null,
+            "superseded_by_item_id": null,
+            "work_item_id": 100
+          }
+        ],
+        "events": [
+          {
+            "actor": "reviewer",
+            "created_at": "2026-10-18T15:55:49.723738Z",
+            "event_type": "item-decided",
+            "id": 62,
+            "payload": "{\"kind\": \"accept\", \"resolution\": \"accepted\", \"decision_id\": 56, \"release_digest\": null, \"idempotency_key\": \"9b51f181a3e3440b8a3c29ced6134ba5\"}",
+            "repo_id": "itest-module-497438cd0ab1",
+            "source_type": "actor",
+            "sprint_id": 72,
+            "work_item_id": 100
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "ad589557-eced-4a8b-a81f-32a323a55e0e",
+          "assignee": "owner",
+          "created_at": "2026-10-18T15:55:49.709271Z",
+          "description": "preserved scope",
+          "id": 100,
+          "legacy": false,
+          "priority": 3,
+          "repo_id": "itest-module-497438cd0ab1",
+          "resolution": "accepted",
+          "sprint_id": 72,
+          "status": "done",
+          "terminal_decision_id": 56,
+          "title": "status oracle",
+          "track_id": 70,
+          "updated_at": "2026-10-18T15:55:49.723738Z"
+        },
+        "native_types": {
+          "decisions": [
+            {
+              "actor": "str",
+              "created_at": "str",
+              "evidence_digests": "list",
+              "id": "int",
+              "kind": "str",
+              "legacy_source": "NoneType",
+              "rationale": "str",
+              "release_digest": "NoneType",
+              "repo_id": "str",
+              "sprint_id": "NoneType",
+              "superseded_by_item_id": "NoneType",
+              "work_item_id": "int"
+            }
+          ],
+          "events": [
+            {
+              "actor": "str",
+              "created_at": "str",
+              "event_type": "str",
+              "id": "int",
+              "payload": "str",
+              "repo_id": "str",
+              "source_type": "str",
+              "sprint_id": "int",
+              "work_item_id": "int"
+            }
+          ],
+          "item": {
+            "aggregate_uuid": "str",
+            "assignee": "str",
+            "created_at": "str",
+            "description": "str",
+            "id": "int",
+            "legacy": "bool",
+            "priority": "int",
+            "repo_id": "str",
+            "resolution": "str",
+            "sprint_id": "int",
+            "status": "str",
+            "terminal_decision_id": "int",
+            "title": "str",
+            "track_id": "int",
+            "updated_at": "str"
+          },
+          "releases": [],
+          "reservations": []
+        },
+        "releases": [],
+        "reservations": []
+      },
+      "backend": "sprintctl.pg",
+      "before": {
+        "decisions": [],
+        "events": [],
+        "item": {
+          "aggregate_uuid": "ad589557-eced-4a8b-a81f-32a323a55e0e",
+          "assignee": "owner",
+          "created_at": "2026-10-18T15:55:49.709271Z",
+          "description": "preserved scope",
+          "id": 100,
+          "legacy": false,
+          "priority": 3,
+          "repo_id": "itest-module-497438cd0ab1",
+          "resolution": null,
+          "sprint_id": 72,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "status oracle",
+          "track_id": 70,
+          "updated_at": "2026-10-18T15:55:49.709578Z"
+        },
+        "native_types": {
+          "decisions": [],
+          "events": [],
+          "item": {
+            "aggregate_uuid": "str",
+            "assignee": "str",
+            "created_at": "str",
+            "description": "str",
+            "id": "int",
+            "legacy": "bool",
+            "priority": "int",
+            "repo_id": "str",
+            "resolution": "NoneType",
+            "sprint_id": "int",
+            "status": "str",
+            "terminal_decision_id": "NoneType",
+            "title": "str",
+            "track_id": "int",
+            "updated_at": "str"
+          },
+          "releases": [],
+          "reservations": []
+        },
+        "releases": [],
+        "reservations": []
+      },
+      "history": "keyed-fault-event",
+      "inside_fault": [
+        {
+          "pending": {
+            "decisions": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:49.710061Z",
+                "evidence_digests": [],
+                "id": 55,
+                "kind": "accept",
+                "legacy_source": null,
+                "rationale": "",
+                "release_digest": null,
+                "repo_id": "itest-module-497438cd0ab1",
+                "sprint_id": null,
+                "superseded_by_item_id": null,
+                "work_item_id": 100
+              }
+            ],
+            "events": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:49.710061Z",
+                "event_type": "item-decided",
+                "id": 61,
+                "payload": "{\"kind\": \"accept\", \"resolution\": \"accepted\", \"decision_id\": 55, \"release_digest\": null, \"idempotency_key\": \"9b51f181a3e3440b8a3c29ced6134ba5\"}",
+                "repo_id": "itest-module-497438cd0ab1",
+                "source_type": "actor",
+                "sprint_id": 72,
+                "work_item_id": 100
+              }
+            ],
+            "item": {
+              "aggregate_uuid": "ad589557-eced-4a8b-a81f-32a323a55e0e",
+              "assignee": "owner",
+              "created_at": "2026-10-18T15:55:49.709271Z",
+              "description": "preserved scope",
+              "id": 100,
+              "legacy": false,
+              "priority": 3,
+              "repo_id": "itest-module-497438cd0ab1",
+              "resolution": "accepted",
+              "sprint_id": 72,
+              "status": "done",
+              "terminal_decision_id": 55,
+              "title": "status oracle",
+              "track_id": 70,
+              "updated_at": "2026-10-18T15:55:49.710061Z"
+            },
+            "native_types": {
+              "decisions": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "evidence_digests": "list",
+                  "id": "int",
+                  "kind": "str",
+                  "legacy_source": "NoneType",
+                  "rationale": "str",
+                  "release_digest": "NoneType",
+                  "repo_id": "str",
+                  "sprint_id": "NoneType",
+                  "superseded_by_item_id": "NoneType",
+                  "work_item_id": "int"
+                }
+              ],
+              "events": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "event_type": "str",
+                  "id": "int",
+                  "payload": "str",
+                  "repo_id": "str",
+                  "source_type": "str",
+                  "sprint_id": "int",
+                  "work_item_id": "int"
+                }
+              ],
+              "item": {
+                "aggregate_uuid": "str",
+                "assignee": "str",
+                "created_at": "str",
+                "description": "str",
+                "id": "int",
+                "legacy": "bool",
+                "priority": "int",
+                "repo_id": "str",
+                "resolution": "str",
+                "sprint_id": "int",
+                "status": "str",
+                "terminal_decision_id": "int",
+                "title": "str",
+                "track_id": "int",
+                "updated_at": "str"
+              },
+              "releases": [],
+              "reservations": []
+            },
+            "releases": [],
+            "reservations": []
+          },
+          "transaction": "INTRANS"
+        }
+      ],
+      "junit_case": {
+        "class": "tests.pg.test_keyed_decision_workflow.TestPostgresKeyedDecision",
+        "name": "test_after_real_effect_fault_rollback_and_same_key_retry[event]"
+      }
+    },
+    {
+      "backend": "sprintctl.pg",
+      "decisions": [
+        [
+          {
+            "actor": "reviewer",
+            "created_at": "2026-10-18T15:55:49.783923Z",
+            "evidence_digests": [],
+            "id": 61,
+            "kind": "revise",
+            "legacy_source": null,
+            "rationale": "",
+            "release_digest": null,
+            "repo_id": "itest-module-497438cd0ab1",
+            "sprint_id": null,
+            "superseded_by_item_id": null,
+            "work_item_id": 107
+          }
+        ],
+        []
+      ],
+      "events": [
+        {
+          "actor": "reviewer",
+          "created_at": "2026-10-18T15:55:49.783923Z",
+          "event_type": "item-decided",
+          "id": 67,
+          "payload": "{\"kind\": \"revise\", \"resolution\": null, \"decision_id\": 61, \"release_digest\": null, \"idempotency_key\": \"485e2631f3e14967adfed3aacbd54ba1\"}",
+          "repo_id": "itest-module-497438cd0ab1",
+          "source_type": "actor",
+          "sprint_id": 79,
+          "work_item_id": 107
+        }
+      ],
+      "history": "two-key-actors-False",
+      "junit_case": {
+        "class": "tests.pg.test_keyed_decision_workflow.TestPostgresKeyedDecision",
+        "name": "test_two_actual_actors_share_one_key[False]"
+      },
+      "operations": [
+        {
+          "actor": 0,
+          "phase": "invoke"
+        },
+        {
+          "actor": 1,
+          "phase": "invoke"
+        },
+        {
+          "observation": "PG blocking PID",
+          "phase": "contender-waits-before-holder-commit"
+        },
+        {
+          "actor": 0,
+          "decision_id": 61,
+          "phase": "complete",
+          "replayed": false
+        },
+        {
+          "actor": 1,
+          "decision_id": 61,
+          "phase": "complete",
+          "replayed": true
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "decisions": [
+        [
+          {
+            "actor": "reviewer",
+            "created_at": "2026-10-18T15:55:49.810247Z",
+            "evidence_digests": [],
+            "id": 62,
+            "kind": "revise",
+            "legacy_source": null,
+            "rationale": "",
+            "release_digest": null,
+            "repo_id": "itest-module-497438cd0ab1",
+            "sprint_id": null,
+            "superseded_by_item_id": null,
+            "work_item_id": 109
+          }
+        ],
+        []
+      ],
+      "events": [
+        {
+          "actor": "reviewer",
+          "created_at": "2026-10-18T15:55:49.810247Z",
+          "event_type": "item-decided",
+          "id": 68,
+          "payload": "{\"kind\": \"revise\", \"resolution\": null, \"decision_id\": 62, \"release_digest\": null, \"idempotency_key\": \"a5cc8b9296304f67ba1b763279d0ba00\"}",
+          "repo_id": "itest-module-497438cd0ab1",
+          "source_type": "actor",
+          "sprint_id": 80,
+          "work_item_id": 109
+        }
+      ],
+      "history": "two-key-actors-True",
+      "junit_case": {
+        "class": "tests.pg.test_keyed_decision_workflow.TestPostgresKeyedDecision",
+        "name": "test_two_actual_actors_share_one_key[True]"
+      },
+      "operations": [
+        {
+          "actor": 0,
+          "phase": "invoke"
+        },
+        {
+          "actor": 1,
+          "phase": "invoke"
+        },
+        {
+          "observation": "PG blocking PID",
+          "phase": "contender-waits-before-holder-commit"
+        },
+        {
+          "actor": 0,
+          "decision_id": 62,
+          "phase": "complete",
+          "replayed": false
+        },
+        {
+          "actor": 1,
+          "error": "IdempotencyConflict",
+          "phase": "complete"
+        }
+      ]
+    },
+    {
+      "backend": "sprintctl.pg",
+      "decision": {
+        "actor": "reader",
+        "created_at": "2026-10-18T15:55:49.834650Z",
+        "evidence_digests": [],
+        "id": 63,
+        "kind": "accept",
+        "legacy_source": null,
+        "rationale": "",
+        "release_digest": null,
+        "repo_id": "itest-module-497438cd0ab1",
+        "sprint_id": null,
+        "superseded_by_item_id": null,
+        "work_item_id": 111
+      },
+      "history": "response-discard-reconnect",
+      "junit_case": {
+        "class": "tests.pg.test_keyed_decision_workflow.TestPostgresKeyedDecision",
+        "name": "test_discard_committed_response_reconnect_and_replay"
+      },
+      "replayed": true
+    },
+    {
+      "before": {
+        "decisions": [],
+        "events": [
+          {
+            "actor": "actor-github:100:0",
+            "created_at": "2026-10-18T15:55:50.143892Z",
+            "event_type": "lease.acquired",
+            "id": 105,
+            "payload": "{\"run_id\": \"run_E389X644151RWNWT6CFQ7291GD\", \"lease_id\": \"lease_J3PAJFWTSWYE79M204WTAV9RDT\", \"replaces\": null, \"generation\": 1, \"takeover_of\": null, \"ttl_seconds\": 600, \"principal_id\": \"github:100:0\", \"previous_status\": \"pending\"}",
+            "repo_id": "itest-module-497438cd0ab1",
+            "source_type": "system",
+            "sprint_id": 97,
+            "work_item_id": 124
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "766f16bf-a765-4b4b-b8a3-5d15a76cd9a1",
+          "assignee": "owner",
+          "created_at": "2026-10-18T15:55:50.142669Z",
+          "description": "preserved scope",
+          "id": 124,
+          "legacy": false,
+          "priority": 3,
+          "repo_id": "itest-module-497438cd0ab1",
+          "resolution": null,
+          "sprint_id": 97,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "status oracle",
+          "track_id": 95,
+          "updated_at": "2026-10-18T15:55:50.143892Z"
+        },
+        "native_types": {
+          "decisions": [],
+          "events": [
+            {
+              "actor": "str",
+              "created_at": "str",
+              "event_type": "str",
+              "id": "int",
+              "payload": "str",
+              "repo_id": "str",
+              "source_type": "str",
+              "sprint_id": "int",
+              "work_item_id": "int"
+            }
+          ],
+          "item": {
+            "aggregate_uuid": "str",
+            "assignee": "str",
+            "created_at": "str",
+            "description": "str",
+            "id": "int",
+            "legacy": "bool",
+            "priority": "int",
+            "repo_id": "str",
+            "resolution": "NoneType",
+            "sprint_id": "int",
+            "status": "str",
+            "terminal_decision_id": "NoneType",
+            "title": "str",
+            "track_id": "int",
+            "updated_at": "str"
+          },
+          "releases": [],
+          "reservations": []
+        },
+        "releases": [],
+        "reservations": []
+      },
+      "effects_before": {
+        "work_lease": [
+          {
+            "acquired_at": "2026-10-18 18:55:50.144991+03:00",
+            "claim_key": "keyed-fault-d421df0c18ec4d13b25dd607e7b48163",
+            "client_id": null,
+            "end_reason": null,
+            "ended_at": null,
+            "grant_id": null,
+            "heartbeat_at": "2026-10-18 18:55:50.144991+03:00",
+            "lease_id": "lease_J3PAJFWTSWYE79M204WTAV9RDT",
+            "principal_id": "github:100:0",
+            "repo_id": "itest-module-497438cd0ab1",
+            "required_checks": [],
+            "run_id": "run_E389X644151RWNWT6CFQ7291GD",
+            "state": "active",
+            "superseded_by": null,
+            "takeover_of": null,
+            "ttl_seconds": 600,
+            "verification_profile": "checked",
+            "work_item_id": 124,
+            "workspace_id": "ws-1"
+          }
+        ],
+        "work_outcome_report": []
+      },
+      "history": "native-keyed-fault-False",
+      "inside_fault": [
+        {
+          "effects": {
+            "work_lease": [
+              {
+                "acquired_at": "2026-10-18 18:55:50.144991+03:00",
+                "claim_key": "keyed-fault-d421df0c18ec4d13b25dd607e7b48163",
+                "client_id": null,
+                "end_reason": "item-accepted",
+                "ended_at": "2026-10-18 18:55:50.152794+03:00",
+                "grant_id": null,
+                "heartbeat_at": "2026-10-18 18:55:50.144991+03:00",
+                "lease_id": "lease_J3PAJFWTSWYE79M204WTAV9RDT",
+                "principal_id": "github:100:0",
+                "repo_id": "itest-module-497438cd0ab1",
+                "required_checks": [],
+                "run_id": "run_E389X644151RWNWT6CFQ7291GD",
+                "state": "settled",
+                "superseded_by": null,
+                "takeover_of": null,
+                "ttl_seconds": 600,
+                "verification_profile": "checked",
+                "work_item_id": 124,
+                "workspace_id": "ws-1"
+              }
+            ],
+            "work_outcome_report": []
+          },
+          "pending": {
+            "decisions": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:50.150350Z",
+                "evidence_digests": [],
+                "id": 74,
+                "kind": "accept",
+                "legacy_source": null,
+                "rationale": "",
+                "release_digest": null,
+                "repo_id": "itest-module-497438cd0ab1",
+                "sprint_id": null,
+                "superseded_by_item_id": null,
+                "work_item_id": 124
+              }
+            ],
+            "events": [
+              {
+                "actor": "actor-github:100:0",
+                "created_at": "2026-10-18T15:55:50.143892Z",
+                "event_type": "lease.acquired",
+                "id": 105,
+                "payload": "{\"run_id\": \"run_E389X644151RWNWT6CFQ7291GD\", \"lease_id\": \"lease_J3PAJFWTSWYE79M204WTAV9RDT\", \"replaces\": null, \"generation\": 1, \"takeover_of\": null, \"ttl_seconds\": 600, \"principal_id\": \"github:100:0\", \"previous_status\": \"pending\"}",
+                "repo_id": "itest-module-497438cd0ab1",
+                "source_type": "system",
+                "sprint_id": 97,
+                "work_item_id": 124
+              }
+            ],
+            "item": {
+              "aggregate_uuid": "766f16bf-a765-4b4b-b8a3-5d15a76cd9a1",
+              "assignee": "owner",
+              "created_at": "2026-10-18T15:55:50.142669Z",
+              "description": "preserved scope",
+              "id": 124,
+              "legacy": false,
+              "priority": 3,
+              "repo_id": "itest-module-497438cd0ab1",
+              "resolution": "accepted",
+              "sprint_id": 97,
+              "status": "done",
+              "terminal_decision_id": 74,
+              "title": "status oracle",
+              "track_id": 95,
+              "updated_at": "2026-10-18T15:55:50.150350Z"
+            },
+            "native_types": {
+              "decisions": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "evidence_digests": "list",
+                  "id": "int",
+                  "kind": "str",
+                  "legacy_source": "NoneType",
+                  "rationale": "str",
+                  "release_digest": "NoneType",
+                  "repo_id": "str",
+                  "sprint_id": "NoneType",
+                  "superseded_by_item_id": "NoneType",
+                  "work_item_id": "int"
+                }
+              ],
+              "events": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "event_type": "str",
+                  "id": "int",
+                  "payload": "str",
+                  "repo_id": "str",
+                  "source_type": "str",
+                  "sprint_id": "int",
+                  "work_item_id": "int"
+                }
+              ],
+              "item": {
+                "aggregate_uuid": "str",
+                "assignee": "str",
+                "created_at": "str",
+                "description": "str",
+                "id": "int",
+                "legacy": "bool",
+                "priority": "int",
+                "repo_id": "str",
+                "resolution": "str",
+                "sprint_id": "int",
+                "status": "str",
+                "terminal_decision_id": "int",
+                "title": "str",
+                "track_id": "int",
+                "updated_at": "str"
+              },
+              "releases": [],
+              "reservations": []
+            },
+            "releases": [],
+            "reservations": []
+          }
+        }
+      ],
+      "junit_case": {
+        "class": "tests.pg.test_keyed_decision_workflow",
+        "name": "test_after_real_native_effect_fault_is_observed_before_rollback[False]"
+      }
+    },
+    {
+      "before": {
+        "decisions": [],
+        "events": [
+          {
+            "actor": "actor-github:100:0",
+            "created_at": "2026-10-18T15:55:50.171238Z",
+            "event_type": "lease.acquired",
+            "id": 107,
+            "payload": "{\"run_id\": \"run_8JV1K4V79EJ0EEG85GZK120RRB\", \"lease_id\": \"lease_9QCBV40125CCWB5Q52B1EQ4NX4\", \"replaces\": null, \"generation\": 1, \"takeover_of\": null, \"ttl_seconds\": 600, \"principal_id\": \"github:100:0\", \"previous_status\": \"pending\"}",
+            "repo_id": "itest-module-497438cd0ab1",
+            "source_type": "system",
+            "sprint_id": 99,
+            "work_item_id": 125
+          },
+          {
+            "actor": "operator",
+            "created_at": "2026-10-18T15:55:50.178857Z",
+            "event_type": "reservation.reserved",
+            "id": 108,
+            "payload": "{\"role\": \"execution\", \"session_id\": \"legacy-6614d45e\", \"release_digest\": \"1576ca4489be5c65ec24425cc31f26d5a3e5600d36eb566ae0995f8cb737dfae\", \"reservation_id\": 10, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+            "repo_id": "itest-module-497438cd0ab1",
+            "source_type": "system",
+            "sprint_id": 99,
+            "work_item_id": 125
+          },
+          {
+            "actor": "operator",
+            "created_at": "2026-10-18T15:55:50.180745Z",
+            "event_type": "reservation.released",
+            "id": 109,
+            "payload": "{\"reservation_id\": 10}",
+            "repo_id": "itest-module-497438cd0ab1",
+            "source_type": "system",
+            "sprint_id": 99,
+            "work_item_id": 125
+          },
+          {
+            "actor": "actor-github:100:0",
+            "created_at": "2026-10-18T15:55:50.182277Z",
+            "event_type": "lease.outcome-reported",
+            "id": 110,
+            "payload": "{\"run_id\": \"run_8JV1K4V79EJ0EEG85GZK120RRB\", \"outcome\": \"succeeded\", \"lease_id\": \"lease_9QCBV40125CCWB5Q52B1EQ4NX4\", \"report_id\": \"outcome_X2MV7XHNGW523PYF5S8SYB3PP0\", \"decision_id\": null, \"disposition\": \"awaiting-verification\", \"reason_code\": null, \"payload_digest\": \"b2df170bd445e3c154415b3758bc5598e8bae8d3d2666d9ba5d1d6b09c388175\", \"verification_profile\": \"human-authorized\"}",
+            "repo_id": "itest-module-497438cd0ab1",
+            "source_type": "system",
+            "sprint_id": 99,
+            "work_item_id": 125
+          }
+        ],
+        "item": {
+          "aggregate_uuid": "be71390e-289f-40f8-bc2c-35efb760e602",
+          "assignee": null,
+          "created_at": "2026-10-18T15:55:50.170004Z",
+          "description": "",
+          "id": 125,
+          "legacy": false,
+          "priority": null,
+          "repo_id": "itest-module-497438cd0ab1",
+          "resolution": null,
+          "sprint_id": 99,
+          "status": "active",
+          "terminal_decision_id": null,
+          "title": "item 0",
+          "track_id": 97,
+          "updated_at": "2026-10-18T15:55:50.171238Z"
+        },
+        "native_types": {
+          "decisions": [],
+          "events": [
+            {
+              "actor": "str",
+              "created_at": "str",
+              "event_type": "str",
+              "id": "int",
+              "payload": "str",
+              "repo_id": "str",
+              "source_type": "str",
+              "sprint_id": "int",
+              "work_item_id": "int"
+            },
+            {
+              "actor": "str",
+              "created_at": "str",
+              "event_type": "str",
+              "id": "int",
+              "payload": "str",
+              "repo_id": "str",
+              "source_type": "str",
+              "sprint_id": "int",
+              "work_item_id": "int"
+            },
+            {
+              "actor": "str",
+              "created_at": "str",
+              "event_type": "str",
+              "id": "int",
+              "payload": "str",
+              "repo_id": "str",
+              "source_type": "str",
+              "sprint_id": "int",
+              "work_item_id": "int"
+            },
+            {
+              "actor": "str",
+              "created_at": "str",
+              "event_type": "str",
+              "id": "int",
+              "payload": "str",
+              "repo_id": "str",
+              "source_type": "str",
+              "sprint_id": "int",
+              "work_item_id": "int"
+            }
+          ],
+          "item": {
+            "aggregate_uuid": "str",
+            "assignee": "NoneType",
+            "created_at": "str",
+            "description": "str",
+            "id": "int",
+            "legacy": "bool",
+            "priority": "NoneType",
+            "repo_id": "str",
+            "resolution": "NoneType",
+            "sprint_id": "int",
+            "status": "str",
+            "terminal_decision_id": "NoneType",
+            "title": "str",
+            "track_id": "int",
+            "updated_at": "str"
+          },
+          "releases": [
+            {
+              "acceptance_contract": "dict",
+              "actor": "str",
+              "context_refs": "list",
+              "created_at": "str",
+              "id": "int",
+              "item_revision": "str",
+              "release_digest": "str",
+              "repo_id": "str",
+              "revise_count": "int",
+              "work_item_id": "int"
+            }
+          ],
+          "reservations": [
+            {
+              "actor": "str",
+              "correlation_ref": "NoneType",
+              "created_at": "datetime",
+              "id": "int",
+              "interruption_reason": "NoneType",
+              "last_activity_at": "datetime",
+              "release_digest": "str",
+              "released_at": "datetime",
+              "repo_id": "str",
+              "role": "str",
+              "session_id": "str",
+              "state": "str",
+              "work_item_id": "int"
+            }
+          ]
+        },
+        "releases": [
+          {
+            "acceptance_contract": {
+              "verification_profile": "human-authorized"
+            },
+            "actor": "operator",
+            "context_refs": [],
+            "created_at": "2026-10-18T15:55:50.178857Z",
+            "id": 10,
+            "item_revision": "item:be71390e-289f-40f8-bc2c-35efb760e602@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+            "release_digest": "1576ca4489be5c65ec24425cc31f26d5a3e5600d36eb566ae0995f8cb737dfae",
+            "repo_id": "itest-module-497438cd0ab1",
+            "revise_count": 0,
+            "work_item_id": 125
+          }
+        ],
+        "reservations": [
+          {
+            "actor": "operator",
+            "correlation_ref": null,
+            "created_at": "2026-10-18 18:55:50+03:00",
+            "id": 10,
+            "interruption_reason": null,
+            "last_activity_at": "2026-10-18 18:55:50+03:00",
+            "release_digest": "1576ca4489be5c65ec24425cc31f26d5a3e5600d36eb566ae0995f8cb737dfae",
+            "released_at": "2026-10-18 18:55:50+03:00",
+            "repo_id": "itest-module-497438cd0ab1",
+            "role": "execution",
+            "session_id": "legacy-6614d45e",
+            "state": "released",
+            "work_item_id": 125
+          }
+        ]
+      },
+      "effects_before": {
+        "work_lease": [
+          {
+            "acquired_at": "2026-10-18 18:55:50.172500+03:00",
+            "claim_key": "keyed-fault-43469557d4304989893dc23911fbc628-a",
+            "client_id": null,
+            "end_reason": null,
+            "ended_at": null,
+            "grant_id": null,
+            "heartbeat_at": "2026-10-18 18:55:50.172500+03:00",
+            "lease_id": "lease_9QCBV40125CCWB5Q52B1EQ4NX4",
+            "principal_id": "github:100:0",
+            "repo_id": "itest-module-497438cd0ab1",
+            "required_checks": [],
+            "run_id": "run_8JV1K4V79EJ0EEG85GZK120RRB",
+            "state": "active",
+            "superseded_by": null,
+            "takeover_of": null,
+            "ttl_seconds": 600,
+            "verification_profile": "human-authorized",
+            "work_item_id": 125,
+            "workspace_id": "ws-1"
+          }
+        ],
+        "work_outcome_report": [
+          {
+            "checks": [
+              {
+                "name": "tests",
+                "status": "passed"
+              }
+            ],
+            "created_at": "2026-10-18 18:55:50.182277+03:00",
+            "decision_id": null,
+            "disposition": "awaiting-verification",
+            "idempotency_key": "keyed-fault-43469557d4304989893dc23911fbc628-c",
+            "lease_id": "lease_9QCBV40125CCWB5Q52B1EQ4NX4",
+            "outcome": "succeeded",
+            "payload": {
+              "result": "ok"
+            },
+            "payload_digest": "b2df170bd445e3c154415b3758bc5598e8bae8d3d2666d9ba5d1d6b09c388175",
+            "principal_id": "github:100:0",
+            "reason_code": null,
+            "repo_id": "itest-module-497438cd0ab1",
+            "report_id": "outcome_X2MV7XHNGW523PYF5S8SYB3PP0",
+            "request_digest": "4f80f4e5005d198e4a0a9adcd5cc7e019ac944528e9290a6eac0b804b6aeed8a",
+            "run_id": "run_8JV1K4V79EJ0EEG85GZK120RRB",
+            "summary": "done",
+            "verification_profile": "human-authorized",
+            "work_item_id": 125,
+            "workspace_id": "ws-1"
+          }
+        ]
+      },
+      "history": "native-keyed-fault-True",
+      "inside_fault": [
+        {
+          "effects": {
+            "work_lease": [
+              {
+                "acquired_at": "2026-10-18 18:55:50.172500+03:00",
+                "claim_key": "keyed-fault-43469557d4304989893dc23911fbc628-a",
+                "client_id": null,
+                "end_reason": "item-accepted",
+                "ended_at": "2026-10-18 18:55:50.191189+03:00",
+                "grant_id": null,
+                "heartbeat_at": "2026-10-18 18:55:50.172500+03:00",
+                "lease_id": "lease_9QCBV40125CCWB5Q52B1EQ4NX4",
+                "principal_id": "github:100:0",
+                "repo_id": "itest-module-497438cd0ab1",
+                "required_checks": [],
+                "run_id": "run_8JV1K4V79EJ0EEG85GZK120RRB",
+                "state": "settled",
+                "superseded_by": null,
+                "takeover_of": null,
+                "ttl_seconds": 600,
+                "verification_profile": "human-authorized",
+                "work_item_id": 125,
+                "workspace_id": "ws-1"
+              }
+            ],
+            "work_outcome_report": [
+              {
+                "checks": [
+                  {
+                    "name": "tests",
+                    "status": "passed"
+                  }
+                ],
+                "created_at": "2026-10-18 18:55:50.182277+03:00",
+                "decision_id": null,
+                "disposition": "rejected",
+                "idempotency_key": "keyed-fault-43469557d4304989893dc23911fbc628-c",
+                "lease_id": "lease_9QCBV40125CCWB5Q52B1EQ4NX4",
+                "outcome": "succeeded",
+                "payload": {
+                  "result": "ok"
+                },
+                "payload_digest": "b2df170bd445e3c154415b3758bc5598e8bae8d3d2666d9ba5d1d6b09c388175",
+                "principal_id": "github:100:0",
+                "reason_code": "decided-accept-unverified",
+                "repo_id": "itest-module-497438cd0ab1",
+                "report_id": "outcome_X2MV7XHNGW523PYF5S8SYB3PP0",
+                "request_digest": "4f80f4e5005d198e4a0a9adcd5cc7e019ac944528e9290a6eac0b804b6aeed8a",
+                "run_id": "run_8JV1K4V79EJ0EEG85GZK120RRB",
+                "summary": "done",
+                "verification_profile": "human-authorized",
+                "work_item_id": 125,
+                "workspace_id": "ws-1"
+              }
+            ]
+          },
+          "pending": {
+            "decisions": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:50.188445Z",
+                "evidence_digests": [],
+                "id": 76,
+                "kind": "accept",
+                "legacy_source": null,
+                "rationale": "",
+                "release_digest": "1576ca4489be5c65ec24425cc31f26d5a3e5600d36eb566ae0995f8cb737dfae",
+                "repo_id": "itest-module-497438cd0ab1",
+                "sprint_id": null,
+                "superseded_by_item_id": null,
+                "work_item_id": 125
+              }
+            ],
+            "events": [
+              {
+                "actor": "actor-github:100:0",
+                "created_at": "2026-10-18T15:55:50.171238Z",
+                "event_type": "lease.acquired",
+                "id": 107,
+                "payload": "{\"run_id\": \"run_8JV1K4V79EJ0EEG85GZK120RRB\", \"lease_id\": \"lease_9QCBV40125CCWB5Q52B1EQ4NX4\", \"replaces\": null, \"generation\": 1, \"takeover_of\": null, \"ttl_seconds\": 600, \"principal_id\": \"github:100:0\", \"previous_status\": \"pending\"}",
+                "repo_id": "itest-module-497438cd0ab1",
+                "source_type": "system",
+                "sprint_id": 99,
+                "work_item_id": 125
+              },
+              {
+                "actor": "operator",
+                "created_at": "2026-10-18T15:55:50.178857Z",
+                "event_type": "reservation.reserved",
+                "id": 108,
+                "payload": "{\"role\": \"execution\", \"session_id\": \"legacy-6614d45e\", \"release_digest\": \"1576ca4489be5c65ec24425cc31f26d5a3e5600d36eb566ae0995f8cb737dfae\", \"reservation_id\": 10, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-497438cd0ab1",
+                "source_type": "system",
+                "sprint_id": 99,
+                "work_item_id": 125
+              },
+              {
+                "actor": "operator",
+                "created_at": "2026-10-18T15:55:50.180745Z",
+                "event_type": "reservation.released",
+                "id": 109,
+                "payload": "{\"reservation_id\": 10}",
+                "repo_id": "itest-module-497438cd0ab1",
+                "source_type": "system",
+                "sprint_id": 99,
+                "work_item_id": 125
+              },
+              {
+                "actor": "actor-github:100:0",
+                "created_at": "2026-10-18T15:55:50.182277Z",
+                "event_type": "lease.outcome-reported",
+                "id": 110,
+                "payload": "{\"run_id\": \"run_8JV1K4V79EJ0EEG85GZK120RRB\", \"outcome\": \"succeeded\", \"lease_id\": \"lease_9QCBV40125CCWB5Q52B1EQ4NX4\", \"report_id\": \"outcome_X2MV7XHNGW523PYF5S8SYB3PP0\", \"decision_id\": null, \"disposition\": \"awaiting-verification\", \"reason_code\": null, \"payload_digest\": \"b2df170bd445e3c154415b3758bc5598e8bae8d3d2666d9ba5d1d6b09c388175\", \"verification_profile\": \"human-authorized\"}",
+                "repo_id": "itest-module-497438cd0ab1",
+                "source_type": "system",
+                "sprint_id": 99,
+                "work_item_id": 125
+              }
+            ],
+            "item": {
+              "aggregate_uuid": "be71390e-289f-40f8-bc2c-35efb760e602",
+              "assignee": null,
+              "created_at": "2026-10-18T15:55:50.170004Z",
+              "description": "",
+              "id": 125,
+              "legacy": false,
+              "priority": null,
+              "repo_id": "itest-module-497438cd0ab1",
+              "resolution": "accepted",
+              "sprint_id": 99,
+              "status": "done",
+              "terminal_decision_id": 76,
+              "title": "item 0",
+              "track_id": 97,
+              "updated_at": "2026-10-18T15:55:50.188445Z"
+            },
+            "native_types": {
+              "decisions": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "evidence_digests": "list",
+                  "id": "int",
+                  "kind": "str",
+                  "legacy_source": "NoneType",
+                  "rationale": "str",
+                  "release_digest": "str",
+                  "repo_id": "str",
+                  "sprint_id": "NoneType",
+                  "superseded_by_item_id": "NoneType",
+                  "work_item_id": "int"
+                }
+              ],
+              "events": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "event_type": "str",
+                  "id": "int",
+                  "payload": "str",
+                  "repo_id": "str",
+                  "source_type": "str",
+                  "sprint_id": "int",
+                  "work_item_id": "int"
+                },
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "event_type": "str",
+                  "id": "int",
+                  "payload": "str",
+                  "repo_id": "str",
+                  "source_type": "str",
+                  "sprint_id": "int",
+                  "work_item_id": "int"
+                },
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "event_type": "str",
+                  "id": "int",
+                  "payload": "str",
+                  "repo_id": "str",
+                  "source_type": "str",
+                  "sprint_id": "int",
+                  "work_item_id": "int"
+                },
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "event_type": "str",
+                  "id": "int",
+                  "payload": "str",
+                  "repo_id": "str",
+                  "source_type": "str",
+                  "sprint_id": "int",
+                  "work_item_id": "int"
+                }
+              ],
+              "item": {
+                "aggregate_uuid": "str",
+                "assignee": "NoneType",
+                "created_at": "str",
+                "description": "str",
+                "id": "int",
+                "legacy": "bool",
+                "priority": "NoneType",
+                "repo_id": "str",
+                "resolution": "str",
+                "sprint_id": "int",
+                "status": "str",
+                "terminal_decision_id": "int",
+                "title": "str",
+                "track_id": "int",
+                "updated_at": "str"
+              },
+              "releases": [
+                {
+                  "acceptance_contract": "dict",
+                  "actor": "str",
+                  "context_refs": "list",
+                  "created_at": "str",
+                  "id": "int",
+                  "item_revision": "str",
+                  "release_digest": "str",
+                  "repo_id": "str",
+                  "revise_count": "int",
+                  "work_item_id": "int"
+                }
+              ],
+              "reservations": [
+                {
+                  "actor": "str",
+                  "correlation_ref": "NoneType",
+                  "created_at": "datetime",
+                  "id": "int",
+                  "interruption_reason": "NoneType",
+                  "last_activity_at": "datetime",
+                  "release_digest": "str",
+                  "released_at": "datetime",
+                  "repo_id": "str",
+                  "role": "str",
+                  "session_id": "str",
+                  "state": "str",
+                  "work_item_id": "int"
+                }
+              ]
+            },
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "verification_profile": "human-authorized"
+                },
+                "actor": "operator",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:55:50.178857Z",
+                "id": 10,
+                "item_revision": "item:be71390e-289f-40f8-bc2c-35efb760e602@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "1576ca4489be5c65ec24425cc31f26d5a3e5600d36eb566ae0995f8cb737dfae",
+                "repo_id": "itest-module-497438cd0ab1",
+                "revise_count": 0,
+                "work_item_id": 125
+              }
+            ],
+            "reservations": [
+              {
+                "actor": "operator",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:55:50+03:00",
+                "id": 10,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18 18:55:50+03:00",
+                "release_digest": "1576ca4489be5c65ec24425cc31f26d5a3e5600d36eb566ae0995f8cb737dfae",
+                "released_at": "2026-10-18 18:55:50+03:00",
+                "repo_id": "itest-module-497438cd0ab1",
+                "role": "execution",
+                "session_id": "legacy-6614d45e",
+                "state": "released",
+                "work_item_id": 125
+              }
+            ]
+          }
+        }
+      ],
+      "junit_case": {
+        "class": "tests.pg.test_keyed_decision_workflow",
+        "name": "test_after_real_native_effect_fault_is_observed_before_rollback[True]"
+      }
+    },
+    {
+      "history": "keyed-owner-managed-False",
+      "junit_case": {
+        "class": "tests.pg.test_keyed_decision_workflow",
+        "name": "test_forbidden_owner_boundary_retains_actual_pending_state[False-managed]"
+      },
+      "observed_before_caller_cleanup": [
+        {
+          "caller_goal": "pending caller",
+          "durable": {
+            "decisions": [],
+            "events": [],
+            "item": {
+              "aggregate_uuid": "fd5e4ed2-e22d-4d12-b07b-23f0df185101",
+              "assignee": "owner",
+              "created_at": "2026-10-18T15:55:50.247398Z",
+              "description": "preserved scope",
+              "id": 127,
+              "legacy": false,
+              "priority": 3,
+              "repo_id": "itest-module-497438cd0ab1",
+              "resolution": null,
+              "sprint_id": 102,
+              "status": "active",
+              "terminal_decision_id": null,
+              "title": "status oracle",
+              "track_id": 100,
+              "updated_at": "2026-10-18T15:55:50.247760Z"
+            },
+            "native_types": {
+              "decisions": [],
+              "events": [],
+              "item": {
+                "aggregate_uuid": "str",
+                "assignee": "str",
+                "created_at": "str",
+                "description": "str",
+                "id": "int",
+                "legacy": "bool",
+                "priority": "int",
+                "repo_id": "str",
+                "resolution": "NoneType",
+                "sprint_id": "int",
+                "status": "str",
+                "terminal_decision_id": "NoneType",
+                "title": "str",
+                "track_id": "int",
+                "updated_at": "str"
+              },
+              "releases": [],
+              "reservations": []
+            },
+            "releases": [],
+            "reservations": []
+          },
+          "pending": {
+            "decisions": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:50.248812Z",
+                "evidence_digests": [],
+                "id": 79,
+                "kind": "revise",
+                "legacy_source": null,
+                "rationale": "",
+                "release_digest": null,
+                "repo_id": "itest-module-497438cd0ab1",
+                "sprint_id": null,
+                "superseded_by_item_id": null,
+                "work_item_id": 127
+              }
+            ],
+            "events": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:50.248812Z",
+                "event_type": "item-decided",
+                "id": 121,
+                "payload": "{\"kind\": \"revise\", \"resolution\": null, \"decision_id\": 79, \"release_digest\": null, \"idempotency_key\": \"014864cf8ad8425f993a010328d8e2cb\"}",
+                "repo_id": "itest-module-497438cd0ab1",
+                "source_type": "actor",
+                "sprint_id": 102,
+                "work_item_id": 127
+              }
+            ],
+            "item": {
+              "aggregate_uuid": "fd5e4ed2-e22d-4d12-b07b-23f0df185101",
+              "assignee": "owner",
+              "created_at": "2026-10-18T15:55:50.247398Z",
+              "description": "preserved scope",
+              "id": 127,
+              "legacy": false,
+              "priority": 3,
+              "repo_id": "itest-module-497438cd0ab1",
+              "resolution": null,
+              "sprint_id": 102,
+              "status": "active",
+              "terminal_decision_id": null,
+              "title": "status oracle",
+              "track_id": 100,
+              "updated_at": "2026-10-18T15:55:50.247760Z"
+            },
+            "native_types": {
+              "decisions": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "evidence_digests": "list",
+                  "id": "int",
+                  "kind": "str",
+                  "legacy_source": "NoneType",
+                  "rationale": "str",
+                  "release_digest": "NoneType",
+                  "repo_id": "str",
+                  "sprint_id": "NoneType",
+                  "superseded_by_item_id": "NoneType",
+                  "work_item_id": "int"
+                }
+              ],
+              "events": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "event_type": "str",
+                  "id": "int",
+                  "payload": "str",
+                  "repo_id": "str",
+                  "source_type": "str",
+                  "sprint_id": "int",
+                  "work_item_id": "int"
+                }
+              ],
+              "item": {
+                "aggregate_uuid": "str",
+                "assignee": "str",
+                "created_at": "str",
+                "description": "str",
+                "id": "int",
+                "legacy": "bool",
+                "priority": "int",
+                "repo_id": "str",
+                "resolution": "NoneType",
+                "sprint_id": "int",
+                "status": "str",
+                "terminal_decision_id": "NoneType",
+                "title": "str",
+                "track_id": "int",
+                "updated_at": "str"
+              },
+              "releases": [],
+              "reservations": []
+            },
+            "releases": [],
+            "reservations": []
+          }
+        }
+      ]
+    },
+    {
+      "history": "keyed-owner-two-phase-False",
+      "junit_case": {
+        "class": "tests.pg.test_keyed_decision_workflow",
+        "name": "test_forbidden_owner_boundary_retains_actual_pending_state[False-two-phase]"
+      },
+      "observed_before_caller_cleanup": [
+        {
+          "caller_goal": "pending caller",
+          "durable": {
+            "decisions": [],
+            "events": [],
+            "item": {
+              "aggregate_uuid": "64ab5371-fce9-4820-918b-8267d6444d91",
+              "assignee": "owner",
+              "created_at": "2026-10-18T15:55:50.265095Z",
+              "description": "preserved scope",
+              "id": 128,
+              "legacy": false,
+              "priority": 3,
+              "repo_id": "itest-module-497438cd0ab1",
+              "resolution": null,
+              "sprint_id": 103,
+              "status": "active",
+              "terminal_decision_id": null,
+              "title": "status oracle",
+              "track_id": 101,
+              "updated_at": "2026-10-18T15:55:50.265469Z"
+            },
+            "native_types": {
+              "decisions": [],
+              "events": [],
+              "item": {
+                "aggregate_uuid": "str",
+                "assignee": "str",
+                "created_at": "str",
+                "description": "str",
+                "id": "int",
+                "legacy": "bool",
+                "priority": "int",
+                "repo_id": "str",
+                "resolution": "NoneType",
+                "sprint_id": "int",
+                "status": "str",
+                "terminal_decision_id": "NoneType",
+                "title": "str",
+                "track_id": "int",
+                "updated_at": "str"
+              },
+              "releases": [],
+              "reservations": []
+            },
+            "releases": [],
+            "reservations": []
+          },
+          "pending": {
+            "decisions": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:50.266617Z",
+                "evidence_digests": [],
+                "id": 80,
+                "kind": "revise",
+                "legacy_source": null,
+                "rationale": "",
+                "release_digest": null,
+                "repo_id": "itest-module-497438cd0ab1",
+                "sprint_id": null,
+                "superseded_by_item_id": null,
+                "work_item_id": 128
+              }
+            ],
+            "events": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:50.266617Z",
+                "event_type": "item-decided",
+                "id": 122,
+                "payload": "{\"kind\": \"revise\", \"resolution\": null, \"decision_id\": 80, \"release_digest\": null, \"idempotency_key\": \"a7de130c87484cfb882be4321b86b2ab\"}",
+                "repo_id": "itest-module-497438cd0ab1",
+                "source_type": "actor",
+                "sprint_id": 103,
+                "work_item_id": 128
+              }
+            ],
+            "item": {
+              "aggregate_uuid": "64ab5371-fce9-4820-918b-8267d6444d91",
+              "assignee": "owner",
+              "created_at": "2026-10-18T15:55:50.265095Z",
+              "description": "preserved scope",
+              "id": 128,
+              "legacy": false,
+              "priority": 3,
+              "repo_id": "itest-module-497438cd0ab1",
+              "resolution": null,
+              "sprint_id": 103,
+              "status": "active",
+              "terminal_decision_id": null,
+              "title": "status oracle",
+              "track_id": 101,
+              "updated_at": "2026-10-18T15:55:50.265469Z"
+            },
+            "native_types": {
+              "decisions": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "evidence_digests": "list",
+                  "id": "int",
+                  "kind": "str",
+                  "legacy_source": "NoneType",
+                  "rationale": "str",
+                  "release_digest": "NoneType",
+                  "repo_id": "str",
+                  "sprint_id": "NoneType",
+                  "superseded_by_item_id": "NoneType",
+                  "work_item_id": "int"
+                }
+              ],
+              "events": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "event_type": "str",
+                  "id": "int",
+                  "payload": "str",
+                  "repo_id": "str",
+                  "source_type": "str",
+                  "sprint_id": "int",
+                  "work_item_id": "int"
+                }
+              ],
+              "item": {
+                "aggregate_uuid": "str",
+                "assignee": "str",
+                "created_at": "str",
+                "description": "str",
+                "id": "int",
+                "legacy": "bool",
+                "priority": "int",
+                "repo_id": "str",
+                "resolution": "NoneType",
+                "sprint_id": "int",
+                "status": "str",
+                "terminal_decision_id": "NoneType",
+                "title": "str",
+                "track_id": "int",
+                "updated_at": "str"
+              },
+              "releases": [],
+              "reservations": []
+            },
+            "releases": [],
+            "reservations": []
+          }
+        }
+      ]
+    },
+    {
+      "history": "keyed-owner-managed-True",
+      "junit_case": {
+        "class": "tests.pg.test_keyed_decision_workflow",
+        "name": "test_forbidden_owner_boundary_retains_actual_pending_state[True-managed]"
+      },
+      "observed_before_caller_cleanup": [
+        {
+          "caller_goal": "pending caller",
+          "durable": {
+            "decisions": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:50.282807Z",
+                "evidence_digests": [],
+                "id": 81,
+                "kind": "revise",
+                "legacy_source": null,
+                "rationale": "",
+                "release_digest": null,
+                "repo_id": "itest-module-497438cd0ab1",
+                "sprint_id": null,
+                "superseded_by_item_id": null,
+                "work_item_id": 129
+              }
+            ],
+            "events": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:50.282807Z",
+                "event_type": "item-decided",
+                "id": 123,
+                "payload": "{\"kind\": \"revise\", \"resolution\": null, \"decision_id\": 81, \"release_digest\": null, \"idempotency_key\": \"0ac0c920b5984c0aa21da41d360b1693\"}",
+                "repo_id": "itest-module-497438cd0ab1",
+                "source_type": "actor",
+                "sprint_id": 104,
+                "work_item_id": 129
+              }
+            ],
+            "item": {
+              "aggregate_uuid": "0727f79a-bbfa-418f-a0d1-766daf40965a",
+              "assignee": "owner",
+              "created_at": "2026-10-18T15:55:50.281919Z",
+              "description": "preserved scope",
+              "id": 129,
+              "legacy": false,
+              "priority": 3,
+              "repo_id": "itest-module-497438cd0ab1",
+              "resolution": null,
+              "sprint_id": 104,
+              "status": "active",
+              "terminal_decision_id": null,
+              "title": "status oracle",
+              "track_id": 102,
+              "updated_at": "2026-10-18T15:55:50.282216Z"
+            },
+            "native_types": {
+              "decisions": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "evidence_digests": "list",
+                  "id": "int",
+                  "kind": "str",
+                  "legacy_source": "NoneType",
+                  "rationale": "str",
+                  "release_digest": "NoneType",
+                  "repo_id": "str",
+                  "sprint_id": "NoneType",
+                  "superseded_by_item_id": "NoneType",
+                  "work_item_id": "int"
+                }
+              ],
+              "events": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "event_type": "str",
+                  "id": "int",
+                  "payload": "str",
+                  "repo_id": "str",
+                  "source_type": "str",
+                  "sprint_id": "int",
+                  "work_item_id": "int"
+                }
+              ],
+              "item": {
+                "aggregate_uuid": "str",
+                "assignee": "str",
+                "created_at": "str",
+                "description": "str",
+                "id": "int",
+                "legacy": "bool",
+                "priority": "int",
+                "repo_id": "str",
+                "resolution": "NoneType",
+                "sprint_id": "int",
+                "status": "str",
+                "terminal_decision_id": "NoneType",
+                "title": "str",
+                "track_id": "int",
+                "updated_at": "str"
+              },
+              "releases": [],
+              "reservations": []
+            },
+            "releases": [],
+            "reservations": []
+          },
+          "pending": {
+            "decisions": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:50.282807Z",
+                "evidence_digests": [],
+                "id": 81,
+                "kind": "revise",
+                "legacy_source": null,
+                "rationale": "",
+                "release_digest": null,
+                "repo_id": "itest-module-497438cd0ab1",
+                "sprint_id": null,
+                "superseded_by_item_id": null,
+                "work_item_id": 129
+              }
+            ],
+            "events": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:50.282807Z",
+                "event_type": "item-decided",
+                "id": 123,
+                "payload": "{\"kind\": \"revise\", \"resolution\": null, \"decision_id\": 81, \"release_digest\": null, \"idempotency_key\": \"0ac0c920b5984c0aa21da41d360b1693\"}",
+                "repo_id": "itest-module-497438cd0ab1",
+                "source_type": "actor",
+                "sprint_id": 104,
+                "work_item_id": 129
+              }
+            ],
+            "item": {
+              "aggregate_uuid": "0727f79a-bbfa-418f-a0d1-766daf40965a",
+              "assignee": "owner",
+              "created_at": "2026-10-18T15:55:50.281919Z",
+              "description": "preserved scope",
+              "id": 129,
+              "legacy": false,
+              "priority": 3,
+              "repo_id": "itest-module-497438cd0ab1",
+              "resolution": null,
+              "sprint_id": 104,
+              "status": "active",
+              "terminal_decision_id": null,
+              "title": "status oracle",
+              "track_id": 102,
+              "updated_at": "2026-10-18T15:55:50.282216Z"
+            },
+            "native_types": {
+              "decisions": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "evidence_digests": "list",
+                  "id": "int",
+                  "kind": "str",
+                  "legacy_source": "NoneType",
+                  "rationale": "str",
+                  "release_digest": "NoneType",
+                  "repo_id": "str",
+                  "sprint_id": "NoneType",
+                  "superseded_by_item_id": "NoneType",
+                  "work_item_id": "int"
+                }
+              ],
+              "events": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "event_type": "str",
+                  "id": "int",
+                  "payload": "str",
+                  "repo_id": "str",
+                  "source_type": "str",
+                  "sprint_id": "int",
+                  "work_item_id": "int"
+                }
+              ],
+              "item": {
+                "aggregate_uuid": "str",
+                "assignee": "str",
+                "created_at": "str",
+                "description": "str",
+                "id": "int",
+                "legacy": "bool",
+                "priority": "int",
+                "repo_id": "str",
+                "resolution": "NoneType",
+                "sprint_id": "int",
+                "status": "str",
+                "terminal_decision_id": "NoneType",
+                "title": "str",
+                "track_id": "int",
+                "updated_at": "str"
+              },
+              "releases": [],
+              "reservations": []
+            },
+            "releases": [],
+            "reservations": []
+          }
+        }
+      ]
+    },
+    {
+      "history": "keyed-owner-two-phase-True",
+      "junit_case": {
+        "class": "tests.pg.test_keyed_decision_workflow",
+        "name": "test_forbidden_owner_boundary_retains_actual_pending_state[True-two-phase]"
+      },
+      "observed_before_caller_cleanup": [
+        {
+          "caller_goal": "pending caller",
+          "durable": {
+            "decisions": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:50.300902Z",
+                "evidence_digests": [],
+                "id": 82,
+                "kind": "revise",
+                "legacy_source": null,
+                "rationale": "",
+                "release_digest": null,
+                "repo_id": "itest-module-497438cd0ab1",
+                "sprint_id": null,
+                "superseded_by_item_id": null,
+                "work_item_id": 130
+              }
+            ],
+            "events": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:50.300902Z",
+                "event_type": "item-decided",
+                "id": 124,
+                "payload": "{\"kind\": \"revise\", \"resolution\": null, \"decision_id\": 82, \"release_digest\": null, \"idempotency_key\": \"f574b4c465a34edebb33c23729dbe233\"}",
+                "repo_id": "itest-module-497438cd0ab1",
+                "source_type": "actor",
+                "sprint_id": 105,
+                "work_item_id": 130
+              }
+            ],
+            "item": {
+              "aggregate_uuid": "054cecdb-bdbe-4979-90bb-bb00f85b3b54",
+              "assignee": "owner",
+              "created_at": "2026-10-18T15:55:50.300070Z",
+              "description": "preserved scope",
+              "id": 130,
+              "legacy": false,
+              "priority": 3,
+              "repo_id": "itest-module-497438cd0ab1",
+              "resolution": null,
+              "sprint_id": 105,
+              "status": "active",
+              "terminal_decision_id": null,
+              "title": "status oracle",
+              "track_id": 103,
+              "updated_at": "2026-10-18T15:55:50.300364Z"
+            },
+            "native_types": {
+              "decisions": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "evidence_digests": "list",
+                  "id": "int",
+                  "kind": "str",
+                  "legacy_source": "NoneType",
+                  "rationale": "str",
+                  "release_digest": "NoneType",
+                  "repo_id": "str",
+                  "sprint_id": "NoneType",
+                  "superseded_by_item_id": "NoneType",
+                  "work_item_id": "int"
+                }
+              ],
+              "events": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "event_type": "str",
+                  "id": "int",
+                  "payload": "str",
+                  "repo_id": "str",
+                  "source_type": "str",
+                  "sprint_id": "int",
+                  "work_item_id": "int"
+                }
+              ],
+              "item": {
+                "aggregate_uuid": "str",
+                "assignee": "str",
+                "created_at": "str",
+                "description": "str",
+                "id": "int",
+                "legacy": "bool",
+                "priority": "int",
+                "repo_id": "str",
+                "resolution": "NoneType",
+                "sprint_id": "int",
+                "status": "str",
+                "terminal_decision_id": "NoneType",
+                "title": "str",
+                "track_id": "int",
+                "updated_at": "str"
+              },
+              "releases": [],
+              "reservations": []
+            },
+            "releases": [],
+            "reservations": []
+          },
+          "pending": {
+            "decisions": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:50.300902Z",
+                "evidence_digests": [],
+                "id": 82,
+                "kind": "revise",
+                "legacy_source": null,
+                "rationale": "",
+                "release_digest": null,
+                "repo_id": "itest-module-497438cd0ab1",
+                "sprint_id": null,
+                "superseded_by_item_id": null,
+                "work_item_id": 130
+              }
+            ],
+            "events": [
+              {
+                "actor": "reviewer",
+                "created_at": "2026-10-18T15:55:50.300902Z",
+                "event_type": "item-decided",
+                "id": 124,
+                "payload": "{\"kind\": \"revise\", \"resolution\": null, \"decision_id\": 82, \"release_digest\": null, \"idempotency_key\": \"f574b4c465a34edebb33c23729dbe233\"}",
+                "repo_id": "itest-module-497438cd0ab1",
+                "source_type": "actor",
+                "sprint_id": 105,
+                "work_item_id": 130
+              }
+            ],
+            "item": {
+              "aggregate_uuid": "054cecdb-bdbe-4979-90bb-bb00f85b3b54",
+              "assignee": "owner",
+              "created_at": "2026-10-18T15:55:50.300070Z",
+              "description": "preserved scope",
+              "id": 130,
+              "legacy": false,
+              "priority": 3,
+              "repo_id": "itest-module-497438cd0ab1",
+              "resolution": null,
+              "sprint_id": 105,
+              "status": "active",
+              "terminal_decision_id": null,
+              "title": "status oracle",
+              "track_id": 103,
+              "updated_at": "2026-10-18T15:55:50.300364Z"
+            },
+            "native_types": {
+              "decisions": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "evidence_digests": "list",
+                  "id": "int",
+                  "kind": "str",
+                  "legacy_source": "NoneType",
+                  "rationale": "str",
+                  "release_digest": "NoneType",
+                  "repo_id": "str",
+                  "sprint_id": "NoneType",
+                  "superseded_by_item_id": "NoneType",
+                  "work_item_id": "int"
+                }
+              ],
+              "events": [
+                {
+                  "actor": "str",
+                  "created_at": "str",
+                  "event_type": "str",
+                  "id": "int",
+                  "payload": "str",
+                  "repo_id": "str",
+                  "source_type": "str",
+                  "sprint_id": "int",
+                  "work_item_id": "int"
+                }
+              ],
+              "item": {
+                "aggregate_uuid": "str",
+                "assignee": "str",
+                "created_at": "str",
+                "description": "str",
+                "id": "int",
+                "legacy": "bool",
+                "priority": "int",
+                "repo_id": "str",
+                "resolution": "NoneType",
+                "sprint_id": "int",
+                "status": "str",
+                "terminal_decision_id": "NoneType",
+                "title": "str",
+                "track_id": "int",
+                "updated_at": "str"
+              },
+              "releases": [],
+              "reservations": []
+            },
+            "releases": [],
+            "reservations": []
+          }
+        }
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "file": "sprintctl-2789-local-before.xml",
+      "sha256": "407bad9eec4aa0e2ac5b81ac306dec8f9f264b8c4c2261a92a6865edfe0ad99c",
+      "suites": [
+        {
+          "errors": "0",
+          "failures": "0",
+          "hostname": "workstation",
+          "name": "pytest",
+          "skipped": "0",
+          "tests": "311",
+          "time": "150.688",
+          "timestamp": "2026-10-18T18:55:33.368798+03:00"
+        }
+      ]
+    },
+    {
+      "file": "sprintctl-2789-pg-before.xml",
+      "sha256": "8c2cb9db3b850ac5c937e263ae53c50e0dd8306df002eac069e5301b634c1539",
+      "suites": [
+        {
+          "errors": "0",
+          "failures": "0",
+          "hostname": "workstation",
+          "name": "pytest",
+          "skipped": "0",
+          "tests": "487",
+          "time": "20.040",
+          "timestamp": "2026-10-18T18:55:47.873807+03:00"
+        }
+      ]
+    }
+  ],
+  "source": "actual completed JUnit record_property observations"
+}

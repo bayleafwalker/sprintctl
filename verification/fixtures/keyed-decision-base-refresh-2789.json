@@ -1,0 +1,19 @@
+{
+  "old_base": "0c53a5b86ff8e9d17282e5c1dad074acdf597e6f",
+  "new_base": "4718d49467234e9362fe1ec6430da77456b7dca8",
+  "candidate_ast_hashes": {
+    "sprintctl/db.py:record_decision_keyed": "102cc94ca108f883539814f29d2cde83adb814cb491bfeaffdad93928d57c86a",
+    "sprintctl/pg.py:record_decision_keyed": "6d6b36f66730567f60d307f3b6612b4b81e66c79ce7c71bddc17ee22bcda06d0",
+    "sprintctl/workitemcore.py:_KeyedDecisionParticipant": "a803c6a07dbf3a944b4e6232e091cf52b3e8aca29c9e26753c18211cb1568d1e",
+    "sprintctl/workitemcore.py:_KeyedDecisionOutcome": "9da1d4d7cdef5793530faa433c6d73f415361488830995da58dc8bbb115019ce",
+    "sprintctl/workitemcore.py:_record_decision_keyed_locked": "e824c341827c175b57aac70ca449037e4e294fdf9a26303c74c84ce02e54de03"
+  },
+  "unchanged_candidate_symbols": 5,
+  "unchanged_adjacent_symbols_against_final_base": 410,
+  "test_files": {
+    "tests/_keyed_decision_contract.py": "8c41def15b4d15e28a6f39dde4f9647cbbef4ac712e9fa8b2a6e70a72bb5bb52",
+    "tests/test_keyed_decision_workflow.py": "c7600189c9a1a3a9e8c19eac2d2ae1db2582950f228cc5b0ca8a642696d31840",
+    "tests/pg/test_keyed_decision_workflow.py": "8366290da9998a044d649b15601ccb6d443b4661cf5264cc8b5aeeb2769ef0db"
+  },
+  "meaning": "Initial baseline/fullPG/failedlocal captures stay attributed to0c53 plus candidate. Finalacceptedbase4718 includes separatelyaccepted reserve2787 and docs2788/2790. Owned ASTs and frozen oracle unchanged; corrected full local and combined PG+exact-headCI qualify combined source."
+}

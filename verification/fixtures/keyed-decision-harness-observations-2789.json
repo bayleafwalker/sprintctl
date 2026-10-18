@@ -1,0 +1,13 @@
+{
+  "kind": "Initial full local harness failure; not a passing gate or product repair",
+  "source_base": "0c53a5b86ff8e9d17282e5c1dad074acdf597e6f",
+  "summary": "1failed2928passed4skipped14deselected1034.75s",
+  "failure": "uv cannot create temporary cache lock on read-only sandbox home",
+  "raw_artifacts": {
+    "/tmp/sprintctl-2789-initial-local-cache-failure.txt": "0af5191e2dabac464a835cb717ac228148c4bad0d65a4938b069674010199cfd",
+    "/tmp/sprintctl-2789-initial-local-cache-failure.xml": "d8a2cc47af8c88b322b5a098cf87b57b741454bf136c0ec1edca9fc4d51303f4",
+    "/tmp/sprintctl-2789-yaml-diagnostic.txt": "eaae78f348b4ced2e51721017c4e328f2cf7e664fa85d36eeaaa13189024ac43",
+    "/tmp/sprintctl-2789-yaml-cache-correction.txt": "e8c2ebdecc6c68bd31c948de0b0c1dd4c57dd47d093194a6c1d241c65727824d"
+  },
+  "correction": "Same unchanged exact case passed1test0.07s with UV_OFFLINE=1 and writable normal cache. Corrected full run on final4718+candidate passed2959/4skipped/14deselected695.64s. No product/test changes for cache correction."
+}

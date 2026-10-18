@@ -5,7 +5,7 @@ connection adapter implementing :class:`WorkItemConn`. The query shapes and
 tenant handling live here once so the two backends cannot drift apart in
 work-item behaviour. Mirrors the pattern established in ``sprintcore.py``.
 
-The private locked-status workflow also lives here. Backend wrappers retain
+The private locked-status and keyed-Decision workflows also live here. Backend wrappers retain
 their transaction policies and supply noncommitting SQL, reservation and
 lease/report participants; this adds no caller-composition guarantee.
 
@@ -497,3 +497,51 @@ def _set_work_item_status_locked(
         if released_lease_ids is not None:
             payload["released_lease_ids"] = released_lease_ids
         p.insert_item_released(item, actor_value, payload)
+
+
+
+@dataclass(frozen=True)
+class _KeyedDecisionParticipant:
+    """Noncommitting operations bound to the current Decision owner's cursor."""
+
+    lock_item: Callable[[int], dict | None]
+    keyed_decision: Callable[[str], dict | None]
+    status_revision: Callable[[dict], str]
+    decide: Callable[[dict, dict], dict]
+
+
+@dataclass(frozen=True)
+class _KeyedDecisionOutcome:
+    item: dict
+    recorded: dict
+    replayed: bool
+    legacy_remark: bool
+
+
+def _record_decision_keyed_locked(
+    p: _KeyedDecisionParticipant, item_id: int, decision: dict, *,
+    idempotency_key: str | None, expected_revision: str | None,
+) -> _KeyedDecisionOutcome:
+    """Resolve the locked Decision sequence without changing owner boundaries.
+
+    Wrappers retain validation, key locks, replay rollback and fresh event/commit
+    placement. Actual Decision rows and native backend effects remain opaque.
+    """
+    item = p.lock_item(item_id)
+    if item is None:
+        raise ValueError(f"Item #{item_id} not found")
+    if idempotency_key is not None:
+        replayed = _decisions.replay_or_conflict(
+            p.keyed_decision(idempotency_key), item_id, decision, idempotency_key
+        )
+        if replayed is not None:
+            return _KeyedDecisionOutcome(item, replayed, True, False)
+    current_revision = p.status_revision(item)
+    if expected_revision is not None and expected_revision != current_revision:
+        raise StatusConflict(
+            f"Item #{item_id} status revision mismatch: "
+            f"expected {expected_revision}, current {current_revision}"
+        )
+    remark = _decisions.is_legacy_remark_target(item)
+    recorded = p.decide(item, decision)
+    return _KeyedDecisionOutcome(item, recorded, False, remark)

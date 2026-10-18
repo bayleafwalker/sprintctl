@@ -1,0 +1,255 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.locked-keyed-decision",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2789",
+    "revision": "native:release:3e5a3d56bb0338a7aaf960ab0e0f1cfe77661af15d1737b6901926407d6d233b"
+  },
+  "implementation_sha": "4718d49467234e9362fe1ec6430da77456b7dca8",
+  "depth": 2,
+  "environment": {
+    "backend": "actual temporary SQLite and registered disposable PostgreSQL16.15",
+    "python": "3.13.16",
+    "pytest": "9.0.2",
+    "isolation": "SQLite existing writer ownership; measured PG READ COMMITTED"
+  },
+  "execution": {
+    "histories": 18,
+    "bounds": {
+      "shared_cases_per_backend": 46,
+      "additional_pg_cases": 23,
+      "new_concurrent_histories": 4,
+      "workers_per_race": 2,
+      "actual_pre_product_observations": 18,
+      "retained_sequential_observations": 14,
+      "retained_concurrent_observations": 4
+    },
+    "faults_exercised": [
+      "exception after real Decision writes",
+      "exception inside fresh event payload callback after actual payload computation",
+      "exception after canonical event insertion",
+      "PG commit/rollback forbidden in managed/two-phase caller",
+      "discard committed response and reconnect (no crash)"
+    ]
+  },
+  "claims": [
+    {
+      "property": "normalization/key/basis syntax precede owner effects; missing target precedes keyed replay and replay precedes revision/fresh admission",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_keyed_decision_contract.py",
+        "tests/pg/test_keyed_decision_workflow.py",
+        "verification/traces/keyed-decision-histories-2789.json"
+      ]
+    },
+    {
+      "property": "fresh Decision and canonical event preserve kind/resolution/Release/successor/legacy bindings and native row representation",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_keyed_decision_contract.py",
+        "tests/pg/test_keyed_decision_workflow.py",
+        "verification/traces/keyed-decision-histories-2789.json"
+      ]
+    },
+    {
+      "property": "matching replay returns the actual stored lookup object and never evaluates fresh-only callbacks; repeated unkeyed revise remains two writes",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_keyed_decision_contract.py",
+        "tests/pg/test_keyed_decision_workflow.py",
+        "verification/traces/keyed-decision-histories-2789.json"
+      ]
+    },
+    {
+      "property": "ordinary after-Decision/payload/event faults roll back actual rows and PostgreSQL report/lease effects before fixture cleanup; same-key retry writes once",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_keyed_decision_contract.py",
+        "tests/pg/test_keyed_decision_workflow.py",
+        "verification/traces/keyed-decision-histories-2789.json"
+      ]
+    },
+    {
+      "property": "SQLite implicit caller joining and PG implicit/managed/two-phase transaction consequences remain unchanged",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_keyed_decision_contract.py",
+        "tests/pg/test_keyed_decision_workflow.py",
+        "verification/traces/keyed-decision-histories-2789.json"
+      ]
+    },
+    {
+      "property": "PG key advisory lock precedes target lock; replay rollback stays inside item cursor and fresh event/commit follows cursor exit",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_keyed_decision_contract.py",
+        "tests/pg/test_keyed_decision_workflow.py",
+        "verification/traces/keyed-decision-histories-2789.json"
+      ]
+    },
+    {
+      "property": "same-key equal requests produce one fresh and one replay, different-item requests one fresh and one conflict, in recorded held-writer schedules",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/_keyed_decision_contract.py",
+        "tests/pg/test_keyed_decision_workflow.py",
+        "verification/traces/keyed-decision-histories-2789.json"
+      ]
+    },
+    {
+      "property": "response-discard reconnect returns original committed Decision without another event; this is not physical crash proof",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_keyed_decision_contract.py",
+        "tests/pg/test_keyed_decision_workflow.py",
+        "verification/traces/keyed-decision-histories-2789.json"
+      ]
+    },
+    {
+      "property": "PostgreSQL target/key/successor/Release lookups remain repository scoped and unverified/superseded reports never gain invented verification",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_keyed_decision_contract.py",
+        "tests/pg/test_keyed_decision_workflow.py",
+        "verification/traces/keyed-decision-histories-2789.json"
+      ]
+    },
+    {
+      "property": "universal caller composition, whole-provider parity, arbitrary isolation/interleavings, fencing, physical crash safety, API/schema/IDL/runtime/deployment or parent2150 completion",
+      "result": "unknown"
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "implementation_sha identifies accepted baseline plus candidate byte hashes, not a self-referential future commit. Hashes establish bytes and declared provenance, not external source authenticity.",
+    "Actual pre-product baseline311local150.69s and487PG20.07s/14cleanupzero. Three oracle files were independently reviewed CLEAR and frozen5707 before product edits.18actual before observations remain separate from after observations.",
+    "Two independent oracle findings corrected before freeze: observe deterministic held-writer contender wait, and assert actual replay lookup object identity/immutability with fresh callbacks forbidden. Initial fixture-goal None assumption corrected before product edits. Historical draft310local/68PG captures are not the final unchanged oracle.",
+    "After extraction46local22.34s and487PG18.07s/14cleanupzero passed with frozen test bytes.408existing function/class ASTs, decisions.py bytes and19protected owner/key lookup/lease/report symbols unchanged; only2public keyed wrapper bodies changed plus3new private core symbols. Independent source review CLEAR; unchanged46SQLite cases independently passed23.14s.",
+    "Core owns no validation preamble, key lock, transaction, event or connection. PG replay rollback remains inside item cursor and fresh event/commit outside; existing implicit caller fresh commit/replay rollback and managed/TPC pending effects retained.",
+    "Paired shared snapshots retain stored native type metadata; PG lease/report extension raw timestamp values serialize as strings and do not establish native-type fidelity on their own. Four actual held-writer races use SQLite attempted BEGIN or exact PG holder blocking PID before release. Response discard is no physical crash.",
+    "Initial full local completed1failed/2928passed/4skipped/14performance deselected1034.75s. Solefailure test_ci_yaml_parses_with_safe_load has exact read-only uv-cache temporary-lock error, confirmed in terminal JUnit. Initial log/XML and exact diagnostic failure/correction retained separately in keyed-decision-harness-observations-2789.json. Unchanged exact case passed1test0.07s under UV_OFFLINE=1 with writable normal cache. No product/test change; corrected full local gate required. Full PG completed1586passed112.33s/85cleanupzero.",
+    "Final accepted base4718d49467234e9362fe1ec6430da77456b7dca8 includes accepted reservation2787 plus docs2788/2790. Five refactor-owned candidate ASTs and three frozen oracle file bytes are unchanged by this update. All410adjacent function/class ASTs match the final accepted base; the earlier408comparison remains an initial-source observation. Historical fullPG1586 and failedlocal captures stay attributed to0c53+candidate; corrected full local and combinedPG qualify finalcombinedsource.",
+    "Combined final-source PG command: PATH=<cached PostgreSQL16.15>/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-keyed-decision-2789-pg-env UV_OFFLINE=1 timeout --foreground -k30s900s scripts/pg-disposable-tests.sh -k \"keyed_decision_workflow or reserve_admission or native_reserve_owner or decisions or retirement_rationale or releases or work_lease or locked_item_status or legacy_remark\" --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2789-combined-pg.xml.551passed/1071deselected19.68s;16registeredcleanupinstancesempty.",
+    "Completed corrected final-base full local command: UV_OFFLINE=1 /tmp/sprintctl-keyed-decision-2789-env/bin/python -m pytest tests --ignore=tests/pg --ignore=tests/test_work_application_pg.py -m \"not perf\" -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2789-full-local.xml. Tool execution permits writes to normal cached isolated uv environments; no source/test change or global tool install.",
+    "Structural comparisons use ast.dump(include_attributes=False) under ambient Python3.14.7; behavioral tests use isolated Python3.13.16. AST identity does not establish transitive helper/import behavior; source review and actual bounded tests supply separate evidence.",
+    "Corrected final4718 source full local completed2959passed/4skipped/14performance deselected695.64s, exit0. Final combined551PG19.68s/16cleanupzero is a focused combined regression, not a relabeled fullPG. Historical1586fullPG remains0c53+candidate. Exact-head canonical CI and final packet review remain publication gates.",
+    "Final18after observations are extracted from corrected final4718 fullLocal JUnit and final4718 combinedPG JUnit:14sequential and4actual held-writer concurrent. Separate before18 retained from frozen311/487baseline. Neither extractor nor JUnit authenticates imported source independently; declared base, byte hashes, actual source review and run provenance bound these claims.",
+    "First commit refused by active gitleaks hook:18 false positives in SHA-256 evidence fields and generated disposable request IDs. Exact18 file/rule/line fingerprints retained in .gitleaksignore; no hook bypass, rule/whole-file exclusion or raw trace changes. An initial uncommitted AND path/line config failed a detector control (named-file content skipped in directory scan) and was removed entirely before publication."
+  ],
+  "verification_commands": [
+    {
+      "scope": "final-base full local",
+      "command": "UV_OFFLINE=1 /tmp/sprintctl-keyed-decision-2789-env/bin/python -m pytest tests --ignore=tests/pg --ignore=tests/test_work_application_pg.py -m 'not perf' -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2789-full-local.xml",
+      "result": "2959 passed,4 skipped,14 deselected;695.64s;exit0; writable normal uv cache permitted"
+    },
+    {
+      "scope": "final-base combined PostgreSQL",
+      "command": "PATH=/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-keyed-decision-2789-pg-env UV_OFFLINE=1 timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh -k 'keyed_decision_workflow or reserve_admission or native_reserve_owner or decisions or retirement_rationale or releases or work_lease or locked_item_status or legacy_remark' --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2789-combined-pg.xml",
+      "result": "551 passed,1071 deselected;19.68s;16 cleanup instances empty;exit0"
+    },
+    {
+      "scope": "extract final actual observations",
+      "command": "python verification/traces/extract-keyed-decision-histories.py /tmp/sprintctl-2789-full-local.xml /tmp/sprintctl-2789-combined-pg.xml --output verification/traces/keyed-decision-histories-2789.json",
+      "result": "18 actual observations"
+    },
+    {
+      "scope": "historical0c53 full PostgreSQL",
+      "command": "PATH=/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-keyed-decision-2789-pg-env UV_OFFLINE=1 timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2789-full-pg.xml",
+      "result": "1586 passed;112.33s;85 cleanup instances empty;exit0"
+    },
+    {
+      "scope": "initial failed full local0c53 (historical harness failure)",
+      "command": "/tmp/sprintctl-keyed-decision-2789-env/bin/python -m pytest tests --ignore=tests/pg --ignore=tests/test_work_application_pg.py -m 'not perf' -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2789-full-local.xml",
+      "result": "1 failed,2928 passed,4 skipped,14 deselected;1034.75s;archived under initial-local-cache-failure; uv cache read-only; not a passing gate"
+    },
+    {
+      "scope": "artifact validation",
+      "command": "python /projects/dev/agentops/scripts/validate_verification_artifacts.py --root .",
+      "result": "passed;exit0"
+    },
+    {
+      "scope": "whitespace",
+      "command": "git diff --check",
+      "result": "passed;exit0"
+    },
+    {
+      "scope": "evidence docs integrity",
+      "command": "/tmp/sprintctl-keyed-decision-2789-env/bin/python -m pytest tests/test_docs_integrity.py -x -q --tb=short",
+      "result": "15 passed;0.04s;exit0"
+    },
+    {
+      "scope": "scanner exception controls",
+      "command": "python /tmp/sprintctl-2789-detector-controls.py",
+      "result": "3 staged-git controls passed: exact synthetic fingerprint ignored; same pattern elsewhere and credential field at another line in same named file still detected. Each uses actual gitleaks git --staged with default rules and the exact .gitleaksignore."
+    }
+  ],
+  "raw_artifact_hashes": {
+    "/tmp/sprintctl-2789-full-local.txt": "5aaa4061b65199910082ad44ac9932fba31fd2e99de001f1f3926508f484085a",
+    "/tmp/sprintctl-2789-full-local.xml": "afa019fef2e764681de83a217b4822a77e226678cebf8bec0d6be4437f92af66",
+    "/tmp/sprintctl-2789-combined-pg.txt": "4084f91589fbe0191a2245196149eede58504ddeb3771e2aedade53e2c745a6b",
+    "/tmp/sprintctl-2789-combined-pg.xml": "f01d524f76fef5dd198bec48cfc3843695b856c1a1174cab467ac4c6514a4144",
+    "/tmp/sprintctl-2789-full-pg.txt": "d02be0835ed6080d5a951652470ae5915500325b4f75ca3880455bf3eeb53fe6",
+    "/tmp/sprintctl-2789-full-pg.xml": "e1ce2884c2e689d032ab626877f04285345cd6dd21500252b59e4b2dd0c4a35c",
+    "/tmp/sprintctl-2789-local-before.txt": "b244e9b985cc199e1e07c803a9174b69670b9acc4620d236eddf5270f494bfdf",
+    "/tmp/sprintctl-2789-local-before.xml": "407bad9eec4aa0e2ac5b81ac306dec8f9f264b8c4c2261a92a6865edfe0ad99c",
+    "/tmp/sprintctl-2789-pg-before.txt": "5400a4eedeb2d6e5964cf76a5ab5fdce18d678d2681c384e7ca63b46f375d008",
+    "/tmp/sprintctl-2789-pg-before.xml": "8c2cb9db3b850ac5c937e263ae53c50e0dd8306df002eac069e5301b634c1539",
+    "/tmp/sprintctl-2789-pg-after.txt": "216f0f77648eae1719a0773ec1b318cea4946af02c55849bb266de617ff887c3",
+    "/tmp/sprintctl-2789-pg-after.xml": "b6b4cf1aa3311c9f088a3dbc0d09b1a5d17efb69b51f3d4a227ccb0c17742a39"
+  },
+  "run_summaries": {
+    "full-local": [
+      {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "4",
+        "tests": "2963",
+        "time": "695.571",
+        "timestamp": "2026-10-18T19:19:50.640606+03:00",
+        "hostname": "workstation"
+      }
+    ],
+    "combined-pg": [
+      {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "551",
+        "time": "19.665",
+        "timestamp": "2026-10-18T19:20:33.102192+03:00",
+        "hostname": "workstation"
+      }
+    ],
+    "full-pg": [
+      {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "1586",
+        "time": "112.299",
+        "timestamp": "2026-10-18T19:00:01.386170+03:00",
+        "hostname": "workstation"
+      }
+    ]
+  },
+  "candidate_artifact_hashes": {
+    "sprintctl/db.py": "d8ea4fd6795bf99064a098e601809580835060a5ec22547cf43cbc634b5ab3e6",
+    "sprintctl/pg.py": "8619997e37d247f425c4ff1954a0fabed93069a42f6f8f3f4e36d54acffe0cc3",
+    "sprintctl/workitemcore.py": "e56448a3d9b14004f8123322affd3239aa8bf858203318c93a84d4f81d8498b4",
+    "tests/_keyed_decision_contract.py": "8c41def15b4d15e28a6f39dde4f9647cbbef4ac712e9fa8b2a6e70a72bb5bb52",
+    "tests/test_keyed_decision_workflow.py": "c7600189c9a1a3a9e8c19eac2d2ae1db2582950f228cc5b0ca8a642696d31840",
+    "tests/pg/test_keyed_decision_workflow.py": "8366290da9998a044d649b15601ccb6d443b4661cf5264cc8b5aeeb2769ef0db",
+    "verification/contexts/locked-keyed-decision.json": "b36bff45054baae576cf04f3be2c9c14d3f1e6888004f7ffcd4c5ddce899e005",
+    "docs/evidence/locked-keyed-decision-2789.md": "0187f44a22192ae5e18bc0de78c724d0ee1da79736ec71d685987d111cdf21e6",
+    "verification/fixtures/keyed-decision-base-refresh-2789.json": "e169f4074b0ee7c8fb2307d36973bf0d80ee9179a5f38b14ad64c589953a77fe",
+    "verification/fixtures/keyed-decision-baseline-2789.json": "8580236271dceabe1624ec6e5896a401609a586d21b1f77a20cef34deace6680",
+    "verification/fixtures/keyed-decision-before-histories-2789.json": "933959a012a924a515e6b2fbc18d5a63cbd2b0dbd2b07887ed70bcb2fac92eb0",
+    "verification/fixtures/keyed-decision-harness-observations-2789.json": "9d3ff67e7893fa8e8be2cc3effc8c79c58a55f39e6ceaad1ea5457224f422793",
+    "verification/traces/extract-keyed-decision-histories.py": "ef3409c44d57e172ddf499a4c0b7e386ace94292c4710ab00f75e77e8bd3e5b0",
+    "verification/traces/keyed-decision-histories-2789.json": "8d8b3c88f4ca19a4bd42f32c61bee2ef2748d8a828dbbcf0702f591cb8277252",
+    ".gitleaksignore": "582038b9814bd6b7eb774483a210186397d7532d503927457fb6a9312c2de9c5"
+  }
+}

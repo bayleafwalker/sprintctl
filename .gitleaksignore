@@ -1,0 +1,20 @@
+# Reviewed #2789 false positives: generated disposable request IDs and SHA-256 evidence.
+# Exact file/rule/line fingerprints; no rule or whole-file exclusion.
+verification/fixtures/keyed-decision-base-refresh-2789.json:generic-api-key:5
+verification/fixtures/keyed-decision-base-refresh-2789.json:generic-api-key:6
+verification/fixtures/keyed-decision-base-refresh-2789.json:generic-api-key:8
+verification/fixtures/keyed-decision-base-refresh-2789.json:generic-api-key:9
+verification/results/locked-keyed-decision-2789.json:generic-api-key:245
+verification/results/locked-keyed-decision-2789.json:generic-api-key:246
+verification/traces/keyed-decision-histories-2789.json:generic-api-key:1801
+verification/traces/keyed-decision-histories-2789.json:generic-api-key:1830
+verification/traces/keyed-decision-histories-2789.json:generic-api-key:2160
+verification/traces/keyed-decision-histories-2789.json:generic-api-key:2191
+verification/traces/keyed-decision-histories-2789.json:generic-api-key:2218
+verification/traces/keyed-decision-histories-2789.json:generic-api-key:2249
+verification/fixtures/keyed-decision-before-histories-2789.json:generic-api-key:1801
+verification/fixtures/keyed-decision-before-histories-2789.json:generic-api-key:1830
+verification/fixtures/keyed-decision-before-histories-2789.json:generic-api-key:2160
+verification/fixtures/keyed-decision-before-histories-2789.json:generic-api-key:2191
+verification/fixtures/keyed-decision-before-histories-2789.json:generic-api-key:2218
+verification/fixtures/keyed-decision-before-histories-2789.json:generic-api-key:2249
