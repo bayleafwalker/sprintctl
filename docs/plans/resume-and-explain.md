@@ -11,14 +11,13 @@ agents change. This develops the ratified [roadmap reset](roadmap-reset.md) and
 the owner's 2026-10-18 directive against Vuoro's accepted 2026-10-15 direction.
 It does not supersede either record or claim that existing capabilities are absent.
 
-The owner requested implementation and development-item registration. During
-planning, the deployment session confirmed the shared API was deliberately fenced
-for the paired restore/cutover, with no fresh authoritative backlog export.
-Existing item matches are therefore **unknown**. The slices below are concrete
-registration candidates, not invented live IDs or a second status database.
-Reconcile them against live items and refs before registering anything; retain
-matching items, record priorities natively, and attach this document's exact Git
-revision. Draft editorial status is not agent ratification.
+The owner approved implementation and native development-item registration.
+Authoritative served state was reconciled after service restoration on
+2026-10-18. The source scopes and remaining qualifications now map to native
+items below. Live state wins over this roadmap; implementation does not ratify
+this draft. Existing historical handoff scope, `sprintctl#2082` guidance,
+`sprintctl#2150` backend unification, `sprintctl#2127` external onboarding release, and `vuoro#2237`
+broader experiment memory remain distinct and were not closed by this work.
 
 ## Boundaries and sequence
 
@@ -31,12 +30,12 @@ credential inheritance, schema migration, or deployment action.
 | Slice | Intended priority and posture | Concrete outcome and scope | Depends on |
 | --- | --- | --- | --- |
 | R1: Resume change briefing | 2, dispatch-build | One bounded CLI owner read presents changed/unchanged/unknown; JSON retains the existing response and cursors. Text handoff preserves predecessor position. Correct positioning and served onboarding. | Existing continuation-delta operation |
-| R2: Fresh-reader continuation proof | 2, dispatch-build after live matching | Qualify R1 against three disposable interrupted-task cases; one deliberate release/artifact change, one decision change, one missing baseline/content case. Record correct/incorrect inferences, extra calls, recovery effort and denominator. | R1 |
+| R2: Fresh-reader continuation proof | 2, software proof implemented; field qualification open | Qualify R1 against three disposable interrupted-task cases; one deliberate release/artifact change, one decision change, one missing baseline/content case. Record correct/incorrect inferences, extra calls, recovery effort and denominator. | R1 |
 | E1: Explain effect acceptance facts | 2, dispatch-build | Present the existing acceptance snapshot in one bounded read, name missing chain links and keep evidence classes distinct. Preserve raw JSON and caller-scoped receipt visibility. | Existing acceptance snapshot |
-| E2: Independent result-reader proof | 2, dispatch-build after E1 decisions | An independent reader detects changed digest and omitted receipt; qualify a supported result packet only after explicit closure, versioning, scope and export/import guarantees are settled. | E1 |
+| E2: Independent result-reader proof | 2, software proof implemented; general packet dispatch-plan | An independent reader detects changed digest and omitted receipt; qualify a supported result packet only after explicit closure, versioning, scope and export/import guarantees are settled. | E1 |
 | H1: Continuation diagnostic | 3, dispatch-build | One bounded continuation read yields stable reason-coded findings and explicit report-class observation provenance; no artifact fetch or measured-effort score. | R1; bounded observation protocol |
 | H2: Interrupted-work recovery qualification | 3, dispatch-build | Three paired native-owner fixtures qualify frozen diagnostic questions and explicit lookup/check counts. The field trial records real fresh-reader effort separately, retaining failures and unknowns. | H1 |
-| L1: Accepted-outcome comparison input | 3, Vuoro-owned dispatch-plan | Map accepted releases to rework, recovery time, review effort, known cost and unknown coverage. Sprintctl supplies records, not a comparison engine. | Acceptance/evidence joins qualified by E2 |
+| L1: Accepted-outcome comparison input | 3, Vuoro-owned supplied-record intake | Map accepted releases to rework, recovery time, review effort, known cost and unknown coverage. Sprintctl supplies records, not a comparison engine. | Acceptance/evidence joins qualified by E2 |
 
 Priorities are recommendations for live refinement, not assertions about the
 current execution queue. No new item may be registered solely because this table
@@ -110,7 +109,8 @@ An accepted/applied intent or done item cannot fill those gaps. Focused tests
 must cover changed basis/artifact, matching/missing/foreign-bound receipt,
 missing Release/check revisions, overflow, refusal and complete JSON preservation.
 
-Before E2 is build-ready, settle complete-chain joins, coverage, source revision,
+Before the general result-packet/export portion of E2 is build-ready, settle
+complete-chain joins, coverage, source revision,
 closure/version and supported export/import behavior separately. Reuse the
 authoritative evidence home. The existing archival fixture proof does not
 establish general result export support. This bounded E1 view is useful without
@@ -140,22 +140,99 @@ Actual fresh-human/agent recovery time and improvement remain unmeasured until
 the field protocol runs with independent readers, interventions, failed cases
 and visible denominators. Missing effort never becomes zero.
 
-## L1 decisions still required
+## L1 supplied-record intake decision
 
-L1 belongs to Vuoro's learning layer. Before comparing workflows, specify task
-grouping, accepted-outcome denominator, minimum sample and capture coverage,
-known/unknown cost and review/recovery measurements. Insufficient evidence must
-produce an inconclusive result. No comparison automatically expands authority.
+L1 belongs to Vuoro's learning layer. Its existing `ExperimentRecord` already
+retains explicit case populations, accepted/capture denominators, unknown effort
+and cost, separate currencies and reviewer-supplied review thresholds. The
+[learning architecture](https://github.com/bayleafwalker/vuoro/blob/main/docs/architecture/accepted-outcome-learning.md)
+defines the supplied-record intake into that existing model; Sprintctl does not
+add a comparison engine or authoritative evidence store.
+
+The pure intake checks matching repository/item identities, terminal Decision
+and Release digests in supplied projections. Consistent accepted joins remain
+externally supplied acceptance, with source verification explicitly not performed
+by the package. Missing or conflicting joins become unknown observations while
+retaining case/run identity, independent capture and qualified population-burden
+measurements. Partial coverage or missing provenance/windows never becomes zero
+or a known scalar. Measurement sidecars remain separate from the derived summary.
+Representative samples, source authentication and causal workflow conclusions
+remain unqualified; insufficient evidence produces an inconclusive summary.
+No comparison expands authority.
+
+## Implementation and qualification evidence
+
+This table describes source evidence, not native tracker status. Original product
+outcomes remain open wherever the qualification column calls for evidence not
+yet obtained. Native scope was matched before registration; the references below
+identify actual repository-scoped items, with priorities and dependencies stored
+in the live ledger.
+
+| Slice | Source outcome | Remaining qualification |
+| --- | --- | --- |
+| R1 | Briefing, handoff evidence and consistent owner snapshot implemented | Deployed acceptance is owned by the deployment session |
+| R2 | Three native-owner to fresh-process continuation cases passed | Independent human/LLM recovery, measured effort and provider/host swap |
+| E1 | Bounded effect explanation implemented | Complete request, actor, attempt, target and terminal-acceptance reconstruction |
+| E2 | Three native effect-reader mismatch/missing-input cases passed | General packet closure/versioning and supported export/import |
+| H1 | Diagnostic checklist and bounded caller-observation protocol implemented | External observation quality remains caller responsibility; no measured burden ranking |
+| H2 | Three paired native fixtures passed with explicit read/check counts | Independent-reader recovery effort and demonstrated improvement |
+| L1 | Existing Vuoro learning model reused with supplied-record intake | Source authentication and representative accepted-outcome samples |
+
+See [reader qualification](../evidence/resume-result-reader-qualification.md),
+[diagnostic qualification and field protocol](../guides/diagnose-resume.md),
+and the versioned `verification/contexts` and `verification/results` packets.
+Software fixtures supply example evidence; they cannot stand in for field trials,
+general archival portability or an authenticated chain of external effects.
+
+### Native work references and landed source
+
+| Native item | Bounded scope |
+| --- | --- |
+| `sprintctl#2655` | R1 bounded briefing and handoff presentation |
+| `sprintctl#2656` | Consistent owner handoff snapshot repair |
+| `sprintctl#2657` | R2/E2 six-case fresh-process software proof |
+| `sprintctl#2658` | E1 bounded effect explanation |
+| `sprintctl#2659` | H1 diagnostic and H2 paired software fixtures |
+| `sprintctl#2660` | Ten audited repository reads classified for bounded reconnect |
+| `sprintctl#2661` | R2 independent-reader field qualification |
+| `sprintctl#2662` | E2 supported general packet guarantees and design |
+| `sprintctl#2663` | H2 measured recovery-effort field comparison |
+| `sprintctl#2664` | Executable scoped reservation commands and runtime-session detection |
+| `vuoro#2665` | L1 supplied-record intake into the existing learning model |
+
+Landed source:
+[R1](https://github.com/bayleafwalker/sprintctl/commit/48f95090dd85587bbce062e4b537b661bd601e97),
+[handoff snapshot](https://github.com/bayleafwalker/sprintctl/commit/894035c92058cab274b71ad7fddd440caac86f95),
+[reader proof](https://github.com/bayleafwalker/sprintctl/commit/2e001841e9786e7e77f7dad2d23a67ccebeeec0d),
+[E1](https://github.com/bayleafwalker/sprintctl/commit/d729b27b91abb5bf3c537640f4a5f110f5dced8c),
+[diagnostic](https://github.com/bayleafwalker/sprintctl/commit/94fe7b932e18b22376300473b88b26d559dd6420),
+[read recovery](https://github.com/bayleafwalker/sprintctl/commit/6f8b5870381236ac3da78a6cce8cdd871147ed0d),
+[Vuoro intake](https://github.com/bayleafwalker/vuoro/commit/aa5af4de351f011c1d4f795eaa72b692c5dfcb47),
+and [scoped reservation commands](https://github.com/bayleafwalker/sprintctl/commit/c7dc64d5aafd941cac97f0e37077e1151bccb395).
+Native items retain the corresponding main CI and committed evidence references.
+
+Source closeout Decisions retain evidence digests and Git/CI references. The
+observation-reservation closeout records have no bound Release; that missing
+link stays explicit. Their bounded source acceptance is not a qualified general
+result packet or an authenticated L1 accepted-outcome sample. Current source
+registration and reservations were not backdated into the service fence.
+
+The served catalog currently refuses `render`; the required generated sprint
+snapshot could not be refreshed. Existing snapshots were preserved, without a
+local-state fallback or manual replacement. Native reads and writes succeeded.
 
 ## Consolidation and release posture
 
 Fix confirmed handoff snapshot consistency and retry classification defects as
-separate bounded items with disposable PostgreSQL verification. Do not attach
+separate bounded items with disposable PostgreSQL verification. The subsequent
+reservation CLI repair reuses existing scope/session/configuration resolvers; its
+protocol boundary and pre-I/O refusals are example-tested without changing owner
+semantics. Do not attach
 broad module-size cleanup, event-ordering changes, or ref batching to R1.
 
-Develop in isolated source scope while service restoration is fenced. The
-deployment session owns every service operation and keeps the official 0.20.0
-pin. Source merge does not publish a release or qualify the running service.
-After restoration, reconcile/register slices, attach verification provenance,
-and record acceptance only for scope actually completed. Never mark the entire
-roadmap done because R1 lands.
+Source development used isolated scopes during the service-restoration fence.
+The deployment session owns every service operation and keeps the official
+0.20.0 pin. Source merge does not publish a release or qualify the running service.
+After restoration, native reconciliation and bounded-source acceptance were
+recorded with verification provenance. Field and general-packet qualifications
+remain separate open scope. No source merge marks the entire roadmap done.
