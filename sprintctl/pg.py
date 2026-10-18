@@ -4757,6 +4757,50 @@ def list_reservations_by_sprint(store: PgStore, sprint_id: int, *, active_only: 
         return [_reservation.display(row) for row in cur.fetchall()]
 
 
+class _ReservationAdmissionPg:
+    """Same-cursor SQL; the public or native ledger caller owns the transaction."""
+
+    def __init__(self, cur, store, item_id, basis):
+        self.cur, self.store, self.item_id, self.basis = cur, store, item_id, basis
+
+    def release_basis(self):
+        return self.basis
+
+    def freeze_release(self, item, revision, revise_count, actor, contract):
+        return _freeze_release_locked(self.cur, self.store.repo_id, item, revision, revise_count,
+            actor=actor, acceptance_contract=contract)
+
+    def active_reservations(self):
+        self.cur.execute(
+            "SELECT * FROM reservation WHERE repo_id = %s AND work_item_id = %s "
+            "AND state = 'active' ORDER BY id FOR UPDATE",
+            (self.store.repo_id, self.item_id),
+        )
+        return [dict(row) for row in self.cur.fetchall()]
+
+    def interrupt_execution(self, selected, now, reason):
+        self.cur.execute(
+            "UPDATE reservation SET state = 'interrupted', released_at = %s, interruption_reason = %s "
+            "WHERE repo_id = %s AND id = ANY(%s)",
+            (now, reason, self.store.repo_id, [old['id'] for old in selected]),
+        )
+
+    def insert_reservation(self, session_id, actor, role, now, correlation_ref, release_digest):
+        self.cur.execute("INSERT INTO reservation(repo_id, work_item_id, session_id, actor, role, state, created_at, last_activity_at, correlation_ref, release_digest) VALUES (%s, %s, %s, %s, %s, 'active', %s, %s, %s, %s) RETURNING id", (self.store.repo_id, self.item_id, session_id, actor, role, now, now, correlation_ref, release_digest))
+        return self.cur.fetchone()['id']
+
+    def read_inserted(self, reservation_id):
+        self.cur.execute("SELECT * FROM reservation WHERE repo_id = %s AND id = %s",
+            (self.store.repo_id, reservation_id))
+        return dict(self.cur.fetchone())
+
+    def event_item(self):
+        return self.basis[0]
+
+    def event(self, item, row, kind, actor, payload):
+        _reservation_event_in_transaction(self.store, item, row, kind, actor, payload)
+
+
 def reserve_in_transaction(cur: Any, store: PgStore, work_item_id: int, *,
                            actor: str, session_id: str, role: str = _reservation.DEFAULT_ROLE,
                            correlation_ref: str | None = None, interrupt_existing: bool = False,
@@ -4774,7 +4818,6 @@ def reserve_in_transaction(cur: Any, store: PgStore, work_item_id: int, *,
         expected_revision = _releases.validate_basis(expected_revision)
     contract = _releases.normalize_acceptance_contract(acceptance_contract)
     now = _reservation.now_text()
-    interrupted: list[dict] = []
     # Serialize repo-wide reservation admission with maintenance
     # activation.  Activation gates on "zero active reservations"
     # (maintenance_capability), which is a COUNT, not a constraint the
@@ -4794,48 +4837,13 @@ def reserve_in_transaction(cur: Any, store: PgStore, work_item_id: int, *,
         raise ReservationConflict(
             "reservations are disabled while an exact-plan maintenance capability is active"
         )
-    item, revision, revise_count = _release_basis_locked(cur, store.repo_id, work_item_id)
-    release_digest = None
-    if role == "execution" or expected_revision is not None:
-        if expected_revision is not None and not _releases.basis_matches(
-            expected_revision, revision
-        ):
-            raise _releases.StaleReleaseBasis(work_item_id, expected_revision, revision)
-        if role == "execution":
-            release_digest = _freeze_release_locked(
-                cur, store.repo_id, item, revision, revise_count,
-                actor=actor, acceptance_contract=contract,
-            )
-    cur.execute(
-        "SELECT * FROM reservation WHERE repo_id = %s AND work_item_id = %s "
-        "AND state = 'active' ORDER BY id FOR UPDATE",
-        (store.repo_id, work_item_id),
+    basis = _release_basis_locked(cur, store.repo_id, work_item_id)
+    return _reservationcore._reserve_admitted(
+        _ReservationAdmissionPg(cur, store, work_item_id, basis), work_item_id,
+        actor=actor, session_id=session_id, role=role, now=now,
+        correlation_ref=correlation_ref, interrupt_existing=interrupt_existing,
+        expected_revision=expected_revision, contract=contract,
     )
-    existing = [dict(row) for row in cur.fetchall()]
-    if interrupt_existing:
-        interrupted = [row for row in existing if row["role"] == "execution"]
-        if interrupted:
-            cur.execute(
-                "UPDATE reservation SET state = 'interrupted', released_at = %s, interruption_reason = %s "
-                "WHERE repo_id = %s AND id = ANY(%s)",
-                (now, f"interrupted by {actor} ({session_id})", store.repo_id, [old["id"] for old in interrupted]),
-            )
-    cur.execute("INSERT INTO reservation(repo_id, work_item_id, session_id, actor, role, state, created_at, last_activity_at, correlation_ref, release_digest) VALUES (%s, %s, %s, %s, %s, 'active', %s, %s, %s, %s) RETURNING id", (store.repo_id, work_item_id, session_id, actor, role, now, now, correlation_ref, release_digest))
-    reservation_id = cur.fetchone()["id"]
-    cur.execute("SELECT * FROM reservation WHERE repo_id = %s AND id = %s",
-                (store.repo_id, reservation_id))
-    row = dict(cur.fetchone())
-    interrupted_ids = {old["id"] for old in interrupted}
-    remaining = [old for old in existing if old["id"] not in interrupted_ids]
-    for previous in interrupted:
-        _reservation_event_in_transaction(store, item, previous, "reservation.interrupted", actor,
-            {"reservation_id": previous["id"], "reason": "explicit-takeover", "replacement_id": reservation_id})
-    _reservation_event_in_transaction(store, item, row, "reservation.reserved", actor,
-        {"reservation_id": reservation_id, "session_id": session_id, "role": role,
-         "correlation_ref": correlation_ref, "interrupt_existing": interrupt_existing,
-         "conflicting_reservation_ids": [previous["id"] for previous in remaining],
-         "release_digest": row["release_digest"]})
-    return _reservation.annotate_conflicts(_reservation.display(row), remaining)
 
 
 def _reservation_event_in_transaction(store: PgStore, item: dict, row: dict,

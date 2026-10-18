@@ -1,0 +1,140 @@
+{
+  "claims": [
+    {
+      "evidence": [
+        "verification/traces/reserve-admission-histories-2787.json",
+        "tests/_reserve_admission_contract.py",
+        "tests/test_reserve_admission.py",
+        "tests/pg/test_reserve_admission.py"
+      ],
+      "property": "role normalization, raw actor/session/correlation and truthy takeover flag preserve exact payload and native backend timestamp types",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "verification/traces/reserve-admission-histories-2787.json",
+        "tests/_reserve_admission_contract.py",
+        "tests/test_reserve_admission.py",
+        "tests/pg/test_reserve_admission.py"
+      ],
+      "property": "Release freeze and stale basis precede reservation effects while SQLite conditional versus PG all-role basis ownership remains distinct",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "verification/traces/reserve-admission-histories-2787.json",
+        "tests/_reserve_admission_contract.py",
+        "tests/test_reserve_admission.py",
+        "tests/pg/test_reserve_admission.py"
+      ],
+      "property": "ordered takeover interrupts only execution rows and preserves original interruption/reserved event payloads and overlap classification",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "verification/traces/reserve-admission-histories-2787.json",
+        "tests/_reserve_admission_contract.py",
+        "tests/test_reserve_admission.py",
+        "tests/pg/test_reserve_admission.py"
+      ],
+      "property": "actual SQL and post-effect Python faults restore ordinary public owner state before fixture cleanup and allow retry",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "verification/traces/reserve-admission-histories-2787.json",
+        "tests/_reserve_admission_contract.py",
+        "tests/test_reserve_admission.py",
+        "tests/pg/test_reserve_admission.py"
+      ],
+      "property": "PG direct participant leaves provisional effects and caller writes to its owner on success and Python failure; public wrapper retains commit/rollback behavior",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "verification/traces/reserve-admission-histories-2787.json",
+        "tests/_reserve_admission_contract.py",
+        "tests/test_reserve_admission.py",
+        "tests/pg/test_reserve_admission.py"
+      ],
+      "property": "input item/reservation rows and acceptance contract remain unchanged; repeated unkeyed calls remain distinct admissions",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "verification/traces/reserve-admission-histories-2787.json",
+        "tests/_reserve_admission_contract.py",
+        "tests/test_reserve_admission.py",
+        "tests/pg/test_reserve_admission.py"
+      ],
+      "property": "one captured pre-lock reservation timestamp survives the tested actual SQLite writer wait and PG advisory lock wait",
+      "result": "concurrency-tested"
+    },
+    {
+      "evidence": [
+        "tests/pg/test_native_reserve_owner.py",
+        "tests/pg/test_reservations.py",
+        "tests/pg/test_work_lease.py"
+      ],
+      "property": "existing native reserve ledger replay, commit-boundary loss and maintenance interleaving tests pass unchanged",
+      "result": "concurrency-tested"
+    },
+    {
+      "property": "universal caller composition, arbitrary isolation, physical crash durability, runtime identity qualification, full provider parity, deployment and parent2150 completion",
+      "result": "unknown"
+    }
+  ],
+  "context_id": "sprintctl.reserve-admission",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2787",
+    "revision": "native:release:5168d9d2d0e5f56fd134331bdb4a3a38ccf7e4b976ae1a4b015917ce3b832b63"
+  },
+  "counterexamples": [],
+  "depth": 2,
+  "environment": {
+    "backend": "actual temporary SQLite and disposable PostgreSQL16.15",
+    "isolation": "SQLite writer ownership and actual measured PG READ COMMITTED on primary and independent oracle connections",
+    "psycopg": "3.3.3",
+    "pytest": "9.0.2",
+    "python": "3.13.16",
+    "sqlite": "3.53.1"
+  },
+  "execution": {
+    "bounds": {
+      "additional_pg_cases": 6,
+      "retained_clock_wait_histories_per_capture": 2,
+      "retained_observations_per_capture": 19,
+      "shared_cases_per_backend": 30,
+      "workers_per_clock_history": 2
+    },
+    "faults_exercised": [
+      "actual BEFORE/AFTER reservation INSERT abort",
+      "actual BEFORE/AFTER takeover UPDATE abort",
+      "exception after reserved lifecycle event",
+      "exception after result display/annotation",
+      "private PG participant after-event Python failure before caller cleanup",
+      "existing native owner commit-boundary loss and replay waits"
+    ],
+    "histories": 19
+  },
+  "implementation_sha": "479ce6eb8afc76c890110b5c7fa03a47243567f4",
+  "notes": [
+    "Private source reuse under unfinished2150; no new schema/API/IDL, lease policy, native ledger/replay protocol, runtime identity, deployment or public composition promise.",
+    "Before product edits: actual141local31.10s and304PG9.38s,10registered cleanup instances empty; independent oracle review CLEAR and independent SQLite30pass9.97s. Primary PG isolation measurement added per advisory before final304baseline; reviewer acknowledged it. Frozen three-file hashes stayed identical through extraction.",
+    "Original baseline source0c53a5b; candidate base7b221ea is accepted2788 one-file reference correction. The three owned product files were byte-identical across that base update before extraction.",
+    "Initial oracle development retained test-only review_required truthiness and SQLite thread-connection assumption failures; corrected before product edits. No product defect or semantic repair inferred.",
+    "After extraction unchanged focused selection141local42.07s,304PG12.81s/10cleanupzero. Full completed captures below; exact-head CI remains a publication gate.",
+    "Nineteen actual baseline observations are separate from nineteen actual full observations:17sequential fault/owner examples plus2clock lock-wait schedules in each capture. SQLite wait records BEGIN attempt; PG proves actual blocking PID. Existing native owner/advisory concurrency cases run unchanged but are not added to the new retained-history count.",
+    "Raw PG public result timestamp types are asserted by actual tests; JSON trace default=str serialization does not independently authenticate native types. Volatile display age/stale is omitted from durable equality. Captured reservation clock is not a maintenance-expiry clock or freshness guarantee.",
+    "Direct PG participant never commits/rolls back; tested Python failure leaves its real pending takeover/events plus caller write until explicit caller cleanup. The unkeyed public wrapper commits successful implicit caller work and rolls it back even on participant validation failure. SQLite idle refusal stays outside handler. No new managed/TPC or arbitrary composition guarantee is claimed.",
+    "Independent source review CLEAR;394existing top-level functions/classes compared to accepted base: onlydb.reserve andpg.reserve_in_transaction changed;392others AST-identical. AST comparison uses ast.dump(include_attributes=False), ambient parser Python3.14.7 separate from project test Python3.13.16. Fixed SQL string multisets match old entrypoint versus new entrypoint+driver:5SQLite/6PG; syntactic PG participant/driver scan finds no commit/rollback/transaction/connect calls. These source checks do not prove transitive behavior; actual ownership tests and review supply bounded additional evidence. Native WorkApplication and existing owner regression files unchanged. No whole-provider proof.",
+    "Full actual execution: {\"local\": {\"log_sha256\": \"1232fafb3922dbacb92bcf935ed5338c34618f3e2972c33d48d4787b7bd9d921\", \"passed\": 2913, \"skipped\": 4, \"tests\": 2917, \"xml_sha256\": \"66111d4ca04f260930a4f8655782d61458ba621118cfe2c93d381f63a8e95690\"}, \"pg\": {\"log_sha256\": \"746a4507f28b9653cc33fdf9d4cb281e4cdc7bef5d4aed51922c0f9428dd0a43\", \"passed\": 1553, \"skipped\": 0, \"tests\": 1553, \"xml_sha256\": \"d1d6ecc5b93e95e32023b4e326b5087415b5688788d2b53065040e9b52e82653\"}, \"pg_cleanup_instances_zero\": 85}",
+    "Exact verification commands executed from the isolated candidate worktree: {\"after_local\": \"UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-reserve-admission-2787-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/test_reserve_admission.py tests/test_reservation_atomicity.py tests/test_sqlite_item_reserve_caller.py tests/test_reservations.py tests/test_releases.py -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2787-after-local.xml > /tmp/sprintctl-2787-after-local.txt 2>&1\", \"after_pg\": \"PATH=/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-reserve-admission-2787-env UV_OFFLINE=1 timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh -k 'reserve_admission or reservation_atomicity or native_reserve_owner or releases or reservations or work_lease' --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2787-after-pg.xml > /tmp/sprintctl-2787-after-pg.txt 2>&1\", \"before_local\": \"UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-reserve-admission-2787-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/test_reserve_admission.py tests/test_reservation_atomicity.py tests/test_sqlite_item_reserve_caller.py tests/test_reservations.py tests/test_releases.py -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2787-before-final-local.xml > /tmp/sprintctl-2787-before-final-local.txt 2>&1\", \"before_pg\": \"PATH=/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-reserve-admission-2787-env UV_OFFLINE=1 timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh -k 'reserve_admission or reservation_atomicity or native_reserve_owner or releases or reservations or work_lease' --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2787-before-final-pg.xml > /tmp/sprintctl-2787-before-final-pg.txt 2>&1\", \"documentation\": \"UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-reserve-admission-2787-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/test_docs_integrity.py -q > /tmp/sprintctl-2787-doc-check.txt 2>&1\", \"full_local\": \"UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-reserve-admission-2787-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests --ignore=tests/pg --ignore=tests/test_work_application_pg.py -m 'not perf' -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2787-full-local.xml > /tmp/sprintctl-2787-full-local.txt 2>&1\", \"full_pg\": \"PATH=/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-reserve-admission-2787-env UV_OFFLINE=1 timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2787-full-pg.xml > /tmp/sprintctl-2787-full-pg.txt 2>&1\", \"packet_validator\": \"python /projects/dev/agentops/scripts/validate_verification_artifacts.py --root . > /tmp/sprintctl-2787-validation.txt\"}",
+    "Candidate/oracle/evidence byte hashes: {\"sprintctl/db.py\": \"5a67f4e158271af9e7eb491042189076d81c58f2190e24cd99c02b9c9926006b\", \"sprintctl/pg.py\": \"7c8ae28d1eec0e905d71c9a036ef5cc0e05a0d8c1c4106c3952d03e0a25cce07\", \"sprintctl/reservationcore.py\": \"8ae9a2f4373b079a2f417612746279281719c157bd419e93ebddcbfdfa93cd16\", \"tests/_reserve_admission_contract.py\": \"d9c4dad8eda3129c4472fe916183a891baa2e4a5873a9dfd4971fadb98b53f24\", \"tests/pg/test_reserve_admission.py\": \"552ec762aace30304e7564e47afd95979fcdbf0e9f83bdf41fab9ba0070487a4\", \"tests/test_reserve_admission.py\": \"c4d6902698df3b56a95321e774fe447adf190c8dfade226a25951fba12081f13\", \"verification/fixtures/reserve-admission-baseline-2787.json\": \"876ea50f75dc5f738aaf0b61c1bb65a4afef86776cbbdfa7266596aed02909d1\", \"verification/fixtures/reserve-admission-histories-before-2787.json\": \"896b070614db398b148ca21e80d17f63cb6272253710772baf40eca6cf3491aa\", \"verification/fixtures/reserve-admission-protected-asts-2787.json\": \"bf025af6ee2873ccf61be87e71620ba4999f788c75032dbd2df326aa73ac6d65\", \"verification/fixtures/reserve-admission-sql-owner-checks-2787.json\": \"72dad6bce53a5742d79edb80a09e590d313c496cc4232c5b15e3a8880970e4ee\", \"verification/traces/extract-reserve-admission-histories.py\": \"99a4328f7a9f3fbf62b7a5fc39dd40cd5e2b3e0e3f8089937372bd63983686f9\", \"verification/traces/reserve-admission-histories-2787.json\": \"2019906bdadb05b612f0ce14aa036c51aa8a028a5d894b8e33af85a7140c16f8\"}",
+    "implementation_sha names the accepted base plus pinned candidate bytes, avoiding a future self-referential commit; it is not a deployed runtime attestation.",
+    "Final publication base 479ce6eb8afc76c890110b5c7fa03a47243567f4 is accepted README-only PR182 atop broad-tested base 7b221ea3732bffbce03d0a7fab797f8939bf6872. Owned product source bytes are identical between those accepted bases; frozen oracle bytes and tested candidate product bytes unchanged. Actual final combined documentation/install check passed18tests; full source captures remain attributed to7b221ea. Exact-head CI will qualify the final combined tree.",
+    "Exact final documentation command: UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-reserve-admission-2787-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/test_docs_integrity.py tests/test_install_workflow_contract.py -q > /tmp/sprintctl-2787-final-doc-check.txt 2>&1",
+    "An initial combined documentation command named nonexistent tests/test_install.py and collected zero tests. Its actual error log is retained at /tmp/sprintctl-2787-final-doc-check-initial-collection-error.txt. The corrected command above passed18tests with no product/test changes; final documentation log SHA256 0616d6aa11496391686dcbd658123e51d8d057e1f02661af7ef8512554e404d8. No failed product test is inferred from the initial collection error."
+  ],
+  "schema_version": "verification-result/v1"
+}

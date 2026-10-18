@@ -1,0 +1,28 @@
+{
+  "sprintctl/db.py": {
+    "existing_symbols_checked": 141,
+    "existing_changed": [
+      "reserve"
+    ],
+    "new_symbols": [
+      "_ReservationAdmissionSqlite"
+    ]
+  },
+  "sprintctl/pg.py": {
+    "existing_symbols_checked": 246,
+    "existing_changed": [
+      "reserve_in_transaction"
+    ],
+    "new_symbols": [
+      "_ReservationAdmissionPg"
+    ]
+  },
+  "sprintctl/reservationcore.py": {
+    "existing_symbols_checked": 7,
+    "existing_changed": [],
+    "new_symbols": [
+      "_AdmissionParticipant",
+      "_reserve_admitted"
+    ]
+  }
+}

@@ -1,0 +1,1755 @@
+{
+  "histories": [
+    {
+      "junit_case": {
+        "class": "tests.test_reserve_admission.TestSQLiteReserveAdmission",
+        "name": "test_actual_sql_fault_rolls_back_before_fixture_cleanup[BEFORE-INSERT]"
+      },
+      "name": "sqlite-BEFORE-INSERT",
+      "observations": [
+        {
+          "durable": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:49:49Z",
+                "event_type": "reservation.reserved",
+                "id": 1,
+                "payload": "{\"reservation_id\": 1, \"session_id\": \" session \", \"role\": \"execution\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": \"e782c8a229ea012712d24075fe4f6e96c722f116f5b86c114472a5ce21580b3b\"}",
+                "source_type": "system",
+                "sprint_id": 1,
+                "work_item_id": 1
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:49:49Z",
+                "id": 1,
+                "item_revision": "item:c524ffc0-f9df-4019-bdc7-b0b3604f3eeb@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "e782c8a229ea012712d24075fe4f6e96c722f116f5b86c114472a5ce21580b3b",
+                "revise_count": 0,
+                "work_item_id": 1
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18T15:49:49Z",
+                "id": 1,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18T15:49:49Z",
+                "release_digest": "e782c8a229ea012712d24075fe4f6e96c722f116f5b86c114472a5ce21580b3b",
+                "released_at": null,
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 1
+              }
+            ]
+          },
+          "owner": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:49:49Z",
+                "event_type": "reservation.reserved",
+                "id": 1,
+                "payload": "{\"reservation_id\": 1, \"session_id\": \" session \", \"role\": \"execution\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": \"e782c8a229ea012712d24075fe4f6e96c722f116f5b86c114472a5ce21580b3b\"}",
+                "source_type": "system",
+                "sprint_id": 1,
+                "work_item_id": 1
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:49:49Z",
+                "id": 1,
+                "item_revision": "item:c524ffc0-f9df-4019-bdc7-b0b3604f3eeb@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "e782c8a229ea012712d24075fe4f6e96c722f116f5b86c114472a5ce21580b3b",
+                "revise_count": 0,
+                "work_item_id": 1
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18T15:49:49Z",
+                "id": 1,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18T15:49:49Z",
+                "release_digest": "e782c8a229ea012712d24075fe4f6e96c722f116f5b86c114472a5ce21580b3b",
+                "released_at": null,
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 1
+              }
+            ]
+          },
+          "owner_idle_before_cleanup": true
+        }
+      ]
+    },
+    {
+      "junit_case": {
+        "class": "tests.test_reserve_admission.TestSQLiteReserveAdmission",
+        "name": "test_actual_sql_fault_rolls_back_before_fixture_cleanup[BEFORE-UPDATE]"
+      },
+      "name": "sqlite-BEFORE-UPDATE",
+      "observations": [
+        {
+          "durable": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:49:49Z",
+                "event_type": "reservation.reserved",
+                "id": 1,
+                "payload": "{\"reservation_id\": 1, \"session_id\": \" session \", \"role\": \"execution\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": \"5f4fb31a53d9ce4913e5b5e622751ba747f0d3797a89073b795925c5f48daed7\"}",
+                "source_type": "system",
+                "sprint_id": 1,
+                "work_item_id": 1
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:49:49Z",
+                "id": 1,
+                "item_revision": "item:0052c0ac-2a52-4552-9d98-c420a9d90a49@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "5f4fb31a53d9ce4913e5b5e622751ba747f0d3797a89073b795925c5f48daed7",
+                "revise_count": 0,
+                "work_item_id": 1
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18T15:49:49Z",
+                "id": 1,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18T15:49:49Z",
+                "release_digest": "5f4fb31a53d9ce4913e5b5e622751ba747f0d3797a89073b795925c5f48daed7",
+                "released_at": null,
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 1
+              }
+            ]
+          },
+          "owner": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:49:49Z",
+                "event_type": "reservation.reserved",
+                "id": 1,
+                "payload": "{\"reservation_id\": 1, \"session_id\": \" session \", \"role\": \"execution\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": \"5f4fb31a53d9ce4913e5b5e622751ba747f0d3797a89073b795925c5f48daed7\"}",
+                "source_type": "system",
+                "sprint_id": 1,
+                "work_item_id": 1
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:49:49Z",
+                "id": 1,
+                "item_revision": "item:0052c0ac-2a52-4552-9d98-c420a9d90a49@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "5f4fb31a53d9ce4913e5b5e622751ba747f0d3797a89073b795925c5f48daed7",
+                "revise_count": 0,
+                "work_item_id": 1
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18T15:49:49Z",
+                "id": 1,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18T15:49:49Z",
+                "release_digest": "5f4fb31a53d9ce4913e5b5e622751ba747f0d3797a89073b795925c5f48daed7",
+                "released_at": null,
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 1
+              }
+            ]
+          },
+          "owner_idle_before_cleanup": true
+        }
+      ]
+    },
+    {
+      "junit_case": {
+        "class": "tests.test_reserve_admission.TestSQLiteReserveAdmission",
+        "name": "test_actual_sql_fault_rolls_back_before_fixture_cleanup[AFTER-INSERT]"
+      },
+      "name": "sqlite-AFTER-INSERT",
+      "observations": [
+        {
+          "durable": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:49:50Z",
+                "event_type": "reservation.reserved",
+                "id": 1,
+                "payload": "{\"reservation_id\": 1, \"session_id\": \" session \", \"role\": \"execution\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": \"7aec21c4e71ffe35bd667adaecc039725b43a386303187e0265928914b44c592\"}",
+                "source_type": "system",
+                "sprint_id": 1,
+                "work_item_id": 1
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:49:50Z",
+                "id": 1,
+                "item_revision": "item:f1a64a01-9bd7-4250-a93c-b0fdda94366c@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "7aec21c4e71ffe35bd667adaecc039725b43a386303187e0265928914b44c592",
+                "revise_count": 0,
+                "work_item_id": 1
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18T15:49:50Z",
+                "id": 1,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18T15:49:50Z",
+                "release_digest": "7aec21c4e71ffe35bd667adaecc039725b43a386303187e0265928914b44c592",
+                "released_at": null,
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 1
+              }
+            ]
+          },
+          "owner": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:49:50Z",
+                "event_type": "reservation.reserved",
+                "id": 1,
+                "payload": "{\"reservation_id\": 1, \"session_id\": \" session \", \"role\": \"execution\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": \"7aec21c4e71ffe35bd667adaecc039725b43a386303187e0265928914b44c592\"}",
+                "source_type": "system",
+                "sprint_id": 1,
+                "work_item_id": 1
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:49:50Z",
+                "id": 1,
+                "item_revision": "item:f1a64a01-9bd7-4250-a93c-b0fdda94366c@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "7aec21c4e71ffe35bd667adaecc039725b43a386303187e0265928914b44c592",
+                "revise_count": 0,
+                "work_item_id": 1
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18T15:49:50Z",
+                "id": 1,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18T15:49:50Z",
+                "release_digest": "7aec21c4e71ffe35bd667adaecc039725b43a386303187e0265928914b44c592",
+                "released_at": null,
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 1
+              }
+            ]
+          },
+          "owner_idle_before_cleanup": true
+        }
+      ]
+    },
+    {
+      "junit_case": {
+        "class": "tests.test_reserve_admission.TestSQLiteReserveAdmission",
+        "name": "test_actual_sql_fault_rolls_back_before_fixture_cleanup[AFTER-UPDATE]"
+      },
+      "name": "sqlite-AFTER-UPDATE",
+      "observations": [
+        {
+          "durable": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:49:50Z",
+                "event_type": "reservation.reserved",
+                "id": 1,
+                "payload": "{\"reservation_id\": 1, \"session_id\": \" session \", \"role\": \"execution\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": \"abdd41c1a57b14f0c5e40e56f43972680fb0c5b7d9ccbb5ee85b563f971c1194\"}",
+                "source_type": "system",
+                "sprint_id": 1,
+                "work_item_id": 1
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:49:50Z",
+                "id": 1,
+                "item_revision": "item:81db9724-0736-49b0-956e-6455e6f57fa7@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "abdd41c1a57b14f0c5e40e56f43972680fb0c5b7d9ccbb5ee85b563f971c1194",
+                "revise_count": 0,
+                "work_item_id": 1
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18T15:49:50Z",
+                "id": 1,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18T15:49:50Z",
+                "release_digest": "abdd41c1a57b14f0c5e40e56f43972680fb0c5b7d9ccbb5ee85b563f971c1194",
+                "released_at": null,
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 1
+              }
+            ]
+          },
+          "owner": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:49:50Z",
+                "event_type": "reservation.reserved",
+                "id": 1,
+                "payload": "{\"reservation_id\": 1, \"session_id\": \" session \", \"role\": \"execution\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": \"abdd41c1a57b14f0c5e40e56f43972680fb0c5b7d9ccbb5ee85b563f971c1194\"}",
+                "source_type": "system",
+                "sprint_id": 1,
+                "work_item_id": 1
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:49:50Z",
+                "id": 1,
+                "item_revision": "item:81db9724-0736-49b0-956e-6455e6f57fa7@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "abdd41c1a57b14f0c5e40e56f43972680fb0c5b7d9ccbb5ee85b563f971c1194",
+                "revise_count": 0,
+                "work_item_id": 1
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18T15:49:50Z",
+                "id": 1,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18T15:49:50Z",
+                "release_digest": "abdd41c1a57b14f0c5e40e56f43972680fb0c5b7d9ccbb5ee85b563f971c1194",
+                "released_at": null,
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 1
+              }
+            ]
+          },
+          "owner_idle_before_cleanup": true
+        }
+      ]
+    },
+    {
+      "junit_case": {
+        "class": "tests.test_reserve_admission.TestSQLiteReserveAdmission",
+        "name": "test_after_actual_effect_fault_rolls_back_and_retries[display]"
+      },
+      "name": "sqlite-display",
+      "observations": [
+        {
+          "durable": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:49:51Z",
+                "event_type": "reservation.reserved",
+                "id": 1,
+                "payload": "{\"reservation_id\": 1, \"session_id\": \" session \", \"role\": \"execution\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": \"0b267df364c3dfac88376def9973408e3201dbf2de5514f05c1d0003efb9575e\"}",
+                "source_type": "system",
+                "sprint_id": 1,
+                "work_item_id": 1
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:49:51Z",
+                "id": 1,
+                "item_revision": "item:160a07c0-04e3-4ca3-bf98-6ad2ca5992e4@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "0b267df364c3dfac88376def9973408e3201dbf2de5514f05c1d0003efb9575e",
+                "revise_count": 0,
+                "work_item_id": 1
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18T15:49:51Z",
+                "id": 1,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18T15:49:51Z",
+                "release_digest": "0b267df364c3dfac88376def9973408e3201dbf2de5514f05c1d0003efb9575e",
+                "released_at": null,
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 1
+              }
+            ]
+          },
+          "rolled_back_before_cleanup": true
+        }
+      ]
+    },
+    {
+      "junit_case": {
+        "class": "tests.test_reserve_admission.TestSQLiteReserveAdmission",
+        "name": "test_after_actual_effect_fault_rolls_back_and_retries[annotation]"
+      },
+      "name": "sqlite-annotation",
+      "observations": [
+        {
+          "durable": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:49:51Z",
+                "event_type": "reservation.reserved",
+                "id": 1,
+                "payload": "{\"reservation_id\": 1, \"session_id\": \" session \", \"role\": \"execution\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": \"4fa28b65bbe093d6a06396b2a006d31ab0f8ce228fa62d15b2e7d6d67e266dd5\"}",
+                "source_type": "system",
+                "sprint_id": 1,
+                "work_item_id": 1
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:49:51Z",
+                "id": 1,
+                "item_revision": "item:1964f964-5206-462c-9555-f62e8dd2779e@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "4fa28b65bbe093d6a06396b2a006d31ab0f8ce228fa62d15b2e7d6d67e266dd5",
+                "revise_count": 0,
+                "work_item_id": 1
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18T15:49:51Z",
+                "id": 1,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18T15:49:51Z",
+                "release_digest": "4fa28b65bbe093d6a06396b2a006d31ab0f8ce228fa62d15b2e7d6d67e266dd5",
+                "released_at": null,
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 1
+              }
+            ]
+          },
+          "rolled_back_before_cleanup": true
+        }
+      ]
+    },
+    {
+      "junit_case": {
+        "class": "tests.test_reserve_admission.TestSQLiteReserveAdmission",
+        "name": "test_after_actual_effect_fault_rolls_back_and_retries[reserved-event]"
+      },
+      "name": "sqlite-reserved-event",
+      "observations": [
+        {
+          "durable": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:49:51Z",
+                "event_type": "reservation.reserved",
+                "id": 1,
+                "payload": "{\"reservation_id\": 1, \"session_id\": \" session \", \"role\": \"execution\", \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": [], \"release_digest\": \"5269ddb1d5e118b7b8dbdd88e08c17972c3c3e2373689116afa3225160cd5437\"}",
+                "source_type": "system",
+                "sprint_id": 1,
+                "work_item_id": 1
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:49:51Z",
+                "id": 1,
+                "item_revision": "item:bd0675cf-020a-45fc-b537-91944989307b@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "5269ddb1d5e118b7b8dbdd88e08c17972c3c3e2373689116afa3225160cd5437",
+                "revise_count": 0,
+                "work_item_id": 1
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18T15:49:51Z",
+                "id": 1,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18T15:49:51Z",
+                "release_digest": "5269ddb1d5e118b7b8dbdd88e08c17972c3c3e2373689116afa3225160cd5437",
+                "released_at": null,
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 1
+              }
+            ]
+          },
+          "rolled_back_before_cleanup": true
+        }
+      ]
+    },
+    {
+      "junit_case": {
+        "class": "tests.test_reserve_admission.TestSQLiteReserveAdmission",
+        "name": "test_one_prelock_timestamp_survives_actual_writer_wait"
+      },
+      "name": "sqlite-captured-clock-writer-wait",
+      "observations": [
+        {
+          "result": {
+            "activity_age_seconds": 214404347,
+            "actor": "waiter",
+            "conflict": false,
+            "conflict_severity": "none",
+            "conflicting_reservations": [],
+            "correlation_ref": null,
+            "created_at": "2020-01-02T03:04:05Z",
+            "id": 1,
+            "interruption_reason": null,
+            "last_activity_at": "2020-01-02T03:04:05Z",
+            "release_digest": "70b5ffa1b98994593284b9b1732de7107691c8f616ef4dba9874433245521fd2",
+            "released_at": null,
+            "role": "execution",
+            "session_id": "waiter",
+            "stale": true,
+            "state": "active",
+            "work_item_id": 1
+          },
+          "single_prelock_clock": "2020-01-02T03:04:05Z",
+          "wait_observation": "SQLite BEGIN attempt"
+        }
+      ]
+    },
+    {
+      "junit_case": {
+        "class": "tests.pg.test_reserve_admission.TestPostgresReserveAdmission",
+        "name": "test_actual_sql_fault_rolls_back_before_fixture_cleanup[BEFORE-INSERT]"
+      },
+      "name": "pg-BEFORE-INSERT",
+      "observations": [
+        {
+          "durable": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:52:35.798391Z",
+                "event_type": "reservation.reserved",
+                "id": 211,
+                "payload": "{\"role\": \"execution\", \"session_id\": \" session \", \"release_digest\": \"c842483e673d8173daf63b7ab7c09bafeea483b97324990653fe2a346c0afa49\", \"reservation_id\": 171, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 97,
+                "work_item_id": 100
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:52:35.798391Z",
+                "id": 123,
+                "item_revision": "item:720ca938-cffe-4878-ad01-c47baf2cae9a@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "c842483e673d8173daf63b7ab7c09bafeea483b97324990653fe2a346c0afa49",
+                "repo_id": "itest-module-ace22f2e0029",
+                "revise_count": 0,
+                "work_item_id": 100
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:52:35+03:00",
+                "id": 171,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18 18:52:35+03:00",
+                "release_digest": "c842483e673d8173daf63b7ab7c09bafeea483b97324990653fe2a346c0afa49",
+                "released_at": null,
+                "repo_id": "itest-module-ace22f2e0029",
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 100
+              }
+            ]
+          },
+          "owner": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:52:35.798391Z",
+                "event_type": "reservation.reserved",
+                "id": 211,
+                "payload": "{\"role\": \"execution\", \"session_id\": \" session \", \"release_digest\": \"c842483e673d8173daf63b7ab7c09bafeea483b97324990653fe2a346c0afa49\", \"reservation_id\": 171, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 97,
+                "work_item_id": 100
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:52:35.798391Z",
+                "id": 123,
+                "item_revision": "item:720ca938-cffe-4878-ad01-c47baf2cae9a@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "c842483e673d8173daf63b7ab7c09bafeea483b97324990653fe2a346c0afa49",
+                "repo_id": "itest-module-ace22f2e0029",
+                "revise_count": 0,
+                "work_item_id": 100
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:52:35+03:00",
+                "id": 171,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18 18:52:35+03:00",
+                "release_digest": "c842483e673d8173daf63b7ab7c09bafeea483b97324990653fe2a346c0afa49",
+                "released_at": null,
+                "repo_id": "itest-module-ace22f2e0029",
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 100
+              }
+            ]
+          },
+          "owner_idle_before_cleanup": true
+        }
+      ]
+    },
+    {
+      "junit_case": {
+        "class": "tests.pg.test_reserve_admission.TestPostgresReserveAdmission",
+        "name": "test_actual_sql_fault_rolls_back_before_fixture_cleanup[BEFORE-UPDATE]"
+      },
+      "name": "pg-BEFORE-UPDATE",
+      "observations": [
+        {
+          "durable": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:52:35.817891Z",
+                "event_type": "reservation.reserved",
+                "id": 214,
+                "payload": "{\"role\": \"execution\", \"session_id\": \" session \", \"release_digest\": \"05a2f866e874e0afbe7b12681186a5779232c203f92b0b4b41dd529648920196\", \"reservation_id\": 174, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 98,
+                "work_item_id": 101
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:52:35.817891Z",
+                "id": 126,
+                "item_revision": "item:f79eebfe-1236-4898-a86a-0b87cd2fb73a@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "05a2f866e874e0afbe7b12681186a5779232c203f92b0b4b41dd529648920196",
+                "repo_id": "itest-module-ace22f2e0029",
+                "revise_count": 0,
+                "work_item_id": 101
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:52:35+03:00",
+                "id": 174,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18 18:52:35+03:00",
+                "release_digest": "05a2f866e874e0afbe7b12681186a5779232c203f92b0b4b41dd529648920196",
+                "released_at": null,
+                "repo_id": "itest-module-ace22f2e0029",
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 101
+              }
+            ]
+          },
+          "owner": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:52:35.817891Z",
+                "event_type": "reservation.reserved",
+                "id": 214,
+                "payload": "{\"role\": \"execution\", \"session_id\": \" session \", \"release_digest\": \"05a2f866e874e0afbe7b12681186a5779232c203f92b0b4b41dd529648920196\", \"reservation_id\": 174, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 98,
+                "work_item_id": 101
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:52:35.817891Z",
+                "id": 126,
+                "item_revision": "item:f79eebfe-1236-4898-a86a-0b87cd2fb73a@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "05a2f866e874e0afbe7b12681186a5779232c203f92b0b4b41dd529648920196",
+                "repo_id": "itest-module-ace22f2e0029",
+                "revise_count": 0,
+                "work_item_id": 101
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:52:35+03:00",
+                "id": 174,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18 18:52:35+03:00",
+                "release_digest": "05a2f866e874e0afbe7b12681186a5779232c203f92b0b4b41dd529648920196",
+                "released_at": null,
+                "repo_id": "itest-module-ace22f2e0029",
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 101
+              }
+            ]
+          },
+          "owner_idle_before_cleanup": true
+        }
+      ]
+    },
+    {
+      "junit_case": {
+        "class": "tests.pg.test_reserve_admission.TestPostgresReserveAdmission",
+        "name": "test_actual_sql_fault_rolls_back_before_fixture_cleanup[AFTER-INSERT]"
+      },
+      "name": "pg-AFTER-INSERT",
+      "observations": [
+        {
+          "durable": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:52:35.837476Z",
+                "event_type": "reservation.reserved",
+                "id": 217,
+                "payload": "{\"role\": \"execution\", \"session_id\": \" session \", \"release_digest\": \"c3ad06b7f52320d2347983c39600066e83492c30903a67505cfe257955fef489\", \"reservation_id\": 176, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 99,
+                "work_item_id": 102
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:52:35.837476Z",
+                "id": 129,
+                "item_revision": "item:c0767baa-cc36-4730-b769-a4878c99adf7@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "c3ad06b7f52320d2347983c39600066e83492c30903a67505cfe257955fef489",
+                "repo_id": "itest-module-ace22f2e0029",
+                "revise_count": 0,
+                "work_item_id": 102
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:52:35+03:00",
+                "id": 176,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18 18:52:35+03:00",
+                "release_digest": "c3ad06b7f52320d2347983c39600066e83492c30903a67505cfe257955fef489",
+                "released_at": null,
+                "repo_id": "itest-module-ace22f2e0029",
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 102
+              }
+            ]
+          },
+          "owner": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:52:35.837476Z",
+                "event_type": "reservation.reserved",
+                "id": 217,
+                "payload": "{\"role\": \"execution\", \"session_id\": \" session \", \"release_digest\": \"c3ad06b7f52320d2347983c39600066e83492c30903a67505cfe257955fef489\", \"reservation_id\": 176, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 99,
+                "work_item_id": 102
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:52:35.837476Z",
+                "id": 129,
+                "item_revision": "item:c0767baa-cc36-4730-b769-a4878c99adf7@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "c3ad06b7f52320d2347983c39600066e83492c30903a67505cfe257955fef489",
+                "repo_id": "itest-module-ace22f2e0029",
+                "revise_count": 0,
+                "work_item_id": 102
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:52:35+03:00",
+                "id": 176,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18 18:52:35+03:00",
+                "release_digest": "c3ad06b7f52320d2347983c39600066e83492c30903a67505cfe257955fef489",
+                "released_at": null,
+                "repo_id": "itest-module-ace22f2e0029",
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 102
+              }
+            ]
+          },
+          "owner_idle_before_cleanup": true
+        }
+      ]
+    },
+    {
+      "junit_case": {
+        "class": "tests.pg.test_reserve_admission.TestPostgresReserveAdmission",
+        "name": "test_actual_sql_fault_rolls_back_before_fixture_cleanup[AFTER-UPDATE]"
+      },
+      "name": "pg-AFTER-UPDATE",
+      "observations": [
+        {
+          "durable": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:52:35.856599Z",
+                "event_type": "reservation.reserved",
+                "id": 220,
+                "payload": "{\"role\": \"execution\", \"session_id\": \" session \", \"release_digest\": \"c8bcac585f6ebabe50e650a2146f702d4316bb6fc111f78aa85f7c236a1bc455\", \"reservation_id\": 179, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 100,
+                "work_item_id": 103
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:52:35.856599Z",
+                "id": 132,
+                "item_revision": "item:bcd454ed-c4b7-43f5-8623-28954a1c8344@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "c8bcac585f6ebabe50e650a2146f702d4316bb6fc111f78aa85f7c236a1bc455",
+                "repo_id": "itest-module-ace22f2e0029",
+                "revise_count": 0,
+                "work_item_id": 103
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:52:35+03:00",
+                "id": 179,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18 18:52:35+03:00",
+                "release_digest": "c8bcac585f6ebabe50e650a2146f702d4316bb6fc111f78aa85f7c236a1bc455",
+                "released_at": null,
+                "repo_id": "itest-module-ace22f2e0029",
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 103
+              }
+            ]
+          },
+          "owner": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:52:35.856599Z",
+                "event_type": "reservation.reserved",
+                "id": 220,
+                "payload": "{\"role\": \"execution\", \"session_id\": \" session \", \"release_digest\": \"c8bcac585f6ebabe50e650a2146f702d4316bb6fc111f78aa85f7c236a1bc455\", \"reservation_id\": 179, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 100,
+                "work_item_id": 103
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:52:35.856599Z",
+                "id": 132,
+                "item_revision": "item:bcd454ed-c4b7-43f5-8623-28954a1c8344@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "c8bcac585f6ebabe50e650a2146f702d4316bb6fc111f78aa85f7c236a1bc455",
+                "repo_id": "itest-module-ace22f2e0029",
+                "revise_count": 0,
+                "work_item_id": 103
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:52:35+03:00",
+                "id": 179,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18 18:52:35+03:00",
+                "release_digest": "c8bcac585f6ebabe50e650a2146f702d4316bb6fc111f78aa85f7c236a1bc455",
+                "released_at": null,
+                "repo_id": "itest-module-ace22f2e0029",
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 103
+              }
+            ]
+          },
+          "owner_idle_before_cleanup": true
+        }
+      ]
+    },
+    {
+      "junit_case": {
+        "class": "tests.pg.test_reserve_admission.TestPostgresReserveAdmission",
+        "name": "test_after_actual_effect_fault_rolls_back_and_retries[display]"
+      },
+      "name": "pg-display",
+      "observations": [
+        {
+          "durable": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:52:35.874879Z",
+                "event_type": "reservation.reserved",
+                "id": 223,
+                "payload": "{\"role\": \"execution\", \"session_id\": \" session \", \"release_digest\": \"920ae36745033198e116db589164eeec078f5180d857590e8fa660361b13e6f4\", \"reservation_id\": 181, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 101,
+                "work_item_id": 104
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:52:35.874879Z",
+                "id": 135,
+                "item_revision": "item:06399297-53c3-4fea-8672-196dcb0dafb7@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "920ae36745033198e116db589164eeec078f5180d857590e8fa660361b13e6f4",
+                "repo_id": "itest-module-ace22f2e0029",
+                "revise_count": 0,
+                "work_item_id": 104
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:52:35+03:00",
+                "id": 181,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18 18:52:35+03:00",
+                "release_digest": "920ae36745033198e116db589164eeec078f5180d857590e8fa660361b13e6f4",
+                "released_at": null,
+                "repo_id": "itest-module-ace22f2e0029",
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 104
+              }
+            ]
+          },
+          "rolled_back_before_cleanup": true
+        }
+      ]
+    },
+    {
+      "junit_case": {
+        "class": "tests.pg.test_reserve_admission.TestPostgresReserveAdmission",
+        "name": "test_after_actual_effect_fault_rolls_back_and_retries[annotation]"
+      },
+      "name": "pg-annotation",
+      "observations": [
+        {
+          "durable": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:52:35.893744Z",
+                "event_type": "reservation.reserved",
+                "id": 228,
+                "payload": "{\"role\": \"execution\", \"session_id\": \" session \", \"release_digest\": \"94cedea21adb2d7c5054bfc57e61ecea0b2c87b3a3b1cd433de86acaf35fdc8d\", \"reservation_id\": 184, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 102,
+                "work_item_id": 105
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:52:35.893744Z",
+                "id": 138,
+                "item_revision": "item:0b1dcd5e-d43e-4175-8627-32b1692e5dd1@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "94cedea21adb2d7c5054bfc57e61ecea0b2c87b3a3b1cd433de86acaf35fdc8d",
+                "repo_id": "itest-module-ace22f2e0029",
+                "revise_count": 0,
+                "work_item_id": 105
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:52:35+03:00",
+                "id": 184,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18 18:52:35+03:00",
+                "release_digest": "94cedea21adb2d7c5054bfc57e61ecea0b2c87b3a3b1cd433de86acaf35fdc8d",
+                "released_at": null,
+                "repo_id": "itest-module-ace22f2e0029",
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 105
+              }
+            ]
+          },
+          "rolled_back_before_cleanup": true
+        }
+      ]
+    },
+    {
+      "junit_case": {
+        "class": "tests.pg.test_reserve_admission.TestPostgresReserveAdmission",
+        "name": "test_after_actual_effect_fault_rolls_back_and_retries[reserved-event]"
+      },
+      "name": "pg-reserved-event",
+      "observations": [
+        {
+          "durable": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:52:35.911803Z",
+                "event_type": "reservation.reserved",
+                "id": 233,
+                "payload": "{\"role\": \"execution\", \"session_id\": \" session \", \"release_digest\": \"b7f6d98fddd1545ee2cceddf6237807853325ccbf835f127733743d6ab739282\", \"reservation_id\": 187, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 103,
+                "work_item_id": 106
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:52:35.911803Z",
+                "id": 141,
+                "item_revision": "item:ae2252f1-9a96-4863-8287-033ec96ffc7b@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "b7f6d98fddd1545ee2cceddf6237807853325ccbf835f127733743d6ab739282",
+                "repo_id": "itest-module-ace22f2e0029",
+                "revise_count": 0,
+                "work_item_id": 106
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:52:35+03:00",
+                "id": 187,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18 18:52:35+03:00",
+                "release_digest": "b7f6d98fddd1545ee2cceddf6237807853325ccbf835f127733743d6ab739282",
+                "released_at": null,
+                "repo_id": "itest-module-ace22f2e0029",
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 106
+              }
+            ]
+          },
+          "rolled_back_before_cleanup": true
+        }
+      ]
+    },
+    {
+      "junit_case": {
+        "class": "tests.pg.test_reserve_admission.TestPostgresReserveAdmission",
+        "name": "test_one_prelock_timestamp_survives_actual_writer_wait"
+      },
+      "name": "pg-captured-clock-writer-wait",
+      "observations": [
+        {
+          "result": {
+            "activity_age_seconds": 214404510,
+            "actor": "waiter",
+            "conflict": false,
+            "conflict_severity": "none",
+            "conflicting_reservations": [],
+            "correlation_ref": null,
+            "created_at": "2020-01-02 05:04:05+02:00",
+            "id": 190,
+            "interruption_reason": null,
+            "last_activity_at": "2020-01-02 05:04:05+02:00",
+            "release_digest": "712128df5b752a31a5c8e3d853a13320c08428b45de9470cb0f3f2a0aed8492e",
+            "released_at": null,
+            "repo_id": "itest-module-ace22f2e0029",
+            "role": "execution",
+            "session_id": "waiter",
+            "stale": true,
+            "state": "active",
+            "work_item_id": 107
+          },
+          "single_prelock_clock": "2020-01-02T03:04:05Z",
+          "wait_observation": "PG actual blocking PID"
+        }
+      ]
+    },
+    {
+      "junit_case": {
+        "class": "tests.pg.test_reserve_admission",
+        "name": "test_direct_participant_leaves_all_provisional_effects_to_owner[commit]"
+      },
+      "name": "pg-direct-participant-commit",
+      "observations": [
+        {
+          "durable": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:52:35.950925Z",
+                "event_type": "reservation.reserved",
+                "id": 239,
+                "payload": "{\"role\": \"execution\", \"session_id\": \" session \", \"release_digest\": \"085b8c121fe647f8310aa00f194e37a87d18a22fd1c087a32b87727ad27fb281\", \"reservation_id\": 191, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 105,
+                "work_item_id": 108
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:52:35.950925Z",
+                "id": 145,
+                "item_revision": "item:62b3a654-6490-43e1-af1a-cc89136377b2@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "085b8c121fe647f8310aa00f194e37a87d18a22fd1c087a32b87727ad27fb281",
+                "repo_id": "itest-module-ace22f2e0029",
+                "revise_count": 0,
+                "work_item_id": 108
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:52:35+03:00",
+                "id": 191,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18 18:52:35+03:00",
+                "release_digest": "085b8c121fe647f8310aa00f194e37a87d18a22fd1c087a32b87727ad27fb281",
+                "released_at": null,
+                "repo_id": "itest-module-ace22f2e0029",
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 108
+              }
+            ]
+          },
+          "pending": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:52:35.950925Z",
+                "event_type": "reservation.reserved",
+                "id": 239,
+                "payload": "{\"role\": \"execution\", \"session_id\": \" session \", \"release_digest\": \"085b8c121fe647f8310aa00f194e37a87d18a22fd1c087a32b87727ad27fb281\", \"reservation_id\": 191, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 105,
+                "work_item_id": 108
+              },
+              {
+                "actor": "participant",
+                "created_at": "2026-10-18T15:52:35.957522Z",
+                "event_type": "reservation.interrupted",
+                "id": 240,
+                "payload": "{\"reason\": \"explicit-takeover\", \"replacement_id\": 192, \"reservation_id\": 191}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 105,
+                "work_item_id": 108
+              },
+              {
+                "actor": "participant",
+                "created_at": "2026-10-18T15:52:35.957522Z",
+                "event_type": "reservation.reserved",
+                "id": 241,
+                "payload": "{\"role\": \"execution\", \"session_id\": \"participant\", \"release_digest\": \"45d542ee6256e67d25b7949b068890d07bd8710aada0d71b544e35b4bfa7f5fc\", \"reservation_id\": 192, \"correlation_ref\": null, \"interrupt_existing\": true, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 105,
+                "work_item_id": 108
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:52:35.950925Z",
+                "id": 145,
+                "item_revision": "item:62b3a654-6490-43e1-af1a-cc89136377b2@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "085b8c121fe647f8310aa00f194e37a87d18a22fd1c087a32b87727ad27fb281",
+                "repo_id": "itest-module-ace22f2e0029",
+                "revise_count": 0,
+                "work_item_id": 108
+              },
+              {
+                "acceptance_contract": {
+                  "review_required": false
+                },
+                "actor": "participant",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:52:35.957522Z",
+                "id": 146,
+                "item_revision": "item:62b3a654-6490-43e1-af1a-cc89136377b2@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "45d542ee6256e67d25b7949b068890d07bd8710aada0d71b544e35b4bfa7f5fc",
+                "repo_id": "itest-module-ace22f2e0029",
+                "revise_count": 0,
+                "work_item_id": 108
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:52:35+03:00",
+                "id": 191,
+                "interruption_reason": "interrupted by participant (participant)",
+                "last_activity_at": "2026-10-18 18:52:35+03:00",
+                "release_digest": "085b8c121fe647f8310aa00f194e37a87d18a22fd1c087a32b87727ad27fb281",
+                "released_at": "2026-10-18 18:52:35+03:00",
+                "repo_id": "itest-module-ace22f2e0029",
+                "role": "execution",
+                "session_id": " session ",
+                "state": "interrupted",
+                "work_item_id": 108
+              },
+              {
+                "actor": "participant",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:52:35+03:00",
+                "id": 192,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18 18:52:35+03:00",
+                "release_digest": "45d542ee6256e67d25b7949b068890d07bd8710aada0d71b544e35b4bfa7f5fc",
+                "released_at": null,
+                "repo_id": "itest-module-ace22f2e0029",
+                "role": "execution",
+                "session_id": "participant",
+                "state": "active",
+                "work_item_id": 108
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "junit_case": {
+        "class": "tests.pg.test_reserve_admission",
+        "name": "test_direct_participant_leaves_all_provisional_effects_to_owner[rollback]"
+      },
+      "name": "pg-direct-participant-rollback",
+      "observations": [
+        {
+          "durable": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:52:35.977801Z",
+                "event_type": "reservation.reserved",
+                "id": 242,
+                "payload": "{\"role\": \"execution\", \"session_id\": \" session \", \"release_digest\": \"8f748bfd9bff49ed312b8d2e331d4e472e9d02971f5b80d687a64b97c541ba9f\", \"reservation_id\": 193, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 106,
+                "work_item_id": 109
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:52:35.977801Z",
+                "id": 147,
+                "item_revision": "item:4d80102b-3ea4-4ccb-964c-f2d76a3b9d5e@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "8f748bfd9bff49ed312b8d2e331d4e472e9d02971f5b80d687a64b97c541ba9f",
+                "repo_id": "itest-module-ace22f2e0029",
+                "revise_count": 0,
+                "work_item_id": 109
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:52:35+03:00",
+                "id": 193,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18 18:52:35+03:00",
+                "release_digest": "8f748bfd9bff49ed312b8d2e331d4e472e9d02971f5b80d687a64b97c541ba9f",
+                "released_at": null,
+                "repo_id": "itest-module-ace22f2e0029",
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 109
+              }
+            ]
+          },
+          "pending": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:52:35.977801Z",
+                "event_type": "reservation.reserved",
+                "id": 242,
+                "payload": "{\"role\": \"execution\", \"session_id\": \" session \", \"release_digest\": \"8f748bfd9bff49ed312b8d2e331d4e472e9d02971f5b80d687a64b97c541ba9f\", \"reservation_id\": 193, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 106,
+                "work_item_id": 109
+              },
+              {
+                "actor": "participant",
+                "created_at": "2026-10-18T15:52:35.984208Z",
+                "event_type": "reservation.interrupted",
+                "id": 243,
+                "payload": "{\"reason\": \"explicit-takeover\", \"replacement_id\": 194, \"reservation_id\": 193}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 106,
+                "work_item_id": 109
+              },
+              {
+                "actor": "participant",
+                "created_at": "2026-10-18T15:52:35.984208Z",
+                "event_type": "reservation.reserved",
+                "id": 244,
+                "payload": "{\"role\": \"execution\", \"session_id\": \"participant\", \"release_digest\": \"60e8ba3a5d323296d1391085b67270d42081e1ca62b004e1e0ef00e5595ee5af\", \"reservation_id\": 194, \"correlation_ref\": null, \"interrupt_existing\": true, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 106,
+                "work_item_id": 109
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:52:35.977801Z",
+                "id": 147,
+                "item_revision": "item:4d80102b-3ea4-4ccb-964c-f2d76a3b9d5e@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "8f748bfd9bff49ed312b8d2e331d4e472e9d02971f5b80d687a64b97c541ba9f",
+                "repo_id": "itest-module-ace22f2e0029",
+                "revise_count": 0,
+                "work_item_id": 109
+              },
+              {
+                "acceptance_contract": {
+                  "review_required": false
+                },
+                "actor": "participant",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:52:35.984208Z",
+                "id": 148,
+                "item_revision": "item:4d80102b-3ea4-4ccb-964c-f2d76a3b9d5e@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "60e8ba3a5d323296d1391085b67270d42081e1ca62b004e1e0ef00e5595ee5af",
+                "repo_id": "itest-module-ace22f2e0029",
+                "revise_count": 0,
+                "work_item_id": 109
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:52:35+03:00",
+                "id": 193,
+                "interruption_reason": "interrupted by participant (participant)",
+                "last_activity_at": "2026-10-18 18:52:35+03:00",
+                "release_digest": "8f748bfd9bff49ed312b8d2e331d4e472e9d02971f5b80d687a64b97c541ba9f",
+                "released_at": "2026-10-18 18:52:35+03:00",
+                "repo_id": "itest-module-ace22f2e0029",
+                "role": "execution",
+                "session_id": " session ",
+                "state": "interrupted",
+                "work_item_id": 109
+              },
+              {
+                "actor": "participant",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:52:35+03:00",
+                "id": 194,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18 18:52:35+03:00",
+                "release_digest": "60e8ba3a5d323296d1391085b67270d42081e1ca62b004e1e0ef00e5595ee5af",
+                "released_at": null,
+                "repo_id": "itest-module-ace22f2e0029",
+                "role": "execution",
+                "session_id": "participant",
+                "state": "active",
+                "work_item_id": 109
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "junit_case": {
+        "class": "tests.pg.test_reserve_admission",
+        "name": "test_participant_python_failure_preserves_pending_owner_and_effects_before_cleanup"
+      },
+      "name": "pg-failed-participant-before-owner-cleanup",
+      "observations": [
+        {
+          "durable": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:52:36.005100Z",
+                "event_type": "reservation.reserved",
+                "id": 245,
+                "payload": "{\"role\": \"execution\", \"session_id\": \" session \", \"release_digest\": \"20e53f1762cbf457e8af73602c84d494b83b0aec7dced8aebf2154f59bd3f4ed\", \"reservation_id\": 195, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 107,
+                "work_item_id": 110
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:52:36.005100Z",
+                "id": 149,
+                "item_revision": "item:06cce226-e637-49d3-95ef-41d72ef6643c@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "20e53f1762cbf457e8af73602c84d494b83b0aec7dced8aebf2154f59bd3f4ed",
+                "repo_id": "itest-module-ace22f2e0029",
+                "revise_count": 0,
+                "work_item_id": 110
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:52:36+03:00",
+                "id": 195,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18 18:52:36+03:00",
+                "release_digest": "20e53f1762cbf457e8af73602c84d494b83b0aec7dced8aebf2154f59bd3f4ed",
+                "released_at": null,
+                "repo_id": "itest-module-ace22f2e0029",
+                "role": "execution",
+                "session_id": " session ",
+                "state": "active",
+                "work_item_id": 110
+              }
+            ]
+          },
+          "pending": {
+            "events": [
+              {
+                "actor": " operator ",
+                "created_at": "2026-10-18T15:52:36.005100Z",
+                "event_type": "reservation.reserved",
+                "id": 245,
+                "payload": "{\"role\": \"execution\", \"session_id\": \" session \", \"release_digest\": \"20e53f1762cbf457e8af73602c84d494b83b0aec7dced8aebf2154f59bd3f4ed\", \"reservation_id\": 195, \"correlation_ref\": null, \"interrupt_existing\": false, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 107,
+                "work_item_id": 110
+              },
+              {
+                "actor": "participant",
+                "created_at": "2026-10-18T15:52:36.011874Z",
+                "event_type": "reservation.interrupted",
+                "id": 246,
+                "payload": "{\"reason\": \"explicit-takeover\", \"replacement_id\": 196, \"reservation_id\": 195}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 107,
+                "work_item_id": 110
+              },
+              {
+                "actor": "participant",
+                "created_at": "2026-10-18T15:52:36.011874Z",
+                "event_type": "reservation.reserved",
+                "id": 247,
+                "payload": "{\"role\": \"execution\", \"session_id\": \"participant\", \"release_digest\": \"20e53f1762cbf457e8af73602c84d494b83b0aec7dced8aebf2154f59bd3f4ed\", \"reservation_id\": 196, \"correlation_ref\": null, \"interrupt_existing\": true, \"conflicting_reservation_ids\": []}",
+                "repo_id": "itest-module-ace22f2e0029",
+                "source_type": "system",
+                "sprint_id": 107,
+                "work_item_id": 110
+              }
+            ],
+            "releases": [
+              {
+                "acceptance_contract": {
+                  "review_required": true
+                },
+                "actor": " operator ",
+                "context_refs": [],
+                "created_at": "2026-10-18T15:52:36.005100Z",
+                "id": 149,
+                "item_revision": "item:06cce226-e637-49d3-95ef-41d72ef6643c@description:v0@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855@revise:0",
+                "release_digest": "20e53f1762cbf457e8af73602c84d494b83b0aec7dced8aebf2154f59bd3f4ed",
+                "repo_id": "itest-module-ace22f2e0029",
+                "revise_count": 0,
+                "work_item_id": 110
+              }
+            ],
+            "reservations": [
+              {
+                "actor": " operator ",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:52:36+03:00",
+                "id": 195,
+                "interruption_reason": "interrupted by participant (participant)",
+                "last_activity_at": "2026-10-18 18:52:36+03:00",
+                "release_digest": "20e53f1762cbf457e8af73602c84d494b83b0aec7dced8aebf2154f59bd3f4ed",
+                "released_at": "2026-10-18 18:52:36+03:00",
+                "repo_id": "itest-module-ace22f2e0029",
+                "role": "execution",
+                "session_id": " session ",
+                "state": "interrupted",
+                "work_item_id": 110
+              },
+              {
+                "actor": "participant",
+                "correlation_ref": null,
+                "created_at": "2026-10-18 18:52:36+03:00",
+                "id": 196,
+                "interruption_reason": null,
+                "last_activity_at": "2026-10-18 18:52:36+03:00",
+                "release_digest": "20e53f1762cbf457e8af73602c84d494b83b0aec7dced8aebf2154f59bd3f4ed",
+                "released_at": null,
+                "repo_id": "itest-module-ace22f2e0029",
+                "role": "execution",
+                "session_id": "participant",
+                "state": "active",
+                "work_item_id": 110
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "file": "sprintctl-2787-before-final-local.xml",
+      "sha256": "a7d92f81d307673467894103d759e2793920c1e49c829dfa74ea9dd22b836d50",
+      "suites": [
+        {
+          "errors": "0",
+          "failures": "0",
+          "hostname": "workstation",
+          "name": "pytest",
+          "skipped": "0",
+          "tests": "141",
+          "time": "31.100",
+          "timestamp": "2026-10-18T18:49:42.029321+03:00"
+        }
+      ]
+    },
+    {
+      "file": "sprintctl-2787-before-final-pg.xml",
+      "sha256": "009411d2087658839892e6aba47f3d352c388c5dc7e22bc4deb3462acdcd2874",
+      "suites": [
+        {
+          "errors": "0",
+          "failures": "0",
+          "hostname": "workstation",
+          "name": "pytest",
+          "skipped": "0",
+          "tests": "304",
+          "time": "9.372",
+          "timestamp": "2026-10-18T18:52:33.596503+03:00"
+        }
+      ]
+    }
+  ],
+  "source": "actual completed JUnit record_property observations"
+}

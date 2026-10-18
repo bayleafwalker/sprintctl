@@ -1,0 +1,17 @@
+{
+  "base": "7b221ea3732bffbce03d0a7fab797f8939bf6872",
+  "parser_python": "3.14.7",
+  "ast_comparison": "ast.dump(include_attributes=False) structural equality",
+  "sql_comparison": "multiset of concatenated constant SQL strings in old entrypoint versus new entrypoint plus driver",
+  "checks": {
+    "sprintctl/db.py": {
+      "sql_string_count": 5,
+      "fixed_sql_multiset_identical": true
+    },
+    "sprintctl/pg.py": {
+      "sql_string_count": 6,
+      "fixed_sql_multiset_identical": true,
+      "no_owner_operation_calls_in_participant_or_driver": true
+    }
+  }
+}

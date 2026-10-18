@@ -2041,6 +2041,53 @@ def list_reservations_by_sprint(conn: sqlite3.Connection, sprint_id: int, *, act
     return [_reservation.display(dict(row)) for row in rows]
 
 
+class _ReservationAdmissionSqlite:
+    """Noncommitting SQL operations inside the existing admission owner."""
+
+    def __init__(self, conn, item_id):
+        self.conn, self.item_id = conn, item_id
+
+    def release_basis(self):
+        return _release_basis(self.conn, self.item_id)
+
+    def freeze_release(self, item, revision, revise_count, actor, contract):
+        return _freeze_release(self.conn, item, revision, revise_count,
+            actor=actor, acceptance_contract=contract)
+
+    def active_reservations(self):
+        return [dict(row) for row in self.conn.execute(
+            "SELECT * FROM reservation WHERE work_item_id = ? AND state = 'active' ORDER BY id",
+            (self.item_id,),
+        ).fetchall()]
+
+    def interrupt_execution(self, selected, now, reason):
+        self.conn.execute(
+            "UPDATE reservation SET state = 'interrupted', released_at = ?, interruption_reason = ? "
+            "WHERE work_item_id = ? AND state = 'active' AND role = 'execution'",
+            (now, reason, self.item_id),
+        )
+
+    def insert_reservation(self, session_id, actor, role, now, correlation_ref, release_digest):
+        cur = self.conn.execute(
+            "INSERT INTO reservation(work_item_id, session_id, actor, role, state, created_at, last_activity_at, correlation_ref, release_digest) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)",
+            (self.item_id, session_id, actor, role, now, now, correlation_ref, release_digest),
+        )
+        return cur.lastrowid
+
+    def read_inserted(self, reservation_id):
+        row = _reservation_row(self.conn, reservation_id)
+        assert row is not None
+        return row
+
+    def event_item(self):
+        item = get_work_item(self.conn, self.item_id)
+        assert item is not None
+        return item
+
+    def event(self, item, row, kind, actor, payload):
+        _reservation_event_in_transaction(self.conn, item, row, kind, actor, payload)
+
+
 def reserve(conn: sqlite3.Connection, work_item_id: int, *, actor: str, session_id: str,
             role: str = _reservation.DEFAULT_ROLE, correlation_ref: str | None = None,
             interrupt_existing: bool = False, expected_revision: str | None = None,
@@ -2066,7 +2113,6 @@ def reserve(conn: sqlite3.Connection, work_item_id: int, *, actor: str, session_
         raise ValueError(f"Work item #{work_item_id} not found")
     _require_idle_connection(conn, operation="reservation admission")
     now = _reservation.now_text()
-    interrupted: list[dict] = []
     try:
         conn.execute("BEGIN IMMEDIATE")
         # Reservation admission and maintenance activation are mutually
@@ -2084,50 +2130,12 @@ def reserve(conn: sqlite3.Connection, work_item_id: int, *, actor: str, session_
             raise ReservationConflict(
                 "reservations are disabled while an exact-plan maintenance capability is active"
             )
-        release_digest = None
-        if role == "execution" or expected_revision is not None:
-            item, revision, revise_count = _release_basis(conn, work_item_id)
-            if expected_revision is not None and not _releases.basis_matches(
-                expected_revision, revision
-            ):
-                raise _releases.StaleReleaseBasis(work_item_id, expected_revision, revision)
-            if role == "execution":
-                release_digest = _freeze_release(
-                    conn, item, revision, revise_count,
-                    actor=actor, acceptance_contract=contract,
-                )
-        existing = [dict(row) for row in conn.execute(
-            "SELECT * FROM reservation WHERE work_item_id = ? AND state = 'active' ORDER BY id",
-            (work_item_id,),
-        ).fetchall()]
-        if interrupt_existing:
-            interrupted = [row for row in existing if row["role"] == "execution"]
-            if interrupted:
-                conn.execute(
-                    "UPDATE reservation SET state = 'interrupted', released_at = ?, interruption_reason = ? "
-                    "WHERE work_item_id = ? AND state = 'active' AND role = 'execution'",
-                    (now, f"interrupted by {actor} ({session_id})", work_item_id),
-                )
-        cur = conn.execute(
-            "INSERT INTO reservation(work_item_id, session_id, actor, role, state, created_at, last_activity_at, correlation_ref, release_digest) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)",
-            (work_item_id, session_id, actor, role, now, now, correlation_ref, release_digest),
+        result = _reservationcore._reserve_admitted(
+            _ReservationAdmissionSqlite(conn, work_item_id), work_item_id,
+            actor=actor, session_id=session_id, role=role, now=now,
+            correlation_ref=correlation_ref, interrupt_existing=interrupt_existing,
+            expected_revision=expected_revision, contract=contract,
         )
-        reservation_id = cur.lastrowid
-        row = _reservation_row(conn, reservation_id)
-        assert row is not None
-        item = get_work_item(conn, work_item_id)
-        assert item is not None
-        interrupted_ids = {old["id"] for old in interrupted}
-        remaining = [old for old in existing if old["id"] not in interrupted_ids]
-        for old in interrupted:
-            _reservation_event_in_transaction(conn, item, old, "reservation.interrupted", actor,
-                {"reservation_id": old["id"], "reason": "explicit-takeover", "replacement_id": reservation_id})
-        _reservation_event_in_transaction(conn, item, row, "reservation.reserved", actor,
-            {"reservation_id": reservation_id, "session_id": session_id, "role": role,
-             "correlation_ref": correlation_ref, "interrupt_existing": interrupt_existing,
-             "conflicting_reservation_ids": [old["id"] for old in remaining],
-             "release_digest": row["release_digest"]})
-        result = _reservation.annotate_conflicts(_reservation.display(row), remaining)
         conn.commit()
         return result
     except Exception:
