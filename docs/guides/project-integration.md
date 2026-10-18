@@ -10,7 +10,14 @@ orchestrator, also read [Interoperability Patterns](interoperability.md).
 
 This guide covers how to use `sprintctl` inside a real repository, not just how to invoke the CLI.
 
-The patterns here are based on the way a larger reference repo (`homelab-analytics`) uses `sprintctl`: local operational state, committed shared snapshots, and explicit reservation-based coordination for agent sessions.
+The setup and working-loop examples below use local SQLite: local operational
+state, committed shared snapshots, and explicit reservation-based coordination.
+For a shared repository, use [served setup](remote-mode.md) and
+[served coordination](served-coordination.md), including their backend-specific
+status commands. `SPRINTCTL_DB` does not select a backend or override a served
+marker. Do not change a shared marker to force local setup. `render` is
+local-only; use the supported reads in the [resume guide](resume-work.md) for
+served continuation.
 
 `sprintctl` should usually be the execution-memory layer inside the repo, not a
 replacement for the surrounding issue tracker or planning system. Keep external
