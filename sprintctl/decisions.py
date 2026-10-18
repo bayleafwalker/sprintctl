@@ -177,7 +177,15 @@ def decision_error(item: Any, decision: dict) -> str | None:
     """
     item_id = int(item["id"])
     if not is_legacy_remark_target(item):
-        return transition_error(decision["kind"], item_id, item["status"])
+        error = transition_error(decision["kind"], item_id, item["status"])
+        if error is not None:
+            return error
+        # Fresh admission only: both owners consult this after keyed replay.
+        # Keep normalization permissive so historical blank requests retain
+        # their exact digest/replay identity and remain recoverable unchanged.
+        if decision["kind"] in {"reject", "withdraw", "supersede"} and not decision["rationale"].strip():
+            return f"a {decision['kind']} decision requires a non-empty rationale"
+        return None
     if not is_terminal(decision["kind"]):
         return (
             f"Item #{item_id} was done before decisions existed; only a terminal "

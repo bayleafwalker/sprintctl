@@ -240,6 +240,10 @@ sprintctl item decide --id 7 --kind revise --rationale "Review asked for an API 
   idempotency key returns the first decision instead of recording another.
 - `item show` prints the item's resolution and terminal decision
   (`terminal_decision` in `--json`).
+- Fresh `reject`, `withdraw` and `supersede` decisions require a meaningful
+  `--rationale`; empty or whitespace-only reasons are refused. These settle
+  the item with a distinct resolution rather than claiming accepted work.
+  Exact retries of historical decisions preserve their original result.
 - `item status --status done` still works: it is an alias for an `accept`
   decision with no rationale, and still requires `--expected-revision` on a
   direct backend.

@@ -1,0 +1,106 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.retirement-rationale",
+  "owner_repo": "sprintctl",
+  "subject": "fresh-retirement-rationale-and-historical-replay",
+  "contract_ref": {
+    "doc_id": "sprintctl.vuoro-work-adapter",
+    "revision": "sha256:d2a339bc6bded56be5779fba5e4669ca1f5d0a2afa3608c2fc15e54a1d8a7c6a"
+  },
+  "source_of_truth": "append-only-work-decisions-and-owner-terminal-binding",
+  "depth": 2,
+  "backends": [
+    "sqlite",
+    "postgresql16"
+  ],
+  "actors": [
+    "retiring-reviewer",
+    "identical-key-retrying-reviewer"
+  ],
+  "initial_state": [
+    "temporary pending, active or blocked item",
+    "optional historically valid blank-rationale keyed terminal decision"
+  ],
+  "operations": [
+    {
+      "name": "fresh-retirement",
+      "actors": [
+        "retiring-reviewer"
+      ],
+      "synchronization": "shared fresh decision admission inside the owner write transaction"
+    },
+    {
+      "name": "historical-keyed-replay",
+      "actors": [
+        "identical-key-retrying-reviewer"
+      ],
+      "synchronization": "exact replay precedes new admission and stale original status CAS"
+    },
+    {
+      "name": "concurrent-identical-retirement",
+      "actors": [
+        "retiring-reviewer",
+        "identical-key-retrying-reviewer"
+      ],
+      "synchronization": "two independent connections and a barrier before owner admission; SQLite BEGIN IMMEDIATE or PostgreSQL key advisory lock plus item row lock"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one-reasoned-fresh-retirement-with-unchanged-historical-replay"
+  },
+  "assumptions": {
+    "isolation": "SQLite immediate writer or PostgreSQL READ COMMITTED with existing key/item serialization",
+    "clock": "no temporal admission change",
+    "fairness": "both concurrent calls finish within the bounded test wait",
+    "admission_scope": "owner application admission only; no new SQL constraint and no language-level proof of rationale quality"
+  },
+  "bounds": {
+    "blank_cases_per_backend": 27,
+    "meaningful_open_state_cases_per_backend": 9,
+    "historical_replay_cases_per_backend": 6,
+    "concurrent_histories_per_backend": 3,
+    "connections_per_history": 2,
+    "served_boundary_cases_per_backend": 3,
+    "postgresql_authority_command_cases": 3,
+    "historical_sqlite_recovery_cases": 2
+  },
+  "invariants": [
+    "fresh reject, withdraw and supersede require non-whitespace rationale",
+    "direct owner admission refusal leaves work item, work_decision rows and item events unchanged; native command rejection may retain its authority audit",
+    "authored meaningful rationale remains byte-for-byte text unchanged",
+    "historical blank and whitespace requests replay before admission and stale original CAS",
+    "changed content under a historical key conflicts",
+    "accept alias and revise keep optional rationale",
+    "two identical concurrent requests commit one decision and one item-decided event",
+    "historical migration/import and normalization remain unchanged"
+  ],
+  "faults": [
+    "null, empty and whitespace rationale",
+    "response-loss retry of a historical blank request",
+    "changed rationale under an existing key",
+    "two concurrent identical retirement requests",
+    "served and native authority retirement without meaningful reason"
+  ],
+  "oracles": [
+    "owner item/decision/event comparison before and after refusal",
+    "stored rationale and mapped terminal resolution",
+    "keyed result and replay flag",
+    "one decision and one event after concurrent history",
+    "typed application or native authority rejection",
+    "disposable PostgreSQL cleanup report"
+  ],
+  "implementation_anchors": [
+    "sprintctl/decisions.py:decision_error",
+    "sprintctl/db.py:_decide_locked",
+    "sprintctl/pg.py:_decide_locked",
+    "sprintctl/authority.py:_handle_decision",
+    "tests/test_retirement_rationale.py:RetirementRationaleContract",
+    "tests/pg/test_retirement_rationale.py:TestPostgresRetirementRationale"
+  ],
+  "expansions": [
+    "stateful-test",
+    "concurrent-history",
+    "semantic-doc"
+  ]
+}

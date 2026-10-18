@@ -275,7 +275,7 @@ class TestResolutionMetrics:
         sprint_id, _t, _legacy = _legacy_item(conn, "done")
         track_id = db.get_or_create_track(conn, sprint_id, "legacy")
         item_id = _active_item(conn, sprint_id, track_id)
-        db.record_decision(conn, item_id, "reject", actor="owner")
+        db.record_decision(conn, item_id, "reject", actor="owner", rationale="Work is no longer required")
         result = runner.invoke(cli, ["sprint", "show", "--id", str(sprint_id), "--detail"])
         assert result.exit_code == 0, result.output
         assert "done by resolution: 1 rejected, 1 legacy_done" in result.output

@@ -1071,7 +1071,7 @@ class TestReviewFindings:
         (item,) = _items(store)
         run = _run(store, A)
         lease = _claim(store, A, item, run, "elsewhere-a")["lease"]
-        pg.record_decision(store, item, "withdraw", actor="operator")
+        pg.record_decision(store, item, "withdraw", actor="operator", rationale="Work is no longer required")
         state = _read(store, item)
         assert state["current_lease"] is None
         (ended,) = state["leases"]
@@ -1298,7 +1298,7 @@ class TestVerificationProfilesAsRequirementSets:
         if kind == "supersede":
             (replacement,) = _items(store)
             extra = {"superseded_by_item_id": replacement}
-        pg.record_decision(store, item, kind, actor="human-verifier", **extra)
+        pg.record_decision(store, item, kind, actor="human-verifier", rationale="Record the reviewed outcome", **extra)
         (stamped,) = _read(store, item)["outcome_reports"]
         assert (stamped["report_id"], stamped["disposition"], stamped["reason_code"]) == (
             report["report_id"], "rejected", f"decided-{kind}",

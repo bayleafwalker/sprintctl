@@ -1,0 +1,89 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.retirement-rationale",
+  "contract_ref": {
+    "doc_id": "sprintctl.vuoro-work-adapter",
+    "revision": "sha256:d2a339bc6bded56be5779fba5e4669ca1f5d0a2afa3608c2fc15e54a1d8a7c6a"
+  },
+  "implementation_sha": "95f8fedf0a5023cba6fdf8cf668f8e3bbce122bb",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary SQLite and disposable PostgreSQL16.15",
+    "isolation": "SQLite immediate writer; PostgreSQL READ COMMITTED with unchanged key advisory/item row locks; private test cluster only",
+    "tool_versions": {
+      "Python": "3.13.16",
+      "pytest": "9.0.2",
+      "PostgreSQL": "16.15"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 6,
+    "bounds": {
+      "blank_cases_per_backend": 27,
+      "meaningful_open_state_cases_per_backend": 9,
+      "historical_replay_cases_per_backend": 6,
+      "concurrent_histories_per_backend": 3,
+      "connections_per_history": 2,
+      "served_boundary_cases_per_backend": 3,
+      "postgresql_authority_command_cases": 3,
+      "historical_sqlite_recovery_cases": 2
+    },
+    "faults_exercised": [
+      "null, empty and whitespace rationale",
+      "response-loss retry of a historical blank request",
+      "changed rationale under an existing key",
+      "two concurrent identical retirement requests",
+      "served and native authority retirement without meaningful reason"
+    ]
+  },
+  "claims": [
+    {
+      "property": "Fresh retirement requires non-whitespace rationale without changing accepted/revise defaults or authored text",
+      "result": "example-tested",
+      "evidence": [
+        "Shared49-case contract on both backends; SQLite two additional historical snapshot recovery cases; three PostgreSQL native authority-command cases"
+      ]
+    },
+    {
+      "property": "Historical blank/whitespace exact-key retries precede fresh admission and stale original CAS; changed content conflicts",
+      "result": "example-tested",
+      "evidence": [
+        "RetirementRationaleContract.test_historical_blank_request_replays_before_new_admission, six cases/backend",
+        "TestSQLiteRetirementRationale.test_historical_blank_snapshot_remains_recoverable, two cases"
+      ]
+    },
+    {
+      "property": "Two independent same-key callers record one reasoned retirement and one item-decided event",
+      "result": "concurrency-tested",
+      "evidence": [
+        "RetirementRationaleContract.test_concurrent_same_key_keeps_one_reasoned_retirement, three histories/backend with two connections and a barrier"
+      ]
+    },
+    {
+      "property": "All fresh item decision writers converge on shared admission while historical fold/import paths remain unchanged",
+      "result": "documented-only",
+      "evidence": [
+        "Fresh-writer inventory in docs/evidence/retirement-rationale-2240.md",
+        "Runtime diff changes only sprintctl/decisions.py:decision_error; no SQL or catalog descriptor changes"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Baseline16f121f admitted null, empty and whitespace rationales for all three retirement kinds from each of three open states:27 failing regression cases and13 passing cases on each backend before repair",
+      "trace_ref": "tests/test_retirement_rationale.py:RetirementRationaleContract.test_blank_fresh_retirement_is_refused_without_writes"
+    }
+  ],
+  "notes": [
+    "implementation_sha names the final verification base; candidate file SHA256 values bind the uncommitted reviewed change: {\"sprintctl/decisions.py\": \"5d81f93bb2033b7e46d626acfa0780de0d1c0e254baf02018ce21e5348547195\", \"tests/pg/test_retirement_rationale.py\": \"97557195301efc3f3b0f267965cd3baa0fe5d2ce98d26699fa3f382667bfd19a\", \"tests/test_retirement_rationale.py\": \"eaee0492ad273ab35319c214e99b55461a86ca2bb7328d6f62009eb707e47373\"}",
+    "Fresh isolated environment created with uv sync --frozen --extra dev --extra served --extra remote. Final targeted SQLite rationale and resolution-rendering selection52passed6.72s.",
+    "Complete disposable PostgreSQL16.15 gate1175passed69.79s;72fixturecleanups across4fixture names, all remaining row counts zero.",
+    "Counts overlap and are not additive. Fixtures for unrelated release/lease/export/resolution assertions now supply rationale, with original assertions retained.",
+    "Parent findings-first review clear on shared fresh guard, replay ordering, writer convergence, fixture preconditions and preserved history.",
+    "Owner application admission only; no new SQL constraint, proof of semantic reason quality, rawSQL restriction or historical data rewrite. Accept/status-done and revise keep optional rationale.",
+    "Native note5398 and pinned docref1112 record authorized bounded2240 scope; item remains open pending complete delivery. No deployment, grant, operation, schema or package pin changes.",
+    "Final local gate uses UV_OFFLINE=1 with the prewarmed auxiliary PyYAML cache: the existing nested uv --with pyyaml YAML parser otherwise failed PyPI metadata-refresh DNS inside the network sandbox. No product, package or test change; no network installation qualification claimed.",
+    "Final complete non-PostgreSQL/non-performance suite:2440passed4skipped1189deselected197.22s with UV_OFFLINE=1; complete disposable PostgreSQL gate independently green as recorded above. No behavior changes after these runs."
+  ]
+}
