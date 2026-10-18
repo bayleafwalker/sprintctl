@@ -1,0 +1,89 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.handoff.read-snapshot",
+  "owner_repo": "sprintctl",
+  "subject": "handoff-read-consistency",
+  "contract_ref": {
+    "doc_id": "resume-and-explain",
+    "revision": "git:48f95090dd85587bbce062e4b537b661bd601e97"
+  },
+  "source_of_truth": "repository-scoped owner rows and append-only events",
+  "depth": 2,
+  "backends": [
+    "postgresql",
+    "sqlite-fixture"
+  ],
+  "actors": [
+    "reader",
+    "writer"
+  ],
+  "initial_state": [
+    "active sprint with zero items",
+    "reader shared connection already in implicit transaction"
+  ],
+  "operations": [
+    {
+      "name": "read-handoff",
+      "actors": [
+        "reader"
+      ],
+      "synchronization": "resolve sprint, then writer commits before aggregate constituent reads"
+    },
+    {
+      "name": "create-item-and-commit",
+      "actors": [
+        "writer"
+      ],
+      "synchronization": "independent connection after reader resolves sprint"
+    },
+    {
+      "name": "read-missing-sprint",
+      "actors": [
+        "reader"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one served handoff bundle"
+  },
+  "assumptions": {
+    "isolation": "PostgreSQL sibling read-only REPEATABLE READ; SQLite fixture exercises history-input reuse only",
+    "clock": "no timing-dependent oracle",
+    "fairness": "one writer completes synchronously inside the reader boundary hook"
+  },
+  "bounds": {
+    "readers": 1,
+    "writers": 1,
+    "independent_connections": 3,
+    "concurrent_histories": 1
+  },
+  "invariants": [
+    "bundle summary and item sections exclude writes after snapshot establishment",
+    "caller transaction is not committed, rolled back or reconfigured",
+    "sibling connection closes on success and rejection",
+    "predecessor and retained checkpoint derive from one complete history input"
+  ],
+  "faults": [
+    "writer commit between constituent reads",
+    "newer event on redundant history read",
+    "missing sprint rejection"
+  ],
+  "oracles": [
+    "zero-item summary and empty bundle after overlapping writer commit",
+    "writer independently observes one committed item",
+    "shared transaction status preserved and sibling closed",
+    "same history predecessor/checkpoint/delta"
+  ],
+  "implementation_anchors": [
+    "sprintctl/work_application.py:WorkApplication._read_handoff",
+    "sprintctl/handoff.py:build_handoff_bundle",
+    "sprintctl/handoff.py:_previous_handoff_generated",
+    "sprintctl/pg.py:repeatable_read_snapshot"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "concurrent-history",
+    "fault-scenario"
+  ]
+}

@@ -343,6 +343,13 @@ written by the client, then `work.handoff.record` appends the normal,
 non-deduplicated `handoff-generated` event with the authenticated actor. No
 local store fallback is permitted in served mode.
 
+The PostgreSQL owner resolves the sprint and builds the bundle in one sibling
+read-only repeatable-read snapshot, preserving the caller's existing transaction.
+Predecessor selection, retained checkpoint and event delta reuse the same history
+input. The later handoff recording remains a separate write; these guarantees do
+not make read-plus-record atomic. The bounded independent-connection verification
+is recorded in `verification/results/resume-handoff-read-snapshot.json`.
+
 Important sections:
 
 - `work.active_items`, `work.ready_items`, `work.blocked_items`, `work.stale_items`

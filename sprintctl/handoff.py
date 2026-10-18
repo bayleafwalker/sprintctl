@@ -17,8 +17,8 @@ from . import reservation as _reservation
 from . import reservation_policy as _policy
 
 
-def _previous_handoff_generated(store: Any, sprint_id: int, backend: Any) -> dict | None:
-    for event in reversed(backend.list_events(store, sprint_id)):
+def _previous_handoff_generated(all_events: list[dict]) -> dict | None:
+    for event in reversed(all_events):
         if event["event_type"] == "handoff-generated":
             return event
     return None
@@ -136,7 +136,7 @@ def build_handoff_bundle(store: Any, sprint: dict, events_limit: int, *, backend
         items_with_refs.append(enriched)
     recent_events = backend.list_events_limited(store, sprint["id"], limit=events_limit)
     all_events = backend.list_events(store, sprint["id"])
-    previous_handoff = _previous_handoff_generated(store, sprint["id"], backend)
+    previous_handoff = _previous_handoff_generated(all_events)
     active_items = [{"id": item["id"], "title": item["title"], "track": item["track_name"]} for item in items if item["status"] == "active"]
     return contracts.HandoffBundle(
         sprintctl_version=version, generated_at=generated_at,

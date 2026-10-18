@@ -559,6 +559,85 @@ def test_sprint_detail_aggregate_uses_a_fresh_snapshot_after_a_reused_connection
     store.conn.close()
 
 
+def test_handoff_snapshot_excludes_a_writer_committing_after_sprint_resolution(store_factory, monkeypatch):
+    """One independent writer commits between the aggregate's constituent reads."""
+    store = store_factory("handoff-concurrent-writer")
+    sprint_id = pg.create_sprint(store, "Handoff snapshot", status="active")
+    track_id = pg.get_or_create_track(store, sprint_id, "work")
+    store.conn.commit()
+    assert pg.list_sprints(store)  # Leave the caller's implicit transaction open.
+    transaction_status = store.conn.info.transaction_status
+    siblings = []
+
+    def connection_factory():
+        connection = psycopg.connect(_PG_URL, row_factory=dict_row)
+        siblings.append(connection)
+        return connection
+
+    store.connection_factory = connection_factory
+    writer_conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+    writer = replace(store, conn=writer_conn)
+    original = pg.get_sprint
+    fired = False
+    history = []
+
+    def get_sprint_then_commit(read_store, requested):
+        nonlocal fired
+        result = original(read_store, requested)
+        if not fired and requested == sprint_id:
+            fired = True
+            history.append("reader-resolved-sprint")
+            pg.create_work_item(writer, sprint_id, track_id, "Committed during handoff")
+            writer_conn.commit()
+            history.append("writer-committed-item")
+        return result
+
+    monkeypatch.setattr(pg, "get_sprint", get_sprint_then_commit)
+    try:
+        bundle = _application(store, {}).invoke(
+            "work.read.handoff", {"sprint_id": sprint_id, "events_limit": 50},
+            _context("reader", None, None),
+        )
+        history.append("reader-returned-bundle")
+        assert history == ["reader-resolved-sprint", "writer-committed-item", "reader-returned-bundle"]
+        assert bundle["summary"]["total"] == 0
+        assert bundle["items"] == []
+        assert bundle["work"]["ready_items"] == []
+        assert len(pg.list_work_items(writer, sprint_id=sprint_id)) == 1
+        assert store.conn.info.transaction_status == transaction_status
+        assert len(siblings) == 1 and siblings[0].closed
+    finally:
+        writer_conn.close()
+        store.conn.rollback()
+        store.conn.close()
+
+
+def test_handoff_snapshot_rejection_closes_sibling_without_altering_caller(store_factory):
+    store = store_factory("handoff-missing-sprint")
+    pg.list_sprints(store)
+    status = store.conn.info.transaction_status
+    siblings = []
+
+    def factory():
+        connection = psycopg.connect(_PG_URL, row_factory=dict_row)
+        siblings.append(connection)
+        return connection
+
+    store.connection_factory = factory
+    try:
+        with pytest.raises(ApplicationRejection) as rejected:
+            _application(store, {}).invoke(
+                "work.read.handoff", {"sprint_id": 2147483647, "events_limit": 50},
+                _context("reader", None, None),
+            )
+        assert rejected.value.code == "sprint-not-found"
+        assert len(siblings) == 1 and siblings[0].closed
+        assert store.conn.info.transaction_status == status
+    finally:
+        store.conn.rollback()
+        store.conn.close()
+
+
 def test_snapshot_uses_store_connection_factory_instead_of_redacted_dsn(monkeypatch):
     class Transaction:
         def __enter__(self):

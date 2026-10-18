@@ -1455,8 +1455,22 @@ class WorkApplication:
         git_context = arguments.get("git_context")
         if git_context is not None and not isinstance(git_context, dict):
             raise ApplicationRejection("invalid-arguments", "git_context must be an object or null", 422)
-        sprint = self._resolve_sprint(arguments.get("sprint_id"))
-        return handoff.build_handoff_bundle(self.store, sprint, events_limit, backend=self.backend, version=__import__("sprintctl").__version__, git_context=git_context)
+        def build(store):
+            snapshot_app = replace(self, store=store)
+            sprint = snapshot_app._resolve_sprint(arguments.get("sprint_id"))
+            return handoff.build_handoff_bundle(
+                store, sprint, events_limit, backend=self.backend,
+                version=__import__("sprintctl").__version__, git_context=git_context,
+            )
+
+        snapshot = getattr(self.backend, "repeatable_read_snapshot", None)
+        if callable(snapshot):
+            rejections: list[tuple[str, str, int, Any]] = []
+            with snapshot(self.store) as snapshot_store, _capture_application_rejection(rejections):
+                return build(snapshot_store)
+            if rejections:
+                raise ApplicationRejection(*rejections[0])
+        return build(self.store)
 
     def _handoff_record(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         sprint_id = _positive_int(arguments.get("sprint_id"), "sprint_id")

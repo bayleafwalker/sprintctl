@@ -1,0 +1,72 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.handoff.read-snapshot",
+  "contract_ref": {
+    "doc_id": "resume-and-explain",
+    "revision": "git:48f95090dd85587bbce062e4b537b661bd601e97"
+  },
+  "implementation_sha": "48f95090dd85587bbce062e4b537b661bd601e97",
+  "depth": 2,
+  "environment": {
+    "backend": "PostgreSQL16.15 and SQLite fixture",
+    "isolation": "PostgreSQL sibling read-only REPEATABLE READ; SQLite fixture exercises history-input reuse only",
+    "tool_versions": {
+      "Python": "3.13.16",
+      "PostgreSQL": "16.15",
+      "pytest": "9.0.2"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 1,
+    "bounds": {
+      "readers": 1,
+      "writers": 1,
+      "independent_connections": 3,
+      "concurrent_histories": 1
+    },
+    "faults_exercised": [
+      "writer commit between constituent reads",
+      "newer event on redundant history read",
+      "missing sprint rejection"
+    ]
+  },
+  "claims": [
+    {
+      "property": "One handoff excludes a committed writer change after snapshot establishment",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/test_work_application_pg.py:test_handoff_snapshot_excludes_a_writer_committing_after_sprint_resolution",
+        "verification/fixtures/resume-handoff-mixed-read-counterexample.json"
+      ]
+    },
+    {
+      "property": "Missing-sprint rejection preserves caller transaction and closes sibling",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_work_application_pg.py:test_handoff_snapshot_rejection_closes_sibling_without_altering_caller"
+      ]
+    },
+    {
+      "property": "Predecessor and retained checkpoint use one history input",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_handoff_consistency.py:test_handoff_uses_one_history_for_predecessor_checkpoint_and_delta"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Before repair PostgreSQL handoff included later committed item; initial snapshot repair exposed frozen-exception unwind; both minimized fixtures now pass",
+      "trace_ref": "verification/fixtures/resume-handoff-mixed-read-counterexample.json"
+    }
+  ],
+  "notes": [
+    "implementation_sha identifies the base commit; tested candidate source/test patch SHA256 is f773460c39a4a2fd719ae49eebde1673c5c7232da5c70d5915cde35f9855a0fd",
+    "Candidate digest input: git diff --binary for handoff.py, work_application.py and test_work_application_pg.py, followed by test_handoff_consistency.py bytes. Evidence/document files excluded.",
+    "Focused disposable suite:5 passed,1080 deselected; cleanup checker passed with zero remaining fixture rows.",
+    "Focused SQLite/application suite:126 passed.",
+    "No production, shared-backend, general linearizability, broader backend parity, lease or external-effect claim.",
+    "Full frozen source suite:2241 passed,1089 skipped,14 deselected; PostgreSQL tests run separately against the disposable harness."
+  ]
+}

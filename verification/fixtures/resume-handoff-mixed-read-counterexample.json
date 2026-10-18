@@ -1,0 +1,38 @@
+{
+  "base_git_sha": "48f95090dd85587bbce062e4b537b661bd601e97",
+  "histories": [
+    {
+      "backend": "PostgreSQL16.15",
+      "schedule": [
+        "reader-resolved-sprint",
+        "writer-committed-item",
+        "reader-returned-bundle"
+      ],
+      "expected_summary_total": 0,
+      "before_repair_summary_total": 1,
+      "after_repair_summary_total": 0,
+      "after_repair_writer_item_count": 1
+    },
+    {
+      "backend": "SQLite fixture with injected later history",
+      "schedule": [
+        "maintenance-history-read",
+        "bundle-history-read",
+        "redundant-predecessor-history-read"
+      ],
+      "before_repair_predecessor_timestamp": "2099-01-01T00:00:00Z",
+      "before_repair_checkpoint_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "after_repair_history_reads": 2
+    },
+    {
+      "backend": "PostgreSQL16.15",
+      "schedule": [
+        "read-missing-sprint",
+        "snapshot-exit"
+      ],
+      "intermediate_repair_error": "FrozenInstanceError assigning __traceback__",
+      "final_rejection": "sprint-not-found",
+      "final_sibling_closed": true
+    }
+  ]
+}
