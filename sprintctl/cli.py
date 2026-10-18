@@ -10,6 +10,7 @@ from . import __version__
 from . import commands as _commands
 from . import served_routes as _served_routes
 from . import cli_runtime as _cli_runtime
+from . import debug_diagnostics as _debug_diagnostics
 
 # Command modules retain private compatibility seams during the staged
 # extraction.  Export the runtime namespace deliberately (including private
@@ -46,6 +47,7 @@ def cli(ctx: click.Context, repo_id: str | None, allow_markerless_nonlocal: bool
     ctx.obj.setdefault("conn", None)
     ctx.obj["explicit_repo_id"] = repo_id
     ctx.obj["allow_markerless_nonlocal"] = allow_markerless_nonlocal
+    _debug_diagnostics.install(ctx)
 
 _commands.register_doctor_command(cli)
 doctor_cmd = _commands.doctor_cmd

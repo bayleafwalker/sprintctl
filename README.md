@@ -237,6 +237,28 @@ the emitted `pipx`, `uv`, or editable-source reinstall guidance explicitly.
 The source-tree entrypoint should expose the same command surface as the
 console script, including `next-work --explain` and `session resume`.
 
+For a timing and metadata summary of an ordinary local SQLite command:
+
+```sh
+SPRINTCTL_DEBUG=1 sprintctl item show --id 1 --json
+```
+
+The optional human summary goes to stderr; JSON stdout and the command's exit
+status stay unchanged. It reports elapsed command/context time, the local
+SQLite path and actual schema version. Elapsed time runs from the root command
+callback through context cleanup: it excludes Python startup and root-option
+parsing, but includes later subcommand parsing. It is not per-query or server
+timing. Unavailable facts stay unknown. Diagnostic failures preserve the primary
+command's outcome.
+
+This mode observes the command's normal effects and adds one schema read on its
+already-open connection. It collects no SQL text, parameters, note content,
+arguments or credentials. It covers commands using the ordinary single local
+store after it initializes; served, project and file-only paths are not
+instrumented. Use `doctor` for installation/backend checks, [event reads](docs/guides/served-coordination.md)
+for recorded history, and [authority preflight](docs/guides/authority-commands.md)
+for the existing selected-stream checks.
+
 ## Configuration
 
 ```sh
