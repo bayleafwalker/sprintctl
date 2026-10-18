@@ -4,7 +4,7 @@ Covers three layers:
 
 1. ``sprintctl/projection_reads.py`` -- the per-repository opt-in config,
    mirroring the conventions already exercised in ``test_authority_config.py``
-   and ``test_pilot_cli.py``.
+   and the current read-rollout tests.
 2. ``sprintctl/projection.py:assess_freshness`` -- schema-version, staleness,
    and never-synchronized detection.
 3. The CLI wiring in ``sprintctl/cli.py`` -- ``item show`` actually swaps its
@@ -12,13 +12,11 @@ Covers three layers:
    list`` / ``next-work`` / ``usage --context`` disclose freshness without
    changing their content or (for the bare-array endpoints) their JSON shape.
 
-Since ``pilot sync`` refuses to run against a local SQLite backend (see
-``test_pilot_cli.py::test_pilot_sync_is_guarded_in_local_backend``), the
-"healthy projection" scenarios below populate the cache directly with
-``projection.apply_ingested_records``, using the exact record shape
-``sprintctl/sync.py:_cached_record`` produces from a real mirrored outbox
-record. This reproduces what a real `pilot sync` against a remote backend
-would have written, without requiring PostgreSQL.
+Healthy-cache examples populate the cache directly with
+``projection.apply_ingested_records`` using the envelope shape produced by
+``sync.py:_cached_record``. These are local read-selection fixtures, not a
+live ingestion or migration qualification. The retired pilot runtime is not
+used; normal synchronization is owned by ``sprintctl sync``.
 """
 
 from __future__ import annotations

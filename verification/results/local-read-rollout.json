@@ -1,0 +1,77 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.local-read-rollout",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:20e120fb54b51bef001e4d5d57437388e8b8bc58"
+  },
+  "implementation_sha": "20e120fb54b51bef001e4d5d57437388e8b8bc58",
+  "depth": 1,
+  "environment": {
+    "backend": "temporary SQLite authority and seeded cache files",
+    "isolation": "local CLI fixtures with distinct repository directories"
+  },
+  "execution": {
+    "histories": 0,
+    "bounds": {
+      "new_cli_cases": 2,
+      "repositories": 2
+    },
+    "faults_exercised": [
+      "missing, stale, incompatible or never-synchronized cache in existing suite",
+      "malformed or newer config rejected by parser; ordinary reads retain backend"
+    ]
+  },
+  "claims": [
+    {
+      "property": "default-off and effective disable select backend for supported local reads",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_read_rollout_pattern.py",
+        "tests/test_projection_reads.py"
+      ]
+    },
+    {
+      "property": "enabling environment override takes precedence until removed",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_read_rollout_pattern.py",
+        "tests/test_projection_reads.py"
+      ]
+    },
+    {
+      "property": "toggle preserves cache bytes and authoritative rows",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_read_rollout_pattern.py",
+        "tests/test_projection_reads.py"
+      ]
+    },
+    {
+      "property": "selected persisted toggle preserves unrelated repository configuration",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_read_rollout_pattern.py",
+        "tests/test_projection_reads.py"
+      ]
+    },
+    {
+      "property": "shared provider cutover, historical binary compatibility, rollback of new authoritative records or deployed qualification",
+      "result": "unknown",
+      "evidence": [
+        "docs/reference/migration-guide.md"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "No production implementation changes. Base SHA pins unchanged read selector; exact documentation/test hashes follow.",
+    "41 focused passed, final83 passed including local/served backend selection. First broadened invocation named nonexistent test_backend_selection.py and ran no tests; corrected to existing test_backend_mode.py and test_backend_served_mode.py before final83-pass run.",
+    "Optimistic scope and independent read-only final diff review clear. Reviewer did not rerun tests. Existing fallback/parser tests retained; new2cases verify actualCLI effective selection and preservation.",
+    "Unrelated repository proof covers persisted/effective configuration, not a second shared database or deployed read. Cache is seeded with current mirrored envelope; no live synchronization or whole-state equivalence claim.",
+    "Native scope5491 retains provider qualification under1164/2738; archived pilot/capability runtime not re-enabled.",
+    "docs/reference/migration-guide.md SHA256:14f752efe2eaf72302c1cb7d56b134592c91e56838cfcde734d03e2960fea936",
+    "tests/test_projection_reads.py SHA256:00745feab0747d4d50bf4a5eda63caa20b0baf36ef21b0f67ccae96f9b44a41d",
+    "tests/test_read_rollout_pattern.py SHA256:8852734bb22ca6afcb1939bd2d4cb9f853d3d0cba63ba1c1519b050434431bf6"
+  ]
+}

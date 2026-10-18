@@ -131,6 +131,68 @@ schema change, restore removed data, or authorize a shared-authority migration.
 Each rollout phase must name its own fallback and evidence, as required by the
 [canonical ADR](../plans/adr-outbox-sync-model.md#migration-and-rollback).
 
+## Applied pattern: reversible local cache reads
+
+The existing `projection-reads` switch illustrates a compatible read rollout.
+It selects cached event history for supported **local** reads such as `item
+show`; it does not move work authority or change the database schema. Other
+read surfaces may only disclose cache health. A served invocation continues
+through its served owner and never falls back to local SQLite because this
+switch is disabled or its cache is unavailable.
+
+The per-repository `.sprintctl/projection-reads.json` defaults to disabled.
+Writes replace that versioned configuration atomically with mode `0600`.
+The configuration parser rejects malformed shapes, unknown fields and newer
+versions. Use `projection-reads status --json` to diagnose invalid configuration;
+ordinary reads retain the backend when configuration cannot be loaded.
+
+For a selected local repository, inspect the effective setting and read source:
+
+```bash
+sprintctl projection-reads status --json
+sprintctl projection-reads enable
+sprintctl item show --id <item-id> --json
+```
+
+The `projection` field discloses the selected source, watermark and fallback
+reason. Missing, never-synchronized, stale and incompatible caches select the
+backend explicitly; enabling a flag does not make a cache healthy. A compatible
+healthy cache can supply supported event history. Existing authority records
+remain in the backend throughout.
+
+Rollback changes read selection and retains the cache, outbox and authoritative
+records:
+
+```bash
+unset SPRINTCTL_PROJECTION_READS
+sprintctl projection-reads disable
+sprintctl projection-reads status --json
+sprintctl item show --id <item-id> --json
+```
+
+**Environment precedence matters:** `SPRINTCTL_PROJECTION_READS` overrides the
+persisted setting for that process, in either direction. Persisting `disabled`
+while an enabling override remains set does not disable effective cache reads.
+Remove or override that environment setting in every relevant process and
+verify the effective status and `projection.source`. The environment override
+can affect multiple repository invocations; changing one repository's persisted
+file does not change another repository's file.
+
+`tests/test_read_rollout_pattern.py` exercises the actual local CLI with the
+existing cache envelope. It verifies effective rollback with and without an
+enabling override, unchanged cache bytes and authoritative records, and an
+unrelated repository's retained configuration. `tests/test_projection_reads.py`
+covers configuration refusals and explicit cache-health fallbacks. These are
+bounded local examples, not full state equivalence, every historical binary's
+compatibility, or a service migration rehearsal.
+
+This pattern completes Sprintctl#914's documented/applied rollout-pattern scope
+as reconciled in native scope note5491. Actual provider cutover, mixed-version
+qualification and recovery of records created after cutover remain open under
+Sprintctl#1164/#2738. The archived shadow pilot and retired capability runtime
+are historical evidence, not mechanisms to re-enable. A read toggle neither
+reverses schema changes nor replaces those qualification gates.
+
 ## Verification and limits
 
 `tests/test_local_migration_safety.py` injects a real failure after table creation,

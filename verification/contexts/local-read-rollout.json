@@ -1,0 +1,66 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.local-read-rollout",
+  "owner_repo": "sprintctl",
+  "subject": "existing per-repository local guarded-cache read rollback pattern",
+  "contract_ref": {
+    "doc_id": "adr-outbox-sync-model",
+    "revision": "git:20e120fb54b51bef001e4d5d57437388e8b8bc58"
+  },
+  "source_of_truth": "Sprintctl#914 native scope note5491; frozen Release52081a3dc95f27ad54d4ecf4ff96a3693c03902c01c010d65854f335bd0c7606",
+  "depth": 1,
+  "backends": [
+    "temporary SQLite authority and cache files"
+  ],
+  "actors": [
+    "local reader/operator"
+  ],
+  "initial_state": [
+    "default-disabled selected repository with a healthy seeded cache",
+    "unrelated repository with enabled persisted setting"
+  ],
+  "operations": [
+    {
+      "name": "enable, read, disable, read and remove enabling environment override",
+      "actors": [
+        "local reader/operator"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "local effective read selection and retained files"
+  },
+  "assumptions": {
+    "isolation": "independent temporary repository directories and SQLite files",
+    "clock": "cache timestamp seeded current; no elapsed-time or concurrency guarantee",
+    "fairness": "none"
+  },
+  "bounds": {
+    "new_cli_cases": 2,
+    "repositories": 2
+  },
+  "invariants": [
+    "default-off and effective disable select backend for supported local reads",
+    "enabling environment override takes precedence until removed",
+    "toggle preserves cache bytes and authoritative rows",
+    "selected persisted toggle preserves unrelated repository configuration"
+  ],
+  "faults": [
+    "missing, stale, incompatible or never-synchronized cache in existing suite",
+    "malformed or newer config rejected by parser; ordinary reads retain backend"
+  ],
+  "oracles": [
+    "tests/test_read_rollout_pattern.py",
+    "tests/test_projection_reads.py"
+  ],
+  "implementation_anchors": [
+    "sprintctl/projection_reads.py",
+    "sprintctl/commands/work.py::_projection_health",
+    "sprintctl/commands/work.py::_projection_surface_status"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "fault-scenario"
+  ]
+}
