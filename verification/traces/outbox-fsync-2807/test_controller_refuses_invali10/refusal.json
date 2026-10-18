@@ -1,0 +1,16 @@
+{
+  "variant": "wrong_arch",
+  "cleanup": [
+    {
+      "pid": 3133146,
+      "raw_wait_status": 9,
+      "returncode": -9,
+      "actual_sigkill": true,
+      "cleanup_fault_injected": false,
+      "stderr_prefix": "",
+      "cleanup_errors": [],
+      "observed_sync_events": [],
+      "raw_sync_entries": []
+    }
+  ]
+}

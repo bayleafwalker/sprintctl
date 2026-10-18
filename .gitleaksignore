@@ -108,3 +108,8 @@ verification/traces/locked-decision-writing-histories-2805.json:generic-api-key:
 verification/traces/locked-decision-writing-histories-2805.json:generic-api-key:9685
 verification/traces/locked-decision-writing-histories-2805.json:generic-api-key:9760
 verification/traces/locked-decision-writing-histories-2805.json:generic-api-key:9791
+
+# SHA256 of unchanged public product source, not a credential value.
+verification/fixtures/outbox-fsync-source-freeze-2807.json:generic-api-key:114
+verification/fixtures/outbox-fsync-source-freeze-2807-v2.json:generic-api-key:114
+verification/fixtures/outbox-fsync-source-freeze-2807-v3.json:generic-api-key:114

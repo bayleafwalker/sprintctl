@@ -1,0 +1,56 @@
+{
+  "fault": "stall-copy",
+  "observer": {
+    "pid": 3133173,
+    "timeout": 3,
+    "output_limit": 65536,
+    "returncode": -9,
+    "elapsed": 3.003261099001975,
+    "captured_bytes": 0,
+    "stdout": "",
+    "stderr": "",
+    "role": "stall-copy",
+    "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_observer_deadline_does_no0/candidate-copy/copy.db",
+    "phase": "candidate-copy",
+    "expected_stall_marker": {
+      "pid": 3133173,
+      "role": "stall-copy",
+      "nonce": "846161e16b8ecbb08ed893fb07973d90"
+    },
+    "stall_marker": {
+      "pid": 3133173,
+      "role": "stall-copy",
+      "nonce": "846161e16b8ecbb08ed893fb07973d90"
+    },
+    "stall_marker_identity": {
+      "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_observer_deadline_does_no0/candidate-copy/.copy.db.stall-copy.reached.json",
+      "device": 42,
+      "inode": 95659682,
+      "bytes": 83,
+      "sha256": "09dd4fa02455f5961d934c16fb605d8fd9b028a8dcba298f28b6d0f026cf5665"
+    }
+  },
+  "tracee": [
+    {
+      "pid": 3133171,
+      "raw_wait_status": 9,
+      "returncode": -9,
+      "actual_sigkill": true,
+      "cleanup_fault_injected": false,
+      "stderr_prefix": "",
+      "cleanup_errors": [],
+      "observed_sync_events": [],
+      "raw_sync_entries": [
+        {
+          "ordinal": 1,
+          "syscall": 74,
+          "fd": 4,
+          "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_observer_deadline_does_no0/outbox.db-wal",
+          "device": 42,
+          "inode": 95659668,
+          "regular": true
+        }
+      ]
+    }
+  ]
+}

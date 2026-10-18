@@ -1,0 +1,51 @@
+{
+  "schema": "outbox-fsync-publication-provenance/v1",
+  "item": "sprintctl#2807",
+  "cwd": "/tmp/sprintctl-outbox-fsync-2807",
+  "campaign_command": "UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-outbox-fsync-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/test_outbox_fsync.py tests/test_outbox.py tests/test_authority_outbox.py tests/test_abrupt_process_recovery.py tests/test_sync.py tests/test_projection.py --tb=short -o junit_family=legacy --basetemp=/tmp/sprintctl-outbox-fsync-marker-final-temp --junitxml=/tmp/sprintctl-outbox-fsync-marker-final.xml > /tmp/sprintctl-outbox-fsync-marker-final.txt 2>&1",
+  "collection_command": "UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-outbox-fsync-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/test_outbox_fsync.py --collect-only -q > /tmp/sprintctl-outbox-fsync-marker-final-collect.txt 2>&1",
+  "extract_command": "python verification/traces/extract-outbox-fsync-captures.py --source /tmp/sprintctl-outbox-fsync-marker-final-temp --destination verification/traces/outbox-fsync-2807 --xml /tmp/sprintctl-outbox-fsync-marker-final.xml --freeze verification/fixtures/outbox-fsync-source-freeze-2807-v3.json",
+  "chronology": "V1 sourcefreeze preceded initial140campaign; staged EOF finding led to v2freeze/repeated140campaign, committed7ba9ef0 and all4CIgreen. Beforemerge, required review found request tags did not prove child stall reached, so relevant prior control clearance withdrawn. V3 sourcefreeze85dc9de3 preceded new144/70marker campaign; no old captures relabelled. Extractor originally authored after v1campaign and extended before v3campaign to retain4newrefusals+6rawchildmarkers. Runtime gitHEAD7ba identifies prior source candidate, exact current helpers are identified by v3freeze/source hashes.",
+  "artifacts_sha256": {
+    "verification/traces/outbox-fsync-2807/focused.xml": "cbb35c8a9810d4c4cce90fdabcf5b78cca911c093ec2737bff62d5809fccf34a",
+    "verification/traces/outbox-fsync-2807/focused.txt": "d501a4b489c48ffcfa5a5b34fb5ceaffb2addda42d8a2118bd2bbf0fd2d71a21",
+    "verification/traces/outbox-fsync-2807/collected.txt": "8216615cfa268b9b413c2373053a6afa76add359b59db19ba2af22b4a0f048c9",
+    "verification/traces/outbox-fsync-2807/manifest.json": "838025a07836e9ef31832206278f3c93873061836cc438fc3d7e8fd1e64ce28b",
+    "verification/traces/extract-outbox-fsync-captures.py": "23b6b5eca06bed9fe99d5b59bfdfc8ca6e41768de2acd4de70154b166f382d57",
+    "verification/fixtures/outbox-fsync-source-freeze-2807.json": "2d8e49af09f0e52bac2051e8a0beb243b6fb659c65706054c9f81f3d69454233",
+    "verification/fixtures/outbox-fsync-source-freeze-2807-v2.json": "9313864cf04777597c2357f34c9f0f513c32cb40ba1cf64f25c63537b8ee8ad1",
+    "verification/fixtures/outbox-fsync-source-freeze-2807-v3.json": "85dc9de3cbc1b3f2be448f7a5ef08810c1f0d6130ff26dfe3f6dfefa0649917d"
+  },
+  "timeout_scope": {
+    "sqlite_busy_timeout_milliseconds_200": "ONLY independent raw reader connections in _outbox_fsync_worker.read_state",
+    "query_progress_deadline_milliseconds_500": "ONLY independent raw readers, not product append",
+    "actual_product_busy_timeout_milliseconds": 30000,
+    "producer_external_deadline_seconds": 10,
+    "retry_external_deadline_seconds": 3,
+    "startup_stall_external_deadline_seconds": 3
+  },
+  "independent_review": {
+    "session": "01a14db0-5e79-7ed1-89d8-dae5d15231d2",
+    "source_and_raw_replay": "Final v3 CLEAR:6newsource+101productpins;122manifest/indexblobhashes including21DB and6rawchildmarkers;30independentWALchains/24ownboundedCOPYreads;8outboxhistories/4actual9/-9;3validPID-role-freshnonce markers plus4intendedmarkerfalsifiers. No original SQLite open or ptrace rerun.",
+    "publication_metadata": "Final v3 packet CLEAR; all8publicationpins,9scannercontrols0/1/1threeepochs,stagedscanner/validator/diff pass. Amended-head4CI/merge-tree/nativeacceptance remain separate."
+  },
+  "secret_scan": {
+    "finding": "generic-api-key on SHA256 of unchanged sprintctl/vuoro_credentials.py in source freeze; hash equals source bytes, not credential material",
+    "exception": [
+      "verification/fixtures/outbox-fsync-source-freeze-2807.json:generic-api-key:114",
+      "verification/fixtures/outbox-fsync-source-freeze-2807-v2.json:generic-api-key:114",
+      "verification/fixtures/outbox-fsync-source-freeze-2807-v3.json:generic-api-key:114"
+    ],
+    "control_results": "Nine independently run controls: for each historicalv1/v2 and finalv3 exact exception, exactpath/rule/line0, otherfile1, samefileotherline1.",
+    "control_result_path": "verification/traces/outbox-fsync-2807/source-hash-scan-controls.json",
+    "control_result_sha256": "8bc8d57d41908d176688bd5e8eec610c81f3c427e19243cc55b2b3d9f3df217a",
+    "session_local_control_source_sha256": "b6f2f4e31c84ab7470505f32dbf5994d77f702b7d057b9f122592090e85fa587",
+    "session_local_v2_control_source_sha256": "fd03728fe21a04b03ceae62c377ba8646ab698b0d871505ad737bee844174c8a",
+    "session_local_v3_control_source_sha256": "06a4a8f75d3afd5a0f252c1aad54f4a05188d5cd8b71d95ce307f7315a5788fb"
+  },
+  "native_freeze_notes": {
+    "original_before_first_campaign": 5821,
+    "v2_correction_recorded_after_repeated_campaign": 5826,
+    "v3_marker_correction_recorded_after_new_campaign": 5837
+  }
+}

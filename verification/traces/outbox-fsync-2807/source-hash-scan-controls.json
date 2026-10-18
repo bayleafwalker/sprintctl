@@ -1,0 +1,92 @@
+[
+  {
+    "freeze_revision": "v1",
+    "name": "exact-source-hash-exception",
+    "returncode": 0,
+    "findings": []
+  },
+  {
+    "freeze_revision": "v1",
+    "name": "same-hash-other-file",
+    "returncode": 1,
+    "findings": [
+      {
+        "file": "elsewhere.json",
+        "rule": "generic-api-key",
+        "line": 114
+      }
+    ]
+  },
+  {
+    "freeze_revision": "v1",
+    "name": "same-file-other-line",
+    "returncode": 1,
+    "findings": [
+      {
+        "file": "verification/fixtures/outbox-fsync-source-freeze-2807.json",
+        "rule": "generic-api-key",
+        "line": 115
+      }
+    ]
+  },
+  {
+    "freeze_revision": "v2",
+    "name": "exact-source-hash-exception",
+    "returncode": 0,
+    "findings": []
+  },
+  {
+    "freeze_revision": "v2",
+    "name": "same-hash-other-file",
+    "returncode": 1,
+    "findings": [
+      {
+        "file": "elsewhere.json",
+        "rule": "generic-api-key",
+        "line": 114
+      }
+    ]
+  },
+  {
+    "freeze_revision": "v2",
+    "name": "same-file-other-line",
+    "returncode": 1,
+    "findings": [
+      {
+        "file": "verification/fixtures/outbox-fsync-source-freeze-2807-v2.json",
+        "rule": "generic-api-key",
+        "line": 115
+      }
+    ]
+  },
+  {
+    "freeze_revision": "v3",
+    "name": "exact-source-hash-exception",
+    "returncode": 0,
+    "findings": []
+  },
+  {
+    "freeze_revision": "v3",
+    "name": "same-hash-other-file",
+    "returncode": 1,
+    "findings": [
+      {
+        "file": "elsewhere.json",
+        "rule": "generic-api-key",
+        "line": 114
+      }
+    ]
+  },
+  {
+    "freeze_revision": "v3",
+    "name": "same-file-other-line",
+    "returncode": 1,
+    "findings": [
+      {
+        "file": "verification/fixtures/outbox-fsync-source-freeze-2807-v3.json",
+        "rule": "generic-api-key",
+        "line": 115
+      }
+    ]
+  }
+]

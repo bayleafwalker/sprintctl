@@ -1,0 +1,654 @@
+{
+  "trace": {
+    "mode": "observe",
+    "variant": "normal",
+    "target_syscall": 74,
+    "actual_pid": 3132952,
+    "returncode": 0,
+    "raw_wait_status": 0,
+    "bootstrap_exit_observed": false,
+    "typed_syscall_stops": 127,
+    "events": [
+      {
+        "phase": "entry",
+        "syscall": 74,
+        "fd": 4,
+        "ordinal": 1,
+        "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_kernel_boundary_observe_o0/outbox.db-wal",
+        "device": 42,
+        "inode": 95659170,
+        "eligible": true,
+        "kind": "fresh-commit",
+        "wal_sha256": "c399af9fdd26d558b50e8e2640552758c3fe4230bb1261093aeb7bd290ade773",
+        "candidate": {
+          "bytes": 74192,
+          "magic": 931071618,
+          "version": 3007000,
+          "page_size": 4096,
+          "generation": [
+            0,
+            3050305253,
+            4119854296
+          ],
+          "frames": [
+            {
+              "index": 1,
+              "offset": 32,
+              "page": 1,
+              "commit_db_pages": 0
+            },
+            {
+              "index": 2,
+              "offset": 4152,
+              "page": 2,
+              "commit_db_pages": 0
+            },
+            {
+              "index": 3,
+              "offset": 8272,
+              "page": 3,
+              "commit_db_pages": 3
+            },
+            {
+              "index": 4,
+              "offset": 12392,
+              "page": 1,
+              "commit_db_pages": 0
+            },
+            {
+              "index": 5,
+              "offset": 16512,
+              "page": 4,
+              "commit_db_pages": 0
+            },
+            {
+              "index": 6,
+              "offset": 20632,
+              "page": 5,
+              "commit_db_pages": 0
+            },
+            {
+              "index": 7,
+              "offset": 24752,
+              "page": 6,
+              "commit_db_pages": 6
+            },
+            {
+              "index": 8,
+              "offset": 28872,
+              "page": 1,
+              "commit_db_pages": 6
+            },
+            {
+              "index": 9,
+              "offset": 32992,
+              "page": 1,
+              "commit_db_pages": 6
+            },
+            {
+              "index": 10,
+              "offset": 37112,
+              "page": 2,
+              "commit_db_pages": 0
+            },
+            {
+              "index": 11,
+              "offset": 41232,
+              "page": 3,
+              "commit_db_pages": 0
+            },
+            {
+              "index": 12,
+              "offset": 45352,
+              "page": 4,
+              "commit_db_pages": 0
+            },
+            {
+              "index": 13,
+              "offset": 49472,
+              "page": 5,
+              "commit_db_pages": 0
+            },
+            {
+              "index": 14,
+              "offset": 53592,
+              "page": 6,
+              "commit_db_pages": 6
+            },
+            {
+              "index": 15,
+              "offset": 57712,
+              "page": 2,
+              "commit_db_pages": 0
+            },
+            {
+              "index": 16,
+              "offset": 61832,
+              "page": 4,
+              "commit_db_pages": 0
+            },
+            {
+              "index": 17,
+              "offset": 65952,
+              "page": 5,
+              "commit_db_pages": 0
+            },
+            {
+              "index": 18,
+              "offset": 70072,
+              "page": 6,
+              "commit_db_pages": 6
+            }
+          ],
+          "commits": [
+            3,
+            7,
+            8,
+            9,
+            14,
+            18
+          ],
+          "last_commit": 18,
+          "sha256": "c399af9fdd26d558b50e8e2640552758c3fe4230bb1261093aeb7bd290ade773"
+        }
+      },
+      {
+        "phase": "exit",
+        "syscall": 74,
+        "fd": 4,
+        "return": 0,
+        "is_error": 0,
+        "observation_source": "kernel",
+        "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_kernel_boundary_observe_o0/outbox.db-wal",
+        "device": 42,
+        "inode": 95659170
+      },
+      {
+        "phase": "excluded-post-DONE-entry",
+        "syscall": 74,
+        "fd": 4
+      },
+      {
+        "phase": "excluded-post-DONE-exit",
+        "syscall": 74,
+        "fd": 4,
+        "return": 0,
+        "is_error": 0
+      },
+      {
+        "phase": "excluded-post-DONE-entry",
+        "syscall": 74,
+        "fd": 3
+      },
+      {
+        "phase": "excluded-post-DONE-exit",
+        "syscall": 74,
+        "fd": 3,
+        "return": 0,
+        "is_error": 0
+      }
+    ],
+    "raw_sync_entries": [
+      {
+        "ordinal": 1,
+        "syscall": 74,
+        "fd": 4,
+        "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_kernel_boundary_observe_o0/outbox.db-wal",
+        "device": 42,
+        "inode": 95659170,
+        "regular": true
+      }
+    ]
+  },
+  "record_kind": "observation",
+  "recovered": {
+    "records": [
+      {
+        "origin_stream_id": "30fff29f-4a6f-4149-a345-5a90c469c6b5",
+        "origin_seq": 1,
+        "event_id": "seed-event",
+        "schema_version": 1,
+        "record_class": "observation",
+        "event_type": "work.completed",
+        "actor": "verification",
+        "runtime_session_id": "fsync-format-probe",
+        "occurred_at": "2026-10-18T00:00:00Z",
+        "basis_revision": null,
+        "correlation_id": null,
+        "causation_id": null,
+        "payload": "{\"phase\":\"seed\"}",
+        "payload_sha256": "32580c0df02ecbd62877ee669c50d54f3cb12ecb5afef05984e8635c64574c92",
+        "record_sha256": "85959a1bc7dc7236da0ff7e70becd42b74b037f8e37f269d698f460b1845b191",
+        "created_at": "2026-10-18T19:05:28Z"
+      },
+      {
+        "origin_stream_id": "30fff29f-4a6f-4149-a345-5a90c469c6b5",
+        "origin_seq": 2,
+        "event_id": "target-event",
+        "schema_version": 1,
+        "record_class": "observation",
+        "event_type": "work.completed",
+        "actor": "verification",
+        "runtime_session_id": "fsync-format-probe",
+        "occurred_at": "2026-10-18T00:00:00Z",
+        "basis_revision": null,
+        "correlation_id": null,
+        "causation_id": null,
+        "payload": "{\"phase\":\"target\"}",
+        "payload_sha256": "fbf86c284706395fe63f86ed36b9d186416cca4a3d3270365f24c52222cbb49a",
+        "record_sha256": "9008eafcc8c873fec3225152a9c1a1674c43ad2732d0974bcaf74d89b8cc22e6",
+        "created_at": "2026-10-18T19:05:28Z"
+      }
+    ],
+    "streams": [
+      {
+        "singleton": 1,
+        "origin_stream_id": "30fff29f-4a6f-4149-a345-5a90c469c6b5",
+        "next_origin_seq": 3,
+        "created_at": "2026-10-18T19:05:28Z"
+      }
+    ],
+    "status": "readable-outbox",
+    "target_absent": false
+  },
+  "after_retry": {
+    "records": [
+      {
+        "origin_stream_id": "30fff29f-4a6f-4149-a345-5a90c469c6b5",
+        "origin_seq": 1,
+        "event_id": "seed-event",
+        "schema_version": 1,
+        "record_class": "observation",
+        "event_type": "work.completed",
+        "actor": "verification",
+        "runtime_session_id": "fsync-format-probe",
+        "occurred_at": "2026-10-18T00:00:00Z",
+        "basis_revision": null,
+        "correlation_id": null,
+        "causation_id": null,
+        "payload": "{\"phase\":\"seed\"}",
+        "payload_sha256": "32580c0df02ecbd62877ee669c50d54f3cb12ecb5afef05984e8635c64574c92",
+        "record_sha256": "85959a1bc7dc7236da0ff7e70becd42b74b037f8e37f269d698f460b1845b191",
+        "created_at": "2026-10-18T19:05:28Z"
+      },
+      {
+        "origin_stream_id": "30fff29f-4a6f-4149-a345-5a90c469c6b5",
+        "origin_seq": 2,
+        "event_id": "target-event",
+        "schema_version": 1,
+        "record_class": "observation",
+        "event_type": "work.completed",
+        "actor": "verification",
+        "runtime_session_id": "fsync-format-probe",
+        "occurred_at": "2026-10-18T00:00:00Z",
+        "basis_revision": null,
+        "correlation_id": null,
+        "causation_id": null,
+        "payload": "{\"phase\":\"target\"}",
+        "payload_sha256": "fbf86c284706395fe63f86ed36b9d186416cca4a3d3270365f24c52222cbb49a",
+        "record_sha256": "9008eafcc8c873fec3225152a9c1a1674c43ad2732d0974bcaf74d89b8cc22e6",
+        "created_at": "2026-10-18T19:05:28Z"
+      }
+    ],
+    "streams": [
+      {
+        "singleton": 1,
+        "origin_stream_id": "30fff29f-4a6f-4149-a345-5a90c469c6b5",
+        "next_origin_seq": 3,
+        "created_at": "2026-10-18T19:05:28Z"
+      }
+    ],
+    "status": "readable-outbox",
+    "target_absent": false
+  },
+  "attribution": {
+    "candidate": {
+      "records": [
+        {
+          "origin_stream_id": "30fff29f-4a6f-4149-a345-5a90c469c6b5",
+          "origin_seq": 1,
+          "event_id": "seed-event",
+          "schema_version": 1,
+          "record_class": "observation",
+          "event_type": "work.completed",
+          "actor": "verification",
+          "runtime_session_id": "fsync-format-probe",
+          "occurred_at": "2026-10-18T00:00:00Z",
+          "basis_revision": null,
+          "correlation_id": null,
+          "causation_id": null,
+          "payload": "{\"phase\":\"seed\"}",
+          "payload_sha256": "32580c0df02ecbd62877ee669c50d54f3cb12ecb5afef05984e8635c64574c92",
+          "record_sha256": "85959a1bc7dc7236da0ff7e70becd42b74b037f8e37f269d698f460b1845b191",
+          "created_at": "2026-10-18T19:05:28Z"
+        },
+        {
+          "origin_stream_id": "30fff29f-4a6f-4149-a345-5a90c469c6b5",
+          "origin_seq": 2,
+          "event_id": "target-event",
+          "schema_version": 1,
+          "record_class": "observation",
+          "event_type": "work.completed",
+          "actor": "verification",
+          "runtime_session_id": "fsync-format-probe",
+          "occurred_at": "2026-10-18T00:00:00Z",
+          "basis_revision": null,
+          "correlation_id": null,
+          "causation_id": null,
+          "payload": "{\"phase\":\"target\"}",
+          "payload_sha256": "fbf86c284706395fe63f86ed36b9d186416cca4a3d3270365f24c52222cbb49a",
+          "record_sha256": "9008eafcc8c873fec3225152a9c1a1674c43ad2732d0974bcaf74d89b8cc22e6",
+          "created_at": "2026-10-18T19:05:28Z"
+        }
+      ],
+      "streams": [
+        {
+          "singleton": 1,
+          "origin_stream_id": "30fff29f-4a6f-4149-a345-5a90c469c6b5",
+          "next_origin_seq": 3,
+          "created_at": "2026-10-18T19:05:28Z"
+        }
+      ],
+      "status": "readable-outbox",
+      "target_absent": false
+    },
+    "same_main_with_seed_WAL": {
+      "records": [
+        {
+          "origin_stream_id": "30fff29f-4a6f-4149-a345-5a90c469c6b5",
+          "origin_seq": 1,
+          "event_id": "seed-event",
+          "schema_version": 1,
+          "record_class": "observation",
+          "event_type": "work.completed",
+          "actor": "verification",
+          "runtime_session_id": "fsync-format-probe",
+          "occurred_at": "2026-10-18T00:00:00Z",
+          "basis_revision": null,
+          "correlation_id": null,
+          "causation_id": null,
+          "payload": "{\"phase\":\"seed\"}",
+          "payload_sha256": "32580c0df02ecbd62877ee669c50d54f3cb12ecb5afef05984e8635c64574c92",
+          "record_sha256": "85959a1bc7dc7236da0ff7e70becd42b74b037f8e37f269d698f460b1845b191",
+          "created_at": "2026-10-18T19:05:28Z"
+        }
+      ],
+      "streams": [
+        {
+          "singleton": 1,
+          "origin_stream_id": "30fff29f-4a6f-4149-a345-5a90c469c6b5",
+          "next_origin_seq": 2,
+          "created_at": "2026-10-18T19:05:28Z"
+        }
+      ],
+      "status": "readable-outbox",
+      "target_absent": true
+    },
+    "same_main_without_WAL": {
+      "status": "no-outbox-schema",
+      "target_absent": true,
+      "tables": []
+    }
+  },
+  "observers": [
+    {
+      "pid": 3132954,
+      "timeout": 3,
+      "output_limit": 65536,
+      "returncode": 0,
+      "elapsed": 0.046697764002601616,
+      "captured_bytes": 828,
+      "stdout": "{\"records\": [{\"origin_stream_id\": \"30fff29f-4a6f-4149-a345-5a90c469c6b5\", \"origin_seq\": 1, \"event_id\": \"seed-event\", \"schema_version\": 1, \"record_class\": \"observation\", \"event_type\": \"work.completed\", \"actor\": \"verification\", \"runtime_session_id\": \"fsync-format-probe\", \"occurred_at\": \"2026-10-18T00:00:00Z\", \"basis_revision\": null, \"correlation_id\": null, \"causation_id\": null, \"payload\": \"{\\\"phase\\\":\\\"seed\\\"}\", \"payload_sha256\": \"32580c0df02ecbd62877ee669c50d54f3cb12ecb5afef05984e8635c64574c92\", \"record_sha256\": \"85959a1bc7dc7236da0ff7e70becd42b74b037f8e37f269d698f460b1845b191\", \"created_at\": \"2026-10-18T19:05:28Z\"}], \"streams\": [{\"singleton\": 1, \"origin_stream_id\": \"30fff29f-4a6f-4149-a345-5a90c469c6b5\", \"next_origin_seq\": 2, \"created_at\": \"2026-10-18T19:05:28Z\"}], \"status\": \"readable-outbox\", \"target_absent\": true}\n",
+      "stderr": "",
+      "role": "copy",
+      "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_kernel_boundary_observe_o0/seed-copy/copy.db",
+      "phase": "seed-copy"
+    },
+    {
+      "pid": 3132957,
+      "timeout": 3,
+      "output_limit": 65536,
+      "returncode": 0,
+      "elapsed": 0.045303156999580096,
+      "captured_bytes": 1444,
+      "stdout": "{\"records\": [{\"origin_stream_id\": \"30fff29f-4a6f-4149-a345-5a90c469c6b5\", \"origin_seq\": 1, \"event_id\": \"seed-event\", \"schema_version\": 1, \"record_class\": \"observation\", \"event_type\": \"work.completed\", \"actor\": \"verification\", \"runtime_session_id\": \"fsync-format-probe\", \"occurred_at\": \"2026-10-18T00:00:00Z\", \"basis_revision\": null, \"correlation_id\": null, \"causation_id\": null, \"payload\": \"{\\\"phase\\\":\\\"seed\\\"}\", \"payload_sha256\": \"32580c0df02ecbd62877ee669c50d54f3cb12ecb5afef05984e8635c64574c92\", \"record_sha256\": \"85959a1bc7dc7236da0ff7e70becd42b74b037f8e37f269d698f460b1845b191\", \"created_at\": \"2026-10-18T19:05:28Z\"}, {\"origin_stream_id\": \"30fff29f-4a6f-4149-a345-5a90c469c6b5\", \"origin_seq\": 2, \"event_id\": \"target-event\", \"schema_version\": 1, \"record_class\": \"observation\", \"event_type\": \"work.completed\", \"actor\": \"verification\", \"runtime_session_id\": \"fsync-format-probe\", \"occurred_at\": \"2026-10-18T00:00:00Z\", \"basis_revision\": null, \"correlation_id\": null, \"causation_id\": null, \"payload\": \"{\\\"phase\\\":\\\"target\\\"}\", \"payload_sha256\": \"fbf86c284706395fe63f86ed36b9d186416cca4a3d3270365f24c52222cbb49a\", \"record_sha256\": \"9008eafcc8c873fec3225152a9c1a1674c43ad2732d0974bcaf74d89b8cc22e6\", \"created_at\": \"2026-10-18T19:05:28Z\"}], \"streams\": [{\"singleton\": 1, \"origin_stream_id\": \"30fff29f-4a6f-4149-a345-5a90c469c6b5\", \"next_origin_seq\": 3, \"created_at\": \"2026-10-18T19:05:28Z\"}], \"status\": \"readable-outbox\", \"target_absent\": false}\n",
+      "stderr": "",
+      "role": "copy",
+      "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_kernel_boundary_observe_o0/candidate-copy/copy.db",
+      "phase": "candidate-copy"
+    },
+    {
+      "pid": 3132983,
+      "timeout": 3,
+      "output_limit": 65536,
+      "returncode": 0,
+      "elapsed": 0.04476548499951605,
+      "captured_bytes": 828,
+      "stdout": "{\"records\": [{\"origin_stream_id\": \"30fff29f-4a6f-4149-a345-5a90c469c6b5\", \"origin_seq\": 1, \"event_id\": \"seed-event\", \"schema_version\": 1, \"record_class\": \"observation\", \"event_type\": \"work.completed\", \"actor\": \"verification\", \"runtime_session_id\": \"fsync-format-probe\", \"occurred_at\": \"2026-10-18T00:00:00Z\", \"basis_revision\": null, \"correlation_id\": null, \"causation_id\": null, \"payload\": \"{\\\"phase\\\":\\\"seed\\\"}\", \"payload_sha256\": \"32580c0df02ecbd62877ee669c50d54f3cb12ecb5afef05984e8635c64574c92\", \"record_sha256\": \"85959a1bc7dc7236da0ff7e70becd42b74b037f8e37f269d698f460b1845b191\", \"created_at\": \"2026-10-18T19:05:28Z\"}], \"streams\": [{\"singleton\": 1, \"origin_stream_id\": \"30fff29f-4a6f-4149-a345-5a90c469c6b5\", \"next_origin_seq\": 2, \"created_at\": \"2026-10-18T19:05:28Z\"}], \"status\": \"readable-outbox\", \"target_absent\": true}\n",
+      "stderr": "",
+      "role": "copy",
+      "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_kernel_boundary_observe_o0/substituted-copy/copy.db",
+      "phase": "substituted-copy"
+    },
+    {
+      "pid": 3132985,
+      "timeout": 3,
+      "output_limit": 65536,
+      "returncode": 0,
+      "elapsed": 0.03449683800135972,
+      "captured_bytes": 68,
+      "stdout": "{\"status\": \"no-outbox-schema\", \"target_absent\": true, \"tables\": []}\n",
+      "stderr": "",
+      "role": "copy",
+      "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_kernel_boundary_observe_o0/omitted-copy/copy.db",
+      "phase": "omitted-copy"
+    },
+    {
+      "pid": 3132986,
+      "timeout": 3,
+      "output_limit": 65536,
+      "returncode": 0,
+      "elapsed": 0.0354357420001179,
+      "captured_bytes": 1444,
+      "stdout": "{\"records\": [{\"origin_stream_id\": \"30fff29f-4a6f-4149-a345-5a90c469c6b5\", \"origin_seq\": 1, \"event_id\": \"seed-event\", \"schema_version\": 1, \"record_class\": \"observation\", \"event_type\": \"work.completed\", \"actor\": \"verification\", \"runtime_session_id\": \"fsync-format-probe\", \"occurred_at\": \"2026-10-18T00:00:00Z\", \"basis_revision\": null, \"correlation_id\": null, \"causation_id\": null, \"payload\": \"{\\\"phase\\\":\\\"seed\\\"}\", \"payload_sha256\": \"32580c0df02ecbd62877ee669c50d54f3cb12ecb5afef05984e8635c64574c92\", \"record_sha256\": \"85959a1bc7dc7236da0ff7e70becd42b74b037f8e37f269d698f460b1845b191\", \"created_at\": \"2026-10-18T19:05:28Z\"}, {\"origin_stream_id\": \"30fff29f-4a6f-4149-a345-5a90c469c6b5\", \"origin_seq\": 2, \"event_id\": \"target-event\", \"schema_version\": 1, \"record_class\": \"observation\", \"event_type\": \"work.completed\", \"actor\": \"verification\", \"runtime_session_id\": \"fsync-format-probe\", \"occurred_at\": \"2026-10-18T00:00:00Z\", \"basis_revision\": null, \"correlation_id\": null, \"causation_id\": null, \"payload\": \"{\\\"phase\\\":\\\"target\\\"}\", \"payload_sha256\": \"fbf86c284706395fe63f86ed36b9d186416cca4a3d3270365f24c52222cbb49a\", \"record_sha256\": \"9008eafcc8c873fec3225152a9c1a1674c43ad2732d0974bcaf74d89b8cc22e6\", \"created_at\": \"2026-10-18T19:05:28Z\"}], \"streams\": [{\"singleton\": 1, \"origin_stream_id\": \"30fff29f-4a6f-4149-a345-5a90c469c6b5\", \"next_origin_seq\": 3, \"created_at\": \"2026-10-18T19:05:28Z\"}], \"status\": \"readable-outbox\", \"target_absent\": false}\n",
+      "stderr": "",
+      "role": "recover",
+      "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_kernel_boundary_observe_o0/outbox.db",
+      "phase": "post-terminal-original-recovery"
+    },
+    {
+      "pid": 3132987,
+      "timeout": 3,
+      "output_limit": 65536,
+      "returncode": 0,
+      "elapsed": 0.03418924599827733,
+      "captured_bytes": 78,
+      "stdout": "{\"origin_seq\": 2, \"origin_stream_id\": \"30fff29f-4a6f-4149-a345-5a90c469c6b5\"}\n",
+      "stderr": "",
+      "role": "retry",
+      "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_kernel_boundary_observe_o0/outbox.db",
+      "phase": "post-terminal-post-recovery-retry"
+    },
+    {
+      "pid": 3133002,
+      "timeout": 3,
+      "output_limit": 65536,
+      "returncode": 0,
+      "elapsed": 0.03586455500044394,
+      "captured_bytes": 1444,
+      "stdout": "{\"records\": [{\"origin_stream_id\": \"30fff29f-4a6f-4149-a345-5a90c469c6b5\", \"origin_seq\": 1, \"event_id\": \"seed-event\", \"schema_version\": 1, \"record_class\": \"observation\", \"event_type\": \"work.completed\", \"actor\": \"verification\", \"runtime_session_id\": \"fsync-format-probe\", \"occurred_at\": \"2026-10-18T00:00:00Z\", \"basis_revision\": null, \"correlation_id\": null, \"causation_id\": null, \"payload\": \"{\\\"phase\\\":\\\"seed\\\"}\", \"payload_sha256\": \"32580c0df02ecbd62877ee669c50d54f3cb12ecb5afef05984e8635c64574c92\", \"record_sha256\": \"85959a1bc7dc7236da0ff7e70becd42b74b037f8e37f269d698f460b1845b191\", \"created_at\": \"2026-10-18T19:05:28Z\"}, {\"origin_stream_id\": \"30fff29f-4a6f-4149-a345-5a90c469c6b5\", \"origin_seq\": 2, \"event_id\": \"target-event\", \"schema_version\": 1, \"record_class\": \"observation\", \"event_type\": \"work.completed\", \"actor\": \"verification\", \"runtime_session_id\": \"fsync-format-probe\", \"occurred_at\": \"2026-10-18T00:00:00Z\", \"basis_revision\": null, \"correlation_id\": null, \"causation_id\": null, \"payload\": \"{\\\"phase\\\":\\\"target\\\"}\", \"payload_sha256\": \"fbf86c284706395fe63f86ed36b9d186416cca4a3d3270365f24c52222cbb49a\", \"record_sha256\": \"9008eafcc8c873fec3225152a9c1a1674c43ad2732d0974bcaf74d89b8cc22e6\", \"created_at\": \"2026-10-18T19:05:28Z\"}], \"streams\": [{\"singleton\": 1, \"origin_stream_id\": \"30fff29f-4a6f-4149-a345-5a90c469c6b5\", \"next_origin_seq\": 3, \"created_at\": \"2026-10-18T19:05:28Z\"}], \"status\": \"readable-outbox\", \"target_absent\": false}\n",
+      "stderr": "",
+      "role": "recover",
+      "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_kernel_boundary_observe_o0/outbox.db",
+      "phase": null
+    }
+  ],
+  "runtime": {
+    "record_kind": "observation",
+    "fixture_variant": "normal",
+    "source_head": "7ba9ef0ace701d9f37f925ee84823e850c556d67",
+    "source_tree": "1a6350c3bcc929b456771477c47154df360e9dc7",
+    "mountinfo": "69 1 0:33 /@ / rw,noatime shared:1 - btrfs /dev/mapper/cryptroot rw,compress=zstd:3,ssd,discard=async,space_cache=v2,subvolid=256,subvol=/@",
+    "kernel": "6.18.56",
+    "architecture": "x86_64",
+    "metadata_processes": [
+      {
+        "pid": 3132950,
+        "timeout": 2,
+        "output_limit": 4096,
+        "returncode": 0,
+        "elapsed": 0.0015533269979641773,
+        "captured_bytes": 41,
+        "stdout": "7ba9ef0ace701d9f37f925ee84823e850c556d67\n",
+        "stderr": ""
+      },
+      {
+        "pid": 3132951,
+        "timeout": 2,
+        "output_limit": 4096,
+        "returncode": 0,
+        "elapsed": 0.0016533779999008402,
+        "captured_bytes": 41,
+        "stdout": "1a6350c3bcc929b456771477c47154df360e9dc7\n",
+        "stderr": ""
+      }
+    ],
+    "outbox_path": "/tmp/sprintctl-outbox-fsync-2807/sprintctl/outbox.py",
+    "outbox_sha256": "aac1bf2b9131ade3c83d36ef0b8d66486677d98b6cebcbc1f0bdf2c85da84444",
+    "python": "3.13.16",
+    "sqlite": "3.53.1",
+    "source_id": "2026-05-05 10:34:17 c88b22011a54b4f6fbd149e9f8e4de77658ce58143a1af0e3785e4e6475127e9",
+    "compile_options": [
+      "ATOMIC_INTRINSICS=1",
+      "COMPILER=clang-22.1.3",
+      "DEFAULT_AUTOVACUUM",
+      "DEFAULT_CACHE_SIZE=-2000",
+      "DEFAULT_FILE_FORMAT=4",
+      "DEFAULT_JOURNAL_SIZE_LIMIT=-1",
+      "DEFAULT_MMAP_SIZE=0",
+      "DEFAULT_PAGE_SIZE=4096",
+      "DEFAULT_PCACHE_INITSZ=20",
+      "DEFAULT_RECURSIVE_TRIGGERS",
+      "DEFAULT_SECTOR_SIZE=4096",
+      "DEFAULT_SYNCHRONOUS=2",
+      "DEFAULT_WAL_AUTOCHECKPOINT=1000",
+      "DEFAULT_WAL_SYNCHRONOUS=2",
+      "DEFAULT_WORKER_THREADS=0",
+      "DIRECT_OVERFLOW_READ",
+      "ENABLE_DBSTAT_VTAB",
+      "ENABLE_FTS3",
+      "ENABLE_FTS3_PARENTHESIS",
+      "ENABLE_FTS4",
+      "ENABLE_FTS5",
+      "ENABLE_GEOPOLY",
+      "ENABLE_MATH_FUNCTIONS",
+      "ENABLE_PERCENTILE",
+      "ENABLE_RTREE",
+      "MALLOC_SOFT_LIMIT=1024",
+      "MAX_ATTACHED=10",
+      "MAX_COLUMN=2000",
+      "MAX_COMPOUND_SELECT=500",
+      "MAX_DEFAULT_PAGE_SIZE=8192",
+      "MAX_EXPR_DEPTH=1000",
+      "MAX_FUNCTION_ARG=1000",
+      "MAX_LENGTH=1000000000",
+      "MAX_LIKE_PATTERN_LENGTH=50000",
+      "MAX_MMAP_SIZE=0x7fff0000",
+      "MAX_PAGE_COUNT=0xfffffffe",
+      "MAX_PAGE_SIZE=65536",
+      "MAX_SQL_LENGTH=1000000000",
+      "MAX_TRIGGER_DEPTH=1000",
+      "MAX_VARIABLE_NUMBER=32766",
+      "MAX_VDBE_OP=250000000",
+      "MAX_WORKER_THREADS=8",
+      "MUTEX_PTHREADS",
+      "SYSTEM_MALLOC",
+      "TEMP_STORE=1",
+      "THREADSAFE=1"
+    ],
+    "journal_mode": "wal",
+    "synchronous": 2,
+    "wal_autocheckpoint": 1000,
+    "database_list": [
+      [
+        0,
+        "main",
+        "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_kernel_boundary_observe_o0/outbox.db"
+      ]
+    ],
+    "authored_manifest_sha256": "6ec30a1af475258e3f8423cda64a90b76558e5ced6c9fd91d420ac7d52d86651",
+    "vfs_name": {
+      "status": "unknown",
+      "reason": "static builtin SQLite exposes no supported Python connection VFSNAME diagnostic; no private heap inspection or extension used"
+    },
+    "platform": [
+      "Linux",
+      "workstation",
+      "6.18.56",
+      "#1-NixOS SMP PREEMPT_DYNAMIC @1791725172",
+      "x86_64"
+    ],
+    "executable": "/tmp/sprintctl-outbox-fsync-env/bin/python",
+    "sqlite_extension_path": null,
+    "source_manifest": {
+      "__main__": {
+        "path": "tests/_outbox_fsync_worker.py",
+        "sha256": "fd4f403a52cf3fbdbd38333bb6f538fc0b71e8ad3b13e0b00981b0ae6e9deec5"
+      },
+      "sprintctl": {
+        "path": "sprintctl/__init__.py",
+        "sha256": "10faecc13525f49b36cff448ceeac96591ea5dd372c02b2a9654a92f4b5f033d"
+      },
+      "sprintctl.decisions": {
+        "path": "sprintctl/decisions.py",
+        "sha256": "5d81f93bb2033b7e46d626acfa0780de0d1c0e254baf02018ce21e5348547195"
+      },
+      "sprintctl.handoff_contract": {
+        "path": "sprintctl/handoff_contract.py",
+        "sha256": "02b1abe396610d9318b344b82ec18ae707fe0b5234620c90333957949a5a47f6"
+      },
+      "sprintctl.contracts": {
+        "path": "sprintctl/contracts.py",
+        "sha256": "ec19c3020e4dfa22041198f37c3b2788307e7ca357acf4419e1593f901f15183"
+      },
+      "sprintctl.outbox": {
+        "path": "sprintctl/outbox.py",
+        "sha256": "aac1bf2b9131ade3c83d36ef0b8d66486677d98b6cebcbc1f0bdf2c85da84444"
+      },
+      "tests": {
+        "path": "tests/__init__.py",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "tests._outbox_fsync_probe": {
+        "path": "tests/_outbox_fsync_probe.py",
+        "sha256": "660c4fab7eedf24ca02f945038cfd468287266f3ab8cda4d314d3f0438fca9dd"
+      },
+      "tests._syscall_sync_probe": {
+        "path": "tests/_syscall_sync_probe.py",
+        "sha256": "73f82d9095239690062e142d904d74fbd4a0f54895de2853fe8f187e9b5dadfd"
+      }
+    }
+  },
+  "captures": {
+    "seed.db": {
+      "bytes": 4096,
+      "sha256": "0ab48b25cba617ed3a4acca0161813b314c095ef63544bb4af60769eb1012977"
+    },
+    "seed.wal": {
+      "bytes": 57712,
+      "sha256": "6b7ba18df03f73e5d2807e6232750697c85da4b30004f44d16552260373ab475"
+    },
+    "candidate-entry.db": {
+      "bytes": 4096,
+      "sha256": "0ab48b25cba617ed3a4acca0161813b314c095ef63544bb4af60769eb1012977"
+    },
+    "candidate-entry.wal": {
+      "bytes": 74192,
+      "sha256": "c399af9fdd26d558b50e8e2640552758c3fe4230bb1261093aeb7bd290ade773"
+    },
+    "candidate-exit.wal": {
+      "bytes": 74192,
+      "sha256": "c399af9fdd26d558b50e8e2640552758c3fe4230bb1261093aeb7bd290ade773"
+    }
+  }
+}

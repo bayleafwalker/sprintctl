@@ -1,0 +1,30 @@
+[
+  {
+    "pid": 3133191,
+    "raw_wait_status": 9,
+    "returncode": -9,
+    "actual_sigkill": true,
+    "cleanup_fault_injected": false,
+    "stderr_prefix": "",
+    "cleanup_errors": [],
+    "observed_sync_events": [],
+    "raw_sync_entries": [],
+    "expected_stall_marker": {
+      "pid": 3133191,
+      "role": "startup-stall",
+      "nonce": "47be5bdab9c9beed12bd29c4512a17f7"
+    },
+    "stall_marker": {
+      "pid": 3133191,
+      "role": "startup-stall",
+      "nonce": "47be5bdab9c9beed12bd29c4512a17f7"
+    },
+    "stall_marker_identity": {
+      "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_startup_deadline_reaps_pr0/.outbox.db.startup-stall.reached.json",
+      "device": 42,
+      "inode": 95659718,
+      "bytes": 86,
+      "sha256": "062e1c637952a25a0b829ed63829ca9dd2e69460d7b2d72b81d233adb1039391"
+    }
+  }
+]

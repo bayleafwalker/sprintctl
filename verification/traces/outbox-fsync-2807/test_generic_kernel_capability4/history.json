@@ -1,0 +1,44 @@
+{
+  "mode": "after",
+  "variant": "normal",
+  "target_syscall": 74,
+  "actual_pid": 3133132,
+  "returncode": -9,
+  "raw_wait_status": 9,
+  "bootstrap_exit_observed": false,
+  "typed_syscall_stops": 10,
+  "events": [
+    {
+      "phase": "entry",
+      "syscall": 74,
+      "fd": 3,
+      "ordinal": 1,
+      "path": "/tmp/sprintctl-ptrace-owned-3s_sf_a8/owned-file",
+      "device": 42,
+      "inode": 95659496,
+      "eligible": true
+    },
+    {
+      "phase": "exit",
+      "syscall": 74,
+      "fd": 3,
+      "return": 0,
+      "is_error": 0,
+      "observation_source": "kernel",
+      "path": "/tmp/sprintctl-ptrace-owned-3s_sf_a8/owned-file",
+      "device": 42,
+      "inode": 95659496
+    }
+  ],
+  "raw_sync_entries": [
+    {
+      "ordinal": 1,
+      "syscall": 74,
+      "fd": 3,
+      "path": "/tmp/sprintctl-ptrace-owned-3s_sf_a8/owned-file",
+      "device": 42,
+      "inode": 95659496,
+      "regular": true
+    }
+  ]
+}

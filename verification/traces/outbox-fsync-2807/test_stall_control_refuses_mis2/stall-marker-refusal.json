@@ -1,0 +1,34 @@
+{
+  "fault": "wrong-role",
+  "reason": "stall marker role",
+  "observer": {
+    "pid": 3133199,
+    "timeout": 0.5,
+    "output_limit": 65536,
+    "returncode": -9,
+    "elapsed": 0.501382663998811,
+    "captured_bytes": 0,
+    "stdout": "",
+    "stderr": "",
+    "role": "stall-copy",
+    "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_stall_control_refuses_mis2/copy.db",
+    "phase": "marker-falsifier",
+    "expected_stall_marker": {
+      "pid": 3133199,
+      "role": "stall-copy",
+      "nonce": "26324528f013ca018b5eb50536909be9"
+    },
+    "stall_marker": {
+      "pid": 3133199,
+      "role": "unrequested-role",
+      "nonce": "26324528f013ca018b5eb50536909be9"
+    },
+    "stall_marker_identity": {
+      "path": "/tmp/sprintctl-outbox-fsync-marker-final-temp/test_stall_control_refuses_mis2/.copy.db.stall-copy.reached.json",
+      "device": 42,
+      "inode": 95659729,
+      "bytes": 89,
+      "sha256": "3574a79d896554d02ccd4acd969c86f65b25b27c2bf2efab1dc68028b3e47c26"
+    }
+  }
+}

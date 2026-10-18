@@ -1,0 +1,48 @@
+{
+  "variant": "controller_exit",
+  "cleanup": [
+    {
+      "pid": 3133165,
+      "raw_wait_status": 9,
+      "returncode": -9,
+      "actual_sigkill": true,
+      "cleanup_fault_injected": false,
+      "stderr_prefix": "",
+      "cleanup_errors": [],
+      "observed_sync_events": [
+        {
+          "phase": "entry",
+          "syscall": 74,
+          "fd": 3,
+          "ordinal": 1,
+          "path": "/tmp/sprintctl-ptrace-owned-2es2jc4g/owned-file",
+          "device": 42,
+          "inode": 95659647,
+          "eligible": true
+        },
+        {
+          "phase": "exit",
+          "syscall": 74,
+          "fd": 3,
+          "return": 0,
+          "is_error": 0,
+          "observation_source": "kernel",
+          "path": "/tmp/sprintctl-ptrace-owned-2es2jc4g/owned-file",
+          "device": 42,
+          "inode": 95659647
+        }
+      ],
+      "raw_sync_entries": [
+        {
+          "ordinal": 1,
+          "syscall": 74,
+          "fd": 3,
+          "path": "/tmp/sprintctl-ptrace-owned-2es2jc4g/owned-file",
+          "device": 42,
+          "inode": 95659647,
+          "regular": true
+        }
+      ]
+    }
+  ]
+}

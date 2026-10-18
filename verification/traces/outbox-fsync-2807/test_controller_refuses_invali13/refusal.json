@@ -1,0 +1,48 @@
+{
+  "variant": "failed_sync_result",
+  "cleanup": [
+    {
+      "pid": 3133150,
+      "raw_wait_status": 9,
+      "returncode": -9,
+      "actual_sigkill": true,
+      "cleanup_fault_injected": false,
+      "stderr_prefix": "",
+      "cleanup_errors": [],
+      "observed_sync_events": [
+        {
+          "phase": "entry",
+          "syscall": 74,
+          "fd": 3,
+          "ordinal": 1,
+          "path": "/tmp/sprintctl-ptrace-owned-axhwwrho/owned-file",
+          "device": 42,
+          "inode": 95659572,
+          "eligible": true
+        },
+        {
+          "phase": "exit",
+          "syscall": 74,
+          "fd": 3,
+          "return": -5,
+          "is_error": 1,
+          "observation_source": "synthetic",
+          "path": "/tmp/sprintctl-ptrace-owned-axhwwrho/owned-file",
+          "device": 42,
+          "inode": 95659572
+        }
+      ],
+      "raw_sync_entries": [
+        {
+          "ordinal": 1,
+          "syscall": 74,
+          "fd": 3,
+          "path": "/tmp/sprintctl-ptrace-owned-axhwwrho/owned-file",
+          "device": 42,
+          "inode": 95659572,
+          "regular": true
+        }
+      ]
+    }
+  ]
+}

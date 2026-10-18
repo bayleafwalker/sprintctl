@@ -1,0 +1,63 @@
+{
+  "mode": "before",
+  "variant": "normal",
+  "target_syscall": 75,
+  "actual_pid": 3133131,
+  "returncode": -9,
+  "raw_wait_status": 9,
+  "bootstrap_exit_observed": false,
+  "typed_syscall_stops": 11,
+  "events": [
+    {
+      "phase": "entry",
+      "syscall": 74,
+      "fd": 3,
+      "ordinal": 1,
+      "path": "/tmp/sprintctl-ptrace-owned-xzg0a704/owned-file",
+      "device": 42,
+      "inode": 95659491,
+      "eligible": false
+    },
+    {
+      "phase": "exit",
+      "syscall": 74,
+      "fd": 3,
+      "return": 0,
+      "is_error": 0,
+      "observation_source": "kernel",
+      "path": "/tmp/sprintctl-ptrace-owned-xzg0a704/owned-file",
+      "device": 42,
+      "inode": 95659491
+    },
+    {
+      "phase": "entry",
+      "syscall": 75,
+      "fd": 3,
+      "ordinal": 2,
+      "path": "/tmp/sprintctl-ptrace-owned-xzg0a704/owned-file",
+      "device": 42,
+      "inode": 95659491,
+      "eligible": true
+    }
+  ],
+  "raw_sync_entries": [
+    {
+      "ordinal": 1,
+      "syscall": 74,
+      "fd": 3,
+      "path": "/tmp/sprintctl-ptrace-owned-xzg0a704/owned-file",
+      "device": 42,
+      "inode": 95659491,
+      "regular": true
+    },
+    {
+      "ordinal": 2,
+      "syscall": 75,
+      "fd": 3,
+      "path": "/tmp/sprintctl-ptrace-owned-xzg0a704/owned-file",
+      "device": 42,
+      "inode": 95659491,
+      "regular": true
+    }
+  ]
+}
