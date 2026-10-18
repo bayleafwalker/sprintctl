@@ -1304,7 +1304,7 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, project_path, as_json)
 def _served_item_note(
     config, item_id, note_type, summary, detail, tags, actor,
     evidence_item_id, evidence_event_id, git_branch, git_sha, git_worktree,
-    release_digest, worktree_host, predecessor_session, acked_by,
+    release_digest, worktree_host, predecessor_session, acked_by, as_json,
 ) -> None:
     """Served-mode ``item note``: routes to ``work.item.note``.
 
@@ -1339,6 +1339,9 @@ def _served_item_note(
         acked_by=acked_by,
         resolved_context=context,
     )
+    if as_json:
+        click.echo(json.dumps(result, indent=2))
+        return
     click.echo(
         f"Recorded note #{result['event_id']} ({result['note_type']}) "
         f"on item #{result['item_id']}: {result['summary']}"
@@ -1374,12 +1377,13 @@ def _served_item_note(
     "--acked-by", default=None,
     help="Actor/session identifier that acknowledged the checkpoint, if any (lane.checkpoint)",
 )
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output recorded note as JSON")
 @click.pass_obj
 def item_note(
     obj, item_id: str, note_type, summary, detail, tags, actor,
     evidence_item_id, evidence_event_id,
     git_branch, git_sha, git_worktree,
-    release_digest, worktree_host, predecessor_session, acked_by,
+    release_digest, worktree_host, predecessor_session, acked_by, as_json,
 ) -> None:
     """Record a structured note event on a work item."""
     item_id = _apply_scoped_id(obj, item_id, field="item")
@@ -1390,7 +1394,7 @@ def item_note(
         _served_item_note(
             config, item_id, note_type, summary, detail, tags, actor,
             evidence_item_id, evidence_event_id, git_branch, git_sha, git_worktree,
-            release_digest, worktree_host, predecessor_session, acked_by,
+            release_digest, worktree_host, predecessor_session, acked_by, as_json,
         )
         return
     store, m = _get_store(obj)
@@ -1443,6 +1447,12 @@ def item_note(
             },
         )
     _note_reservation_activity(store, m, item_id)
+    if as_json:
+        click.echo(json.dumps({
+            "event_id": eid, "item_id": item_id,
+            "note_type": note_type, "summary": summary,
+        }, indent=2))
+        return
     click.echo(f"Recorded note #{eid} ({note_type}) on item #{item_id}: {summary}")
 
 

@@ -1,0 +1,75 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.item-note-json-coordination",
+  "contract_ref": {
+    "doc_id": "sprintctl.served-coordination",
+    "revision": "sha256:bd7b0c802bc0afe8208e5e347d409d5067529677c28d5648ef366361de18fb31"
+  },
+  "implementation_sha": "d82c3d127bad9fb8d4ca0d61b60e124590366571",
+  "depth": 1,
+  "environment": {
+    "backend": "temporary local SQLite and served transport invoking actual WorkApplication",
+    "isolation": "temporary fixture roots/profile/marker; no production evidence publication, lease/capability or migration",
+    "tool_versions": {
+      "Python": "3.13.16",
+      "pytest": "9.0.2"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": null,
+    "bounds": {
+      "new_cases": 13,
+      "local_cases": 3,
+      "served_cases": 10,
+      "note_writes_per_invocation": 1
+    },
+    "faults_exercised": [
+      "unknown item",
+      "target/evidence/flag repository mismatch",
+      "markerless scope without opt-in",
+      "transport response lost before owner write",
+      "response lost after owner commit"
+    ]
+  },
+  "claims": [
+    {
+      "property": "JSON prints the existing successful note result with one event and one owner invocation",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_item_note_json.py"
+      ]
+    },
+    {
+      "property": "Scope, authenticated actor, errors and lost-response handling preserve existing boundaries without retries or store fallback",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_item_note_json.py"
+      ]
+    },
+    {
+      "property": "Current supported coordination invocation inventory is distinct from unimplemented project workflow interfaces",
+      "result": "documented-only",
+      "evidence": [
+        "docs/guides/served-coordination.md",
+        "sprintctl/served_routes.py",
+        "sprintctl/backend.py"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Original CLI rejects --json before local/served handling:10failed2passed; existing text controls passed",
+      "trace_ref": "tests/test_item_note_json.py"
+    }
+  ],
+  "notes": [
+    "Candidate source/test/document SHA256: {\"docs/guides/remote-mode.md\": \"ce60771d5e782df0bd2aac19bf1d6d824841097dee1f458aea7e2ab0b4f870e0\", \"docs/guides/served-coordination.md\": \"bd7b0c802bc0afe8208e5e347d409d5067529677c28d5648ef366361de18fb31\", \"sprintctl/commands/work.py\": \"15373c81c54d0fbcaec496f1aeed94e3f5e6fe48bbe2174bbb7652b90caaf427\", \"tests/test_item_note_json.py\": \"6778d4d18c8c3fa9de65bcb9299915a49078add964b799b8077afd4815541023\"}",
+    "New JSON/scope/failure cases13passed9.57s; complete targeted note/knowledge/served/application/marker/backend/reservation/checkpoint/docs/install suite329passed95.67s.",
+    "One initial fixture failure reused a sibling directory between parameter cases; fixed test directory isolation, then all13 new cases passed. No product behavior was relaxed.",
+    "Inventory compared with existing route metadata, owner implementation and CLI help. This is source/fixture evidence, not live qualification of every operation, credential, repository or project workflow.",
+    "Child sprintctl#2761 only. Parent2097 remains open for project explain2075 and cross-repository dependency2215, behind the existing foundation prerequisites. Original2097No doc5432/reservation344 authorized work before bounded child split; childNo doc5434/reservation345 and blocker edges recorded.",
+    "No operation, result schema, catalog, grant, actor selection, event mutation ordering or retry contract changes.",
+    "Independent optimistic plan review clear; final findings-first and optimistic source/test/document/context/result review clear."
+  ]
+}
