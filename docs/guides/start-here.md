@@ -1,13 +1,16 @@
 # Start Here
 
-Use this page when you want the narrowest useful `sprintctl` path.
+Use this page for the narrowest local SQLite `sprintctl` path. For shared work,
+start with [served setup](remote-mode.md) and
+[served coordination](served-coordination.md). The examples below use local
+mode; they do not configure a served repository or authorize a local fallback.
 
 If your global `sprintctl` install is older than this repo and a documented
 command/flag is missing, run commands via `python -m sprintctl` from the repo
 checkout.
 
 When available, refresh global installs before starting work:
-`pipx upgrade sprintctl && pipx upgrade kctl` (or `uv tool upgrade sprintctl kctl`).
+`pipx upgrade sprintctl` (or `uv tool upgrade sprintctl`).
 If source, package, extras, or backend capabilities may disagree, run
 `sprintctl doctor --json` first; it is read-only and emits remediation guidance.
 
@@ -83,7 +86,8 @@ sprintctl render > docs/sprint-snapshots/sprint-current.txt
 ```
 
 Use `handoff` when a later session must resume the same work. Use `render` when
-you want a reviewable snapshot in git.
+you want a reviewable snapshot in git. `render` is local-only; served users
+should use the supported reads in the [resume guide](resume-work.md).
 
 ## Next Guides
 

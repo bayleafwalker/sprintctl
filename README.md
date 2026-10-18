@@ -50,9 +50,9 @@ owner's acceptance facts from evidence of an external effect.
 ## What It Is Not
 
 - Not a Jira, Linear, or GitHub Projects replacement
-- Not a team coordination layer
+- Not an execution scheduler; native harnesses own execution
 - Not a distributed lock service or agent swarm runtime
-- Not a hosted app or web UI
+- Not a standalone project-management web UI
 - Not a "better task manager" project
 
 ## Default Path
@@ -155,24 +155,41 @@ not the control plane.
 
 ## Installation
 
+For local SQLite use, install the core CLI with Python 3.11 or newer:
+
 ```sh
 pipx install git+https://github.com/bayleafwalker/sprintctl.git
-pipx install git+https://github.com/bayleafwalker/kctl.git
 ```
 
 Equivalent `uv tool` install:
 
 ```sh
 uv tool install git+https://github.com/bayleafwalker/sprintctl.git
-uv tool install git+https://github.com/bayleafwalker/kctl.git
 ```
 
-To refresh stale global installs:
+For served use, Python 3.12 or newer and the `served` extra are required:
+
+```sh
+pipx install 'sprintctl[served] @ git+https://github.com/bayleafwalker/sprintctl.git'
+# or:
+uv tool install 'sprintctl[served] @ git+https://github.com/bayleafwalker/sprintctl.git'
+```
+
+Then follow [shared-work setup](docs/guides/remote-mode.md) for a validated Vuoro
+profile and [served coordination](docs/guides/served-coordination.md) for the
+supported operations. Installing the CLI alone does not configure shared access.
+Offline result-read packet commands need the optional `inspection` extra; see
+[packet setup](docs/guides/inspect-result-packets.md).
+
+Kctl is optional legacy tooling, not a Sprintctl installation requirement. Its
+retained CLI is for legacy workflows and recovery; the deployed knowledge owner
+is Vuoro Workspace. See the [kctl transition notes](https://github.com/bayleafwalker/kctl#readme).
+
+To refresh a stale global Sprintctl install:
 
 ```sh
 pipx upgrade sprintctl
-pipx upgrade kctl
-# or: uv tool upgrade sprintctl kctl
+# or: uv tool upgrade sprintctl
 ```
 
 For local development:
@@ -196,7 +213,7 @@ Prefer invoking the CLI from the source tree while developing:
 
 If your global install drifts from the checked-out source command surface,
 prefer the module entrypoint for `sprintctl` and refresh global tools with
-`pipx upgrade sprintctl && pipx upgrade kctl` (or `uv tool upgrade sprintctl kctl`).
+`pipx upgrade sprintctl` (or `uv tool upgrade sprintctl`).
 
 Run the read-only doctor before changing an installation or backend:
 
@@ -225,15 +242,18 @@ export SPRINTCTL_RUNTIME_SESSION_ID="${CODEX_THREAD_ID:-manual-session}"
 export SPRINTCTL_INSTANCE_ID="stable-per-process-uuid"
 ```
 
-Per-project repos should usually point `SPRINTCTL_DB` at `.sprintctl/sprintctl.db`
-and gitignore that directory.
+For local SQLite repositories, point `SPRINTCTL_DB` at `.sprintctl/sprintctl.db`
+and gitignore that directory. This variable selects a SQLite file; it does not
+override a served repository marker or select a backend. For shared work, use
+the [served setup](docs/guides/remote-mode.md); do not change its marker to force
+a local fallback.
 
 ## Design Defaults
 
 - CLI-first, local-first, explicit state
 - Reservations are advisory coordination signals, not ownership proof
 - `usage --context --json` is the primary resume contract
-- `session resume --json` surfaces active reservations and next-work explanation
+- In local SQLite mode, `session resume --json` surfaces active reservations and next-work explanation; served mode uses the constituent reads in the [resume guide](docs/guides/resume-work.md)
 - `handoff --format json` is the serialized working-memory contract
 - JSON and text surfaces should describe the same state in the same order
 - critical recovery ergonomics belong in the core binary; repo-local wrappers can build on top of them

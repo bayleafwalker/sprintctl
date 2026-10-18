@@ -1,8 +1,13 @@
 # Bootstrap Workflow
 
-The minimal pattern for onboarding `sprintctl` onto a fresh repository and running the first sprint.
+The minimal local SQLite pattern for onboarding `sprintctl` onto a fresh repository and running the first sprint.
 
-The `sprintctl-bootstrap-template` reference repo is retired; this walkthrough and [docs/guides/project-integration.md](../guides/project-integration.md) are the served onboarding path.
+The `sprintctl-bootstrap-template` reference repo is retired. This walkthrough
+and [Project Integration](../guides/project-integration.md) describe local SQLite
+setup. For shared work, use [served setup](../guides/remote-mode.md) and
+[served coordination](../guides/served-coordination.md). `SPRINTCTL_DB` does not
+select a backend or override a served marker; do not change a shared marker to
+force local setup.
 
 ---
 
@@ -49,6 +54,8 @@ sprintctl item note --id 2 --type decision \
 ```
 
 ## Step 4: Render a committed snapshot
+
+`render` is local-only; this step does not apply to served repositories.
 
 ```bash
 mkdir -p docs/sprint/archive docs/knowledge
