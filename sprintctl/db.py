@@ -1329,10 +1329,15 @@ def list_active_sprints(conn: sqlite3.Connection) -> list[dict]:
     return _sprintcore.list_active_sprints(_SprintSqlite(conn))
 
 
+def _require_idle_connection(conn: sqlite3.Connection, *, operation: str) -> None:
+    """Refuse caller transactions before entering an owned rollback handler."""
+    if conn.in_transaction:
+        raise ValueError(f"{operation} requires an idle SQLite connection")
+
+
 def _require_idle_sprint_connection(conn: sqlite3.Connection) -> None:
     """Protect caller work before the three owned sprint rollback handlers."""
-    if conn.in_transaction:
-        raise ValueError("sprint mutation requires an idle SQLite connection")
+    _require_idle_connection(conn, operation="sprint mutation")
 
 
 def set_sprint_kind(
@@ -1669,6 +1674,7 @@ def set_work_item_status(
 ) -> None:
     if expected_revision is not None:
         expected_revision = validate_item_status_revision(expected_revision)
+    _require_idle_connection(conn, operation="item status mutation")
     wi = _WorkItemSqlite(conn)
     try:
         # SQLite's write transaction is the transition's linearization point.
@@ -2063,6 +2069,7 @@ def reserve(conn: sqlite3.Connection, work_item_id: int, *, actor: str, session_
     contract = _releases.normalize_acceptance_contract(acceptance_contract)
     if get_work_item(conn, work_item_id) is None:
         raise ValueError(f"Work item #{work_item_id} not found")
+    _require_idle_connection(conn, operation="reservation admission")
     now = _reservation.now_text()
     interrupted: list[dict] = []
     try:

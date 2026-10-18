@@ -1,0 +1,43 @@
+{
+  "base": "a5d79985e66c61bf6a8a569ca7b0b3cf857ae3a2",
+  "backend": "actual temporary SQLite only",
+  "limits": "two sequential nested-caller examples, not a new PG contract or repair qualification",
+  "records": [
+    {
+      "operation": "reserve",
+      "function_sha256": "87b29b96460324f171c6aa9bb3502a69ed8c8b6b5e572d11eeb1b73c83f5d2f3",
+      "before": {
+        "in_transaction": true,
+        "goal": "caller pending write"
+      },
+      "error": {
+        "type": "OperationalError",
+        "message": "cannot start a transaction within a transaction"
+      },
+      "after": {
+        "in_transaction": false,
+        "goal": "original",
+        "item_status": "pending",
+        "events": []
+      }
+    },
+    {
+      "operation": "set_work_item_status",
+      "function_sha256": "14b49c8b938e0d1f84bd6a97abd2a2d8c7ba9ea8c38b330d29861cccfb1bae86",
+      "before": {
+        "in_transaction": true,
+        "goal": "caller pending write"
+      },
+      "error": {
+        "type": "OperationalError",
+        "message": "cannot start a transaction within a transaction"
+      },
+      "after": {
+        "in_transaction": false,
+        "goal": "original",
+        "item_status": "pending",
+        "events": []
+      }
+    }
+  ]
+}

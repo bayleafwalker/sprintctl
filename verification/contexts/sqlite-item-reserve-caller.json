@@ -1,0 +1,79 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.sqlite-item-reserve-caller",
+  "owner_repo": "sprintctl",
+  "subject": "caller ownership at SQLite reserve admission and item-status public entrypoints",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2781",
+    "revision": "native:release:d28e692fdca133579c21836dfc2ce3a49593285c73a49136061d6c6ebbe9fca4"
+  },
+  "source_of_truth": "Frozen No doc native decision5602 and current public functions, after accepted2779",
+  "depth": 2,
+  "backends": [
+    "temporary SQLite"
+  ],
+  "actors": [
+    "caller with pending transaction",
+    "independent durable reader"
+  ],
+  "initial_state": [
+    "pending work item with existing execution reservation, frozen Release and revise Decision",
+    "separate caller-owned sprint",
+    "caller write, explicit read or nested savepoint; optional newly inserted uncommitted target"
+  ],
+  "operations": [
+    {
+      "name": "reserve",
+      "actors": [
+        "caller with pending transaction"
+      ],
+      "synchronization": "outside owned try/rollback handler, after existing pre-handler validation"
+    },
+    {
+      "name": "set_work_item_status",
+      "actors": [
+        "caller with pending transaction"
+      ],
+      "synchronization": "outside owned try/rollback handler, after existing pre-handler validation"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "caller transaction preservation on nested refusal"
+  },
+  "assumptions": {
+    "isolation": "real independent SQLite connections; no concurrent writer history",
+    "clock": "existing fixture timestamps; reserve guard precedes clock sampling",
+    "fairness": "none"
+  },
+  "bounds": {
+    "caller_cases": 6,
+    "uncommitted_target_cases": 2,
+    "validation_precedence_cases": 5,
+    "concurrent_histories": 0
+  },
+  "invariants": [
+    "refused public reserve/item-status calls preserve active caller writes, read transactions and nested savepoints without changing existing sprint/item/Release/Decision/reservation/event state",
+    "preliminary reserve lookup neither commits nor rolls back a caller-created uncommitted target",
+    "existing role, basis, contract and item-existence error precedence and status revision syntax errors precede caller refusal",
+    "caller rollback and savepoint rollback/release remain usable and independent readers retain only committed state",
+    "existing sprint guards retain their call positions and exact refusal message after private predicate factoring"
+  ],
+  "faults": [
+    "nested caller transaction refusal",
+    "invalid pre-handler inputs while caller has pending writes"
+  ],
+  "oracles": [
+    "tests/test_sqlite_item_reserve_caller.py",
+    "tests/test_sqlite_sprint_caller.py"
+  ],
+  "implementation_anchors": [
+    "sprintctl/db.py:_require_idle_connection",
+    "sprintctl/db.py:_require_idle_sprint_connection",
+    "sprintctl/db.py:reserve",
+    "sprintctl/db.py:set_work_item_status"
+  ],
+  "expansions": [
+    "fault-scenario"
+  ]
+}

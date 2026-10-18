@@ -1,0 +1,87 @@
+FFFFFFFF.....                                                            [100%]
+=================================== FAILURES ===================================
+___ test_nested_refusal_preserves_caller_and_existing_ledgers[write-reserve] ___
+/tmp/sprintctl-item-reserve-caller-2781/tests/test_sqlite_item_reserve_caller.py:50: in test_nested_refusal_preserves_caller_and_existing_ledgers
+    invoke(conn, operation, iid)
+/tmp/sprintctl-item-reserve-caller-2781/tests/test_sqlite_item_reserve_caller.py:29: in invoke
+    return db.reserve(conn, iid, actor='incoming', session_id='new-session', interrupt_existing=True)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/tmp/sprintctl-item-reserve-caller-2781/sprintctl/db.py:2069: in reserve
+    conn.execute("BEGIN IMMEDIATE")
+E   sqlite3.OperationalError: cannot start a transaction within a transaction
+___ test_nested_refusal_preserves_caller_and_existing_ledgers[write-status] ____
+/tmp/sprintctl-item-reserve-caller-2781/tests/test_sqlite_item_reserve_caller.py:50: in test_nested_refusal_preserves_caller_and_existing_ledgers
+    invoke(conn, operation, iid)
+/tmp/sprintctl-item-reserve-caller-2781/tests/test_sqlite_item_reserve_caller.py:30: in invoke
+    return db.set_work_item_status(conn, iid, 'active', actor='incoming',
+/tmp/sprintctl-item-reserve-caller-2781/sprintctl/db.py:1677: in set_work_item_status
+    wi.begin_txn()
+/tmp/sprintctl-item-reserve-caller-2781/sprintctl/db.py:1481: in begin_txn
+    self._conn.execute("BEGIN IMMEDIATE")
+E   sqlite3.OperationalError: cannot start a transaction within a transaction
+___ test_nested_refusal_preserves_caller_and_existing_ledgers[read-reserve] ____
+/tmp/sprintctl-item-reserve-caller-2781/tests/test_sqlite_item_reserve_caller.py:50: in test_nested_refusal_preserves_caller_and_existing_ledgers
+    invoke(conn, operation, iid)
+/tmp/sprintctl-item-reserve-caller-2781/tests/test_sqlite_item_reserve_caller.py:29: in invoke
+    return db.reserve(conn, iid, actor='incoming', session_id='new-session', interrupt_existing=True)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/tmp/sprintctl-item-reserve-caller-2781/sprintctl/db.py:2069: in reserve
+    conn.execute("BEGIN IMMEDIATE")
+E   sqlite3.OperationalError: cannot start a transaction within a transaction
+____ test_nested_refusal_preserves_caller_and_existing_ledgers[read-status] ____
+/tmp/sprintctl-item-reserve-caller-2781/tests/test_sqlite_item_reserve_caller.py:50: in test_nested_refusal_preserves_caller_and_existing_ledgers
+    invoke(conn, operation, iid)
+/tmp/sprintctl-item-reserve-caller-2781/tests/test_sqlite_item_reserve_caller.py:30: in invoke
+    return db.set_work_item_status(conn, iid, 'active', actor='incoming',
+/tmp/sprintctl-item-reserve-caller-2781/sprintctl/db.py:1677: in set_work_item_status
+    wi.begin_txn()
+/tmp/sprintctl-item-reserve-caller-2781/sprintctl/db.py:1481: in begin_txn
+    self._conn.execute("BEGIN IMMEDIATE")
+E   sqlite3.OperationalError: cannot start a transaction within a transaction
+_ test_nested_refusal_preserves_caller_and_existing_ledgers[savepoint-reserve] _
+/tmp/sprintctl-item-reserve-caller-2781/tests/test_sqlite_item_reserve_caller.py:50: in test_nested_refusal_preserves_caller_and_existing_ledgers
+    invoke(conn, operation, iid)
+/tmp/sprintctl-item-reserve-caller-2781/tests/test_sqlite_item_reserve_caller.py:29: in invoke
+    return db.reserve(conn, iid, actor='incoming', session_id='new-session', interrupt_existing=True)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/tmp/sprintctl-item-reserve-caller-2781/sprintctl/db.py:2069: in reserve
+    conn.execute("BEGIN IMMEDIATE")
+E   sqlite3.OperationalError: cannot start a transaction within a transaction
+_ test_nested_refusal_preserves_caller_and_existing_ledgers[savepoint-status] __
+/tmp/sprintctl-item-reserve-caller-2781/tests/test_sqlite_item_reserve_caller.py:50: in test_nested_refusal_preserves_caller_and_existing_ledgers
+    invoke(conn, operation, iid)
+/tmp/sprintctl-item-reserve-caller-2781/tests/test_sqlite_item_reserve_caller.py:30: in invoke
+    return db.set_work_item_status(conn, iid, 'active', actor='incoming',
+/tmp/sprintctl-item-reserve-caller-2781/sprintctl/db.py:1677: in set_work_item_status
+    wi.begin_txn()
+/tmp/sprintctl-item-reserve-caller-2781/sprintctl/db.py:1481: in begin_txn
+    self._conn.execute("BEGIN IMMEDIATE")
+E   sqlite3.OperationalError: cannot start a transaction within a transaction
+____ test_reserve_lookup_preserves_caller_created_uncommitted_target[False] ____
+/tmp/sprintctl-item-reserve-caller-2781/tests/test_sqlite_item_reserve_caller.py:79: in test_reserve_lookup_preserves_caller_created_uncommitted_target
+    invoke(conn, 'reserve', target)
+/tmp/sprintctl-item-reserve-caller-2781/tests/test_sqlite_item_reserve_caller.py:29: in invoke
+    return db.reserve(conn, iid, actor='incoming', session_id='new-session', interrupt_existing=True)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/tmp/sprintctl-item-reserve-caller-2781/sprintctl/db.py:2069: in reserve
+    conn.execute("BEGIN IMMEDIATE")
+E   sqlite3.OperationalError: cannot start a transaction within a transaction
+____ test_reserve_lookup_preserves_caller_created_uncommitted_target[True] _____
+/tmp/sprintctl-item-reserve-caller-2781/tests/test_sqlite_item_reserve_caller.py:79: in test_reserve_lookup_preserves_caller_created_uncommitted_target
+    invoke(conn, 'reserve', target)
+/tmp/sprintctl-item-reserve-caller-2781/tests/test_sqlite_item_reserve_caller.py:29: in invoke
+    return db.reserve(conn, iid, actor='incoming', session_id='new-session', interrupt_existing=True)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/tmp/sprintctl-item-reserve-caller-2781/sprintctl/db.py:2069: in reserve
+    conn.execute("BEGIN IMMEDIATE")
+E   sqlite3.OperationalError: cannot start a transaction within a transaction
+=========================== short test summary info ============================
+FAILED tests/test_sqlite_item_reserve_caller.py::test_nested_refusal_preserves_caller_and_existing_ledgers[write-reserve]
+FAILED tests/test_sqlite_item_reserve_caller.py::test_nested_refusal_preserves_caller_and_existing_ledgers[write-status]
+FAILED tests/test_sqlite_item_reserve_caller.py::test_nested_refusal_preserves_caller_and_existing_ledgers[read-reserve]
+FAILED tests/test_sqlite_item_reserve_caller.py::test_nested_refusal_preserves_caller_and_existing_ledgers[read-status]
+FAILED tests/test_sqlite_item_reserve_caller.py::test_nested_refusal_preserves_caller_and_existing_ledgers[savepoint-reserve]
+FAILED tests/test_sqlite_item_reserve_caller.py::test_nested_refusal_preserves_caller_and_existing_ledgers[savepoint-status]
+FAILED tests/test_sqlite_item_reserve_caller.py::test_reserve_lookup_preserves_caller_created_uncommitted_target[False]
+FAILED tests/test_sqlite_item_reserve_caller.py::test_reserve_lookup_preserves_caller_created_uncommitted_target[True]
+8 failed, 5 passed in 1.83s
