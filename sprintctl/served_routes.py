@@ -166,6 +166,7 @@ SERVED_COMMAND_ROUTES: tuple[ServedRoute, ...] = (
     ServedRoute("message.cancel", "work.message.cancel-v1"),
     ServedRoute("run.context", "work.run.predecessor-context-v1"),
     ServedRoute("run.note", "work.session-note.write-v1"),
+    ServedRoute("run.brief", "work.run.continuation-delta-v1"),
 )
 
 
@@ -283,6 +284,7 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     "message cancel": "catalog",
     "run context": "catalog",
     "run note": "catalog",
+    "run brief": "catalog",
 }
 
 

@@ -129,6 +129,17 @@ def _configure_served_repo(tmp_path, monkeypatch):
     monkeypatch.delenv("SPRINTCTL_URL", raising=False)
 
 
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="served mode requires Python 3.12+")
+def test_unavailable_resume_names_supported_continuation_reads(runner, tmp_path, monkeypatch):
+    _configure_served_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli_module, "_get_store", lambda _: pytest.fail("opened a store"))
+    result = runner.invoke(cli, ["session", "resume", "--json"])
+    assert result.exit_code == 1
+    assert "sprintctl usage --context --json" in result.output
+    assert "sprintctl next-work --json --explain" in result.output
+    assert "sprintctl reservation list --all --json" in result.output
+
+
 @pytest.mark.skipif(
     sys.version_info < (3, 12),
     reason="served mode requires Python 3.12+",

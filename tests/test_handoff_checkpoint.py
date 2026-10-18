@@ -24,6 +24,7 @@ import json
 import pytest
 
 from sprintctl import db, handoff
+from sprintctl.commands.lifecycle import _render_handoff_text
 
 GIT_CONTEXT = {
     "branch": "main",
@@ -31,6 +32,38 @@ GIT_CONTEXT = {
     "worktree": "/projects/dev/agentops",
     "dirty_files": ["a.py", "b.py"],
 }
+
+
+def test_text_retains_predecessor_position_for_a_worktreeless_reader(conn, active_sprint):
+    recorded = _bundle(conn, active_sprint, git_context=GIT_CONTEXT)
+    handoff.record_handoff_generated(conn, active_sprint["id"], recorded, backend=db, actor="a")
+    resumed = _bundle(conn, active_sprint, git_context=None)
+    text = _render_handoff_text(resumed)
+    for field in ("sha", "branch", "worktree"):
+        assert GIT_CONTEXT[field] in text
+    assert recorded["generated_at"] in text
+    assert "Predecessor dirty_file_count: 2" in text
+    assert "commit alone does not identify all contents" in text
+    assert "current worktree cleanliness is unknown" in text
+
+
+def test_text_first_handoff_has_no_implied_baseline_or_clean_worktree(conn, active_sprint):
+    text = _render_handoff_text(_bundle(conn, active_sprint, git_context=None))
+    assert "Predecessor checkpoint: unavailable" in text
+    assert "unknown (no comparison baseline)" in text
+    assert "Current dirty files: 0" not in text
+
+
+def test_text_renders_exact_delta_values_and_a_clean_current_observation(conn, active_sprint):
+    bundle = _bundle(conn, active_sprint, git_context={**GIT_CONTEXT, "dirty_files": []})
+    bundle["delta_since_last_handoff"] = {"previous_handoff_at": "2026-10-18T01:02:03Z",
+        "item_ids_touched": [17, 23], "reservation_ids_touched": [31], "event_count": 4}
+    text = _render_handoff_text(bundle)
+    assert "Current dirty files: 0" in text
+    assert "[17, 23]" in text
+    assert "[31]" in text
+    assert "New events: 4" in text
+    assert "2026-10-18T01:02:03Z" in text
 
 
 def _bundle(conn, sprint, *, git_context):

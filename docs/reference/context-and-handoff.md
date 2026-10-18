@@ -269,12 +269,15 @@ shape, contract versions, field names, or `next_action` semantics.
 
 Resume-specific backend rules:
 
-- `usage --context --json`, `next-work --json --explain`, `session resume --json`,
-  and `handoff --format json` keep the same contract in both modes
+- `usage --context --json`, `next-work --json --explain`, and `handoff --format json`
+  keep the same contract in local and served modes
+- `session resume --json` is available in local SQLite mode; the combined
+  command is deliberately unavailable in served mode. Served continuation uses
+  the constituent context, next-work, reservation, and checkpoint reads
 - backend selection happens before storage opens; callers should expect startup
   errors from mode mismatch or missing remote configuration before any contract
   payload is emitted
-- `reservation_status` is part of `session resume --json` in all modes
+- `reservation_status` is part of `session resume --json` wherever that command is available
 - remote mode reports reservation state from the shared authority and must not
   imply that a local credential recovery file exists or is required
 
@@ -346,6 +349,24 @@ Important sections:
 - `freshness` for staleness and dirty-worktree visibility
 - `evidence` for ref counts, dirty files, and validation placeholders
 - `resume_instructions` for the recommended restart path
+
+Text rendering also exposes `last_checkpoint`, current Git availability, and
+handoff delta/freshness. Missing current Git context means unknown cleanliness,
+even when older bundle counters contain zero. A missing prior handoff supplies no
+change baseline. These presentation additions do not alter bundle version 1.
+
+## `run brief`
+
+The served-only `run brief` command calls the existing bounded
+`work.run.continuation-delta-v1` operation once. `--format json` emits its complete
+owner response unchanged, including `delta.current`, comparison results,
+reference cursor, independent predecessor cursors, and completeness flags.
+Text presents the same owner facts, with an explicitly disclosed five-reference
+excerpt and 200-character URL excerpts. It adds no API, database,
+authority, artifact verification, or automatic pagination. The complete owner
+checkpoint in `delta.current` is the input to `--checkpoint`; the Git
+`source_checkpoint` is a different record. See the
+[resume guide](../guides/resume-work.md#brief-one-served-item).
 
 ## Recent Decisions
 

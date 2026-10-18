@@ -28,7 +28,7 @@ def _json_input(stream: Any, what: str) -> Any:
         raise click.ClickException(f"{what} is not valid JSON: {exc}") from exc
 
 
-def _invoke(operation: str, arguments: dict[str, Any]) -> None:
+def _call(operation: str, arguments: dict[str, Any]) -> Any:
     obj = click.get_current_context().find_root().obj
     config = _served_config_or_none(obj)
     if config is None:
@@ -50,7 +50,11 @@ def _invoke(operation: str, arguments: dict[str, Any]) -> None:
         message = str(exc).partition(": ")[2] or str(exc)
         click.echo(json.dumps({"error": {"code": exc.code, "message": message}}, indent=2))
         sys.exit(1)
-    click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+    return result
+
+
+def _invoke(operation: str, arguments: dict[str, Any]) -> None:
+    click.echo(json.dumps(_call(operation, arguments), indent=2, ensure_ascii=False))
 
 
 def _present(**values: Any) -> dict[str, Any]:
@@ -198,6 +202,32 @@ def run_context(run_id: str, limit, after_note_id, after_chain_seq) -> None:
 def run_note(run_id: str, note: str, idempotency_key: str) -> None:
     """Write one session note (work.session-note.write-v1)."""
     _invoke("work.session-note.write-v1", {"run_id": run_id, "note": note, "idempotency_key": idempotency_key})
+
+
+@run.command("brief")
+@click.option("--run-id", required=True, help="The caller's own run; predecessor credentials are never reused")
+@click.option("--item-id", required=True, type=click.IntRange(min=1), help="Item in the current repository")
+@click.option("--checkpoint", type=click.File("r"), help="Complete owner checkpoint JSON (previous response's delta.current)")
+@click.option("--cursor", type=click.File("r"), help="Previous response's delta.next_reference_cursor JSON")
+@click.option("--after-note-id", type=click.IntRange(min=0), default=None)
+@click.option("--after-chain-seq", type=click.IntRange(min=0), default=None)
+@click.option("--limit", type=click.IntRange(1, 64), default=32, show_default=True)
+@click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text", show_default=True)
+def run_brief(run_id, item_id, checkpoint, cursor, after_note_id, after_chain_seq, limit, fmt) -> None:
+    """Brief one item from a single bounded owner read; JSON preserves its response."""
+    from ..briefing import render_run_brief
+
+    arguments = _present(run_id=run_id, item_id=item_id, limit=limit,
+                         after_note_id=after_note_id, after_chain_seq=after_chain_seq)
+    for name, stream in (("checkpoint", checkpoint), ("cursor", cursor)):
+        if stream is not None:
+            value = _json_input(stream, name)
+            if not isinstance(value, dict):
+                raise click.ClickException(f"{name} must be a JSON object")
+            arguments[name] = value
+    result = _call("work.run.continuation-delta-v1", arguments)
+    click.echo(json.dumps(result, indent=2, ensure_ascii=False) if fmt == "json"
+               else render_run_brief(result))
 
 
 def register(root: click.Group) -> None:

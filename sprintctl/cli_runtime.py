@@ -364,7 +364,11 @@ def _guard_served_command(command_path: str, params: dict[str, object]) -> None:
     if config is None or disposition == "catalog":
         return
     replacements = {
-        "session resume": "The combined session-resume contract is not yet served.",
+        "session resume": (
+            "The combined session-resume contract is not yet served. "
+            "Use 'sprintctl usage --context --json', 'sprintctl next-work --json --explain', "
+            "and 'sprintctl reservation list --all --json'."
+        ),
     }
     _served_operation_unavailable(command_path, replacement=replacements.get(command_path))
 

@@ -10,6 +10,7 @@ Primary plan documents:
 
 - [ADR: Outbox and Synchronization Model](adr-outbox-sync-model.md)
 - [Roadmap Reset](roadmap-reset.md)
+- [Resume and Explain](resume-and-explain.md)
 - [Operator UX Roadmap](operator-ux-roadmap.md)
 - [UX Plan Pack](ux/00-index.md)
 - [Doc–backlog linking, Phase 0](doc-backlog-linking-phase0.md)

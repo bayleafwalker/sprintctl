@@ -1,25 +1,44 @@
 # sprintctl
 
-`sprintctl` is a local-first execution-state and handoff CLI for a single
-developer with optional agent sessions.
+Sprintctl keeps work identifiable, resumable, and explainable as people and
+agents change.
 
-It tracks work items, reservations, decisions, dependencies, and sprint state in
-SQLite, then projects that state into three primary read surfaces:
+It records work items, advisory reservations, releases, decisions, evidence,
+dependencies, and continuation points. The CLI supports local SQLite work and
+a served Vuoro authority. Served capabilities also include durable inboxes,
+run continuation, and scoped delegation.
 
-- `usage --context` for live resume context
-- `handoff` for serialized working-memory snapshots
-- `session resume` for a single-command resume bundle (context + next-work + git)
+Sprintctl is Vuoro's reference work provider. Its role is to preserve meaningful
+work identity and history across sessions, hosts, and providers; the ledger is
+replaceable. Native harnesses own execution, and protected executors own effects.
 
-It is not a team project manager, a distributed coordinator, or a richer clone
-of an existing task graph tool.
+Start with these read surfaces:
+
+- `usage --context` for current work, conflicts, and a next action
+- `handoff` for working-memory snapshots, including predecessor position
+- `run brief` for a task-specific served change briefing
+- `session resume` for a combined context bundle in local SQLite mode;
+  in served mode, use the constituent reads in the [resume guide](docs/guides/resume-work.md)
 
 ## What It Is
 
-- A local SQLite database of sprint state: sprints, items, events, reservations, refs, deps
+- Explicit work records in SQLite or a served authority
 - A CLI that enforces state transitions and expected-revision compare-and-swap
 - A deterministic resume surface for agent and operator sessions
 - A working-memory handoff bundle for session resumption
 - A reviewable text renderer for committed sprint snapshots
+- Readable continuation over owner facts, with changed, unchanged, and unknown kept distinct
+
+Reservations signal coordination; they do not grant authority. Reported completion
+does not substitute for acceptance. A successor reads predecessor context without
+inheriting predecessor credentials. An unchanged reference record does not prove
+that the referenced artifact is unchanged or accessible.
+
+The next product phase is [resume and explain](docs/plans/resume-and-explain.md).
+The compact briefing is available in this source tree; a fully qualified result
+explanation, recovery-burden assessment, and accepted-outcome comparison remain
+separate development slices. The existing archival result transfer is a bounded
+fixture proof, not a general supported result-packet export.
 
 ## What It Is Not
 
@@ -31,6 +50,9 @@ of an existing task graph tool.
 
 ## Default Path
 
+This example uses local SQLite. For a served authority, follow the
+[resume guide](docs/guides/resume-work.md); snapshot rendering is local-only.
+
 ```sh
 # 1. Create a sprint and a few items
 sprintctl sprint create --name "Sprint 4" --status active
@@ -41,7 +63,6 @@ sprintctl item add --sprint-id 1 --track docs --title "Write resume guide" \
 sprintctl item edit --id 1 --description "Document reservation reassignment, activity touch, and handoff."
 
 # 2. Read live context
-sprintctl session resume --json
 sprintctl usage --context --json
 sprintctl next-work --json --explain
 
@@ -64,6 +85,10 @@ sprintctl render > docs/sprint-snapshots/sprint-current.txt
 
 Use `usage --context` when you need the live answer to "what matters now?" Use
 `handoff` when you need a resumable bundle that can cross session boundaries.
+For a served run and explicit item, use `sprintctl run brief --run-id <run-id>
+--item-id <id> --checkpoint checkpoint.json` to inspect changes against a saved owner checkpoint. It performs
+one read and leaves missing observations unknown; see the
+[resume guide](docs/guides/resume-work.md) for checkpoint and pagination handling.
 
 ## Docs Map
 
@@ -146,10 +171,14 @@ pipx upgrade kctl
 For local development:
 
 ```sh
-python -m venv .venv
-.venv/bin/pip install -e '.[dev]'
-.venv/bin/python -m pytest tests/ -q -m "not perf"
+uv sync --frozen --extra dev --extra served --extra remote
+uv run --frozen --extra dev --extra served --extra remote pytest -q -m "not perf"
 ```
+
+Use the committed lockfile and a clean worktree to reproduce release checks.
+PostgreSQL integration requires the disposable test harness; a normal source
+test run skips it. An old wheel left in `dist/` participates in wheel-contract
+tests and must not be mistaken for the current build.
 
 Prefer invoking the CLI from the source tree while developing:
 

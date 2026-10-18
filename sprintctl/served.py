@@ -870,6 +870,7 @@ AGENT_OPERATIONS = frozenset({
     "work.agent.list-v1", "work.agent.describe-v1", "work.message.send-v1",
     "work.message.read-v1", "work.message.status-v1", "work.message.receipt-v1",
     "work.message.cancel-v1", "work.run.predecessor-context-v1", "work.session-note.write-v1",
+    "work.run.continuation-delta-v1",
 })
 
 

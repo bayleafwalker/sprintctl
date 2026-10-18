@@ -1642,6 +1642,7 @@ def maintain_carryover(obj, from_sprint_id, to_sprint_id, as_json) -> None:
 
 def _render_handoff_text(bundle: dict) -> str:
     """Render a handoff bundle as a human-readable text summary."""
+    from ..briefing import render_handoff_position
     s = bundle["sprint"]
     reservations = bundle["active_reservations"]
     work = bundle["work"]
@@ -1662,6 +1663,9 @@ def _render_handoff_text(bundle: dict) -> str:
         f"{summary['total']} total, {summary['done']} done, {summary['active']} active, "
         f"{summary['pending']} pending, {summary['blocked']} blocked"
     )
+    lines.append("")
+
+    lines.extend(render_handoff_position(bundle))
     lines.append("")
 
     lines.append(f"ACTIVE WORK ({len(work['active_items'])}):")
