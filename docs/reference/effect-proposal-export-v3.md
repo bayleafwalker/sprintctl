@@ -94,15 +94,20 @@ PostgreSQL schema24 adds only
 Its existing name is admitted only with the exact table, method, key, opclass,
 predicate and ready/valid/nonunique shape. A collision refuses. Migration is
 explicit and transactional; normal startup and v3 reads never install or repair
-it. Startup and v3 require existing schema24 and a healthy index. Native schema
-admission is strictly 24; SQLite's separate schema lineage is unchanged and both
-exports refuse SQLite as unsupported.
+it. The v3 exporter checks for exactly one schema-version row equal to 24, 25, 26, or 27
+and a healthy index. This operation-level check does not widen native runtime
+admission: the running owner must also satisfy the exact compatibility policy in
+[pg_migrations.py](../../sprintctl/pg_migrations.py). The exporter guard is in
+[effect_intent_export.py](../../sprintctl/effect_intent_export.py). SQLite's
+separate schema lineage is unchanged and both exports refuse SQLite as unsupported.
 
-The older runtime strictly admits schema23 and refuses a migrated schema24.
-Coordinate native runtime migration/rollout accordingly. Rollback requires an
-explicit offline operator procedure that removes only this index and restores
-schema23 before starting the old runtime, after verifying other schema/data are
-unchanged. No automatic schema downgrade is provided.
+The original rollout from schema 23 to schema 24 required a schema 24 runtime; its older
+schema 23 runtime refused the migrated database. The rollback procedure for that
+original transition removes only this index and restores schema 23 before starting
+the old runtime, after verifying other schema/data are unchanged. It applies only
+when no later migrations are present; it is not a rollback procedure for schemas 25
+through 27. No automatic schema downgrade is provided. Source compatibility does
+not establish a deployed runtime's version or qualification.
 
 Qualification lives in `tests/pg/test_effect_verification_export.py` and
 `test_effect_verification_export_migration.py`, using actual disposable
