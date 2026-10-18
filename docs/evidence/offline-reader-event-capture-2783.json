@@ -1,0 +1,43 @@
+{
+  "item": "sprintctl#2783",
+  "parent": "sprintctl#2661",
+  "baseline": "b5c7492766f368a33a7ed76e48bb24da7c12cb11",
+  "governing_native_note": 5608,
+  "reviewed_plan_sha256": "b363362ad9d7fb7ce63a2100ac66d54f54db6b9633dd8e70a0179a88cae53fbd",
+  "scope": "passive synthetic-stream measurement utility, no reader process or provider invocation",
+  "source_sha256": "6262b3f86122ef3667ac8727c520b8aa7d23d5f43b8cbb61d1abd0bfdfeb3a98",
+  "tests_sha256": "edf94e24cc9605713d428a79208f9158e706f2c25a76dd05ab11d418c82bdd91",
+  "checks": {
+    "command": "uv run --offline --frozen --extra dev --extra remote --extra served --extra inspection pytest tests/test_reader_event_collector.py tests/test_reader_trial_grading.py tests/test_docs_integrity.py -q",
+    "passed": 70,
+    "seconds": 0.11,
+    "python": "3.13.16",
+    "pytest": "9.0.2",
+    "isolation": "temporary folders and synthetic byte streams only"
+  },
+  "review_counterexample": {
+    "fault": "nested JSON positive/negative numeric overflow1e999",
+    "before": "2 failed,45 deselected",
+    "repair": "finite parse_float after predecode depth guard",
+    "after": "included in70passing checks"
+  },
+  "unknowns": [
+    "actual runtime event availability and transport qualification",
+    "complete reader-attempt metrics",
+    "process exit, deadline and cleanup",
+    "active effort, cost and model identity",
+    "startup versus reader file reads",
+    "source authenticity and historical result joins"
+  ],
+  "gates_unchanged": [
+    "agentops#2654",
+    "qualified reader transports",
+    "eligible interrupted real tasks",
+    "executed owner and presentation bindings",
+    "task-specific frozen oracles"
+  ],
+  "readers_launched": 0,
+  "production_changes": false,
+  "initial_review_baseline": "0b1f4ad11b52c5526443487e6cc5f90a84a5a8cb",
+  "rebase": "Source/test/guide bytes unchanged; affected cohort rerun after queued onboarding merge."
+}
