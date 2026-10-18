@@ -40,6 +40,9 @@ repository marker must likewise name `served` and retain its immutable
 served client; it does not probe a legacy database. A server catalog gap fails
 as `served-operation-unavailable` rather than falling back to PostgreSQL.
 
+For exact repository selection, current coordinator operations and the
+remaining project workflow gaps, see [served coordination](served-coordination.md).
+
 ## Local recovery
 
 For a standalone local database, work from a separate directory with no served

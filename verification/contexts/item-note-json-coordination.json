@@ -1,0 +1,95 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.item-note-json-coordination",
+  "owner_repo": "sprintctl",
+  "subject": "single-write-note-output-and-current-repository-scope",
+  "contract_ref": {
+    "doc_id": "sprintctl.served-coordination",
+    "revision": "sha256:bd7b0c802bc0afe8208e5e347d409d5067529677c28d5648ef366361de18fb31"
+  },
+  "source_of_truth": "existing work.item.note result and local event row; authenticated served repository binding",
+  "depth": 1,
+  "backends": [
+    "sqlite",
+    "served-cli-facade"
+  ],
+  "actors": [
+    "note-author",
+    "authenticated-owner"
+  ],
+  "initial_state": [
+    "temporary local repository or served marker and profile",
+    "one item or a missing item",
+    "matching or conflicting repository references"
+  ],
+  "operations": [
+    {
+      "name": "item-note-json",
+      "actors": [
+        "note-author",
+        "authenticated-owner"
+      ]
+    },
+    {
+      "name": "item-note-text",
+      "actors": [
+        "note-author",
+        "authenticated-owner"
+      ]
+    },
+    {
+      "name": "markerless-scoped-note",
+      "actors": [
+        "note-author",
+        "authenticated-owner"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "note-result-without-extra-write-or-scope-override"
+  },
+  "assumptions": {
+    "write": "existing note operation has no idempotency key or automatic retry",
+    "isolation": "temporary SQLite and fake served transport invoking actual WorkApplication; no shared work events",
+    "authorization": "markerless opt-in selects scope but does not grant server access"
+  },
+  "bounds": {
+    "new_cases": 13,
+    "local_cases": 3,
+    "served_cases": 10,
+    "note_writes_per_invocation": 1
+  },
+  "invariants": [
+    "successful JSON is exactly existing event_id/item_id/note_type/summary result",
+    "text output remains unchanged",
+    "scoped target/evidence IDs preserve integer owner inputs and authenticated actor",
+    "marker mismatch refuses before RPC or store access",
+    "markerless scope requires explicit repository and opt-in",
+    "missing item or response loss never retries or falls back to PostgreSQL",
+    "response lost after committed owner write leaves exactly one event"
+  ],
+  "faults": [
+    "unknown item",
+    "target/evidence/flag repository mismatch",
+    "markerless scope without opt-in",
+    "transport response lost before owner write",
+    "response lost after owner commit"
+  ],
+  "oracles": [
+    "actual CLI output parsed as one JSON document",
+    "real temporary event row count and payload",
+    "actual owner call count/arguments",
+    "CLI store opening forbidden in served fixture"
+  ],
+  "implementation_anchors": [
+    "sprintctl/commands/work.py:item_note",
+    "sprintctl/commands/work.py:_served_item_note",
+    "tests/test_item_note_json.py"
+  ],
+  "expansions": [
+    "stateful-test",
+    "fault-scenario",
+    "semantic-doc"
+  ]
+}
