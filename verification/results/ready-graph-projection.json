@@ -1,0 +1,113 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.ready-graph-projection",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2775",
+    "revision": "native:release:1b4431886a7e5a69a339bd636071d235bfa2d3c9010e5c65d4a25e00066bec9e"
+  },
+  "implementation_sha": "191fc9e0398b0aab8b5fb8001adca1ceede1597f",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary SQLite/disposable PostgreSQL16.15",
+    "python": "3.13.16",
+    "pytest": "9.0.2",
+    "uv": "0.13.0"
+  },
+  "execution": {
+    "histories": 0,
+    "bounds": {
+      "shared_cases_per_backend": 15,
+      "additional_pg_parking_case": 1,
+      "concurrent_histories": 0
+    },
+    "faults_exercised": [
+      "backend blocker read raises after an actual read with caller writes pending"
+    ]
+  },
+  "claims": [
+    {
+      "property": "pending-only sprint-scoped graph projection preserves complete backend row fields and native types",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_ready_projection_contract.py",
+        "tests/test_ready_projection.py",
+        "tests/pg/test_ready_projection.py"
+      ]
+    },
+    {
+      "property": "a blocker with done status resolves its edge regardless of terminal resolution",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_ready_projection_contract.py",
+        "tests/test_ready_projection.py",
+        "tests/pg/test_ready_projection.py"
+      ]
+    },
+    {
+      "property": "priority fallback/override and timestamp/id tie ordering are preserved",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_ready_projection_contract.py",
+        "tests/test_ready_projection.py",
+        "tests/pg/test_ready_projection.py"
+      ]
+    },
+    {
+      "property": "PG parked items are filtered before blocker reads; SQLite gains no parking behavior",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_ready_projection_contract.py",
+        "tests/test_ready_projection.py",
+        "tests/pg/test_ready_projection.py"
+      ]
+    },
+    {
+      "property": "input rows and blocker collections remain unchanged; result enrichment uses fresh dictionaries",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_ready_projection_contract.py",
+        "tests/test_ready_projection.py",
+        "tests/pg/test_ready_projection.py"
+      ]
+    },
+    {
+      "property": "read results and read errors leave pending caller writes uncommitted and rollbackable",
+      "result": "example-tested",
+      "evidence": [
+        "tests/_ready_projection_contract.py",
+        "tests/test_ready_projection.py",
+        "tests/pg/test_ready_projection.py"
+      ]
+    },
+    {
+      "property": "dispatch admissibility, accepted-only blocker policy, cross-repository graph support, snapshot consistency, global parity or deployed provider qualification",
+      "result": "unknown"
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "Behavior-preserving refactor; no defect or pre-change RED is claimed. Coordinator-owned shared oracle passed before production edits:15SQLite and16PostgreSQL cases; registered disposable scope cleaned with zero rows.",
+    "After extraction same exact-row oracle and current affected local suites:241passed in47.77s. Command: /tmp/sprintctl-ready-projection-2775-env/bin/python -m pytest tests/test_ready_projection.py tests/test_deps.py tests/test_priority.py tests/test_item_release.py tests/test_work_application.py -xq --tb=short.",
+    "After extraction actual PostgreSQL readiness/ref-dep/parked cases:41passed,1289deselected in1.33s;3fixture cleanup instances zero rows. Command: UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-ready-projection-2775-env timeout --foreground -k30s 900s scripts/pg-disposable-tests.sh -k \"ready_projection or ref_dep or TestParkedDisposition\".",
+    "Complete rows are compared against independent ordinary backend item reads with explicitly authored expected enrichment and order in both baseline and refactored runs; no raw cross-backend metadata equivalence is asserted.",
+    "implementation_sha pins pre-refactor base; exact source/test hashes below pin this candidate. Independent source/packet reviews are clear; exact-head canonical CI remains an acceptance gate.",
+    "Parent2150 remains open. Parent2095 and2215 unchanged. No new schema/API/IDL/locks/effects/SQLite parking/deployment or snapshot claim.",
+    "Additional complete output/native-field-type captures retained in verification/traces/ready-graph-observations.json. Retrospective baseline reruns only the accepted0b1b180 db/pg function definitions against unchanged real backend helpers after extraction; it is distinct from the original pre-edit baseline. Baseline/final captures each pass15SQLite/16PG, with zero-row registered PG cleanups. Fresh generated IDs/UUIDs/timestamps are retained, not asserted byte-identical across runs. Each run compares complete rows to the same authored oracle.",
+    "Observer source verification/observe_ready_graph.py SHA256:485b38cdeca15ee80907613c5277423cd384175d810d5f3696f238dbcaaf8b5d",
+    "Capture commands load the opt-in observer with -p ready_capture_plugin from an identical /tmp copy; READY_CAPTURE_PHASE=baseline|final, READY_CAPTURE_OUTPUT=/tmp/sprintctl-2775-{sqlite|pg}-{phase}-observations.json. SQLite selects tests/test_ready_projection.py; PG uses disposable script -k ready_projection. Observer Git base is immutable0b1b180.",
+    "Independent refactor review117local cases passed; second coordinating source review clear. No additional product or acceptance scope.",
+    "Repository observer path reproduced successfully: PYTHONPATH=/tmp/sprintctl-ready-projection-2775 READY_CAPTURE_PHASE=final READY_CAPTURE_OUTPUT=/tmp/sprintctl-2775-repo-observer-check.json /tmp/sprintctl-ready-projection-2775-env/bin/python -m pytest -p verification.observe_ready_graph tests/test_ready_projection.py -xq --tb=short;15passed in7.91s.",
+    "Pre-rebase exact head0f85eb975ea0725aa49dd1efdffd901681b9ac43 passed all four CI checks, run39130079246:2656Python3.12/2560Python3.11/1330PostgreSQL/91producer;57CI cleanup instances empty. This is historical pre-rebase evidence, not final combined-head qualification.",
+    "Clean rebase onto accepted obligation report merge191fc9e. Joint local ready/obligation/release/dependency/priority/application gate:318passed in30.12s. Joint actual PostgreSQL ready/obligation/release/ref-dep/parking gate:94passed,1259deselected in2.43s;8fixture cleanups empty.",
+    "Joint local command: /tmp/sprintctl-ready-projection-2775-env/bin/python -m pytest tests/test_ready_projection.py tests/test_unmet_obligations_parity.py tests/test_releases.py tests/test_deps.py tests/test_priority.py tests/test_item_release.py tests/test_work_application.py -xq --tb=short.",
+    "Joint PG command: UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-ready-projection-2775-env timeout --foreground -k30s 900s scripts/pg-disposable-tests.sh -k \"ready_projection or unmet_obligations or ref_dep or TestParkedDisposition or releases\".",
+    "The initial joint local launch did not start because automatic approval review timed out. A workspace-only retry then caught an incorrect test filename before collection; the corrected command above passed. Neither was a product test failure.",
+    "Historical output captures remain from pre-rebase0b1b180 source/helper context. Five item/blocker/parking read helper AST bodies were verified unchanged after rebase; see trace metadata. Refreshed whole db/pg hashes below bind final combined candidate. Final exact-head CI remains required.",
+    "sprintctl/depcore.py SHA256:f2f6f6b0c43108a5e6ebd333c12a9290ad15c8ab8a2d7e78993625608e252198",
+    "sprintctl/db.py SHA256:e3f3ef2205df7b3cf6e7fcbdfece678fd5de5289162a329271ad727487a887eb",
+    "sprintctl/pg.py SHA256:e7de6388ee715101475a036b9aa7cdd43f20345155af50aa6e00ab3feb5299b6",
+    "tests/_ready_projection_contract.py SHA256:92c4ca603c8b6127b2995bc4cc7ac1d797c1bbeb4b5e6e7aa5b440ae50ddfd1c",
+    "tests/test_ready_projection.py SHA256:aee56a9e5f00a276f1b93475d9fc36e022b42f3faed07aa2e4a34275099e0491",
+    "tests/pg/test_ready_projection.py SHA256:c95d3bfaa089411bc42fd1e85110178240b4c8afcc08d363f5a91f16abaa2d49"
+  ]
+}

@@ -1,0 +1,81 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.ready-graph-projection",
+  "owner_repo": "sprintctl",
+  "subject": "private shared ready-item graph projection",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2775",
+    "revision": "native:release:1b4431886a7e5a69a339bd636071d235bfa2d3c9010e5c65d4a25e00066bec9e"
+  },
+  "source_of_truth": "Sprintctl#2775 frozen native plan5571; existing db/pg get_ready_items at0b1b180",
+  "depth": 2,
+  "backends": [
+    "temporary SQLite",
+    "disposable PostgreSQL16.15"
+  ],
+  "actors": [
+    "read-only graph client",
+    "caller with pending writes",
+    "independent durable reader"
+  ],
+  "initial_state": [
+    "pending and nonpending items across two sprints",
+    "unresolved and done blockers including all terminal resolutions",
+    "native/title/null priorities and controlled creation timestamp/id ties",
+    "PG real owner parked disposition",
+    "rollbackable caller writes"
+  ],
+  "operations": [
+    {
+      "name": "get_ready_items",
+      "actors": [
+        "read-only graph client"
+      ]
+    },
+    {
+      "name": "read blockers in backend iteration order",
+      "actors": [
+        "read-only graph client"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one existing graph report, without snapshot promise"
+  },
+  "assumptions": {
+    "isolation": "existing backend statement/read transaction behavior; no new locks or commits",
+    "clock": "controlled fixture creation timestamps; no clock concurrency claim",
+    "fairness": "none"
+  },
+  "bounds": {
+    "shared_cases_per_backend": 15,
+    "additional_pg_parking_case": 1,
+    "concurrent_histories": 0
+  },
+  "invariants": [
+    "pending-only sprint-scoped graph projection preserves complete backend row fields and native types",
+    "a blocker with done status resolves its edge regardless of terminal resolution",
+    "priority fallback/override and timestamp/id tie ordering are preserved",
+    "PG parked items are filtered before blocker reads; SQLite gains no parking behavior",
+    "input rows and blocker collections remain unchanged; result enrichment uses fresh dictionaries",
+    "read results and read errors leave pending caller writes uncommitted and rollbackable"
+  ],
+  "faults": [
+    "backend blocker read raises after an actual read with caller writes pending"
+  ],
+  "oracles": [
+    "tests/_ready_projection_contract.py",
+    "tests/test_ready_projection.py",
+    "tests/pg/test_ready_projection.py"
+  ],
+  "implementation_anchors": [
+    "sprintctl/depcore.py::_ready_items",
+    "sprintctl/db.py::get_ready_items",
+    "sprintctl/pg.py::get_ready_items"
+  ],
+  "expansions": [
+    "backend-parity",
+    "fault-scenario"
+  ]
+}
