@@ -1,0 +1,62 @@
+{
+  "base": "9e55ebe01f5085c54c436a54180f4227173a415f",
+  "oracle_unchanged": {
+    "tests/_locked_decision_writing_contract.py": "70406d96f6d4f49ea43735b07137d56ed5b77d968a07a1b82da3ac84d43979e5",
+    "tests/test_locked_decision_writing.py": "fc5b6461e0999072fc6e1ebe11e7a92c3a178f6a2bd4f7a8879ed8eb9708c928",
+    "tests/pg/test_locked_decision_writing.py": "55594b233f61af26155f161910d35c8335a20873f3951448673df5ac32e8d51b",
+    "tests/_session_release_contract.py": "df9645d2ac613ac1b2786c39e25af2150862f9807f995c0cf1a8c079a116253f",
+    "tests/test_session_release.py": "13aa22b6b7d537c5bfa0d1183d1f23019b7b7864f7f518d8cff9ce20fd7101e8",
+    "tests/pg/test_session_release.py": "6b535a343616e3439b0dbd6d89f5c511049ef819e90cf0c2b8af0f0507afd3fe"
+  },
+  "protected": {
+    "sprintctl/authority.py": {
+      "count": 28,
+      "all_unchanged": true
+    },
+    "sprintctl/db.py": {
+      "count": 142,
+      "all_unchanged": true
+    },
+    "sprintctl/decisions.py": {
+      "count": 13,
+      "all_unchanged": true
+    },
+    "sprintctl/pg.py": {
+      "count": 247,
+      "all_unchanged": true
+    },
+    "sprintctl/reservationcore.py": {
+      "count": 11,
+      "all_unchanged": true
+    },
+    "sprintctl/workitemcore.py": {
+      "count": 26,
+      "all_unchanged": true
+    }
+  },
+  "candidate": {
+    "sprintctl/authority.py": "02ecde048c010160d1d0f8fc8e84442cf02f6b375ead03f0308a1b3d142eecc4",
+    "sprintctl/db.py": "643b81aebfadab3f5d0532d84048b2b219aeff4964a1a156158cb8e2fee806a6",
+    "sprintctl/decisions.py": "5d81f93bb2033b7e46d626acfa0780de0d1c0e254baf02018ce21e5348547195",
+    "sprintctl/pg.py": "a95472c2b2b5e052880808b7b67407c26d05b972d7978fa8c03b71389b1eb6d9",
+    "sprintctl/reservationcore.py": "96a34ed2cf6040c56b470e0094812400a92a8b8045c36caf15fe24c2146f44b2",
+    "sprintctl/workitemcore.py": "dcdd77ab8ab3cdf3641d959274e7c1324102cc7652306a14cb9bfc6ee5b92d9b"
+  },
+  "sql_literals": {
+    "sprintctl/db.py": [
+      "INSERT INTO work_decision (kind, work_item_id, release_digest, evidence_digests, rationale, actor, superseded_by_item_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "SELECT * FROM work_decision WHERE id = ?",
+      "SELECT 1 FROM work_item WHERE id = ?",
+      "UPDATE work_item SET resolution = ?, terminal_decision_id = ? WHERE id = ?",
+      "UPDATE work_item SET status = 'done', resolution = ?, terminal_decision_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?"
+    ],
+    "sprintctl/pg.py": [
+      "\n        INSERT INTO work_decision (\n            repo_id, kind, work_item_id, release_digest, evidence_digests,\n            rationale, actor, superseded_by_item_id\n        ) VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s)\n        RETURNING *\n        ",
+      "SELECT 1 FROM work_item WHERE repo_id = %s AND id = %s",
+      "UPDATE work_item SET resolution = %s, terminal_decision_id = %s WHERE repo_id = %s AND id = %s",
+      "UPDATE work_item SET status = 'done', resolution = %s, terminal_decision_id = %s, updated_at = now() WHERE repo_id = %s AND id = %s",
+      "UPDATE work_lease SET state = 'settled', ended_at = clock_timestamp(), end_reason = %s WHERE repo_id = %s AND work_item_id = %s AND state = 'active'"
+    ]
+  },
+  "method": "SHA256 UTF8 ast.dump(include_attributes=False) for existing named top-level symbols; exact backend helper signatures and execute SQL string-value multisets; behavioral order/parameter/identity coverage separately supplied by real-backend oracle."
+}

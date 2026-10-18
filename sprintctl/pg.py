@@ -4017,69 +4017,84 @@ def _decide_locked(cur: Any, repo_id: str, item: Any, decision: dict) -> dict:
     A terminal kind closes the item in the same statement that binds it to the
     decision, so the item can never be done without one.
     """
-    item_id = int(item["id"])
-    error = _decisions.decision_error(item, decision)
-    if error is not None:
-        raise InvalidTransition(error)
-    remark = _decisions.is_legacy_remark_target(item)
-    superseded_by = decision["superseded_by_item_id"]
-    if superseded_by is not None:
-        if superseded_by == item_id:
-            raise ValueError("an item cannot supersede itself")
+
+    def successor_exists(superseded_by):
         cur.execute(
             "SELECT 1 FROM work_item WHERE repo_id = %s AND id = %s",
             (repo_id, superseded_by),
         )
-        if cur.fetchone() is None:
-            raise ValueError(f"Superseding item #{superseded_by} not found")
-    release_digest = _decision_release_locked(
-        cur, repo_id, item_id, decision["release_digest"]
-    )
-    cur.execute(
-        """
+        return cur.fetchone() is not None
+
+    def resolve_release(item_id, requested_digest):
+        return _decision_release_locked(cur, repo_id, item_id, requested_digest)
+
+    def insert(item_id, decision, release_digest, superseded_by):
+        cur.execute(
+            """
         INSERT INTO work_decision (
             repo_id, kind, work_item_id, release_digest, evidence_digests,
             rationale, actor, superseded_by_item_id
         ) VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s)
         RETURNING *
         """,
-        (
-            repo_id,
-            decision["kind"],
-            item_id,
-            release_digest,
-            json.dumps(decision["evidence_digests"]),
-            decision["rationale"],
-            decision["actor"],
-            superseded_by,
-        ),
-    )
-    recorded = _decision_row(cur.fetchone())
-    resolution = _decisions.resolution_for(decision["kind"])
-    _stamp_awaiting_reports(cur, repo_id, item_id, recorded)
-    if remark:
-        # A re-mark binds the closure that already happened: the item stays
-        # done and keeps its updated_at, the only record of when it closed.
+            (
+                repo_id,
+                decision["kind"],
+                item_id,
+                release_digest,
+                json.dumps(decision["evidence_digests"]),
+                decision["rationale"],
+                decision["actor"],
+                superseded_by,
+            ),
+        )
+        recorded = _decision_row(cur.fetchone())
+        return recorded
+
+    def stamp_reports(item_id, handle):
+        _stamp_awaiting_reports(cur, repo_id, item_id, handle)
+
+    def bind_legacy(item_id, resolution, handle):
+        # Bind the historical closure without rewriting its status or close time.
         cur.execute(
             "UPDATE work_item SET resolution = %s, terminal_decision_id = %s "
             "WHERE repo_id = %s AND id = %s",
-            (resolution, recorded["id"], repo_id, item_id),
+            (resolution, handle["id"], repo_id, item_id),
         )
-    elif resolution is not None:
+
+    def close_terminal(item_id, resolution, handle):
         cur.execute(
             "UPDATE work_item SET status = 'done', resolution = %s, "
             "terminal_decision_id = %s, updated_at = now() "
             "WHERE repo_id = %s AND id = %s",
-            (resolution, recorded["id"], repo_id, item_id),
+            (resolution, handle["id"], repo_id, item_id),
         )
-        # A terminal item holds no live lease (agentops#2520), whoever
-        # decided it; lease settlement overwrites the reason with its own.
+
+    def settle_active_leases(item_id, resolution):
+        # complete_lease later overwrites this generic reason with its settlement.
         cur.execute(
             "UPDATE work_lease SET state = 'settled', ended_at = clock_timestamp(), "
             "end_reason = %s WHERE repo_id = %s AND work_item_id = %s AND state = 'active'",
             (f"item-{resolution}", repo_id, item_id),
         )
-    return recorded
+
+    def result(handle):
+        return handle
+
+    participant = _workitemcore._DecisionWriteParticipant(
+        successor_exists=successor_exists,
+        resolve_release=resolve_release,
+        insert=insert,
+        stamp_reports=stamp_reports,
+        bind_legacy=bind_legacy,
+        close_terminal=close_terminal,
+        settle_active_leases=settle_active_leases,
+        result=result,
+    )
+
+    return _workitemcore._write_decision_locked(
+        participant, item, decision, invalid_transition=InvalidTransition,
+    )
 
 
 def _stamp_awaiting_reports(cur: Any, repo_id: str, item_id: int, decision: Mapping[str, Any]) -> None:

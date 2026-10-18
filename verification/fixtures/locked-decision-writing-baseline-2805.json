@@ -1,0 +1,46 @@
+{
+  "item": "sprintctl#2805",
+  "release": "cdfc755f2c4f768563e2ca7831d33fc72e52fcf6f0cbfb50d6d600bf4182e389",
+  "base": "9e55ebe01f5085c54c436a54180f4227173a415f",
+  "source_snapshot": "/tmp/sprintctl-full-backlog-audit/locked-decision-2805-accepted-source.json",
+  "source_snapshot_sha256": "7fa8bc82d2495158ac84a37cb2db6c205e853a5df111d4a4e182a0ec5ff88bda",
+  "plan_sha256": "693fe9afa3767ca3d481715df9410d15c2c931c2b269f41833d3baffc4892ed9",
+  "original_plan_sha256": "c55516dd4c3ea45cc6d91bb4d6ddeeaee3cba68ef7d9b4b70e70e51b757f42c6",
+  "oracle": {
+    "tests/_locked_decision_writing_contract.py": "70406d96f6d4f49ea43735b07137d56ed5b77d968a07a1b82da3ac84d43979e5",
+    "tests/test_locked_decision_writing.py": "fc5b6461e0999072fc6e1ebe11e7a92c3a178f6a2bd4f7a8879ed8eb9708c928",
+    "tests/pg/test_locked_decision_writing.py": "55594b233f61af26155f161910d35c8335a20873f3951448673df5ac32e8d51b",
+    "tests/_session_release_contract.py": "df9645d2ac613ac1b2786c39e25af2150862f9807f995c0cf1a8c079a116253f",
+    "tests/test_session_release.py": "13aa22b6b7d537c5bfa0d1183d1f23019b7b7864f7f518d8cff9ce20fd7101e8",
+    "tests/pg/test_session_release.py": "6b535a343616e3439b0dbd6d89f5c511049ef819e90cf0c2b8af0f0507afd3fe"
+  },
+  "runs": [
+    {
+      "backend": "local",
+      "testcases": 418,
+      "direct": 55,
+      "xml": "/tmp/sprintctl-2805-before-local.xml",
+      "xml_sha256": "3d867c6d3e3e51b630de56e1e1335390445f50ab04d5b763e30004a8da3e765f",
+      "log": "/tmp/sprintctl-2805-before-local.txt",
+      "log_sha256": "6f904805a495026ffabe76b9bafc41335975dba2bc275fe0c42bb22d9f85fa48"
+    },
+    {
+      "backend": "pg",
+      "testcases": 672,
+      "direct": 71,
+      "xml": "/tmp/sprintctl-2805-before-pg.xml",
+      "xml_sha256": "31b8860c973eb937b2d67c8ab237480c80144534aaf72b32ab8c3e1fe53f0242",
+      "log": "/tmp/sprintctl-2805-before-pg.txt",
+      "log_sha256": "82feb74b86017959ad3aa7513c1ea611f0360c511cb4633713249c4cf1666e13"
+    }
+  ],
+  "review": "Independent review CLEAR current55shared+16PG extension including saved-successor timing. Product edits not yet applied.",
+  "reader_correction": "Initial artifact reader used testcase file rather than classname to select inherited tests and correctly aborted with zero count. No artifact was written. Corrected reader classifies actual test module via classname; no test or product changed.",
+  "scope": "Private eight-operation extraction only; owners/events/transactions/native behavior protected; no deployment/parentcompletion",
+  "publication_projection": {
+    "source_freeze_sha256": "67dfed19b8e1057202619741e6d3c5f866bdae3e30f845bf89870b3199ceebb8",
+    "source_freeze_path": "/tmp/sprintctl-full-backlog-audit/locked-decision-2805-before-freeze.json",
+    "excluded": "Repeated histories from other accepted contract families; original frozenfile remains immutable. Selected actual32direct+4reusedraces retained separately in locked-decision-writing-before-histories-2805.json.",
+    "projection_is_original_frozen_bytes": false
+  }
+}

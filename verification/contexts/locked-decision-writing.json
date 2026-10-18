@@ -1,0 +1,83 @@
+{
+  "actors": [
+    "caller owning item/write transaction",
+    "private eight-operation participant",
+    "independent durable observer",
+    "two existing keyed Decision callers"
+  ],
+  "assumptions": {
+    "clock": "Native SQLite strftime, PG now()/clock_timestamp retained; historical fixture uses2001 timestamp",
+    "fairness": "none",
+    "identity": "Existing local test identities; no deployed identity qualification",
+    "isolation": "PG actual primary/observer READ COMMITTED direct fixture; not a claim about every reused caller"
+  },
+  "backends": [
+    "temporary SQLite3.53.1",
+    "registered disposable PostgreSQL16.15 READ COMMITTED"
+  ],
+  "bounds": {
+    "extra_pg_cases": 16,
+    "reused_keyed_writer_races_per_capture": 4,
+    "sequential_direct_observations_per_capture": 32,
+    "shared_cases": 55,
+    "workers_per_race": 2
+  },
+  "consistency": {
+    "object": "Decision admission, original lookup/effect/result timing and provisional owner writes",
+    "target": "application-invariant"
+  },
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2805",
+    "revision": "native:release:cdfc755f2c4f768563e2ca7831d33fc72e52fcf6f0cbfb50d6d600bf4182e389"
+  },
+  "depth": 2,
+  "faults": [
+    "Python exceptions after actual Decision decode/INSERT/item/native writes",
+    "actual SQL trigger abort after INSERT/item UPDATE",
+    "finite in-memory wrong implementations including early SQLite read, PG copy/late decode, omitted/duplicate native effects, successor reread"
+  ],
+  "id": "sprintctl.locked-decision-writing",
+  "implementation_anchors": [
+    "sprintctl/workitemcore.py:_DecisionWriteParticipant",
+    "sprintctl/workitemcore.py:_write_decision_locked",
+    "sprintctl/db.py:_decide_locked",
+    "sprintctl/pg.py:_decide_locked",
+    "sprintctl/pg.py:complete_lease"
+  ],
+  "invariants": [
+    "Admission and successor validation precede Release resolution; saved successor survives intentional same-thread resolver mutation while other INSERT fields remain late-read",
+    "SQLite returns opaque insertID then reads/decodes after item effects; PostgreSQL decodes RETURNING before native effects and returns that identical object",
+    "Five-kind/state and historical re-mark outcomes retain original errors, resolution, binding, status and close timestamp",
+    "PG reports stamp once for all applicable kinds before item binding; ordinary terminal lease update occurs once, legacy/revise do not settle active leases",
+    "complete_lease retains generic primitive lease reason followed by owner settled overwrite and later new outcome report",
+    "No helper event or transaction cleanup; actual primary pending/native SQL failure states and independent durable observations remain caller-owned",
+    "Existing two-key-actor equal/different-item histories retain one fresh and replay/conflict results"
+  ],
+  "limits": [
+    "No arbitrary transaction-composition equivalence, universal backend parity or provider substitution",
+    "No physical crash/fsync/power proof, deployed/runtime qualification, public API/schema/IDL or parent2150 acceptance"
+  ],
+  "operations": [
+    {
+      "name": "_decide_locked",
+      "synchronization": "Retain owning workflows existing SQLite writer or PG item lock; primitive adds no lock/transaction"
+    },
+    {
+      "name": "complete_lease",
+      "synchronization": "Existing native owner retains later lease settlement and report/event writes"
+    }
+  ],
+  "oracles": [
+    "tests/_locked_decision_writing_contract.py",
+    "tests/test_locked_decision_writing.py",
+    "tests/pg/test_locked_decision_writing.py",
+    "tests/_keyed_decision_contract.py",
+    "tests/test_authority_fault_protocol.py",
+    "tests/pg/test_work_lease.py",
+    "tests/_session_release_contract.py"
+  ],
+  "owner_repo": "sprintctl",
+  "schema_version": "test-context/v1",
+  "source_of_truth": "Native No doc5785; timing refinement5803 and accepted-source oracle freeze5804; parent2150 remains separate",
+  "subject": "Private already-locked Decision domain sequence with backend-native effects and caller transaction ownership"
+}

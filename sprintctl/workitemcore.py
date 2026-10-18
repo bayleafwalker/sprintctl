@@ -5,7 +5,8 @@ connection adapter implementing :class:`WorkItemConn`. The query shapes and
 tenant handling live here once so the two backends cannot drift apart in
 work-item behaviour. Mirrors the pattern established in ``sprintcore.py``.
 
-The private locked-status and keyed-Decision workflows also live here. Backend wrappers retain
+The private locked-status, keyed-Decision and locked Decision-writing workflows
+also live here. Backend wrappers retain
 their transaction policies and supply noncommitting SQL, reservation and
 lease/report participants; this adds no caller-composition guarantee.
 
@@ -545,3 +546,52 @@ def _record_decision_keyed_locked(
     remark = _decisions.is_legacy_remark_target(item)
     recorded = p.decide(item, decision)
     return _KeyedDecisionOutcome(item, recorded, False, remark)
+
+
+@dataclass(frozen=True)
+class _DecisionWriteParticipant:
+    """Noncommitting operations on the caller's existing locked item."""
+
+    successor_exists: Callable[[int], bool]
+    resolve_release: Callable[[int, str | None], str | None]
+    insert: Callable[[int, dict, str | None, int | None], object]
+    stamp_reports: Callable[[int, object], None]
+    bind_legacy: Callable[[int, str | None, object], None]
+    close_terminal: Callable[[int, str, object], None]
+    settle_active_leases: Callable[[int, str], None]
+    result: Callable[[object], dict]
+
+
+def _write_decision_locked(
+    participant: _DecisionWriteParticipant,
+    item: Mapping,
+    decision: dict,
+    *,
+    invalid_transition: Callable[[str], Exception],
+) -> dict:
+    """Preserve admission and effect order without owning a transaction.
+
+    The insert handle is opaque: SQLite returns an ID for a final read,
+    whereas PostgreSQL returns its already-decoded RETURNING object.
+    """
+    item_id = int(item["id"])
+    error = _decisions.decision_error(item, decision)
+    if error is not None:
+        raise invalid_transition(error)
+    remark = _decisions.is_legacy_remark_target(item)
+    superseded_by = decision["superseded_by_item_id"]
+    if superseded_by is not None:
+        if superseded_by == item_id:
+            raise ValueError("an item cannot supersede itself")
+        if not participant.successor_exists(superseded_by):
+            raise ValueError(f"Superseding item #{superseded_by} not found")
+    release_digest = participant.resolve_release(item_id, decision["release_digest"])
+    handle = participant.insert(item_id, decision, release_digest, superseded_by)
+    resolution = _decisions.resolution_for(decision["kind"])
+    participant.stamp_reports(item_id, handle)
+    if remark:
+        participant.bind_legacy(item_id, resolution, handle)
+    elif resolution is not None:
+        participant.close_terminal(item_id, resolution, handle)
+        participant.settle_active_leases(item_id, resolution)
+    return participant.result(handle)

@@ -1,0 +1,318 @@
+{
+  "historical_predecessor_controls": {
+    "kind": "finite pre-extraction test-only wrong implementations; product files unchanged",
+    "source": "7af2f81f7f6b4ab50da4eb16fb62505a4fd0e3d2",
+    "plugin": "/tmp/locked_decision_writing_controls.py",
+    "plugin_sha256": "7ace7b8e82b1c220f105b711963da24c29f8ede9259ea92965bdd0fa16609ff5",
+    "oracle_hashes": {
+      "tests/_locked_decision_writing_contract.py": "8d1da48ad72392ca64fb65eac651fbff453b78ed2558f9fc325c45c40f1bde7f",
+      "tests/test_locked_decision_writing.py": "fc5b6461e0999072fc6e1ebe11e7a92c3a178f6a2bd4f7a8879ed8eb9708c928",
+      "tests/pg/test_locked_decision_writing.py": "55594b233f61af26155f161910d35c8335a20873f3951448673df5ac32e8d51b"
+    },
+    "results": [
+      {
+        "mode": "baseline-sqlite",
+        "argv": [
+          "/tmp/sprintctl-locked-decision-writing-local-env/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_locked_decision_writing.py",
+          "-k",
+          "real_insert_decode_effect",
+          "-q",
+          "--tb=short",
+          "-p",
+          "locked_decision_writing_controls"
+        ],
+        "actual_exit": 0,
+        "expected_exit": 0,
+        "log": "/tmp/sprintctl-2805-control-baseline-sqlite.txt",
+        "pytest_summary": "9 passed, 45 deselected in 4.20s",
+        "failed": 0,
+        "passed": 9,
+        "log_sha256": "414c2e5790949a8e38079ca1db4cdca1d34729e6e1558758733ba4714783e0e5"
+      },
+      {
+        "mode": "sqlite-early-read",
+        "argv": [
+          "/tmp/sprintctl-locked-decision-writing-local-env/bin/python",
+          "-m",
+          "pytest",
+          "tests/test_locked_decision_writing.py",
+          "-k",
+          "real_insert_decode_effect",
+          "-q",
+          "--tb=short",
+          "-p",
+          "locked_decision_writing_controls"
+        ],
+        "actual_exit": 1,
+        "expected_exit": 1,
+        "log": "/tmp/sprintctl-2805-control-sqlite-early-read.txt",
+        "pytest_summary": "8 failed, 1 passed, 45 deselected in 4.28s",
+        "failed": 8,
+        "passed": 1,
+        "log_sha256": "ac1cee5392c8e78522489113fcd2d5581414bb557a17a00517bbf545637903ad"
+      },
+      {
+        "mode": "baseline-pg",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "locked_decision_writing and real_insert_decode_effect",
+          "--tb=short",
+          "-p",
+          "locked_decision_writing_controls"
+        ],
+        "actual_exit": 0,
+        "expected_exit": 0,
+        "log": "/tmp/sprintctl-2805-control-baseline-pg.txt",
+        "pytest_summary": "9 passed, 1683 deselected in 0.44s",
+        "failed": 0,
+        "passed": 9,
+        "log_sha256": "b4c28c561d63fab9fe54e30d633fb5108aafe7204351d8a85947ed6d256ad9e8"
+      },
+      {
+        "mode": "pg-copy-result",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "locked_decision_writing and real_insert_decode_effect",
+          "--tb=short",
+          "-p",
+          "locked_decision_writing_controls"
+        ],
+        "actual_exit": 1,
+        "expected_exit": 1,
+        "log": "/tmp/sprintctl-2805-control-pg-copy-result.txt",
+        "pytest_summary": "9 failed, 1683 deselected in 0.52s",
+        "failed": 9,
+        "passed": 0,
+        "log_sha256": "124ca8eff6b358d18e0975ddd372ffdd9ad59da0dbf526f0ac1dadbfef8c71e8"
+      },
+      {
+        "mode": "pg-late-decode",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "locked_decision_writing and real_insert_decode_effect",
+          "--tb=short",
+          "-p",
+          "locked_decision_writing_controls"
+        ],
+        "actual_exit": 1,
+        "expected_exit": 1,
+        "log": "/tmp/sprintctl-2805-control-pg-late-decode.txt",
+        "pytest_summary": "9 failed, 1683 deselected in 0.55s",
+        "failed": 9,
+        "passed": 0,
+        "log_sha256": "ed5eaef0a29f0d033a3c06567f44e1cf26bd9b6854453815aa7142dcb010e17d"
+      },
+      {
+        "mode": "pg-omit-stamp",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "locked_decision_writing and real_insert_decode_effect",
+          "--tb=short",
+          "-p",
+          "locked_decision_writing_controls"
+        ],
+        "actual_exit": 1,
+        "expected_exit": 1,
+        "log": "/tmp/sprintctl-2805-control-pg-omit-stamp.txt",
+        "pytest_summary": "9 failed, 1683 deselected in 0.47s",
+        "failed": 9,
+        "passed": 0,
+        "log_sha256": "b79ff27d86e374793e9275ed61a7ed01bf4f05c27f50ea7e2bcea7500f022410"
+      },
+      {
+        "mode": "pg-duplicate-stamp",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "locked_decision_writing and real_insert_decode_effect",
+          "--tb=short",
+          "-p",
+          "locked_decision_writing_controls"
+        ],
+        "actual_exit": 1,
+        "expected_exit": 1,
+        "log": "/tmp/sprintctl-2805-control-pg-duplicate-stamp.txt",
+        "pytest_summary": "9 failed, 1683 deselected in 0.49s",
+        "failed": 9,
+        "passed": 0,
+        "log_sha256": "dd4fa1c1c5a38a4eec54f4c6ef003c34b22c5f007b056ab837431cb245583bd9"
+      },
+      {
+        "mode": "pg-omit-lease",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "locked_decision_writing and real_insert_decode_effect",
+          "--tb=short",
+          "-p",
+          "locked_decision_writing_controls"
+        ],
+        "actual_exit": 1,
+        "expected_exit": 1,
+        "log": "/tmp/sprintctl-2805-control-pg-omit-lease.txt",
+        "pytest_summary": "4 failed, 5 passed, 1683 deselected in 0.47s",
+        "failed": 4,
+        "passed": 5,
+        "log_sha256": "e758a98f069a78469fc7233080dc1d67239cc1b1e73965e261e3289d8e0af5fc"
+      },
+      {
+        "mode": "pg-duplicate-lease",
+        "argv": [
+          "timeout",
+          "--foreground",
+          "-k",
+          "30s",
+          "900s",
+          "scripts/pg-disposable-tests.sh",
+          "-k",
+          "locked_decision_writing and real_insert_decode_effect",
+          "--tb=short",
+          "-p",
+          "locked_decision_writing_controls"
+        ],
+        "actual_exit": 1,
+        "expected_exit": 1,
+        "log": "/tmp/sprintctl-2805-control-pg-duplicate-lease.txt",
+        "pytest_summary": "4 failed, 5 passed, 1683 deselected in 0.46s",
+        "failed": 4,
+        "passed": 5,
+        "log_sha256": "893f9187c11415d9f09a020acb01fbca8792fc7988cde9901a9d05b3ea84bb4a"
+      }
+    ],
+    "limit": "Two positive9case baselines and seven deliberately incorrect in-memory function variants; not product defects, universal mutation coverage or formal proof. Some no-op branches intentionally pass. No product module source written."
+  },
+  "historical_packet_sha256": "756086c0bb9b2e009aa99ca1db4995c82e5a92075f0a5a02ba9632d2ecd6971b",
+  "successor_controls_at_accepted_base": [
+    {
+      "backend": "sqlite",
+      "mode": "baseline",
+      "argv": [
+        "/tmp/sprintctl-locked-decision-writing-local-env/bin/python",
+        "-m",
+        "pytest",
+        "tests/test_locked_decision_writing.py",
+        "-k",
+        "successor_is_captured",
+        "-q",
+        "--tb=short",
+        "-p",
+        "locked_decision_successor_control"
+      ],
+      "exit": 0,
+      "log": "/tmp/sprintctl-2805-successor-sqlite-baseline.txt",
+      "log_sha256": "f9dac4a40bd0c89ecca013278c06bd27403aef05da0d6b8c01761b2a875618a9",
+      "pytest_summary": "1 passed, 54 deselected in 0.16s"
+    },
+    {
+      "backend": "sqlite",
+      "mode": "sqlite-reread",
+      "argv": [
+        "/tmp/sprintctl-locked-decision-writing-local-env/bin/python",
+        "-m",
+        "pytest",
+        "tests/test_locked_decision_writing.py",
+        "-k",
+        "successor_is_captured",
+        "-q",
+        "--tb=short",
+        "-p",
+        "locked_decision_successor_control"
+      ],
+      "exit": 1,
+      "log": "/tmp/sprintctl-2805-successor-sqlite-sqlite-reread.txt",
+      "log_sha256": "0a1a9a2790bbde05882ac8aa5ef6c3c1cb50d12ba3fb81801d3b7eda883ff644",
+      "pytest_summary": "1 failed, 54 deselected in 0.15s"
+    },
+    {
+      "backend": "pg",
+      "mode": "baseline",
+      "argv": [
+        "timeout",
+        "--foreground",
+        "-k",
+        "30s",
+        "900s",
+        "scripts/pg-disposable-tests.sh",
+        "-k",
+        "locked_decision_writing and successor_is_captured",
+        "--tb=short",
+        "-p",
+        "locked_decision_successor_control"
+      ],
+      "exit": 0,
+      "log": "/tmp/sprintctl-2805-successor-pg-baseline.txt",
+      "log_sha256": "13ab2f5f3a519af0a14b40248cce316d92e26b0909f2a9583805bc5209a186a2",
+      "pytest_summary": "1 passed, 1710 deselected in 0.43s"
+    },
+    {
+      "backend": "pg",
+      "mode": "pg-reread",
+      "argv": [
+        "timeout",
+        "--foreground",
+        "-k",
+        "30s",
+        "900s",
+        "scripts/pg-disposable-tests.sh",
+        "-k",
+        "locked_decision_writing and successor_is_captured",
+        "--tb=short",
+        "-p",
+        "locked_decision_successor_control"
+      ],
+      "exit": 1,
+      "log": "/tmp/sprintctl-2805-successor-pg-pg-reread.txt",
+      "log_sha256": "6896c73a724e28ef9ee5a6baeade641d9a001ffdc135e98d8d8658a1a3ee1641",
+      "pytest_summary": "1 failed, 1710 deselected in 0.42s"
+    }
+  ],
+  "base": "9e55ebe01f5085c54c436a54180f4227173a415f",
+  "plugins": {
+    "/tmp/locked_decision_writing_controls.py": {
+      "sha256": "7ace7b8e82b1c220f105b711963da24c29f8ede9259ea92965bdd0fa16609ff5",
+      "source": "\"\"\"Finite test-only wrong implementations; no product file is modified.\"\"\"\nimport ast\nfrom copy import deepcopy\nimport inspect\nimport os\n\nimport pytest\n\n\n@pytest.fixture(autouse=True)\ndef inject_locked_decision_control(monkeypatch):\n    mode = os.environ['LOCKED_DECISION_CONTROL']\n    if mode == 'baseline':\n        return\n    from sprintctl import db, pg\n    backend = db if mode == 'sqlite-early-read' else pg\n    tree = ast.parse(inspect.getsource(backend._decide_locked))\n    function = tree.body[0]\n    changed = 0\n    if mode == 'sqlite-early-read':\n        assert isinstance(function.body[-1], ast.Return)\n        original_return = deepcopy(function.body[-1].value)\n        index = next(i for i, n in enumerate(function.body)\n                     if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'decision_id' for t in n.targets))\n        function.body.insert(index+1, ast.Assign(targets=[ast.Name(id='_early_recorded', ctx=ast.Store())], value=original_return))\n        function.body[-1].value = ast.Name(id='_early_recorded', ctx=ast.Load())\n        changed = 1\n    elif mode == 'pg-copy-result':\n        assert isinstance(function.body[-1], ast.Return)\n        function.body[-1].value = ast.Call(func=ast.Name(id='dict', ctx=ast.Load()),\n                                         args=[function.body[-1].value], keywords=[])\n        changed = 1\n    elif mode == 'pg-late-decode':\n        assignment = next(n for n in function.body if isinstance(n, ast.Assign)\n                          and isinstance(n.value, ast.Call) and isinstance(n.value.func, ast.Name)\n                          and n.value.func.id == '_decision_row')\n        assignment.value = assignment.value.args[0]  # Actual RETURNING row, decoder deferred.\n        function.body.insert(len(function.body)-1, ast.Assign(targets=[ast.Name(id='recorded', ctx=ast.Store())],\n            value=ast.Call(func=ast.Name(id='_decision_row', ctx=ast.Load()),\n                           args=[ast.Name(id='recorded', ctx=ast.Load())], keywords=[])))\n        changed = 1\n    else:\n        class Transform(ast.NodeTransformer):\n            def visit_Expr(self, node):\n                nonlocal changed\n                call = node.value\n                stamp = isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == '_stamp_awaiting_reports'\n                lease = (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == 'execute'\n                         and call.args and isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str)\n                         and call.args[0].value.startswith('UPDATE work_lease '))\n                if (stamp and mode in ('pg-omit-stamp', 'pg-duplicate-stamp')) or (\n                        lease and mode in ('pg-omit-lease', 'pg-duplicate-lease')):\n                    changed += 1\n                    return None if '-omit-' in mode else [node, deepcopy(node)]\n                return self.generic_visit(node)\n        tree = Transform().visit(tree)\n    assert changed == 1, (mode, changed)\n    namespace = {}\n    exec(compile(ast.fix_missing_locations(tree), '<locked-decision-oracle-control>', 'exec'), backend.__dict__, namespace)\n    monkeypatch.setattr(backend, '_decide_locked', namespace['_decide_locked'])\n"
+    },
+    "/tmp/locked_decision_successor_control.py": {
+      "sha256": "d3efe15d48284588869c92843d42f8923076aa15a6ac54d7d46ed42115c042b7",
+      "source": "\"\"\"Test-only successor reread mutant; never changes product files.\"\"\"\nimport ast\nimport inspect\nimport os\nimport pytest\n\n@pytest.fixture(autouse=True)\ndef inject(monkeypatch):\n    mode = os.environ.get('SUCCESSOR_CONTROL', 'baseline')\n    if mode == 'baseline':\n        return\n    from sprintctl import db, pg\n    backend = db if mode == 'sqlite-reread' else pg\n    tree = ast.parse(inspect.getsource(backend._decide_locked))\n    count = 0\n    class Reread(ast.NodeTransformer):\n        def visit_Call(self, node):\n            nonlocal count\n            if (isinstance(node.func, ast.Attribute) and node.func.attr == 'execute'\n                and node.args and isinstance(node.args[0], ast.Constant)\n                and 'INSERT INTO work_decision' in node.args[0].value):\n                args = node.args[1]\n                assert isinstance(args, ast.Tuple)\n                assert isinstance(args.elts[-1], ast.Name) and args.elts[-1].id == 'superseded_by'\n                args.elts[-1] = ast.parse(\"decision['superseded_by_item_id']\", mode='eval').body\n                count += 1\n            return self.generic_visit(node)\n    tree = Reread().visit(tree)\n    assert count == 1\n    namespace = {}\n    exec(compile(ast.fix_missing_locations(tree), '<successor-reread-control>', 'exec'), backend.__dict__, namespace)\n    monkeypatch.setattr(backend, '_decide_locked', namespace['_decide_locked'])\n"
+    }
+  },
+  "limits": "Finite wrong-implementation controls on pre-extraction helpers, not universal mutation coverage. Historical seven-control oracle bytes precede the added successor test. Current eight-operation delegates require adapting historical AST injection; do not imply this plugin runs on new wrapper bodies."
+}
