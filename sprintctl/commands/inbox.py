@@ -62,6 +62,18 @@ def _present(**values: Any) -> dict[str, Any]:
     return {key: value for key, value in values.items() if value is not None}
 
 
+def _continuation_arguments(run_id, item_id, limit, checkpoint, cursor, after_note_id, after_chain_seq):
+    arguments = _present(run_id=run_id, item_id=item_id, limit=limit,
+                         after_note_id=after_note_id, after_chain_seq=after_chain_seq)
+    for name, stream in (("checkpoint", checkpoint), ("cursor", cursor)):
+        if stream is not None:
+            value = _json_input(stream, name)
+            if not isinstance(value, dict):
+                raise click.ClickException(f"{name} must be a JSON object")
+            arguments[name] = value
+    return arguments
+
+
 # -- agent ------------------------------------------------------------------
 
 @click.group("agent")
@@ -218,17 +230,47 @@ def run_brief(run_id, item_id, checkpoint, cursor, after_note_id, after_chain_se
     """Brief one item from a single bounded owner read; JSON preserves its response."""
     from ..briefing import render_run_brief
 
-    arguments = _present(run_id=run_id, item_id=item_id, limit=limit,
-                         after_note_id=after_note_id, after_chain_seq=after_chain_seq)
-    for name, stream in (("checkpoint", checkpoint), ("cursor", cursor)):
-        if stream is not None:
-            value = _json_input(stream, name)
-            if not isinstance(value, dict):
-                raise click.ClickException(f"{name} must be a JSON object")
-            arguments[name] = value
+    arguments = _continuation_arguments(run_id, item_id, limit, checkpoint, cursor,
+                                        after_note_id, after_chain_seq)
     result = _call("work.run.continuation-delta-v1", arguments)
     click.echo(json.dumps(result, indent=2, ensure_ascii=False) if fmt == "json"
                else render_run_brief(result))
+
+
+@run.command("diagnose")
+@click.option("--run-id", required=True)
+@click.option("--item-id", required=True, type=click.IntRange(min=1))
+@click.option("--checkpoint", type=click.File("r"), help="Complete saved owner delta.current JSON")
+@click.option("--observations", type=click.File("rb"), help="Optional caller-reported checks, at most 64 KiB")
+@click.option("--cursor", type=click.File("r"))
+@click.option("--after-note-id", type=click.IntRange(min=0), default=None)
+@click.option("--after-chain-seq", type=click.IntRange(min=0), default=None)
+@click.option("--limit", type=click.IntRange(1, 64), default=32, show_default=True)
+@click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text", show_default=True)
+def run_diagnose(run_id, item_id, checkpoint, observations, cursor, after_note_id, after_chain_seq, limit, fmt):
+    """Find continuation gaps in one owner page; do not perform artifact checks."""
+    from ..resume_diagnostics import MAX_OBSERVATION_BYTES, diagnose_resume, render_resume_diagnostic
+
+    arguments = _continuation_arguments(run_id, item_id, limit, checkpoint, cursor,
+                                        after_note_id, after_chain_seq)
+    observed = None
+    if observations is not None:
+        raw = observations.read(MAX_OBSERVATION_BYTES + 1)
+        if len(raw) > MAX_OBSERVATION_BYTES:
+            raise click.ClickException("observations exceed 64 KiB")
+        try:
+            observed = json.loads(raw)
+        except (ValueError, UnicodeDecodeError) as error:
+            raise click.ClickException("observations are not valid JSON") from error
+        if not isinstance(observed, dict):
+            raise click.ClickException("observations must be a JSON object")
+    result = _call("work.run.continuation-delta-v1", arguments)
+    try:
+        report = diagnose_resume(result, checkpoint_supplied=checkpoint is not None, observations=observed)
+    except ValueError as error:
+        raise click.ClickException(str(error)) from error
+    click.echo(json.dumps(report, indent=2, ensure_ascii=False) if fmt == "json"
+               else render_resume_diagnostic(report))
 
 
 @click.group("effect")

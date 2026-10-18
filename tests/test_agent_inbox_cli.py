@@ -95,7 +95,7 @@ def test_outside_served_mode_the_verbs_refuse_clearly(monkeypatch):
 def test_routes_are_classified_and_bound_to_published_operations():
     paths = {"agent register", "agent observe", "agent retire", "agent list", "agent describe",
              "message send", "message read", "message status", "message receipt", "message cancel",
-             "run context", "run note", "run brief", "effect explain"}
+             "run context", "run note", "run brief", "run diagnose", "effect explain"}
     assert {path: served_routes.disposition_for(path) for path in paths} == dict.fromkeys(paths, "catalog")
     routed = {spec.cli_path: spec.operation for spec in served_routes.OPERATION_SPECS if spec.cli_path in paths}
     assert set(routed.values()) == served.AGENT_OPERATIONS

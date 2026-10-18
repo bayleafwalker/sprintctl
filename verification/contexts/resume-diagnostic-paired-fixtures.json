@@ -1,0 +1,83 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.resume-diagnostic.paired-fixtures",
+  "owner_repo": "sprintctl",
+  "subject": "continuation-gap-checklist-and-report-provenance",
+  "contract_ref": {
+    "doc_id": "resume-and-explain",
+    "revision": "git:d729b27b91abb5bf3c537640f4a5f110f5dced8c"
+  },
+  "source_of_truth": "disposable PostgreSQL owner response; caller checks are report-class",
+  "depth": 1,
+  "backends": [
+    "postgresql16",
+    "pure diagnostic"
+  ],
+  "actors": [
+    "reader",
+    "fixture-repairer"
+  ],
+  "initial_state": [
+    "continuation missing or comparison baseline missing or reference unchecked"
+  ],
+  "operations": [
+    {
+      "name": "diagnose-one-owner-page",
+      "actors": [
+        "reader"
+      ]
+    },
+    {
+      "name": "repair-specific-context-gap",
+      "actors": [
+        "fixture-repairer"
+      ]
+    },
+    {
+      "name": "supply-bound-caller-report",
+      "actors": [
+        "reader"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one diagnostic presentation report"
+  },
+  "bounds": {
+    "paired_cases": 3,
+    "owner_reads_per_case": 3,
+    "artifact_checks_performed": 0,
+    "observation_checks_max": 64,
+    "observation_file_bytes_max": 65536,
+    "report_eligibility_seconds": 3600
+  },
+  "invariants": [
+    "reports do not upgrade owner unknowns",
+    "stale or future reports are retained but not used for access findings",
+    "wrong scope or snapshot and duplicate or off-page targets are rejected",
+    "declared checklist order is not measured recovery burden",
+    "a repair can remove a specific gap without implying total checklist reduction"
+  ],
+  "faults": [
+    "absent current source checkpoint",
+    "absent comparison baseline",
+    "caller-reported access failure",
+    "stale/future or mismatched caller report"
+  ],
+  "oracles": [
+    "three frozen before/after fixture question sets",
+    "owner-response equality and unknown preservation",
+    "zero diagnostic artifact checks",
+    "negative report-validation cases"
+  ],
+  "implementation_anchors": [
+    "sprintctl/resume_diagnostics.py:diagnose_resume",
+    "sprintctl/resume_diagnostics.py:_observations",
+    "sprintctl/commands/inbox.py:run_diagnose"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "stateful-test"
+  ]
+}

@@ -34,8 +34,8 @@ credential inheritance, schema migration, or deployment action.
 | R2: Fresh-reader continuation proof | 2, dispatch-build after live matching | Qualify R1 against three disposable interrupted-task cases; one deliberate release/artifact change, one decision change, one missing baseline/content case. Record correct/incorrect inferences, extra calls, recovery effort and denominator. | R1 |
 | E1: Explain effect acceptance facts | 2, dispatch-build | Present the existing acceptance snapshot in one bounded read, name missing chain links and keep evidence classes distinct. Preserve raw JSON and caller-scoped receipt visibility. | Existing acceptance snapshot |
 | E2: Independent result-reader proof | 2, dispatch-build after E1 decisions | An independent reader detects changed digest and omitted receipt; qualify a supported result packet only after explicit closure, versioning, scope and export/import guarantees are settled. | E1 |
-| H1: Recovery-burden diagnostic | 3, dispatch-plan | Read-only item-scoped missing-context findings with reason codes and check provenance, starting from continuation point, inaccessible/unchecked artifact, stale reference and unresolved effect outcome. Unchecked differs from missing. | R2; bounded observation protocol |
-| H2: Interrupted-work recovery trial | 3, dispatch-build after H1 | Compare recovery effort before/after repairing diagnosed gaps on the same bounded task population; retain failed recovery and unknown observations. | H1 |
+| H1: Continuation diagnostic | 3, dispatch-build | One bounded continuation read yields stable reason-coded findings and explicit report-class observation provenance; no artifact fetch or measured-effort score. | R1; bounded observation protocol |
+| H2: Interrupted-work recovery qualification | 3, dispatch-build | Three paired native-owner fixtures qualify frozen diagnostic questions and explicit lookup/check counts. The field trial records real fresh-reader effort separately, retaining failures and unknowns. | H1 |
 | L1: Accepted-outcome comparison input | 3, Vuoro-owned dispatch-plan | Map accepted releases to rework, recovery time, review effort, known cost and unknown coverage. Sprintctl supplies records, not a comparison engine. | Acceptance/evidence joins qualified by E2 |
 
 Priorities are recommendations for live refinement, not assertions about the
@@ -116,12 +116,31 @@ authoritative evidence home. The existing archival fixture proof does not
 establish general result export support. This bounded E1 view is useful without
 claiming the full accepted-result reconstruction outcome.
 
-## H1 and L1 decisions still required
+## H1/H2 decisions and acceptance
 
-H1 first needs a bounded protocol for checking artifacts and references, including
-observation age and provenance. Avoid scoring work as healthy merely because it
-is young, or as broken because a check could not run. Recovery-burden ranking
-needs measured effort and a declared uncertainty policy before implementation.
+`run diagnose` reuses one continuation-delta owner read. Its surrounding report
+is a derived checklist, with the complete owner response retained unchanged.
+Reason codes distinguish missing current continuation, missing baseline,
+changed/unknown owner records, incomplete pages, unchecked source/correspondence/
+availability, reported access problems and unassessed outcome. It makes no
+content requests, writes no state, and never grants authority.
+
+The optional observation file binds to the exact repository, item, snapshot
+and visible reference IDs. The protocol is limited to 64 KiB/64 checks, UTC
+timestamps and a one-hour eligibility window on the caller clock; stale/future
+reports are retained but ignored. Matching reports stay report-class and cannot
+upgrade owner unknowns. Unknown fields, duplicate/off-page targets and wrong
+scope are refused. See [diagnostic guide](../guides/diagnose-resume.md).
+
+Review order is a declared checklist: reported access problems, changed records,
+missing/incomplete context, unchecked/unknown facts, then unassessed outcome.
+It is not a recovery-effort score or cross-item priority. H2's three paired
+disposable cases freeze questions and record native owner read/check counts.
+Actual fresh-human/agent recovery time and improvement remain unmeasured until
+the field protocol runs with independent readers, interventions, failed cases
+and visible denominators. Missing effort never becomes zero.
+
+## L1 decisions still required
 
 L1 belongs to Vuoro's learning layer. Before comparing workflows, specify task
 grouping, accepted-outcome denominator, minimum sample and capture coverage,

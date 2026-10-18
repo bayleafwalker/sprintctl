@@ -17,6 +17,7 @@ Start with these read surfaces:
 - `usage --context` for current work, conflicts, and a next action
 - `handoff` for working-memory snapshots, including predecessor position
 - `run brief` for a task-specific served change briefing
+- `run diagnose` for missing continuation context and explicitly unchecked facts
 - `effect explain` for exact effect acceptance facts, receipt visibility, and missing links
 - `session resume` for a combined context bundle in local SQLite mode;
   in served mode, use the constituent reads in the [resume guide](docs/guides/resume-work.md)

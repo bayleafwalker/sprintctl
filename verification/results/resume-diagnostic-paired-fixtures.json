@@ -1,0 +1,69 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.resume-diagnostic.paired-fixtures",
+  "contract_ref": {
+    "doc_id": "resume-and-explain",
+    "revision": "git:d729b27b91abb5bf3c537640f4a5f110f5dced8c"
+  },
+  "implementation_sha": "d729b27b91abb5bf3c537640f4a5f110f5dced8c",
+  "depth": 1,
+  "environment": {
+    "backend": "disposable PostgreSQL16.15 and pure diagnostic fixtures",
+    "isolation": "owner read-only repeatable-read snapshots; explicit caller UTC test clock",
+    "tool_versions": {
+      "Python": "3.13.16",
+      "PostgreSQL": "16.15",
+      "pytest": "9.0.2"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 3,
+    "bounds": {
+      "paired_cases": 3,
+      "owner_reads_per_case": 3,
+      "artifact_checks_performed": 0,
+      "observation_checks_max": 64,
+      "observation_file_bytes_max": 65536,
+      "report_eligibility_seconds": 3600
+    },
+    "faults_exercised": [
+      "absent current source checkpoint",
+      "absent comparison baseline",
+      "caller-reported access failure",
+      "stale/future or mismatched caller report"
+    ]
+  },
+  "claims": [
+    {
+      "property": "Three paired cases answer frozen context-gap questions while preserving remaining unknowns",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_resume_diagnostic_trial.py",
+        "docs/guides/diagnose-resume.md"
+      ]
+    },
+    {
+      "property": "Caller reports are bounded, scope-bound and never owner assurance",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_resume_diagnostics.py"
+      ]
+    },
+    {
+      "property": "Actual human/agent recovery effort or workflow improvement",
+      "result": "unknown",
+      "evidence": [
+        "docs/guides/diagnose-resume.md"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "Paired native-owner suite:3 passed; fixture cleanup completed with zero remaining rows.",
+    "Combined diagnostic/CLI/routing/docs checks:92 passed.",
+    "Implementation SHA names the base commit; candidate module SHA256:ce4a31d8f12f7be86fa477a32aebb1e51a38e3811380af958656145a24bec9e9",
+    "Test source SHA256:820cc159f580aef1ff7db45621e471002b9a35951906967c8ec0ffaf96dac7ab",
+    "One baseline, before and after read per fixture case; zero artifact checks; no human/LLM timing or effort observations."
+  ]
+}
