@@ -1,9 +1,10 @@
-"""``sprintctl agent``, ``sprintctl message`` and ``sprintctl run``: thin served verbs.
+"""Agent, message, run and effect commands over existing served operations.
 
-Each command sends one catalog operation through the served client and prints
-its JSON result.  The agent directory and inbox (vuoro contract v1) and the
+Each command sends one catalog operation through the served client. JSON
+preserves its result; briefing/explanation text presents the same owner facts.
+The agent directory and inbox (vuoro contract v1) and the
 run continuation reads exist only on the PostgreSQL owner, so every verb here
-requires ``SPRINTCTL_BACKEND=served``; nothing is computed locally.  Records
+requires ``SPRINTCTL_BACKEND=served``; no owner state is inferred locally. Records
 that the contract defines as JSON objects (a declaration, an envelope, a
 receipt's own fields) are read from ``--json FILE`` (``-`` for stdin).
 A refusal prints ``{"error": {"code", "message"}}`` and exits 1.
@@ -230,7 +231,41 @@ def run_brief(run_id, item_id, checkpoint, cursor, after_note_id, after_chain_se
                else render_run_brief(result))
 
 
+@click.group("effect")
+def effect() -> None:
+    """Read effect acceptance facts and their evidence limits."""
+
+
+@effect.command("explain")
+@click.option("--intent-id", required=True)
+@click.option("--revision", required=True, type=click.IntRange(min=1))
+@click.option("--canonical-intent-digest", required=True, help="Exact lower-case 64-character SHA256")
+@click.option("--artifact-sha256", required=True, help="sha256:<64 lower-case hex characters>")
+@click.option("--verification-ref", type=click.File("r"), help="JSON object containing run_id and item_id")
+@click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text", show_default=True)
+def effect_explain(intent_id, revision, canonical_intent_digest, artifact_sha256, verification_ref, fmt) -> None:
+    """Explain one exact effect basis; mismatches are facts, not acceptance writes."""
+    import re
+    from ..effect_explanation import render_effect_explanation
+
+    if (re.fullmatch(r"[0-9a-f]{64}", canonical_intent_digest) is None
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", artifact_sha256) is None):
+        raise click.ClickException("give exact lower-case SHA256 digests for the intent and artifact")
+    arguments = {"intent_id": intent_id, "revision": revision,
+                 "canonical_intent_digest": canonical_intent_digest, "artifact_sha256": artifact_sha256}
+    if verification_ref is not None:
+        ref = _json_input(verification_ref, "verification reference")
+        if (not isinstance(ref, dict) or set(ref) != {"run_id", "item_id"}
+                or any(not isinstance(ref[key], str) or not ref[key] for key in ref)):
+            raise click.ClickException("verification reference must contain exactly run_id and item_id strings")
+        arguments["verification_ref"] = ref
+    result = _call("work.effect.acceptance-snapshot-v1", arguments)
+    click.echo(json.dumps(result, indent=2, ensure_ascii=False) if fmt == "json"
+               else render_effect_explanation(result))
+
+
 def register(root: click.Group) -> None:
     root.add_command(agent)
     root.add_command(message)
     root.add_command(run)
+    root.add_command(effect)

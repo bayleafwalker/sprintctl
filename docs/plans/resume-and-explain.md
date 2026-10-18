@@ -32,7 +32,7 @@ credential inheritance, schema migration, or deployment action.
 | --- | --- | --- | --- |
 | R1: Resume change briefing | 2, dispatch-build | One bounded CLI owner read presents changed/unchanged/unknown; JSON retains the existing response and cursors. Text handoff preserves predecessor position. Correct positioning and served onboarding. | Existing continuation-delta operation |
 | R2: Fresh-reader continuation proof | 2, dispatch-build after live matching | Qualify R1 against three disposable interrupted-task cases; one deliberate release/artifact change, one decision change, one missing baseline/content case. Record correct/incorrect inferences, extra calls, recovery effort and denominator. | R1 |
-| E1: Explain an accepted result | 2, dispatch-plan | Specify a derived result explanation joining request/release, attempts, exact artifact, receipts, observations and acceptance. Name missing links and assurance classes; do not promote a Decision into effect evidence. | Owner-fact coverage review; existing acceptance snapshot |
+| E1: Explain effect acceptance facts | 2, dispatch-build | Present the existing acceptance snapshot in one bounded read, name missing chain links and keep evidence classes distinct. Preserve raw JSON and caller-scoped receipt visibility. | Existing acceptance snapshot |
 | E2: Independent result-reader proof | 2, dispatch-build after E1 decisions | An independent reader detects changed digest and omitted receipt; qualify a supported result packet only after explicit closure, versioning, scope and export/import guarantees are settled. | E1 |
 | H1: Recovery-burden diagnostic | 3, dispatch-plan | Read-only item-scoped missing-context findings with reason codes and check provenance, starting from continuation point, inaccessible/unchecked artifact, stale reference and unresolved effect outcome. Unchecked differs from missing. | R2; bounded observation protocol |
 | H2: Interrupted-work recovery trial | 3, dispatch-build after H1 | Compare recovery effort before/after repairing diagnosed gaps on the same bounded task population; retain failed recovery and unknown observations. | H1 |
@@ -75,7 +75,7 @@ The pure presentation proof is example-tested, not a fresh-reader user trial or
 deployed acceptance. Existing disposable owner-snapshot tests establish separate
 owner behavior; a current deployed success requires the deployment owner's gates.
 
-## E1 decisions still required
+## E1 decisions and acceptance
 
 Inventory existing owner operations and facts before adding a surface. In
 particular, `work.effect.acceptance-snapshot-v1` provides exact requested basis,
@@ -83,11 +83,30 @@ artifact comparison, bounded decision/reference facts and verification receipt
 comparison, while lease settlement and obligation mappings may be unknown. It
 does not by itself prove the complete attempt-to-observation chain.
 
-The E1 owner must settle the minimum chain, identity/digest joins, supported
-backends, missing/unavailable semantics, completeness and source revision before
-E2 is build-ready. Preserve report, receipt, acknowledgment, observation and
-acceptance as distinct classes. Reuse the authoritative evidence home. The
-existing archival fixture proof does not establish general result export support.
+`effect explain` requires an exact intent ID, positive revision, canonical intent
+digest and artifact SHA256. An optional reference names the verification run and
+evidence item. It performs one existing owner snapshot read in served mode;
+text is a bounded presentation and JSON retains the complete owner response.
+There is no receipt discovery, implicit artifact fetch or acceptance write.
+
+Mismatches remain prominent even when the current intent is accepted or a receipt
+matches. A successful mismatch read exits zero; it is not an acceptance verdict.
+Missing receipt input, missing evidence authority and caller-invisible receipt
+remain distinct. A missing Release/check revision and truncated collections retain
+unknowns. The snapshot identity does not seal the whole response or receipt.
+
+The explanation preserves report, receipt, acknowledgment, observation and
+acceptance as distinct classes. It names unavailable terminal Decision binding,
+accepting identity/time, attempt history, obligation mapping and target outcome.
+An accepted/applied intent or done item cannot fill those gaps. Focused tests
+must cover changed basis/artifact, matching/missing/foreign-bound receipt,
+missing Release/check revisions, overflow, refusal and complete JSON preservation.
+
+Before E2 is build-ready, settle complete-chain joins, coverage, source revision,
+closure/version and supported export/import behavior separately. Reuse the
+authoritative evidence home. The existing archival fixture proof does not
+establish general result export support. This bounded E1 view is useful without
+claiming the full accepted-result reconstruction outcome.
 
 ## H1 and L1 decisions still required
 

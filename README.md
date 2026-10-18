@@ -17,6 +17,7 @@ Start with these read surfaces:
 - `usage --context` for current work, conflicts, and a next action
 - `handoff` for working-memory snapshots, including predecessor position
 - `run brief` for a task-specific served change briefing
+- `effect explain` for exact effect acceptance facts, receipt visibility, and missing links
 - `session resume` for a combined context bundle in local SQLite mode;
   in served mode, use the constituent reads in the [resume guide](docs/guides/resume-work.md)
 
@@ -35,10 +36,12 @@ inheriting predecessor credentials. An unchanged reference record does not prove
 that the referenced artifact is unchanged or accessible.
 
 The next product phase is [resume and explain](docs/plans/resume-and-explain.md).
-The compact briefing is available in this source tree; a fully qualified result
+The compact briefing and bounded effect explanation are available in this source tree; a fully qualified result
 explanation, recovery-burden assessment, and accepted-outcome comparison remain
 separate development slices. The existing archival result transfer is a bounded
 fixture proof, not a general supported result-packet export.
+The [effect explanation guide](docs/guides/explain-effects.md) distinguishes the
+owner's acceptance facts from evidence of an external effect.
 
 ## What It Is Not
 

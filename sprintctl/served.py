@@ -862,15 +862,16 @@ __all__ = [
 ]
 
 
-#: The served-only ``agent``, ``message`` and ``run`` CLI verbs
+#: The served-only ``agent``, ``message``, ``run`` and ``effect`` CLI verbs
 #: (sprintctl.commands.inbox): the agent directory and inbox, plus the run
-#: continuation read and session-note write.
+#: continuation reads, session-note write and effect acceptance explanation.
 AGENT_OPERATIONS = frozenset({
     "work.agent.register-v1", "work.agent.observe-v1", "work.agent.retire-v1",
     "work.agent.list-v1", "work.agent.describe-v1", "work.message.send-v1",
     "work.message.read-v1", "work.message.status-v1", "work.message.receipt-v1",
     "work.message.cancel-v1", "work.run.predecessor-context-v1", "work.session-note.write-v1",
     "work.run.continuation-delta-v1",
+    "work.effect.acceptance-snapshot-v1",
 })
 
 
