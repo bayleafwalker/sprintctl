@@ -1,0 +1,103 @@
+{
+  "actors": [
+    "public admission caller",
+    "native replay ledger owner",
+    "private participant caller",
+    "writer lock holder",
+    "independent durable observer"
+  ],
+  "assumptions": {
+    "clock": "captured pre-lock timestamp stays distinct from backend database maintenance time and later display age",
+    "fairness": "none",
+    "identity": "existing repository/item/session values; no new credential or live identity qualification",
+    "isolation": "SQLite writer ownership and actual measured PG READ COMMITTED on primary and independent oracle connections"
+  },
+  "backends": [
+    "temporary SQLite",
+    "registered disposable PostgreSQL16.15 READ COMMITTED"
+  ],
+  "bounds": {
+    "additional_pg_cases": 6,
+    "retained_clock_wait_histories_per_capture": 2,
+    "retained_observations_per_capture": 19,
+    "shared_cases_per_backend": 30,
+    "workers_per_clock_history": 2
+  },
+  "consistency": {
+    "object": "preserved admission transaction boundary, exact effects and result representation",
+    "target": "application-invariant"
+  },
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2787",
+    "revision": "native:release:5168d9d2d0e5f56fd134331bdb4a3a38ccf7e4b976ae1a4b015917ce3b832b63"
+  },
+  "depth": 2,
+  "expansions": [
+    "fault-scenario",
+    "backend-parity"
+  ],
+  "faults": [
+    "actual BEFORE/AFTER reservation INSERT abort",
+    "actual BEFORE/AFTER takeover UPDATE abort",
+    "exception after reserved lifecycle event",
+    "exception after result display/annotation",
+    "private PG participant after-event Python failure before caller cleanup",
+    "existing native owner commit-boundary loss and replay waits"
+  ],
+  "id": "sprintctl.reserve-admission",
+  "implementation_anchors": [
+    "sprintctl/reservationcore.py:_AdmissionParticipant",
+    "sprintctl/reservationcore.py:_reserve_admitted",
+    "sprintctl/db.py:_ReservationAdmissionSqlite",
+    "sprintctl/db.py:reserve",
+    "sprintctl/pg.py:_ReservationAdmissionPg",
+    "sprintctl/pg.py:reserve_in_transaction"
+  ],
+  "initial_state": [
+    "empty or overlapping execution/verification/observation reservations",
+    "current or stale item basis, existing or newly frozen Release",
+    "idle public caller or explicit pending private PG caller"
+  ],
+  "invariants": [
+    "role normalization, raw actor/session/correlation and truthy takeover flag preserve exact payload and native backend timestamp types",
+    "Release freeze and stale basis precede reservation effects while SQLite conditional versus PG all-role basis ownership remains distinct",
+    "ordered takeover interrupts only execution rows and preserves original interruption/reserved event payloads and overlap classification",
+    "actual SQL and post-effect Python faults restore ordinary public owner state before fixture cleanup and allow retry",
+    "PG direct participant leaves provisional effects and caller writes to its owner on success and Python failure; public wrapper retains commit/rollback behavior",
+    "input item/reservation rows and acceptance contract remain unchanged; repeated unkeyed calls remain distinct admissions",
+    "one captured pre-lock reservation timestamp survives the tested actual SQLite writer wait and PG advisory lock wait",
+    "existing native reserve ledger replay, commit-boundary loss and maintenance interleaving tests pass unchanged"
+  ],
+  "operations": [
+    {
+      "actors": [
+        "public admission caller",
+        "private participant caller"
+      ],
+      "name": "reserve",
+      "synchronization": "existing SQLite BEGIN IMMEDIATE or PG repository advisory lock then item and ordered reservation row locks"
+    },
+    {
+      "actors": [
+        "public admission caller",
+        "private participant caller"
+      ],
+      "name": "reserve_in_transaction",
+      "synchronization": "existing SQLite BEGIN IMMEDIATE or PG repository advisory lock then item and ordered reservation row locks"
+    }
+  ],
+  "oracles": [
+    "tests/_reserve_admission_contract.py",
+    "tests/test_reserve_admission.py",
+    "tests/pg/test_reserve_admission.py",
+    "tests/_reservation_atomicity_contract.py",
+    "tests/pg/test_native_reserve_owner.py",
+    "tests/pg/test_reservations.py",
+    "tests/pg/test_work_lease.py",
+    "tests/test_sqlite_item_reserve_caller.py"
+  ],
+  "owner_repo": "sprintctl",
+  "schema_version": "test-context/v1",
+  "source_of_truth": "Native No doc5674 and actual reviewed pre-extraction oracle freeze5704",
+  "subject": "private shared admission effects with distinct public and native transaction owners"
+}

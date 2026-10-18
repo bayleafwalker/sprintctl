@@ -1,0 +1,40 @@
+{
+  "item": "sprintctl#2787",
+  "release_digest": "5168d9d2d0e5f56fd134331bdb4a3a38ccf7e4b976ae1a4b015917ce3b832b63",
+  "baseline_base": "0c53a5b86ff8e9d17282e5c1dad074acdf597e6f",
+  "candidate_base": "7b221ea3732bffbce03d0a7fab797f8939bf6872",
+  "base_change": "one accepted reference documentation file; three owned product files byte-identical",
+  "product_edits": false,
+  "new_shared_cases_per_backend": 30,
+  "additional_pg_cases": 6,
+  "actual_selection_results": {
+    "local_passed": 141,
+    "local_seconds": 31.1,
+    "pg_passed": 304,
+    "pg_seconds": 9.38,
+    "pg_deselected": 1249,
+    "pg_cleanup_zero": 10
+  },
+  "review": "Native source-owner and dedicated independent oracle review CLEAR before product edits; reviewer independently SQLite30pass. Added explicit primary PG READ COMMITTED fixture preflight per advisory, reran304PG.",
+  "test_sha256": {
+    "tests/_reserve_admission_contract.py": "d9c4dad8eda3129c4472fe916183a891baa2e4a5873a9dfd4971fadb98b53f24",
+    "tests/test_reserve_admission.py": "c4d6902698df3b56a95321e774fe447adf190c8dfade226a25951fba12081f13",
+    "tests/pg/test_reserve_admission.py": "552ec762aace30304e7564e47afd95979fcdbf0e9f83bdf41fab9ba0070487a4"
+  },
+  "baseline_source_sha256": {
+    "sprintctl/db.py": "af898261c65bc15800f53342f3457de68692c73329848369b1847c791957ce52",
+    "sprintctl/pg.py": "98f459a357054075359cb32d2c915d59e434184fd81a7016f5b045272eadf2cc",
+    "sprintctl/reservationcore.py": "22bb8385e53be827dba9204b4d93e877a9ad2f94c2c5e766b32a1c3817e7d422"
+  },
+  "log_sha256": {
+    "/tmp/sprintctl-2787-before-final-local.txt": "3a56410ee23bff9ea0d9d3194a714be4c9d850b13abf1c251602ba3c08d84624",
+    "/tmp/sprintctl-2787-before-final-local.xml": "a7d92f81d307673467894103d759e2793920c1e49c829dfa74ea9dd22b836d50",
+    "/tmp/sprintctl-2787-before-final-pg.txt": "a046095bc86d50869adf209a5de03f9c7a74c1f284a2b06818bf5c08378c4375",
+    "/tmp/sprintctl-2787-before-final-pg.xml": "009411d2087658839892e6aba47f3d352c388c5dc7e22bc4deb3462acdcd2874"
+  },
+  "limits": [
+    "Actual bounded default-isolation schedules and examples only, no universal parity or runtime identity proof",
+    "Original test-only truthiness/thread-connection assumption failures retained separately, not product defects",
+    "Public and native transaction surfaces remain distinct"
+  ]
+}
