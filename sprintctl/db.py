@@ -2563,25 +2563,24 @@ def record_decision_keyed(
         # (PostgreSQL takes an advisory lock on the key instead).
         if not conn.in_transaction:
             conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute("SELECT * FROM work_item WHERE id = ?", (item_id,)).fetchone()
-        if row is None:
-            raise ValueError(f"Item #{item_id} not found")
-        item = dict(row)
-        if idempotency_key is not None:
-            replayed = _decisions.replay_or_conflict(
-                _keyed_decision(conn, idempotency_key), item_id, decision, idempotency_key
-            )
-            if replayed is not None:
-                conn.rollback()
-                return replayed, True
-        current_revision = item_status_revision(item)
-        if expected_revision is not None and expected_revision != current_revision:
-            raise StatusConflict(
-                f"Item #{item_id} status revision mismatch: "
-                f"expected {expected_revision}, current {current_revision}"
-            )
-        remark = _decisions.is_legacy_remark_target(item)
-        recorded = _decide_locked(conn, item, decision)
+        def lock_item(ident):
+            row = conn.execute("SELECT * FROM work_item WHERE id = ?", (ident,)).fetchone()
+            return dict(row) if row is not None else None
+
+        outcome = _workitemcore._record_decision_keyed_locked(
+            _workitemcore._KeyedDecisionParticipant(
+                lock_item=lock_item,
+                keyed_decision=lambda key: _keyed_decision(conn, key),
+                status_revision=lambda item: item_status_revision(item),
+                decide=lambda item, value: _decide_locked(conn, item, value),
+            ),
+            item_id, decision, idempotency_key=idempotency_key,
+            expected_revision=expected_revision,
+        )
+        if outcome.replayed:
+            conn.rollback()
+            return outcome.recorded, True
+        item, recorded, remark = outcome.item, outcome.recorded, outcome.legacy_remark
         _insert_event(
             conn,
             int(item["sprint_id"]),

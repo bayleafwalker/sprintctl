@@ -1,0 +1,51 @@
+{
+  "item": "sprintctl#2789",
+  "release": "3e5a3d56bb0338a7aaf960ab0e0f1cfe77661af15d1737b6901926407d6d233b",
+  "source_base": "0c53a5b86ff8e9d17282e5c1dad074acdf597e6f",
+  "product_edits": false,
+  "review": "CLEAR",
+  "test_files": {
+    "tests/_keyed_decision_contract.py": "8c41def15b4d15e28a6f39dde4f9647cbbef4ac712e9fa8b2a6e70a72bb5bb52",
+    "tests/test_keyed_decision_workflow.py": "c7600189c9a1a3a9e8c19eac2d2ae1db2582950f228cc5b0ca8a642696d31840",
+    "tests/pg/test_keyed_decision_workflow.py": "8366290da9998a044d649b15601ccb6d443b4661cf5264cc8b5aeeb2769ef0db"
+  },
+  "results": {
+    "local": [
+      {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "311",
+        "time": "150.688",
+        "timestamp": "2026-10-18T18:55:33.368798+03:00",
+        "hostname": "workstation"
+      }
+    ],
+    "pg": [
+      {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "487",
+        "time": "20.040",
+        "timestamp": "2026-10-18T18:55:47.873807+03:00",
+        "hostname": "workstation"
+      }
+    ]
+  },
+  "shared_cases_per_backend": 46,
+  "additional_pg_cases": 23,
+  "artifacts": {
+    "/tmp/sprintctl-2789-local-before.xml": "407bad9eec4aa0e2ac5b81ac306dec8f9f264b8c4c2261a92a6865edfe0ad99c",
+    "/tmp/sprintctl-2789-local-before.txt": "b244e9b985cc199e1e07c803a9174b69670b9acc4620d236eddf5270f494bfdf",
+    "/tmp/sprintctl-2789-pg-before.xml": "8c2cb9db3b850ac5c937e263ae53c50e0dd8306df002eac069e5301b634c1539",
+    "/tmp/sprintctl-2789-pg-before.txt": "5400a4eedeb2d6e5964cf76a5ab5fdce18d678d2681c384e7ca63b46f375d008"
+  },
+  "limits": "Paired examples and two deterministic same-key races/backend, observed actual precommit wait; response-discard reconnect is not physical crash. Existing SQLite implicit caller commit/rollback and PG managed/TPC limitations characterized, not repaired. Returned fresh and replay object identities retained. Legacy awaiting fixtures reuse existing disposable owner harness. Prior draft310local/68PG runs historical before race/replay refinement; test-only fixture default-goal assumption corrected before source edits.",
+  "review_corrections": [
+    "Observe held first writer and contender wait, not barrier scheduling alone",
+    "Spy real replay lookup object before helper handoff and forbid fresh callbacks"
+  ]
+}
