@@ -1,0 +1,63 @@
+{
+  "schema_version": "schema-observation/v1",
+  "source_git_sha": "e31124de724e4716ffbe71ca021394f742b3ec39",
+  "observed_at": "2026-10-18",
+  "environment": "fresh temporary SQLite and disposable localhost PostgreSQL16.15",
+  "scope": "metadata-only observation; not a schema/retention contract",
+  "probe_source_sha256": "711d828be80bf136bc56308b7daa393c4190b9ef8a0151c5502d3e86e08a7e46",
+  "metadata": {
+    "postgresql_archival_columns": [
+      {
+        "column_name": "claim_token",
+        "table_name": "claim_history"
+      },
+      {
+        "column_name": "lease_epoch",
+        "table_name": "claim_history"
+      },
+      {
+        "column_name": "lease_epoch",
+        "table_name": "terminal_recovery_ledger"
+      }
+    ],
+    "postgresql_history_guards": [
+      {
+        "table_name": "terminal_recovery_audit",
+        "tgname": "terminal_recovery_audit_immutable"
+      },
+      {
+        "table_name": "terminal_recovery_ledger",
+        "tgname": "terminal_recovery_ledger_immutable"
+      }
+    ],
+    "postgresql_live_claim": false,
+    "sqlite_archive_columns": [
+      "agent",
+      "branch",
+      "claim_token",
+      "claim_type",
+      "commit_sha",
+      "created_at",
+      "exclusive",
+      "expires_at",
+      "heartbeat",
+      "hostname",
+      "id",
+      "instance_id",
+      "lease_epoch",
+      "pid",
+      "pr_ref",
+      "runtime_session_id",
+      "status",
+      "work_item_id",
+      "worktree_path"
+    ],
+    "sqlite_live_claim": false
+  },
+  "limits": [
+    "No shared database or archive data queried.",
+    "No production row mutation, archive removal, DDL policy or retention decision.",
+    "Fresh layout is not a live-shaped historical PostgreSQL upgrade proof.",
+    "Observed guard presence does not establish privileged TRUNCATE/DDL protection."
+  ]
+}

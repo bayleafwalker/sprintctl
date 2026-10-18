@@ -1,0 +1,69 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.claim-archive-criteria-1238",
+  "contract_ref": {
+    "doc_id": "sprintctl.claim-archive-criteria-1238",
+    "revision": "sha256:8257feb7e4160ed7ea95f00a0abb1c1cc7e4d559d34e895db44822e282856ee2"
+  },
+  "implementation_sha": "e31124de724e4716ffbe71ca021394f742b3ec39",
+  "depth": 1,
+  "environment": {
+    "backend": "fresh temporary SQLite and private PostgreSQL16.15",
+    "isolation": "metadata-only schema probe; no shared database or historical archive rows",
+    "tool_versions": {
+      "Python": "3.13.16",
+      "pytest": "9.0.2",
+      "PostgreSQL": "16.15"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": null,
+    "bounds": {
+      "schema_probe_cases": 1,
+      "shared_local_cases": 83,
+      "shared_native_pg_cases": 49
+    },
+    "faults_exercised": [
+      "criterion contradictions identified by current metadata/source and existing advisory examples"
+    ]
+  },
+  "claims": [
+    {
+      "property": "Observed fresh layouts have no live claim table but retain specified historical columns/guards",
+      "result": "example-tested",
+      "evidence": [
+        "docs/evidence/claim-archive-schema-observation-20261018.json"
+      ]
+    },
+    {
+      "property": "Current local cutover/advisory examples pass without restoring obsolete exclusivity",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_core.py:TestEdgeCases.test_upgrade_across_the_cutover_archives_then_drops_the_claim_relation",
+        "tests/test_reservations.py"
+      ]
+    },
+    {
+      "property": "Archive policy, historical PG upgrade qualification and native prerequisites remain unresolved",
+      "result": "documented-only",
+      "evidence": [
+        "docs/evidence/claim-archive-criteria-1238-20261018.md"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Native literal no claim_token/lease_epoch anywhere criterion is contradicted by current archival layout; historical conflict-refusal criterion differs from advisory overlap",
+      "trace_ref": "docs/evidence/claim-archive-schema-observation-20261018.json"
+    }
+  ],
+  "notes": [
+    "83 shared local tests passed2.05s;50disposablePGcases passed5.50s includes28nativeowner+21intake+1freshschema probe;3 fixturecleanups/zero rows. Shared native tests are not historical PG migration/data-preservation qualification.",
+    "One-off metadata probe SHA256711d828be80bf136bc56308b7daa393c4190b9ef8a0151c5502d3e86e08a7e46 removed from tests after execution; retained observation does not add a regression oracle deciding archival retention.",
+    "Both schemas retain claim_history claim_token/lease_epoch; PG terminal recovery ledger retains lease_epoch and ledger/audit UPDATE/DELETE guard triggers. No privileged TRUNCATE/DDL protection proof or archive removal performed.",
+    "No native status, prerequisite edge, terminal decision, schema, archive contents, API/grant, deployment or foundation selection changed.1237/1164/1244 gates stay open; release verification reservation362 after evidence handoff.",
+    "Independent findings-first/optimistic criterion review clear for evidence publication only, not completion or archival policy.",
+    "Final documentation checks22passed0.06s; packet validators/whitespace and independent final artifact review clear for evidence publication only."
+  ]
+}
