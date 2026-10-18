@@ -500,7 +500,10 @@ class SQLiteMaintenanceCapabilityStore:
                     MaintenanceResourceStore(self).record_current_in_transaction(capability_id)
                 self.conn.commit()
                 return duplicate
-            if now >= frozen.expires_at:
+            # Audit time cannot admit a stale window or refuse a valid one.
+            # Observe the database after acquiring the writer transaction and
+            # checking exact replay, just as transitions do.
+            if self._decision_time() >= frozen.expires_at:
                 raise MaintenanceCapabilityError("expired envelopes cannot be prepared")
             if self.conn.execute("SELECT 1 FROM maintenance_capability WHERE capability_id = ?", (capability_id,)).fetchone():
                 raise MaintenanceCapabilityError("capability_id already exists; capabilities cannot be renewed or replaced")
@@ -589,14 +592,14 @@ class PostgresMaintenanceCapabilityStore:
         digest = hashlib.sha256(_canonical({"capability_id": capability_id, "envelope_digest": frozen.digest, "actor": actor})).hexdigest()
         try:
             with self.conn.cursor() as cur:
-                if resource:
-                    # Serialize first delivery and lost-response retries for the
-                    # same action root before either the receipt or opaque
-                    # resource binding is inspected or allocated.
-                    cur.execute(
-                        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-                        (f"{self.repo_id}:{capability_id}",),
-                    )
+                # All prepare paths share this lock: an INSERT conflict could
+                # otherwise wait beyond expiry after checking the clock, and a
+                # resource prepare must also serialize with ordinary prepare.
+                # Inspect exact replay and observe time only after the wait.
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    (f"{self.repo_id}:{capability_id}",),
+                )
                 duplicate = self._duplicate(cur, capability_id, request_id, digest)
                 if duplicate:
                     if resource:
@@ -604,7 +607,7 @@ class PostgresMaintenanceCapabilityStore:
                         MaintenanceResourceStore(self).record_current_in_transaction(capability_id)
                     self.conn.commit()
                     return duplicate
-                if now >= frozen.expires_at:
+                if self._decision_time(cur) >= frozen.expires_at:
                     raise MaintenanceCapabilityError("expired envelopes cannot be prepared")
                 cur.execute("SELECT 1 FROM maintenance_capability WHERE repo_id = %s AND capability_id = %s FOR UPDATE", (self.repo_id, capability_id))
                 if cur.fetchone():

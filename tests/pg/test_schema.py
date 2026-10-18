@@ -6,7 +6,10 @@ skip machinery, and helpers.
 """
 from __future__ import annotations
 
+from datetime import timedelta
+import time
 import pytest
+from tests.test_maintenance_capability import shifted_envelope
 
 from tests.pg._shared import (
     pg,
@@ -45,6 +48,98 @@ pytestmark = PG_MARKS
 
 
 class TestMaintenanceCapabilityLifecycle:
+    @pytest.mark.parametrize("resource", [False, True])
+    def test_prepare_uses_clock_after_waiting_for_writer(self, store, pg_test_scope, resource):
+        repo_id = pg_test_scope("maintenance-prepare-wait")
+        capability_id = f"mcap:{uuid.uuid4()}"
+        value = shifted_envelope(timedelta(hours=-1, seconds=4))
+        state = {}
+        ready = threading.Event()
+
+        def prepare_after_lock():
+            with psycopg.connect(_PG_URL, row_factory=dict_row) as conn:
+                state["pid"] = conn.info.backend_pid
+                ready.set()
+                lifecycle = PostgresMaintenanceCapabilityStore(pg.PgStore(conn=conn, repo_id=repo_id))
+                try:
+                    lifecycle.prepare(capability_id=capability_id, request_id=str(uuid.uuid4()),
+                                      envelope=value, actor="operator", at=AT, resource=resource)
+                    state["outcome"] = "accepted"
+                except MaintenanceCapabilityError as error:
+                    state["outcome"] = str(error)
+
+        store.conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"{repo_id}:{capability_id}",))
+        worker = threading.Thread(target=prepare_after_lock)
+        worker.start()
+        try:
+            assert ready.wait(5)
+            limit = time.monotonic() + 10
+            waiting_seen = False
+            waiting_while_valid = False
+            while time.monotonic() < limit:
+                row = store.conn.execute(
+                    "SELECT statement_timestamp() >= %s::timestamptz AS expired, "
+                    "EXISTS (SELECT 1 FROM pg_locks WHERE pid=%s AND NOT granted) AS waiting",
+                    (value["window"]["expires_at"], state["pid"]),
+                ).fetchone()
+                waiting_seen = waiting_seen or row["waiting"]
+                waiting_while_valid = waiting_while_valid or (row["waiting"] and not row["expired"])
+                if waiting_seen and row["expired"]:
+                    break
+                time.sleep(0.01)
+            assert waiting_while_valid and row["expired"]
+        finally:
+            store.conn.commit()  # Release the writer only after database expiry.
+            worker.join(10)
+        assert not worker.is_alive()
+        assert state["outcome"] == "expired envelopes cannot be prepared"
+        assert PostgresMaintenanceCapabilityStore(pg.PgStore(conn=store.conn, repo_id=repo_id)).get(capability_id) is None
+
+    @pytest.mark.parametrize("resource", [False, True])
+    def test_prepare_exact_replay_after_database_expiry(self, store, pg_test_scope, resource):
+        lifecycle = PostgresMaintenanceCapabilityStore(pg.PgStore(
+            conn=store.conn, repo_id=pg_test_scope("maintenance-expired-replay")))
+        value = shifted_envelope(timedelta(hours=-1, seconds=3))
+        arguments = dict(capability_id=f"mcap:{uuid.uuid4()}", request_id=str(uuid.uuid4()),
+                         envelope=value, actor="operator", at=AT, resource=resource)
+        original = lifecycle.prepare(**arguments)
+        limit = time.monotonic() + 10
+        while time.monotonic() < limit:
+            expired = store.conn.execute("SELECT statement_timestamp() >= %s::timestamptz AS expired",
+                                         (value["window"]["expires_at"],)).fetchone()["expired"]
+            if expired:
+                break
+            time.sleep(0.01)
+        assert expired
+        assert lifecycle.prepare(**arguments) == {**original, "duplicate": True}
+        count = store.conn.execute("SELECT count(*) AS count FROM maintenance_capability_receipt "
+                                   "WHERE repo_id=%s AND capability_id=%s",
+                                   (lifecycle.repo_id, arguments["capability_id"])).fetchone()["count"]
+        assert count == 1
+
+    @pytest.mark.parametrize("resource", [False, True])
+    @pytest.mark.parametrize("expired", [False, True])
+    def test_prepare_clock_is_database_authority(self, store, pg_test_scope, resource, expired):
+        repo_id = pg_test_scope("maintenance-prepare-clock")
+        lifecycle = PostgresMaintenanceCapabilityStore(pg.PgStore(conn=store.conn, repo_id=repo_id))
+        arguments = dict(
+            capability_id=f"mcap:{uuid.uuid4()}", request_id=str(uuid.uuid4()),
+            envelope=shifted_envelope(timedelta(hours=-3)) if expired else envelope(),
+            actor="operator", at=AT if expired else "2099-01-01T00:00:00Z", resource=resource,
+        )
+        if expired:
+            with pytest.raises(MaintenanceCapabilityError, match="expired envelopes cannot be prepared"):
+                lifecycle.prepare(**arguments)
+            with store.conn.cursor() as cur:
+                for table in ("maintenance_capability", "maintenance_capability_receipt", "maintenance_resource"):
+                    cur.execute(f"SELECT COUNT(*) AS count FROM {table} WHERE repo_id=%s", (repo_id,))
+                    assert cur.fetchone()["count"] == 0
+            store.conn.rollback()
+        else:
+            result = lifecycle.prepare(**arguments)
+            assert result["state"] == "prepared"
+            assert lifecycle.prepare(**{**arguments, "at": AT}) == {**result, "duplicate": True}
+
     def test_postgres_matches_exact_plan_lifecycle_and_replay(self, store, pg_test_scope):
         repo_id = pg_test_scope("maintenance-lifecycle")
         lifecycle = PostgresMaintenanceCapabilityStore(
