@@ -1,0 +1,14 @@
+{
+  "phase": "BEFORE repaired harness requalification",
+  "item": "sprintctl#2810",
+  "change": "Move optional psycopg.sql import into PostgreSQL-only remote_state helper; module collection follows existing PG_MARKS when remote extra is absent. No product change or weakened runtime assertion.",
+  "historical_qualified_path": "tests/pg/test_producer_restart_sync.py",
+  "historical_sha256": "29c9c3dbedf27e63dc774774d8954b7c3e2065437a485041987f47d6fd9de4a7",
+  "historical_archive": "verification/fixtures/producer-restart-sync-qualified-pg-2810.py",
+  "repaired_path": "tests/pg/test_producer_restart_sync.py",
+  "repaired_sha256": "a43e68e700b078bcf5d4dbee50e329c7c0ba63436f82f208830caf08d09aaf89",
+  "historical_base": "32bc4e6b3b1fa1c369fcd139605d0dff6795488e",
+  "publication_base": "974107f0a3bc13681d2408c3f8b78b23571c67ed",
+  "failed_ci_run": "https://github.com/bayleafwalker/sprintctl/actions/runs/39297478354",
+  "historical_result_attribution": "Original frozen result remains unchanged. Its PG harness path/digest identifies the original campaign; exact original bytes now also resolve via historical_archive. New campaign evidence will be recorded separately."
+}

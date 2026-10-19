@@ -1,0 +1,27 @@
+{
+  "phase": "accepted-source and fixed interfaces BEFORE new test authoring",
+  "base": "1ec78fa9a2f1dbacc4d5ec832c14b961e09abc12",
+  "item": "sprintctl#2810",
+  "release": "01b2473fd9cb1e7624e7333977cecb1fa9ab553d7ec4e189e1bca2f4f24d892b",
+  "reservation": 390,
+  "plan_sha256": "f19ed78f4301735884e0c0c07b1341e8c133bde848a2c04821ac4b4d7b1e1af5",
+  "files": {
+    "sprintctl/outbox.py": "aac1bf2b9131ade3c83d36ef0b8d66486677d98b6cebcbc1f0bdf2c85da84444",
+    "sprintctl/sync.py": "f8d5dd2c0cc3c2601822a5912e8cf83987629bade0d8f1e1609debfbf3602fa6",
+    "sprintctl/projection.py": "0a267ff5c85b93d033f3d1055ceb21db7598e52582f16c96d7208b0be03ff7b1",
+    "sprintctl/pg.py": "a95472c2b2b5e052880808b7b67407c26d05b972d7978fa8c03b71389b1eb6d9",
+    "sprintctl/contracts.py": "ec19c3020e4dfa22041198f37c3b2788307e7ca357acf4419e1593f901f15183",
+    "sprintctl/authority.py": "02ecde048c010160d1d0f8fc8e84442cf02f6b375ead03f0308a1b3d142eecc4",
+    "tests/_process_recovery_worker.py": "3e514298a274bbb866ae4c080afa51debf0595542d0ca568bde12a4bed0bc12f",
+    "tests/test_abrupt_process_recovery.py": "13d7b39a330a9f7f69ba906e671e089d355cfe1c62be02a5973fb70d60234d28",
+    "tests/test_outbox.py": "7c63b715bf56be3acb4dadbeb0f26b59fbae0371c9f49c28df11051477a4c694",
+    "tests/test_sync.py": "c9d0c36f5d7cb9c3b72732937606f24b59b4966712d92e56ee260c694c2cfa52",
+    "tests/pg/test_outbox.py": "3567f7a90093adfaac01bc1dcb7bf23e443f6dcea31ae9fcdb9a618d220c534d",
+    "tests/pg/test_authority.py": "bacb082abc86cc836e9382d8160457577ca31eb27093f11665b805b3f8c60bc2",
+    "tests/pg/_shared.py": "0ea3d87634bf17312ef68f923c184d354bca4b8ae082bd918374cc319f48d70d",
+    "scripts/pg-disposable-tests.sh": "bd930ca6e4956a033cfb9d1909bd4fb7fffe44de29350079fbfddeecbe401492",
+    "docs/plans/adr-outbox-sync-model.md": "bbfb30b9d7b7c5802dc2852529464d6ccd79ccf9567f241b5d06778a4ef4fa1d"
+  },
+  "product_edit_permission": "none; test/support/evidence only",
+  "oracle_freeze": "after authoring; before final qualification"
+}

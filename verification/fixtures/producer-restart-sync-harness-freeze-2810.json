@@ -1,0 +1,46 @@
+{
+  "phase": "AFTER authoring and independent oracle/worker CLEAR; BEFORE registered final qualification",
+  "item": "sprintctl#2810",
+  "release": "01b2473fd9cb1e7624e7333977cecb1fa9ab553d7ec4e189e1bca2f4f24d892b",
+  "reservation": 390,
+  "accepted_base": "32bc4e6b3b1fa1c369fcd139605d0dff6795488e",
+  "harness_sha256": {
+    "tests/_producer_restart_sync_oracle.py": "5e087394f5d7d16f4c2bd96659aa12bf8a0a1fe05f7d1624b22dd7cb4e1eb65e",
+    "tests/_producer_restart_sync_worker.py": "1b835c9b2e5a4b7396ee6b610ed3a1bb3e330bd37ace083f59e3cc20f7e0e906",
+    "tests/pg/test_producer_restart_sync.py": "29c9c3dbedf27e63dc774774d8954b7c3e2065437a485041987f47d6fd9de4a7",
+    "tests/test_producer_restart_sync_oracle.py": "ec2ccd6564ef4294b0ce6643aa3108345306a1d227ca5c578c5ba3087a1ea484"
+  },
+  "source_sha256": {
+    "sprintctl/outbox.py": "aac1bf2b9131ade3c83d36ef0b8d66486677d98b6cebcbc1f0bdf2c85da84444",
+    "sprintctl/sync.py": "f8d5dd2c0cc3c2601822a5912e8cf83987629bade0d8f1e1609debfbf3602fa6",
+    "sprintctl/projection.py": "0a267ff5c85b93d033f3d1055ceb21db7598e52582f16c96d7208b0be03ff7b1",
+    "sprintctl/pg.py": "9f839d03935720758476ff707ecebcd0e3a73725e5919bf9b1957d2e898a2851",
+    "sprintctl/contracts.py": "ec19c3020e4dfa22041198f37c3b2788307e7ca357acf4419e1593f901f15183",
+    "sprintctl/authority.py": "02ecde048c010160d1d0f8fc8e84442cf02f6b375ead03f0308a1b3d142eecc4",
+    "tests/_process_recovery_worker.py": "3e514298a274bbb866ae4c080afa51debf0595542d0ca568bde12a4bed0bc12f",
+    "tests/test_abrupt_process_recovery.py": "13d7b39a330a9f7f69ba906e671e089d355cfe1c62be02a5973fb70d60234d28",
+    "tests/test_outbox.py": "7c63b715bf56be3acb4dadbeb0f26b59fbae0371c9f49c28df11051477a4c694",
+    "tests/test_sync.py": "c9d0c36f5d7cb9c3b72732937606f24b59b4966712d92e56ee260c694c2cfa52",
+    "tests/pg/test_outbox.py": "3567f7a90093adfaac01bc1dcb7bf23e443f6dcea31ae9fcdb9a618d220c534d",
+    "tests/pg/test_authority.py": "bacb082abc86cc836e9382d8160457577ca31eb27093f11665b805b3f8c60bc2",
+    "tests/pg/_shared.py": "0ea3d87634bf17312ef68f923c184d354bca4b8ae082bd918374cc319f48d70d",
+    "scripts/pg-disposable-tests.sh": "bd930ca6e4956a033cfb9d1909bd4fb7fffe44de29350079fbfddeecbe401492",
+    "docs/plans/adr-outbox-sync-model.md": "bbfb30b9d7b7c5802dc2852529464d6ccd79ccf9567f241b5d06778a4ef4fa1d"
+  },
+  "plan_sha256": "f19ed78f4301735884e0c0c07b1341e8c133bde848a2c04821ac4b4d7b1e1af5",
+  "chronology": "Preauthor source1ec and existing30local/33PG baseline retained. Source refresh32bc proved only4acceptedReleasePGhelperASTs changed. Rebase-stage oracle hashes precede last producer-return/runtime assertions; final reviewed four hashes here supersede that stage only. No product edit.",
+  "bounds": {
+    "actual_pg_histories": 2,
+    "shared_local_control_cases": 16,
+    "producer_incarnations_per_history": 3,
+    "independent_raw_observers_per_history": 6,
+    "max_records": 4,
+    "marker_input_bytes": 16384,
+    "worker_output_bytes": 65536,
+    "marker_deadline_seconds": 20,
+    "reap_deadline_seconds": 10,
+    "sqlite_busy_seconds": 0.2,
+    "sqlite_progress_seconds": 2
+  },
+  "review": "Independent final oracle/worker CLEAR exact4hashes; final qualification has not run."
+}
