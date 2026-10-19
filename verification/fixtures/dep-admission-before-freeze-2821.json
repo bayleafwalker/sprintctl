@@ -1,0 +1,135 @@
+{
+  "accepted_base": "4a59bd6afddb6f6a6fe86ab80a27fb4d28ea11c9",
+  "collected_nodes": {
+    "local": [
+      "tests/test_dep_admission.py::TestSqliteDepAdmission::test_guard_order_preserves_caller_and_all_durable_rows[self-existing]",
+      "tests/test_dep_admission.py::TestSqliteDepAdmission::test_guard_order_preserves_caller_and_all_durable_rows[self-missing]",
+      "tests/test_dep_admission.py::TestSqliteDepAdmission::test_guard_order_preserves_caller_and_all_durable_rows[both-missing]",
+      "tests/test_dep_admission.py::TestSqliteDepAdmission::test_guard_order_preserves_caller_and_all_durable_rows[missing-first]",
+      "tests/test_dep_admission.py::TestSqliteDepAdmission::test_guard_order_preserves_caller_and_all_durable_rows[missing-second]",
+      "tests/test_dep_admission.py::TestSqliteDepAdmission::test_second_lookup_resolves_current_backend_binding[success]",
+      "tests/test_dep_admission.py::TestSqliteDepAdmission::test_second_lookup_resolves_current_backend_binding[exception]",
+      "tests/test_dep_admission.py::TestSqliteDepAdmission::test_insert_and_duplicate_keep_commit_before_final_id_read[False]",
+      "tests/test_dep_admission.py::TestSqliteDepAdmission::test_insert_and_duplicate_keep_commit_before_final_id_read[True]",
+      "tests/test_dep_admission.py::TestSqliteDepAdmission::test_reverse_cross_sprint_and_active_endpoints_remain_legal",
+      "tests/test_dep_admission.py::TestSqliteDepAdmission::test_real_insert_error_keeps_backend_failure_state_until_caller_rollback",
+      "tests/test_dep_admission.py::TestSqliteDepAdmission::test_real_final_read_failure_does_not_undo_committed_effect",
+      "tests/test_dep_admission.py::TestSqliteDepAdmission::test_commit_omission_falsifier_fails_durable_edge_assertion",
+      "tests/test_dep_admission.py::TestSqliteDepAdmission::test_refusal_rollback_falsifier_fails_caller_assertion",
+      "tests/test_dep_admission.py::TestSqliteDepAdmission::test_idle_guard_lookup_transaction_consequence[self-existing]",
+      "tests/test_dep_admission.py::TestSqliteDepAdmission::test_idle_guard_lookup_transaction_consequence[self-missing]",
+      "tests/test_dep_admission.py::TestSqliteDepAdmission::test_idle_guard_lookup_transaction_consequence[both-missing]",
+      "tests/test_dep_admission.py::TestSqliteDepAdmission::test_idle_guard_lookup_transaction_consequence[missing-first]",
+      "tests/test_dep_admission.py::TestSqliteDepAdmission::test_idle_guard_lookup_transaction_consequence[missing-second]",
+      "tests/test_dep_admission.py::test_wrapper_preserves_raw_equality_ids_and_falsey_non_none[ids0-sqlite-wrapper]",
+      "tests/test_dep_admission.py::test_wrapper_preserves_raw_equality_ids_and_falsey_non_none[ids0-pg-wrapper]",
+      "tests/test_dep_admission.py::test_wrapper_preserves_raw_equality_ids_and_falsey_non_none[ids1-sqlite-wrapper]",
+      "tests/test_dep_admission.py::test_wrapper_preserves_raw_equality_ids_and_falsey_non_none[ids1-pg-wrapper]",
+      "tests/test_dep_admission.py::test_public_wrapper_passes_discriminator_and_seeded_mutant_fails[self-first-sqlite-wrapper]",
+      "tests/test_dep_admission.py::test_public_wrapper_passes_discriminator_and_seeded_mutant_fails[self-first-pg-wrapper]",
+      "tests/test_dep_admission.py::test_public_wrapper_passes_discriminator_and_seeded_mutant_fails[endpoint-order-sqlite-wrapper]",
+      "tests/test_dep_admission.py::test_public_wrapper_passes_discriminator_and_seeded_mutant_fails[endpoint-order-pg-wrapper]",
+      "tests/test_dep_admission.py::test_public_wrapper_passes_discriminator_and_seeded_mutant_fails[none-only-sqlite-wrapper]",
+      "tests/test_dep_admission.py::test_public_wrapper_passes_discriminator_and_seeded_mutant_fails[none-only-pg-wrapper]",
+      "tests/test_dep_admission.py::test_public_wrapper_passes_discriminator_and_seeded_mutant_fails[dynamic-lookup-sqlite-wrapper]",
+      "tests/test_dep_admission.py::test_public_wrapper_passes_discriminator_and_seeded_mutant_fails[dynamic-lookup-pg-wrapper]",
+      "tests/test_dep_admission.py::test_public_wrapper_passes_discriminator_and_seeded_mutant_fails[raw-ids-sqlite-wrapper]",
+      "tests/test_dep_admission.py::test_public_wrapper_passes_discriminator_and_seeded_mutant_fails[raw-ids-pg-wrapper]",
+      "tests/test_dep_admission.py::test_public_wrapper_passes_discriminator_and_seeded_mutant_fails[adapter-after-guards-sqlite-wrapper]",
+      "tests/test_dep_admission.py::test_public_wrapper_passes_discriminator_and_seeded_mutant_fails[adapter-after-guards-pg-wrapper]"
+    ],
+    "pg": [
+      "tests/pg/test_dep_admission.py::TestPostgresDepAdmission::test_guard_order_preserves_caller_and_all_durable_rows[self-existing]",
+      "tests/pg/test_dep_admission.py::TestPostgresDepAdmission::test_guard_order_preserves_caller_and_all_durable_rows[self-missing]",
+      "tests/pg/test_dep_admission.py::TestPostgresDepAdmission::test_guard_order_preserves_caller_and_all_durable_rows[both-missing]",
+      "tests/pg/test_dep_admission.py::TestPostgresDepAdmission::test_guard_order_preserves_caller_and_all_durable_rows[missing-first]",
+      "tests/pg/test_dep_admission.py::TestPostgresDepAdmission::test_guard_order_preserves_caller_and_all_durable_rows[missing-second]",
+      "tests/pg/test_dep_admission.py::TestPostgresDepAdmission::test_second_lookup_resolves_current_backend_binding[success]",
+      "tests/pg/test_dep_admission.py::TestPostgresDepAdmission::test_second_lookup_resolves_current_backend_binding[exception]",
+      "tests/pg/test_dep_admission.py::TestPostgresDepAdmission::test_insert_and_duplicate_keep_commit_before_final_id_read[False]",
+      "tests/pg/test_dep_admission.py::TestPostgresDepAdmission::test_insert_and_duplicate_keep_commit_before_final_id_read[True]",
+      "tests/pg/test_dep_admission.py::TestPostgresDepAdmission::test_reverse_cross_sprint_and_active_endpoints_remain_legal",
+      "tests/pg/test_dep_admission.py::TestPostgresDepAdmission::test_real_insert_error_keeps_backend_failure_state_until_caller_rollback",
+      "tests/pg/test_dep_admission.py::TestPostgresDepAdmission::test_real_final_read_failure_does_not_undo_committed_effect",
+      "tests/pg/test_dep_admission.py::TestPostgresDepAdmission::test_commit_omission_falsifier_fails_durable_edge_assertion",
+      "tests/pg/test_dep_admission.py::TestPostgresDepAdmission::test_refusal_rollback_falsifier_fails_caller_assertion",
+      "tests/pg/test_dep_admission.py::TestPostgresDepAdmission::test_idle_guard_lookup_transaction_consequence[self-existing]",
+      "tests/pg/test_dep_admission.py::TestPostgresDepAdmission::test_idle_guard_lookup_transaction_consequence[self-missing]",
+      "tests/pg/test_dep_admission.py::TestPostgresDepAdmission::test_idle_guard_lookup_transaction_consequence[both-missing]",
+      "tests/pg/test_dep_admission.py::TestPostgresDepAdmission::test_idle_guard_lookup_transaction_consequence[missing-first]",
+      "tests/pg/test_dep_admission.py::TestPostgresDepAdmission::test_idle_guard_lookup_transaction_consequence[missing-second]",
+      "tests/pg/test_dep_admission.py::test_foreign_repository_endpoint_is_missing[first]",
+      "tests/pg/test_dep_admission.py::test_foreign_repository_endpoint_is_missing[second]"
+    ]
+  },
+  "commands": {
+    "local": "UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-add-dep-local-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/test_dep_admission.py -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2821-before-local.xml",
+    "pg": "PATH=/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-add-dep-pg-env UV_OFFLINE=1 UV_FROZEN=1 UV_NO_SYNC=1 timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh -k dep_admission --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2821-before-pg.xml"
+  },
+  "created_at": "2026-10-19T19:08:28.980426+00:00",
+  "history": "Existing68local/7PG baseline; developmentv1actual18local/16PG;v2puremutants caught intendedfaults but overstrict pytest-message comparison caused12testfailures;v3format-onlyfix30local;v4idle-entrycoverage35local/21PG. None relabeled as frozen before campaign.",
+  "item": "sprintctl#2821",
+  "oracle_sha256": {
+    "tests/_dep_admission_contract.py": "b978afbfe5c973bdbab14d20906f33297ae04434fe9a60e4a01db084afca49e5",
+    "tests/pg/test_dep_admission.py": "3fbbe773eebc39b9fce63d991f1b817f15acb8ecb97e7ceb75d8bc768f0a96a7",
+    "tests/test_dep_admission.py": "2e927bfaee153d6b649bad92948c0fff8c2b1fb60d21c4e2b6e1cf3e03b72969"
+  },
+  "phase": "AFTER independent before-oracle review CLEAR; BEFORE frozen before-product campaign",
+  "release": "de6449769abbb7870843651c4f6f184998cdc08065908fa31b0d8631be78ca51",
+  "review": "Independent read-only reviewer CLEAR these exact3hashes after adding idle-entry guard coverage; root still must authorize product change after actual frozen campaign.",
+  "runtime": {
+    "local": {
+      "executable": "/tmp/sprintctl-add-dep-local-env/bin/python",
+      "imports": {
+        "sprintctl.db": {
+          "path": "/tmp/sprintctl-add-dep-guards-20261019/sprintctl/db.py",
+          "sha256": "27a4e70f871f015df177a31501d7123dfd0414fe393259213ec09537705bde30"
+        },
+        "sprintctl.depcore": {
+          "path": "/tmp/sprintctl-add-dep-guards-20261019/sprintctl/depcore.py",
+          "sha256": "f2f6f6b0c43108a5e6ebd333c12a9290ad15c8ab8a2d7e78993625608e252198"
+        },
+        "sprintctl.pg": {
+          "path": "/tmp/sprintctl-add-dep-guards-20261019/sprintctl/pg.py",
+          "sha256": "9f839d03935720758476ff707ecebcd0e3a73725e5919bf9b1957d2e898a2851"
+        }
+      },
+      "pytest": "9.0.2",
+      "python": "3.13.16 (main, Oct  1 2026, 20:59:14) [Clang 22.1.3 ]",
+      "sqlite": "3.53.1"
+    },
+    "pg": {
+      "executable": "/tmp/sprintctl-add-dep-pg-env/bin/python",
+      "imports": {
+        "sprintctl.db": {
+          "path": "/tmp/sprintctl-add-dep-guards-20261019/sprintctl/db.py",
+          "sha256": "27a4e70f871f015df177a31501d7123dfd0414fe393259213ec09537705bde30"
+        },
+        "sprintctl.depcore": {
+          "path": "/tmp/sprintctl-add-dep-guards-20261019/sprintctl/depcore.py",
+          "sha256": "f2f6f6b0c43108a5e6ebd333c12a9290ad15c8ab8a2d7e78993625608e252198"
+        },
+        "sprintctl.pg": {
+          "path": "/tmp/sprintctl-add-dep-guards-20261019/sprintctl/pg.py",
+          "sha256": "9f839d03935720758476ff707ecebcd0e3a73725e5919bf9b1957d2e898a2851"
+        }
+      },
+      "psycopg": "3.3.3",
+      "pytest": "9.0.2",
+      "python": "3.13.16 (main, Oct  1 2026, 20:59:14) [Clang 22.1.3 ]",
+      "sqlite": "3.53.1"
+    }
+  },
+  "source_sha256": {
+    "pyproject.toml": "7577786be7bb627d8c45499c5aba60b370914f50a268a3e5be89c98d2a8a9a51",
+    "scripts/pg-disposable-tests.sh": "bd930ca6e4956a033cfb9d1909bd4fb7fffe44de29350079fbfddeecbe401492",
+    "sprintctl/db.py": "27a4e70f871f015df177a31501d7123dfd0414fe393259213ec09537705bde30",
+    "sprintctl/depcore.py": "f2f6f6b0c43108a5e6ebd333c12a9290ad15c8ab8a2d7e78993625608e252198",
+    "sprintctl/pg.py": "9f839d03935720758476ff707ecebcd0e3a73725e5919bf9b1957d2e898a2851",
+    "tests/conftest.py": "451de85956d4d7d25a5eb6d6a68d2e196a8edbf23aebd301462a0dacce039812",
+    "tests/pg/_shared.py": "0ea3d87634bf17312ef68f923c184d354bca4b8ae082bd918374cc319f48d70d",
+    "tests/pg/test_ref_dep.py": "b758f332d4ce946d58875218da528de9f4c4258df6751756777bc18a60c76d24",
+    "tests/test_deps.py": "e7a928843d9455f78144020cfc655253ab28569cf09927ef6cfb2ea7d16273b3",
+    "uv.lock": "e5e692437b9cdd7620e9273fa316bcedd14db9b8f90f0662b5e9591c15063f3d"
+  }
+}

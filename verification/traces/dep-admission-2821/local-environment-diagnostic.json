@@ -1,0 +1,44 @@
+{
+  "recorded_at": "2026-10-19T19:24:16.071374+00:00",
+  "product_or_oracle_edits_after_original_failure": false,
+  "inherited_environment_names": [
+    "SPRINTCTL_BACKEND",
+    "SPRINTCTL_VUORO_PROFILE"
+  ],
+  "measured_nonsecret_selection": {
+    "SPRINTCTL_BACKEND": "served",
+    "SPRINTCTL_VUORO_PROFILE": "<inherited shared profile path>"
+  },
+  "environment_correction": "while IFS= read -r name; do unset \"$name\"; done < <(compgen -e | rg \"^SPRINTCTL_\")",
+  "original_local_command": "UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-add-dep-local-env UV_OFFLINE=1 timeout --foreground -k 30s 1800s uv run --frozen --no-sync pytest -q -m \"not pg and not perf\" --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2821-full-local.xml",
+  "diagnostic_command": "clear SPRINTCTL_* as above; UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-add-dep-local-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/test_agent_inbox_cli.py tests/test_reservations.py -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2821-sanitized-cli.xml",
+  "artifacts": {
+    "/tmp/sprintctl-2821-full-local.txt": "4d967aefed0627fbae7be0b704e2e757a0d66aa26650d5eeac1beebabead9fbc",
+    "/tmp/sprintctl-2821-full-local.xml": "0a50ab74db2158d9a9a39e3c9ac06bc316232cf91d8c9ef8c76ebe2f7bab188f",
+    "/tmp/sprintctl-2821-sanitized-cli.txt": "c234d4bd17f49b2bea9d7e1c8371d411b3735c514722156d88b87d1103076a01",
+    "/tmp/sprintctl-2821-sanitized-cli.xml": "5405ae9033b586d4e984f288ddb61e4476d3eb8efdb4ff0cb6e4546d121dd0aa"
+  },
+  "original_suite": {
+    "name": "pytest",
+    "errors": "0",
+    "failures": "21",
+    "skipped": "4",
+    "tests": "3267",
+    "time": "623.384",
+    "timestamp": "2026-10-19T22:12:17.464302+03:00",
+    "hostname": "workstation"
+  },
+  "sanitized_diagnostic_suite": {
+    "name": "pytest",
+    "errors": "0",
+    "failures": "0",
+    "skipped": "0",
+    "tests": "52",
+    "time": "6.388",
+    "timestamp": "2026-10-19T22:23:20.371233+03:00",
+    "hostname": "workstation"
+  },
+  "http_observability": "No actual served HTTP attempt is observed in failure traces. Inbox failures stop at backend-uncorroborated admission; reservation test fixtures replace owner methods or configuration with test doubles. Original full run has no complete transport instrumentation, so absence of HTTP requests or shared-state effects across that run is unknown.",
+  "sanitized_full_suite": "PASS:3263passed,4skipped,1810deselected in524.71s; see full-gates-receipt.json",
+  "independent_review": "Corroborated: outer _guard_served_command depends on inherited SPRINTCTL_BACKEND before inbox callbacks; failed reservation expectations expose added config lookup or deliberate backend test-double failure. No product/oracle edits required."
+}

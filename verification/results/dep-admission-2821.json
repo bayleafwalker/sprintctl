@@ -1,0 +1,128 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.dep-admission",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2821",
+    "revision": "native:release:de6449769abbb7870843651c4f6f184998cdc08065908fa31b0d8631be78ca51"
+  },
+  "implementation_sha": "4a59bd6afddb6f6a6fe86ab80a27fb4d28ea11c9",
+  "depth": 2,
+  "environment": {
+    "backend": "temporary SQLite3.53.1 / disposable PostgreSQL16.15",
+    "isolation": "SQLite native transaction behavior / PostgreSQL READ COMMITTED",
+    "tool_versions": {
+      "python": "3.13.16",
+      "pytest": "9.0.2",
+      "psycopg": "3.3.3"
+    }
+  },
+  "execution": {
+    "histories": 0,
+    "bounds": {
+      "shared_actual_cases_per_backend": 19,
+      "additional_pg_foreign_endpoint_cases": 2,
+      "synthetic_wrapper_cases": 4,
+      "pure_mutation_controls": 12,
+      "actual_database_mutation_controls_in_shared_cases": 4,
+      "concurrent_histories": 0
+    },
+    "faults_exercised": [
+      "Backend getter rebinding and exception",
+      "Scoped actual SQL INSERT trigger error",
+      "Exception after actual final ID SELECT",
+      "Omitted commit and caller rollback on refusal",
+      "Finite synthetic wrong wrappers for guard/binding/ID behavior"
+    ]
+  },
+  "claims": [
+    {
+      "property": "Self equality precedes any backend lookup or adapter construction; missing first endpoint precedes missing second endpoint",
+      "result": "example-tested",
+      "evidence": [
+        "verification/traces/dep-admission-2821/sprintctl-2821-before-receipt.json",
+        "verification/traces/dep-admission-2821/sprintctl-2821-after-receipt.json"
+      ]
+    },
+    {
+      "property": "Only None marks absence; raw IDs and equality semantics remain unchanged",
+      "result": "example-tested",
+      "evidence": [
+        "verification/traces/dep-admission-2821/sprintctl-2821-before-receipt.json",
+        "verification/traces/dep-admission-2821/sprintctl-2821-after-receipt.json"
+      ]
+    },
+    {
+      "property": "Each endpoint lookup resolves current backend get_work_item binding; identical lookup exceptions propagate",
+      "result": "example-tested",
+      "evidence": [
+        "verification/traces/dep-admission-2821/sprintctl-2821-before-receipt.json",
+        "verification/traces/dep-admission-2821/sprintctl-2821-after-receipt.json"
+      ]
+    },
+    {
+      "property": "Refusals preserve caller writes/savepoints and durable dep/work_item/event/reservation state",
+      "result": "example-tested",
+      "evidence": [
+        "verification/traces/dep-admission-2821/sprintctl-2821-before-receipt.json",
+        "verification/traces/dep-admission-2821/sprintctl-2821-after-receipt.json"
+      ]
+    },
+    {
+      "property": "Idle guard checks preserve native SQLite idle versus PG read transaction consequences",
+      "result": "example-tested",
+      "evidence": [
+        "verification/traces/dep-admission-2821/sprintctl-2821-before-receipt.json",
+        "verification/traces/dep-admission-2821/sprintctl-2821-after-receipt.json"
+      ]
+    },
+    {
+      "property": "Successful insertion and duplicate lookup commit prior caller writes before final ID read",
+      "result": "example-tested",
+      "evidence": [
+        "verification/traces/dep-admission-2821/sprintctl-2821-before-receipt.json",
+        "verification/traces/dep-admission-2821/sprintctl-2821-after-receipt.json"
+      ]
+    },
+    {
+      "property": "Actual INSERT failure preserves SQLite usable pending state versus PG failed transaction until caller rollback",
+      "result": "example-tested",
+      "evidence": [
+        "verification/traces/dep-admission-2821/sprintctl-2821-before-receipt.json",
+        "verification/traces/dep-admission-2821/sprintctl-2821-after-receipt.json"
+      ]
+    },
+    {
+      "property": "Failure after actual final ID read leaves already committed edge and caller writes durable",
+      "result": "example-tested",
+      "evidence": [
+        "verification/traces/dep-admission-2821/sprintctl-2821-before-receipt.json",
+        "verification/traces/dep-admission-2821/sprintctl-2821-after-receipt.json"
+      ]
+    },
+    {
+      "property": "Reverse, cross-sprint and active endpoints remain permitted; PG foreign endpoints remain missing",
+      "result": "example-tested",
+      "evidence": [
+        "verification/traces/dep-admission-2821/sprintctl-2821-before-receipt.json",
+        "verification/traces/dep-admission-2821/sprintctl-2821-after-receipt.json"
+      ]
+    },
+    {
+      "property": "Concurrent, atomic, crash-durable or global backend/provider equivalence; completion of parent2150 or EC05",
+      "result": "unknown"
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "Behavior-preserving extraction, not a defect repair: the independently reviewed frozen oracle passed against unchanged product before edits and against the candidate after root authorization. No pre-change RED is claimed.",
+    "implementation_sha pins the accepted pre-extraction base. Candidate whole-file source hashes and AST comparison are retained in verification/traces/dep-admission-2821/sprintctl-2821-after-source-comparison.json; exact final Git head and canonical CI are separate landing gates.",
+    "Before 35 local / 21 PostgreSQL passed with zero failures/errors/skips and one registered empty PostgreSQL cleanup; after the same exact nodes and same oracle hashes passed with the same cleanup result.",
+    "19 shared actual-database cases per backend include two real commit/refusal mutation controls; 2 extra PostgreSQL foreign-endpoint cases. The local total additionally includes 4 synthetic raw-value cases and 12 pure seeded mutation controls. These are not concurrent histories.",
+    "Raw JUnit properties retain complete relevant database rows and observed transaction states. IDs, UUIDs and timestamps remain real per-run values; assertions compare exact authored effects within each run, not byte equality between separately seeded before/after databases.",
+    "The historical freeze and receipt retain original absolute execution paths and timestamps. Adjacent copies of their referenced raw log/XML artifacts have identical bytes. No prior development run is relabeled as frozen evidence.",
+    "Independent reviewer cleared the before oracle, frozen before receipt and bounded product/source-after evidence. Full regression results and final packet review remain separate required gates.",
+    "Full disposable PostgreSQL suite: 1796 passed in119.70s, zero failures/errors/skips;92 registered fixture cleanups across4 names, all zero remaining rows. Raw full-suite log and JUnit are retained alongside the focused runs. Command: PATH=/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-add-dep-pg-env UV_OFFLINE=1 UV_FROZEN=1 UV_NO_SYNC=1 timeout --foreground -k30s 900s scripts/pg-disposable-tests.sh --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2821-full-pg.xml.",
+    "Initial full local launch retained inherited SPRINTCTL_BACKEND=served and shared profile. It ended21failed/3242passed/4skipped/1810deselected in623.49s; failures were CLI startup identity/scoped-config expectations. Identical source/oracle with inherited SPRINTCTL_* cleared passed all52 cases in the2 affected test files6.40s. Original failure and diagnosis are retained in local-environment-diagnostic.json; sanitized full-suite rerun remained pending (superseded by the terminal corrected local gate note below). Original logs lack complete transport instrumentation; absence of shared-state effects is not claimed.",
+    "Terminal corrected local gate:3263passed/4skipped/1810deselected in524.71s. No product/oracle edits after focused after campaign. All35frozen local and21frozen PG nodes present in respective full suites. Four explicit local skips: absent optional vuoro-service integration extra,2owned-PG-fixture opt-ins, release wheel built only by release workflow. Full commands, exact JUnit suite metadata, skip details and raw hashes are retained in verification/traces/dep-admission-2821/full-gates-receipt.json. User requested handoff: final full-local packet review, final staging/scan, commit/PR/canonical CI and root landing/native acceptance remain pending."
+  ]
+}
