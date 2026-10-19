@@ -1,0 +1,44 @@
+{
+  "item": "sprintctl#2810",
+  "implementation_base": "974107f0a3bc13681d2408c3f8b78b23571c67ed",
+  "historical_attribution": {
+    "phase": "BEFORE repaired harness requalification",
+    "item": "sprintctl#2810",
+    "change": "Move optional psycopg.sql import into PostgreSQL-only remote_state helper; module collection follows existing PG_MARKS when remote extra is absent. No product change or weakened runtime assertion.",
+    "historical_qualified_path": "tests/pg/test_producer_restart_sync.py",
+    "historical_sha256": "29c9c3dbedf27e63dc774774d8954b7c3e2065437a485041987f47d6fd9de4a7",
+    "historical_archive": "verification/fixtures/producer-restart-sync-qualified-pg-2810.py",
+    "repaired_path": "tests/pg/test_producer_restart_sync.py",
+    "repaired_sha256": "a43e68e700b078bcf5d4dbee50e329c7c0ba63436f82f208830caf08d09aaf89",
+    "historical_base": "32bc4e6b3b1fa1c369fcd139605d0dff6795488e",
+    "publication_base": "974107f0a3bc13681d2408c3f8b78b23571c67ed",
+    "failed_ci_run": "https://github.com/bayleafwalker/sprintctl/actions/runs/39297478354",
+    "historical_result_attribution": "Original frozen result remains unchanged. Its PG harness path/digest identifies the original campaign; exact original bytes now also resolve via historical_archive. New campaign evidence will be recorded separately."
+  },
+  "source_identity": "The final commit/tree is bound by the PR exact-head CI and native acceptance receipt; the repaired source bytes are pinned before this run by publication-freeze.",
+  "campaign": {
+    "local_passed": 46,
+    "pg_passed": 35,
+    "pg_deselected": 1733,
+    "pg_cleanup_scopes_empty": 7,
+    "without_optional_remote_extra": {
+      "local_passed": 16,
+      "pg_skipped": 2,
+      "reason": "Existing PG_MARKS skip PostgreSQL tests when psycopg/URL are unavailable; no collection error. These skips are not counted as PG qualification."
+    }
+  },
+  "commands": {
+    "local": "UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-restart-sync-local-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/test_producer_restart_sync_oracle.py tests/test_outbox.py tests/test_sync.py tests/test_abrupt_process_recovery.py -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2810-fixed-20261019-local.xml",
+    "pg": "PATH=/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-restart-sync-pg-env UV_OFFLINE=1 UV_NO_SYNC=1 timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh -k 'producer_restart_sync or test_outbox or test_authority' --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2810-fixed-20261019-pg.xml",
+    "without_remote_extra": "UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-2810-no-remote-env UV_OFFLINE=1 uv sync --frozen --extra dev --extra served; UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-2810-no-remote-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/pg/test_producer_restart_sync.py tests/test_producer_restart_sync_oracle.py -q --tb=short"
+  },
+  "artifacts": {
+    "verification/traces/producer-restart-sync-publication-2810/local.txt": "f84e346c603b927c63b79cc822a37da9e669a221cc37ab6fe4e94ffbeffa22cb",
+    "verification/traces/producer-restart-sync-publication-2810/local.xml": "c6b9997e4828602ba32b842b7b955bf939bfd92b88c390a574fdcf7d6b79344d",
+    "verification/traces/producer-restart-sync-publication-2810/observations.json": "7962cc28358d4f5401c29ceae6ac49d7adc8f26ddf8208ee4d982c36ee2bf4ee",
+    "verification/traces/producer-restart-sync-publication-2810/pg.txt": "78f5e2fd78b020b58a3ea2956a9d606a458045fea9047a676a0117b4eb7e435e",
+    "verification/traces/producer-restart-sync-publication-2810/pg.xml": "03aebe9001ca1d34f0ad297e5c389de24605a36055176d3456108a0e814c1644",
+    "verification/traces/producer-restart-sync-publication-2810/without-remote-extra.txt": "cde1e426809e954c1b6c7b391d4b66aa74110dd5d377c1e3dc79a0c0d2db002c"
+  },
+  "limits": "Historical qualified32bc artifacts retain their original hashes and attribution. Only optional import placement changed. New actual PG qualification passes all35 with7empty cleanup; no product change, physical durability or parent1131 closure."
+}

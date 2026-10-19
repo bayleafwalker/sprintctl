@@ -1,0 +1,237 @@
+{
+  "claims": [
+    {
+      "evidence": [
+        "verification/fixtures/producer-restart-sync-publication-2810.json",
+        "verification/traces/producer-restart-sync-publication-2810/observations.json"
+      ],
+      "property": "Committed observations and unsigned LOCAL requests retain every stored field across an owned producer SIGKILL after successful append return",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "verification/fixtures/producer-restart-sync-publication-2810.json",
+        "verification/traces/producer-restart-sync-publication-2810/observations.json"
+      ],
+      "property": "Fresh producer processes synchronize recovered observations to actual PostgreSQL and cache; replay returns the original offsets and records, then sequence4 adds exactly one new record",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "verification/fixtures/producer-restart-sync-publication-2810.json",
+        "verification/traces/producer-restart-sync-publication-2810/observations.json"
+      ],
+      "property": "LOCAL command prefix stays pending with its later observation and leaves all independently read remote authority tables unchanged",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "verification/fixtures/producer-restart-sync-publication-2810.json",
+        "verification/traces/producer-restart-sync-publication-2810/observations.json"
+      ],
+      "property": "Returned upload identities, duplicate flags, apply counts and separate ingest/authority watermarks match independently expected persisted records in every phase",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "verification/fixtures/producer-restart-sync-publication-2810.json",
+        "verification/traces/producer-restart-sync-publication-2810/observations.json"
+      ],
+      "property": "Six separately owned raw observers per history verify predeath, first recovery and postworker SQLite/cache state with a common bounded marker reader",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "verification/fixtures/producer-restart-sync-publication-2810.json",
+        "verification/traces/producer-restart-sync-publication-2810/observations.json"
+      ],
+      "property": "The same checkers reject seven persisted-state violations; four real bad checkpoints refuse qualification and five reached-stall controls exercise the actual marker deadline",
+      "result": "example-tested"
+    }
+  ],
+  "context_id": "sprintctl.producer-restart-sync",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2810",
+    "revision": "native:release:01b2473fd9cb1e7624e7333977cecb1fa9ab553d7ec4e189e1bca2f4f24d892b"
+  },
+  "counterexamples": [],
+  "depth": 2,
+  "environment": {
+    "executable": "/tmp/sprintctl-restart-sync-pg-env/bin/python",
+    "isolation": "not captured; independent observer read transactions are rolled back between committed phases",
+    "postgresql": "16.15 (actual disposable runner log)",
+    "psycopg": "3.3.3",
+    "python": "3.13.16 (main, Oct  1 2026, 20:59:14) [Clang 22.1.3 ]",
+    "scope": "Temporary local files and registered disposable repository scopes only",
+    "sqlite": "3.53.1"
+  },
+  "execution": {
+    "actual_histories": {
+      "actual_deadline_reader_controls": 5,
+      "joined_restarts": 2,
+      "persisted_state_controls": 7,
+      "raw_observers_per_joined_history": 6,
+      "real_bad_markers": 4
+    },
+    "bounds": {
+      "actual_pg_histories": 2,
+      "independent_raw_observers_per_history": 6,
+      "marker_deadline_seconds": 20,
+      "marker_input_bytes": 16384,
+      "max_records": 4,
+      "producer_incarnations_per_history": 3,
+      "reap_deadline_seconds": 10,
+      "shared_local_control_cases": 16,
+      "sqlite_busy_seconds": 0.2,
+      "sqlite_progress_seconds": 2,
+      "worker_output_bytes": 65536
+    },
+    "commands": {
+      "local": "UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-restart-sync-local-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/test_producer_restart_sync_oracle.py tests/test_outbox.py tests/test_sync.py tests/test_abrupt_process_recovery.py -q --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2810-fixed-20261019-local.xml",
+      "pg": "PATH=/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-restart-sync-pg-env UV_OFFLINE=1 UV_NO_SYNC=1 timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh -k 'producer_restart_sync or test_outbox or test_authority' --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2810-fixed-20261019-pg.xml",
+      "without_remote_extra": "UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-2810-no-remote-env UV_OFFLINE=1 uv sync --frozen --extra dev --extra served; UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-2810-no-remote-env UV_OFFLINE=1 uv run --frozen --no-sync pytest tests/pg/test_producer_restart_sync.py tests/test_producer_restart_sync_oracle.py -q --tb=short"
+    },
+    "pg_cleanup_zero": 7,
+    "runs": {
+      "local": {
+        "direct_new_cases": 16,
+        "errors": 0,
+        "failures": 0,
+        "log": "verification/traces/producer-restart-sync-publication-2810/local.txt",
+        "log_sha256": "f84e346c603b927c63b79cc822a37da9e669a221cc37ab6fe4e94ffbeffa22cb",
+        "nodes": [
+          "tests.test_producer_restart_sync_oracle::test_same_checker_rejects_persisted_wrong_outbox[lost-first-retained sequence]",
+          "tests.test_producer_restart_sync_oracle::test_same_checker_rejects_persisted_wrong_outbox[next-next sequence]",
+          "tests.test_producer_restart_sync_oracle::test_same_checker_rejects_persisted_wrong_outbox[origin-origin identity]",
+          "tests.test_producer_restart_sync_oracle::test_same_checker_rejects_persisted_wrong_outbox[changed-payload-payload digest]",
+          "tests.test_producer_restart_sync_oracle::test_same_checker_rejects_persisted_wrong_outbox[consistent-partial-exact retained manifest]",
+          "tests.test_producer_restart_sync_oracle::test_same_checker_rejects_persisted_wrong_outbox[whole-origin-exact retained manifest]",
+          "tests.test_producer_restart_sync_oracle::test_same_checker_rejects_persisted_ahead_cache_watermark",
+          "tests.test_producer_restart_sync_oracle::test_real_bad_checkpoint_refuses_qualification_and_reaps_owned_pid[missing-nonce]",
+          "tests.test_producer_restart_sync_oracle::test_real_bad_checkpoint_refuses_qualification_and_reaps_owned_pid[wrong-pid]",
+          "tests.test_producer_restart_sync_oracle::test_real_bad_checkpoint_refuses_qualification_and_reaps_owned_pid[wrong-role]",
+          "tests.test_producer_restart_sync_oracle::test_real_bad_checkpoint_refuses_qualification_and_reaps_owned_pid[wrong-phase]",
+          "tests.test_producer_restart_sync_oracle::test_deadline_control_proves_child_entered_stall[producer]",
+          "tests.test_producer_restart_sync_oracle::test_deadline_control_proves_child_entered_stall[first-sync]",
+          "tests.test_producer_restart_sync_oracle::test_deadline_control_proves_child_entered_stall[replay-sync]",
+          "tests.test_producer_restart_sync_oracle::test_deadline_control_proves_child_entered_stall[raw-observer]",
+          "tests.test_producer_restart_sync_oracle::test_deadline_control_proves_child_entered_stall[sqlite-copy]",
+          "tests.test_outbox::test_record_survives_restart_with_required_provenance",
+          "tests.test_outbox::test_idempotent_retry_does_not_consume_a_sequence",
+          "tests.test_outbox::test_reused_event_id_for_different_observation_is_rejected",
+          "tests.test_outbox::test_append_rejects_authority_decision_and_unknown_event_types[item.done-authority-command]",
+          "tests.test_outbox::test_append_rejects_authority_decision_and_unknown_event_types[item.transitioned-remote-decision]",
+          "tests.test_outbox::test_append_rejects_authority_decision_and_unknown_event_types[unclassified.event-not classified]",
+          "tests.test_outbox::test_failed_insert_rolls_back_stream_creation_and_sequence",
+          "tests.test_outbox::test_records_are_immutable",
+          "tests.test_outbox::test_concurrent_appends_use_contiguous_single_stream_sequences",
+          "tests.test_sync::test_repository_sync_paths_are_fixed_under_the_repository",
+          "tests.test_sync::test_normal_sync_migrates_legacy_pilot_databases_without_removing_them",
+          "tests.test_sync::test_sync_uploads_observations_and_materializes_remote_cursor",
+          "tests.test_sync::test_sync_recovers_after_lost_response_or_projection_apply_failure",
+          "tests.test_sync::test_sync_rejects_invalid_batch_sizes[0]",
+          "tests.test_sync::test_sync_rejects_invalid_batch_sizes[-1]",
+          "tests.test_sync::test_sync_rejects_invalid_batch_sizes[True]",
+          "tests.test_sync::test_sync_rejects_invalid_batch_sizes[invalid]",
+          "tests.test_abrupt_process_recovery::test_sigkill_recovers_exact_committed_state_and_retry[outbox-before_commit]",
+          "tests.test_abrupt_process_recovery::test_sigkill_recovers_exact_committed_state_and_retry[outbox-after_return]",
+          "tests.test_abrupt_process_recovery::test_sigkill_recovers_exact_committed_state_and_retry[ingest-mid_batch]",
+          "tests.test_abrupt_process_recovery::test_sigkill_recovers_exact_committed_state_and_retry[ingest-before_commit]",
+          "tests.test_abrupt_process_recovery::test_sigkill_recovers_exact_committed_state_and_retry[ingest-after_return]",
+          "tests.test_abrupt_process_recovery::test_sigkill_recovers_exact_committed_state_and_retry[authority-mid_batch]",
+          "tests.test_abrupt_process_recovery::test_sigkill_recovers_exact_committed_state_and_retry[authority-before_commit]",
+          "tests.test_abrupt_process_recovery::test_sigkill_recovers_exact_committed_state_and_retry[authority-after_return]",
+          "tests.test_abrupt_process_recovery::test_same_raw_checker_rejects_persisted_invariant_violation[outbox-outbox next sequence]",
+          "tests.test_abrupt_process_recovery::test_same_raw_checker_rejects_persisted_invariant_violation[ingest-ingest watermark]",
+          "tests.test_abrupt_process_recovery::test_same_raw_checker_rejects_persisted_invariant_violation[authority-authority watermark]",
+          "tests.test_abrupt_process_recovery::test_checker_rejects_logically_consistent_partial_new_batch",
+          "tests.test_abrupt_process_recovery::test_trace_guard_exception_terminates_instead_of_silently_committing"
+        ],
+        "passed": 46,
+        "skipped": 0,
+        "suites": [
+          {
+            "errors": "0",
+            "failures": "0",
+            "hostname": "workstation",
+            "name": "pytest",
+            "skipped": "0",
+            "tests": "46",
+            "time": "18.447",
+            "timestamp": "2026-10-19T20:52:36.198205+03:00"
+          }
+        ],
+        "xml": "verification/traces/producer-restart-sync-publication-2810/local.xml",
+        "xml_sha256": "c6b9997e4828602ba32b842b7b955bf939bfd92b88c390a574fdcf7d6b79344d"
+      },
+      "pg": {
+        "direct_new_cases": 2,
+        "errors": 0,
+        "failures": 0,
+        "log": "verification/traces/producer-restart-sync-publication-2810/pg.txt",
+        "log_sha256": "78f5e2fd78b020b58a3ea2956a9d606a458045fea9047a676a0117b4eb7e435e",
+        "nodes": [
+          "tests.pg.test_authority.TestAuthorityFaultHistories::test_partition_reassignment_then_stale_touch_is_rejected",
+          "tests.pg.test_authority.TestAuthorityFaultHistories::test_stale_item_and_sprint_commands_reject_without_second_mutation",
+          "tests.pg.test_authority.TestAuthorityCommandArbitration::test_request_and_decision_receive_consecutive_repository_offsets",
+          "tests.pg.test_authority.TestAuthorityCommandArbitration::test_authenticated_actor_mismatch_is_durably_rejected_and_consumes_sequence",
+          "tests.pg.test_authority.TestAuthorityCommandArbitration::test_item_transition_retry_and_stale_rejection_are_durable",
+          "tests.pg.test_authority.TestAuthorityCommandArbitration::test_repository_uuid_mismatch_is_durably_rejected",
+          "tests.pg.test_authority.TestAuthorityCommandArbitration::test_arbitrate_command_succeeds_without_a_committed_repository_uuid",
+          "tests.pg.test_authority.TestAuthorityCommandArbitration::test_malformed_embedded_command_is_durably_rejected",
+          "tests.pg.test_authority.TestAuthorityCommandArbitration::test_sync_stops_at_pending_command_then_resumes_stream_in_order",
+          "tests.pg.test_authority.TestAuthorityCommandArbitration::test_sprint_activate_is_remotely_arbitrated",
+          "tests.pg.test_authority.TestAuthorityCommandArbitration::test_decision_insert_failure_rolls_back_request_and_effect",
+          "tests.pg.test_authority.TestAuthorityCommandArbitration::test_sprint_close_boundary_and_decision_commit_atomically",
+          "tests.pg.test_authority.TestAuthorityCommandArbitration::test_old_client_item_done_becomes_an_accept_decision",
+          "tests.pg.test_authority.TestAuthorityCommandArbitration::test_decision_record_supersedes_by_aggregate_uuid",
+          "tests.pg.test_authority.TestAuthorityCommandArbitration::test_retired_capability_receipt_commands_are_refused",
+          "tests.pg.test_authority_doctor::test_real_owner_ledger_matches_readonly_producer_snapshot",
+          "tests.pg.test_outbox.TestProducerOutboxIngestion::test_retry_returns_original_offset_and_cursor_orders_new_records",
+          "tests.pg.test_outbox.TestProducerOutboxIngestion::test_interleaved_repositories_each_publish_contiguous_offsets",
+          "tests.pg.test_outbox.TestProducerOutboxIngestion::test_concurrent_streams_in_one_repository_allocate_offsets_one_and_two",
+          "tests.pg.test_outbox.TestProducerOutboxIngestion::test_concurrent_first_appends_use_public_one_and_distinct_internal_ids",
+          "tests.pg.test_outbox.TestProducerOutboxIngestion::test_lost_response_retry_does_not_advance_repository_cursor",
+          "tests.pg.test_outbox.TestProducerOutboxIngestion::test_failure_after_offset_allocation_rolls_back_cursor_and_record",
+          "tests.pg.test_outbox.TestProducerOutboxIngestion::test_item_evidence_ingest_deduplicates_stale_basis_without_status_mutation",
+          "tests.pg.test_outbox.TestProducerOutboxIngestion::test_changed_producer_timestamp_conflicts_with_existing_origin_tuple",
+          "tests.pg.test_outbox.TestProducerOutboxIngestion::test_gap_rejects_whole_batch_without_advancing_stream",
+          "tests.pg.test_outbox.TestProducerOutboxIngestion::test_seed_ingest_stream_lets_a_stranded_producer_resume",
+          "tests.pg.test_outbox.TestProducerOutboxIngestion::test_concurrent_same_stream_retry_admits_once",
+          "tests.pg.test_outbox.TestProducerOutboxIngestion::test_disposable_remote_history_rebuilds_projection",
+          "tests.pg.test_producer_restart_sync::test_sigkill_pending_producer_restarts_into_actual_sync[observations]",
+          "tests.pg.test_producer_restart_sync::test_sigkill_pending_producer_restarts_into_actual_sync[local-prefix]",
+          "tests.pg.test_releases.TestReviseAndDecisions::test_authority_decision_command_refuses_a_foreign_release",
+          "tests.pg.test_retirement_rationale::test_authority_decision_writer_refuses_blank_retirement[reject]",
+          "tests.pg.test_retirement_rationale::test_authority_decision_writer_refuses_blank_retirement[withdraw]",
+          "tests.pg.test_retirement_rationale::test_authority_decision_writer_refuses_blank_retirement[supersede]",
+          "tests.pg.test_s1_hardening.TestSchema13::test_authority_decisions_refuse_update_delete_and_truncate"
+        ],
+        "passed": 35,
+        "skipped": 0,
+        "suites": [
+          {
+            "errors": "0",
+            "failures": "0",
+            "hostname": "workstation",
+            "name": "pytest",
+            "skipped": "0",
+            "tests": "35",
+            "time": "10.316",
+            "timestamp": "2026-10-19T20:52:40.777005+03:00"
+          }
+        ],
+        "xml": "verification/traces/producer-restart-sync-publication-2810/pg.xml",
+        "xml_sha256": "03aebe9001ca1d34f0ad297e5c389de24605a36055176d3456108a0e814c1644"
+      }
+    }
+  },
+  "implementation_sha": "974107f0a3bc13681d2408c3f8b78b23571c67ed",
+  "notes": [
+    "Publication requalification after CI proved missing optional psycopg collection failure. Only move psycopg.sql import inside PG-only helper; original qualified file archived byte-for-byte, frozen result/trace unmodified.",
+    "Fresh46local passed18.45s;35actualPG passed10.32s,1733deselected,7emptycleanup scopes. Missing-remote-extra environment passed16local and intentionally skipped2PG without collection error.",
+    "Separate publication freeze pins exact repaired harness before fresh campaign. Current corrected source/commit attribution is supplied by exact-head CI/native merge receipt; historical32bc hashes remain original.",
+    "See publication fixture for literal commands, old/new source mapping, raw log/XML/trace hashes. Original claim limits remain unchanged; parent1131 stays open."
+  ],
+  "schema_version": "verification-result/v1"
+}

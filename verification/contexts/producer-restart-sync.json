@@ -1,0 +1,93 @@
+{
+  "actors": [
+    "owned producer killed after appends return",
+    "fresh first-sync producer",
+    "fresh replay/sequence-continuation producer",
+    "independent actual PostgreSQL observer",
+    "six bounded raw SQLite observers per history"
+  ],
+  "assumptions": {
+    "clock": "Producer/cache generation uses existing whole-second UTC clocks; known authored timestamps remain distinct. Initial generation bounds are floor(lower)..floor(upper), immutable values stay exact on replay.",
+    "fairness": "none; test-owned marker20s/reap10s deadlines",
+    "identity": "Exact owned Popen PID/role/per-run nonce; no deployed actor qualification",
+    "isolation": "PG isolation setting was not captured. Each independent observer owns and rolls back its read transaction after committed worker exit; these sequential examples claim no shared snapshot."
+  },
+  "backends": [
+    "temporary normal-opening SQLite3.53.1",
+    "runner-owned disposable PostgreSQL16.15"
+  ],
+  "bounds": {
+    "actual_pg_histories": 2,
+    "independent_raw_observers_per_history": 6,
+    "marker_deadline_seconds": 20,
+    "marker_input_bytes": 16384,
+    "max_records": 4,
+    "producer_incarnations_per_history": 3,
+    "reap_deadline_seconds": 10,
+    "shared_local_control_cases": 16,
+    "sqlite_busy_seconds": 0.2,
+    "sqlite_progress_seconds": 2,
+    "worker_output_bytes": 65536
+  },
+  "consistency": {
+    "object": "Retained producer identities, deduplicated ingest and separate cache watermarks",
+    "target": "application-invariant"
+  },
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2810",
+    "revision": "native:release:01b2473fd9cb1e7624e7333977cecb1fa9ab553d7ec4e189e1bca2f4f24d892b"
+  },
+  "depth": 2,
+  "faults": [
+    "Own-child SIGKILL at application-return boundary",
+    "Six persisted wrong outbox states and one ahead cache watermark",
+    "Four actual worker checkpoint identity violations",
+    "Five actual child stalls followed by the same marker reader with bounded timeout"
+  ],
+  "id": "sprintctl.producer-restart-sync",
+  "implementation_anchors": [
+    "sprintctl/outbox.py:append_observation",
+    "sprintctl/outbox.py:append_authority_command",
+    "sprintctl/sync.py:synchronize_outbox",
+    "sprintctl/pg.py:ingest_records",
+    "sprintctl/projection.py:apply_ingested_records"
+  ],
+  "invariants": [
+    "Committed observations and unsigned LOCAL requests retain every stored field across an owned producer SIGKILL after successful append return",
+    "Fresh producer processes synchronize recovered observations to actual PostgreSQL and cache; replay returns the original offsets and records, then sequence4 adds exactly one new record",
+    "LOCAL command prefix stays pending with its later observation and leaves all independently read remote authority tables unchanged",
+    "Returned upload identities, duplicate flags, apply counts and separate ingest/authority watermarks match independently expected persisted records in every phase",
+    "Six separately owned raw observers per history verify predeath, first recovery and postworker SQLite/cache state with a common bounded marker reader",
+    "The same checkers reject seven persisted-state violations; four real bad checkpoints refuse qualification and five reached-stall controls exercise the actual marker deadline"
+  ],
+  "limits": [
+    "Two bounded sequential histories and16controls, not exhaustive crash schedules or linearizability",
+    "Application-return process death is distinct from fsync/power/storage qualification; no network outage is injected",
+    "Ingest cache is narrower than whole business state; producer requests do not authorize acceptance",
+    "F01/F13/F14, formal refinement, all9invariants and full1131 acceptance remain separate; no deployed/runtime/API/schema/IDL or product repair"
+  ],
+  "operations": [
+    {
+      "name": "producer append then SIGKILL",
+      "synchronization": "Child emits validated marker only after public append returns and owner is idle; parent confirms remote baseline then kills and reaps that exact child."
+    },
+    {
+      "name": "synchronize_outbox",
+      "synchronization": "Separate fresh processes use actual public synchronizer and registered disposable PG, batch_size2; no authority credential resolver."
+    },
+    {
+      "name": "raw observer and backup controls",
+      "synchronization": "Whitelisted separately owned roles; no product initialization in first raw recovery; hard parent marker/reap bounds and child busy/progress limits."
+    }
+  ],
+  "oracles": [
+    "tests/_producer_restart_sync_oracle.py",
+    "tests/_producer_restart_sync_worker.py",
+    "tests/pg/test_producer_restart_sync.py",
+    "tests/test_producer_restart_sync_oracle.py"
+  ],
+  "owner_repo": "sprintctl",
+  "schema_version": "test-context/v1",
+  "source_of_truth": "ADR adr-outbox-sync-model F02; native No doc and freeze5857 for child2810 under unfinished1131",
+  "subject": "ADR F02 joined producer restart through actual synchronization"
+}

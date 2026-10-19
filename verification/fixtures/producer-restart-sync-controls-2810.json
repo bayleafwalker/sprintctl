@@ -1,0 +1,183 @@
+{
+  "source": "frozen actual qualification histories; positive checker observations precede mutations",
+  "trace": "verification/traces/producer-restart-sync-2810.json",
+  "trace_sha256": "2b5cad4d86134dd5eeecc7c2450c496edec97f2e5d06ae438347728205b3c5ba",
+  "controls": [
+    {
+      "classification": "persisted-state",
+      "case": {
+        "classname": "tests.test_producer_restart_sync_oracle",
+        "name": "test_same_checker_rejects_persisted_wrong_outbox[lost-first-retained sequence]"
+      },
+      "actual_control": "lost-first",
+      "trace_pointer": "/captures/local/0/observation",
+      "expected_refusal": "retained sequence",
+      "worker_role": null
+    },
+    {
+      "classification": "persisted-state",
+      "case": {
+        "classname": "tests.test_producer_restart_sync_oracle",
+        "name": "test_same_checker_rejects_persisted_wrong_outbox[next-next sequence]"
+      },
+      "actual_control": "next",
+      "trace_pointer": "/captures/local/1/observation",
+      "expected_refusal": "next sequence",
+      "worker_role": null
+    },
+    {
+      "classification": "persisted-state",
+      "case": {
+        "classname": "tests.test_producer_restart_sync_oracle",
+        "name": "test_same_checker_rejects_persisted_wrong_outbox[origin-origin identity]"
+      },
+      "actual_control": "origin",
+      "trace_pointer": "/captures/local/2/observation",
+      "expected_refusal": "origin identity",
+      "worker_role": null
+    },
+    {
+      "classification": "persisted-state",
+      "case": {
+        "classname": "tests.test_producer_restart_sync_oracle",
+        "name": "test_same_checker_rejects_persisted_wrong_outbox[changed-payload-payload digest]"
+      },
+      "actual_control": "changed-payload",
+      "trace_pointer": "/captures/local/3/observation",
+      "expected_refusal": "payload digest",
+      "worker_role": null
+    },
+    {
+      "classification": "persisted-state",
+      "case": {
+        "classname": "tests.test_producer_restart_sync_oracle",
+        "name": "test_same_checker_rejects_persisted_wrong_outbox[consistent-partial-exact retained manifest]"
+      },
+      "actual_control": "consistent-partial",
+      "trace_pointer": "/captures/local/4/observation",
+      "expected_refusal": "exact retained manifest",
+      "worker_role": null
+    },
+    {
+      "classification": "persisted-state",
+      "case": {
+        "classname": "tests.test_producer_restart_sync_oracle",
+        "name": "test_same_checker_rejects_persisted_wrong_outbox[whole-origin-exact retained manifest]"
+      },
+      "actual_control": "whole-origin",
+      "trace_pointer": "/captures/local/5/observation",
+      "expected_refusal": "exact retained manifest",
+      "worker_role": null
+    },
+    {
+      "classification": "persisted-state",
+      "case": {
+        "classname": "tests.test_producer_restart_sync_oracle",
+        "name": "test_same_checker_rejects_persisted_ahead_cache_watermark"
+      },
+      "actual_control": "ahead-cache",
+      "trace_pointer": "/captures/local/6/observation",
+      "expected_refusal": null,
+      "worker_role": null
+    },
+    {
+      "classification": "checkpoint-identity",
+      "case": {
+        "classname": "tests.test_producer_restart_sync_oracle",
+        "name": "test_real_bad_checkpoint_refuses_qualification_and_reaps_owned_pid[missing-nonce]"
+      },
+      "actual_control": "missing-nonce",
+      "trace_pointer": "/captures/local/7/observation",
+      "expected_refusal": null,
+      "worker_role": "producer"
+    },
+    {
+      "classification": "checkpoint-identity",
+      "case": {
+        "classname": "tests.test_producer_restart_sync_oracle",
+        "name": "test_real_bad_checkpoint_refuses_qualification_and_reaps_owned_pid[wrong-pid]"
+      },
+      "actual_control": "wrong-pid",
+      "trace_pointer": "/captures/local/8/observation",
+      "expected_refusal": null,
+      "worker_role": "producer"
+    },
+    {
+      "classification": "checkpoint-identity",
+      "case": {
+        "classname": "tests.test_producer_restart_sync_oracle",
+        "name": "test_real_bad_checkpoint_refuses_qualification_and_reaps_owned_pid[wrong-role]"
+      },
+      "actual_control": "wrong-role",
+      "trace_pointer": "/captures/local/9/observation",
+      "expected_refusal": null,
+      "worker_role": "unexecuted-role"
+    },
+    {
+      "classification": "checkpoint-identity",
+      "case": {
+        "classname": "tests.test_producer_restart_sync_oracle",
+        "name": "test_real_bad_checkpoint_refuses_qualification_and_reaps_owned_pid[wrong-phase]"
+      },
+      "actual_control": "wrong-phase",
+      "trace_pointer": "/captures/local/10/observation",
+      "expected_refusal": null,
+      "worker_role": "producer"
+    },
+    {
+      "classification": "deadline-reader",
+      "case": {
+        "classname": "tests.test_producer_restart_sync_oracle",
+        "name": "test_deadline_control_proves_child_entered_stall[producer]"
+      },
+      "actual_control": "reached-stall",
+      "trace_pointer": "/captures/local/11/observation",
+      "expected_refusal": null,
+      "worker_role": "producer"
+    },
+    {
+      "classification": "deadline-reader",
+      "case": {
+        "classname": "tests.test_producer_restart_sync_oracle",
+        "name": "test_deadline_control_proves_child_entered_stall[first-sync]"
+      },
+      "actual_control": "reached-stall",
+      "trace_pointer": "/captures/local/12/observation",
+      "expected_refusal": null,
+      "worker_role": "first-sync"
+    },
+    {
+      "classification": "deadline-reader",
+      "case": {
+        "classname": "tests.test_producer_restart_sync_oracle",
+        "name": "test_deadline_control_proves_child_entered_stall[replay-sync]"
+      },
+      "actual_control": "reached-stall",
+      "trace_pointer": "/captures/local/13/observation",
+      "expected_refusal": null,
+      "worker_role": "replay-sync"
+    },
+    {
+      "classification": "deadline-reader",
+      "case": {
+        "classname": "tests.test_producer_restart_sync_oracle",
+        "name": "test_deadline_control_proves_child_entered_stall[raw-observer]"
+      },
+      "actual_control": "reached-stall",
+      "trace_pointer": "/captures/local/14/observation",
+      "expected_refusal": null,
+      "worker_role": "raw-observer"
+    },
+    {
+      "classification": "deadline-reader",
+      "case": {
+        "classname": "tests.test_producer_restart_sync_oracle",
+        "name": "test_deadline_control_proves_child_entered_stall[sqlite-copy]"
+      },
+      "actual_control": "reached-stall",
+      "trace_pointer": "/captures/local/15/observation",
+      "expected_refusal": null,
+      "worker_role": "sqlite-copy"
+    }
+  ]
+}
