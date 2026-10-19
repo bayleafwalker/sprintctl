@@ -198,6 +198,7 @@ def test_reserve_transport_credential_change_after_resolve_keeps_original_owner(
         def __init__(self, resolver): self.resolver = resolver
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
+        async def handshake(self): self.resolver("test-reference"); return {}
         async def invoke(self, operation, arguments, **kwargs):
             caller = self.resolver("test-reference")
             used.append(caller.identity.principal_id)

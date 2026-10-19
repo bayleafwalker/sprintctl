@@ -30,6 +30,9 @@ def diagnostic_client(conn, runner, tmp_path, monkeypatch):
         async def __aexit__(self, *args):
             pass
 
+        async def handshake(self):
+            return {}
+
         async def invoke(self, operation, arguments, **kwargs):
             calls.append((operation, arguments, kwargs))
             try:

@@ -427,6 +427,9 @@ def test_native_facade_preserves_real_served_refusal(monkeypatch):
         async def __aexit__(self, *args):
             return False
 
+        async def handshake(self):
+            return {}
+
         async def invoke(self, operation, arguments, **kwargs):
             assert operation == intake.OPERATION
             raise refusal
@@ -453,6 +456,9 @@ def test_native_transport_preserves_explicit_repository_scope(operation, monkeyp
         async def __aexit__(self, *args):
             return False
 
+        async def handshake(self):
+            return {}
+
         async def invoke(self, invoked, arguments, **kwargs):
             assert invoked == operation
             assert kwargs["repo_id"] == "agentops"
@@ -476,6 +482,7 @@ def test_evidence_pass_keeps_identity_across_credential_replacement(monkeypatch)
         def __init__(self, resolver): self.resolver = resolver
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
+        async def handshake(self): self.resolver('test-reference'); return {}
         async def invoke(self, operation, arguments, **kwargs):
             assert kwargs['repo_id'] == 'repo'
             assert 'idempotency_key' not in kwargs
@@ -514,6 +521,7 @@ def test_evidence_pass_does_not_switch_after_revocation(monkeypatch):
     class Client:
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
+        async def handshake(self): self.resolver('test-reference'); return {}
         async def invoke(self, operation, arguments, **kwargs):
             tokens.append(self.resolver('test-reference'))
             if len(tokens) == 2:

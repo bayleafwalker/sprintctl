@@ -116,6 +116,7 @@ def test_proposal_transport_pins_credential_and_keeps_key_in_arguments(monkeypat
     class Client:
         async def __aenter__(self):return self
         async def __aexit__(self,*args):pass
+        async def handshake(self):self.resolver('reference');return {}
         async def invoke(self,operation,arguments,**kwargs):
             assert kwargs=={'repo_id':'repo'}
             tokens.append(self.resolver('reference'));calls.append((operation,arguments));return {}

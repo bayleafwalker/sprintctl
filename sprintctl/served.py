@@ -85,6 +85,7 @@ async def _invoke_operation(
     client = (_client(served_profile) if _credential_resolver is None else
               _client(served_profile, credential_resolver=_credential_resolver))
     async with client:
+        await client.handshake()
         return await client.invoke(operation, arguments, **kwargs)
 
 
