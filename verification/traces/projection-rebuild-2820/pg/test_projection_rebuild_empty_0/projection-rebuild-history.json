@@ -1,0 +1,296 @@
+{
+  "foreign_append_intervals": [
+    {
+      "after": 1792432291.9176311,
+      "before": 1792432291.9050899,
+      "created_at": "2026-10-19T17:51:31Z"
+    }
+  ],
+  "foreign_ingest_interval": [
+    1792432291.9309087,
+    1792432291.933661
+  ],
+  "foreign_rows": [
+    {
+      "actor": "verification",
+      "basis_revision": null,
+      "causation_id": null,
+      "correlation_id": null,
+      "event_id": "rebuild-foreign-1",
+      "event_type": "work.completed",
+      "ingest_id": 30,
+      "ingest_offset": 1,
+      "ingested_at": "2026-10-19T17:51:31.931049Z",
+      "occurred_at": "2026-10-18T00:00:00Z",
+      "origin_seq": 1,
+      "origin_stream_id": "6900944a-7bf0-47bf-a4ea-ef34f7126564",
+      "payload": {
+        "index": 1,
+        "label": "foreign",
+        "summary": "rebuild \u03b4"
+      },
+      "payload_sha256": "5d848248a2070eff8c032e1a4ba084a2099252e4c5d6f097ebf46e8a6447d781",
+      "producer_created_at": "2026-10-19T17:51:31Z",
+      "record_class": "observation",
+      "record_sha256": "459cbfb37e8984077ae1ba6e184cb237ab5dd17db122575e98e18c4674539e71",
+      "repo_id": "itest-rebuild-empty-foreign-114224eacb82",
+      "runtime_session_id": "rebuild-contract",
+      "schema_version": 1
+    }
+  ],
+  "normal_reopen": {
+    "raw_reader_after": {
+      "database": {
+        "bytes": 40960,
+        "device": 42,
+        "inode": 97244992,
+        "path": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_empty_0/cache.db",
+        "sha256": "63dcbd8308b3fe55dfacb68cded0d8d23dd1164e6229588a14826adbf5135aca"
+      },
+      "reader": {
+        "captured_bytes": 2195,
+        "elapsed": 0.022039469000446843,
+        "output_limit": 65536,
+        "pid": 43052,
+        "returncode": 0,
+        "stderr": "",
+        "stdout": "{\"integrity\":\"ok\",\"journal_mode\":\"delete\",\"rows\":{\"cached_authority_decision\":[],\"cached_authority_watermark\":[{\"advanced_at\":null,\"decision_ingest_offset\":0,\"repo_id\":\"itest-rebuild-empty-c6d1a0feda3b\"}],\"cached_ingest_record\":[],\"cached_ingest_watermark\":[{\"advanced_at\":null,\"ingest_offset\":0,\"repo_id\":\"itest-rebuild-empty-c6d1a0feda3b\"}],\"cached_projection_meta\":[{\"repo_id\":\"itest-rebuild-empty-c6d1a0feda3b\",\"schema_version\":2,\"singleton\":1}]},\"schema\":{\"cached_authority_decision\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"decision_ingest_offset\",\"notnull\":1,\"pk\":2,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"decision_json\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":3,\"dflt_value\":null,\"name\":\"decision_sha256\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":4,\"dflt_value\":null,\"name\":\"received_at\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}],\"cached_authority_watermark\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":0,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"decision_ingest_offset\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"advanced_at\",\"notnull\":0,\"pk\":0,\"type\":\"TEXT\"}],\"cached_ingest_record\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"ingest_offset\",\"notnull\":1,\"pk\":2,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"record_json\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":3,\"dflt_value\":null,\"name\":\"record_sha256\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":4,\"dflt_value\":null,\"name\":\"received_at\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}],\"cached_ingest_watermark\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":0,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"ingest_offset\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"advanced_at\",\"notnull\":0,\"pk\":0,\"type\":\"TEXT\"}],\"cached_projection_meta\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"singleton\",\"notnull\":0,\"pk\":1,\"type\":\"INTEGER\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"schema_version\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}]}}\n",
+        "timeout": 3
+      }
+    },
+    "records": [],
+    "schema_version": 2,
+    "watermark": {
+      "advanced_at": null,
+      "ingest_offset": 0
+    }
+  },
+  "reader": {
+    "isolation": "read committed",
+    "pid": 42856,
+    "version": "16.15"
+  },
+  "result": {
+    "operation_interval": [
+      1792432291.9344103,
+      1792432292.248511
+    ],
+    "reader": {
+      "database": {
+        "bytes": 40960,
+        "device": 42,
+        "inode": 97244992,
+        "path": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_empty_0/cache.db",
+        "sha256": "63dcbd8308b3fe55dfacb68cded0d8d23dd1164e6229588a14826adbf5135aca"
+      },
+      "reader": {
+        "captured_bytes": 2195,
+        "elapsed": 0.02383551399998396,
+        "output_limit": 65536,
+        "pid": 43051,
+        "returncode": 0,
+        "stderr": "",
+        "stdout": "{\"integrity\":\"ok\",\"journal_mode\":\"delete\",\"rows\":{\"cached_authority_decision\":[],\"cached_authority_watermark\":[{\"advanced_at\":null,\"decision_ingest_offset\":0,\"repo_id\":\"itest-rebuild-empty-c6d1a0feda3b\"}],\"cached_ingest_record\":[],\"cached_ingest_watermark\":[{\"advanced_at\":null,\"ingest_offset\":0,\"repo_id\":\"itest-rebuild-empty-c6d1a0feda3b\"}],\"cached_projection_meta\":[{\"repo_id\":\"itest-rebuild-empty-c6d1a0feda3b\",\"schema_version\":2,\"singleton\":1}]},\"schema\":{\"cached_authority_decision\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"decision_ingest_offset\",\"notnull\":1,\"pk\":2,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"decision_json\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":3,\"dflt_value\":null,\"name\":\"decision_sha256\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":4,\"dflt_value\":null,\"name\":\"received_at\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}],\"cached_authority_watermark\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":0,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"decision_ingest_offset\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"advanced_at\",\"notnull\":0,\"pk\":0,\"type\":\"TEXT\"}],\"cached_ingest_record\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"ingest_offset\",\"notnull\":1,\"pk\":2,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"record_json\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":3,\"dflt_value\":null,\"name\":\"record_sha256\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":4,\"dflt_value\":null,\"name\":\"received_at\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}],\"cached_ingest_watermark\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":0,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"ingest_offset\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"advanced_at\",\"notnull\":0,\"pk\":0,\"type\":\"TEXT\"}],\"cached_projection_meta\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"singleton\",\"notnull\":0,\"pk\":1,\"type\":\"INTEGER\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"schema_version\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}]}}\n",
+        "timeout": 3
+      }
+    },
+    "state": {
+      "integrity": "ok",
+      "journal_mode": "delete",
+      "rows": {
+        "cached_authority_decision": [],
+        "cached_authority_watermark": [
+          {
+            "advanced_at": null,
+            "decision_ingest_offset": 0,
+            "repo_id": "itest-rebuild-empty-c6d1a0feda3b"
+          }
+        ],
+        "cached_ingest_record": [],
+        "cached_ingest_watermark": [
+          {
+            "advanced_at": null,
+            "ingest_offset": 0,
+            "repo_id": "itest-rebuild-empty-c6d1a0feda3b"
+          }
+        ],
+        "cached_projection_meta": [
+          {
+            "repo_id": "itest-rebuild-empty-c6d1a0feda3b",
+            "schema_version": 2,
+            "singleton": 1
+          }
+        ]
+      },
+      "schema": {
+        "cached_authority_decision": [
+          {
+            "cid": 0,
+            "dflt_value": null,
+            "name": "repo_id",
+            "notnull": 1,
+            "pk": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "dflt_value": null,
+            "name": "decision_ingest_offset",
+            "notnull": 1,
+            "pk": 2,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "dflt_value": null,
+            "name": "decision_json",
+            "notnull": 1,
+            "pk": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "dflt_value": null,
+            "name": "decision_sha256",
+            "notnull": 1,
+            "pk": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "dflt_value": null,
+            "name": "received_at",
+            "notnull": 1,
+            "pk": 0,
+            "type": "TEXT"
+          }
+        ],
+        "cached_authority_watermark": [
+          {
+            "cid": 0,
+            "dflt_value": null,
+            "name": "repo_id",
+            "notnull": 0,
+            "pk": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "dflt_value": null,
+            "name": "decision_ingest_offset",
+            "notnull": 1,
+            "pk": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "dflt_value": null,
+            "name": "advanced_at",
+            "notnull": 0,
+            "pk": 0,
+            "type": "TEXT"
+          }
+        ],
+        "cached_ingest_record": [
+          {
+            "cid": 0,
+            "dflt_value": null,
+            "name": "repo_id",
+            "notnull": 1,
+            "pk": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "dflt_value": null,
+            "name": "ingest_offset",
+            "notnull": 1,
+            "pk": 2,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "dflt_value": null,
+            "name": "record_json",
+            "notnull": 1,
+            "pk": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "dflt_value": null,
+            "name": "record_sha256",
+            "notnull": 1,
+            "pk": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "dflt_value": null,
+            "name": "received_at",
+            "notnull": 1,
+            "pk": 0,
+            "type": "TEXT"
+          }
+        ],
+        "cached_ingest_watermark": [
+          {
+            "cid": 0,
+            "dflt_value": null,
+            "name": "repo_id",
+            "notnull": 0,
+            "pk": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "dflt_value": null,
+            "name": "ingest_offset",
+            "notnull": 1,
+            "pk": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "dflt_value": null,
+            "name": "advanced_at",
+            "notnull": 0,
+            "pk": 0,
+            "type": "TEXT"
+          }
+        ],
+        "cached_projection_meta": [
+          {
+            "cid": 0,
+            "dflt_value": null,
+            "name": "singleton",
+            "notnull": 0,
+            "pk": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "dflt_value": null,
+            "name": "schema_version",
+            "notnull": 1,
+            "pk": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "dflt_value": null,
+            "name": "repo_id",
+            "notnull": 1,
+            "pk": 0,
+            "type": "TEXT"
+          }
+        ]
+      }
+    }
+  },
+  "returned_watermark": {
+    "advanced_at": null,
+    "ingest_offset": 0
+  },
+  "source_rows": []
+}

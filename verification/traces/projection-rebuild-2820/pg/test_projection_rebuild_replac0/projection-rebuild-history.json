@@ -1,0 +1,727 @@
+{
+  "before": {
+    "integrity": "ok",
+    "journal_mode": "delete",
+    "rows": {
+      "cached_authority_decision": [],
+      "cached_authority_watermark": [
+        {
+          "advanced_at": null,
+          "decision_ingest_offset": 0,
+          "repo_id": "authored-oracle-fixture"
+        }
+      ],
+      "cached_ingest_record": [
+        {
+          "ingest_offset": 1,
+          "received_at": "2026-10-18T00:00:00Z",
+          "record_json": "{\"actor\":\"verification\",\"basis_revision\":null,\"causation_id\":null,\"correlation_id\":null,\"created_at\":\"2026-10-18T00:00:00Z\",\"event_id\":\"rebuild-source-1\",\"event_type\":\"work.completed\",\"occurred_at\":\"2026-10-18T00:00:00Z\",\"origin_seq\":1,\"origin_stream_id\":\"00000000-0000-4000-8000-000000000001\",\"payload\":{\"index\":1,\"label\":\"source\",\"summary\":\"rebuild \u03b4\"},\"payload_sha256\":\"5e4affd3a1744d22403e1ceb4a3b1c403c4d43083c2d396221130bec3c25279e\",\"record_class\":\"observation\",\"runtime_session_id\":\"rebuild-contract\",\"schema_version\":1}",
+          "record_sha256": "b31321e0b228267ed31433981eff64ed70fa04eea5890047a2f827b5b453672c",
+          "repo_id": "authored-oracle-fixture"
+        }
+      ],
+      "cached_ingest_watermark": [
+        {
+          "advanced_at": "2026-10-18T00:00:00Z",
+          "ingest_offset": 1,
+          "repo_id": "authored-oracle-fixture"
+        }
+      ],
+      "cached_projection_meta": [
+        {
+          "repo_id": "authored-oracle-fixture",
+          "schema_version": 2,
+          "singleton": 1
+        }
+      ]
+    },
+    "schema": {
+      "cached_authority_decision": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "repo_id",
+          "notnull": 1,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "decision_ingest_offset",
+          "notnull": 1,
+          "pk": 2,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "decision_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": null,
+          "name": "decision_sha256",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": null,
+          "name": "received_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "cached_authority_watermark": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "repo_id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "decision_ingest_offset",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "advanced_at",
+          "notnull": 0,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "cached_ingest_record": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "repo_id",
+          "notnull": 1,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "ingest_offset",
+          "notnull": 1,
+          "pk": 2,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "record_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": null,
+          "name": "record_sha256",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": null,
+          "name": "received_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "cached_ingest_watermark": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "repo_id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "ingest_offset",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "advanced_at",
+          "notnull": 0,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "cached_projection_meta": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "singleton",
+          "notnull": 0,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "schema_version",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "repo_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ]
+    }
+  },
+  "before_reader": {
+    "database": {
+      "bytes": 40960,
+      "device": 42,
+      "inode": 97241842,
+      "path": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_replac0/cache.db",
+      "sha256": "2917b0863c71e2381ea735fe17b816087daeed61c450b5d4ae90bd935541c971"
+    },
+    "reader": {
+      "captured_bytes": 2964,
+      "elapsed": 0.02193016900037037,
+      "output_limit": 65536,
+      "pid": 41502,
+      "returncode": 0,
+      "stderr": "",
+      "stdout": "{\"integrity\":\"ok\",\"journal_mode\":\"delete\",\"rows\":{\"cached_authority_decision\":[],\"cached_authority_watermark\":[{\"advanced_at\":null,\"decision_ingest_offset\":0,\"repo_id\":\"authored-oracle-fixture\"}],\"cached_ingest_record\":[{\"ingest_offset\":1,\"received_at\":\"2026-10-18T00:00:00Z\",\"record_json\":\"{\\\"actor\\\":\\\"verification\\\",\\\"basis_revision\\\":null,\\\"causation_id\\\":null,\\\"correlation_id\\\":null,\\\"created_at\\\":\\\"2026-10-18T00:00:00Z\\\",\\\"event_id\\\":\\\"rebuild-source-1\\\",\\\"event_type\\\":\\\"work.completed\\\",\\\"occurred_at\\\":\\\"2026-10-18T00:00:00Z\\\",\\\"origin_seq\\\":1,\\\"origin_stream_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"payload\\\":{\\\"index\\\":1,\\\"label\\\":\\\"source\\\",\\\"summary\\\":\\\"rebuild \u03b4\\\"},\\\"payload_sha256\\\":\\\"5e4affd3a1744d22403e1ceb4a3b1c403c4d43083c2d396221130bec3c25279e\\\",\\\"record_class\\\":\\\"observation\\\",\\\"runtime_session_id\\\":\\\"rebuild-contract\\\",\\\"schema_version\\\":1}\",\"record_sha256\":\"b31321e0b228267ed31433981eff64ed70fa04eea5890047a2f827b5b453672c\",\"repo_id\":\"authored-oracle-fixture\"}],\"cached_ingest_watermark\":[{\"advanced_at\":\"2026-10-18T00:00:00Z\",\"ingest_offset\":1,\"repo_id\":\"authored-oracle-fixture\"}],\"cached_projection_meta\":[{\"repo_id\":\"authored-oracle-fixture\",\"schema_version\":2,\"singleton\":1}]},\"schema\":{\"cached_authority_decision\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"decision_ingest_offset\",\"notnull\":1,\"pk\":2,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"decision_json\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":3,\"dflt_value\":null,\"name\":\"decision_sha256\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":4,\"dflt_value\":null,\"name\":\"received_at\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}],\"cached_authority_watermark\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":0,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"decision_ingest_offset\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"advanced_at\",\"notnull\":0,\"pk\":0,\"type\":\"TEXT\"}],\"cached_ingest_record\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"ingest_offset\",\"notnull\":1,\"pk\":2,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"record_json\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":3,\"dflt_value\":null,\"name\":\"record_sha256\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":4,\"dflt_value\":null,\"name\":\"received_at\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}],\"cached_ingest_watermark\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":0,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"ingest_offset\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"advanced_at\",\"notnull\":0,\"pk\":0,\"type\":\"TEXT\"}],\"cached_projection_meta\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"singleton\",\"notnull\":0,\"pk\":1,\"type\":\"INTEGER\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"schema_version\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}]}}\n",
+      "timeout": 3
+    }
+  },
+  "foreign_append_intervals": [
+    {
+      "after": 1792432283.3471856,
+      "before": 1792432283.3375127,
+      "created_at": "2026-10-19T17:51:23Z"
+    }
+  ],
+  "foreign_ingest_interval": [
+    1792432283.3625436,
+    1792432283.3651314
+  ],
+  "foreign_rows": [
+    {
+      "actor": "verification",
+      "basis_revision": null,
+      "causation_id": null,
+      "correlation_id": null,
+      "event_id": "rebuild-foreign-1",
+      "event_type": "work.completed",
+      "ingest_id": 12,
+      "ingest_offset": 1,
+      "ingested_at": "2026-10-19T17:51:23.362618Z",
+      "occurred_at": "2026-10-18T00:00:00Z",
+      "origin_seq": 1,
+      "origin_stream_id": "cb902672-747f-4e00-9311-5acc5a15e664",
+      "payload": {
+        "index": 1,
+        "label": "foreign",
+        "summary": "rebuild \u03b4"
+      },
+      "payload_sha256": "5d848248a2070eff8c032e1a4ba084a2099252e4c5d6f097ebf46e8a6447d781",
+      "producer_created_at": "2026-10-19T17:51:23Z",
+      "record_class": "observation",
+      "record_sha256": "03f0a43258ed91d73908fd688e3c3b56bb7abad97a9094220aad9eeb720713dd",
+      "repo_id": "itest-rebuild-foreign-dc49d91ba6fd",
+      "runtime_session_id": "rebuild-contract",
+      "schema_version": 1
+    }
+  ],
+  "normal_reopen": {
+    "raw_reader_after": {
+      "database": {
+        "bytes": 40960,
+        "device": 42,
+        "inode": 97241949,
+        "path": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_replac0/cache.db",
+        "sha256": "9ff72c653a81c9cabe9562f7e40769e42f2eede332ab0c9a16a4b076eeb6b9f0"
+      },
+      "reader": {
+        "captured_bytes": 4588,
+        "elapsed": 0.02269249100027082,
+        "output_limit": 65536,
+        "pid": 41561,
+        "returncode": 0,
+        "stderr": "",
+        "stdout": "{\"integrity\":\"ok\",\"journal_mode\":\"delete\",\"rows\":{\"cached_authority_decision\":[],\"cached_authority_watermark\":[{\"advanced_at\":null,\"decision_ingest_offset\":0,\"repo_id\":\"itest-rebuild-primary-114a32aaeef5\"}],\"cached_ingest_record\":[{\"ingest_offset\":1,\"received_at\":\"2026-10-19T17:51:23Z\",\"record_json\":\"{\\\"actor\\\":\\\"verification\\\",\\\"basis_revision\\\":null,\\\"causation_id\\\":null,\\\"correlation_id\\\":null,\\\"created_at\\\":\\\"2026-10-19T17:51:23Z\\\",\\\"event_id\\\":\\\"rebuild-source-1\\\",\\\"event_type\\\":\\\"work.completed\\\",\\\"occurred_at\\\":\\\"2026-10-18T00:00:00Z\\\",\\\"origin_seq\\\":1,\\\"origin_stream_id\\\":\\\"19c6875a-b82c-48e8-900e-d55906fb2113\\\",\\\"payload\\\":{\\\"index\\\":1,\\\"label\\\":\\\"source\\\",\\\"summary\\\":\\\"rebuild \u03b4\\\"},\\\"payload_sha256\\\":\\\"5e4affd3a1744d22403e1ceb4a3b1c403c4d43083c2d396221130bec3c25279e\\\",\\\"record_class\\\":\\\"observation\\\",\\\"runtime_session_id\\\":\\\"rebuild-contract\\\",\\\"schema_version\\\":1}\",\"record_sha256\":\"82f223dc2eaae50bcf6093f52abd068b011f1f6e14b48d4916a3db57608d1eb4\",\"repo_id\":\"itest-rebuild-primary-114a32aaeef5\"},{\"ingest_offset\":2,\"received_at\":\"2026-10-19T17:51:23Z\",\"record_json\":\"{\\\"actor\\\":\\\"verification\\\",\\\"basis_revision\\\":null,\\\"causation_id\\\":null,\\\"correlation_id\\\":null,\\\"created_at\\\":\\\"2026-10-19T17:51:23Z\\\",\\\"event_id\\\":\\\"rebuild-source-2\\\",\\\"event_type\\\":\\\"work.completed\\\",\\\"occurred_at\\\":\\\"2026-10-18T00:00:00Z\\\",\\\"origin_seq\\\":2,\\\"origin_stream_id\\\":\\\"19c6875a-b82c-48e8-900e-d55906fb2113\\\",\\\"payload\\\":{\\\"index\\\":2,\\\"label\\\":\\\"source\\\",\\\"summary\\\":\\\"rebuild \u03b4\\\"},\\\"payload_sha256\\\":\\\"7c750e947a31a1618246c865f6283cb8644ba44679623b44aaaa51db71bc5b39\\\",\\\"record_class\\\":\\\"observation\\\",\\\"runtime_session_id\\\":\\\"rebuild-contract\\\",\\\"schema_version\\\":1}\",\"record_sha256\":\"80dd5fcec9675ea9bcec4bcff7c408e57c2db40095cd03c9c519dbaab3dbe533\",\"repo_id\":\"itest-rebuild-primary-114a32aaeef5\"},{\"ingest_offset\":3,\"received_at\":\"2026-10-19T17:51:23Z\",\"record_json\":\"{\\\"actor\\\":\\\"verification\\\",\\\"basis_revision\\\":null,\\\"causation_id\\\":null,\\\"correlation_id\\\":null,\\\"created_at\\\":\\\"2026-10-19T17:51:23Z\\\",\\\"event_id\\\":\\\"rebuild-source-3\\\",\\\"event_type\\\":\\\"work.completed\\\",\\\"occurred_at\\\":\\\"2026-10-18T00:00:00Z\\\",\\\"origin_seq\\\":3,\\\"origin_stream_id\\\":\\\"19c6875a-b82c-48e8-900e-d55906fb2113\\\",\\\"payload\\\":{\\\"index\\\":3,\\\"label\\\":\\\"source\\\",\\\"summary\\\":\\\"rebuild \u03b4\\\"},\\\"payload_sha256\\\":\\\"face7e653344df9075e73c28782e8dcfb10b6655c0e314d1752bb51c225c4ceb\\\",\\\"record_class\\\":\\\"observation\\\",\\\"runtime_session_id\\\":\\\"rebuild-contract\\\",\\\"schema_version\\\":1}\",\"record_sha256\":\"f708249810cbe5c9844b81b7b7b9bfdc4d89e0677943b442fa2eb7da535f8b26\",\"repo_id\":\"itest-rebuild-primary-114a32aaeef5\"}],\"cached_ingest_watermark\":[{\"advanced_at\":\"2026-10-19T17:51:23Z\",\"ingest_offset\":3,\"repo_id\":\"itest-rebuild-primary-114a32aaeef5\"}],\"cached_projection_meta\":[{\"repo_id\":\"itest-rebuild-primary-114a32aaeef5\",\"schema_version\":2,\"singleton\":1}]},\"schema\":{\"cached_authority_decision\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"decision_ingest_offset\",\"notnull\":1,\"pk\":2,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"decision_json\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":3,\"dflt_value\":null,\"name\":\"decision_sha256\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":4,\"dflt_value\":null,\"name\":\"received_at\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}],\"cached_authority_watermark\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":0,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"decision_ingest_offset\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"advanced_at\",\"notnull\":0,\"pk\":0,\"type\":\"TEXT\"}],\"cached_ingest_record\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"ingest_offset\",\"notnull\":1,\"pk\":2,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"record_json\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":3,\"dflt_value\":null,\"name\":\"record_sha256\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":4,\"dflt_value\":null,\"name\":\"received_at\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}],\"cached_ingest_watermark\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":0,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"ingest_offset\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"advanced_at\",\"notnull\":0,\"pk\":0,\"type\":\"TEXT\"}],\"cached_projection_meta\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"singleton\",\"notnull\":0,\"pk\":1,\"type\":\"INTEGER\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"schema_version\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}]}}\n",
+        "timeout": 3
+      }
+    },
+    "records": [
+      {
+        "ingest_offset": 1,
+        "record": {
+          "actor": "verification",
+          "basis_revision": null,
+          "causation_id": null,
+          "correlation_id": null,
+          "created_at": "2026-10-19T17:51:23Z",
+          "event_id": "rebuild-source-1",
+          "event_type": "work.completed",
+          "occurred_at": "2026-10-18T00:00:00Z",
+          "origin_seq": 1,
+          "origin_stream_id": "19c6875a-b82c-48e8-900e-d55906fb2113",
+          "payload": {
+            "index": 1,
+            "label": "source",
+            "summary": "rebuild \u03b4"
+          },
+          "payload_sha256": "5e4affd3a1744d22403e1ceb4a3b1c403c4d43083c2d396221130bec3c25279e",
+          "record_class": "observation",
+          "runtime_session_id": "rebuild-contract",
+          "schema_version": 1
+        }
+      },
+      {
+        "ingest_offset": 2,
+        "record": {
+          "actor": "verification",
+          "basis_revision": null,
+          "causation_id": null,
+          "correlation_id": null,
+          "created_at": "2026-10-19T17:51:23Z",
+          "event_id": "rebuild-source-2",
+          "event_type": "work.completed",
+          "occurred_at": "2026-10-18T00:00:00Z",
+          "origin_seq": 2,
+          "origin_stream_id": "19c6875a-b82c-48e8-900e-d55906fb2113",
+          "payload": {
+            "index": 2,
+            "label": "source",
+            "summary": "rebuild \u03b4"
+          },
+          "payload_sha256": "7c750e947a31a1618246c865f6283cb8644ba44679623b44aaaa51db71bc5b39",
+          "record_class": "observation",
+          "runtime_session_id": "rebuild-contract",
+          "schema_version": 1
+        }
+      },
+      {
+        "ingest_offset": 3,
+        "record": {
+          "actor": "verification",
+          "basis_revision": null,
+          "causation_id": null,
+          "correlation_id": null,
+          "created_at": "2026-10-19T17:51:23Z",
+          "event_id": "rebuild-source-3",
+          "event_type": "work.completed",
+          "occurred_at": "2026-10-18T00:00:00Z",
+          "origin_seq": 3,
+          "origin_stream_id": "19c6875a-b82c-48e8-900e-d55906fb2113",
+          "payload": {
+            "index": 3,
+            "label": "source",
+            "summary": "rebuild \u03b4"
+          },
+          "payload_sha256": "face7e653344df9075e73c28782e8dcfb10b6655c0e314d1752bb51c225c4ceb",
+          "record_class": "observation",
+          "runtime_session_id": "rebuild-contract",
+          "schema_version": 1
+        }
+      }
+    ],
+    "schema_version": 2,
+    "watermark": {
+      "advanced_at": "2026-10-19T17:51:23Z",
+      "ingest_offset": 3
+    }
+  },
+  "reader": {
+    "isolation": "read committed",
+    "pid": 41460,
+    "version": "16.15"
+  },
+  "result": {
+    "operation_interval": [
+      1792432283.6636672,
+      1792432283.9713514
+    ],
+    "reader": {
+      "database": {
+        "bytes": 40960,
+        "device": 42,
+        "inode": 97241949,
+        "path": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_replac0/cache.db",
+        "sha256": "9ff72c653a81c9cabe9562f7e40769e42f2eede332ab0c9a16a4b076eeb6b9f0"
+      },
+      "reader": {
+        "captured_bytes": 4588,
+        "elapsed": 0.029767559999527293,
+        "output_limit": 65536,
+        "pid": 41552,
+        "returncode": 0,
+        "stderr": "",
+        "stdout": "{\"integrity\":\"ok\",\"journal_mode\":\"delete\",\"rows\":{\"cached_authority_decision\":[],\"cached_authority_watermark\":[{\"advanced_at\":null,\"decision_ingest_offset\":0,\"repo_id\":\"itest-rebuild-primary-114a32aaeef5\"}],\"cached_ingest_record\":[{\"ingest_offset\":1,\"received_at\":\"2026-10-19T17:51:23Z\",\"record_json\":\"{\\\"actor\\\":\\\"verification\\\",\\\"basis_revision\\\":null,\\\"causation_id\\\":null,\\\"correlation_id\\\":null,\\\"created_at\\\":\\\"2026-10-19T17:51:23Z\\\",\\\"event_id\\\":\\\"rebuild-source-1\\\",\\\"event_type\\\":\\\"work.completed\\\",\\\"occurred_at\\\":\\\"2026-10-18T00:00:00Z\\\",\\\"origin_seq\\\":1,\\\"origin_stream_id\\\":\\\"19c6875a-b82c-48e8-900e-d55906fb2113\\\",\\\"payload\\\":{\\\"index\\\":1,\\\"label\\\":\\\"source\\\",\\\"summary\\\":\\\"rebuild \u03b4\\\"},\\\"payload_sha256\\\":\\\"5e4affd3a1744d22403e1ceb4a3b1c403c4d43083c2d396221130bec3c25279e\\\",\\\"record_class\\\":\\\"observation\\\",\\\"runtime_session_id\\\":\\\"rebuild-contract\\\",\\\"schema_version\\\":1}\",\"record_sha256\":\"82f223dc2eaae50bcf6093f52abd068b011f1f6e14b48d4916a3db57608d1eb4\",\"repo_id\":\"itest-rebuild-primary-114a32aaeef5\"},{\"ingest_offset\":2,\"received_at\":\"2026-10-19T17:51:23Z\",\"record_json\":\"{\\\"actor\\\":\\\"verification\\\",\\\"basis_revision\\\":null,\\\"causation_id\\\":null,\\\"correlation_id\\\":null,\\\"created_at\\\":\\\"2026-10-19T17:51:23Z\\\",\\\"event_id\\\":\\\"rebuild-source-2\\\",\\\"event_type\\\":\\\"work.completed\\\",\\\"occurred_at\\\":\\\"2026-10-18T00:00:00Z\\\",\\\"origin_seq\\\":2,\\\"origin_stream_id\\\":\\\"19c6875a-b82c-48e8-900e-d55906fb2113\\\",\\\"payload\\\":{\\\"index\\\":2,\\\"label\\\":\\\"source\\\",\\\"summary\\\":\\\"rebuild \u03b4\\\"},\\\"payload_sha256\\\":\\\"7c750e947a31a1618246c865f6283cb8644ba44679623b44aaaa51db71bc5b39\\\",\\\"record_class\\\":\\\"observation\\\",\\\"runtime_session_id\\\":\\\"rebuild-contract\\\",\\\"schema_version\\\":1}\",\"record_sha256\":\"80dd5fcec9675ea9bcec4bcff7c408e57c2db40095cd03c9c519dbaab3dbe533\",\"repo_id\":\"itest-rebuild-primary-114a32aaeef5\"},{\"ingest_offset\":3,\"received_at\":\"2026-10-19T17:51:23Z\",\"record_json\":\"{\\\"actor\\\":\\\"verification\\\",\\\"basis_revision\\\":null,\\\"causation_id\\\":null,\\\"correlation_id\\\":null,\\\"created_at\\\":\\\"2026-10-19T17:51:23Z\\\",\\\"event_id\\\":\\\"rebuild-source-3\\\",\\\"event_type\\\":\\\"work.completed\\\",\\\"occurred_at\\\":\\\"2026-10-18T00:00:00Z\\\",\\\"origin_seq\\\":3,\\\"origin_stream_id\\\":\\\"19c6875a-b82c-48e8-900e-d55906fb2113\\\",\\\"payload\\\":{\\\"index\\\":3,\\\"label\\\":\\\"source\\\",\\\"summary\\\":\\\"rebuild \u03b4\\\"},\\\"payload_sha256\\\":\\\"face7e653344df9075e73c28782e8dcfb10b6655c0e314d1752bb51c225c4ceb\\\",\\\"record_class\\\":\\\"observation\\\",\\\"runtime_session_id\\\":\\\"rebuild-contract\\\",\\\"schema_version\\\":1}\",\"record_sha256\":\"f708249810cbe5c9844b81b7b7b9bfdc4d89e0677943b442fa2eb7da535f8b26\",\"repo_id\":\"itest-rebuild-primary-114a32aaeef5\"}],\"cached_ingest_watermark\":[{\"advanced_at\":\"2026-10-19T17:51:23Z\",\"ingest_offset\":3,\"repo_id\":\"itest-rebuild-primary-114a32aaeef5\"}],\"cached_projection_meta\":[{\"repo_id\":\"itest-rebuild-primary-114a32aaeef5\",\"schema_version\":2,\"singleton\":1}]},\"schema\":{\"cached_authority_decision\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"decision_ingest_offset\",\"notnull\":1,\"pk\":2,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"decision_json\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":3,\"dflt_value\":null,\"name\":\"decision_sha256\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":4,\"dflt_value\":null,\"name\":\"received_at\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}],\"cached_authority_watermark\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":0,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"decision_ingest_offset\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"advanced_at\",\"notnull\":0,\"pk\":0,\"type\":\"TEXT\"}],\"cached_ingest_record\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"ingest_offset\",\"notnull\":1,\"pk\":2,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"record_json\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":3,\"dflt_value\":null,\"name\":\"record_sha256\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":4,\"dflt_value\":null,\"name\":\"received_at\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}],\"cached_ingest_watermark\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":0,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"ingest_offset\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"advanced_at\",\"notnull\":0,\"pk\":0,\"type\":\"TEXT\"}],\"cached_projection_meta\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"singleton\",\"notnull\":0,\"pk\":1,\"type\":\"INTEGER\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"schema_version\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}]}}\n",
+        "timeout": 3
+      }
+    },
+    "state": {
+      "integrity": "ok",
+      "journal_mode": "delete",
+      "rows": {
+        "cached_authority_decision": [],
+        "cached_authority_watermark": [
+          {
+            "advanced_at": null,
+            "decision_ingest_offset": 0,
+            "repo_id": "itest-rebuild-primary-114a32aaeef5"
+          }
+        ],
+        "cached_ingest_record": [
+          {
+            "ingest_offset": 1,
+            "received_at": "2026-10-19T17:51:23Z",
+            "record_json": "{\"actor\":\"verification\",\"basis_revision\":null,\"causation_id\":null,\"correlation_id\":null,\"created_at\":\"2026-10-19T17:51:23Z\",\"event_id\":\"rebuild-source-1\",\"event_type\":\"work.completed\",\"occurred_at\":\"2026-10-18T00:00:00Z\",\"origin_seq\":1,\"origin_stream_id\":\"19c6875a-b82c-48e8-900e-d55906fb2113\",\"payload\":{\"index\":1,\"label\":\"source\",\"summary\":\"rebuild \u03b4\"},\"payload_sha256\":\"5e4affd3a1744d22403e1ceb4a3b1c403c4d43083c2d396221130bec3c25279e\",\"record_class\":\"observation\",\"runtime_session_id\":\"rebuild-contract\",\"schema_version\":1}",
+            "record_sha256": "82f223dc2eaae50bcf6093f52abd068b011f1f6e14b48d4916a3db57608d1eb4",
+            "repo_id": "itest-rebuild-primary-114a32aaeef5"
+          },
+          {
+            "ingest_offset": 2,
+            "received_at": "2026-10-19T17:51:23Z",
+            "record_json": "{\"actor\":\"verification\",\"basis_revision\":null,\"causation_id\":null,\"correlation_id\":null,\"created_at\":\"2026-10-19T17:51:23Z\",\"event_id\":\"rebuild-source-2\",\"event_type\":\"work.completed\",\"occurred_at\":\"2026-10-18T00:00:00Z\",\"origin_seq\":2,\"origin_stream_id\":\"19c6875a-b82c-48e8-900e-d55906fb2113\",\"payload\":{\"index\":2,\"label\":\"source\",\"summary\":\"rebuild \u03b4\"},\"payload_sha256\":\"7c750e947a31a1618246c865f6283cb8644ba44679623b44aaaa51db71bc5b39\",\"record_class\":\"observation\",\"runtime_session_id\":\"rebuild-contract\",\"schema_version\":1}",
+            "record_sha256": "80dd5fcec9675ea9bcec4bcff7c408e57c2db40095cd03c9c519dbaab3dbe533",
+            "repo_id": "itest-rebuild-primary-114a32aaeef5"
+          },
+          {
+            "ingest_offset": 3,
+            "received_at": "2026-10-19T17:51:23Z",
+            "record_json": "{\"actor\":\"verification\",\"basis_revision\":null,\"causation_id\":null,\"correlation_id\":null,\"created_at\":\"2026-10-19T17:51:23Z\",\"event_id\":\"rebuild-source-3\",\"event_type\":\"work.completed\",\"occurred_at\":\"2026-10-18T00:00:00Z\",\"origin_seq\":3,\"origin_stream_id\":\"19c6875a-b82c-48e8-900e-d55906fb2113\",\"payload\":{\"index\":3,\"label\":\"source\",\"summary\":\"rebuild \u03b4\"},\"payload_sha256\":\"face7e653344df9075e73c28782e8dcfb10b6655c0e314d1752bb51c225c4ceb\",\"record_class\":\"observation\",\"runtime_session_id\":\"rebuild-contract\",\"schema_version\":1}",
+            "record_sha256": "f708249810cbe5c9844b81b7b7b9bfdc4d89e0677943b442fa2eb7da535f8b26",
+            "repo_id": "itest-rebuild-primary-114a32aaeef5"
+          }
+        ],
+        "cached_ingest_watermark": [
+          {
+            "advanced_at": "2026-10-19T17:51:23Z",
+            "ingest_offset": 3,
+            "repo_id": "itest-rebuild-primary-114a32aaeef5"
+          }
+        ],
+        "cached_projection_meta": [
+          {
+            "repo_id": "itest-rebuild-primary-114a32aaeef5",
+            "schema_version": 2,
+            "singleton": 1
+          }
+        ]
+      },
+      "schema": {
+        "cached_authority_decision": [
+          {
+            "cid": 0,
+            "dflt_value": null,
+            "name": "repo_id",
+            "notnull": 1,
+            "pk": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "dflt_value": null,
+            "name": "decision_ingest_offset",
+            "notnull": 1,
+            "pk": 2,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "dflt_value": null,
+            "name": "decision_json",
+            "notnull": 1,
+            "pk": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "dflt_value": null,
+            "name": "decision_sha256",
+            "notnull": 1,
+            "pk": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "dflt_value": null,
+            "name": "received_at",
+            "notnull": 1,
+            "pk": 0,
+            "type": "TEXT"
+          }
+        ],
+        "cached_authority_watermark": [
+          {
+            "cid": 0,
+            "dflt_value": null,
+            "name": "repo_id",
+            "notnull": 0,
+            "pk": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "dflt_value": null,
+            "name": "decision_ingest_offset",
+            "notnull": 1,
+            "pk": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "dflt_value": null,
+            "name": "advanced_at",
+            "notnull": 0,
+            "pk": 0,
+            "type": "TEXT"
+          }
+        ],
+        "cached_ingest_record": [
+          {
+            "cid": 0,
+            "dflt_value": null,
+            "name": "repo_id",
+            "notnull": 1,
+            "pk": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "dflt_value": null,
+            "name": "ingest_offset",
+            "notnull": 1,
+            "pk": 2,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "dflt_value": null,
+            "name": "record_json",
+            "notnull": 1,
+            "pk": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 3,
+            "dflt_value": null,
+            "name": "record_sha256",
+            "notnull": 1,
+            "pk": 0,
+            "type": "TEXT"
+          },
+          {
+            "cid": 4,
+            "dflt_value": null,
+            "name": "received_at",
+            "notnull": 1,
+            "pk": 0,
+            "type": "TEXT"
+          }
+        ],
+        "cached_ingest_watermark": [
+          {
+            "cid": 0,
+            "dflt_value": null,
+            "name": "repo_id",
+            "notnull": 0,
+            "pk": 1,
+            "type": "TEXT"
+          },
+          {
+            "cid": 1,
+            "dflt_value": null,
+            "name": "ingest_offset",
+            "notnull": 1,
+            "pk": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "dflt_value": null,
+            "name": "advanced_at",
+            "notnull": 0,
+            "pk": 0,
+            "type": "TEXT"
+          }
+        ],
+        "cached_projection_meta": [
+          {
+            "cid": 0,
+            "dflt_value": null,
+            "name": "singleton",
+            "notnull": 0,
+            "pk": 1,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 1,
+            "dflt_value": null,
+            "name": "schema_version",
+            "notnull": 1,
+            "pk": 0,
+            "type": "INTEGER"
+          },
+          {
+            "cid": 2,
+            "dflt_value": null,
+            "name": "repo_id",
+            "notnull": 1,
+            "pk": 0,
+            "type": "TEXT"
+          }
+        ]
+      }
+    }
+  },
+  "returned_watermark": {
+    "advanced_at": "2026-10-19T17:51:23Z",
+    "ingest_offset": 3
+  },
+  "source_append_intervals": [
+    {
+      "after": 1792432283.206782,
+      "before": 1792432283.1965787,
+      "created_at": "2026-10-19T17:51:23Z"
+    },
+    {
+      "after": 1792432283.2169862,
+      "before": 1792432283.2068167,
+      "created_at": "2026-10-19T17:51:23Z"
+    },
+    {
+      "after": 1792432283.2277753,
+      "before": 1792432283.2170215,
+      "created_at": "2026-10-19T17:51:23Z"
+    }
+  ],
+  "source_ingest_interval": [
+    1792432283.3584795,
+    1792432283.3625424
+  ],
+  "source_metadata": {
+    "ingest_repo_cursor": [
+      {
+        "highest_offset": 3,
+        "repo_id": "itest-rebuild-primary-114a32aaeef5"
+      }
+    ],
+    "ingest_stream": [
+      {
+        "created_at": "2026-10-19T17:51:23.358632Z",
+        "highest_origin_seq": 3,
+        "origin_stream_id": "19c6875a-b82c-48e8-900e-d55906fb2113",
+        "repo_id": "itest-rebuild-primary-114a32aaeef5"
+      }
+    ]
+  },
+  "source_rows": [
+    {
+      "actor": "verification",
+      "basis_revision": null,
+      "causation_id": null,
+      "correlation_id": null,
+      "event_id": "rebuild-source-1",
+      "event_type": "work.completed",
+      "ingest_id": 9,
+      "ingest_offset": 1,
+      "ingested_at": "2026-10-19T17:51:23.358632Z",
+      "occurred_at": "2026-10-18T00:00:00Z",
+      "origin_seq": 1,
+      "origin_stream_id": "19c6875a-b82c-48e8-900e-d55906fb2113",
+      "payload": {
+        "index": 1,
+        "label": "source",
+        "summary": "rebuild \u03b4"
+      },
+      "payload_sha256": "5e4affd3a1744d22403e1ceb4a3b1c403c4d43083c2d396221130bec3c25279e",
+      "producer_created_at": "2026-10-19T17:51:23Z",
+      "record_class": "observation",
+      "record_sha256": "82f223dc2eaae50bcf6093f52abd068b011f1f6e14b48d4916a3db57608d1eb4",
+      "repo_id": "itest-rebuild-primary-114a32aaeef5",
+      "runtime_session_id": "rebuild-contract",
+      "schema_version": 1
+    },
+    {
+      "actor": "verification",
+      "basis_revision": null,
+      "causation_id": null,
+      "correlation_id": null,
+      "event_id": "rebuild-source-2",
+      "event_type": "work.completed",
+      "ingest_id": 10,
+      "ingest_offset": 2,
+      "ingested_at": "2026-10-19T17:51:23.358632Z",
+      "occurred_at": "2026-10-18T00:00:00Z",
+      "origin_seq": 2,
+      "origin_stream_id": "19c6875a-b82c-48e8-900e-d55906fb2113",
+      "payload": {
+        "index": 2,
+        "label": "source",
+        "summary": "rebuild \u03b4"
+      },
+      "payload_sha256": "7c750e947a31a1618246c865f6283cb8644ba44679623b44aaaa51db71bc5b39",
+      "producer_created_at": "2026-10-19T17:51:23Z",
+      "record_class": "observation",
+      "record_sha256": "80dd5fcec9675ea9bcec4bcff7c408e57c2db40095cd03c9c519dbaab3dbe533",
+      "repo_id": "itest-rebuild-primary-114a32aaeef5",
+      "runtime_session_id": "rebuild-contract",
+      "schema_version": 1
+    },
+    {
+      "actor": "verification",
+      "basis_revision": null,
+      "causation_id": null,
+      "correlation_id": null,
+      "event_id": "rebuild-source-3",
+      "event_type": "work.completed",
+      "ingest_id": 11,
+      "ingest_offset": 3,
+      "ingested_at": "2026-10-19T17:51:23.358632Z",
+      "occurred_at": "2026-10-18T00:00:00Z",
+      "origin_seq": 3,
+      "origin_stream_id": "19c6875a-b82c-48e8-900e-d55906fb2113",
+      "payload": {
+        "index": 3,
+        "label": "source",
+        "summary": "rebuild \u03b4"
+      },
+      "payload_sha256": "face7e653344df9075e73c28782e8dcfb10b6655c0e314d1752bb51c225c4ceb",
+      "producer_created_at": "2026-10-19T17:51:23Z",
+      "record_class": "observation",
+      "record_sha256": "f708249810cbe5c9844b81b7b7b9bfdc4d89e0677943b442fa2eb7da535f8b26",
+      "repo_id": "itest-rebuild-primary-114a32aaeef5",
+      "runtime_session_id": "rebuild-contract",
+      "schema_version": 1
+    }
+  ]
+}

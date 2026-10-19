@@ -1,0 +1,192 @@
+{
+  "foreign_append_intervals": [
+    {
+      "after": 1792432285.4038267,
+      "before": 1792432285.3895156,
+      "created_at": "2026-10-19T17:51:25Z"
+    }
+  ],
+  "foreign_ingest_interval": [
+    1792432285.4219937,
+    1792432285.424328
+  ],
+  "foreign_rows": [
+    {
+      "actor": "verification",
+      "basis_revision": null,
+      "causation_id": null,
+      "correlation_id": null,
+      "event_id": "rebuild-foreign-1",
+      "event_type": "work.completed",
+      "ingest_id": 21,
+      "ingest_offset": 1,
+      "ingested_at": "2026-10-19T17:51:25.422050Z",
+      "occurred_at": "2026-10-18T00:00:00Z",
+      "origin_seq": 1,
+      "origin_stream_id": "161f034e-2b83-40c1-a7cc-bd7b494ba7da",
+      "payload": {
+        "index": 1,
+        "label": "foreign",
+        "summary": "rebuild \u03b4"
+      },
+      "payload_sha256": "5d848248a2070eff8c032e1a4ba084a2099252e4c5d6f097ebf46e8a6447d781",
+      "producer_created_at": "2026-10-19T17:51:25Z",
+      "record_class": "observation",
+      "record_sha256": "031d3cf9af78b813db0d18f7dc46e5c2540832a18236d4f1880c888ef346e809",
+      "repo_id": "itest-rebuild-foreign-48a550f3c36d",
+      "runtime_session_id": "rebuild-contract",
+      "schema_version": 1
+    }
+  ],
+  "reader": {
+    "isolation": "read committed",
+    "pid": 41755,
+    "version": "16.15"
+  },
+  "source_append_intervals": [
+    {
+      "after": 1792432285.1958566,
+      "before": 1792432285.1819472,
+      "created_at": "2026-10-19T17:51:25Z"
+    },
+    {
+      "after": 1792432285.2210395,
+      "before": 1792432285.1959064,
+      "created_at": "2026-10-19T17:51:25Z"
+    },
+    {
+      "after": 1792432285.2350183,
+      "before": 1792432285.2210793,
+      "created_at": "2026-10-19T17:51:25Z"
+    }
+  ],
+  "source_ingest_interval": [
+    1792432285.4180155,
+    1792432285.4219933
+  ],
+  "source_metadata": {
+    "ingest_repo_cursor": [
+      {
+        "highest_offset": 3,
+        "repo_id": "itest-rebuild-primary-b4285c1f3930"
+      }
+    ],
+    "ingest_stream": [
+      {
+        "created_at": "2026-10-19T17:51:25.418196Z",
+        "highest_origin_seq": 3,
+        "origin_stream_id": "08cada5a-72c1-4e5b-a067-28a4d76ddd02",
+        "repo_id": "itest-rebuild-primary-b4285c1f3930"
+      }
+    ]
+  },
+  "source_rows": [
+    {
+      "actor": "verification",
+      "basis_revision": null,
+      "causation_id": null,
+      "correlation_id": null,
+      "event_id": "rebuild-source-1",
+      "event_type": "work.completed",
+      "ingest_id": 18,
+      "ingest_offset": 1,
+      "ingested_at": "2026-10-19T17:51:25.418196Z",
+      "occurred_at": "2026-10-18T00:00:00Z",
+      "origin_seq": 1,
+      "origin_stream_id": "08cada5a-72c1-4e5b-a067-28a4d76ddd02",
+      "payload": {
+        "index": 1,
+        "label": "source",
+        "summary": "rebuild \u03b4"
+      },
+      "payload_sha256": "5e4affd3a1744d22403e1ceb4a3b1c403c4d43083c2d396221130bec3c25279e",
+      "producer_created_at": "2026-10-19T17:51:25Z",
+      "record_class": "observation",
+      "record_sha256": "8d79deb8f434da4613da5eb77eb963ccb9ce3aa6662f92c59990bd9510abeca3",
+      "repo_id": "itest-rebuild-primary-b4285c1f3930",
+      "runtime_session_id": "rebuild-contract",
+      "schema_version": 1
+    },
+    {
+      "actor": "verification",
+      "basis_revision": null,
+      "causation_id": null,
+      "correlation_id": null,
+      "event_id": "rebuild-source-2",
+      "event_type": "work.completed",
+      "ingest_id": 19,
+      "ingest_offset": 2,
+      "ingested_at": "2026-10-19T17:51:25.418196Z",
+      "occurred_at": "2026-10-18T00:00:00Z",
+      "origin_seq": 2,
+      "origin_stream_id": "08cada5a-72c1-4e5b-a067-28a4d76ddd02",
+      "payload": {
+        "index": 2,
+        "label": "source",
+        "summary": "rebuild \u03b4"
+      },
+      "payload_sha256": "7c750e947a31a1618246c865f6283cb8644ba44679623b44aaaa51db71bc5b39",
+      "producer_created_at": "2026-10-19T17:51:25Z",
+      "record_class": "observation",
+      "record_sha256": "3a95f54041fc1d0dfe760370fb134702094a188a22bccc3117f146506179225b",
+      "repo_id": "itest-rebuild-primary-b4285c1f3930",
+      "runtime_session_id": "rebuild-contract",
+      "schema_version": 1
+    },
+    {
+      "actor": "verification",
+      "basis_revision": null,
+      "causation_id": null,
+      "correlation_id": null,
+      "event_id": "rebuild-source-3",
+      "event_type": "work.completed",
+      "ingest_id": 20,
+      "ingest_offset": 3,
+      "ingested_at": "2026-10-19T17:51:25.418196Z",
+      "occurred_at": "2026-10-18T00:00:00Z",
+      "origin_seq": 3,
+      "origin_stream_id": "08cada5a-72c1-4e5b-a067-28a4d76ddd02",
+      "payload": {
+        "index": 3,
+        "label": "source",
+        "summary": "rebuild \u03b4"
+      },
+      "payload_sha256": "face7e653344df9075e73c28782e8dcfb10b6655c0e314d1752bb51c225c4ceb",
+      "producer_created_at": "2026-10-19T17:51:25Z",
+      "record_class": "observation",
+      "record_sha256": "36246e994501a7bb629041ce25ad6e9e03d033fb30235b982230ef10e0a7a7ee",
+      "repo_id": "itest-rebuild-primary-b4285c1f3930",
+      "runtime_session_id": "rebuild-contract",
+      "schema_version": 1
+    }
+  ],
+  "writer_stall_control": {
+    "marker": {
+      "backend_pid": 41758,
+      "nonce": "527965f09b6a45fda0b13a8d90f80432",
+      "phase": "connected-before-producer-append",
+      "pid": 41757
+    },
+    "owner": {
+      "captured_bytes": 120,
+      "elapsed": 3.007396654999866,
+      "output_limit": 65536,
+      "pid": 41757,
+      "returncode": -9,
+      "stderr": "",
+      "stdout": "{\"backend_pid\":41758,\"nonce\":\"527965f09b6a45fda0b13a8d90f80432\",\"phase\":\"connected-before-producer-append\",\"pid\":41757}\n",
+      "timeout": 3
+    },
+    "remaining_backend_rows": 0
+  },
+  "writer_stall_owner": {
+    "captured_bytes": 120,
+    "elapsed": 3.007396654999866,
+    "output_limit": 65536,
+    "pid": 41757,
+    "returncode": -9,
+    "stderr": "",
+    "stdout": "{\"backend_pid\":41758,\"nonce\":\"527965f09b6a45fda0b13a8d90f80432\",\"phase\":\"connected-before-producer-append\",\"pid\":41757}\n",
+    "timeout": 3
+  }
+}

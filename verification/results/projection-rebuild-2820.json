@@ -1,0 +1,109 @@
+{
+  "claims": [
+    {
+      "evidence": [
+        "verification/traces/projection-rebuild-2820/manifest.json"
+      ],
+      "property": "Actual public PostgreSQL-backed rebuild upgrades schema v1, replaces stale current cache and yields bound empty current cache despite a foreign tenant record",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "verification/traces/projection-rebuild-2820/manifest.json"
+      ],
+      "property": "Captured high-water3 limits rebuilt cache to1..3 despite independently committed4 visible in real pages[1,2]/[3,4]; ordinary subsequent catchup applies4",
+      "result": "concurrency-tested"
+    },
+    {
+      "evidence": [
+        "verification/traces/projection-rebuild-2820/manifest.json"
+      ],
+      "property": "Actual second-page injected failure and retained-prefix refusal preserve exact original closed bytes/state, remove sibling; failure retry converges",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "verification/traces/projection-rebuild-2820/manifest.json"
+      ],
+      "property": "Independent five-table known-answer checker accepts valid fixtures and refuses nine separately persisted faults with exact intended reasons",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "verification/traces/projection-rebuild-2820/manifest.json"
+      ],
+      "property": "Connected writer reaches nonce/PID-bound injected stall, exact owned child is killed/reaped and PostgreSQL backend disappears without a new record",
+      "result": "example-tested"
+    },
+    {
+      "evidence": [
+        "verification/fixtures/projection-rebuild-plan-2820.md"
+      ],
+      "property": "Physical durability, concurrent-open-reader replacement, trusted snapshot recovery, whole-business shadow parity and full parent1131 qualification",
+      "result": "unknown"
+    }
+  ],
+  "context_id": "sprintctl.projection-rebuild-high-water",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2820",
+    "revision": "native:release:828e25d93e243de91cc73ec3eeb1a61258326f0a8d2655fa7fdf5b4f312284b8"
+  },
+  "counterexamples": [],
+  "depth": 2,
+  "environment": {
+    "backend": "temporary SQLite3.53.1 and runner-owned disposable PostgreSQL16.15",
+    "isolation": "Actual reader and independent writer each measured READ COMMITTED; no shared MVCC snapshot",
+    "tool_versions": {
+      "executable": "/tmp/sprintctl-projection-rebuild-f13/.venv/bin/python",
+      "psycopg": "3.3.3",
+      "pytest": "9.0.2",
+      "python": "3.13.16 (main, Oct  1 2026, 20:59:14) [Clang 22.1.3 ]",
+      "sqlite": "3.53.1"
+    }
+  },
+  "execution": {
+    "bounds": {
+      "batch_size": 2,
+      "concurrent_additional_records": 1,
+      "empty_registered_fixture_cleanups": 2,
+      "foreign_records_per_case": 1,
+      "local_passed": 55,
+      "new_pg_cases": 7,
+      "oracle_cases": 11,
+      "pg_connect_timeout_seconds": 5,
+      "pg_lock_timeout_ms": 3000,
+      "pg_passed": 8,
+      "pg_statement_timeout_ms": 5000,
+      "raw_objects": 52,
+      "raw_reader_columns_per_table": 32,
+      "raw_reader_output_bytes": 65536,
+      "raw_reader_rows_per_table": 32,
+      "raw_reader_tables": 8,
+      "raw_reader_timeout_seconds": 3,
+      "seed_primary_records": 3,
+      "sqlite_busy_timeout_seconds": 0.2,
+      "sqlite_progress_timeout_seconds": 0.5,
+      "writer_backend_cleanup_timeout_seconds": 2,
+      "writer_process_timeout_seconds": 8,
+      "writer_stall_timeout_seconds": 3
+    },
+    "faults_exercised": [
+      "named exception after actual second remote page query before returning it",
+      "explicit guarded disposable transaction disables only ingest_record_immutable, deletes scoped offset one, restores trigger before commit and verifies enabled",
+      "nine persisted oracle falsifiers: hash mismatch, actor mismatch, boolean schema version, float origin sequence, watermark ahead, internally consistent partial population, wrong repository, unexpected authority record, unexpected authority watermark",
+      "connected remote writer reaches fresh nonce/PID-bound stall before producer append; observer kills/reaps exact child and backend disappears without new record"
+    ],
+    "histories": 6,
+    "seed": null
+  },
+  "implementation_sha": "32bc4e6b3b1fa1c369fcd139605d0dff6795488e",
+  "notes": [
+    "Final frozen campaign at32bc4e6:55local passed21.33s;8PG passed11.04s,1765deselected;2registered cleanup scopes empty. Exact collected and JUnit node multisets equal; no failures/errors/skips.",
+    "Source reviewed five hashes preserved before and after qualification; actual freeze native5893 precedes final execution. Full source and raw-object hashes live in provenance. Historical development is separate.",
+    "Six actual rebuild histories plus one connected-writer stall control; two valid local oracle examples and nine persisted falsifiers. The seven PG cases plus one existing PG example make eight.",
+    "Authority cache is intentionally empty after whole-file ingest rebuild; schema assertions cover columns/types/notnull/primary keys/defaults, not complete DDL/index/trigger equivalence.",
+    "Explicit guarded disposable fixture mutation simulates retention; it is not a product retention API or successful trusted snapshot recovery.",
+    "Exact-head four canonical CI jobs, independent packet review, tested/merge-tree equality and native Release-bound acceptance remain publication gates."
+  ],
+  "schema_version": "verification-result/v1"
+}

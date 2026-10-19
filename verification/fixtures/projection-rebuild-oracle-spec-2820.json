@@ -1,0 +1,84 @@
+{
+  "schema": "projection-rebuild-f13-oracle-spec/v1",
+  "status": "planning-only; no verification implementation or execution",
+  "governing_plan_sha256": "385e63b1d166584ef95b59ca312019acdec5b872c3d9b6334d300a979f300916",
+  "source_observation": "accepted246211e9; PgStore read functions use ordinary cursors and ingest_records commits before returning; source refresh follows accepted2806 before implementation",
+  "success_tables": {
+    "cached_ingest_record": [
+      "repo_id",
+      "ingest_offset",
+      "record_json",
+      "record_sha256",
+      "received_at"
+    ],
+    "cached_ingest_watermark": [
+      "repo_id",
+      "ingest_offset",
+      "advanced_at"
+    ],
+    "cached_authority_decision": [
+      "repo_id",
+      "decision_ingest_offset",
+      "decision_json",
+      "decision_sha256",
+      "received_at"
+    ],
+    "cached_authority_watermark": [
+      "repo_id",
+      "decision_ingest_offset",
+      "advanced_at"
+    ],
+    "cached_projection_meta": [
+      "singleton",
+      "schema_version",
+      "repo_id"
+    ]
+  },
+  "known_record_fields": [
+    "origin_stream_id",
+    "origin_seq",
+    "event_id",
+    "schema_version",
+    "record_class",
+    "event_type",
+    "actor",
+    "runtime_session_id",
+    "occurred_at",
+    "basis_revision",
+    "correlation_id",
+    "causation_id",
+    "payload",
+    "payload_sha256",
+    "created_at"
+  ],
+  "oracle_rules": [
+    "Observe authored producer UUID and created_at as source identity, validate canonical UUID/time representation; do not use private product conversion/fingerprint helpers as expected-value functions.",
+    "Recompute canonical JSON SHA256 independently before exact expected authored-content comparison. Dynamic local received_at/advanced_at must have canonical UTC format and be inside actual rebuild interval; success does not require invented equal timestamps.",
+    "For H>0 require exactly offsets1..H, primary repo binding, full15field remote envelope known answers, current schema metadata2 and singleton1, one ingest watermarkH/nonNULL, empty authority records and one authority watermark0/NULL. For H0 require empty ingest with watermark0/NULL.",
+    "Failure comparison is exact original closed-file SHA256 and full raw preexisting tables/fields; schema-v1 input legitimately has fewer tables. Do not apply success-five-table schema expectations before an old schema has rebuilt.",
+    "Raw snapshot readers must not initialize/migrate/write; bounded busy/progress/process owner, integrity_check, stable before/after original file hash.",
+    "Measure SHOW transaction_isolation on each actual PG actor; close the test-owned inspection transaction before target activity. Writer API commits before return, and a different connection observing highwater4 proves visibility; never infer committed visibility only from writer-local state.",
+    "In primary positives and highwater race, all PG page/highwater results must come from unchanged actual functions. Hooks record/barrier/inject only after their real query. Do not fabricate pages as positive evidence.",
+    "Partial rebuild failure must demonstrate actual first-page sibling rows/watermark before second real query result is deliberately withheld, then exact named exception, original preservation and sibling cleanup.",
+    "Exact intended assertion reasons distinguish corrupted JSON hash, stored hash, population, ahead watermark and repository/authority-domain mismatch controls. A valid fixture must pass the same checker first."
+  ],
+  "highwater_history": [
+    "actual captureH3",
+    "first page boundary reached",
+    "independent actor commits record4",
+    "different connection observesH4",
+    "actual page1 offsets1,2",
+    "actual page2 offsets3,4",
+    "rebuild returnsH3 with records1..3",
+    "later actual catchup yieldsrecord4/watermark4"
+  ],
+  "nonclaims": [
+    "concurrent reader/rename semantics",
+    "a shared PostgreSQL snapshot",
+    "network partition",
+    "trusted snapshot/base-offset recovery",
+    "business-state shadow parity",
+    "authority preservation or effect",
+    "fullparent1131 completion"
+  ]
+}

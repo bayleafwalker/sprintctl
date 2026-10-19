@@ -1,0 +1,473 @@
+{
+  "fault": "wrong-repository",
+  "expected_reason": "projection repository/schema binding",
+  "actual_reason": "projection repository/schema binding",
+  "valid": {
+    "integrity": "ok",
+    "journal_mode": "delete",
+    "rows": {
+      "cached_authority_decision": [],
+      "cached_authority_watermark": [
+        {
+          "advanced_at": null,
+          "decision_ingest_offset": 0,
+          "repo_id": "authored-oracle-fixture"
+        }
+      ],
+      "cached_ingest_record": [
+        {
+          "ingest_offset": 1,
+          "received_at": "2026-10-18T00:00:00Z",
+          "record_json": "{\"actor\":\"verification\",\"basis_revision\":null,\"causation_id\":null,\"correlation_id\":null,\"created_at\":\"2026-10-18T00:00:00Z\",\"event_id\":\"rebuild-source-1\",\"event_type\":\"work.completed\",\"occurred_at\":\"2026-10-18T00:00:00Z\",\"origin_seq\":1,\"origin_stream_id\":\"00000000-0000-4000-8000-000000000001\",\"payload\":{\"index\":1,\"label\":\"source\",\"summary\":\"rebuild \u03b4\"},\"payload_sha256\":\"5e4affd3a1744d22403e1ceb4a3b1c403c4d43083c2d396221130bec3c25279e\",\"record_class\":\"observation\",\"runtime_session_id\":\"rebuild-contract\",\"schema_version\":1}",
+          "record_sha256": "b31321e0b228267ed31433981eff64ed70fa04eea5890047a2f827b5b453672c",
+          "repo_id": "authored-oracle-fixture"
+        },
+        {
+          "ingest_offset": 2,
+          "received_at": "2026-10-18T00:00:00Z",
+          "record_json": "{\"actor\":\"verification\",\"basis_revision\":null,\"causation_id\":null,\"correlation_id\":null,\"created_at\":\"2026-10-18T00:00:00Z\",\"event_id\":\"rebuild-source-2\",\"event_type\":\"work.completed\",\"occurred_at\":\"2026-10-18T00:00:00Z\",\"origin_seq\":2,\"origin_stream_id\":\"00000000-0000-4000-8000-000000000001\",\"payload\":{\"index\":2,\"label\":\"source\",\"summary\":\"rebuild \u03b4\"},\"payload_sha256\":\"7c750e947a31a1618246c865f6283cb8644ba44679623b44aaaa51db71bc5b39\",\"record_class\":\"observation\",\"runtime_session_id\":\"rebuild-contract\",\"schema_version\":1}",
+          "record_sha256": "3d5f4e5aa0c0bb734fae7aa0f097edb63982a8e67fff7d9e6a05e8dd72d42842",
+          "repo_id": "authored-oracle-fixture"
+        },
+        {
+          "ingest_offset": 3,
+          "received_at": "2026-10-18T00:00:00Z",
+          "record_json": "{\"actor\":\"verification\",\"basis_revision\":null,\"causation_id\":null,\"correlation_id\":null,\"created_at\":\"2026-10-18T00:00:00Z\",\"event_id\":\"rebuild-source-3\",\"event_type\":\"work.completed\",\"occurred_at\":\"2026-10-18T00:00:00Z\",\"origin_seq\":3,\"origin_stream_id\":\"00000000-0000-4000-8000-000000000001\",\"payload\":{\"index\":3,\"label\":\"source\",\"summary\":\"rebuild \u03b4\"},\"payload_sha256\":\"face7e653344df9075e73c28782e8dcfb10b6655c0e314d1752bb51c225c4ceb\",\"record_class\":\"observation\",\"runtime_session_id\":\"rebuild-contract\",\"schema_version\":1}",
+          "record_sha256": "6d741b73643ca78341f768c7222e1b377d08d28da8575647bf11a858e015d9d6",
+          "repo_id": "authored-oracle-fixture"
+        }
+      ],
+      "cached_ingest_watermark": [
+        {
+          "advanced_at": "2026-10-18T00:00:00Z",
+          "ingest_offset": 3,
+          "repo_id": "authored-oracle-fixture"
+        }
+      ],
+      "cached_projection_meta": [
+        {
+          "repo_id": "authored-oracle-fixture",
+          "schema_version": 2,
+          "singleton": 1
+        }
+      ]
+    },
+    "schema": {
+      "cached_authority_decision": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "repo_id",
+          "notnull": 1,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "decision_ingest_offset",
+          "notnull": 1,
+          "pk": 2,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "decision_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": null,
+          "name": "decision_sha256",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": null,
+          "name": "received_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "cached_authority_watermark": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "repo_id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "decision_ingest_offset",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "advanced_at",
+          "notnull": 0,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "cached_ingest_record": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "repo_id",
+          "notnull": 1,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "ingest_offset",
+          "notnull": 1,
+          "pk": 2,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "record_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": null,
+          "name": "record_sha256",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": null,
+          "name": "received_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "cached_ingest_watermark": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "repo_id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "ingest_offset",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "advanced_at",
+          "notnull": 0,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "cached_projection_meta": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "singleton",
+          "notnull": 0,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "schema_version",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "repo_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ]
+    }
+  },
+  "changed": {
+    "integrity": "ok",
+    "journal_mode": "delete",
+    "rows": {
+      "cached_authority_decision": [],
+      "cached_authority_watermark": [
+        {
+          "advanced_at": null,
+          "decision_ingest_offset": 0,
+          "repo_id": "authored-oracle-fixture"
+        }
+      ],
+      "cached_ingest_record": [
+        {
+          "ingest_offset": 1,
+          "received_at": "2026-10-18T00:00:00Z",
+          "record_json": "{\"actor\":\"verification\",\"basis_revision\":null,\"causation_id\":null,\"correlation_id\":null,\"created_at\":\"2026-10-18T00:00:00Z\",\"event_id\":\"rebuild-source-1\",\"event_type\":\"work.completed\",\"occurred_at\":\"2026-10-18T00:00:00Z\",\"origin_seq\":1,\"origin_stream_id\":\"00000000-0000-4000-8000-000000000001\",\"payload\":{\"index\":1,\"label\":\"source\",\"summary\":\"rebuild \u03b4\"},\"payload_sha256\":\"5e4affd3a1744d22403e1ceb4a3b1c403c4d43083c2d396221130bec3c25279e\",\"record_class\":\"observation\",\"runtime_session_id\":\"rebuild-contract\",\"schema_version\":1}",
+          "record_sha256": "b31321e0b228267ed31433981eff64ed70fa04eea5890047a2f827b5b453672c",
+          "repo_id": "authored-oracle-fixture"
+        },
+        {
+          "ingest_offset": 2,
+          "received_at": "2026-10-18T00:00:00Z",
+          "record_json": "{\"actor\":\"verification\",\"basis_revision\":null,\"causation_id\":null,\"correlation_id\":null,\"created_at\":\"2026-10-18T00:00:00Z\",\"event_id\":\"rebuild-source-2\",\"event_type\":\"work.completed\",\"occurred_at\":\"2026-10-18T00:00:00Z\",\"origin_seq\":2,\"origin_stream_id\":\"00000000-0000-4000-8000-000000000001\",\"payload\":{\"index\":2,\"label\":\"source\",\"summary\":\"rebuild \u03b4\"},\"payload_sha256\":\"7c750e947a31a1618246c865f6283cb8644ba44679623b44aaaa51db71bc5b39\",\"record_class\":\"observation\",\"runtime_session_id\":\"rebuild-contract\",\"schema_version\":1}",
+          "record_sha256": "3d5f4e5aa0c0bb734fae7aa0f097edb63982a8e67fff7d9e6a05e8dd72d42842",
+          "repo_id": "authored-oracle-fixture"
+        },
+        {
+          "ingest_offset": 3,
+          "received_at": "2026-10-18T00:00:00Z",
+          "record_json": "{\"actor\":\"verification\",\"basis_revision\":null,\"causation_id\":null,\"correlation_id\":null,\"created_at\":\"2026-10-18T00:00:00Z\",\"event_id\":\"rebuild-source-3\",\"event_type\":\"work.completed\",\"occurred_at\":\"2026-10-18T00:00:00Z\",\"origin_seq\":3,\"origin_stream_id\":\"00000000-0000-4000-8000-000000000001\",\"payload\":{\"index\":3,\"label\":\"source\",\"summary\":\"rebuild \u03b4\"},\"payload_sha256\":\"face7e653344df9075e73c28782e8dcfb10b6655c0e314d1752bb51c225c4ceb\",\"record_class\":\"observation\",\"runtime_session_id\":\"rebuild-contract\",\"schema_version\":1}",
+          "record_sha256": "6d741b73643ca78341f768c7222e1b377d08d28da8575647bf11a858e015d9d6",
+          "repo_id": "authored-oracle-fixture"
+        }
+      ],
+      "cached_ingest_watermark": [
+        {
+          "advanced_at": "2026-10-18T00:00:00Z",
+          "ingest_offset": 3,
+          "repo_id": "authored-oracle-fixture"
+        }
+      ],
+      "cached_projection_meta": [
+        {
+          "repo_id": "other-repository",
+          "schema_version": 2,
+          "singleton": 1
+        }
+      ]
+    },
+    "schema": {
+      "cached_authority_decision": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "repo_id",
+          "notnull": 1,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "decision_ingest_offset",
+          "notnull": 1,
+          "pk": 2,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "decision_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": null,
+          "name": "decision_sha256",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": null,
+          "name": "received_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "cached_authority_watermark": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "repo_id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "decision_ingest_offset",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "advanced_at",
+          "notnull": 0,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "cached_ingest_record": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "repo_id",
+          "notnull": 1,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "ingest_offset",
+          "notnull": 1,
+          "pk": 2,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "record_json",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 3,
+          "dflt_value": null,
+          "name": "record_sha256",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        },
+        {
+          "cid": 4,
+          "dflt_value": null,
+          "name": "received_at",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "cached_ingest_watermark": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "repo_id",
+          "notnull": 0,
+          "pk": 1,
+          "type": "TEXT"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "ingest_offset",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "advanced_at",
+          "notnull": 0,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ],
+      "cached_projection_meta": [
+        {
+          "cid": 0,
+          "dflt_value": null,
+          "name": "singleton",
+          "notnull": 0,
+          "pk": 1,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 1,
+          "dflt_value": null,
+          "name": "schema_version",
+          "notnull": 1,
+          "pk": 0,
+          "type": "INTEGER"
+        },
+        {
+          "cid": 2,
+          "dflt_value": null,
+          "name": "repo_id",
+          "notnull": 1,
+          "pk": 0,
+          "type": "TEXT"
+        }
+      ]
+    }
+  },
+  "valid_reader": {
+    "database": {
+      "path": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle8/cache.db",
+      "device": 42,
+      "inode": 97234545,
+      "bytes": 40960,
+      "sha256": "9db5c62aa1cd08ff267d6e31bbf24946b815e046ce577731881ffa7042dc5488"
+    },
+    "reader": {
+      "pid": 40145,
+      "timeout": 3,
+      "output_limit": 65536,
+      "returncode": 0,
+      "elapsed": 0.02286754199940333,
+      "captured_bytes": 4522,
+      "stdout": "{\"integrity\":\"ok\",\"journal_mode\":\"delete\",\"rows\":{\"cached_authority_decision\":[],\"cached_authority_watermark\":[{\"advanced_at\":null,\"decision_ingest_offset\":0,\"repo_id\":\"authored-oracle-fixture\"}],\"cached_ingest_record\":[{\"ingest_offset\":1,\"received_at\":\"2026-10-18T00:00:00Z\",\"record_json\":\"{\\\"actor\\\":\\\"verification\\\",\\\"basis_revision\\\":null,\\\"causation_id\\\":null,\\\"correlation_id\\\":null,\\\"created_at\\\":\\\"2026-10-18T00:00:00Z\\\",\\\"event_id\\\":\\\"rebuild-source-1\\\",\\\"event_type\\\":\\\"work.completed\\\",\\\"occurred_at\\\":\\\"2026-10-18T00:00:00Z\\\",\\\"origin_seq\\\":1,\\\"origin_stream_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"payload\\\":{\\\"index\\\":1,\\\"label\\\":\\\"source\\\",\\\"summary\\\":\\\"rebuild \u03b4\\\"},\\\"payload_sha256\\\":\\\"5e4affd3a1744d22403e1ceb4a3b1c403c4d43083c2d396221130bec3c25279e\\\",\\\"record_class\\\":\\\"observation\\\",\\\"runtime_session_id\\\":\\\"rebuild-contract\\\",\\\"schema_version\\\":1}\",\"record_sha256\":\"b31321e0b228267ed31433981eff64ed70fa04eea5890047a2f827b5b453672c\",\"repo_id\":\"authored-oracle-fixture\"},{\"ingest_offset\":2,\"received_at\":\"2026-10-18T00:00:00Z\",\"record_json\":\"{\\\"actor\\\":\\\"verification\\\",\\\"basis_revision\\\":null,\\\"causation_id\\\":null,\\\"correlation_id\\\":null,\\\"created_at\\\":\\\"2026-10-18T00:00:00Z\\\",\\\"event_id\\\":\\\"rebuild-source-2\\\",\\\"event_type\\\":\\\"work.completed\\\",\\\"occurred_at\\\":\\\"2026-10-18T00:00:00Z\\\",\\\"origin_seq\\\":2,\\\"origin_stream_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"payload\\\":{\\\"index\\\":2,\\\"label\\\":\\\"source\\\",\\\"summary\\\":\\\"rebuild \u03b4\\\"},\\\"payload_sha256\\\":\\\"7c750e947a31a1618246c865f6283cb8644ba44679623b44aaaa51db71bc5b39\\\",\\\"record_class\\\":\\\"observation\\\",\\\"runtime_session_id\\\":\\\"rebuild-contract\\\",\\\"schema_version\\\":1}\",\"record_sha256\":\"3d5f4e5aa0c0bb734fae7aa0f097edb63982a8e67fff7d9e6a05e8dd72d42842\",\"repo_id\":\"authored-oracle-fixture\"},{\"ingest_offset\":3,\"received_at\":\"2026-10-18T00:00:00Z\",\"record_json\":\"{\\\"actor\\\":\\\"verification\\\",\\\"basis_revision\\\":null,\\\"causation_id\\\":null,\\\"correlation_id\\\":null,\\\"created_at\\\":\\\"2026-10-18T00:00:00Z\\\",\\\"event_id\\\":\\\"rebuild-source-3\\\",\\\"event_type\\\":\\\"work.completed\\\",\\\"occurred_at\\\":\\\"2026-10-18T00:00:00Z\\\",\\\"origin_seq\\\":3,\\\"origin_stream_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"payload\\\":{\\\"index\\\":3,\\\"label\\\":\\\"source\\\",\\\"summary\\\":\\\"rebuild \u03b4\\\"},\\\"payload_sha256\\\":\\\"face7e653344df9075e73c28782e8dcfb10b6655c0e314d1752bb51c225c4ceb\\\",\\\"record_class\\\":\\\"observation\\\",\\\"runtime_session_id\\\":\\\"rebuild-contract\\\",\\\"schema_version\\\":1}\",\"record_sha256\":\"6d741b73643ca78341f768c7222e1b377d08d28da8575647bf11a858e015d9d6\",\"repo_id\":\"authored-oracle-fixture\"}],\"cached_ingest_watermark\":[{\"advanced_at\":\"2026-10-18T00:00:00Z\",\"ingest_offset\":3,\"repo_id\":\"authored-oracle-fixture\"}],\"cached_projection_meta\":[{\"repo_id\":\"authored-oracle-fixture\",\"schema_version\":2,\"singleton\":1}]},\"schema\":{\"cached_authority_decision\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"decision_ingest_offset\",\"notnull\":1,\"pk\":2,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"decision_json\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":3,\"dflt_value\":null,\"name\":\"decision_sha256\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":4,\"dflt_value\":null,\"name\":\"received_at\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}],\"cached_authority_watermark\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":0,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"decision_ingest_offset\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"advanced_at\",\"notnull\":0,\"pk\":0,\"type\":\"TEXT\"}],\"cached_ingest_record\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"ingest_offset\",\"notnull\":1,\"pk\":2,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"record_json\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":3,\"dflt_value\":null,\"name\":\"record_sha256\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":4,\"dflt_value\":null,\"name\":\"received_at\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}],\"cached_ingest_watermark\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":0,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"ingest_offset\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"advanced_at\",\"notnull\":0,\"pk\":0,\"type\":\"TEXT\"}],\"cached_projection_meta\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"singleton\",\"notnull\":0,\"pk\":1,\"type\":\"INTEGER\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"schema_version\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}]}}\n",
+      "stderr": ""
+    }
+  },
+  "changed_reader": {
+    "database": {
+      "path": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle8/cache.db",
+      "device": 42,
+      "inode": 97234545,
+      "bytes": 40960,
+      "sha256": "c71f4154c542bd5b50608fcdea52aab61ddebdbc27dbe14724cf468dbe610a2c"
+    },
+    "reader": {
+      "pid": 40151,
+      "timeout": 3,
+      "output_limit": 65536,
+      "returncode": 0,
+      "elapsed": 0.023139771999922232,
+      "captured_bytes": 4515,
+      "stdout": "{\"integrity\":\"ok\",\"journal_mode\":\"delete\",\"rows\":{\"cached_authority_decision\":[],\"cached_authority_watermark\":[{\"advanced_at\":null,\"decision_ingest_offset\":0,\"repo_id\":\"authored-oracle-fixture\"}],\"cached_ingest_record\":[{\"ingest_offset\":1,\"received_at\":\"2026-10-18T00:00:00Z\",\"record_json\":\"{\\\"actor\\\":\\\"verification\\\",\\\"basis_revision\\\":null,\\\"causation_id\\\":null,\\\"correlation_id\\\":null,\\\"created_at\\\":\\\"2026-10-18T00:00:00Z\\\",\\\"event_id\\\":\\\"rebuild-source-1\\\",\\\"event_type\\\":\\\"work.completed\\\",\\\"occurred_at\\\":\\\"2026-10-18T00:00:00Z\\\",\\\"origin_seq\\\":1,\\\"origin_stream_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"payload\\\":{\\\"index\\\":1,\\\"label\\\":\\\"source\\\",\\\"summary\\\":\\\"rebuild \u03b4\\\"},\\\"payload_sha256\\\":\\\"5e4affd3a1744d22403e1ceb4a3b1c403c4d43083c2d396221130bec3c25279e\\\",\\\"record_class\\\":\\\"observation\\\",\\\"runtime_session_id\\\":\\\"rebuild-contract\\\",\\\"schema_version\\\":1}\",\"record_sha256\":\"b31321e0b228267ed31433981eff64ed70fa04eea5890047a2f827b5b453672c\",\"repo_id\":\"authored-oracle-fixture\"},{\"ingest_offset\":2,\"received_at\":\"2026-10-18T00:00:00Z\",\"record_json\":\"{\\\"actor\\\":\\\"verification\\\",\\\"basis_revision\\\":null,\\\"causation_id\\\":null,\\\"correlation_id\\\":null,\\\"created_at\\\":\\\"2026-10-18T00:00:00Z\\\",\\\"event_id\\\":\\\"rebuild-source-2\\\",\\\"event_type\\\":\\\"work.completed\\\",\\\"occurred_at\\\":\\\"2026-10-18T00:00:00Z\\\",\\\"origin_seq\\\":2,\\\"origin_stream_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"payload\\\":{\\\"index\\\":2,\\\"label\\\":\\\"source\\\",\\\"summary\\\":\\\"rebuild \u03b4\\\"},\\\"payload_sha256\\\":\\\"7c750e947a31a1618246c865f6283cb8644ba44679623b44aaaa51db71bc5b39\\\",\\\"record_class\\\":\\\"observation\\\",\\\"runtime_session_id\\\":\\\"rebuild-contract\\\",\\\"schema_version\\\":1}\",\"record_sha256\":\"3d5f4e5aa0c0bb734fae7aa0f097edb63982a8e67fff7d9e6a05e8dd72d42842\",\"repo_id\":\"authored-oracle-fixture\"},{\"ingest_offset\":3,\"received_at\":\"2026-10-18T00:00:00Z\",\"record_json\":\"{\\\"actor\\\":\\\"verification\\\",\\\"basis_revision\\\":null,\\\"causation_id\\\":null,\\\"correlation_id\\\":null,\\\"created_at\\\":\\\"2026-10-18T00:00:00Z\\\",\\\"event_id\\\":\\\"rebuild-source-3\\\",\\\"event_type\\\":\\\"work.completed\\\",\\\"occurred_at\\\":\\\"2026-10-18T00:00:00Z\\\",\\\"origin_seq\\\":3,\\\"origin_stream_id\\\":\\\"00000000-0000-4000-8000-000000000001\\\",\\\"payload\\\":{\\\"index\\\":3,\\\"label\\\":\\\"source\\\",\\\"summary\\\":\\\"rebuild \u03b4\\\"},\\\"payload_sha256\\\":\\\"face7e653344df9075e73c28782e8dcfb10b6655c0e314d1752bb51c225c4ceb\\\",\\\"record_class\\\":\\\"observation\\\",\\\"runtime_session_id\\\":\\\"rebuild-contract\\\",\\\"schema_version\\\":1}\",\"record_sha256\":\"6d741b73643ca78341f768c7222e1b377d08d28da8575647bf11a858e015d9d6\",\"repo_id\":\"authored-oracle-fixture\"}],\"cached_ingest_watermark\":[{\"advanced_at\":\"2026-10-18T00:00:00Z\",\"ingest_offset\":3,\"repo_id\":\"authored-oracle-fixture\"}],\"cached_projection_meta\":[{\"repo_id\":\"other-repository\",\"schema_version\":2,\"singleton\":1}]},\"schema\":{\"cached_authority_decision\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"decision_ingest_offset\",\"notnull\":1,\"pk\":2,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"decision_json\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":3,\"dflt_value\":null,\"name\":\"decision_sha256\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":4,\"dflt_value\":null,\"name\":\"received_at\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}],\"cached_authority_watermark\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":0,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"decision_ingest_offset\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"advanced_at\",\"notnull\":0,\"pk\":0,\"type\":\"TEXT\"}],\"cached_ingest_record\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"ingest_offset\",\"notnull\":1,\"pk\":2,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"record_json\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":3,\"dflt_value\":null,\"name\":\"record_sha256\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"},{\"cid\":4,\"dflt_value\":null,\"name\":\"received_at\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}],\"cached_ingest_watermark\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":0,\"pk\":1,\"type\":\"TEXT\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"ingest_offset\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"advanced_at\",\"notnull\":0,\"pk\":0,\"type\":\"TEXT\"}],\"cached_projection_meta\":[{\"cid\":0,\"dflt_value\":null,\"name\":\"singleton\",\"notnull\":0,\"pk\":1,\"type\":\"INTEGER\"},{\"cid\":1,\"dflt_value\":null,\"name\":\"schema_version\",\"notnull\":1,\"pk\":0,\"type\":\"INTEGER\"},{\"cid\":2,\"dflt_value\":null,\"name\":\"repo_id\",\"notnull\":1,\"pk\":0,\"type\":\"TEXT\"}]}}\n",
+      "stderr": ""
+    }
+  }
+}

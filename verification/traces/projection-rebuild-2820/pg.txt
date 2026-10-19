@@ -1,0 +1,5 @@
+pg-disposable-tests: PostgreSQL server version 16.15 (server_version_num 160015)
+........                                                                 [100%]
+8 passed, 1765 deselected in 11.04s
+pg-cleanup-report-check: pg_test_scope: 2 fixture cleanup(s) completed with zero remaining rows
+pg-cleanup-report-check: ok: 2 fixture cleanup(s) across 1 fixture name(s)

@@ -1,0 +1,765 @@
+{
+  "junit": {
+    "local": [
+      {
+        "classname": "tests.test_projection_rebuild_oracle",
+        "file": "tests/test_projection_rebuild_oracle.py",
+        "line": "29",
+        "name": "test_projection_rebuild_oracle_accepts_valid_manifest[0]",
+        "time": "0.353"
+      },
+      {
+        "classname": "tests.test_projection_rebuild_oracle",
+        "file": "tests/test_projection_rebuild_oracle.py",
+        "line": "29",
+        "name": "test_projection_rebuild_oracle_accepts_valid_manifest[3]",
+        "time": "0.361"
+      },
+      {
+        "classname": "tests.test_projection_rebuild_oracle",
+        "file": "tests/test_projection_rebuild_oracle.py",
+        "line": "51",
+        "name": "test_projection_rebuild_oracle_refuses_seeded_violation[record-json-cached record hash]",
+        "time": "0.484"
+      },
+      {
+        "classname": "tests.test_projection_rebuild_oracle",
+        "file": "tests/test_projection_rebuild_oracle.py",
+        "line": "51",
+        "name": "test_projection_rebuild_oracle_refuses_seeded_violation[record-hash-cached record hash]",
+        "time": "0.467"
+      },
+      {
+        "classname": "tests.test_projection_rebuild_oracle",
+        "file": "tests/test_projection_rebuild_oracle.py",
+        "line": "51",
+        "name": "test_projection_rebuild_oracle_refuses_seeded_violation[boolean-schema-version-authored remote envelope]",
+        "time": "0.467"
+      },
+      {
+        "classname": "tests.test_projection_rebuild_oracle",
+        "file": "tests/test_projection_rebuild_oracle.py",
+        "line": "51",
+        "name": "test_projection_rebuild_oracle_refuses_seeded_violation[float-origin-seq-authored remote envelope]",
+        "time": "0.477"
+      },
+      {
+        "classname": "tests.test_projection_rebuild_oracle",
+        "file": "tests/test_projection_rebuild_oracle.py",
+        "line": "51",
+        "name": "test_projection_rebuild_oracle_refuses_seeded_violation[watermark-ahead-ingest watermark population]",
+        "time": "0.475"
+      },
+      {
+        "classname": "tests.test_projection_rebuild_oracle",
+        "file": "tests/test_projection_rebuild_oracle.py",
+        "line": "51",
+        "name": "test_projection_rebuild_oracle_refuses_seeded_violation[consistent-partial-projection record population]",
+        "time": "0.442"
+      },
+      {
+        "classname": "tests.test_projection_rebuild_oracle",
+        "file": "tests/test_projection_rebuild_oracle.py",
+        "line": "51",
+        "name": "test_projection_rebuild_oracle_refuses_seeded_violation[wrong-repository-projection repository/schema binding]",
+        "time": "0.466"
+      },
+      {
+        "classname": "tests.test_projection_rebuild_oracle",
+        "file": "tests/test_projection_rebuild_oracle.py",
+        "line": "51",
+        "name": "test_projection_rebuild_oracle_refuses_seeded_violation[authority-record-unexpected authority records]",
+        "time": "0.460"
+      },
+      {
+        "classname": "tests.test_projection_rebuild_oracle",
+        "file": "tests/test_projection_rebuild_oracle.py",
+        "line": "51",
+        "name": "test_projection_rebuild_oracle_refuses_seeded_violation[authority-watermark-unexpected authority watermark]",
+        "time": "0.462"
+      },
+      {
+        "classname": "tests.test_projection",
+        "file": "tests/test_projection.py",
+        "line": "15",
+        "name": "test_apply_persists_remote_records_and_visible_watermark_atomically",
+        "time": "0.373"
+      },
+      {
+        "classname": "tests.test_projection",
+        "file": "tests/test_projection.py",
+        "line": "30",
+        "name": "test_failed_record_application_rolls_back_records_and_watermark",
+        "time": "0.379"
+      },
+      {
+        "classname": "tests.test_projection",
+        "file": "tests/test_projection.py",
+        "line": "51",
+        "name": "test_existing_offsets_replay_idempotently_and_conflicting_replay_rejects",
+        "time": "0.414"
+      },
+      {
+        "classname": "tests.test_projection",
+        "file": "tests/test_projection.py",
+        "line": "64",
+        "name": "test_gaps_and_out_of_order_inputs_are_rejected_without_advancing_watermark",
+        "time": "0.326"
+      },
+      {
+        "classname": "tests.test_projection",
+        "file": "tests/test_projection.py",
+        "line": "77",
+        "name": "test_serializable_input_and_unapplied_watermark_age",
+        "time": "0.327"
+      },
+      {
+        "classname": "tests.test_projection",
+        "file": "tests/test_projection.py",
+        "line": "87",
+        "name": "test_authority_decisions_advance_separate_sparse_watermark_atomically",
+        "time": "0.410"
+      },
+      {
+        "classname": "tests.test_projection",
+        "file": "tests/test_projection.py",
+        "line": "111",
+        "name": "test_authority_decision_failure_rolls_back_rows_and_watermark",
+        "time": "0.369"
+      },
+      {
+        "classname": "tests.test_projection",
+        "file": "tests/test_projection.py",
+        "line": "136",
+        "name": "test_offline_catch_up_and_full_log_rebuild_converge",
+        "time": "0.790"
+      },
+      {
+        "classname": "tests.test_projection",
+        "file": "tests/test_projection.py",
+        "line": "168",
+        "name": "test_retained_suffix_cannot_advance_an_empty_projection",
+        "time": "0.317"
+      },
+      {
+        "classname": "tests.test_projection",
+        "file": "tests/test_projection.py",
+        "line": "179",
+        "name": "test_schema_v1_cache_fails_closed_until_atomic_rebuild",
+        "time": "0.224"
+      },
+      {
+        "classname": "tests.test_projection",
+        "file": "tests/test_projection.py",
+        "line": "211",
+        "name": "test_high_water_rebuild_rejects_suffix_and_preserves_live_cache",
+        "time": "0.732"
+      },
+      {
+        "classname": "tests.test_projection",
+        "file": "tests/test_projection.py",
+        "line": "234",
+        "name": "test_high_water_rebuild_replaces_cache_only_after_contiguous_capture",
+        "time": "0.808"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "81",
+        "name": "test_status_defaults_disabled_without_creating_state",
+        "time": "0.001"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "92",
+        "name": "test_enable_disable_round_trip_is_atomic_private_write",
+        "time": "0.026"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "105",
+        "name": "test_rejects_invalid_config_shape[[]-expected an object]",
+        "time": "0.001"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "105",
+        "name": "test_rejects_invalid_config_shape[{\"version\": 1}-missing enabled]",
+        "time": "0.001"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "105",
+        "name": "test_rejects_invalid_config_shape[{\"version\": 1, \"enabled\": true, \"extra\": 1}-unknown extra]",
+        "time": "0.001"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "105",
+        "name": "test_rejects_invalid_config_shape[{\"version\": 2, \"enabled\": true}-unsupported projection reads config version]",
+        "time": "0.001"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "122",
+        "name": "test_env_var_overrides_persisted_config_in_both_directions",
+        "time": "0.011"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "148",
+        "name": "test_assess_freshness_reports_never_synchronized_for_empty_cache",
+        "time": "0.339"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "157",
+        "name": "test_assess_freshness_healthy_when_recently_advanced",
+        "time": "0.363"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "172",
+        "name": "test_assess_freshness_reports_stale_past_threshold",
+        "time": "0.291"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "186",
+        "name": "test_assess_freshness_reports_schema_upgrade_required",
+        "time": "0.323"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "207",
+        "name": "test_item_show_default_backend_only_and_projection_key_reports_disabled",
+        "time": "0.359"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "229",
+        "name": "test_item_show_falls_back_explicitly_when_projection_missing",
+        "time": "0.361"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "254",
+        "name": "test_item_show_serves_events_from_healthy_projection_with_backend_parity",
+        "time": "0.811"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "319",
+        "name": "test_item_show_falls_back_when_never_synchronized",
+        "time": "0.746"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "334",
+        "name": "test_item_show_falls_back_when_stale",
+        "time": "0.668"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "356",
+        "name": "test_item_show_falls_back_when_schema_upgrade_required",
+        "time": "0.733"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "381",
+        "name": "test_env_var_enables_projection_reads_without_persisted_config",
+        "time": "0.365"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "400",
+        "name": "test_item_list_json_shape_never_gains_a_projection_key",
+        "time": "0.352"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "413",
+        "name": "test_item_list_text_discloses_unsupported_read_surface_when_enabled",
+        "time": "0.349"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "426",
+        "name": "test_next_work_explain_json_gains_projection_key_when_enabled",
+        "time": "0.346"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "444",
+        "name": "test_usage_context_default_json_shape_is_unchanged",
+        "time": "0.332"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "451",
+        "name": "test_usage_context_gains_projection_key_when_enabled",
+        "time": "0.394"
+      },
+      {
+        "classname": "tests.test_projection_reads",
+        "file": "tests/test_projection_reads.py",
+        "line": "468",
+        "name": "test_projection_reads_cli_round_trip",
+        "time": "0.026"
+      },
+      {
+        "classname": "tests.test_sync",
+        "file": "tests/test_sync.py",
+        "line": "10",
+        "name": "test_repository_sync_paths_are_fixed_under_the_repository",
+        "time": "0.001"
+      },
+      {
+        "classname": "tests.test_sync",
+        "file": "tests/test_sync.py",
+        "line": "22",
+        "name": "test_normal_sync_migrates_legacy_pilot_databases_without_removing_them",
+        "time": "0.615"
+      },
+      {
+        "classname": "tests.test_sync",
+        "file": "tests/test_sync.py",
+        "line": "104",
+        "name": "test_sync_uploads_observations_and_materializes_remote_cursor",
+        "time": "0.581"
+      },
+      {
+        "classname": "tests.test_sync",
+        "file": "tests/test_sync.py",
+        "line": "119",
+        "name": "test_sync_recovers_after_lost_response_or_projection_apply_failure",
+        "time": "0.642"
+      },
+      {
+        "classname": "tests.test_sync",
+        "file": "tests/test_sync.py",
+        "line": "146",
+        "name": "test_sync_rejects_invalid_batch_sizes[0]",
+        "time": "0.456"
+      },
+      {
+        "classname": "tests.test_sync",
+        "file": "tests/test_sync.py",
+        "line": "146",
+        "name": "test_sync_rejects_invalid_batch_sizes[-1]",
+        "time": "0.466"
+      },
+      {
+        "classname": "tests.test_sync",
+        "file": "tests/test_sync.py",
+        "line": "146",
+        "name": "test_sync_rejects_invalid_batch_sizes[True]",
+        "time": "0.453"
+      },
+      {
+        "classname": "tests.test_sync",
+        "file": "tests/test_sync.py",
+        "line": "146",
+        "name": "test_sync_rejects_invalid_batch_sizes[invalid]",
+        "time": "0.484"
+      }
+    ],
+    "pg": [
+      {
+        "classname": "tests.pg.test_outbox.TestProducerOutboxIngestion",
+        "file": "tests/pg/test_outbox.py",
+        "line": "346",
+        "name": "test_disposable_remote_history_rebuilds_projection",
+        "time": "0.599"
+      },
+      {
+        "classname": "tests.pg.test_projection_rebuild",
+        "file": "tests/pg/test_projection_rebuild.py",
+        "line": "180",
+        "name": "test_projection_rebuild_upgrades_schema_v1_from_real_remote",
+        "time": "0.907"
+      },
+      {
+        "classname": "tests.pg.test_projection_rebuild",
+        "file": "tests/pg/test_projection_rebuild.py",
+        "line": "200",
+        "name": "test_projection_rebuild_replaces_current_cache_from_real_remote",
+        "time": "0.980"
+      },
+      {
+        "classname": "tests.pg.test_projection_rebuild",
+        "file": "tests/pg/test_projection_rebuild.py",
+        "line": "222",
+        "name": "test_projection_rebuild_stops_at_captured_high_water_while_remote_advances",
+        "time": "0.985"
+      },
+      {
+        "classname": "tests.pg.test_projection_rebuild",
+        "file": "tests/pg/test_projection_rebuild.py",
+        "line": "283",
+        "name": "test_projection_rebuild_remote_writer_stall_is_killed_and_reaped",
+        "time": "3.423"
+      },
+      {
+        "classname": "tests.pg.test_projection_rebuild",
+        "file": "tests/pg/test_projection_rebuild.py",
+        "line": "320",
+        "name": "test_projection_rebuild_remote_page_failure_preserves_live_cache",
+        "time": "1.697"
+      },
+      {
+        "classname": "tests.pg.test_projection_rebuild",
+        "file": "tests/pg/test_projection_rebuild.py",
+        "line": "360",
+        "name": "test_projection_rebuild_retained_suffix_preserves_live_cache",
+        "time": "1.273"
+      },
+      {
+        "classname": "tests.pg.test_projection_rebuild",
+        "file": "tests/pg/test_projection_rebuild.py",
+        "line": "402",
+        "name": "test_projection_rebuild_empty_remote_creates_bound_empty_cache",
+        "time": "0.919"
+      }
+    ]
+  },
+  "objects": [
+    {
+      "bytes": 40960,
+      "path": "local/test_projection_rebuild_oracle0/cache.db",
+      "sha256": "a00405a6be8ce1ab5a7c53f0da6f295d98d83f21faa908af35df1713dd47e0b3",
+      "source": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle0/cache.db"
+    },
+    {
+      "bytes": 40960,
+      "path": "local/test_projection_rebuild_oracle1/cache.db",
+      "sha256": "9db5c62aa1cd08ff267d6e31bbf24946b815e046ce577731881ffa7042dc5488",
+      "source": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle1/cache.db"
+    },
+    {
+      "bytes": 40960,
+      "path": "local/test_projection_rebuild_oracle10/cache.db",
+      "sha256": "cb045ab3f9b2e0a5e8689c8c6923b2910f7d8807fe59af8a5e41e28d63c9727c",
+      "source": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle10/cache.db"
+    },
+    {
+      "bytes": 25501,
+      "path": "local/test_projection_rebuild_oracle10/oracle-control.json",
+      "sha256": "0211815146bb1c3972c7296cdc70c3fca1974bcbe7252aec1eeb80597fd78382",
+      "source": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle10/oracle-control.json"
+    },
+    {
+      "bytes": 40960,
+      "path": "local/test_projection_rebuild_oracle2/cache.db",
+      "sha256": "eb14c6c808a6d5558bf459f4bf0d56c3e730fd6e996df5c7f8794b0fe0f3754b",
+      "source": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle2/cache.db"
+    },
+    {
+      "bytes": 25455,
+      "path": "local/test_projection_rebuild_oracle2/oracle-control.json",
+      "sha256": "b04f86cff7714ab27476a96bc10cd70326ccec3b3196e470b1e7c0194bceb203",
+      "source": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle2/oracle-control.json"
+    },
+    {
+      "bytes": 40960,
+      "path": "local/test_projection_rebuild_oracle3/cache.db",
+      "sha256": "c36a336dbefecdb82c54c2da6fb4c3b6c77144b3d083acc74679b33e521966c3",
+      "source": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle3/cache.db"
+    },
+    {
+      "bytes": 25428,
+      "path": "local/test_projection_rebuild_oracle3/oracle-control.json",
+      "sha256": "0d21c7cbf0f8c702134e339c387ca2d0536091c821a3ece3cb58978d0bac7580",
+      "source": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle3/oracle-control.json"
+    },
+    {
+      "bytes": 40960,
+      "path": "local/test_projection_rebuild_oracle4/cache.db",
+      "sha256": "4241ed9a87b21cd07e148b5a64bd504cd947d55bf93bca27ec2da359fb78aa07",
+      "source": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle4/cache.db"
+    },
+    {
+      "bytes": 25458,
+      "path": "local/test_projection_rebuild_oracle4/oracle-control.json",
+      "sha256": "4cd27e87041e502c6760e5fd79424130c8aae978cc3a74f526d049342ac49d1b",
+      "source": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle4/oracle-control.json"
+    },
+    {
+      "bytes": 40960,
+      "path": "local/test_projection_rebuild_oracle5/cache.db",
+      "sha256": "4f28ef8bd984f4ce2a12c2f99cdc67876a45de700714c95ea42c192370d2e650",
+      "source": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle5/cache.db"
+    },
+    {
+      "bytes": 25450,
+      "path": "local/test_projection_rebuild_oracle5/oracle-control.json",
+      "sha256": "55fe9b6658be08eb167dac0b7184c10f094d00ab81d853ab11dbca4966e2990e",
+      "source": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle5/oracle-control.json"
+    },
+    {
+      "bytes": 40960,
+      "path": "local/test_projection_rebuild_oracle6/cache.db",
+      "sha256": "5159142bf76ba71f10db4e0e9ba38235028ca87fa37a57468cc4127ddaf9082b",
+      "source": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle6/cache.db"
+    },
+    {
+      "bytes": 25451,
+      "path": "local/test_projection_rebuild_oracle6/oracle-control.json",
+      "sha256": "1a0f7cf9f11a2e34620cb414daae1411b6272bfb013a8a44c5e9ccea420b7130",
+      "source": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle6/oracle-control.json"
+    },
+    {
+      "bytes": 40960,
+      "path": "local/test_projection_rebuild_oracle7/cache.db",
+      "sha256": "3afa607a76fa478196eb55f62691354b3f77c4254e1d891f60fb611e02743a0b",
+      "source": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle7/cache.db"
+    },
+    {
+      "bytes": 23679,
+      "path": "local/test_projection_rebuild_oracle7/oracle-control.json",
+      "sha256": "d2ac90153fbf61f260047ef594a4838cd56944aac8f557f48afb3c32effb8822",
+      "source": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle7/oracle-control.json"
+    },
+    {
+      "bytes": 40960,
+      "path": "local/test_projection_rebuild_oracle8/cache.db",
+      "sha256": "c71f4154c542bd5b50608fcdea52aab61ddebdbc27dbe14724cf468dbe610a2c",
+      "source": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle8/cache.db"
+    },
+    {
+      "bytes": 25457,
+      "path": "local/test_projection_rebuild_oracle8/oracle-control.json",
+      "sha256": "20e07ed1eab6d8400862351e75985b656db4acf8e6afb836aa7c5a86a74eaaa5",
+      "source": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle8/oracle-control.json"
+    },
+    {
+      "bytes": 40960,
+      "path": "local/test_projection_rebuild_oracle9/cache.db",
+      "sha256": "73e06ce796bcd943083c8e9a833da248836480841c5e1037c3343af884378844",
+      "source": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle9/cache.db"
+    },
+    {
+      "bytes": 25972,
+      "path": "local/test_projection_rebuild_oracle9/oracle-control.json",
+      "sha256": "b95fcbbe079bb1e0e7db3b38da8303de22cbd0a081983ff0f61b1e87a7a9088e",
+      "source": "/tmp/sprintctl-2820-final-20261019-local-temp/test_projection_rebuild_oracle9/oracle-control.json"
+    },
+    {
+      "bytes": 40960,
+      "path": "pg/test_projection_rebuild_empty_0/cache.db",
+      "sha256": "63dcbd8308b3fe55dfacb68cded0d8d23dd1164e6229588a14826adbf5135aca",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_empty_0/cache.db"
+    },
+    {
+      "bytes": 24576,
+      "path": "pg/test_projection_rebuild_empty_0/foreign.db",
+      "sha256": "57cdf261faced358627645ad3705fa6a89fbb82da625c8d91dd866ef68f5b656",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_empty_0/foreign.db"
+    },
+    {
+      "bytes": 12550,
+      "path": "pg/test_projection_rebuild_empty_0/projection-rebuild-history.json",
+      "sha256": "84834cb1c8721b8488e8565a3d0d2673e215db43ed4d3494cd3d5e4323e4d8a3",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_empty_0/projection-rebuild-history.json"
+    },
+    {
+      "bytes": 24576,
+      "path": "pg/test_projection_rebuild_remote0/foreign.db",
+      "sha256": "67797d9a90230d707fe92d9ae6f7f3aabee94b0be06219fc283e56f638dfbd44",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_remote0/foreign.db"
+    },
+    {
+      "bytes": 24576,
+      "path": "pg/test_projection_rebuild_remote0/producer.db",
+      "sha256": "eed8be96211725b3ae15b034bfcb617f0c0e5e6ed81e2e105cf5069daf51bc5e",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_remote0/producer.db"
+    },
+    {
+      "bytes": 6067,
+      "path": "pg/test_projection_rebuild_remote0/projection-rebuild-history.json",
+      "sha256": "88a82bfd5b2c10bcf168d080838e859bf9d69ee3244123661b6820d5513cf0a0",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_remote0/projection-rebuild-history.json"
+    },
+    {
+      "bytes": 40960,
+      "path": "pg/test_projection_rebuild_remote1/cache-after-failure.db",
+      "sha256": "2917b0863c71e2381ea735fe17b816087daeed61c450b5d4ae90bd935541c971",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_remote1/cache-after-failure.db"
+    },
+    {
+      "bytes": 40960,
+      "path": "pg/test_projection_rebuild_remote1/cache-before.db",
+      "sha256": "2917b0863c71e2381ea735fe17b816087daeed61c450b5d4ae90bd935541c971",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_remote1/cache-before.db"
+    },
+    {
+      "bytes": 40960,
+      "path": "pg/test_projection_rebuild_remote1/cache-partial-sibling.db",
+      "sha256": "e66cd983722b8b5fcb59614dd905c3b053bf2cff166288ef13bbcb12012901b7",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_remote1/cache-partial-sibling.db"
+    },
+    {
+      "bytes": 40960,
+      "path": "pg/test_projection_rebuild_remote1/cache.db",
+      "sha256": "c4e31a52295991a60a063a66375f39de097f8656ae9b64a24f32a817cf2d4147",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_remote1/cache.db"
+    },
+    {
+      "bytes": 24576,
+      "path": "pg/test_projection_rebuild_remote1/foreign.db",
+      "sha256": "e30f83c8411bc6f6bcea8b29b0cdbf26b6fbf142f822190e3a2f9731f97fed08",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_remote1/foreign.db"
+    },
+    {
+      "bytes": 24576,
+      "path": "pg/test_projection_rebuild_remote1/producer.db",
+      "sha256": "90bbf55de9971cf0c8142390fd121eb153822b8891914ae9d53335f48c4560c8",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_remote1/producer.db"
+    },
+    {
+      "bytes": 52094,
+      "path": "pg/test_projection_rebuild_remote1/projection-rebuild-history.json",
+      "sha256": "1bc73b603cc0ed69e13910d046e699d1ddf11af3240ed62bbd5fe85cf86fc945",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_remote1/projection-rebuild-history.json"
+    },
+    {
+      "bytes": 40960,
+      "path": "pg/test_projection_rebuild_replac0/cache.db",
+      "sha256": "9ff72c653a81c9cabe9562f7e40769e42f2eede332ab0c9a16a4b076eeb6b9f0",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_replac0/cache.db"
+    },
+    {
+      "bytes": 24576,
+      "path": "pg/test_projection_rebuild_replac0/foreign.db",
+      "sha256": "b8ba9b290b8183511a7957e49ef7584a5dd4082e8d6bb76a19fd3403f560ace7",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_replac0/foreign.db"
+    },
+    {
+      "bytes": 24576,
+      "path": "pg/test_projection_rebuild_replac0/producer.db",
+      "sha256": "fbaceb1ca5ecef4584fd77695e36700d84ad0bb754191765980ff9aeabcec480",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_replac0/producer.db"
+    },
+    {
+      "bytes": 36292,
+      "path": "pg/test_projection_rebuild_replac0/projection-rebuild-history.json",
+      "sha256": "cbe97fdde2ab8fa4776daf58fdf4f1002c0bb3b9ae75a3e938286a65503162db",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_replac0/projection-rebuild-history.json"
+    },
+    {
+      "bytes": 40960,
+      "path": "pg/test_projection_rebuild_retain0/cache-after-failure.db",
+      "sha256": "2917b0863c71e2381ea735fe17b816087daeed61c450b5d4ae90bd935541c971",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_retain0/cache-after-failure.db"
+    },
+    {
+      "bytes": 40960,
+      "path": "pg/test_projection_rebuild_retain0/cache-before.db",
+      "sha256": "2917b0863c71e2381ea735fe17b816087daeed61c450b5d4ae90bd935541c971",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_retain0/cache-before.db"
+    },
+    {
+      "bytes": 40960,
+      "path": "pg/test_projection_rebuild_retain0/cache.db",
+      "sha256": "2917b0863c71e2381ea735fe17b816087daeed61c450b5d4ae90bd935541c971",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_retain0/cache.db"
+    },
+    {
+      "bytes": 24576,
+      "path": "pg/test_projection_rebuild_retain0/foreign.db",
+      "sha256": "0f32d4e39aaab12677f099ada07d54afb874c1727d987f40521c3d63793dcc11",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_retain0/foreign.db"
+    },
+    {
+      "bytes": 24576,
+      "path": "pg/test_projection_rebuild_retain0/producer.db",
+      "sha256": "0b0c98c127f0a5d23c991e53d6cdb55285e22fe5e2bc4f934b598affa088b03b",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_retain0/producer.db"
+    },
+    {
+      "bytes": 18909,
+      "path": "pg/test_projection_rebuild_retain0/projection-rebuild-history.json",
+      "sha256": "c37e4ef3caecfaca56cc0b49ff0251910524c5e6b21f26a3a7dbbaaca6609d44",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_retain0/projection-rebuild-history.json"
+    },
+    {
+      "bytes": 40960,
+      "path": "pg/test_projection_rebuild_stops_0/cache.db",
+      "sha256": "57c2936255401fe48e521e77225bc75453b2a1826df7febf10dc1b72dd917fd2",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_stops_0/cache.db"
+    },
+    {
+      "bytes": 24576,
+      "path": "pg/test_projection_rebuild_stops_0/foreign.db",
+      "sha256": "c88cc05f684e485bfe6fa1de679314c2a8e85f0cddd4adbdd41b17d6f59dc9f0",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_stops_0/foreign.db"
+    },
+    {
+      "bytes": 24576,
+      "path": "pg/test_projection_rebuild_stops_0/producer.db",
+      "sha256": "daaabed0c6afb74bf693eca1db7a5dd415b87ee53d0baa2f324d70f99296b871",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_stops_0/producer.db"
+    },
+    {
+      "bytes": 48628,
+      "path": "pg/test_projection_rebuild_stops_0/projection-rebuild-history.json",
+      "sha256": "37aadeb8fd3e4d9f851c685dd2bca6932a1ddaad30167758be4bf7c30f4a094d",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_stops_0/projection-rebuild-history.json"
+    },
+    {
+      "bytes": 12288,
+      "path": "pg/test_projection_rebuild_upgrad0/cache-before.db",
+      "sha256": "d5fffebedf0e386dccb95ecbf9d3174bc92d310847a7c84b1e3b44f120e949c5",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_upgrad0/cache-before.db"
+    },
+    {
+      "bytes": 40960,
+      "path": "pg/test_projection_rebuild_upgrad0/cache.db",
+      "sha256": "e2cee6f515fe0e6e7f9ee6410a5c336cfd64f594b8d2dee66d752b44167c7400",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_upgrad0/cache.db"
+    },
+    {
+      "bytes": 24576,
+      "path": "pg/test_projection_rebuild_upgrad0/foreign.db",
+      "sha256": "6296cc3732b32222390b2acff07d069f8ac82d658178b377a033c09a88de9115",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_upgrad0/foreign.db"
+    },
+    {
+      "bytes": 24576,
+      "path": "pg/test_projection_rebuild_upgrad0/producer.db",
+      "sha256": "3913ca310d5d82f29c6a7531682550b7aa8484b2cb907bd4a2f33c64cc7d22c8",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_upgrad0/producer.db"
+    },
+    {
+      "bytes": 29882,
+      "path": "pg/test_projection_rebuild_upgrad0/projection-rebuild-history.json",
+      "sha256": "2a469b080e311baadbc2b6251b9ebf538f337a9fd31b92e7b786b3e3e1cd6ebc",
+      "source": "/tmp/sprintctl-2820-final-20261019-pg-temp/test_projection_rebuild_upgrad0/projection-rebuild-history.json"
+    }
+  ],
+  "qualification": "raw capture only; result packet and independent review required",
+  "schema_version": "projection-rebuild-capture/v1"
+}
