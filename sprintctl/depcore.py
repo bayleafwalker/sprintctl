@@ -5,10 +5,10 @@ connection adapter implementing :class:`DepConn`. The query shapes and
 tenant handling live here once so the two backends cannot drift apart in
 dep-table behaviour. Mirrors the pattern established in ``sprintcore.py``.
 
-Validation (self-dependency check, work-item existence) stays in each
-backend's wrapper because it calls other backend-specific functions
-(``get_work_item``). This module owns the raw storage shape and the private
-read-only graph projection over backend-selected eligible rows.
+Private admission policy uses a backend-supplied work-item lookup. Each
+backend retains lookup binding, connection adaptation and transaction behavior.
+This module also owns the raw storage shape and the private read-only graph
+projection over backend-selected eligible rows.
 """
 
 from __future__ import annotations
@@ -57,6 +57,21 @@ def _where(conn: DepConn, *conditions: str, alias: str = "") -> str:
         parts.append(f"{prefix}repo_id = {conn.ph}")
     parts.extend(conditions)
     return " WHERE " + " AND ".join(parts) if parts else ""
+
+
+def _validate_add_dep(
+    item_id: int,
+    blocked_item_id: int,
+    *,
+    get_item: Callable[[int], object | None],
+) -> None:
+    """Preserve admission order using the caller's current backend lookup."""
+    if item_id == blocked_item_id:
+        raise ValueError("An item cannot depend on itself")
+    if get_item(item_id) is None:
+        raise ValueError(f"Work item #{item_id} not found")
+    if get_item(blocked_item_id) is None:
+        raise ValueError(f"Work item #{blocked_item_id} not found")
 
 
 def add_dep(conn: DepConn, item_id: int, blocked_item_id: int) -> int:

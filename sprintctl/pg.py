@@ -5249,12 +5249,9 @@ class _DepPg:
 
 
 def add_dep(store: PgStore, item_id: int, blocked_item_id: int) -> int:
-    if item_id == blocked_item_id:
-        raise ValueError("An item cannot depend on itself")
-    if get_work_item(store, item_id) is None:
-        raise ValueError(f"Work item #{item_id} not found")
-    if get_work_item(store, blocked_item_id) is None:
-        raise ValueError(f"Work item #{blocked_item_id} not found")
+    _depcore._validate_add_dep(
+        item_id, blocked_item_id, get_item=lambda ident: get_work_item(store, ident)
+    )
     return _depcore.add_dep(_DepPg(store), item_id, blocked_item_id)
 
 

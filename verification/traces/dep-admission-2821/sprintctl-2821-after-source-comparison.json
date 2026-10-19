@@ -1,0 +1,29 @@
+{
+  "sprintctl/db.py": {
+    "sha256": "724ddba8a9014c9db299da95c701121ca12fa69bd77892a0198ba929a3dc3756",
+    "changed_top_level_definitions": [
+      "add_dep"
+    ],
+    "added": [],
+    "removed": [],
+    "all_other_definitions_unchanged": true
+  },
+  "sprintctl/pg.py": {
+    "sha256": "cba485edc6a19f009070172cd91fc9352934c971183ff5b503f63e9e29fcd25b",
+    "changed_top_level_definitions": [
+      "add_dep"
+    ],
+    "added": [],
+    "removed": [],
+    "all_other_definitions_unchanged": true
+  },
+  "sprintctl/depcore.py": {
+    "sha256": "1a49d60bcf22b9d83467fe80543688e57e53d6ab400ef2e5224365884e97805f",
+    "changed_top_level_definitions": [],
+    "added": [
+      "_validate_add_dep"
+    ],
+    "removed": [],
+    "all_other_definitions_unchanged": true
+  }
+}

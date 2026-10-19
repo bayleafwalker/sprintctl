@@ -2390,12 +2390,9 @@ def add_dep(
     Both items must exist. An item cannot depend on itself.
     Duplicate deps are ignored (returns existing dep id).
     """
-    if item_id == blocked_item_id:
-        raise ValueError("An item cannot depend on itself")
-    if get_work_item(conn, item_id) is None:
-        raise ValueError(f"Work item #{item_id} not found")
-    if get_work_item(conn, blocked_item_id) is None:
-        raise ValueError(f"Work item #{blocked_item_id} not found")
+    _depcore._validate_add_dep(
+        item_id, blocked_item_id, get_item=lambda ident: get_work_item(conn, ident)
+    )
     return _depcore.add_dep(_DepSqlite(conn), item_id, blocked_item_id)
 
 

@@ -113,3 +113,6 @@ verification/traces/locked-decision-writing-histories-2805.json:generic-api-key:
 verification/fixtures/outbox-fsync-source-freeze-2807.json:generic-api-key:114
 verification/fixtures/outbox-fsync-source-freeze-2807-v2.json:generic-api-key:114
 verification/fixtures/outbox-fsync-source-freeze-2807-v3.json:generic-api-key:114
+
+# Synthetic GitHub-PAT-shaped test parameter id from tests/test_work_application.py:2220, not a credential value.
+verification/traces/dep-admission-2821/sprintctl-2821-full-local-sanitized.xml:github-pat:1

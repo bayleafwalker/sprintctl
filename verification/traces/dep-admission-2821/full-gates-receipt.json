@@ -1,0 +1,117 @@
+{
+  "item": "sprintctl#2821",
+  "release": "de6449769abbb7870843651c4f6f184998cdc08065908fa31b0d8631be78ca51",
+  "recorded_at": "2026-10-19T19:33:03.168221+00:00",
+  "accepted_base": "4a59bd6afddb6f6a6fe86ab80a27fb4d28ea11c9",
+  "oracle_sha256": {
+    "tests/_dep_admission_contract.py": "b978afbfe5c973bdbab14d20906f33297ae04434fe9a60e4a01db084afca49e5",
+    "tests/pg/test_dep_admission.py": "3fbbe773eebc39b9fce63d991f1b817f15acb8ecb97e7ceb75d8bc768f0a96a7",
+    "tests/test_dep_admission.py": "2e927bfaee153d6b649bad92948c0fff8c2b1fb60d21c4e2b6e1cf3e03b72969"
+  },
+  "product_source": {
+    "sprintctl/db.py": {
+      "sha256": "724ddba8a9014c9db299da95c701121ca12fa69bd77892a0198ba929a3dc3756",
+      "changed_top_level_definitions": [
+        "add_dep"
+      ],
+      "added": [],
+      "removed": [],
+      "all_other_definitions_unchanged": true
+    },
+    "sprintctl/pg.py": {
+      "sha256": "cba485edc6a19f009070172cd91fc9352934c971183ff5b503f63e9e29fcd25b",
+      "changed_top_level_definitions": [
+        "add_dep"
+      ],
+      "added": [],
+      "removed": [],
+      "all_other_definitions_unchanged": true
+    },
+    "sprintctl/depcore.py": {
+      "sha256": "1a49d60bcf22b9d83467fe80543688e57e53d6ab400ef2e5224365884e97805f",
+      "changed_top_level_definitions": [],
+      "added": [
+        "_validate_add_dep"
+      ],
+      "removed": [],
+      "all_other_definitions_unchanged": true
+    }
+  },
+  "runs": {
+    "local": {
+      "suite": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "4",
+        "tests": "3267",
+        "time": "524.626",
+        "timestamp": "2026-10-19T22:23:43.754334+03:00",
+        "hostname": "workstation"
+      },
+      "case_count": 3267,
+      "passed": 3263,
+      "skips": [
+        {
+          "classname": "",
+          "name": "tests.test_vuoro_work_adapter_integration",
+          "message": "collection skipped",
+          "detail": "('/tmp/sprintctl-add-dep-guards-20261019/tests/test_vuoro_work_adapter_integration.py', 15, 'Skipped: Vuoro service integration extra is absent')"
+        },
+        {
+          "classname": "tests.test_archival_result_fixture",
+          "name": "test_actual_native_source_archive_target_and_refusals",
+          "message": "owned PG fixture opt-in",
+          "detail": "/tmp/sprintctl-add-dep-guards-20261019/tests/test_archival_result_fixture.py:214: owned PG fixture opt-in"
+        },
+        {
+          "classname": "tests.test_archival_result_fixture",
+          "name": "test_real_canonical_capability_refuses_without_scrubbing",
+          "message": "owned PG fixture opt-in",
+          "detail": "/tmp/sprintctl-add-dep-guards-20261019/tests/test_archival_result_fixture.py:792: owned PG fixture opt-in"
+        },
+        {
+          "classname": "tests.test_release_contract",
+          "name": "test_built_wheel_satisfies_release_contract",
+          "message": "release wheel is built by the release workflow",
+          "detail": "/tmp/sprintctl-add-dep-guards-20261019/tests/test_release_contract.py:108: release wheel is built by the release workflow"
+        }
+      ],
+      "frozen_oracle_nodes_present": true,
+      "raw_artifacts": {
+        "verification/traces/dep-admission-2821/sprintctl-2821-full-local-sanitized.xml": "96b4fe91f51e956125a5dca2560ed39da504c1e58549314e2367c8d8c01f453f",
+        "verification/traces/dep-admission-2821/sprintctl-2821-full-local-sanitized.txt": "42f05984e3df22e3fe4fa7db79f2347c19a23785998d4ef732f7c3922a5b3dbd"
+      },
+      "environment": "All inherited SPRINTCTL_* variables unset before launch; dedicated frozen offline dev+served+remote environment.",
+      "command": "while IFS= read -r name; do unset \"$name\"; done < <(compgen -e | rg \"^SPRINTCTL_\"); UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-add-dep-local-env UV_OFFLINE=1 timeout --foreground -k 30s 1800s uv run --frozen --no-sync pytest -q -m \"not pg and not perf\" --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2821-full-local-sanitized.xml"
+    },
+    "pg": {
+      "suite": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "1796",
+        "time": "119.655",
+        "timestamp": "2026-10-19T22:12:24.766491+03:00",
+        "hostname": "workstation"
+      },
+      "case_count": 1796,
+      "passed": 1796,
+      "skips": [],
+      "frozen_oracle_nodes_present": true,
+      "raw_artifacts": {
+        "verification/traces/dep-admission-2821/sprintctl-2821-full-pg.xml": "097e76263e6f10f8f82cf4c7e608d0b0454c0280dea40993a53ae64d4f153dab",
+        "verification/traces/dep-admission-2821/sprintctl-2821-full-pg.txt": "42de11ed3f4419d67e3b7c9e5f630f60f2477eea2203a748024eb07bedbb2532"
+      },
+      "cleanup": {
+        "total": 92,
+        "fixture_names": 4,
+        "remaining_rows": 0
+      },
+      "command": "PATH=/nix/store/lkcp4yn4dmkhmngwa363wwqyhhk5rzs4-postgresql-16.15/bin:$PATH UV_PROJECT_ENVIRONMENT=/tmp/sprintctl-add-dep-pg-env UV_OFFLINE=1 UV_FROZEN=1 UV_NO_SYNC=1 timeout --foreground -k 30s 900s scripts/pg-disposable-tests.sh --tb=short -o junit_family=legacy --junitxml=/tmp/sprintctl-2821-full-pg.xml"
+    }
+  },
+  "final_independent_packet_review": "pending",
+  "commit_pr_ci_landing": "not performed; user handoff freeze"
+}

@@ -1,0 +1,89 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.dep-admission",
+  "owner_repo": "sprintctl",
+  "subject": "Private add_dep admission policy with existing backend transaction behavior",
+  "depth": 2,
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2821",
+    "revision": "native:release:de6449769abbb7870843651c4f6f184998cdc08065908fa31b0d8631be78ca51"
+  },
+  "source_of_truth": "Current No doc child2821 embeds reviewed scope c691b74b002ad5eb5b3c42899d839dd5660388afe02c228af9aa3d00421c5e32; parent2150 notes5809/5834/5848",
+  "backends": [
+    "temporary SQLite3.53.1",
+    "disposable PostgreSQL16.15 READ COMMITTED"
+  ],
+  "actors": [
+    "backend caller",
+    "independent committed-state observer"
+  ],
+  "initial_state": [
+    "Two distinct items across active/planned sprints",
+    "Pending unrelated caller write and savepoint",
+    "Idle entry for guard transaction characterization",
+    "Existing duplicate edge",
+    "Separate PG repository endpoints"
+  ],
+  "operations": [
+    {
+      "name": "add_dep",
+      "actors": [
+        "backend caller"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "One existing dependency insertion and its caller transaction effects"
+  },
+  "assumptions": {
+    "isolation": "Existing SQLite transactions and PostgreSQL READ COMMITTED; no added locks or atomicity",
+    "clock": "Native creation timestamps retained and compared within each run",
+    "fairness": "None; independent reads use finite timeouts"
+  },
+  "bounds": {
+    "shared_actual_cases_per_backend": 19,
+    "additional_pg_foreign_endpoint_cases": 2,
+    "synthetic_wrapper_cases": 4,
+    "pure_mutation_controls": 12,
+    "actual_database_mutation_controls_in_shared_cases": 4,
+    "concurrent_histories": 0
+  },
+  "invariants": [
+    "Self equality precedes any backend lookup or adapter construction; missing first endpoint precedes missing second endpoint",
+    "Only None marks absence; raw IDs and equality semantics remain unchanged",
+    "Each endpoint lookup resolves current backend get_work_item binding; identical lookup exceptions propagate",
+    "Refusals preserve caller writes/savepoints and durable dep/work_item/event/reservation state",
+    "Idle guard checks preserve native SQLite idle versus PG read transaction consequences",
+    "Successful insertion and duplicate lookup commit prior caller writes before final ID read",
+    "Actual INSERT failure preserves SQLite usable pending state versus PG failed transaction until caller rollback",
+    "Failure after actual final ID read leaves already committed edge and caller writes durable",
+    "Reverse, cross-sprint and active endpoints remain permitted; PG foreign endpoints remain missing"
+  ],
+  "faults": [
+    "Backend getter rebinding and exception",
+    "Scoped actual SQL INSERT trigger error",
+    "Exception after actual final ID SELECT",
+    "Omitted commit and caller rollback on refusal",
+    "Finite synthetic wrong wrappers for guard/binding/ID behavior"
+  ],
+  "oracles": [
+    "tests/_dep_admission_contract.py",
+    "tests/test_dep_admission.py",
+    "tests/pg/test_dep_admission.py"
+  ],
+  "implementation_anchors": [
+    "sprintctl/depcore.py::_validate_add_dep",
+    "sprintctl/db.py::add_dep",
+    "sprintctl/pg.py::add_dep"
+  ],
+  "expansions": [
+    "backend-parity",
+    "fault-scenario"
+  ],
+  "limits": [
+    "Finite characterization; no new atomicity, concurrency, durability or provider equivalence guarantee",
+    "Synthetic falsey rows and raw IDs are explicitly separate from persisted legal backend rows",
+    "Parent2150 and EC05 remain incomplete; no schema/API/IDL/deployed provider changes"
+  ]
+}
