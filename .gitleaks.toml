@@ -1,0 +1,13 @@
+# The two immutable #2820 snapshots pin source-file bytes, not a credential.
+# Keep default rules active and exempt only this exact digest line at these paths.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+[[rules.allowlists]]
+description = "Sprintctl #2820 frozen vuoro_credentials.py source SHA256"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^verification/fixtures/projection-rebuild-(preauthor-source|harness-freeze)-2820\.json$''']
+regexes = ['''^\s*"sprintctl/vuoro_credentials\.py": "25c5ed02336eaf1799a08ab3934f491b8125aa43e70a29064e26973db56751be",?$''']

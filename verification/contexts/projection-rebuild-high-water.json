@@ -1,0 +1,112 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.projection-rebuild-high-water",
+  "owner_repo": "sprintctl",
+  "contract_ref": {
+    "doc_id": "sprintctl-item-2820",
+    "revision": "native:release:828e25d93e243de91cc73ec3eeb1a61258326f0a8d2655fa7fdf5b4f312284b8"
+  },
+  "subject": "Public ingest-cache schema rebuild through a captured repository high-water against actual disposable PostgreSQL",
+  "source_of_truth": "Native No doc5849; docs/plans/adr-outbox-sync-model.md at accepted32bc4e6b3b1fa1c369fcd139605d0dff6795488e; reviewed plan385e63b1d166584ef95b59ca312019acdec5b872c3d9b6334d300a979f300916; no new architecture ratification",
+  "depth": 2,
+  "expansions": [
+    "fault-scenario"
+  ],
+  "backends": [
+    "actual disposable PostgreSQL16",
+    "temporary SQLite ingest cache, DELETE journal mode"
+  ],
+  "actors": [
+    "rebuild reader connection",
+    "independent remote writer connection in exact owned subprocess with actual commit",
+    "separately owned bounded raw SQLite reader process"
+  ],
+  "assumptions": {
+    "clock": "producer and remote ingest timestamps constrained to measured append/admission intervals; local generated cache times constrained to rebuild/catchup interval",
+    "fairness": "none; finite events, statement/lock timeouts and owned-process deadlines are test guards",
+    "identity": "generated registered disposable repo scopes and synthetic producer UUIDs only",
+    "isolation": "READ COMMITTED independently measured on both PG actors; exact writer process owned and reaped by bounded observer; no shared MVCC snapshot claim",
+    "storage": "closed live SQLite fixtures; whole-file replacement; no power-loss/directory-sync/concurrent-open-reader claim"
+  },
+  "initial_state": [
+    "actual three-record primary remote ledger and distinct foreign tenant record; empty primary in separate example",
+    "closed schema-v1 or stale current cache",
+    "source offset and stream metadata unchanged by simulated retained-prefix fault"
+  ],
+  "operations": [
+    {
+      "name": "rebuild_ingest_projection",
+      "actors": [
+        "rebuild reader connection"
+      ],
+      "synchronization": "actual captured high-water and actual paginated queries; sibling SQLite build and whole-file replacement"
+    },
+    {
+      "name": "ingest_records",
+      "actors": [
+        "independent remote writer connection with actual commit"
+      ],
+      "synchronization": "commit fourth record only after reader captures three; reader observes four before actual page fetch"
+    },
+    {
+      "name": "apply_ingested_records",
+      "actors": [
+        "rebuild reader connection"
+      ],
+      "synchronization": "ordinary post-rebuild cache catchup from remote offset four"
+    }
+  ],
+  "invariants": [
+    "rebuild persisted envelope population equals exact authored prefix through captured high-water, even when an actual later commit is visible in fetched pages",
+    "all five persisted cache table column/PK shapes, repository binding, full canonical record JSON/hashes, ingest continuity and both separate watermarks match the authored manifest",
+    "schema-v1 refuses ordinary application then actual public rebuild produces current bound cache",
+    "actual second-page fault after first sibling page leaves exact original live bytes/state and removes sibling; unmodified retry converges",
+    "actual retained suffix without offset one refuses with expected1/received2, preserves original bytes/state and removes sibling",
+    "empty primary produces current bound empty cache despite foreign records",
+    "the same raw checker rejects seeded hash/envelope/type/population/repository/authority violations after first accepting valid fixtures"
+  ],
+  "faults": [
+    "named exception after actual second remote page query before returning it",
+    "explicit guarded disposable transaction disables only ingest_record_immutable, deletes scoped offset one, restores trigger before commit and verifies enabled",
+    "nine persisted oracle falsifiers: hash mismatch, actor mismatch, boolean schema version, float origin sequence, watermark ahead, internally consistent partial population, wrong repository, unexpected authority record, unexpected authority watermark",
+    "connected remote writer reaches fresh nonce/PID-bound stall before producer append; observer kills/reaps exact child and backend disappears without new record"
+  ],
+  "oracles": [
+    "tests/_projection_rebuild_contract.py",
+    "tests/test_projection_rebuild_oracle.py",
+    "tests/pg/test_projection_rebuild.py"
+  ],
+  "implementation_anchors": [
+    "sprintctl/sync.py:rebuild_ingest_projection",
+    "sprintctl/projection.py:rebuild_cached_projection",
+    "sprintctl/projection.py:apply_ingested_records",
+    "sprintctl/pg.py:ingest_records",
+    "sprintctl/pg.py:get_ingest_high_water",
+    "sprintctl/pg.py:list_ingested_records"
+  ],
+  "consistency": {
+    "object": "repository ingest-cache envelope prefix; no business-state parity or authority mutation",
+    "target": "application-invariant"
+  },
+  "bounds": {
+    "seed_primary_records": 3,
+    "concurrent_additional_records": 1,
+    "foreign_records_per_case": 1,
+    "batch_size": 2,
+    "new_pg_cases": 7,
+    "oracle_cases": 11,
+    "raw_reader_rows_per_table": 32,
+    "raw_reader_tables": 8,
+    "raw_reader_columns_per_table": 32,
+    "raw_reader_output_bytes": 65536,
+    "raw_reader_timeout_seconds": 3,
+    "sqlite_busy_timeout_seconds": 0.2,
+    "sqlite_progress_timeout_seconds": 0.5,
+    "pg_connect_timeout_seconds": 5,
+    "pg_statement_timeout_ms": 5000,
+    "pg_lock_timeout_ms": 3000,
+    "writer_process_timeout_seconds": 8,
+    "writer_stall_timeout_seconds": 3,
+    "writer_backend_cleanup_timeout_seconds": 2
+  }
+}
