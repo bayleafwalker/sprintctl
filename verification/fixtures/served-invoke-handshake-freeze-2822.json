@@ -1,0 +1,122 @@
+{
+  "schema": "sprintctl-oracle-freeze/v1",
+  "work_item": 2822,
+  "title": "Handshake before authenticated served operation invocation",
+  "evidence_class": "local transport replay (httpx.MockTransport), not live service evidence",
+  "worktree": "/tmp/sprintctl-served-handshake-2822",
+  "branch": "fix/served-invoke-handshake-2822",
+  "head": "4a59bd6afddb6f6a6fe86ab80a27fb4d28ea11c9",
+  "oracle_path": "/tmp/sprintctl-served-handshake-2822/tests/test_served_invoke_handshake_oracle.py",
+  "oracle_sha256": "f5085854d395d49e68a2a04a9c695437971fbee4b183e5732d450b132a9eed11",
+  "served_py_sha256": "f866ddba5d0ef350ee61197579f4af618ee028ce37183440f34432d729b47b64",
+  "served_py_modified": false,
+  "vuoro_client": {
+    "version": "0.1.1",
+    "dist_info_RECORD_sha256": "4470f9d9f75dd485ae3997e4042106a5905a824383f4342786158e08d02b1754",
+    "files_sha256": {
+      "__init__.py": "8152cbed3c6c13fc7955658124496940971ca6b4479e4ad050a732fb097a7d2a",
+      "cli.py": "1205c0c41bd28ce1ad68d20299f592c136e82a3f0a72e92a6899ef29fb9e5ae8",
+      "client.py": "d2933ea8819f58997e8b8a2f102ede6b0886f3e0d9a1eb97a30ea94f8feba521",
+      "discovery.py": "5c227fa51c9bd75a66fd871d0431baf314068cfd7137a27d2f2f9852b7c843e9",
+      "errors.py": "c33ed5178525fd5a69b36c374a1eefc5bd74a0978c149d1c061fb06d9bc9001f",
+      "profile.py": "1ad6d238a916e10fd77b1a79c1a9c252fa3712eb331cfc3c5cdf41a1417ddc72",
+      "profile.schema.json": "9c3b3438e3bac9892b57806acf730fd20391ddc33d721d6bbf353d15d7e275a3",
+      "recovery.py": "d4f2e670cf7ea4d96e8ea09153f8eeb681f05c7a377413d42f6b7896b65d55b2",
+      "resources.py": "f31f554cd41a5a41f2f9ef2722c3c11ec4010ed27761226c032789a7a577b635"
+    }
+  },
+  "env": "/tmp/sprintctl-handshake-2822-env",
+  "python_version": "3.13.16",
+  "pytest_version": "9.0.2",
+  "httpx_version": "0.28.1",
+  "click_version": "8.3.1",
+  "pytest_command": "cd /tmp/sprintctl-served-handshake-2822 && env -u SPRINTCTL_BACKEND -u SPRINTCTL_VUORO_PROFILE /tmp/sprintctl-handshake-2822-env/bin/pytest -p no:cacheprovider tests/test_served_invoke_handshake_oracle.py -q -rA",
+  "summary": {
+    "total": 19,
+    "failed": 17,
+    "passed": 2
+  },
+  "fix_independent_controls_expected_green": [
+    "test_real_client_class_handshake_control",
+    "test_fresh_client_and_loop_per_sync_call_closed_on_success_control"
+  ],
+  "red_reason": "every failing test observes request order [GET /api/catalog/v1, POST /api/invoke/v1] with no GET /api/meta/v1/handshake",
+  "outcomes": {
+    "test_cli_matching_handshake_precedes_catalog_and_invoke": {
+      "outcome": "failed",
+      "reason": "AssertionError: ['/api/catalog/v1', '/api/invoke/v1']"
+    },
+    "test_cli_failed_handshake_blocks_catalog_and_invoke[http_error]": {
+      "outcome": "failed",
+      "reason": "AssertionError: ['/api/catalog/v1', '/api/invoke/v1']"
+    },
+    "test_cli_failed_handshake_blocks_catalog_and_invoke[incompatible_protocol]": {
+      "outcome": "failed",
+      "reason": "AssertionError: ['/api/catalog/v1', '/api/invoke/v1']"
+    },
+    "test_cli_failed_handshake_blocks_catalog_and_invoke[malformed_body]": {
+      "outcome": "failed",
+      "reason": "AssertionError: ['/api/catalog/v1', '/api/invoke/v1']"
+    },
+    "test_cli_failed_handshake_blocks_catalog_and_invoke[wrong_environment]": {
+      "outcome": "failed",
+      "reason": "AssertionError: ['/api/catalog/v1', '/api/invoke/v1']"
+    },
+    "test_real_client_class_handshake_control": {
+      "outcome": "passed"
+    },
+    "test_cli_uses_one_real_client_class_for_both_environments": {
+      "outcome": "failed",
+      "reason": "AssertionError: (<class 'vuoro_client.client.AsyncVuoroClient'>, 0, ['/api/catalog/v1', '/api/invoke/v1'])"
+    },
+    "test_fresh_client_and_loop_per_sync_call_closed_on_success_control": {
+      "outcome": "passed"
+    },
+    "test_each_sync_call_handshakes_its_own_fresh_client": {
+      "outcome": "failed",
+      "reason": "AssertionError: assert [['/api/catal...i/invoke/v1']] == [['/api/meta/...i/invoke/v1']]"
+    },
+    "test_facade_failed_handshake_raises_and_closes[http_error]": {
+      "outcome": "failed",
+      "reason": "AssertionError: ['/api/catalog/v1', '/api/invoke/v1']"
+    },
+    "test_facade_failed_handshake_raises_and_closes[incompatible_protocol]": {
+      "outcome": "failed",
+      "reason": "AssertionError: ['/api/catalog/v1', '/api/invoke/v1']"
+    },
+    "test_facade_failed_handshake_raises_and_closes[malformed_body]": {
+      "outcome": "failed",
+      "reason": "AssertionError: ['/api/catalog/v1', '/api/invoke/v1']"
+    },
+    "test_facade_failed_handshake_raises_and_closes[wrong_environment]": {
+      "outcome": "failed",
+      "reason": "AssertionError: ['/api/catalog/v1', '/api/invoke/v1']"
+    },
+    "test_client_closed_when_invocation_is_rejected": {
+      "outcome": "failed",
+      "reason": "AssertionError: ['/api/catalog/v1', '/api/invoke/v1']"
+    },
+    "test_attributed_mutation_handshakes_before_invoke": {
+      "outcome": "failed",
+      "reason": "AssertionError: ['/api/catalog/v1', '/api/invoke/v1']"
+    },
+    "test_attributed_mutation_blocked_by_wrong_environment": {
+      "outcome": "failed",
+      "reason": "AssertionError: ['/api/catalog/v1', '/api/invoke/v1']"
+    },
+    "test_pinned_resolver_idempotent_mutation_handshakes_before_invoke": {
+      "outcome": "failed",
+      "reason": "AssertionError: ['/api/catalog/v1', '/api/invoke/v1']"
+    },
+    "test_pinned_resolver_path_blocked_by_wrong_environment": {
+      "outcome": "failed",
+      "reason": "AssertionError: ['/api/catalog/v1', '/api/invoke/v1']"
+    },
+    "test_custom_credential_resolver_handshakes_before_invoke": {
+      "outcome": "failed",
+      "reason": "AssertionError: ['/api/catalog/v1', '/api/invoke/v1']"
+    }
+  },
+  "credential_values_recorded": false,
+  "satisfiability_check": "scratch copy with one-line fix (await client.handshake() before invoke in _invoke_operation): 19/19 oracle tests pass; worktree source untouched"
+}

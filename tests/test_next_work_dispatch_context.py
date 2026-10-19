@@ -94,6 +94,9 @@ def test_served_cli_keeps_graph_suggestions_without_positive_dispatch(
         async def __aexit__(self, *args):
             pass
 
+        async def handshake(self):
+            return {}
+
         async def invoke(self, operation, arguments, **kwargs):
             owner = project if operation.startswith("work.project.") else application
             result = owner.invoke(operation, arguments, _context(repo_ids=frozenset({"test-repo"})))

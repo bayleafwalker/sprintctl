@@ -196,6 +196,7 @@ def test_reserve_transport_pins_one_credential_snapshot_for_pass(monkeypatch):
         def __init__(self, resolver): self.resolver = resolver
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
+        async def handshake(self): self.resolver("test-reference"); return {}
         async def invoke(self, operation, arguments, **kwargs):
             tokens.append(self.resolver("test-reference")); return {}
     def client(profile, *, credential_resolver):

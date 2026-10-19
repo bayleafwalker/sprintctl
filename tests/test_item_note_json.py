@@ -65,6 +65,9 @@ def served_note(conn, runner, tmp_path, monkeypatch):
         async def __aexit__(self, *args):
             pass
 
+        async def handshake(self):
+            return {}
+
         async def invoke(self, operation, arguments, **kwargs):
             calls.append((operation, arguments, kwargs))
             if state["failure"] is not None and not state["after_write"]:

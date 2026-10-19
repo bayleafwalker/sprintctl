@@ -55,6 +55,7 @@ class _FakeAsyncVuoroClient:
         self.credential_resolver = credential_resolver
         self.invocations: list[tuple[str, dict, dict]] = []
         self.catalog_calls = 0
+        self.handshakes = 0
         self.closed = False
         type(self).instances.append(self)
 
@@ -65,7 +66,13 @@ class _FakeAsyncVuoroClient:
         self.closed = True
         return None
 
+    async def handshake(self):
+        assert not self.invocations, "handshake must precede invocation"
+        self.handshakes += 1
+        return {}
+
     async def invoke(self, operation_name, arguments, **kwargs):
+        assert self.handshakes == 1, "invocation requires a prior handshake"
         self.invocations.append((operation_name, dict(arguments), dict(kwargs)))
         return {"operation": operation_name, "arguments": arguments}
 
@@ -487,6 +494,7 @@ def test_lifecycle_arbitrate_uses_a_fresh_client_per_call(fake_vuoro_client):
     first, second = fake_vuoro_client.instances
     assert first is not second
     assert first.closed and second.closed
+    assert first.handshakes == second.handshakes == 1
 
 
 def test_credential_resolver_passed_to_client_is_resolve_file_credential(fake_vuoro_client):
@@ -521,6 +529,7 @@ def test_each_operation_constructs_a_fresh_client_per_call(fake_vuoro_client, ca
     first, second = fake_vuoro_client.instances
     assert first is not second
     assert first.closed and second.closed
+    assert first.handshakes == second.handshakes == 1
 
 
 def test_client_profile_carries_the_served_profile_fields(fake_vuoro_client):
