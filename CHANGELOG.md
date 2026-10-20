@@ -25,12 +25,15 @@ Same schema 27 as 0.20.0: no owner migration.
 ### Added
 
 - Opt-in local CLI debug summaries.
-- Offline inspection of bounded owner-read result packets and of authority
-  producer preflight evidence (new `inspection` extra).
+- Offline inspection of bounded owner-read result packets (new `inspection`
+  extra) and of authority producer preflight evidence.
+- Effect explanation reports the exact acceptance facts without inventing
+  outcome proof.
 - Bounded resume briefing and diagnosis of resume context gaps; served
   handoffs are built from one read snapshot.
 - Served sprints are classified with scoped state-basis CAS.
-- Passive bounded reader-event capture for qualification preparation.
+- Passive bounded reader-event capture for qualification preparation
+  (`scripts/collect_reader_events.py`, source checkout only).
 
 ### Changed
 
