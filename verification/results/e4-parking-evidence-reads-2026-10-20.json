@@ -1,0 +1,116 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.e4-parking-evidence-reads",
+  "contract_ref": {
+    "doc_id": "sprintctl.parking-evidence-reads",
+    "revision": "sha256:9a22b00bb85b8202e4fffcfab9bcd3f79a2a388ca13cf11f0559d70602b01d59"
+  },
+  "implementation_sha": "206e396c7ba36f1f6922cb445471b4182a725f4b",
+  "depth": 2,
+  "environment": {
+    "backend": "owner PostgreSQL16.15 with separately restricted test/probe roles; real Vuoro consumer over owner operations",
+    "isolation": "READ COMMITTED; disposable loopback clusters; no production state",
+    "tool_versions": {
+      "python": "3.12.14",
+      "postgresql": "16.15",
+      "pytest": "8.4.2"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 4,
+    "bounds": {
+      "owner_exact_read_cases_passed": 7,
+      "owner_parking_cases_passed": 14,
+      "real_edge_histories_passed": 4,
+      "concurrent_connections": 2,
+      "full_postgresql_passed": 1817,
+      "full_postgresql_skipped": 0,
+      "full_non_postgresql_passed": 3283,
+      "full_non_postgresql_skipped": 4,
+      "historical_adapter_integration_passed": 14
+    },
+    "faults_exercised": [
+      "foreign caller binding",
+      "foreign repository",
+      "wrong or malformed chain sequence",
+      "unknown authority/idempotency key",
+      "wrong-kind/warning/mismatched-digest/extra-field/bad-scalar denial",
+      "foreign run citation",
+      "later release with earlier transaction-start time",
+      "caller-owned pending work before invoking the read"
+    ]
+  },
+  "claims": [
+    {
+      "property": "Exact owned sequence lookup binds principal/workspace/repo/client/grant, returns missing sequence as null, and preserves historical operation descriptors",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_evidence_entry.py"
+      ]
+    },
+    {
+      "property": "Bounded public parking context exposes only digest-validated rejected denial scalars and immutable run model declarations, never private predecessor evidence",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_parking_context.py"
+      ]
+    },
+    {
+      "property": "A later release by an earlier-started transaction cannot rewrite the previous parking/release pair for an acquired lease; event ID is the causal fence",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/pg/test_parking_context.py:test_later_release_from_older_transaction_does_not_rewrite_claim_history"
+      ]
+    },
+    {
+      "property": "New reads preserve caller-owned pending transactions; invoke only closes read transactions it opened from idle",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_evidence_entry.py",
+        "tests/pg/test_parking_context.py"
+      ]
+    },
+    {
+      "property": "Four real edge histories resolve an older denial, park, refuse claim, explicitly release and append one observed reclaim across same/different families",
+      "result": "example-tested",
+      "evidence": [
+        "tests/pg/test_e4_edge_composition.py"
+      ]
+    },
+    {
+      "property": "Production consumer deployment and live native denial acceptance",
+      "result": "unknown",
+      "evidence": [
+        "docs/protocols/parking-evidence-reads.md"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "property": "timestamp alone bounds prior release history",
+      "trace": [
+        "transaction starts before successor acquisition",
+        "successor acquires lease",
+        "older transaction emits a later release",
+        "transaction timestamp incorrectly sorts release before acquisition"
+      ],
+      "explanation": "Reproduced with two independent connections before repair; acquisition event ID now bounds history."
+    },
+    {
+      "property": "read-only invoke can always roll back",
+      "trace": [
+        "caller begins transaction and writes pending state",
+        "new read invokes unconditional cleanup",
+        "pending write disappears"
+      ],
+      "explanation": "Reproduced before repair; cleanup now respects entry transaction ownership."
+    }
+  ],
+  "notes": [
+    "Published0.22.0 wheel SHA2562783651fc835e3e6123a14e3b1ca7587f9920db3c76c79c6ac7fdf5869cb2ca3 attested to implementation206e396c7ba36f1f6922cb445471b4182a725f4b.",
+    "Full PostgreSQL release run had1817passes, no skips and94successful guarded fixture cleanups. Four optional consumer histories ran separately with explicit enablement; ordinary owner CI does not require consumer installation.",
+    "Non-PG full run preceded release metadata-only amendment; release/catalogue121tests ran after it. Canonical CI on Python3.11/3.12 and PostgreSQL passed.",
+    "No schema migration, authority expansion, scheduler, model selector or automatic release was introduced."
+  ]
+}
