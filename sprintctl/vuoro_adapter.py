@@ -3150,6 +3150,53 @@ def _run_delegation_operation_contracts() -> tuple[WorkOperationContract, ...]:
 
 WORK_OPERATION_CONTRACTS += _run_delegation_operation_contracts()
 
+_PARK_RATE_SCHEMA = _object_schema({
+    "observed_at": {"type": "string"}, "status": {"const": "rejected"},
+    "limit_scope": {"enum": ["plan", "family", "unknown"]},
+    "resets_at": {"type": ["string", "null"]},
+    "reset_source": {"enum": ["harness-structured", "unparsed-local-string", "absent"]},
+    "http_status": {"type": ["integer", "null"], "minimum": 100, "maximum": 599},
+    "overage": {"type": ["boolean", "null"]},
+}, required=("observed_at", "status", "limit_scope", "resets_at", "reset_source", "http_status", "overage"))
+_PARK_CONTEXT_FIELDS = {
+    "event_id": {"type": "integer", "minimum": 1}, "reason_ref": {"type": ["string", "null"]},
+    "parked_at": {"type": "string"}, "report_id": {"type": ["string", "null"]},
+    "lease_id": {"type": ["string", "null"]}, "run_id": {"type": ["string", "null"]},
+    "model_id": {"type": ["string", "null"]},
+    "rate_limit": {"anyOf": [_PARK_RATE_SCHEMA, {"type": "null"}]},
+}
+_PARK_PREVIOUS_FIELDS = {**_PARK_CONTEXT_FIELDS, "release_event_id": {"type": "integer", "minimum": 1},
+                         "released_at": {"type": "string"}}
+
+WORK_OPERATION_CONTRACTS += (
+    WorkOperationContract(
+        "work.evidence.entry-v1",
+        _object_schema({
+            "run_id": _RUN_ID_SCHEMA,
+            "chain_seq": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        }, required=("run_id", "chain_seq")),
+        _result_schema(("repo_id", "run_id", "item"), {
+            "repo_id": {"type": "string"}, "run_id": _RUN_ID_SCHEMA,
+            "item": {"anyOf": [_EVIDENCE_ITEM_SCHEMA, {"type": "null"}]},
+        }),
+        "work:evidence", "read", "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.lease.parking-context-v1",
+        _object_schema({"item_id": {"type": "integer", "minimum": 1}, "lease_id": _LEASE_ID_SCHEMA},
+                       required=("item_id",)),
+        _result_schema(("repo_id", "item_id", "current", "previous", "lease_run", "evaluated_at"), {
+            "repo_id": {"type": "string"}, "item_id": {"type": "integer"},
+            "lease_run": {"anyOf": [_object_schema({"run_id": _RUN_ID_SCHEMA, "model_id": {"type": "string"}},
+                                                       required=("run_id", "model_id")), {"type": "null"}]},
+            "current": {"anyOf": [_object_schema(_PARK_CONTEXT_FIELDS, required=tuple(_PARK_CONTEXT_FIELDS)), {"type": "null"}]},
+            "previous": {"anyOf": [_object_schema(_PARK_PREVIOUS_FIELDS, required=tuple(_PARK_PREVIOUS_FIELDS)), {"type": "null"}]},
+            "evaluated_at": {"type": "string"},
+        }),
+        "work:read", "read", "not-allowed",
+    ),
+)
+
 
 LEGACY_REMOTE_COMMAND_PARITY: tuple[dict[str, str], ...] = (
     {"legacy": "sprintctl context-candidates --json", "operation": "work.read.context-candidates"},

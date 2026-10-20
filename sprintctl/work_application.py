@@ -838,6 +838,8 @@ class WorkApplication:
             "work.run.predecessor-context-v1": target._run_predecessor_context,
             "work.run.continuation-delta-v1": target._read_run_continuation_delta,
             "work.evidence.tail-v1": target._evidence_tail,
+            "work.evidence.entry-v1": target._evidence_entry,
+            "work.lease.parking-context-v1": target._parking_context,
             "work.evidence.evaluate-v1": target._evidence_evaluate,
             "work.evidence.append-v1": target._evidence_append,
             "work.session-note.write-v1": target._session_note_write,
@@ -2595,6 +2597,23 @@ class WorkApplication:
         item = self.backend.evidence_tail(self.store, run_id)
         return {"repo_id": self.repo_id, "run_id": run_id, "item": item}
 
+    def _evidence_entry(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        if set(arguments) != {"run_id", "chain_seq"}:
+            raise ApplicationRejection("invalid-arguments", "entry lookup requires only run_id and chain_seq", 422)
+        if "work:evidence" not in (getattr(context.identity, "authorities", ()) or ()):
+            raise ApplicationRejection("authority-required", "entry lookup requires work:evidence", 403)
+        run_id = arguments["run_id"]
+        if not isinstance(run_id, str) or not re.fullmatch(r"run_[0-9A-HJKMNP-TV-Z]{26}", run_id):
+            raise ApplicationRejection("invalid-arguments", "invalid run_id", 422)
+        sequence = _non_negative_int(arguments["chain_seq"], "chain_seq")
+        if getattr(context, "idempotency_key", None) is not None:
+            raise ApplicationRejection("invalid-arguments", "entry lookup forbids an idempotency key", 422)
+        if sequence > 9007199254740991:
+            raise ApplicationRejection("invalid-arguments", "chain_seq exceeds the wire integer range", 422)
+        self._require_owned_run(run_id, context)
+        item = self.backend.evidence_entry(self.store, run_id, sequence)
+        return {"repo_id": self.repo_id, "run_id": run_id, "item": item}
+
     def _evidence_evaluate(
         self, arguments: dict[str, Any], context: InvocationContext
     ) -> dict[str, Any]:
@@ -2977,6 +2996,25 @@ class WorkApplication:
         if self.backend.get_work_item(self.store, item_id) is None:
             raise ApplicationRejection("work-not-found", f"item #{item_id} not found", 404)
         return {"repo_id": self.repo_id, "item_id": item_id, **self.backend.claim_state(self.store, item_id)}
+
+    def _parking_context(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        if getattr(context, "idempotency_key", None) is not None:
+            raise ApplicationRejection("invalid-arguments", "parking context forbids an idempotency key", 422)
+        if set(arguments) - {"item_id", "lease_id"} or "item_id" not in arguments:
+            raise ApplicationRejection("invalid-arguments", "parking context requires item_id and optional lease_id", 422)
+        if "work:read" not in (getattr(context.identity, "authorities", ()) or ()):
+            raise ApplicationRejection("authority-required", "parking context requires work:read", 403)
+        item_id = _positive_int(arguments["item_id"], "item_id")
+        lease_id = arguments.get("lease_id")
+        if "lease_id" in arguments and (not isinstance(lease_id, str) or not re.fullmatch(r"lease_[0-9A-HJKMNP-TV-Z]{26}", lease_id)):
+            raise ApplicationRejection("invalid-arguments", "invalid lease_id", 422)
+        if self.backend.get_work_item(self.store, item_id) is None:
+            raise ApplicationRejection("work-not-found", f"item #{item_id} not found", 404)
+        try:
+            value = self.backend.parking_context(self.store, item_id, lease_id)
+        except self.backend.LeaseRefused as exc:
+            raise ApplicationRejection(exc.code, str(exc), 404 if exc.code == "lease-not-found" else 409) from exc
+        return {"repo_id": self.repo_id, "item_id": item_id, **value}
 
     # -- work.effect.* ----------------------------------------------------
     # agentops#2541 (M2-1): the sprintctl-owned effect-intent lifecycle.  The

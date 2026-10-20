@@ -19,4 +19,6 @@ def pytest_ignore_collect(collection_path, config):
 
     if collection_path.name == 'test_independent_reader_trial.py':
         return not bool(os.environ.get('RESUME_COLD_TRIAL_OUTPUT'))
+    if collection_path.name == 'test_e4_edge_composition.py':
+        return not bool(os.environ.get('SPRINTCTL_TEST_E4_EDGE_COMPOSITION'))
     return None

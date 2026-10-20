@@ -91,6 +91,7 @@ def test_only_attempt_and_declared_preview_descriptors_are_added_to_released_cat
         set(contract.OPERATION_AUTHORITIES)
         | {
             OPERATION_PREVIEW,
+            "work.evidence.entry-v1", "work.lease.parking-context-v1",
             "work.effect.acceptance-snapshot-v1",
             "work.effect.export-proposal-v2",
             "work.effect.export-proposal-v3", "work.effect.basis-v1",

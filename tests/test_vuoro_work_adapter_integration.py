@@ -87,7 +87,8 @@ def test_adapter_kit_migration_preserves_catalog_bytes_and_registry_revision(
     # Preserve every historical descriptor byte and registry revision below;
     # never repin the old catalog to make the extension pass.
     extensions = {"work.run.delegate-v1", "work.run.delegation-get-v1",
-                  "work.run.delegation-revoke-v1", "work.sprint.kind"}
+                  "work.run.delegation-revoke-v1", "work.sprint.kind", "work.evidence.entry-v1",
+                  "work.lease.parking-context-v1"}
     assert extensions <= {operation["name"] for operation in operations}
     import sprintctl.vuoro_adapter as adapter
     original_specs = adapter.catalog_operation_specs

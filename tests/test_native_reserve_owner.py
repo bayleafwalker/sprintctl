@@ -88,6 +88,7 @@ def test_native_reserve_is_only_catalog_addition_with_all_legacy_bytes_preserved
     from sprintctl.effect_attempt import OPERATION_AUTHORITIES
     assert set(actual) - set(expected) == {
         "work.reservation.reserve-v1", "work.effect.propose-bound-v1",
+        "work.evidence.entry-v1", "work.lease.parking-context-v1",
         "work.evidence.evaluate-v1", "work.effect.preview-v1",
         "work.effect.acceptance-snapshot-v1", "work.effect.export-proposal-v2", "work.effect.export-proposal-v3", "work.effect.basis-v1",
         "work.run.continuation-delta-v1",

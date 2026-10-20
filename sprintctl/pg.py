@@ -6512,6 +6512,17 @@ def evidence_tail(store: PgStore, run_id: str) -> dict | None:
     return _evidence_row(row) if row is not None else None
 
 
+def evidence_entry(store: PgStore, run_id: str, chain_seq: int) -> dict | None:
+    """One immutable entry in this repository and run, never a nearby tail."""
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM evidence_item WHERE repo_id = %s AND run_id = %s AND chain_seq = %s",
+            (store.repo_id, run_id, chain_seq),
+        )
+        row = cur.fetchone()
+    return _evidence_row(row) if row is not None else None
+
+
 def lock_evidence_chain_in_transaction(cur: Any, repo_id: str, run_id: str) -> None:
     """Shared append/admission lock; caller owns the transaction."""
     cur.execute(
@@ -7939,6 +7950,83 @@ def complete_lease(
         return report
 
     return _in_write_transaction(store, cur, body)
+
+
+def parking_context(store: PgStore, work_item_id: int, lease_id: str | None = None) -> dict:
+    """Current park and the park/release pair immediately before a named lease.
+
+    Public work facts are bounded by the item's own events and report. This
+    cannot resolve an arbitrary run or expose an earlier run's private chain.
+    """
+    from .parking_context import REFERENCE, bounded_observation
+
+    def latest(cur, *, before_id=None):
+        clauses = ["repo_id = %s", "work_item_id = %s", "event_type = ANY(%s)"]
+        params = [store.repo_id, work_item_id, list(_PARKING_EVENT_TYPES)]
+        if before_id is not None:
+            clauses.append("id < %s")
+            params.append(before_id)
+        cur.execute("SELECT * FROM event WHERE " + " AND ".join(clauses) + " ORDER BY id DESC LIMIT 1", params)
+        return cur.fetchone()
+
+    def project(cur, event):
+        if event is None or event["event_type"] != WORK_PARKED_EVENT_TYPE:
+            return None
+        payload = event["payload"]
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        # Join the cited report and its immutable run, scoped to this work item.
+        cur.execute(
+            "SELECT r.run_id, r.lease_id, n.model_id FROM work_outcome_report r "
+            "JOIN run n ON n.repo_id = r.repo_id AND n.run_id = r.run_id "
+            "WHERE r.repo_id = %s AND r.work_item_id = %s AND r.report_id = %s AND r.lease_id = %s",
+            (store.repo_id, work_item_id, payload.get("report_id"), payload.get("lease_id")),
+        )
+        report = cur.fetchone()
+        observation = None
+        match = REFERENCE.fullmatch(payload.get("reason_ref") or "")
+        if report and match and match[1] == report["run_id"] and int(match[2]) <= 9007199254740991:
+            cur.execute("SELECT * FROM evidence_item WHERE repo_id = %s AND run_id = %s AND chain_seq = %s",
+                        (store.repo_id, report["run_id"], int(match[2])))
+            row = cur.fetchone()
+            observation = bounded_observation(_evidence_row(row) if row else None, report["model_id"])
+        return {
+            "event_id": int(event["id"]), "reason_ref": payload.get("reason_ref"),
+            "parked_at": _iso(event["created_at"]), "report_id": payload.get("report_id"),
+            "lease_id": payload.get("lease_id"), "run_id": report["run_id"] if report else None,
+            "model_id": report["model_id"] if report else None, "rate_limit": observation,
+        }
+
+    with store.conn.cursor() as cur:
+        now = _lease_now(cur)
+        current = project(cur, latest(cur))
+        previous = None
+        lease_run = None
+        if lease_id is not None:
+            cur.execute("SELECT l.acquired_at, l.run_id, n.model_id FROM work_lease l "
+                        "JOIN run n ON n.repo_id = l.repo_id AND n.run_id = l.run_id "
+                        "WHERE l.repo_id = %s AND l.work_item_id = %s AND l.lease_id = %s",
+                        (store.repo_id, work_item_id, lease_id))
+            lease = cur.fetchone()
+            if lease is None:
+                raise LeaseRefused("lease-not-found", "no such lease belongs to this work item")
+            lease_run = {"run_id": lease["run_id"], "model_id": lease["model_id"]}
+            # Event timestamps use transaction-start time. A transaction
+            # started before this claim can append a release afterwards.
+            # The item's serialized acquisition event is the causal fence.
+            cur.execute("SELECT id FROM event WHERE repo_id = %s AND work_item_id = %s "
+                        "AND event_type = 'lease.acquired' AND payload->>'lease_id' = %s "
+                        "ORDER BY id LIMIT 1", (store.repo_id, work_item_id, lease_id))
+            acquired = cur.fetchone()
+            if acquired is None:
+                raise LeaseRefused("lease-history-unavailable", "the lease acquisition event is unavailable")
+            release = latest(cur, before_id=acquired["id"])
+            if release and release["event_type"] == "item-released":
+                previous = project(cur, latest(cur, before_id=release["id"]))
+                if previous:
+                    previous = {**previous, "release_event_id": int(release["id"]),
+                                "released_at": _iso(release["created_at"])}
+        return {"current": current, "previous": previous, "lease_run": lease_run, "evaluated_at": _iso(now)}
 
 
 def claim_state(store: PgStore, work_item_id: int) -> dict:

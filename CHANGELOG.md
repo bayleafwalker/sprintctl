@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.22.0 — 2026-10-20
+
+Same schema 27 as 0.21.0: no owner migration. All existing operation
+descriptors remain byte-for-byte unchanged.
+
+### Added
+
+- Exact immutable evidence reads by run and chain sequence, with the full
+  repository/principal/workspace/client/grant binding (`work.evidence.entry-v1`).
+- Bounded item-linked parking history (`work.lease.parking-context-v1`),
+  publishing only digest-validated denial scalars and declared models for the
+  cited parked report and successor lease. Private predecessor evidence
+  chains remain inaccessible to successors. No model choice or automatic
+  release is introduced (agentops#2826, prerequisite for E4 #2472).
+- PostgreSQL privacy, nonmutation and optional real Vuoro edge composition
+  tests, including older citations and reclaim replay after later appends.
+
 ## 0.21.0 — 2026-10-20
 
 Same schema 27 as 0.20.0: no owner migration.

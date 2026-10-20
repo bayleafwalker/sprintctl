@@ -80,8 +80,8 @@ def test_resource_schema_gate_removes_exactly_the_three_owner_operations() -> No
         "work.maintenance.resource.changes",
     }
 
-    assert len(available) == 107  # includes the authenticated sprint-kind CAS operation
-    assert len(unavailable) == 104
+    assert len(available) == 109  # adds the two read-only parking/evidence operations
+    assert len(unavailable) == 106
     assert {spec["name"] for spec in available} - {
         spec["name"] for spec in unavailable
     } == resource_names

@@ -1,0 +1,102 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.e4-parking-evidence-reads",
+  "owner_repo": "sprintctl",
+  "subject": "exact-owned-evidence-and-bounded-public-parking-context",
+  "contract_ref": {
+    "doc_id": "sprintctl.parking-evidence-reads",
+    "revision": "sha256:9a22b00bb85b8202e4fffcfab9bcd3f79a2a388ca13cf11f0559d70602b01d59"
+  },
+  "source_of_truth": "PostgreSQL immutable run/evidence and item-serialized lease/report/events",
+  "depth": 2,
+  "backends": [
+    "disposable PostgreSQL16"
+  ],
+  "actors": [
+    "parked-run owner",
+    "successor with a different principal",
+    "work-only reader",
+    "older concurrent release transaction"
+  ],
+  "operations": [
+    {
+      "name": "append exact denial and a later entry"
+    },
+    {
+      "name": "read exact older entry"
+    },
+    {
+      "name": "report failed parked"
+    },
+    {
+      "name": "refuse parked claim"
+    },
+    {
+      "name": "explicit release to pending"
+    },
+    {
+      "name": "successor claim"
+    },
+    {
+      "name": "read bounded previous parking"
+    },
+    {
+      "name": "append reclaim and replay after another entry"
+    },
+    {
+      "name": "later release from transaction started before the successor claim"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "owned chain privacy and immutable per-lease parking provenance"
+  },
+  "assumptions": {
+    "isolation": "READ COMMITTED",
+    "ordering": "owner writers serialize on the item row; acquisition event ID bounds history; timestamps are transaction-start audit data",
+    "authority": "work:evidence for exact owned reads; work:read for bounded explicitly cited work facts"
+  },
+  "bounds": {
+    "new_owned_read_cases": 7,
+    "new_parking_context_cases": 14,
+    "real_edge_composition_cases": 4,
+    "concurrent_database_connections": 2
+  },
+  "invariants": [
+    "Full principal/workspace/repo/client/grant binding protects exact entry reads",
+    "Unknown and foreign runs share refusal; missing sequence returns null",
+    "Reads leave run/evidence/lease/report/item/event/ledger rows unchanged",
+    "Only digest-bound rejected v1 denial scalars from the parked report run are public",
+    "No private refs, claims or arbitrary provenance cross to the successor",
+    "Later transactions/events do not rewrite prior park/release pair for a lease",
+    "Owner remains the only parking/release authority; no model selection introduced",
+    "A reclaim append replay remains one entry even after the tail advances",
+    "Reads preserve caller-owned pending transactions and close only transactions opened by idle invocations"
+  ],
+  "faults": [
+    "foreign caller binding",
+    "foreign repository",
+    "wrong or malformed chain sequence",
+    "unknown authority/idempotency key",
+    "wrong-kind/warning/mismatched-digest/extra-field/bad-scalar denial",
+    "foreign run citation",
+    "later release with earlier transaction-start time",
+    "caller-owned pending work before invoking the read"
+  ],
+  "oracles": [
+    "complete owner-row snapshots before/after reads",
+    "strict input/result JSON schemas",
+    "real WorkApplication.invoke over disposable PostgreSQL",
+    "real edge tools over actual owner operations",
+    "two independent database connections with observed transaction start and later release",
+    "unchanged historical operation descriptor hashes"
+  ],
+  "implementation_anchors": [
+    "sprintctl/work_application.py:WorkApplication._evidence_entry",
+    "sprintctl/work_application.py:WorkApplication._parking_context",
+    "sprintctl/pg.py:parking_context",
+    "sprintctl/parking_context.py:bounded_observation",
+    "tests/pg/test_parking_context.py:test_later_release_from_older_transaction_does_not_rewrite_claim_history",
+    "tests/pg/test_e4_edge_composition.py:test_real_edge_owner_denial_park_explicit_release_and_observed_reclaim"
+  ]
+}
