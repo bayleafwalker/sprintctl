@@ -56,12 +56,13 @@ class TestReleaseIntegrity:
         the verification lookup index (schema24) and the agent directory and
         inbox (schema25). Minor 0.20.0 adds schema26 (run resolution facts and
         structured approvals) and schema27 (run-scoped delegation), raising the
-        strict floor in a coordinated owner migration."""
+        strict floor in a coordinated owner migration. Minor 0.21.0 adds the
+        served invocation handshake and offline inspection on the same schema27."""
         from sprintctl import pg_migrations
 
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
-        assert pyproject["project"]["version"] == __version__ == "0.20.0"
+        assert pyproject["project"]["version"] == __version__ == "0.21.0"
         assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 27
         assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 27
 

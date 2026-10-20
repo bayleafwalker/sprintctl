@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+## 0.21.0 — 2026-10-20
+
+Same schema 27 as 0.20.0: no owner migration.
+
+### Fixed
+
+- Served clients complete the Vuoro handshake before invoking an authenticated
+  operation; 0.20.0 went straight from catalog to invoke.
+- SQLite refused reserve, item-status and sprint mutations keep the caller's
+  open transaction; reservation lifecycle, stale sweeps, stale-item blocking,
+  carryover and backlog seeding each commit atomically with their events.
+- Approval expiry compares UTC instants; maintenance prepare checks expiry
+  after taking the writer lock; fresh retirement decisions require a reason.
+- Graph-ready dispatch admissibility stays unknown instead of inferred;
+  scoped reservation recommendations are executable commands.
+- Repository reads are classified for bounded connection recovery.
+- Existing served maintenance checks are exposed through the CLI; agent
+  protocol status commands are labelled by backend; note results are JSON for
+  served coordination.
+
+### Added
+
+- Opt-in local CLI debug summaries.
+- Offline inspection of bounded owner-read result packets (new `inspection`
+  extra) and of authority producer preflight evidence.
+- Effect explanation reports the exact acceptance facts without inventing
+  outcome proof.
+- Bounded resume briefing and diagnosis of resume context gaps; served
+  handoffs are built from one read snapshot.
+- Served sprints are classified with scoped state-basis CAS.
+- Passive bounded reader-event capture for qualification preparation
+  (`scripts/collect_reader_events.py`, source checkout only).
+
+### Changed
+
+- Reservation admission and release, Decision writing, item and sprint status,
+  sprint close, ready-item projection, unmet-obligation reporting, Release
+  policy and dependency admission guards share one core across the SQLite and
+  PostgreSQL drivers.
+
 ## 0.20.0 — 2026-10-17
 
 Requires an explicit PostgreSQL owner migration to schema 27. Previous
