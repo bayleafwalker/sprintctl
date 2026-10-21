@@ -34,15 +34,17 @@ tmp_base="${TMPDIR:-/tmp}"
 # run's own dir exists. A failing sweep must not block the run.
 "$repo_root/scripts/pg-disposable-sweep.sh" || echo "pg-disposable-tests: warning: stale-cluster sweep failed" >&2
 work="$(mktemp -d "$tmp_base/sprintctl-pg.XXXXXX")"
-# Owner file for the sweep: this script's pid and its start time (field 22 of
-# /proc/<pid>/stat, counted after the last ")"), or "unknown" without /proc.
+# Owner file for the sweep: PID, start time and PID namespace identity.
+# Start time is field 22 of /proc/<pid>/stat, counted after the last ")".
+# Missing process metadata is recorded as "unknown" and is never swept.
+owner_namespace="$(readlink "/proc/$$/ns/pid" 2>/dev/null || echo unknown)"
 owner_start=unknown
 if [ -r "/proc/$$/stat" ]; then
   owner_stat="$(cat "/proc/$$/stat")"
   read -ra owner_fields <<<"${owner_stat##*) }"
   owner_start="${owner_fields[19]:-unknown}"
 fi
-echo "$$ $owner_start" >"$work/owner.tmp"
+echo "$$ $owner_start $owner_namespace" >"$work/owner.tmp"
 mv "$work/owner.tmp" "$work/owner"
 data="$work/data"
 sock="$work/sock"

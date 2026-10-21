@@ -99,18 +99,29 @@ Extra arguments are passed to pytest. The cold run takes about 30 seconds.
 ### Stale clusters
 
 Right after `mktemp` the script writes `<dir>/owner`, one line holding its pid
-and that pid's start time (field 22 of `/proc/<pid>/stat`). PostgreSQL
+and that pid's start time (field 22 of `/proc/<pid>/stat`) plus its PID
+namespace identity (`readlink /proc/<pid>/ns/pid`). PostgreSQL
 daemonizes, so a SIGKILL of the script or a host loss leaves the postmaster
 running with nothing to stop it. `scripts/pg-disposable-sweep.sh` handles
 that: the main script runs it before it creates its own directory, and it also
 runs standalone. It scans the `sprintctl-pg.*` directories owned by the current
-user under `/tmp` and under the tmp base. For a directory whose owner pid is dead,
-or alive with a different start time (pid reuse), it stops the cluster with
+user under `/tmp` and under the tmp base. Before any PID liveness check or
+cleanup, it requires a known, well-formed recorded namespace matching its own.
+Missing, malformed, unknown or different namespaces (including legacy two-field
+owner files) are reported and preserved. Unknown owner start times are also
+preserved, even when the PID appears dead. Only a matching-namespace directory
+whose owner pid is dead, or alive with a different start time (pid reuse), is
+eligible for cleanup. It stops the cluster with
 `pg_ctl -D <dir>/data -m immediate stop`, falls back to SIGQUIT and then
 `kill -9` of the `postmaster.pid` pid only when that process's command line
 names `<dir>/data`, removes the directory, and prints one line per swept
 directory. It never touches a directory whose owner is alive. A directory with no
-owner file (older layout) is reported and left alone.
+owner file is reported and left alone.
+
+For isolated testing, repeated `--scan-base DIR` arguments replace **all** default
+scan roots. The sweep unit fixtures always supply their own explicit root;
+`TMPDIR` alone is insufficient because normal operation also scans `/tmp`.
+Unknown namespace records require investigation rather than automatic deletion.
 
 ## Cleanup evidence and interruption limits
 
