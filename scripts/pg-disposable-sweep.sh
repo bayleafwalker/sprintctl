@@ -7,13 +7,14 @@
 # directories named sprintctl-pg.* that the current user owns, directly under
 # /tmp and under the tmp base (TMPDIR, or /tmp when TMPDIR is over 60 chars).
 #
-# Each run writes <dir>/owner = "<pid> <starttime>" right after mktemp, where
-# starttime is field 22 of /proc/<pid>/stat. A dir is stale when its owner pid is
-# dead, or alive with a different start time (pid reuse). A stale dir's cluster is
-# stopped (pg_ctl -D <dir>/data -m immediate stop; then SIGQUIT, then kill -9, each
+# Each run writes <dir>/owner = "<pid> <starttime> <pid-namespace>" right after
+# mktemp, where starttime is field 22 of /proc/<pid>/stat. A dir is stale when its owner pid is
+# dead, or alive with a different start time (pid reuse), but only after its
+# namespace is known and matches this sweep. Legacy/unknown identities stay.
+# A stale dir's cluster is stopped (pg_ctl -D <dir>/data -m immediate stop; then SIGQUIT, then kill -9, each
 # only for a process whose cmdline names <dir>/data) and the dir removed, with one
 # line printed per swept dir. A dir whose owner is alive is never touched. A dir
-# without a usable owner file is reported and left alone. Always exits 0.
+# without a usable owner file is reported and left alone. Exits 0 unless command-line arguments are invalid.
 set -uo pipefail
 
 # libpq reads every PG* variable; none may redirect pg_ctl.
@@ -91,8 +92,22 @@ stop_cluster() {
 tmp_base="${TMPDIR:-/tmp}"
 [ "${#tmp_base}" -le 60 ] || tmp_base=/tmp
 
+# Explicit scan roots replace both default roots. Tests must use this option;
+# setting TMPDIR alone still scans the real /tmp in normal operation.
+bases=()
+while [ "$#" -gt 0 ]; do
+  if [ "$1" != --scan-base ] || [ "$#" -lt 2 ] || [ -z "$2" ]; then
+    say "usage: $0 [--scan-base DIR ...]" >&2
+    exit 2
+  fi
+  bases+=("$2")
+  shift 2
+done
+[ "${#bases[@]}" -gt 0 ] || bases=(/tmp "$tmp_base")
+current_namespace="$(readlink "/proc/$$/ns/pid" 2>/dev/null || true)"
+
 seen=""
-for base in /tmp "$tmp_base"; do
+for base in "${bases[@]}"; do
   [ -d "$base" ] || continue
   base_real="$(cd "$base" && pwd -P)"
   case "$seen" in *"|$base_real|"*) continue ;; esac
@@ -105,10 +120,22 @@ for base in /tmp "$tmp_base"; do
       say "SKIP $dir: no owner file, left alone"
       continue
     fi
-    owner_pid="" owner_start=""
-    read -r owner_pid owner_start _ <"$owner_file" || true
-    case "${owner_pid:-}" in ''|*[!0-9]*)
+    owner_pid="" owner_start="" owner_namespace="" extra=""
+    read -r owner_pid owner_start owner_namespace extra <"$owner_file" || true
+    # Check namespaces BEFORE interpreting a PID or deciding whether any
+    # process is dead/reused. Foreign namespaces can share these directories.
+    if [[ ! "$current_namespace" =~ ^pid:\[[1-9][0-9]*\]$ ]] ||
+       [[ ! "$owner_namespace" =~ ^pid:\[[1-9][0-9]*\]$ ]] ||
+       [ "$owner_namespace" != "$current_namespace" ] || [ -n "$extra" ]; then
+      say "SKIP $dir: unknown or different PID namespace, left alone"
+      continue
+    fi
+    case "${owner_pid:-}" in ''|0|*[!0-9]*)
       say "SKIP $dir: unreadable owner file, left alone"
+      continue ;;
+    esac
+    case "${owner_start:-}" in ''|*[!0-9]*)
+      say "SKIP $dir: unknown owner start time, left alone"
       continue ;;
     esac
     reason=""

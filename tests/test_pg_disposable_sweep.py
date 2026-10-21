@@ -1,23 +1,26 @@
-"""Oracle for scripts/pg-disposable-sweep.sh (agentops#2564, A2). No PostgreSQL needed.
+"""Oracle for the disposable sweep (#2564 A2, amended by agentops#2834).
 
-Contract fixed by this oracle (the builder conforms to it, it may not edit it):
+No PostgreSQL needed. Contract:
 
 * ``scripts/pg-disposable-tests.sh`` writes an owner file ``<dir>/owner`` right
-  after ``mktemp``. It holds one line ``<pid> <starttime>``: the script's pid
-  and that pid's start time, field 22 of ``/proc/<pid>/stat`` (clock ticks
-  since boot).
+  after ``mktemp``. It holds ``<pid> <starttime> <pid-namespace>``: the script's
+  pid and start time, field 22 of ``/proc/<pid>/stat`` (clock ticks
+  since boot), plus its ``pid:[inode]`` namespace identity.
 * ``scripts/pg-disposable-sweep.sh`` is executable, runs standalone, and scans
   uid-owned ``sprintctl-pg.*`` dirs under ``/tmp`` and under the tmp base
-  (``$TMPDIR``, falling back to ``/tmp`` when longer than 60 chars). A dir whose
-  owner pid is dead, or alive with a different start time, is stale: the sweep
-  stops its cluster (``pg_ctl -D <dir>/data -m immediate stop``; if that fails,
+  (``$TMPDIR``, falling back to ``/tmp`` when longer than 60 chars). The
+  recorded namespace must match the current known namespace before any
+  liveness check. Missing/legacy/malformed/foreign namespaces are preserved.
+  An owner pid that is dead, or alive with a different start time, is stale:
+  the sweep stops its cluster (``pg_ctl -D <dir>/data -m immediate stop``; if that fails,
   ``kill -9`` the ``postmaster.pid`` pid only when that process's cmdline names
   ``<dir>/data``), removes the dir and prints a line naming it. A dir whose
   owner is alive is never touched. A dir with no owner file is reported and
   left alone. The sweep exits 0.
 
-``pg_ctl`` is replaced by a failing stub so the kill -9 guard is exercised the
-same way on every host, with or without PostgreSQL installed.
+Every fixture supplies ``--scan-base`` to replace all default roots; no test
+scans the real ``/tmp``. ``pg_ctl`` is replaced by a failing stub so the kill -9
+guard is exercised the same way on every host, with or without PostgreSQL installed.
 """
 
 from __future__ import annotations
@@ -57,7 +60,7 @@ def _make_dir(base: Path, name: str, *, owner: str | None) -> Path:
     (work / "data").mkdir(parents=True)
     (work / "sock").mkdir()
     if owner is not None:
-        (work / "owner").write_text(owner + "\n")
+        (work / "owner").write_text(owner + " " + os.readlink("/proc/self/ns/pid") + "\n")
     return work
 
 
@@ -100,7 +103,7 @@ def sweep_env():
 
 def _run_sweep(env: dict) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [str(SWEEP)],
+        [str(SWEEP), "--scan-base", env["TMPDIR"]],
         capture_output=True,
         text=True,
         timeout=120,
@@ -180,3 +183,101 @@ def test_sweep_with_nothing_to_do_exits_zero(sweep_env):
     result = _run_sweep(env)
     assert result.returncode == 0, result.stdout + result.stderr
     assert list(base.glob("sprintctl-pg.*")) == []
+
+
+@pytest.mark.parametrize("owner_kind", ["dead", "reused"])
+@pytest.mark.parametrize("namespace_kind", ["foreign", "unknown", "malformed", "legacy"])
+def test_ambiguous_namespace_preserves_directory_and_postmaster(
+    sweep_env, owner_kind, namespace_kind
+):
+    base, env, procs = sweep_env
+    pid = _dead_pid() if owner_kind == "dead" else os.getpid()
+    owner = f"{pid} {_start_ticks(os.getpid()) + 100000}"
+    work = _make_dir(base, "sprintctl-pg.nsSAFE", owner=None)
+    namespace = os.readlink("/proc/self/ns/pid")
+    inode = int(namespace.removeprefix("pid:[").removesuffix("]"))
+    suffix = {
+        "foreign": f" pid:[{inode + 1}]",
+        "unknown": " unknown",
+        "malformed": " pid:[bad]",
+        "legacy": "",
+    }[namespace_kind]
+    (work / "owner").write_text(owner + suffix + "\n")
+    postmaster = _fake_postmaster(work / "data")
+    procs.append(postmaster)
+    _write_postmaster_pid(work, postmaster.pid)
+
+    result = _run_sweep(env)
+    assert result.returncode == 0, result.stderr
+    assert work.exists(), result.stdout
+    assert _alive(postmaster), result.stdout
+    assert "PID namespace" in result.stdout
+
+
+def test_unknown_sweeper_namespace_preserves_same_namespace_owner(sweep_env):
+    base, env, _procs = sweep_env
+    work = _make_dir(base, "sprintctl-pg.unknown", owner=f"{_dead_pid()} 12345")
+    stub = base / "stub-bin" / "readlink"
+    stub.write_text("#!/usr/bin/env bash\nexit 1\n")
+    stub.chmod(0o755)
+    result = _run_sweep(env)
+    assert result.returncode == 0 and work.exists(), result.stdout + result.stderr
+    assert "PID namespace" in result.stdout
+
+
+def test_explicit_scan_base_replaces_ambient_tmpdir(sweep_env):
+    base, env, _procs = sweep_env
+    included = base / "included"
+    excluded = base / "excluded"
+    included.mkdir()
+    excluded.mkdir()
+    swept = _make_dir(included, "sprintctl-pg.included", owner=f"{_dead_pid()} 12345")
+    kept = _make_dir(excluded, "sprintctl-pg.excluded", owner=f"{_dead_pid()} 12345")
+    env["TMPDIR"] = str(excluded)
+    result = subprocess.run(
+        [str(SWEEP), "--scan-base", str(included)],
+        capture_output=True, text=True, timeout=15, env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not swept.exists(), result.stdout
+    assert kept.exists(), result.stdout
+    assert str(excluded) not in result.stdout
+
+
+def test_producer_records_namespace_identity_before_starting_postgres(tmp_path):
+    source = (ROOT / "scripts" / "pg-disposable-tests.sh").read_text()
+    owner_code = source.split("# Owner file for the sweep:", 1)[1].split('data="$work/data"', 1)[0]
+    # Execute only the owner-file section, without invoking the startup sweep
+    # or PostgreSQL; the comment's first line is intentionally omitted.
+    owner_code = owner_code.split("\n", 1)[1]
+    subprocess.run(
+        ["bash", "-eu", "-c", 'work="$1"\n' + owner_code, "owner-test", str(tmp_path)],
+        check=True, timeout=5,
+    )
+    pid, start, namespace = (tmp_path / "owner").read_text().split()
+    assert int(pid) > 0 and int(start) > 0
+    assert namespace == os.readlink("/proc/self/ns/pid")
+
+
+@pytest.mark.parametrize("owner_kind", ["dead", "live"])
+def test_unknown_owner_start_time_is_preserved(sweep_env, owner_kind):
+    base, env, _procs = sweep_env
+    pid = _dead_pid() if owner_kind == "dead" else os.getpid()
+    work = _make_dir(base, "sprintctl-pg.unknownStart", owner=f"{pid} unknown")
+    result = _run_sweep(env)
+    assert result.returncode == 0 and work.exists(), result.stdout + result.stderr
+    assert "unknown owner start time" in result.stdout
+
+
+@pytest.mark.parametrize("arguments", [["--scan-base"], ["--scan-base", ""], ["--unknown"]])
+def test_invalid_scan_arguments_refuse_before_scanning(sweep_env, arguments):
+    base, env, _procs = sweep_env
+    work = _make_dir(base, "sprintctl-pg.invalidArgs", owner=f"{_dead_pid()} 12345")
+    result = subprocess.run(
+        [str(SWEEP), "--scan-base", str(base), *arguments],
+        capture_output=True, text=True, timeout=15, env=env,
+    )
+    assert result.returncode == 2
+    assert work.exists()
+    assert result.stdout == ""
+    assert "usage:" in result.stderr
