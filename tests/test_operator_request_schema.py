@@ -7,6 +7,7 @@ class CatalogCursor:
     def __init__(self):
         self.tables = set(schema.TABLES)
         self.indexes = set(schema._INDEX_DEFINITIONS)
+        self.schema_name = "public"
         self.columns = {table: list(values) for table, values in schema._COLUMNS.items()}
         self.constraints = dict(schema._CONSTRAINTS)
         self.index_definitions = dict(schema._INDEX_DEFINITIONS)
@@ -32,8 +33,19 @@ class CatalogCursor:
                 for name, definition in self.constraints.items()
             ]
         elif "pg_get_indexdef(c.oid)" in query:
-            self._rows = [{"relname": name, "indexdef": definition}
-                          for name, definition in self.index_definitions.items()]
+            self._rows = []
+            for name, definition in self.index_definitions.items():
+                table_name = definition.split(" ON ", 1)[1].split(" USING ", 1)[0]
+                qualified = definition.replace(
+                    f" ON {table_name} ",
+                    f" ON {self.schema_name}.{table_name} ",
+                    1,
+                )
+                self._rows.append({
+                    "relname": name,
+                    "schema_name": self.schema_name,
+                    "indexdef": qualified,
+                })
         elif "FROM pg_trigger t" in query:
             self._rows = [
                 {"tgname": name, "table_name": value["table"], "function_name": value["function"],
@@ -64,6 +76,16 @@ def test_schema28_exact_catalog_is_admitted():
     assert result["table_count"] == 3
     assert result["trigger_count"] == 2
     assert result["function_count"] == 1
+    assert result["catalog_fingerprint"] == result["expected_catalog_fingerprint"]
+
+
+def test_catalog_index_definitions_are_qualified_to_the_current_schema():
+    cursor = CatalogCursor()
+    cursor.schema_name = "tenant"
+
+    result = schema.inspect_catalog(cursor)
+
+    assert result["available"] is True
     assert result["catalog_fingerprint"] == result["expected_catalog_fingerprint"]
 
 
