@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import threading
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -278,6 +279,61 @@ def test_supersession_transfers_only_live_dependants_and_keeps_history(request_o
     assert [event["action"] for event in old_events] == [
         "published", "dependant-withdrawn", "superseded",
     ]
+
+
+def test_authorized_successor_can_attest_and_retry_after_lost_response(request_owner):
+    from sprintctl.application import WorkApplication
+
+    store, item_id = request_owner
+    store.remote_schema_version = 28
+    request_id = "req_01JBC3D4E5F6G7H8J9K0MNPQSC"
+    _publish(store, item_id, request_id)
+
+    report = contract.report_performed_arguments({
+        "request_id": request_id, "expected_revision": 1,
+        "outcome": "performed", "note": "Operator reports the preflight ran.",
+        "idempotency_key": "report-before-attestation-replay",
+    })
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        storage.report_performed(cur, store, "principal-a", "workspace-a", report)
+
+    arguments = {
+        "request_id": request_id, "expected_revision": 2,
+        "statement": "I independently observed the checked completion.",
+        "performed_at": "2026-10-24T10:30:00Z",
+        "idempotency_key": "lost-resolution-response-replay",
+    }
+    context = SimpleNamespace(
+        identity=SimpleNamespace(
+            # The original requester is not present in this continuation. A
+            # different currently authorized human may attest the performed
+            # report without inheriting the requester's identity.
+            principal_id="principal-reviewer", workspace_id="workspace-a",
+            authorities=frozenset({"work:approve"}),
+        ),
+        repo_id=store.repo_id,
+        request_id="request:operator-attestation-replay",
+        basis_revision=None,
+        catalog_revision="schema-28",
+        idempotency_requirement="required",
+        idempotency_key=arguments["idempotency_key"],
+    )
+    app = WorkApplication.postgres(store)
+    first = app.invoke("work.request.attest-v1", arguments, context)
+    retried = app.invoke("work.request.attest-v1", arguments, context)
+
+    assert first == {"request_id": request_id, "revision": 3, "replayed": False}
+    assert retried == {"request_id": request_id, "revision": 3, "replayed": True}
+    assert _read(store, request_id)["state"] == "resolved"
+    with store.conn.cursor() as cur:
+        events = storage.events(cur, store, "workspace-a", {
+            "request_id": request_id, "after_revision": 0, "limit": 100,
+        })["events"]
+    store.conn.commit()
+    assert [event["action"] for event in events] == [
+        "published", "performed-reported", "resolved-human-attestation",
+    ]
+    assert events[-1]["actor"] == "principal-reviewer"
 
 
 def test_concurrent_revisions_allow_one_writer_and_reject_the_stale_writer(request_owner):
