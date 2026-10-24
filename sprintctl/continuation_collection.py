@@ -358,6 +358,7 @@ def inspect_collection(value: bytes | dict[str, Any]) -> dict[str, Any]:
             or not isinstance(identity["run_id"], str) or not identity["run_id"]
             or collection["collection_kind"] != "offline-page-observations; non-atomic"
             or any(collection[field] != "unknown" for field in ("authenticity", "currentness", "authority"))
+            or not isinstance(collection["stop_reason"], str)
             or collection["stop_reason"] not in {
                 "page-budget-exhausted", "supplied-pages-ended-with-cursors-remaining",
                 "owner-cursors-null-and-decision-page-complete",
@@ -376,7 +377,8 @@ def inspect_collection(value: bytes | dict[str, Any]) -> dict[str, Any]:
     counts = collection["record_counts"]
     list_names = {"references", "predecessor_notes", "predecessor_evidence", "decision_history"}
     if (not isinstance(completeness, dict) or set(completeness) != list_names
-            or any(status not in allowed_status for status in completeness.values())
+            or any(not isinstance(status, str) or status not in allowed_status
+                   for status in completeness.values())
             or not isinstance(counts, dict) or set(counts) != list_names
             or any(type(count) is not int or count < 0 for count in counts.values())):
         raise CollectionError("malformed continuation completeness or record counts")
