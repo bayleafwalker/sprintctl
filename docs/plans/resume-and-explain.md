@@ -27,6 +27,11 @@ contracts. Vuoro owns derived cross-provider interpretation and learning. No
 slice adds an execution runtime, parallel evidence store, broad management UI,
 credential inheritance, schema migration, or deployment action.
 
+The proposed [portable continuation requirements](2026-10-24-portable-continuation-requirements.md)
+describe a larger cross-host batch. Any page aggregation remains conditional
+on owner-approved scope and preserves the one-read behavior above until that
+approval exists.
+
 | Slice | Intended priority and posture | Concrete outcome and scope | Depends on |
 | --- | --- | --- | --- |
 | R1: Resume change briefing | 2, dispatch-build | One bounded CLI owner read presents changed/unchanged/unknown; JSON retains the existing response and cursors. Text handoff preserves predecessor position. Correct positioning and served onboarding. | Existing continuation-delta operation |
