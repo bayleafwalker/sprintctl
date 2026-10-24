@@ -343,6 +343,7 @@ def run_collect_fetch(run_id, item_id, limit, page_budget, deadline_seconds, out
                              after_chain_seq=after_chain_seq)
         try:
             response = _call("work.run.continuation-delta-v1", arguments, raise_refusal=True)
+            read_completed_after_deadline = monotonic() >= deadline
         except _OwnerReadRefused as error:
             read_stop_reason = "owner-refused"
             extra_warnings.append(f"owner read refused ({error.code})")
@@ -374,6 +375,12 @@ def run_collect_fetch(run_id, item_id, limit, page_budget, deadline_seconds, out
             "observed_at": observed_at,
             "response": response,
         })
+        if read_completed_after_deadline:
+            # The synchronous owner call cannot be interrupted. Preserve its
+            # valid response, disclose the overrun, and let the existing
+            # between-read deadline check prevent another request.
+            deadline_exhausted = True
+            extra_warnings.append("in-flight owner read completed after caller deadline")
         try:
             candidate = create_collection(pages, page_budget=page_budget)
             if len(canonical(candidate)) > MAX_COLLECTION_BYTES:
@@ -438,7 +445,7 @@ def run_collect_fetch(run_id, item_id, limit, page_budget, deadline_seconds, out
         last_current = delta["current"]
         after_note_id = next_note_id
         after_chain_seq = next_chain_seq
-        if monotonic() >= deadline and len(pages) < page_budget:
+        if (deadline_exhausted or monotonic() >= deadline) and len(pages) < page_budget:
             deadline_exhausted = True
             break
 

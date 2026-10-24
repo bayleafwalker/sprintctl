@@ -386,9 +386,15 @@ writes the final archive atomically. An elapsed deadline is recorded as
 `deadline-exhausted`; a page budget remains independently visible.
 
 The deadline is checked between synchronous owner reads, so a single in-flight
-read can exceed it. A refused, failed, or malformed read stops further paging;
-when successful pages exist, they are preserved in a partial archive with a
-sanitized stop reason. A first-page failure produces no archive. The archive
+read can exceed it and cannot be cancelled by the CLI. A valid late response is
+retained as an observation and the archive warns that the caller deadline was
+exceeded; if that response has cursors remaining, no further read is issued.
+A refused, failed, or malformed read stops further paging; when successful
+pages exist, they are preserved in a partial archive with a sanitized stop
+reason. A first-page failure produces no archive. The command does not retry a
+failed or response-lost read: the first request has no snapshot basis to
+reconcile against, and a later fresh collection remains a separate attempt.
+The archive
 keeps request inputs, caller-reported
 observation times, page responses, cursors, and per-list completeness separate.
 It does not assert authenticity, currentness, atomicity, authority, or source
