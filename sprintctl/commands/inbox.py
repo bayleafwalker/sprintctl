@@ -237,6 +237,33 @@ def run_brief(run_id, item_id, checkpoint, cursor, after_note_id, after_chain_se
                else render_run_brief(result))
 
 
+@run.command("collect")
+@click.option("--json", "pages", type=click.File("rb"), required=True,
+              help="Offline JSON array of explicitly captured page envelopes")
+@click.option("--page-budget", type=click.IntRange(1, 64), default=None,
+              help="Finite collection budget, at most 64 pages")
+@click.option("--output", type=click.Path(path_type=str), default="-", show_default=True,
+              help="Collection JSON output path, - for stdout")
+def run_collect(pages, page_budget, output) -> None:
+    """Package supplied continuation pages offline; no owner call is made."""
+    from ..continuation_collection import MAX_COLLECTION_BYTES, CollectionError, create_collection
+
+    raw = pages.read(MAX_COLLECTION_BYTES + 1)
+    if len(raw) > MAX_COLLECTION_BYTES:
+        raise click.ClickException("captured page input exceeds 8 MiB")
+    try:
+        envelopes = json.loads(raw)
+        collection = create_collection(envelopes, page_budget=page_budget)
+    except (ValueError, UnicodeDecodeError) as error:
+        raise click.ClickException(str(error)) from error
+    rendered = json.dumps(collection, indent=2, ensure_ascii=False) + "\n"
+    if output == "-":
+        click.echo(rendered, nl=False)
+    else:
+        with open(output, "w", encoding="utf-8") as stream:
+            stream.write(rendered)
+
+
 @run.command("diagnose")
 @click.option("--run-id", required=True)
 @click.option("--item-id", required=True, type=click.IntRange(min=1))
