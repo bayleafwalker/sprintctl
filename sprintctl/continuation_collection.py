@@ -15,6 +15,8 @@ from .result_packet import MAX_BYTES, PacketError, canonical, decode
 SCHEMA = "sprintctl-portable-continuation-collection/v1"
 MAX_PAGES = 64
 MAX_COLLECTION_BYTES = MAX_BYTES
+
+
 class CollectionError(ValueError):
     """Invalid offline continuation collection input."""
 
@@ -83,6 +85,20 @@ def _cursor_equal(left: Any, right: Any) -> bool:
     return canonical(left) == canonical(right)
 
 
+def _list_observations(delta: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        "references": {"returned_cursor": delta["next_reference_cursor"],
+                       "owner_complete": delta["reference_page_complete"],
+                       "record_count": len(delta["reference_page"])},
+        "predecessor_notes": {"returned_cursor": delta["next_after_note_id"],
+                              "record_count": len(delta["predecessor_notes"])},
+        "predecessor_evidence": {"returned_cursor": delta["next_after_chain_seq"],
+                                 "record_count": len(delta["predecessor_evidence"])},
+        "decision_history": {"owner_complete": delta["decision_page_complete"],
+                             "record_count": len(delta["decision_page"])},
+    }
+
+
 def _credential_check(value: Any) -> None:
     from .contracts import reject_credential_shaped_values
     try:
@@ -116,12 +132,12 @@ def _bounded_copy(value: Any) -> Any:
     return copied
 
 
-def create_collection(envelopes: Any, *, page_budget: int | None = None) -> dict[str, Any]:
+def create_collection(envelopes: Any, *, page_budget: int = MAX_PAGES) -> dict[str, Any]:
     """Package supplied request-basis and response envelopes, without owner reads."""
     envelopes = _bounded_copy(envelopes)
     if not isinstance(envelopes, list) or not envelopes or len(envelopes) > MAX_PAGES:
         raise CollectionError("pages must be a nonempty list of at most 64 envelopes")
-    budget = page_budget if page_budget is not None else len(envelopes)
+    budget = MAX_PAGES if page_budget is None else page_budget
     if type(budget) is not int or not 1 <= budget <= MAX_PAGES or len(envelopes) > budget:
         raise CollectionError("page budget must be 1..64 and cover every supplied page")
     pages = []
@@ -190,6 +206,11 @@ def create_collection(envelopes: Any, *, page_budget: int | None = None) -> dict
                                     request_cursor["expected_snapshot_digest"] == delta["snapshot_digest"])
         if not snapshot_matches_request:
             warnings.append(f"page {ordinal} response snapshot differs from its request cursor basis")
+        reference_flag_matches_cursor = (
+            delta["reference_page_complete"] == (returned is None)
+        )
+        if not reference_flag_matches_cursor:
+            warnings.append(f"page {ordinal} reference completeness flag conflicts with its returned cursor")
         pages.append({
             "ordinal": ordinal, "request_inputs": {
                 "run_id": envelope["run_id"], "item_id": envelope["item_id"],
@@ -206,10 +227,12 @@ def create_collection(envelopes: Any, *, page_budget: int | None = None) -> dict
                 "predecessor_notes": delta["next_after_note_id"],
                 "predecessor_evidence": delta["next_after_chain_seq"],
             },
+            "list_observations": _list_observations(delta),
             "owner_snapshot_digest": delta["snapshot_digest"],
             "request_checkpoint_digest": (request_cursor or {}).get("checkpoint_digest"),
             "owner_checkpoint_digest": (returned or {}).get("checkpoint_digest"),
             "snapshot_matches_request_basis": snapshot_matches_request,
+            "reference_flag_matches_cursor": reference_flag_matches_cursor,
             "integrity": {"domain": "canonical-json/v1",
                            "sha256": "sha256:" + hashlib.sha256(canonical(response)).hexdigest()},
         })
@@ -221,27 +244,61 @@ def create_collection(envelopes: Any, *, page_budget: int | None = None) -> dict
             warnings.append(f"page {ordinal} has a different owner snapshot digest from the prior page")
         prior_snapshot = delta["snapshot_digest"]
     delta = pages[-1]["response"]["delta"]
-    cursors_remain = any((delta["next_reference_cursor"] is not None,
+    cursor_pending = any((delta["next_reference_cursor"] is not None,
                           delta["next_after_note_id"] is not None,
-                          delta["next_after_chain_seq"] is not None,
-                          not delta["decision_page_complete"]))
+                          delta["next_after_chain_seq"] is not None))
+    owner_incomplete_without_cursor = (
+        (any(not p["list_observations"]["references"]["owner_complete"] and
+             p["returned_cursors"]["references"] is None for p in pages))
+        or any(not p["list_observations"]["decision_history"]["owner_complete"] for p in pages)
+    )
     stop_reason = (
         ("page-budget-exhausted" if len(pages) >= budget else "supplied-pages-ended-with-cursors-remaining")
-        if cursors_remain else "owner-cursors-null-and-decision-page-complete"
+        if cursor_pending else "owner-reported-incomplete-without-cursor" if owner_incomplete_without_cursor
+        else "owner-cursors-null-and-decision-page-complete"
+    )
+    more_content_may_remain: bool | str = (
+        True if cursor_pending else "unknown" if owner_incomplete_without_cursor else False
     )
     incomplete_status = ("partial-due-to-budget" if len(pages) >= budget
                          else "partial-supplied-pages-ended-early")
+    basis_consistent = all(p["snapshot_matches_request_basis"] for p in pages) and not any(
+        "different owner snapshot" in warning for warning in warnings
+    )
+    if any(not p["reference_flag_matches_cursor"] for p in pages):
+        reference_status = "unknown-owner-completeness-cursor-mismatch"
+    elif any(not p["list_observations"]["references"]["owner_complete"] and
+             p["returned_cursors"]["references"] is None for p in pages):
+        reference_status = "unknown-owner-incomplete-without-cursor"
+    elif not basis_consistent:
+        reference_status = "unknown-inconsistent-request-checkpoint-basis"
+    elif delta["reference_page_complete"] and delta["next_reference_cursor"] is None:
+        reference_status = "complete-for-this-request-checkpoint-basis"
+    else:
+        reference_status = incomplete_status
+    def scoped_status(complete_for_basis: bool, pending: bool = False) -> str:
+        if not basis_consistent:
+            return "unknown-inconsistent-request-checkpoint-basis"
+        if complete_for_basis and not pending:
+            return "complete-for-this-request-checkpoint-basis"
+        return incomplete_status
     complete = {
-        "references": "complete" if delta["next_reference_cursor"] is None else incomplete_status,
-        "predecessor_notes": "complete" if delta["next_after_note_id"] is None else incomplete_status,
-        "predecessor_evidence": "complete" if delta["next_after_chain_seq"] is None else incomplete_status,
-        "decision_history": "complete" if delta["decision_page_complete"] else incomplete_status,
+        "references": reference_status,
+        "predecessor_notes": scoped_status(delta["next_after_note_id"] is None,
+                                            delta["next_after_note_id"] is not None),
+        "predecessor_evidence": scoped_status(delta["next_after_chain_seq"] is None,
+                                               delta["next_after_chain_seq"] is not None),
+        "decision_history": (
+            "unknown-owner-incomplete-page" if any(
+                not p["list_observations"]["decision_history"]["owner_complete"] for p in pages
+            ) else scoped_status(True)
+        ),
     }
     body = {"schema": SCHEMA, "serializer_version": 1, "page_budget": budget,
             "page_count": len(pages), "identity": {"repo_id": identity[0], "run_id": identity[1], "item_id": identity[2]},
             "collection_kind": "offline-page-observations; non-atomic",
             "authenticity": "unknown", "currentness": "unknown", "authority": "unknown",
-            "stop_reason": stop_reason, "more_content_may_remain": cursors_remain,
+            "stop_reason": stop_reason, "more_content_may_remain": more_content_may_remain,
             "warnings": warnings,
             "completeness": complete, "record_counts": {
                 "references": sum(len(p["response"]["delta"]["reference_page"]) for p in pages),
@@ -269,14 +326,60 @@ def inspect_collection(value: bytes | dict[str, Any]) -> dict[str, Any]:
         collection = decode(value) if isinstance(value, bytes) else _bounded_copy(value)
     except (PacketError, RecursionError, CollectionError) as exc:
         raise CollectionError("invalid offline collection JSON") from exc
-    if not isinstance(collection, dict) or collection.get("schema") != SCHEMA:
+    collection_fields = {
+        "schema", "serializer_version", "page_budget", "page_count", "identity",
+        "collection_kind", "authenticity", "currentness", "authority", "stop_reason",
+        "more_content_may_remain", "warnings", "completeness", "record_counts",
+        "pages", "integrity",
+    }
+    page_fields = {
+        "ordinal", "request_inputs", "checkpoint_basis", "observed_at", "clock_provenance",
+        "response", "returned_cursors", "list_observations", "owner_snapshot_digest",
+        "request_checkpoint_digest", "owner_checkpoint_digest", "snapshot_matches_request_basis",
+        "reference_flag_matches_cursor", "integrity",
+    }
+    if (not isinstance(collection, dict) or set(collection) != collection_fields
+            or collection.get("schema") != SCHEMA):
         raise CollectionError("unsupported continuation collection schema")
     integrity = collection.get("integrity")
     pages = collection.get("pages")
     if (not isinstance(integrity, dict) or set(integrity) != {"domain", "sha256"}
             or integrity.get("domain") != "canonical-json/v1"
-            or not isinstance(pages, list) or len(pages) > MAX_PAGES):
+            or not isinstance(integrity.get("sha256"), str)
+            or not isinstance(pages, list) or not pages or len(pages) > MAX_PAGES):
         raise CollectionError("malformed continuation collection integrity or pages")
+    identity = collection["identity"]
+    if (type(collection["serializer_version"]) is not int or collection["serializer_version"] != 1
+            or type(collection["page_budget"]) is not int or not len(pages) <= collection["page_budget"] <= MAX_PAGES
+            or type(collection["page_count"]) is not int or collection["page_count"] != len(pages)
+            or not isinstance(identity, dict) or set(identity) != {"repo_id", "run_id", "item_id"}
+            or not isinstance(identity["repo_id"], str) or not identity["repo_id"]
+            or type(identity["item_id"]) is not int or identity["item_id"] < 1
+            or not isinstance(identity["run_id"], str) or not identity["run_id"]
+            or collection["collection_kind"] != "offline-page-observations; non-atomic"
+            or any(collection[field] != "unknown" for field in ("authenticity", "currentness", "authority"))
+            or collection["stop_reason"] not in {
+                "page-budget-exhausted", "supplied-pages-ended-with-cursors-remaining",
+                "owner-cursors-null-and-decision-page-complete",
+                "owner-reported-incomplete-without-cursor"
+            }
+            or not (type(collection["more_content_may_remain"]) is bool
+                    or collection["more_content_may_remain"] == "unknown")
+            or not isinstance(collection["warnings"], list)
+            or any(not isinstance(warning, str) for warning in collection["warnings"])):
+        raise CollectionError("malformed continuation collection v1 metadata")
+    allowed_status = {"complete-for-this-request-checkpoint-basis", "partial-due-to-budget",
+                      "partial-supplied-pages-ended-early", "unknown-owner-completeness-cursor-mismatch",
+                      "unknown-inconsistent-request-checkpoint-basis",
+                      "unknown-owner-incomplete-without-cursor", "unknown-owner-incomplete-page"}
+    completeness = collection["completeness"]
+    counts = collection["record_counts"]
+    list_names = {"references", "predecessor_notes", "predecessor_evidence", "decision_history"}
+    if (not isinstance(completeness, dict) or set(completeness) != list_names
+            or any(status not in allowed_status for status in completeness.values())
+            or not isinstance(counts, dict) or set(counts) != list_names
+            or any(type(count) is not int or count < 0 for count in counts.values())):
+        raise CollectionError("malformed continuation completeness or record counts")
     try:
         from .contracts import reject_credential_shaped_values
         reject_credential_shaped_values(collection, "continuation collection")
@@ -286,9 +389,46 @@ def inspect_collection(value: bytes | dict[str, Any]) -> dict[str, Any]:
     computed = "sha256:" + hashlib.sha256(canonical(body)).hexdigest()
     page_reports = []
     for ordinal, page in enumerate(pages, 1):
-        recorded = page.get("integrity") if isinstance(page, dict) else None
-        response = page.get("response") if isinstance(page, dict) else None
-        if not isinstance(recorded, dict) or not isinstance(response, dict):
+        if (not isinstance(page, dict) or set(page) != page_fields
+                or type(page.get("ordinal")) is not int or page["ordinal"] != ordinal):
+            raise CollectionError(f"malformed page {ordinal} v1 fields or ordinal")
+        request = page["request_inputs"]
+        if not isinstance(request, dict) or set(request) != {
+            "run_id", "item_id", "limit", "cursor", "checkpoint", "after_note_id", "after_chain_seq"
+        }:
+            raise CollectionError(f"malformed page {ordinal} request inputs")
+        observations = page["list_observations"]
+        observation_shapes = {
+            "references": {"returned_cursor", "owner_complete", "record_count"},
+            "predecessor_notes": {"returned_cursor", "record_count"},
+            "predecessor_evidence": {"returned_cursor", "record_count"},
+            "decision_history": {"owner_complete", "record_count"},
+        }
+        if not isinstance(page["returned_cursors"], dict) or set(page["returned_cursors"]) != {
+            "references", "predecessor_notes", "predecessor_evidence"
+        } or not isinstance(observations, dict) or set(observations) != set(observation_shapes):
+            raise CollectionError(f"malformed page {ordinal} list observation fields")
+        for name, fields in observation_shapes.items():
+            observation = observations[name]
+            if (not isinstance(observation, dict) or set(observation) != fields
+                    or type(observation["record_count"]) is not int or observation["record_count"] < 0
+                    or ("owner_complete" in observation and type(observation["owner_complete"]) is not bool)):
+                raise CollectionError(f"malformed page {ordinal} {name} observation")
+        _validate_request_basis(request)
+        _validate_request_basis_values(request["after_note_id"], request["after_chain_seq"])
+        _timestamp(page["observed_at"])
+        if page["clock_provenance"] != "caller-reported; unverified":
+            raise CollectionError(f"malformed page {ordinal} clock provenance")
+        response = page["response"]
+        _validate_response(response)
+        delta = response["delta"]
+        if (type(page["snapshot_matches_request_basis"]) is not bool
+                or type(page["reference_flag_matches_cursor"]) is not bool):
+            raise CollectionError(f"malformed page {ordinal} basis/completeness metadata")
+        recorded = page["integrity"]
+        if (not isinstance(recorded, dict) or set(recorded) != {"domain", "sha256"}
+                or recorded.get("domain") != "canonical-json/v1"
+                or not isinstance(recorded.get("sha256"), str)):
             raise CollectionError(f"malformed page {ordinal} integrity record")
         page_digest = "sha256:" + hashlib.sha256(canonical(response)).hexdigest()
         page_reports.append({"ordinal": page.get("ordinal"),
@@ -296,12 +436,26 @@ def inspect_collection(value: bytes | dict[str, Any]) -> dict[str, Any]:
                              and recorded.get("sha256") == page_digest,
                              "computed_sha256": page_digest,
                              "recorded_sha256": recorded.get("sha256")})
+    metadata_consistency = False
+    metadata_detail = "derived collection metadata differs from retained page request/response records"
+    try:
+        rebuilt = create_collection([
+            {**page["request_inputs"], "observed_at": page["observed_at"], "response": page["response"]}
+            for page in pages
+        ], page_budget=collection["page_budget"])
+        rebuilt_body = {key: child for key, child in rebuilt.items() if key != "integrity"}
+        metadata_consistency = canonical(rebuilt_body) == canonical(body)
+        if metadata_consistency:
+            metadata_detail = "derived metadata matches retained page request/response records"
+    except (CollectionError, PacketError, RecursionError, KeyError, TypeError, ValueError):
+        pass
     return {"schema": "sprintctl-continuation-collection-inspection/v1",
             "integrity": {"self_consistent": computed == integrity.get("sha256"),
                           "computed_sha256": computed,
                           "recorded_sha256": integrity.get("sha256"),
                           "domain": "canonical-json/v1"},
             "page_integrity": page_reports,
+            "metadata_consistency": {"consistent": metadata_consistency, "detail": metadata_detail},
             "authenticity": "unknown", "currentness": "unknown", "authority": "unknown",
             "owner_or_source_access": "none; offline inspection",
             "page_count": len(pages), "identity": collection.get("identity"),

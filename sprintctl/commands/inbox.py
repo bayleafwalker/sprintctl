@@ -13,7 +13,9 @@ A refusal prints ``{"error": {"code", "message"}}`` and exits 1.
 from __future__ import annotations
 
 import json
+import os
 import sys
+import tempfile
 from typing import Any
 
 import click
@@ -240,7 +242,7 @@ def run_brief(run_id, item_id, checkpoint, cursor, after_note_id, after_chain_se
 @run.command("collect")
 @click.option("--json", "pages", type=click.File("rb"), required=True,
               help="Offline envelope array: run_id, item_id, limit, cursor, checkpoint, after_note_id, after_chain_seq, observed_at, response")
-@click.option("--page-budget", type=click.IntRange(1, 64), default=None,
+@click.option("--page-budget", type=click.IntRange(1, 64), default=64, show_default=True,
               help="Finite collection budget, at most 64 pages")
 @click.option("--output", type=click.Path(path_type=str), default="-", show_default=True,
               help="Collection JSON output path, - for stdout")
@@ -256,16 +258,31 @@ def run_collect(pages, page_budget, output) -> None:
     except (ValueError, UnicodeDecodeError, RecursionError) as error:
         raise click.ClickException(str(error)) from error
     from ..result_packet import canonical
-    rendered = canonical(collection).decode("utf-8") + "\n"
+    rendered = canonical(collection).decode("utf-8")
     if output == "-":
         click.echo(rendered, nl=False)
     else:
+        absolute_output = os.path.abspath(output)
+        output_dir = os.path.dirname(absolute_output)
+        temp_path = None
         try:
-            stream = open(output, "x", encoding="utf-8")
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=output_dir,
+                                             prefix=".sprintctl-collection-", delete=False) as stream:
+                temp_path = stream.name
+                stream.write(rendered)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.link(temp_path, absolute_output)
         except FileExistsError as error:
             raise click.ClickException("output exists; choose a new path") from error
-        with stream:
-            stream.write(rendered)
+        except OSError as error:
+            raise click.ClickException(f"could not write collection atomically: {error}") from error
+        finally:
+            if temp_path is not None:
+                try:
+                    os.unlink(temp_path)
+                except FileNotFoundError:
+                    pass
 
 
 @run.command("collect-inspect")
