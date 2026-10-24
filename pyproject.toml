@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sprintctl"
-version = "0.22.0"
+version = "0.23.0"
 requires-python = ">=3.11"
 dependencies = [
     "click>=8.1",
@@ -37,6 +37,7 @@ capabilities = [
     "agent-inbox/v1",
     "item-evidence-observations/v1",
     "normalized-scope-refs/v1",
+    "operator-request/v1",
     "portable-aggregate-uuid-json/v1",
     "remote-backend/v1",
     "remote-schema-compatibility/v1",
@@ -45,7 +46,7 @@ capabilities = [
     "volatile-context-item-projection/v1",
 ]
 sqlite-schema-version = 25
-remote-schema-version = 27
+remote-schema-version = 28
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

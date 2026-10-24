@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from sprintctl import pg, pg_migrations, run_invocation_schema, effect_verification_export_index
-from sprintctl import agent_inbox_schema, approval_schema, delegation_schema
+from sprintctl import agent_inbox_schema, approval_schema, delegation_schema, operator_request_schema
 
 
 CURRENT = pg_migrations.CURRENT_SCHEMA_VERSION
@@ -58,6 +58,8 @@ class _SchemaCursor:
             self._conn.approval_installed = True
         if query == delegation_schema.DDL:
             self._conn.delegation_installed = True
+        if query == operator_request_schema.DDL:
+            self._conn.operator_request_installed = True
         return self
 
     rowcount = 0
@@ -136,6 +138,7 @@ class _SchemaConnection:
         self.agent_inbox_installed = version is not None and version >= 25
         self.approval_installed = version is not None and version >= 26
         self.delegation_installed = version is not None and version >= 27
+        self.operator_request_installed = version is not None and version >= 28
         self.calls = []
         self.version = version
         self.version_rows = version_rows if version is not None else 0
@@ -222,6 +225,19 @@ def _stub_invocation_catalog_for_schema_state_fakes(monkeypatch):
         }
 
     monkeypatch.setattr(delegation_schema, "inspect_catalog", inspect_delegation)
+
+    def inspect_operator_requests(cur):
+        available = cur._conn.operator_request_installed
+        return {
+            "table_count": 3 if available else 0,
+            "catalog_fingerprint": "operator-request-schema28" if available else "0" * 64,
+            "expected_catalog_fingerprint": "operator-request-schema28",
+            "trigger_count": 0,
+            "available": available,
+            "complete": True,
+        }
+
+    monkeypatch.setattr(operator_request_schema, "inspect_catalog", inspect_operator_requests)
 
 
 def test_snapshot_uses_store_connection_factory_instead_of_redacted_dsn(monkeypatch):
@@ -318,6 +334,15 @@ def test_runtime_compatibility_probe_is_read_only_and_publishes_work_api():
                 "table_count": 1,
                 "catalog_fingerprint": delegation_schema.EXPECTED_CATALOG_FINGERPRINT,
                 "expected_catalog_fingerprint": delegation_schema.EXPECTED_CATALOG_FINGERPRINT,
+                "available": True,
+                "complete": True,
+            },
+            "operator_request_storage": {
+                "schema_version": "operator-request-storage/v1",
+                "table_count": 3,
+                "catalog_fingerprint": "operator-request-schema28",
+                "expected_catalog_fingerprint": "operator-request-schema28",
+                "trigger_count": 0,
                 "available": True,
                 "complete": True,
             },

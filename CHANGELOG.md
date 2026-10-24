@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 0.23.0 — 2026-10-24 (candidate)
+
+Schema 28 is a coordinated owner/runtime cutover. This source candidate adds
+durable operator-request packets, revisioned dependants and append-only request
+events, including procedure progress, performed reports, human attestation,
+decline and supersession. Reads and writes are scoped to the caller's
+authenticated workspace and repository. Source verification, offline
+reconciliation and continuation delivery remain follow-on work; this candidate
+does not claim those flows are qualified.
+
+### Added
+
+- A separate `operator-request/v1` owner record family. It does not change work
+  status, effect acceptance or agent inbox records.
+- Catalog operations for publishing, reading, revising, listing, linking
+  dependants and recording request outcomes, with request operations withheld
+  from schema-27 owners.
+- Typed Python client transport methods and TypeSpec request models.
+
 ## 0.22.0 — 2026-10-20
 
 Same schema 27 as 0.21.0: no owner migration. All existing operation

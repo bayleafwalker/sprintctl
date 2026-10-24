@@ -2338,6 +2338,42 @@ def test_repository_read_retry_classification_matches_the_owner_catalog():
             contract.execution_semantics == "read"), contract.name
 
 
+def test_operator_request_refuses_before_storage_on_a_schema27_owner():
+    stale = _RuntimeConnection("stale")
+    app = _runtime_application(_RuntimeBackend(stale), lambda: _RuntimeConnection("unused"))
+    app.store.remote_schema_version = 27
+    app.backend.idempotent_write = lambda **_kwargs: pytest.fail("schema gate must run before storage")
+    context = _context()
+    context.identity.principal_id = "principal-1"
+    context.identity.workspace_id = "workspace-1"
+    context.identity.authorities = frozenset({"work:read"})
+
+    with pytest.raises(ApplicationRejection) as rejected:
+        app.invoke("work.request.get-v1", {"request_id": "req_01JBC3D4E5F6G7H8J9K0MNPQRS"}, context)
+
+    assert (rejected.value.code, rejected.value.http_status) == ("owner-capability-unavailable", 503)
+
+
+def test_human_attestation_requires_work_approve_without_reaching_storage():
+    stale = _RuntimeConnection("stale")
+    app = _runtime_application(_RuntimeBackend(stale), lambda: _RuntimeConnection("unused"))
+    app.store.remote_schema_version = 28
+    app.backend.idempotent_write = lambda **_kwargs: pytest.fail("attestation authority must be checked first")
+    context = _context()
+    context.identity.principal_id = "principal-1"
+    context.identity.workspace_id = "workspace-1"
+    context.identity.authorities = frozenset({"work:evidence"})
+
+    with pytest.raises(ApplicationRejection) as rejected:
+        app.invoke("work.request.attest-v1", {
+            "request_id": "req_01JBC3D4E5F6G7H8J9K0MNPQRS", "expected_revision": 2,
+            "statement": "The physical operation completed.",
+            "performed_at": "2026-10-24T10:30:00Z", "idempotency_key": "attest-request-1",
+        }, context)
+
+    assert (rejected.value.code, rejected.value.http_status) == ("authority-required", 403)
+
+
 @pytest.mark.parametrize("operation,handler_name", _ADDITIONAL_READ_HANDLERS.items())
 @pytest.mark.parametrize("replacement_fails", [False, True])
 def test_added_read_handlers_retry_once_and_never_report_unknown_write_outcome(

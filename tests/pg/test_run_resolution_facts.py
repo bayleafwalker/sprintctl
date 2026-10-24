@@ -516,13 +516,13 @@ class TestApprovalRecordAndGet:
     def test_handshake_reports_the_exact_approval_catalog(self, store):
         compatibility = pg_migrations.compatibility_handshake(store)
         storage = compatibility["capabilities"]["approval_storage"]
-        assert compatibility["compatible"] and compatibility["remote_schema"]["actual"] == 27
+        assert compatibility["compatible"] and compatibility["remote_schema"]["actual"] == 28
         assert storage["available"] and storage["complete"] and storage["table_count"] == 1
         assert storage["catalog_fingerprint"] == approval_schema.EXPECTED_CATALOG_FINGERPRINT
 
 
 # --------------------------------------------------------------------------
-# Schema 25 -> 27 upgrade, in an isolated schema of the disposable database.
+# Schema 25 -> 28 upgrade, in an isolated schema of the disposable database.
 # --------------------------------------------------------------------------
 @pytest.fixture
 def isolated():
@@ -577,11 +577,11 @@ def test_upgrade_25_to_27_is_explicit_idempotent_and_the_runtime_never_migrates(
         pg_migrations.startup_schema_handshake(store, {})
     assert _version(store) == 25 and _approval_catalog(store)["table_count"] == 0
     result = pg_migrations.migrate_schema(store)
-    assert result["applied_versions"] == [26, 27] and result["to_version"] == 27
+    assert result["applied_versions"] == [26, 27, 28] and result["to_version"] == 28
     assert result["compatibility"]["compatible"] is True
     assert _approval_catalog(store)["available"] is True
     assert pg_migrations.migrate_schema(store)["applied_versions"] == []
-    assert pg_migrations.startup_schema_handshake(store, {})["remote_schema"]["actual"] == 27
+    assert pg_migrations.startup_schema_handshake(store, {})["remote_schema"]["actual"] == 28
 
 
 def test_a_pre_existing_lookalike_is_refused_without_advancing(isolated):
@@ -622,4 +622,4 @@ def test_an_injected_ddl_failure_rolls_back_storage_and_version(isolated, monkey
         "available": False, "complete": True,
     }
     monkeypatch.setattr(approval_schema, "DDL", original)
-    assert pg_migrations.migrate_schema(store)["applied_versions"] == [26, 27]
+    assert pg_migrations.migrate_schema(store)["applied_versions"] == [26, 27, 28]

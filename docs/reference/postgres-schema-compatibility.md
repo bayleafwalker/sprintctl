@@ -16,10 +16,8 @@ create, alter, or repair schema objects.
 work API as `sprintctl-work/v1`, reports the actual remote schema version, and
 reports the minimum and maximum versions this runtime supports.
 
-The current source tree (unreleased after sprintctl 0.19.0, which admits
-exactly schema 25) admits exactly remote schema 27 (schema 18 for sprintctl
-0.9.0 through 0.10.x): `MINIMUM_SCHEMA_VERSION` and
-`MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 27, and
+The current source tree admits exactly remote schema 28: `MINIMUM_SCHEMA_VERSION`
+and `MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 28, and
 `remote-schema-version` in `pyproject.toml` records the same value. Any other
 ledger version fails closed before a runtime command is served.
 
@@ -347,3 +345,12 @@ for a runtime role to acquire DDL.
 Local SQLite remains self-migrating through `sprintctl.db.init_db()` for local
 and recovery authority. This PostgreSQL role split does not change SQLite
 transition semantics or migration behavior.
+Schema 28 adds the independent operator-request lifecycle: `operator_request`,
+`operator_request_dependant`, and `operator_request_event`. Request and event
+records are scoped to the authenticated workspace and repository. Dependants
+retain source work status revisions; a changed or missing source is returned
+as requiring refresh, never resolved automatically. The exact schema inventory
+is checked at startup; the migration is deployment-only. No request operation
+changes work status or authorizes a protected effect. Event rows are guarded
+against update, delete and truncate. The runtime fingerprint checks the
+constraint definitions and guard function and triggers.
