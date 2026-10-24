@@ -196,6 +196,90 @@ def test_progress_and_performed_report_do_not_resolve_or_change_work_item(reques
     assert pg.get_work_item(store, item_id)["status"] == before
 
 
+def test_withdrawing_one_shared_dependant_keeps_request_open_until_last(request_owner):
+    store, item_id = request_owner
+    request_id = "req_01JBC3D4E5F6G7H8J9K0MNPQRY"
+    _publish(store, item_id, request_id, sessions=("session-a", "session-b"))
+
+    first = contract.dependant_withdraw_arguments({
+        "request_id": request_id, "expected_revision": 1,
+        "work_item_id": item_id, "session_id": "session-a",
+        "idempotency_key": "withdraw-first-shared-dependent",
+    })
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        assert storage.withdraw_dependant(
+            cur, store, "principal-a", "workspace-a", first
+        )["revision"] == 2
+
+    snapshot = _read(store, request_id)
+    assert snapshot["state"] == "open"
+    assert [(item["session_id"], item["state"]) for item in snapshot["dependants"]] == [
+        ("session-a", "withdrawn"), ("session-b", "active"),
+    ]
+
+    last = contract.dependant_withdraw_arguments({
+        "request_id": request_id, "expected_revision": 2,
+        "work_item_id": item_id, "session_id": "session-b",
+        "idempotency_key": "withdraw-last-shared-dependent",
+    })
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        assert storage.withdraw_dependant(
+            cur, store, "principal-a", "workspace-a", last
+        )["revision"] == 3
+
+    assert _read(store, request_id)["state"] == "withdrawn"
+
+
+def test_supersession_transfers_only_live_dependants_and_keeps_history(request_owner):
+    store, item_id = request_owner
+    request_id = "req_01JBC3D4E5F6G7H8J9K0MNPQSA"
+    replacement_id = "req_01JBC3D4E5F6G7H8J9K0MNPQSB"
+    _publish(store, item_id, request_id, sessions=("session-a", "session-b"))
+
+    withdrawn = contract.dependant_withdraw_arguments({
+        "request_id": request_id, "expected_revision": 1,
+        "work_item_id": item_id, "session_id": "session-a",
+        "idempotency_key": "withdraw-before-supersession",
+    })
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        storage.withdraw_dependant(cur, store, "principal-a", "workspace-a", withdrawn)
+
+    replacement_packet = _packet("The target changed; use this refreshed instruction.")
+    replacement_packet["execution"]["target"] = "staging/service-b"
+    replacement_packet["blocker"]["source_revisions"] = [
+        {"source": "release", "revision": "sha256:def"},
+    ]
+    supersede = contract.supersede_arguments({
+        "request_id": request_id, "expected_revision": 2,
+        "replacement_request_id": replacement_id, "packet": replacement_packet,
+        "idempotency_key": "supersede-after-target-change",
+    })
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        assert storage.supersede(
+            cur, store, "principal-a", "workspace-a", supersede
+        )["revision"] == 3
+
+    old = _read(store, request_id)
+    replacement = _read(store, replacement_id)
+    assert old["state"] == "superseded"
+    assert [(item["session_id"], item["state"]) for item in old["dependants"]] == [
+        ("session-a", "withdrawn"), ("session-b", "withdrawn"),
+    ]
+    assert replacement["state"] == "open"
+    assert replacement["packet"]["execution"]["target"] == "staging/service-b"
+    assert [(item["session_id"], item["state"]) for item in replacement["dependants"]] == [
+        ("session-b", "active"),
+    ]
+    with store.conn.cursor() as cur:
+        old_events = storage.events(cur, store, "workspace-a", {
+            "request_id": request_id, "after_revision": 0, "limit": 100,
+        })["events"]
+    store.conn.commit()
+    assert [event["action"] for event in old_events] == [
+        "published", "dependant-withdrawn", "superseded",
+    ]
+
+
 def test_concurrent_revisions_allow_one_writer_and_reject_the_stale_writer(request_owner):
     store, item_id = request_owner
     request_id = "req_01JBC3D4E5F6G7H8J9K0MNPQRV"
