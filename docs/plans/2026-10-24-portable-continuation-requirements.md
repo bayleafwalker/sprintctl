@@ -146,6 +146,25 @@ matching digest can establish byte equality for the compared bytes only; it
 does not establish publication authority, currentness, target effect, or
 authorization to act.
 
+## P08 local implementation choice
+
+P08 adds `sprintctl run collect-fetch` as an explicit caller-invoked reader of
+the exact `work.run.continuation-delta-v1` operation. It sends one sequential
+read at a time for the caller's own run and selected item, follows the three
+owner cursors independently, and uses finite defaults of 64 pages and a
+30-second caller-side deadline (configurable up to five minutes). It makes no
+request mutations, source dereferences, or artifact fetches. `run collect`
+continues to package already supplied pages offline.
+
+Each successful response remains a separate observation in the existing
+collection format. Repeated/non-advancing cursors stop the read, owner refusal
+or transport failure preserves earlier successful pages when available, and
+changed snapshot/checkpoint evidence stops further reads and marks coverage
+unknown. The archive records a sanitized stop reason and no raw failure
+message. The deadline is checked between owner reads; one synchronous in-flight
+read can exceed it. These local CLI choices do not ratify an owner API change
+or establish a complete/atomic history.
+
 ## Acceptance evidence
 
 Before implementation can be accepted, the owning issue must confirm the

@@ -132,8 +132,30 @@ def _bounded_copy(value: Any) -> Any:
     return copied
 
 
-def create_collection(envelopes: Any, *, page_budget: int = MAX_PAGES) -> dict[str, Any]:
+def create_collection(
+    envelopes: Any,
+    *,
+    page_budget: int = MAX_PAGES,
+    stop_reason_override: str | None = None,
+    additional_warnings: list[str] | None = None,
+) -> dict[str, Any]:
     """Package supplied request-basis and response envelopes, without owner reads."""
+    allowed_stop_overrides = {
+        None,
+        "deadline-exhausted",
+        "owner-refused",
+        "owner-read-failed",
+        "invalid-cursor",
+        "source-changed",
+    }
+    if stop_reason_override not in allowed_stop_overrides:
+        raise CollectionError("unsupported collection stop reason")
+    if additional_warnings is None:
+        additional_warnings = []
+    if (not isinstance(additional_warnings, list) or len(additional_warnings) > MAX_PAGES * 3
+            or any(not isinstance(warning, str) or len(warning) > 240
+                   for warning in additional_warnings)):
+        raise CollectionError("additional warnings must be bounded strings")
     envelopes = _bounded_copy(envelopes)
     if not isinstance(envelopes, list) or not envelopes or len(envelopes) > MAX_PAGES:
         raise CollectionError("pages must be a nonempty list of at most 64 envelopes")
@@ -252,18 +274,27 @@ def create_collection(envelopes: Any, *, page_budget: int = MAX_PAGES) -> dict[s
              p["returned_cursors"]["references"] is None for p in pages))
         or any(not p["list_observations"]["decision_history"]["owner_complete"] for p in pages)
     )
-    stop_reason = (
-        ("page-budget-exhausted" if len(pages) >= budget else "supplied-pages-ended-with-cursors-remaining")
-        if cursor_pending else "owner-reported-incomplete-without-cursor" if owner_incomplete_without_cursor
-        else "owner-cursors-null-and-decision-page-complete"
-    )
+    if stop_reason_override == "source-changed":
+        stop_reason = "source-changed"
+    elif cursor_pending:
+        stop_reason = (
+            "page-budget-exhausted"
+            if len(pages) >= budget
+            else stop_reason_override or "supplied-pages-ended-with-cursors-remaining"
+        )
+    elif owner_incomplete_without_cursor:
+        stop_reason = "owner-reported-incomplete-without-cursor"
+    else:
+        stop_reason = "owner-cursors-null-and-decision-page-complete"
     more_content_may_remain: bool | str = (
         True if cursor_pending else "unknown" if owner_incomplete_without_cursor else False
     )
     incomplete_status = ("partial-due-to-budget" if len(pages) >= budget
                          else "partial-supplied-pages-ended-early")
+    warnings.extend(warning for warning in additional_warnings if warning not in warnings)
     basis_consistent = all(p["snapshot_matches_request_basis"] for p in pages) and not any(
-        "different owner snapshot" in warning for warning in warnings
+        "different owner snapshot" in warning or "owner current checkpoint changed" in warning
+        for warning in warnings
     )
     if any(not p["reference_flag_matches_cursor"] for p in pages):
         reference_status = "unknown-owner-completeness-cursor-mismatch"
@@ -361,6 +392,8 @@ def inspect_collection(value: bytes | dict[str, Any]) -> dict[str, Any]:
             or not isinstance(collection["stop_reason"], str)
             or collection["stop_reason"] not in {
                 "page-budget-exhausted", "supplied-pages-ended-with-cursors-remaining",
+                "deadline-exhausted",
+                "owner-refused", "owner-read-failed", "invalid-cursor", "source-changed",
                 "owner-cursors-null-and-decision-page-complete",
                 "owner-reported-incomplete-without-cursor"
             }
@@ -444,7 +477,13 @@ def inspect_collection(value: bytes | dict[str, Any]) -> dict[str, Any]:
         rebuilt = create_collection([
             {**page["request_inputs"], "observed_at": page["observed_at"], "response": page["response"]}
             for page in pages
-        ], page_budget=collection["page_budget"])
+        ], page_budget=collection["page_budget"],
+            stop_reason_override=(collection["stop_reason"]
+                                  if collection["stop_reason"] in {
+                                      "deadline-exhausted", "owner-refused", "owner-read-failed",
+                                      "invalid-cursor", "source-changed"
+                                  } else None),
+            additional_warnings=collection["warnings"])
         rebuilt_body = {key: child for key, child in rebuilt.items() if key != "integrity"}
         metadata_consistency = canonical(rebuilt_body) == canonical(body)
         if metadata_consistency:
