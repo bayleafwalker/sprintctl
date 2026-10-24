@@ -16,24 +16,35 @@ from typing import Any
 OPERATION_PUBLISH = "work.request.publish-v1"
 OPERATION_GET = "work.request.get-v1"
 OPERATION_LIST = "work.request.list-v1"
+OPERATION_EVENTS = "work.request.events-v1"
 OPERATION_REVISE = "work.request.revise-v1"
 OPERATION_DEPENDENT_ADD = "work.request.dependent-add-v1"
 OPERATION_DEPENDENT_WITHDRAW = "work.request.dependent-withdraw-v1"
+OPERATION_PROGRESS = "work.request.progress-v1"
+OPERATION_REPORT_PERFORMED = "work.request.report-performed-v1"
+OPERATION_ATTEST = "work.request.attest-v1"
+OPERATION_DECLINE = "work.request.decline-v1"
+OPERATION_SUPERSEDE = "work.request.supersede-v1"
 
 WRITE_OPERATIONS = frozenset({
     OPERATION_PUBLISH,
     OPERATION_REVISE,
     OPERATION_DEPENDENT_ADD,
     OPERATION_DEPENDENT_WITHDRAW,
+    OPERATION_PROGRESS,
+    OPERATION_REPORT_PERFORMED,
+    OPERATION_ATTEST,
+    OPERATION_DECLINE,
+    OPERATION_SUPERSEDE,
 })
-READ_OPERATIONS = frozenset({OPERATION_GET, OPERATION_LIST})
+READ_OPERATIONS = frozenset({OPERATION_GET, OPERATION_LIST, OPERATION_EVENTS})
 OPERATIONS = WRITE_OPERATIONS | READ_OPERATIONS
 
 REQUEST_ID_RE = re.compile(r"^req_[0-9A-HJKMNP-TV-Z]{26}$")
 IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
 _RFC3339_RE = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$")
 _KINDS = frozenset({"perform", "authorize", "decide", "provide-information"})
-_STATES = frozenset({"open", "reported-performed", "verifying", "resolved", "withdrawn", "superseded"})
+_STATES = frozenset({"open", "reported-performed", "verifying", "resolved", "declined", "withdrawn", "superseded"})
 _SENSITIVE_KEYS = frozenset({
     "actor", "principal", "principal_id", "workspace", "workspace_id", "repo", "repo_id",
     "authority", "authorities", "capability", "token", "access_token", "secret", "password",
@@ -51,9 +62,30 @@ MAX_REVISION = 2**31 - 1
 class RequestRefused(ValueError):
     """A stable operator-request contract refusal."""
 
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, details: Mapping[str, Any] | None = None):
         super().__init__(message)
         self.code = code
+        self.details = dict(details) if details is not None else None
+
+    @property
+    def http_status(self) -> int:
+        return {
+            "invalid-arguments": 422,
+            "payload-too-large": 413,
+            "not-found": 404,
+            "work-not-found": 404,
+            "requester-not-owner": 403,
+            "request-id-conflict": 409,
+            "revision-conflict": 409,
+            "request-not-open": 409,
+            "dependant-not-active": 409,
+            "dependant-already-withdrawn": 409,
+            "idempotency-conflict": 409,
+            "revision-exhausted": 409,
+            "request-not-verifiable": 409,
+            "no-active-dependants": 409,
+            "unknown-procedure-step": 422,
+        }.get(self.code, 409)
 
 
 def _invalid(message: str) -> None:
@@ -122,7 +154,7 @@ def validate_idempotency_key(value: Any) -> str:
 
 def validate_revision(value: Any, name: str = "expected_revision") -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_REVISION:
-        _invalid(f"{name} must be an integer in the positive int64 range")
+        _invalid(f"{name} must be a positive int32")
     return value
 
 
@@ -272,9 +304,99 @@ def dependant_withdraw_arguments(value: Any) -> dict:
     }
 
 
+def progress_arguments(value: Any) -> dict:
+    args = _object(value, "arguments", required={
+        "request_id", "expected_revision", "work_item_id", "session_id", "step_id", "status", "note",
+        "idempotency_key",
+    })
+    dependent = validate_dependant({"work_item_id": args["work_item_id"], "session_id": args["session_id"]})
+    if not isinstance(args["status"], str) or args["status"] not in {
+        "in-progress", "completed", "blocked", "uncertain",
+    }:
+        _invalid("status must be in-progress, completed, blocked or uncertain")
+    return {
+        "request_id": validate_request_id(args["request_id"]),
+        "expected_revision": validate_revision(args["expected_revision"]),
+        **dependent,
+        "step_id": _text(args["step_id"], "step_id", maximum=128),
+        "status": args["status"],
+        "note": _text(args["note"], "note", maximum=2048),
+        "idempotency_key": validate_idempotency_key(args["idempotency_key"]),
+    }
+
+
+def report_performed_arguments(value: Any) -> dict:
+    args = _object(value, "arguments", required={
+        "request_id", "expected_revision", "outcome", "note", "idempotency_key",
+    })
+    outcome = args["outcome"]
+    if not isinstance(outcome, str) or outcome not in {"performed", "partial", "uncertain"}:
+        _invalid("outcome must be performed, partial or uncertain")
+    return {
+        "request_id": validate_request_id(args["request_id"]),
+        "expected_revision": validate_revision(args["expected_revision"]),
+        "outcome": outcome,
+        "note": _text(args["note"], "note", maximum=2048),
+        "idempotency_key": validate_idempotency_key(args["idempotency_key"]),
+    }
+
+
+def attest_arguments(value: Any) -> dict:
+    args = _object(value, "arguments", required={
+        "request_id", "expected_revision", "statement", "performed_at", "idempotency_key",
+    })
+    return {
+        "request_id": validate_request_id(args["request_id"]),
+        "expected_revision": validate_revision(args["expected_revision"]),
+        "statement": _text(args["statement"], "statement", maximum=2048),
+        "performed_at": _timestamp(args["performed_at"], "performed_at").isoformat(),
+        "idempotency_key": validate_idempotency_key(args["idempotency_key"]),
+    }
+
+
+def decline_arguments(value: Any) -> dict:
+    args = _object(value, "arguments", required={
+        "request_id", "expected_revision", "reason", "idempotency_key",
+    })
+    return {
+        "request_id": validate_request_id(args["request_id"]),
+        "expected_revision": validate_revision(args["expected_revision"]),
+        "reason": _text(args["reason"], "reason", maximum=2048),
+        "idempotency_key": validate_idempotency_key(args["idempotency_key"]),
+    }
+
+
+def supersede_arguments(value: Any) -> dict:
+    args = _object(value, "arguments", required={
+        "request_id", "expected_revision", "replacement_request_id", "packet", "idempotency_key",
+    })
+    request_id = validate_request_id(args["request_id"])
+    replacement_id = validate_request_id(args["replacement_request_id"])
+    if request_id == replacement_id:
+        _invalid("replacement_request_id must differ from request_id")
+    return {
+        "request_id": request_id,
+        "expected_revision": validate_revision(args["expected_revision"]),
+        "replacement_request_id": replacement_id,
+        "packet": validate_packet(args["packet"]),
+        "idempotency_key": validate_idempotency_key(args["idempotency_key"]),
+    }
+
+
 def get_arguments(value: Any) -> dict:
     args = _object(value, "arguments", required={"request_id"})
     return {"request_id": validate_request_id(args["request_id"])}
+
+
+def events_arguments(value: Any) -> dict:
+    args = _object(value, "arguments", required={"request_id", "after_revision", "limit"})
+    after = args["after_revision"]
+    limit = args["limit"]
+    if isinstance(after, bool) or not isinstance(after, int) or not 0 <= after <= MAX_REVISION:
+        _invalid("after_revision must be a non-negative int32")
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+        _invalid("limit must be an integer from 1 to 100")
+    return {"request_id": validate_request_id(args["request_id"]), "after_revision": after, "limit": limit}
 
 
 def list_arguments(value: Any) -> dict:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from sprintctl import operator_request as request
+from sprintctl.vuoro_adapter import WORK_OPERATION_CONTRACTS, catalog_operation_specs
 
 
 def packet() -> dict:
@@ -113,3 +114,56 @@ def test_revisions_must_be_positive_int32_and_not_boolean():
 def test_list_rejects_non_string_state():
     with pytest.raises(request.RequestRefused):
         request.list_arguments({"limit": 25, "state": []})
+
+
+def test_request_operations_are_advertised_only_by_schema28_owners():
+    old = catalog_operation_specs(resource_schema_available=True, remote_schema_version=27)
+    current = catalog_operation_specs(resource_schema_available=True, remote_schema_version=28)
+    request_names = {contract.name for contract in WORK_OPERATION_CONTRACTS
+                     if contract.name.startswith("work.request.")}
+
+    assert request_names
+    assert not (request_names & {spec["name"] for spec in old})
+    assert request_names <= {spec["name"] for spec in current}
+
+
+def test_outcome_and_progress_arguments_preserve_distinct_states():
+    request_id = "req_01JBC3D4E5F6G7H8J9K0MNPQRS"
+    progress = request.progress_arguments({
+        "request_id": request_id, "expected_revision": 3, "work_item_id": 12,
+        "session_id": "ses-1", "step_id": "check", "status": "completed",
+        "note": "The observed digest matched.", "idempotency_key": "progress-key-1",
+    })
+    report = request.report_performed_arguments({
+        "request_id": request_id, "expected_revision": 4, "outcome": "performed",
+        "note": "The command was run.", "idempotency_key": "report-key-1",
+    })
+    attestation = request.attest_arguments({
+        "request_id": request_id, "expected_revision": 5,
+        "statement": "I observed the physical work complete.",
+        "performed_at": "2026-10-24T10:30:00Z", "idempotency_key": "attest-key-1",
+    })
+
+    assert progress["status"] == "completed"
+    assert report["outcome"] == "performed"
+    assert report["note"]
+    assert attestation["performed_at"].endswith("+00:00")
+
+
+def test_progress_and_attestation_reject_ambiguous_or_invalid_inputs():
+    with pytest.raises(request.RequestRefused):
+        request.progress_arguments({
+            "request_id": "req_01JBC3D4E5F6G7H8J9K0MNPQRS", "expected_revision": 3,
+            "work_item_id": 12, "session_id": "ses-1", "step_id": "check", "status": [],
+            "note": "progress", "idempotency_key": "progress-key-1",
+        })
+    with pytest.raises(request.RequestRefused):
+        request.report_performed_arguments({
+            "request_id": "req_01JBC3D4E5F6G7H8J9K0MNPQRS", "expected_revision": 3,
+            "outcome": "resolved", "note": "claimed success", "idempotency_key": "report-key-1",
+        })
+    with pytest.raises(request.RequestRefused):
+        request.attest_arguments({
+            "request_id": "req_01JBC3D4E5F6G7H8J9K0MNPQRS", "expected_revision": 3,
+            "statement": "complete", "performed_at": "not a time", "idempotency_key": "attest-key-1",
+        })

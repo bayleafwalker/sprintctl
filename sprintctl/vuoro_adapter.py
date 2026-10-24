@@ -60,6 +60,9 @@ class WorkOperationContract:
     execution_semantics: Literal["read", "write", "enqueue", "admin"]
     idempotency: Literal["not-allowed", "optional", "required"]
     required_client_schema_features: tuple[str, ...] = SCHEMA_FEATURES
+    #: Minimum owner schema that can implement this operation. Older owner
+    #: catalogs must not advertise it as a callable promise.
+    required_remote_schema_version: int = 1
     result_contract_resource_kind: str | None = None
     #: The catalog's deprecation record, ``{deprecated, replacement,
     #: sunset_at}``; None publishes the operation as current.
@@ -2983,6 +2986,176 @@ WORK_OPERATION_CONTRACTS += _agent_inbox_operation_contracts()
 
 
 # --------------------------------------------------------------------------
+# work.request.* (schema 28): durable operator-request/v1 lifecycle.  These
+# records are independent of work status, Agent Inbox v1, and effect approvals.
+# --------------------------------------------------------------------------
+def _operator_request_operation_contracts() -> tuple[WorkOperationContract, ...]:
+    request_id = {"type": "string", "pattern": r"^req_[0-9A-HJKMNP-TV-Z]{26}$"}
+    idem_key = {"type": "string", "pattern": r"^[A-Za-z0-9._:-]{8,128}$"}
+    revision = {"type": "integer", "minimum": 1, "maximum": 2147483647}
+    packet = _object_schema(
+        {
+            "schema": {"const": "operator-request/v1"},
+            "kind": {"enum": ["perform", "authorize", "decide", "provide-information"]},
+            "required_outcome": {"type": "string", "minLength": 1, "maxLength": 2048},
+            "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+            "execution": _object_schema(
+                {
+                    "host": {"type": "string", "minLength": 1, "maxLength": 1024},
+                    "directory": {"type": "string", "minLength": 1, "maxLength": 1024},
+                    "intended_identity": {"type": "string", "minLength": 1, "maxLength": 1024},
+                    "target": {"type": "string", "minLength": 1, "maxLength": 1024},
+                    "inputs": {"type": "array", "maxItems": 16, "items": _object_schema(
+                        {"name": {"type": "string", "minLength": 1, "maxLength": 256},
+                         "acquire_from": {"type": "string", "minLength": 1, "maxLength": 1024}},
+                        required=("name", "acquire_from"))},
+                }, required=("host", "directory", "intended_identity", "target", "inputs")),
+            "procedure": _object_schema(
+                {
+                    "version": {"type": "string", "minLength": 1, "maxLength": 128},
+                    "steps": {"type": "array", "minItems": 1, "maxItems": 64, "items": _object_schema(
+                        {
+                            "step_id": {"type": "string", "minLength": 1, "maxLength": 128},
+                            "instruction": {"type": "string", "minLength": 1, "maxLength": 4096},
+                            "expected_result": {"type": "string", "minLength": 1, "maxLength": 4096},
+                            "preconditions": {"type": "array", "maxItems": 32,
+                                              "items": {"type": "string", "maxLength": 1024}},
+                            "verification": {"type": "string", "minLength": 1, "maxLength": 4096},
+                            "partial_progress": {"type": "string", "minLength": 1, "maxLength": 4096},
+                            "recovery": {"type": "string", "minLength": 1, "maxLength": 4096},
+                        }, required=("step_id", "instruction", "expected_result", "preconditions",
+                                     "verification", "partial_progress", "recovery"))},
+                }, required=("version", "steps")),
+            "blocker": _object_schema(
+                {
+                    "condition": {"type": "string", "minLength": 1, "maxLength": 2048},
+                    "checked_at": {"type": "string", "format": "date-time"},
+                    "fresh_until": {"type": "string", "format": "date-time"},
+                    "source_revisions": {"type": "array", "maxItems": 32, "items": _object_schema(
+                        {"source": {"type": "string", "minLength": 1, "maxLength": 1024},
+                         "revision": {"type": "string", "minLength": 1, "maxLength": 512}},
+                        required=("source", "revision"))},
+                }, required=("condition", "checked_at", "fresh_until", "source_revisions")),
+        }, required=("schema", "kind", "required_outcome", "reason", "execution", "procedure", "blocker"))
+    dependant = _object_schema(
+        {"work_item_id": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+         "session_id": {"type": "string", "minLength": 1, "maxLength": 256},
+         "runtime_id": {"type": "string", "minLength": 1, "maxLength": 256}},
+        required=("work_item_id", "session_id"))
+    dependant_record = _object_schema(
+        {**dependant["properties"], "runtime_id": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+         "work_revision": {"type": "string"},
+         "current_work_revision": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+         "source_changed": {"type": "boolean"}, "state": {"enum": ["active", "withdrawn"]},
+         "attached_at": {"type": "string", "format": "date-time"},
+         "withdrawn_at": {"anyOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]}},
+        required=("work_item_id", "session_id", "runtime_id", "work_revision", "current_work_revision",
+                  "source_changed", "state", "attached_at", "withdrawn_at"), additional_properties=False)
+    snapshot = _object_schema(
+        {"request_id": request_id, "revision": revision,
+         "state": {"enum": ["open", "reported-performed", "verifying", "resolved", "declined", "withdrawn", "superseded"]},
+         "freshness": {"enum": ["current", "needs-refresh", "unknown"]}, "packet": packet,
+         "dependants": {"type": "array", "items": dependant_record},
+         "created_at": {"type": "string", "format": "date-time"},
+         "updated_at": {"type": "string", "format": "date-time"}},
+        required=("request_id", "revision", "state", "freshness", "packet", "dependants", "created_at", "updated_at"))
+    mutation = _object_schema({"request_id": request_id, "revision": revision, "replayed": {"type": "boolean"}},
+                              required=("request_id", "revision", "replayed"))
+    event = _object_schema(
+        {"request_id": request_id, "revision": revision, "action": {"type": "string"},
+         "actor": {"type": "string"}, "details": {"type": "object"},
+         "recorded_at": {"type": "string", "format": "date-time"}},
+        required=("request_id", "revision", "action", "actor", "details", "recorded_at"))
+    return (
+        WorkOperationContract("work.request.publish-v1",
+            _object_schema({"request_id": request_id, "packet": packet,
+                            "dependants": {"type": "array", "minItems": 1, "maxItems": 128, "items": dependant},
+                            "idempotency_key": idem_key},
+                           required=("request_id", "packet", "dependants", "idempotency_key")),
+            mutation, "work:evidence", "write", "not-allowed", required_remote_schema_version=28),
+        WorkOperationContract("work.request.get-v1",
+            _object_schema({"request_id": request_id}, required=("request_id",)),
+            snapshot, "work:read", "read", "not-allowed", required_remote_schema_version=28),
+        WorkOperationContract("work.request.list-v1",
+            _object_schema({"limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                            "after_request_id": request_id,
+                            "state": {"enum": ["open", "reported-performed", "verifying", "resolved", "declined", "withdrawn", "superseded"]}},
+                           required=("limit",)),
+            _object_schema({"requests": {"type": "array", "items": snapshot},
+                            "next_after_request_id": {"anyOf": [request_id, {"type": "null"}]}},
+                           required=("requests", "next_after_request_id")),
+            "work:read", "read", "not-allowed", required_remote_schema_version=28),
+        WorkOperationContract("work.request.revise-v1",
+            _object_schema({"request_id": request_id, "expected_revision": revision,
+                            "packet": packet, "idempotency_key": idem_key},
+                           required=("request_id", "expected_revision", "packet", "idempotency_key")),
+            mutation, "work:evidence", "write", "not-allowed", required_remote_schema_version=28),
+        WorkOperationContract("work.request.dependent-add-v1",
+            _object_schema({"request_id": request_id, "expected_revision": revision,
+                            "dependant": dependant, "idempotency_key": idem_key},
+                           required=("request_id", "expected_revision", "dependant", "idempotency_key")),
+            mutation, "work:evidence", "write", "not-allowed", required_remote_schema_version=28),
+        WorkOperationContract("work.request.dependent-withdraw-v1",
+            _object_schema({"request_id": request_id, "expected_revision": revision,
+                            "work_item_id": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+                            "session_id": {"type": "string", "minLength": 1, "maxLength": 256},
+                            "idempotency_key": idem_key},
+                           required=("request_id", "expected_revision", "work_item_id", "session_id", "idempotency_key")),
+            mutation, "work:evidence", "write", "not-allowed", required_remote_schema_version=28),
+        WorkOperationContract("work.request.events-v1",
+            _object_schema({"request_id": request_id, "after_revision": {"type": "integer", "minimum": 0,
+                                                                            "maximum": 2147483647},
+                            "limit": {"type": "integer", "minimum": 1, "maximum": 100}},
+                           required=("request_id", "after_revision", "limit")),
+            _object_schema({"request_id": request_id, "events": {"type": "array", "items": event},
+                            "next_after_revision": {"type": "integer", "minimum": 0, "maximum": 2147483647}},
+                           required=("request_id", "events", "next_after_revision")),
+            "work:read", "read", "not-allowed", required_remote_schema_version=28),
+        WorkOperationContract("work.request.progress-v1",
+            _object_schema({"request_id": request_id, "expected_revision": revision,
+                            "work_item_id": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+                            "session_id": {"type": "string", "minLength": 1, "maxLength": 256},
+                            "step_id": {"type": "string", "minLength": 1, "maxLength": 128},
+                            "status": {"enum": ["in-progress", "completed", "blocked", "uncertain"]},
+                            "note": {"type": "string", "minLength": 1, "maxLength": 2048},
+                            "idempotency_key": idem_key},
+                           required=("request_id", "expected_revision", "work_item_id", "session_id", "step_id",
+                                     "status", "note", "idempotency_key")),
+            mutation, "work:evidence", "write", "not-allowed", required_remote_schema_version=28),
+        WorkOperationContract("work.request.report-performed-v1",
+            _object_schema({"request_id": request_id, "expected_revision": revision,
+                            "outcome": {"enum": ["performed", "partial", "uncertain"]},
+                            "note": {"type": "string", "minLength": 1, "maxLength": 2048},
+                            "idempotency_key": idem_key},
+                           required=("request_id", "expected_revision", "outcome", "note", "idempotency_key")),
+            mutation, "work:evidence", "write", "not-allowed", required_remote_schema_version=28),
+        WorkOperationContract("work.request.attest-v1",
+            _object_schema({"request_id": request_id, "expected_revision": revision,
+                            "statement": {"type": "string", "minLength": 1, "maxLength": 2048},
+                            "performed_at": {"type": "string", "format": "date-time"},
+                            "idempotency_key": idem_key},
+                           required=("request_id", "expected_revision", "statement", "performed_at", "idempotency_key")),
+            mutation, "work:approve", "write", "not-allowed", required_remote_schema_version=28),
+        WorkOperationContract("work.request.decline-v1",
+            _object_schema({"request_id": request_id, "expected_revision": revision,
+                            "reason": {"type": "string", "minLength": 1, "maxLength": 2048},
+                            "idempotency_key": idem_key},
+                           required=("request_id", "expected_revision", "reason", "idempotency_key")),
+            mutation, "work:approve", "write", "not-allowed", required_remote_schema_version=28),
+        WorkOperationContract("work.request.supersede-v1",
+            _object_schema({"request_id": request_id, "expected_revision": revision,
+                            "replacement_request_id": request_id, "packet": packet,
+                            "idempotency_key": idem_key},
+                           required=("request_id", "expected_revision", "replacement_request_id", "packet",
+                                     "idempotency_key")),
+            mutation, "work:evidence", "write", "not-allowed", required_remote_schema_version=28),
+    )
+
+
+WORK_OPERATION_CONTRACTS += _operator_request_operation_contracts()
+
+
+# --------------------------------------------------------------------------
 # Run resolution facts and structured approvals (schema 26).
 #
 # work.run.resolve-v2 is resolve-v1's binding plus the owner-side facts an
@@ -3248,7 +3421,7 @@ def _operation_rejected(error_type: type[Exception], error: ApplicationRejection
 
 
 def catalog_operation_specs(
-    *, resource_schema_available: bool
+    *, resource_schema_available: bool, remote_schema_version: int | None = None
 ) -> tuple[dict[str, Any], ...]:
     """Return fresh data-only Vuoro definitions in owner-declared order."""
 
@@ -3275,6 +3448,7 @@ def catalog_operation_specs(
         )
         for contract in WORK_OPERATION_CONTRACTS
         if resource_schema_available or contract.name not in _RESOURCE_OPERATIONS
+        if remote_schema_version is None or contract.required_remote_schema_version <= remote_schema_version
     )
 
 
@@ -3318,7 +3492,8 @@ def register_work_catalog(
     resource_kind_registered = False
     contracts = {contract.name: contract for contract in WORK_OPERATION_CONTRACTS}
     for raw_spec in catalog_operation_specs(
-        resource_schema_available=resource_schema_available
+        resource_schema_available=resource_schema_available,
+        remote_schema_version=getattr(application.store, "remote_schema_version", None) or 0,
     ):
         operation = raw_spec["name"]
         contract = contracts[operation]

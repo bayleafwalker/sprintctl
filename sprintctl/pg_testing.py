@@ -21,6 +21,10 @@ TEST_ROLE_PREFIX = "sprintctl_test_"
 TEST_DATABASE_PREFIX = "sprintctl_test_"
 DISPOSABLE_DATABASE_COMMENT = "sprintctl:disposable-integration-test"
 REPO_TABLES = (
+    # Schema 28: request event and dependant history before the request row.
+    "operator_request_event",
+    "operator_request_dependant",
+    "operator_request",
     # Schema 27: owner delegation rows restrict both their run and creator.
     "work_run_delegation",
     # Schema 26 (approvals): append-only, RESTRICT on run; before run.

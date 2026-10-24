@@ -94,7 +94,7 @@ PostgreSQL schema24 adds only
 Its existing name is admitted only with the exact table, method, key, opclass,
 predicate and ready/valid/nonunique shape. A collision refuses. Migration is
 explicit and transactional; normal startup and v3 reads never install or repair
-it. The v3 exporter checks for exactly one schema-version row equal to 24, 25, 26, or 27
+it. The v3 exporter checks for exactly one schema-version row equal to 24, 25, 26, 27, or 28
 and a healthy index. This operation-level check does not widen native runtime
 admission: the running owner must also satisfy the exact compatibility policy in
 [pg_migrations.py](../../sprintctl/pg_migrations.py). The exporter guard is in
@@ -106,7 +106,7 @@ schema 23 runtime refused the migrated database. The rollback procedure for that
 original transition removes only this index and restores schema 23 before starting
 the old runtime, after verifying other schema/data are unchanged. It applies only
 when no later migrations are present; it is not a rollback procedure for schemas 25
-through 27. No automatic schema downgrade is provided. Source compatibility does
+through 28. No automatic schema downgrade is provided. Source compatibility does
 not establish a deployed runtime's version or qualification.
 
 Qualification lives in `tests/pg/test_effect_verification_export.py` and

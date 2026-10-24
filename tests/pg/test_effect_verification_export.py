@@ -9,7 +9,7 @@ import uuid
 import jsonschema
 import pytest
 
-from sprintctl import pg, effect_verification
+from sprintctl import pg, effect_verification, pg_migrations
 from sprintctl.application import ApplicationRejection
 from sprintctl.effect_verification_export import RESULT_SCHEMA_V3
 from tests.pg._shared import PG_MARKS, _PG_URL, psycopg, dict_row
@@ -232,5 +232,5 @@ def test_v3_refuses_schema23_even_when_exact_index_was_left_in_place(store):
         refused(lambda: export(store, intent), "proposal-verification-index-unavailable")
     finally:
         with store.conn.cursor() as cur:
-            cur.execute("UPDATE schema_version SET version=27")
+            cur.execute("UPDATE schema_version SET version=%s", (pg_migrations.CURRENT_SCHEMA_VERSION,))
         store.conn.commit()
