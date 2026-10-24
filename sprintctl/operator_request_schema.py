@@ -7,7 +7,6 @@ from typing import Any
 
 from .pg_migrations import RemoteSchemaMigrationError
 
-
 TABLES = ("operator_request", "operator_request_dependant", "operator_request_event")
 INDEXES = (
     "operator_request_pkey",
@@ -169,14 +168,27 @@ def inspect_catalog(cur: Any) -> dict[str, Any]:
                             for name, definition in _CONSTRAINTS.items()}
 
     cur.execute(
-        "SELECT c.relname,pg_get_indexdef(c.oid) AS indexdef FROM pg_class c "
+        "SELECT c.relname,quote_ident(n.nspname) AS schema_name,"
+        "pg_get_indexdef(c.oid) AS indexdef FROM pg_class c "
         "JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=current_schema() "
         "AND c.relkind='i' AND c.oid IN (SELECT i.indexrelid FROM pg_index i "
         "JOIN pg_class t ON t.oid=i.indrelid WHERE t.relname=ANY(%s)) ORDER BY c.relname",
         (list(TABLES),),
     )
-    actual_indexes = {row["relname"]: row["indexdef"] for row in cur.fetchall()}
-    expected_indexes = _INDEX_DEFINITIONS
+    index_rows = cur.fetchall()
+    actual_indexes = {row["relname"]: row["indexdef"] for row in index_rows}
+    index_schemas = {row["relname"]: row["schema_name"] for row in index_rows}
+    expected_indexes = {}
+    for name, definition in _INDEX_DEFINITIONS.items():
+        table_name = definition.split(" ON ", 1)[1].split(" USING ", 1)[0]
+        schema_name = index_schemas.get(name)
+        expected_indexes[name] = (
+            definition.replace(
+                f" ON {table_name} ", f" ON {schema_name}.{table_name} ", 1
+            )
+            if schema_name is not None
+            else definition
+        )
     actual_description = {
         "relations": sorted(actual_relations),
         "columns": actual_columns,
