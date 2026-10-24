@@ -239,29 +239,51 @@ def run_brief(run_id, item_id, checkpoint, cursor, after_note_id, after_chain_se
 
 @run.command("collect")
 @click.option("--json", "pages", type=click.File("rb"), required=True,
-              help="Offline JSON array of explicitly captured page envelopes")
+              help="Offline envelope array: run_id, item_id, limit, cursor, checkpoint, after_note_id, after_chain_seq, observed_at, response")
 @click.option("--page-budget", type=click.IntRange(1, 64), default=None,
               help="Finite collection budget, at most 64 pages")
 @click.option("--output", type=click.Path(path_type=str), default="-", show_default=True,
               help="Collection JSON output path, - for stdout")
 def run_collect(pages, page_budget, output) -> None:
     """Package supplied continuation pages offline; no owner call is made."""
-    from ..continuation_collection import MAX_COLLECTION_BYTES, CollectionError, create_collection
+    from ..continuation_collection import MAX_COLLECTION_BYTES, create_collection
 
     raw = pages.read(MAX_COLLECTION_BYTES + 1)
     if len(raw) > MAX_COLLECTION_BYTES:
-        raise click.ClickException("captured page input exceeds 8 MiB")
+        raise click.ClickException("captured page input exceeds 2 MiB")
     try:
-        envelopes = json.loads(raw)
-        collection = create_collection(envelopes, page_budget=page_budget)
-    except (ValueError, UnicodeDecodeError) as error:
+        collection = create_collection(raw, page_budget=page_budget)
+    except (ValueError, UnicodeDecodeError, RecursionError) as error:
         raise click.ClickException(str(error)) from error
-    rendered = json.dumps(collection, indent=2, ensure_ascii=False) + "\n"
+    from ..result_packet import canonical
+    rendered = canonical(collection).decode("utf-8") + "\n"
     if output == "-":
         click.echo(rendered, nl=False)
     else:
-        with open(output, "w", encoding="utf-8") as stream:
+        try:
+            stream = open(output, "x", encoding="utf-8")
+        except FileExistsError as error:
+            raise click.ClickException("output exists; choose a new path") from error
+        with stream:
             stream.write(rendered)
+
+
+@run.command("collect-inspect")
+@click.option("--json", "collection_file", type=click.File("rb"), required=True,
+              help="Offline continuation collection JSON file")
+def run_collect_inspect(collection_file) -> None:
+    """Verify collection/page digests offline; authenticity stays unknown."""
+    from ..continuation_collection import MAX_COLLECTION_BYTES, inspect_collection
+
+    raw = collection_file.read(MAX_COLLECTION_BYTES + 1)
+    if len(raw) > MAX_COLLECTION_BYTES:
+        raise click.ClickException("continuation collection exceeds 2 MiB")
+    try:
+        report = inspect_collection(raw)
+    except (ValueError, UnicodeDecodeError, RecursionError) as error:
+        raise click.ClickException(str(error)) from error
+    from ..result_packet import canonical
+    click.echo(canonical(report).decode("utf-8"))
 
 
 @run.command("diagnose")

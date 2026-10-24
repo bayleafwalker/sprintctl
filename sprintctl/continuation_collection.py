@@ -10,11 +10,11 @@ import hashlib
 import json
 from typing import Any
 
-from .result_packet import PacketError, canonical
+from .result_packet import MAX_BYTES, PacketError, canonical, decode
 
 SCHEMA = "sprintctl-portable-continuation-collection/v1"
 MAX_PAGES = 64
-MAX_COLLECTION_BYTES = 8 * 1024 * 1024
+MAX_COLLECTION_BYTES = MAX_BYTES
 class CollectionError(ValueError):
     """Invalid offline continuation collection input."""
 
@@ -53,14 +53,28 @@ def _validate_response(response: Any) -> None:
         raise CollectionError("unsupported owner continuation response version")
 
 
-def _validate_request_basis(cursor: Any, checkpoint: Any) -> None:
+def _validate_request_basis(envelope: dict[str, Any]) -> None:
     Draft202012Validator, ValidationError, contract = _contract()
-    for name, value in (("cursor", cursor), ("checkpoint", checkpoint)):
+    for name in ("run_id", "item_id", "limit", "cursor", "checkpoint"):
+        value = envelope[name]
         if value is None:
+            if name in {"run_id", "item_id", "limit"}:
+                raise CollectionError(f"{name} is required in every request envelope")
             continue
         schema = contract.input_schema["properties"].get(name)
         try:
             Draft202012Validator(schema).validate(value)
+        except ValidationError as exc:
+            raise CollectionError(f"{name} does not match the owner request schema") from exc
+
+
+def _validate_request_basis_values(after_note_id: Any, after_chain_seq: Any) -> None:
+    Draft202012Validator, ValidationError, contract = _contract()
+    for name, value in (("after_note_id", after_note_id), ("after_chain_seq", after_chain_seq)):
+        if value is None:
+            continue
+        try:
+            Draft202012Validator(contract.input_schema["properties"][name]).validate(value)
         except ValidationError as exc:
             raise CollectionError(f"{name} does not match the owner request schema") from exc
 
@@ -79,10 +93,12 @@ def _credential_check(value: Any) -> None:
 
 def _bounded_copy(value: Any) -> Any:
     try:
+        if isinstance(value, bytes):
+            return decode(value)
         encoded = canonical(value)
         if len(encoded) > MAX_COLLECTION_BYTES:
-            raise CollectionError("collection input exceeds 8 MiB")
-        copied = json.loads(encoded)
+            raise CollectionError("collection input exceeds 2 MiB")
+        copied = decode(encoded)
     except (PacketError, RecursionError, ValueError) as exc:
         if isinstance(exc, CollectionError):
             raise
@@ -101,7 +117,7 @@ def _bounded_copy(value: Any) -> Any:
 
 
 def create_collection(envelopes: Any, *, page_budget: int | None = None) -> dict[str, Any]:
-    """Package supplied {request_cursor, checkpoint, observed_at, response} pages."""
+    """Package supplied request-basis and response envelopes, without owner reads."""
     envelopes = _bounded_copy(envelopes)
     if not isinstance(envelopes, list) or not envelopes or len(envelopes) > MAX_PAGES:
         raise CollectionError("pages must be a nonempty list of at most 64 envelopes")
@@ -111,26 +127,51 @@ def create_collection(envelopes: Any, *, page_budget: int | None = None) -> dict
     pages = []
     identity = None
     prior_returned = None
+    prior_checkpoint = None
     prior_snapshot = None
     seen_cursors = set()
+    seen_note_cursors = set()
+    seen_evidence_cursors = set()
     warnings = []
     for ordinal, envelope in enumerate(envelopes, 1):
         if not isinstance(envelope, dict) or set(envelope) != {
-            "request_cursor", "checkpoint", "observed_at", "response"
+            "run_id", "item_id", "limit", "cursor", "checkpoint",
+            "after_note_id", "after_chain_seq", "observed_at", "response"
         }:
-            raise CollectionError("each page requires request_cursor, checkpoint, observed_at, and response")
-        request_cursor = envelope["request_cursor"]
+            raise CollectionError("each page requires run_id, item_id, limit, cursor, checkpoint, "
+                                  "after_note_id, after_chain_seq, observed_at, and response")
+        request_cursor = envelope["cursor"]
         checkpoint = envelope["checkpoint"]
-        _validate_request_basis(request_cursor, checkpoint)
+        after_note_id = envelope["after_note_id"]
+        after_chain_seq = envelope["after_chain_seq"]
+        _validate_request_basis(envelope)
+        _validate_request_basis_values(after_note_id, after_chain_seq)
         if ordinal == 1 and request_cursor is not None:
-            raise CollectionError("first page request_cursor must be null (explicit first-page marker)")
-        if ordinal > 1 and (prior_returned is None or not _cursor_equal(request_cursor, prior_returned)):
-            raise CollectionError("each page request_cursor must equal the exact prior returned cursor")
+            raise CollectionError("first page cursor must be null (explicit first-page marker)")
+        if ordinal == 1 and (after_note_id is not None or after_chain_seq is not None):
+            raise CollectionError("first page predecessor cursors must be null")
+        if ordinal > 1:
+            if prior_returned is None or not _cursor_equal(request_cursor, prior_returned["references"]):
+                raise CollectionError("each page cursor must equal the exact prior returned reference cursor")
+            if after_note_id != prior_returned["predecessor_notes"]:
+                raise CollectionError("after_note_id must equal the prior returned predecessor note cursor")
+            if after_chain_seq != prior_returned["predecessor_evidence"]:
+                raise CollectionError("after_chain_seq must equal the prior returned predecessor evidence cursor")
+            if not _cursor_equal(checkpoint, prior_checkpoint):
+                raise CollectionError("checkpoint basis must remain identical across pages")
         if request_cursor is not None:
             cursor_key = canonical(request_cursor)
             if cursor_key in seen_cursors:
                 raise CollectionError("repeated request cursor; pages cannot form a continuation chain")
             seen_cursors.add(cursor_key)
+        for current, seen, name in (
+            (after_note_id, seen_note_cursors, "after_note_id"),
+            (after_chain_seq, seen_evidence_cursors, "after_chain_seq"),
+        ):
+            if current is not None:
+                if current in seen:
+                    raise CollectionError(f"repeated {name}; pages cannot form a continuation chain")
+                seen.add(current)
         _timestamp(envelope["observed_at"])
         response = envelope["response"]
         _validate_response(response)
@@ -142,13 +183,20 @@ def create_collection(envelopes: Any, *, page_budget: int | None = None) -> dict
             identity = page_identity
         elif identity != page_identity:
             raise CollectionError("all pages must identify the same repository, run, and item")
+        if envelope["run_id"] != page_identity[1] or envelope["item_id"] != page_identity[2]:
+            raise CollectionError("request run_id, item_id, and limit must match the owner response schema and bounds")
         returned = delta["next_reference_cursor"]
         snapshot_matches_request = (request_cursor is None or
                                     request_cursor["expected_snapshot_digest"] == delta["snapshot_digest"])
         if not snapshot_matches_request:
             warnings.append(f"page {ordinal} response snapshot differs from its request cursor basis")
         pages.append({
-            "ordinal": ordinal, "request_cursor": request_cursor,
+            "ordinal": ordinal, "request_inputs": {
+                "run_id": envelope["run_id"], "item_id": envelope["item_id"],
+                "limit": envelope["limit"],
+                "cursor": request_cursor, "checkpoint": checkpoint,
+                "after_note_id": after_note_id, "after_chain_seq": after_chain_seq,
+            },
             "checkpoint_basis": checkpoint,
             "observed_at": envelope["observed_at"],
             "clock_provenance": "caller-reported; unverified",
@@ -165,7 +213,10 @@ def create_collection(envelopes: Any, *, page_budget: int | None = None) -> dict
             "integrity": {"domain": "canonical-json/v1",
                            "sha256": "sha256:" + hashlib.sha256(canonical(response)).hexdigest()},
         })
-        prior_returned = returned
+        prior_returned = {"references": returned,
+                          "predecessor_notes": delta["next_after_note_id"],
+                          "predecessor_evidence": delta["next_after_chain_seq"]}
+        prior_checkpoint = checkpoint
         if prior_snapshot is not None and prior_snapshot != delta["snapshot_digest"]:
             warnings.append(f"page {ordinal} has a different owner snapshot digest from the prior page")
         prior_snapshot = delta["snapshot_digest"]
@@ -178,11 +229,13 @@ def create_collection(envelopes: Any, *, page_budget: int | None = None) -> dict
         ("page-budget-exhausted" if len(pages) >= budget else "supplied-pages-ended-with-cursors-remaining")
         if cursors_remain else "owner-cursors-null-and-decision-page-complete"
     )
+    incomplete_status = ("partial-due-to-budget" if len(pages) >= budget
+                         else "partial-supplied-pages-ended-early")
     complete = {
-        "references": "complete" if delta["next_reference_cursor"] is None else "partial-due-to-budget",
-        "predecessor_notes": "complete" if delta["next_after_note_id"] is None else "partial-due-to-budget",
-        "predecessor_evidence": "complete" if delta["next_after_chain_seq"] is None else "partial-due-to-budget",
-        "decision_history": "complete" if delta["decision_page_complete"] else "partial-due-to-budget",
+        "references": "complete" if delta["next_reference_cursor"] is None else incomplete_status,
+        "predecessor_notes": "complete" if delta["next_after_note_id"] is None else incomplete_status,
+        "predecessor_evidence": "complete" if delta["next_after_chain_seq"] is None else incomplete_status,
+        "decision_history": "complete" if delta["decision_page_complete"] else incomplete_status,
     }
     body = {"schema": SCHEMA, "serializer_version": 1, "page_budget": budget,
             "page_count": len(pages), "identity": {"repo_id": identity[0], "run_id": identity[1], "item_id": identity[2]},
@@ -202,6 +255,56 @@ def create_collection(envelopes: Any, *, page_budget: int | None = None) -> dict
     except PacketError as exc:
         raise CollectionError(str(exc)) from exc
     if len(encoded) > MAX_COLLECTION_BYTES:
-        raise CollectionError("collection exceeds 8 MiB")
-    return {**body, "integrity": {"domain": "canonical-json/v1",
-            "sha256": "sha256:" + hashlib.sha256(encoded).hexdigest()}}
+        raise CollectionError("collection exceeds 2 MiB")
+    collection = {**body, "integrity": {"domain": "canonical-json/v1",
+                  "sha256": "sha256:" + hashlib.sha256(encoded).hexdigest()}}
+    if len(canonical(collection)) > MAX_COLLECTION_BYTES:
+        raise CollectionError("collection including integrity record exceeds 2 MiB")
+    return collection
+
+
+def inspect_collection(value: bytes | dict[str, Any]) -> dict[str, Any]:
+    """Verify canonical collection and page digests without contacting sources."""
+    try:
+        collection = decode(value) if isinstance(value, bytes) else _bounded_copy(value)
+    except (PacketError, RecursionError, CollectionError) as exc:
+        raise CollectionError("invalid offline collection JSON") from exc
+    if not isinstance(collection, dict) or collection.get("schema") != SCHEMA:
+        raise CollectionError("unsupported continuation collection schema")
+    integrity = collection.get("integrity")
+    pages = collection.get("pages")
+    if (not isinstance(integrity, dict) or set(integrity) != {"domain", "sha256"}
+            or integrity.get("domain") != "canonical-json/v1"
+            or not isinstance(pages, list) or len(pages) > MAX_PAGES):
+        raise CollectionError("malformed continuation collection integrity or pages")
+    try:
+        from .contracts import reject_credential_shaped_values
+        reject_credential_shaped_values(collection, "continuation collection")
+    except ValueError as exc:
+        raise CollectionError("credential-shaped values are not supported in collections") from exc
+    body = {key: child for key, child in collection.items() if key != "integrity"}
+    computed = "sha256:" + hashlib.sha256(canonical(body)).hexdigest()
+    page_reports = []
+    for ordinal, page in enumerate(pages, 1):
+        recorded = page.get("integrity") if isinstance(page, dict) else None
+        response = page.get("response") if isinstance(page, dict) else None
+        if not isinstance(recorded, dict) or not isinstance(response, dict):
+            raise CollectionError(f"malformed page {ordinal} integrity record")
+        page_digest = "sha256:" + hashlib.sha256(canonical(response)).hexdigest()
+        page_reports.append({"ordinal": page.get("ordinal"),
+                             "self_consistent": recorded.get("domain") == "canonical-json/v1"
+                             and recorded.get("sha256") == page_digest,
+                             "computed_sha256": page_digest,
+                             "recorded_sha256": recorded.get("sha256")})
+    return {"schema": "sprintctl-continuation-collection-inspection/v1",
+            "integrity": {"self_consistent": computed == integrity.get("sha256"),
+                          "computed_sha256": computed,
+                          "recorded_sha256": integrity.get("sha256"),
+                          "domain": "canonical-json/v1"},
+            "page_integrity": page_reports,
+            "authenticity": "unknown", "currentness": "unknown", "authority": "unknown",
+            "owner_or_source_access": "none; offline inspection",
+            "page_count": len(pages), "identity": collection.get("identity"),
+            "stop_reason": collection.get("stop_reason"),
+            "completeness": collection.get("completeness"),
+            "record_counts": collection.get("record_counts")}
