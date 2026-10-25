@@ -242,8 +242,14 @@ def cleanup_test_repositories(conn: Any, repo_ids: Iterable[str]) -> dict[str, A
                 "run_predecessor",
             )
             for table in immutable_tables:
+                cur.execute("SELECT to_regclass(%s) AS relation", (table,))
+                if cur.fetchone()["relation"] is None:
+                    continue
                 cur.execute(f"ALTER TABLE {table} DISABLE TRIGGER USER")
             for table in REPO_TABLES:
+                cur.execute("SELECT to_regclass(%s) AS relation", (table,))
+                if cur.fetchone()["relation"] is None:
+                    continue
                 cur.execute(
                     f"DELETE FROM {table} WHERE repo_id = ANY(%s)",
                     (scopes,),
@@ -253,8 +259,14 @@ def cleanup_test_repositories(conn: Any, repo_ids: Iterable[str]) -> dict[str, A
             # triggers can be re-enabled.
             cur.execute("SET CONSTRAINTS ALL IMMEDIATE")
             for table in immutable_tables:
+                cur.execute("SELECT to_regclass(%s) AS relation", (table,))
+                if cur.fetchone()["relation"] is None:
+                    continue
                 cur.execute(f"ALTER TABLE {table} ENABLE TRIGGER USER")
             for table in REPO_TABLES:
+                cur.execute("SELECT to_regclass(%s) AS relation", (table,))
+                if cur.fetchone()["relation"] is None:
+                    continue
                 cur.execute(
                     f"SELECT count(*) AS count FROM {table} WHERE repo_id = ANY(%s)",
                     (scopes,),

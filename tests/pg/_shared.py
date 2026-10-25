@@ -120,6 +120,10 @@ def drop_schema26(cur) -> None:
     # Remove newer additive layers first when reconstructing a schema-25
     # fixture for upgrade coverage.
     cur.execute("DROP TABLE IF EXISTS operator_request_event, operator_request_dependant, operator_request")
+    # The schema-28 append-only trigger function is not owned by the tables
+    # after they are dropped. Remove it when reconstructing an older schema so
+    # the forward migration tests exercise a clean historical catalog.
+    cur.execute("DROP FUNCTION IF EXISTS sprintctl_operator_request_event_append_only()")
     cur.execute("DROP TABLE IF EXISTS work_run_delegation")
     cur.execute("DROP FUNCTION IF EXISTS sprintctl_run_delegation_guard()")
     cur.execute("DROP TRIGGER sprintctl_run_binding_immutable ON run")

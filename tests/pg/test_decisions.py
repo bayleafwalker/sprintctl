@@ -335,6 +335,9 @@ class TestSchema14Fold:
                 patch.setattr(pg, "_apply_schema_version_23", lambda cur: None)
                 patch.setattr(pg, "_apply_schema_version_25", lambda cur: None)
                 patch.setattr(pg, "_apply_schema_version_26", lambda cur: None)
+                # This fixture intentionally omits newer schema owners; the
+                # real schema-28 install is exercised by its dedicated PG gate.
+                patch.setattr(pg, "_apply_schema_version_28", lambda cur: None)
                 # This isolated legacy fixture omits the agent-inbox owner
                 # tables that schema 27's delegation FK requires.
                 from sprintctl import delegation_schema
