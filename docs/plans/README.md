@@ -33,3 +33,9 @@ frontmatter or a body `Status:` line; execution status lives in sprintctl):
 
 Historical phase snapshots remain in `docs/sprint-snapshots/` only as archived
 records. They are not the authoritative backlog source.
+
+## Portable agent workflow planning (2026-10-24)
+
+The [portable workflow owner plan](2026-10-24-portable-agent-workflows.md) records the investigated
+next work, dependencies and acceptance gates for repeatable long-running agent
+sessions. It is a proposal for implementation, not evidence of a deployed capability.
