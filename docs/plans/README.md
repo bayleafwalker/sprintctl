@@ -34,6 +34,15 @@ frontmatter or a body `Status:` line; execution status lives in sprintctl):
 Historical phase snapshots remain in `docs/sprint-snapshots/` only as archived
 records. They are not the authoritative backlog source.
 
+## Evidence-guided completion (2026-10-25)
+
+The [owner-side work completion plan](2026-10-25-evidence-guided-completion.md)
+specifies a deterministic read-only evidence sufficiency assessment, existing
+authorized Release/Decision transitions and optional nonblocking model-backed
+follow-up proposals. It is distinct from the protected-effect
+`vuoro-reconciler`. This plan does not add a mandatory human approval gate,
+create work items, or implement a new acceptance writer.
+
 ## Portable agent workflow planning (2026-10-24)
 
 The [portable workflow owner plan](2026-10-24-portable-agent-workflows.md) records the investigated
