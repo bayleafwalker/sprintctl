@@ -63,7 +63,9 @@ SUPPORTED_BATCH_TYPES = (
 #: session notes and this many evidence items per read, each list paged by
 #: its own cursor (after_note_id, after_chain_seq).
 PREDECESSOR_CONTEXT_DEFAULT_LIMIT = 100
-PREDECESSOR_CONTEXT_MAX_LIMIT = 500
+PREDECESSOR_CONTEXT_MAX_LIMIT = 200
+PREDECESSOR_CONTEXT_MAX_RESPONSE_BYTES = 1_048_576
+SESSION_NOTE_MAX_LENGTH = 16_384
 _ADMIN_SHUTDOWN_IDEMPOTENT_OPERATIONS = frozenset(
     {
         "work.lifecycle.arbitrate",

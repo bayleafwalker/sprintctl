@@ -59,12 +59,14 @@ class TestReleaseIntegrity:
         strict floor in a coordinated owner migration. Minor 0.21.0 adds the
         served invocation handshake and offline inspection on the same schema27.
         Minor 0.22.0 adds exact evidence and bounded parking reads. Candidate
-        0.23.0 adds schema28 operator-request storage and served operations."""
+        0.23.0 adds schema28 operator-request storage and served operations.
+        Candidate 0.24.0 bounds session-note writes and predecessor-context pages
+        on the unchanged schema28."""
         from sprintctl import pg_migrations
 
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
-        assert pyproject["project"]["version"] == __version__ == "0.23.0"
+        assert pyproject["project"]["version"] == __version__ == "0.24.0"
         assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 28
         assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 28
 

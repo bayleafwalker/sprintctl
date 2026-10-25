@@ -43,6 +43,7 @@ from .application import (
 from .application_common import (
     PREDECESSOR_CONTEXT_DEFAULT_LIMIT,
     PREDECESSOR_CONTEXT_MAX_LIMIT,
+    SESSION_NOTE_MAX_LENGTH,
 )
 
 WORK_API_VERSION = "work-api/v1"
@@ -1608,7 +1609,10 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         _object_schema(
             {
                 "run_id": _RUN_ID_SCHEMA,
-                "note": {"type": "string", "minLength": 1},
+                "note": {
+                    "type": "string", "minLength": 1,
+                    "maxLength": SESSION_NOTE_MAX_LENGTH,
+                },
                 "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
             },
             required=("run_id", "note", "idempotency_key"),

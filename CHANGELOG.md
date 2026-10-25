@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.24.0 — 2026-10-25 (candidate)
+
+Same PostgreSQL schema 28 as 0.23.0; no database migration is required.
+
+### Added
+
+- Session-note writes accept at most 16,384 Unicode characters. Predecessor
+  context pages are limited to 200 entries per list and 1 MiB of compact
+  UTF-8 JSON, with independent cursors that may advance on a short page when
+  the byte budget is reached. A single historical row that cannot fit is
+  refused explicitly without truncation or cursor advancement.
+
 ## 0.23.0 — 2026-10-24 (candidate)
 
 Schema 28 is a coordinated owner/runtime cutover. This source candidate adds

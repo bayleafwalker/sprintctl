@@ -10,11 +10,17 @@ vuoro_service dispatches through.
 from __future__ import annotations
 
 import uuid
+import json
 
 import pytest
 
 from sprintctl import pg, pg_migrations
 from sprintctl.application import ApplicationRejection
+from sprintctl.application_common import (
+    PREDECESSOR_CONTEXT_MAX_LIMIT,
+    PREDECESSOR_CONTEXT_MAX_RESPONSE_BYTES,
+    SESSION_NOTE_MAX_LENGTH,
+)
 from sprintctl.vuoro_adapter import WORK_OPERATION_CONTRACTS
 
 from tests.pg._shared import (
@@ -64,7 +70,7 @@ def _note(app, run_id: str, note: str, *, context) -> None:
     )
 
 
-def _append(app, run_id: str, *, context) -> dict:
+def _append(app, run_id: str, *, context, provenance=None) -> dict:
     tail = app.invoke("work.evidence.tail-v1", {"run_id": run_id}, context)["item"]
     seq = 0 if tail is None else tail["chain_seq"] + 1
     item = {
@@ -77,6 +83,7 @@ def _append(app, run_id: str, *, context) -> dict:
         "validity": _validity(),
         "chain_seq": seq,
         "chain_prev_digest": None if tail is None else pg.evidence_entry_digest(tail),
+        "provenance": {} if provenance is None else provenance,
         "idempotency_key": _key(),
     }
     return app.invoke("work.evidence.append-v1", item, context)["item"]
@@ -84,6 +91,20 @@ def _append(app, run_id: str, *, context) -> dict:
 
 def _read(app, run_id: str, *, context) -> dict:
     return app.invoke(CONTEXT_OPERATION, {"run_id": run_id}, context)
+
+
+def _sibling_connection():
+    conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+    assert_disposable_connection(conn)
+    conn.commit()
+    return conn
+
+
+@pytest.fixture(autouse=True)
+def _enable_sibling_read_snapshot(store):
+    # repeatable_read_snapshot must use a fresh qualified disposable URL;
+    # psycopg intentionally omits passwords from conn.info.dsn.
+    store.connection_factory = _sibling_connection
 
 
 def _refused(call) -> ApplicationRejection:
@@ -314,12 +335,10 @@ class TestPredecessorContext:
         assert len(whole["session_notes"]) == 3 and len(whole["evidence"]) == 3
 
     @pytest.mark.parametrize("arguments", [
-        {"limit": 0}, {"limit": 501}, {"after_note_id": -1}, {"after_chain_seq": -1},
+        {"limit": 0}, {"limit": 201}, {"after_note_id": -1}, {"after_chain_seq": -1},
     ])
     def test_out_of_range_paging_is_refused(self, store, arguments):
-        from sprintctl.application_common import PREDECESSOR_CONTEXT_MAX_LIMIT
-
-        assert PREDECESSOR_CONTEXT_MAX_LIMIT == 500
+        assert PREDECESSOR_CONTEXT_MAX_LIMIT == 200
         app = _app(store)
         ctx = _context(**PREDECESSOR)
         run_id = _run(app, context=ctx)["run_id"]
@@ -327,6 +346,112 @@ class TestPredecessorContext:
             lambda: app.invoke(CONTEXT_OPERATION, {"run_id": run_id, **arguments}, ctx)
         )
         assert error.code == "invalid-arguments"
+
+    def test_session_note_size_limit_is_character_based_and_refuses_before_write(self, store):
+        app = _app(store)
+        pred_ctx = _context(**PREDECESSOR)
+        predecessor = _run(app, context=pred_ctx)["run_id"]
+        accepted = "🧭" * SESSION_NOTE_MAX_LENGTH
+        _note(app, predecessor, accepted, context=pred_ctx)
+
+        error = _refused(
+            lambda: app.invoke(
+                "work.session-note.write-v1",
+                {
+                    "run_id": predecessor,
+                    "note": accepted + "x",
+                    "idempotency_key": _key(),
+                },
+                pred_ctx,
+            )
+        )
+        assert error.code == "invalid-arguments"
+        with store.conn.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) AS count FROM session_note WHERE repo_id = %s AND run_id = %s",
+                (store.repo_id, predecessor),
+            )
+            assert cur.fetchone()["count"] == 1
+
+    def test_context_pages_stay_under_byte_budget_and_keep_independent_cursors(self, store):
+        store.connection_factory = _sibling_connection
+        app = _app(store)
+        pred_ctx = _context(**PREDECESSOR)
+        predecessor = _run(app, context=pred_ctx)["run_id"]
+        note_value = "🧭" * SESSION_NOTE_MAX_LENGTH
+        for _ in range(12):
+            _note(app, predecessor, note_value, context=pred_ctx)
+        evidence = [
+            _append(app, predecessor, context=pred_ctx, provenance={"payload": "x" * 140_000})
+            for _ in range(6)
+        ]
+        succ_ctx = _context(**SUCCESSOR)
+        successor = _run(app, context=succ_ctx, predecessor_run_id=predecessor)["run_id"]
+
+        gathered_notes = []
+        gathered_evidence = []
+        after_note_id = None
+        after_chain_seq = None
+        pages = []
+        while True:
+            page = app.invoke(
+                CONTEXT_OPERATION,
+                {
+                    "run_id": successor,
+                    "limit": PREDECESSOR_CONTEXT_MAX_LIMIT,
+                    "after_note_id": after_note_id,
+                    "after_chain_seq": after_chain_seq,
+                },
+                succ_ctx,
+            )
+            encoded = json.dumps(
+                page, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            ).encode("utf-8")
+            assert len(encoded) <= PREDECESSOR_CONTEXT_MAX_RESPONSE_BYTES
+            pages.append(page)
+            gathered_notes.extend(page["session_notes"])
+            gathered_evidence.extend(page["evidence"])
+            next_note = page["next_after_note_id"]
+            next_evidence = page["next_after_chain_seq"]
+            if next_note is None and next_evidence is None:
+                break
+            if next_note is not None:
+                assert page["session_notes"]
+                assert next_note == page["session_notes"][-1]["note_id"]
+                after_note_id = next_note
+            if next_evidence is not None:
+                assert page["evidence"]
+                assert next_evidence == page["evidence"][-1]["chain_seq"]
+                after_chain_seq = next_evidence
+
+        assert len(pages) > 1
+        assert pages[0]["next_after_note_id"] is not None
+        assert pages[0]["next_after_chain_seq"] is not None
+        assert [row["note_id"] for row in gathered_notes] == sorted(
+            row["note_id"] for row in gathered_notes
+        )
+        assert [row["note"] for row in gathered_notes] == [note_value] * 12
+        assert gathered_evidence == evidence
+
+    def test_oversized_historical_note_fails_explicitly_without_advancing(self, store):
+        store.connection_factory = _sibling_connection
+        app = _app(store)
+        pred_ctx = _context(**PREDECESSOR)
+        predecessor = _run(app, context=pred_ctx)["run_id"]
+        succ_ctx = _context(**SUCCESSOR)
+        successor = _run(app, context=succ_ctx, predecessor_run_id=predecessor)["run_id"]
+        with store.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO session_note(repo_id, run_id, idempotency_key, request_digest, note) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (store.repo_id, predecessor, "historical-large-note-1", "0" * 64, "z" * 600_000),
+            )
+        store.conn.commit()
+
+        error = _refused(lambda: _read(app, successor, context=succ_ctx))
+        assert error.code == "context-item-exceeds-byte-budget"
+        assert error.http_status == 413
+        assert "z" * 64 not in str(error)
 
     def test_only_the_caller_s_own_run_can_be_read(self, store):
         app = _app(store)
