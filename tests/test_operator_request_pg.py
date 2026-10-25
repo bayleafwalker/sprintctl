@@ -13,9 +13,10 @@ from sprintctl import operator_request as contract
 from sprintctl import operator_request_pg as storage
 from sprintctl import pg
 from sprintctl.pg import PgStore
+from sprintctl.application import ApplicationRejection, WorkApplication
 from sprintctl.pg_testing import (
+    FixtureCleanup,
     assert_disposable_connection,
-    cleanup_test_repositories,
     new_test_repo_id,
 )
 
@@ -71,9 +72,10 @@ def _packet(reason: str = "The checked operator action remains outstanding.") ->
 
 
 @pytest.fixture(scope="module")
-def request_owner():
+def request_owner(request):
     connection = psycopg.connect(_PG_URL, row_factory=dict_row)
     assert_disposable_connection(connection)
+    cleanup = FixtureCleanup("operator_request_owner", request.node.nodeid)
     repo_id = new_test_repo_id("operator-request")
     store = PgStore(
         conn=connection,
@@ -89,7 +91,7 @@ def request_owner():
         yield store, item_id
     finally:
         connection.commit()
-        cleanup_test_repositories(connection, [repo_id])
+        cleanup.cleanup(connection, [repo_id])
         connection.close()
 
 
@@ -114,6 +116,100 @@ def _read(store: PgStore, request_id: str) -> dict:
         result = storage.get(cur, store, "workspace-a", request_id)
     store.conn.commit()
     return result
+
+
+def _request_context(store: PgStore, *, authorities=frozenset({"work:evidence", "work:read"}),
+                     workspace_id: str = "workspace-a", request_id: str = "request-call"):
+    return SimpleNamespace(
+        identity=SimpleNamespace(
+            principal_id="principal-a", workspace_id=workspace_id, authorities=authorities,
+        ),
+        repo_id=store.repo_id,
+        request_id=request_id,
+        basis_revision=None,
+        catalog_revision="catalog-schema28",
+        idempotency_requirement="required",
+        idempotency_key=request_id,
+        transient_credentials=None,
+    )
+
+
+def test_served_application_binds_authority_workspace_replay_and_completion(request_owner):
+    """Exercise catalog operations through the real schema-28 application path."""
+    store, item_id = request_owner
+    app = WorkApplication.postgres(store)
+    request_id = "req_01JBC3D4E5F6G7H8J9K0MNPQRS"
+    arguments = contract.publish_arguments({
+        "request_id": request_id,
+        "packet": _packet(),
+        "dependants": [{"work_item_id": item_id, "session_id": "session-a"}],
+        "idempotency_key": "application-publish-key",
+    })
+    published = app.invoke(
+        contract.OPERATION_PUBLISH, arguments,
+        _request_context(store, request_id="application-publish-call"),
+    )
+    assert published == {"request_id": request_id, "revision": 1, "replayed": False}
+    replay = app.invoke(
+        contract.OPERATION_PUBLISH, arguments,
+        _request_context(store, request_id="application-publish-retry"),
+    )
+    assert replay == {"request_id": request_id, "revision": 1, "replayed": True}
+
+    with pytest.raises(ApplicationRejection) as other_workspace:
+        app.invoke(contract.OPERATION_GET, {"request_id": request_id},
+                   _request_context(store, workspace_id="workspace-b"))
+    assert other_workspace.value.code == "not-found"
+
+    report_args = contract.report_performed_arguments({
+        "request_id": request_id,
+        "expected_revision": 1,
+        "outcome": "performed",
+        "note": "The operator reports the checked procedure was performed.",
+        "idempotency_key": "application-performed-key",
+    })
+    reported = app.invoke(
+        contract.OPERATION_REPORT_PERFORMED, report_args,
+        _request_context(store, request_id="application-report-call"),
+    )
+    assert reported["revision"] == 2
+    assert _read(store, request_id)["state"] == "reported-performed"
+
+    attest_args = contract.attest_arguments({
+        "request_id": request_id,
+        "expected_revision": 2,
+        "statement": "I verified the completed operator action.",
+        "performed_at": "2026-10-25T10:00:00Z",
+        "idempotency_key": "application-attest-key",
+    })
+    with pytest.raises(ApplicationRejection) as missing_authority:
+        app.invoke(contract.OPERATION_ATTEST, attest_args,
+                   _request_context(store, authorities=frozenset({"work:evidence"}),
+                                    request_id="application-attest-denied"))
+    assert (missing_authority.value.code, missing_authority.value.http_status) == (
+        "authority-required", 403,
+    )
+
+    resolved = app.invoke(
+        contract.OPERATION_ATTEST, attest_args,
+        _request_context(store, authorities=frozenset({"work:approve"}),
+                         request_id="application-attest-approved"),
+    )
+    snapshot = app.invoke(
+        contract.OPERATION_GET, {"request_id": request_id},
+        _request_context(store, request_id="application-get-resolved"),
+    )
+    assert resolved["revision"] == 3
+    assert snapshot["state"] == "resolved"
+    with store.conn.cursor() as cur:
+        cur.execute(
+            "SELECT action FROM operator_request_event WHERE repo_id=%s AND request_id=%s "
+            "ORDER BY revision",
+            (store.repo_id, request_id),
+        )
+        actions = [row["action"] for row in cur.fetchall()]
+    store.conn.commit()
+    assert actions == ["published", "performed-reported", "resolved-human-attestation"]
 
 
 def test_publish_is_durable_scoped_and_safe_to_retry_after_lost_response(request_owner):
