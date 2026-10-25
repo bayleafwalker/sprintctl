@@ -116,10 +116,14 @@ def store(pg_test_scope):
 
 
 def drop_schema26(cur) -> None:
-    """Remove schema 26's approval storage, for fixtures that rebuild an
-    older schema in place before migrating it forward again."""
-    # Schema 27 is the next additive layer. Remove it first when reconstructing
-    # a schema-25 fixture for upgrade coverage.
+    """Remove schema 26+ owner additions before rebuilding an older fixture."""
+    # Remove newer additive layers first when reconstructing a schema-25
+    # fixture for upgrade coverage.
+    cur.execute("DROP TABLE IF EXISTS operator_request_event, operator_request_dependant, operator_request")
+    # The schema-28 append-only trigger function is not owned by the tables
+    # after they are dropped. Remove it when reconstructing an older schema so
+    # the forward migration tests exercise a clean historical catalog.
+    cur.execute("DROP FUNCTION IF EXISTS sprintctl_operator_request_event_append_only()")
     cur.execute("DROP TABLE IF EXISTS work_run_delegation")
     cur.execute("DROP FUNCTION IF EXISTS sprintctl_run_delegation_guard()")
     cur.execute("DROP TRIGGER sprintctl_run_binding_immutable ON run")

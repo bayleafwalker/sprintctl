@@ -20,6 +20,8 @@ Start with these read surfaces:
 - `usage --context` for current work, conflicts, and a next action
 - `handoff` for working-memory snapshots, including predecessor position
 - `run brief` for a task-specific served change briefing
+- `run collect-fetch` for a bounded owner read archived as separate continuation page observations
+- `run collect` and `run collect-inspect` for offline archive creation and integrity review
 - `run diagnose` for missing continuation context and explicitly unchecked facts
 - `effect explain` for exact effect acceptance facts, receipt visibility, and missing links
 - `session resume` for a combined context bundle in local SQLite mode;
@@ -101,6 +103,10 @@ For a served run and explicit item, use `sprintctl run brief --run-id <run-id>
 --item-id <id> --checkpoint checkpoint.json` to inspect changes against a saved owner checkpoint. It performs
 one read and leaves missing observations unknown; see the
 [resume guide](docs/guides/resume-work.md) for checkpoint and pagination handling.
+Use `sprintctl run collect-fetch --run-id <run-id> --item-id <id>` when an
+authorized owner read should collect more than one page. It preserves each
+response separately in the bounded continuation archive; it does not combine
+pages into an atomic snapshot or verify cited source bytes.
 
 ## Docs Map
 

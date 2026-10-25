@@ -7,20 +7,24 @@ name and server-side comment explicitly identify it as disposable.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import json
 import os
-from pathlib import Path
 import re
-from typing import Any, Iterable
+from collections.abc import Iterable
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
-
 
 TEST_REPO_PREFIX = "itest-"
 TEST_ROLE_PREFIX = "sprintctl_test_"
 TEST_DATABASE_PREFIX = "sprintctl_test_"
 DISPOSABLE_DATABASE_COMMENT = "sprintctl:disposable-integration-test"
 REPO_TABLES = (
+    # Schema 28: request event and dependant history before the request row.
+    "operator_request_event",
+    "operator_request_dependant",
+    "operator_request",
     # Schema 27: owner delegation rows restrict both their run and creator.
     "work_run_delegation",
     # Schema 26 (approvals): append-only, RESTRICT on run; before run.
@@ -147,9 +151,9 @@ def inspect_disposable_identity(conn: Any) -> PostgresTestIdentity:
         cur.execute(
             """
             SELECT
-                current_database() AS database_name,
-                current_user AS role_name,
-                pg_get_userbyid(database_row.datdba) AS database_owner,
+                current_database()::text AS database_name,
+                current_user::text AS role_name,
+                pg_get_userbyid(database_row.datdba)::text AS database_owner,
                 shobj_description(database_row.oid, 'pg_database') AS database_comment,
                 role_row.rolsuper AS role_superuser,
                 role_row.rolcreatedb AS role_create_db,
@@ -232,15 +236,22 @@ def cleanup_test_repositories(conn: Any, repo_ids: Iterable[str]) -> dict[str, A
                 "agent_observation",
                 "agent_declaration_revision",
                 "agent_instance",
+                "operator_request_event",
                 "work_approval",
                 "work_run_delegation",
                 "run_predecessor",
             )
             for table in immutable_tables:
-                cur.execute(f"ALTER TABLE {table} DISABLE TRIGGER USER")  # noqa: S608
+                cur.execute("SELECT to_regclass(%s) AS relation", (table,))
+                if cur.fetchone()["relation"] is None:
+                    continue
+                cur.execute(f"ALTER TABLE {table} DISABLE TRIGGER USER")
             for table in REPO_TABLES:
+                cur.execute("SELECT to_regclass(%s) AS relation", (table,))
+                if cur.fetchone()["relation"] is None:
+                    continue
                 cur.execute(
-                    f"DELETE FROM {table} WHERE repo_id = ANY(%s)",  # noqa: S608
+                    f"DELETE FROM {table} WHERE repo_id = ANY(%s)",
                     (scopes,),
                 )
                 deleted_rows[table] = cur.rowcount
@@ -248,10 +259,16 @@ def cleanup_test_repositories(conn: Any, repo_ids: Iterable[str]) -> dict[str, A
             # triggers can be re-enabled.
             cur.execute("SET CONSTRAINTS ALL IMMEDIATE")
             for table in immutable_tables:
-                cur.execute(f"ALTER TABLE {table} ENABLE TRIGGER USER")  # noqa: S608
+                cur.execute("SELECT to_regclass(%s) AS relation", (table,))
+                if cur.fetchone()["relation"] is None:
+                    continue
+                cur.execute(f"ALTER TABLE {table} ENABLE TRIGGER USER")
             for table in REPO_TABLES:
+                cur.execute("SELECT to_regclass(%s) AS relation", (table,))
+                if cur.fetchone()["relation"] is None:
+                    continue
                 cur.execute(
-                    f"SELECT count(*) AS count FROM {table} WHERE repo_id = ANY(%s)",  # noqa: S608
+                    f"SELECT count(*) AS count FROM {table} WHERE repo_id = ANY(%s)",
                     (scopes,),
                 )
                 remaining_rows[table] = int(cur.fetchone()["count"])

@@ -14,6 +14,7 @@ from functools import partial
 
 from .application_common import *
 from . import agent_inbox as _inbox
+from . import operator_request as _operator_request_contract
 from . import approval as _approval
 from . import contracts as _contracts
 from . import decisions as _decisions
@@ -869,12 +870,15 @@ class WorkApplication:
             _attempt.OPERATION_REPORT: target._effect_attempt_report,
             _attempt.OPERATION_GET: target._effect_attempt_get,
             **{name: target._agent_inbox for name in _inbox.OPERATIONS},
+            **{name: target._operator_request for name in _operator_request_contract.OPERATIONS},
             _approval.OPERATION_RECORD: target._approval_record,
             _approval.OPERATION_GET: target._approval_get,
         }
         try:
             handler = handlers[operation]
             if operation in _inbox.OPERATIONS:
+                handler = partial(handler, operation)
+            elif operation in _operator_request_contract.OPERATIONS:
                 handler = partial(handler, operation)
         except KeyError as exc:
             raise ApplicationRejection(
@@ -2840,6 +2844,90 @@ class WorkApplication:
                 ) from exc
             raise _inbox.InboxRefused(exc.code, str(exc)) from exc
         return {**result, "replayed": bool(replayed or result.get("replayed"))}
+
+    # -- work.request.* ----------------------------------------------------
+    # Operator-request/v1 is a separate owner record family. Its packet is
+    # untrusted instruction content; this handler changes neither work item
+    # status nor protected-effect authorization.
+
+    def _operator_request(self, operation: str, arguments: dict[str, Any],
+                          context: InvocationContext) -> dict[str, Any]:
+        if not callable(getattr(self.backend, "idempotent_write", None)):
+            raise ApplicationRejection(
+                "unsupported-backend",
+                "operator requests require the PostgreSQL owner; standalone SQLite does not store them",
+                501,
+            )
+        if (getattr(self.store, "remote_schema_version", None) or 0) < 28:
+            raise ApplicationRejection(
+                "owner-capability-unavailable",
+                "operator requests require the PostgreSQL schema 28 owner",
+                503,
+            )
+        from . import operator_request_pg as storage
+        from . import pg as _pg
+
+        principal_id, workspace_id = _identity_binding(context)
+        if operation in {_operator_request_contract.OPERATION_ATTEST,
+                         _operator_request_contract.OPERATION_DECLINE}:
+            authorities = getattr(context.identity, "authorities", frozenset()) or frozenset()
+            if "work:approve" not in authorities:
+                raise ApplicationRejection(
+                    "authority-required",
+                    f"{operation} requires the work:approve capability",
+                    403,
+                )
+        try:
+            if operation in _operator_request_contract.READ_OPERATIONS:
+                with self.store.conn.cursor() as cur:
+                    if operation == _operator_request_contract.OPERATION_GET:
+                        args = _operator_request_contract.get_arguments(arguments)
+                        return storage.get(cur, self.store, workspace_id, args["request_id"])
+                    if operation == _operator_request_contract.OPERATION_LIST:
+                        args = _operator_request_contract.list_arguments(arguments)
+                        return storage.list_requests(cur, self.store, workspace_id, args)
+                    args = _operator_request_contract.events_arguments(arguments)
+                    return storage.events(cur, self.store, workspace_id, args)
+
+            parsers = {
+                _operator_request_contract.OPERATION_PUBLISH: (
+                    _operator_request_contract.publish_arguments, storage.publish, "operator_request_publish"),
+                _operator_request_contract.OPERATION_REVISE: (
+                    _operator_request_contract.revise_arguments, storage.revise, "operator_request_revise"),
+                _operator_request_contract.OPERATION_DEPENDENT_ADD: (
+                    _operator_request_contract.dependant_add_arguments, storage.add_dependant,
+                    "operator_request_dependent_add"),
+                _operator_request_contract.OPERATION_DEPENDENT_WITHDRAW: (
+                    _operator_request_contract.dependant_withdraw_arguments, storage.withdraw_dependant,
+                    "operator_request_dependent_withdraw"),
+                _operator_request_contract.OPERATION_PROGRESS: (
+                    _operator_request_contract.progress_arguments, storage.progress,
+                    "operator_request_progress"),
+                _operator_request_contract.OPERATION_REPORT_PERFORMED: (
+                    _operator_request_contract.report_performed_arguments, storage.report_performed,
+                    "operator_request_report_performed"),
+                _operator_request_contract.OPERATION_ATTEST: (
+                    _operator_request_contract.attest_arguments, storage.attest, "operator_request_attest"),
+                _operator_request_contract.OPERATION_DECLINE: (
+                    _operator_request_contract.decline_arguments, storage.decline, "operator_request_decline"),
+                _operator_request_contract.OPERATION_SUPERSEDE: (
+                    _operator_request_contract.supersede_arguments, storage.supersede,
+                    "operator_request_supersede"),
+            }
+            validate, write, tool = parsers[operation]
+            args = validate(arguments)
+            try:
+                result, replayed = self.backend.idempotent_write(
+                    self.store, workspace_id=workspace_id, principal_id=principal_id, tool=tool,
+                    key=args["idempotency_key"], request_digest=_request_digest(tool, args),
+                    effect=lambda cur: write(cur, self.store, principal_id, workspace_id, args),
+                    with_replay=True,
+                )
+            except _pg.IdempotencyConflict as exc:
+                raise _operator_request_contract.RequestRefused("idempotency-conflict", str(exc)) from exc
+            return {**result, "replayed": bool(replayed or result.get("replayed"))}
+        except _operator_request_contract.RequestRefused as exc:
+            raise ApplicationRejection(exc.code, str(exc), exc.http_status, details=exc.details) from exc
 
     # -- work.lease.* -----------------------------------------------------
     # agentops#2520 (E2b): the exclusive durable lease behind the Vuoro MCP

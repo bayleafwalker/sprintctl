@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import jsonschema
 import pytest
 
-from sprintctl import approval, approval_schema, db, delegation_schema, pg_migrations
+from sprintctl import approval, approval_schema, db, delegation_schema, operator_request, pg_migrations
 from sprintctl.application import ApplicationRejection, WorkApplication
 from sprintctl.vuoro_adapter import WORK_OPERATION_CONTRACTS, catalog_operation_specs
 
@@ -87,9 +87,13 @@ def test_approval_operations_name_their_authorities_and_take_no_identity_argumen
         jsonschema.validate({"approval_id": "apr_bad"}, get.input_schema)
 
 
-def test_work_approve_is_not_an_authority_any_other_operation_requires():
+def test_work_approve_is_limited_to_effect_approval_and_explicit_request_decisions():
     holders = {c.name for c in WORK_OPERATION_CONTRACTS if c.required_authority == "work:approve"}
-    assert holders == {approval.OPERATION_RECORD}
+    assert holders == {
+        approval.OPERATION_RECORD,
+        operator_request.OPERATION_ATTEST,
+        operator_request.OPERATION_DECLINE,
+    }
 
 
 @pytest.mark.parametrize("arguments,code", [
@@ -110,8 +114,8 @@ def test_record_arguments(arguments, code):
         assert caught.value.code == code
 
 
-def test_schema26_approval_floor_and_schema27_delegation_runtime_window():
-    assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.MAXIMUM_SCHEMA_VERSION == 27
+def test_schema28_operator_request_floor_and_delegation_runtime_window():
+    assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.MAXIMUM_SCHEMA_VERSION == 28
     assert approval.SCHEMA_VERSION == 26
     assert "work_approval" in approval_schema.DDL
     assert f"interval '{approval_schema.MAX_LIFETIME_SECONDS} seconds'" in approval_schema.DDL

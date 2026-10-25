@@ -375,6 +375,32 @@ checkpoint in `delta.current` is the input to `--checkpoint`; the Git
 `source_checkpoint` is a different record. See the
 [resume guide](../guides/resume-work.md#brief-one-served-item).
 
+## `run collect-fetch`
+
+The served-only `run collect-fetch` command follows the reference, predecessor
+note, and predecessor evidence cursors returned by
+`work.run.continuation-delta-v1`. It stops at the configured page budget or
+caller-side deadline and stores each successful response in the existing
+offline continuation collection format. `--output` refuses replacement and
+writes the final archive atomically. An elapsed deadline is recorded as
+`deadline-exhausted`; a page budget remains independently visible.
+
+The deadline is checked between synchronous owner reads, so a single in-flight
+read can exceed it and cannot be cancelled by the CLI. A valid late response is
+retained as an observation and the archive warns that the caller deadline was
+exceeded; if that response has cursors remaining, no further read is issued.
+A refused, failed, or malformed read stops further paging; when successful
+pages exist, they are preserved in a partial archive with a sanitized stop
+reason. A first-page failure produces no archive. The command does not retry a
+failed or response-lost read: the first request has no snapshot basis to
+reconcile against, and a later fresh collection remains a separate attempt.
+The archive
+keeps request inputs, caller-reported
+observation times, page responses, cursors, and per-list completeness separate.
+It does not assert authenticity, currentness, atomicity, authority, or source
+availability. For already captured pages, `run collect` remains offline and
+`run collect-inspect` recomputes archive and page integrity without owner calls.
+
 ## Recent Decisions
 
 `decision`, `pattern-noted`, `lesson-learned`, and `risk-accepted` are treated

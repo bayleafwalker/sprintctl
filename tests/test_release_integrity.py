@@ -58,14 +58,15 @@ class TestReleaseIntegrity:
         structured approvals) and schema27 (run-scoped delegation), raising the
         strict floor in a coordinated owner migration. Minor 0.21.0 adds the
         served invocation handshake and offline inspection on the same schema27.
-        Minor 0.22.0 adds exact evidence and bounded parking reads without a migration."""
+        Minor 0.22.0 adds exact evidence and bounded parking reads. Candidate
+        0.23.0 adds schema28 operator-request storage and served operations."""
         from sprintctl import pg_migrations
 
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
-        assert pyproject["project"]["version"] == __version__ == "0.22.0"
-        assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 27
-        assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 27
+        assert pyproject["project"]["version"] == __version__ == "0.23.0"
+        assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 28
+        assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 28
 
     def test_release_contract_names_this_version(self):
         """The tag workflow validates the wheel against RELEASE_VERSION; a
