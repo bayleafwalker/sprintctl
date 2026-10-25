@@ -110,7 +110,13 @@ def test_only_attempt_and_declared_preview_descriptors_are_added_to_released_cat
         | SCHEMA26_OPERATIONS
         | SCHEMA27_OPERATIONS | SCHEMA28_OPERATIONS | {"work.sprint.kind"}
     )
-    assert {k: actual[k] for k in baseline["operation_sha256"]} == baseline["operation_sha256"]
+    # #2596 intentionally tightens these two existing payload schemas. Every
+    # other descriptor remains byte-identical to the attested release.
+    budgeted = {"work.run.predecessor-context-v1", "work.session-note.write-v1"}
+    preserved = set(baseline["operation_sha256"]) - budgeted
+    assert {k: actual[k] for k in preserved} == {
+        k: baseline["operation_sha256"][k] for k in preserved
+    }
 
 
 def test_catalog_attempt_capability_and_outer_idempotency_are_exact():

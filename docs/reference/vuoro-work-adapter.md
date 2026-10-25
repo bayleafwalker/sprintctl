@@ -201,11 +201,18 @@ evidence or ledger storage.
 - `work.run.predecessor-context-v1` (`work:read`) takes the caller's own
   `run_id`, resolved to its exact binding (`run-not-found` otherwise), and
   returns `predecessor_run_id` with one page of that predecessor's session
-  notes (`note_id` order) and evidence items (`chain_seq` order). Each list
-  is paged by its own cursor: at most `limit` (default 100, maximum 500)
-  entries after `after_note_id` / `after_chain_seq`, with
-  `next_after_note_id` / `next_after_chain_seq` set to the next cursor when
-  more remain and null when the list is exhausted. A run without a
+  notes (`note_id` order) and evidence items (`chain_seq` order). A note is
+  limited to 16,384 Unicode characters on write. Each list is paged by its
+  own cursor: at most `limit` (default 100, maximum 200) entries after
+  `after_note_id` / `after_chain_seq`; the compact UTF-8 JSON result is capped
+  at 1 MiB, so a page may contain fewer than `limit` entries. A non-null
+  cursor is the last returned key whenever more entries remain, including
+  when the byte budget ends a page early. The note and evidence cursors
+  advance independently. A single historical row that cannot fit in its
+  share of the byte budget is refused with
+  `context-item-exceeds-byte-budget`; it is not truncated or skipped.
+  `next_after_note_id` / `next_after_chain_seq` are the next cursors, with
+  null when the list is exhausted. A run without a
   predecessor returns null and empty lists. Notes of one run are written
   one at a time (a per-run lock, like the evidence chain's), so `note_id`
   order is commit order and a cursor never skips a note even while the

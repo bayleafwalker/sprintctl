@@ -24,6 +24,7 @@ from sprintctl.contracts import (
     PUBLIC_WORK_TITLE_MAX_LENGTH,
 )
 from sprintctl.vuoro_adapter import WORK_OPERATION_CONTRACTS
+from sprintctl.application_common import SESSION_NOTE_MAX_LENGTH
 from sprintctl.work_application import WorkApplication
 
 # The gate is the repo's own Draft 2020-12 subset validator from the served
@@ -290,6 +291,16 @@ def test_title_is_capped_at_160_and_a_longer_one_fails_the_schema(conn, active_s
     uncapped = {**shown, "item": {**shown["item"], "title": long_title}}
     with pytest.raises(SchemaFailure, match="maxLength"):
         _validator(ITEM_OP).validate(uncapped)
+
+
+def test_session_note_write_contract_has_the_shared_character_limit():
+    contract = next(
+        item for item in WORK_OPERATION_CONTRACTS
+        if item.name == "work.session-note.write-v1"
+    )
+    note = contract.input_schema["properties"]["note"]
+    assert note["minLength"] == 1
+    assert note["maxLength"] == SESSION_NOTE_MAX_LENGTH == 16_384
 
 
 def test_blocked_is_never_derived_from_description(conn, active_sprint):

@@ -2589,10 +2589,14 @@ class WorkApplication:
                     cur, context, delegated, "work.run.predecessor-context-v1", run_id
                 )
         self._require_owned_run(run_id, context)
-        continued = self.backend.predecessor_context(
-            self.store, run_id, limit=limit,
-            after_note_id=after_note_id, after_chain_seq=after_chain_seq,
-        )
+        from . import pg as _pg
+        try:
+            continued = self.backend.predecessor_context(
+                self.store, run_id, limit=limit,
+                after_note_id=after_note_id, after_chain_seq=after_chain_seq,
+            )
+        except _pg.PredecessorContextEntryExceedsByteBudget as exc:
+            raise ApplicationRejection(exc.code, str(exc), 413) from exc
         return {"repo_id": self.repo_id, "run_id": run_id, **continued}
 
     def _evidence_tail(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
@@ -2714,6 +2718,13 @@ class WorkApplication:
     def _session_note_write(
         self, arguments: dict[str, Any], context: InvocationContext
     ) -> dict[str, Any]:
+        note = arguments.get("note")
+        if not isinstance(note, str) or not 1 <= len(note) <= SESSION_NOTE_MAX_LENGTH:
+            raise ApplicationRejection(
+                "invalid-arguments",
+                f"note must contain 1 to {SESSION_NOTE_MAX_LENGTH} characters",
+                422,
+            )
         run_id = arguments["run_id"]
         delegated = self._delegated_context(context, "work.session-note.write-v1", run_id)
         self._require_owned_run(run_id, context)
@@ -2722,15 +2733,15 @@ class WorkApplication:
             self._revalidate_delegation(
                 cur, context, delegated, "work.session-note.write-v1", run_id
             )
-            note = self.backend.write_session_note(
+            written_note = self.backend.write_session_note(
                 self.store,
                 run_id,
-                note=arguments["note"],
+                note=note,
                 idempotency_key=arguments["idempotency_key"],
                 request_digest=request_digest,
                 cur=cur,
             )
-            return {"repo_id": self.repo_id, "run_id": run_id, **note}
+            return {"repo_id": self.repo_id, "run_id": run_id, **written_note}
 
         return self._idempotent_write(
             context, "write_session_note", arguments, effect,
@@ -3557,6 +3568,7 @@ class WorkApplication:
             raise ApplicationRejection("unsupported-backend", "continuation delta requires PostgreSQL owner state", 501)
         principal_id, workspace_id = _identity_binding(context)
         client_id, grant_id = _grant_binding(context)
+        from . import pg as _pg
         deferred_rejections: list[tuple[str, str, int, Any]] = []
         with snapshot(self.store) as owner_store, _capture_application_rejection(deferred_rejections):
             try:
@@ -3642,10 +3654,13 @@ class WorkApplication:
                 next_cursor = {"expected_snapshot_digest": snapshot_digest,
                                "checkpoint_digest": checkpoint_digest,
                                "last_reference_id": int(selected[-1]["id"])}
-            predecessor = self.backend.predecessor_context(
-                owner_store, run_id, limit=limit, after_note_id=after_note_id,
-                after_chain_seq=after_chain_seq,
-            )
+            try:
+                predecessor = self.backend.predecessor_context(
+                    owner_store, run_id, limit=limit, after_note_id=after_note_id,
+                    after_chain_seq=after_chain_seq, _repeatable_snapshot=False,
+                )
+            except _pg.PredecessorContextEntryExceedsByteBudget as exc:
+                raise ApplicationRejection(exc.code, str(exc), 413) from exc
             predecessor_notes = [{"note_id": row["note_id"], "created_at": row["created_at"]}
                                  for row in predecessor["session_notes"]]
             predecessor_evidence = [{"item_id": row["item_id"], "chain_seq": row["chain_seq"],

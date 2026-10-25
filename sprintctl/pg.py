@@ -21,7 +21,7 @@ import json
 import logging
 import re
 import secrets
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Callable, Mapping
@@ -5876,6 +5876,16 @@ class PredecessorNotEligible(ValueError):
     code = "predecessor-not-eligible"
 
 
+class PredecessorContextEntryExceedsByteBudget(ValueError):
+    """A single historical row cannot fit in a bounded context page.
+
+    The caller must handle this explicitly; the row is neither truncated nor
+    skipped, so its cursor is never advanced past data the reader did not see.
+    """
+
+    code = "context-item-exceeds-byte-budget"
+
+
 _RUN_ID_RE = re.compile(r"^run_[0-9A-HJKMNP-TV-Z]{26}$")
 
 
@@ -6326,8 +6336,17 @@ def predecessor_context(
     limit: int,
     after_note_id: int | None = None,
     after_chain_seq: int | None = None,
+    _repeatable_snapshot: bool = True,
 ) -> dict:
-    """One page of the recorded predecessor of ``run_id``: up to ``limit``
+    """One byte-bounded page of the recorded predecessor of ``run_id``.
+
+    Each list is capped by ``limit`` and its half of the one-MiB serialized
+    result budget. A non-null cursor always equals the final returned key;
+    rows are returned in order and are never truncated or skipped. The two
+    streams are read from one repeatable-read snapshot so writers cannot make
+    the page's independently collected cursors skip a committed row.
+
+    Up to ``limit``
     session notes after ``after_note_id`` (``note_id`` order) and up to
     ``limit`` evidence items after ``after_chain_seq`` (``chain_seq`` order).
 
@@ -6344,42 +6363,121 @@ def predecessor_context(
     A run with no predecessor answers ``predecessor_run_id`` None and empty
     lists.
     """
+    from .application_common import PREDECESSOR_CONTEXT_MAX_RESPONSE_BYTES
+
+    if limit < 1:
+        raise ValueError("predecessor context limit must be positive")
+    if limit > 200:
+        raise ValueError("predecessor context limit exceeds 200")
+    per_list_budget = (PREDECESSOR_CONTEXT_MAX_RESPONSE_BYTES - 4096) // 2
     empty = {
-        "session_notes": [], "evidence": [],
-        "next_after_note_id": None, "next_after_chain_seq": None,
+        "repo_id": store.repo_id,
+        "run_id": run_id,
+        "predecessor_run_id": None,
+        "session_notes": [],
+        "evidence": [],
+        "next_after_note_id": None,
+        "next_after_chain_seq": None,
     }
-    with store.conn.cursor() as cur:
-        predecessor = _predecessor_of(cur, store, run_id)
-        if predecessor is None:
-            return {"predecessor_run_id": None, **empty}
-        cur.execute(
-            "SELECT note_id, note, created_at FROM session_note "
-            "WHERE repo_id = %s AND run_id = %s AND note_id > %s ORDER BY note_id LIMIT %s",
-            (store.repo_id, predecessor, -1 if after_note_id is None else after_note_id, limit + 1),
-        )
-        rows = cur.fetchall()
-        notes = [
-            {
-                "note_id": int(row["note_id"]),
-                "note": row["note"],
-                "created_at": _iso(row["created_at"]) or str(row["created_at"]),
+
+    def encoded_size(value: dict) -> int:
+        return len(json.dumps(
+            value, sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False,
+        ).encode("utf-8"))
+
+    snapshot_context = (
+        repeatable_read_snapshot(store)
+        if _repeatable_snapshot else nullcontext(store)
+    )
+    with snapshot_context as snapshot:
+        with snapshot.conn.cursor() as cur:
+            predecessor = _predecessor_of(cur, snapshot, run_id)
+            if predecessor is None:
+                return {
+                    key: value for key, value in empty.items()
+                    if key not in {"repo_id", "run_id"}
+                }
+
+            note_after = -1 if after_note_id is None else after_note_id
+            evidence_after = -1 if after_chain_seq is None else after_chain_seq
+            cur.execute(
+                "SELECT note_id, octet_length(jsonb_build_object("
+                "'note_id', note_id, 'note', note, 'created_at', created_at)::text) "
+                "AS response_bytes FROM session_note WHERE repo_id = %s AND run_id = %s "
+                "AND note_id > %s ORDER BY note_id LIMIT %s",
+                (snapshot.repo_id, predecessor, note_after, limit + 1),
+            )
+            note_sizes = cur.fetchall()
+            cur.execute(
+                "SELECT chain_seq, octet_length(jsonb_build_object("
+                "'item_id', item_id, 'kind', kind, 'ref', ref, 'digest', digest, "
+                "'collector', collector, 'validity', validity, 'claims', claims, "
+                "'provenance', provenance, 'chain_seq', chain_seq, "
+                "'chain_prev_digest', chain_prev_digest)::text) AS response_bytes "
+                "FROM evidence_item WHERE repo_id = %s AND run_id = %s AND chain_seq > %s "
+                "ORDER BY chain_seq LIMIT %s",
+                (snapshot.repo_id, predecessor, evidence_after, limit + 1),
+            )
+            evidence_sizes = cur.fetchall()
+
+            def select_ids(rows: list[dict], key: str, cursor_name: str) -> tuple[list[int], int | None]:
+                selected: list[int] = []
+                used = 0
+                for row in rows[:limit]:
+                    item_id = int(row[key])
+                    # PostgreSQL's JSONB text representation is at least as
+                    # large as the compact UTF-8 result object; the margin
+                    # covers timestamp normalization, list punctuation and
+                    # this page's cursor fields.
+                    item_budget = int(row["response_bytes"]) + 256
+                    if item_budget > per_list_budget and not selected:
+                        raise PredecessorContextEntryExceedsByteBudget(
+                            f"one predecessor {cursor_name} entry exceeds the per-list response budget"
+                        )
+                    if used + item_budget > per_list_budget:
+                        break
+                    selected.append(item_id)
+                    used += item_budget
+                has_more = len(rows) > len(selected)
+                return selected, (selected[-1] if selected and has_more else None)
+
+            note_ids, next_note = select_ids(note_sizes, "note_id", "session-note")
+            evidence_ids, next_evidence = select_ids(evidence_sizes, "chain_seq", "evidence")
+            result = {
+                **empty,
+                "predecessor_run_id": predecessor,
+                "next_after_note_id": next_note,
+                "next_after_chain_seq": next_evidence,
             }
-            for row in rows[:limit]
-        ]
-        cur.execute(
-            "SELECT * FROM evidence_item WHERE repo_id = %s AND run_id = %s AND chain_seq > %s "
-            "ORDER BY chain_seq LIMIT %s",
-            (store.repo_id, predecessor, -1 if after_chain_seq is None else after_chain_seq, limit + 1),
-        )
-        items = cur.fetchall()
-        evidence = [_evidence_row(row) for row in items[:limit]]
-    return {
-        "predecessor_run_id": predecessor,
-        "session_notes": notes,
-        "evidence": evidence,
-        "next_after_note_id": notes[-1]["note_id"] if len(rows) > limit else None,
-        "next_after_chain_seq": evidence[-1]["chain_seq"] if len(items) > limit else None,
-    }
+            if note_ids:
+                cur.execute(
+                    "SELECT note_id, note, created_at FROM session_note "
+                    "WHERE repo_id = %s AND run_id = %s AND note_id = ANY(%s) "
+                    "ORDER BY note_id",
+                    (snapshot.repo_id, predecessor, note_ids),
+                )
+                result["session_notes"] = [
+                    {
+                        "note_id": int(row["note_id"]),
+                        "note": row["note"],
+                        "created_at": _iso(row["created_at"]) or str(row["created_at"]),
+                    }
+                    for row in cur.fetchall()
+                ]
+            if evidence_ids:
+                cur.execute(
+                    "SELECT * FROM evidence_item WHERE repo_id = %s AND run_id = %s "
+                    "AND chain_seq = ANY(%s) ORDER BY chain_seq",
+                    (snapshot.repo_id, predecessor, evidence_ids),
+                )
+                result["evidence"] = [_evidence_row(row) for row in cur.fetchall()]
+            if encoded_size(result) > PREDECESSOR_CONTEXT_MAX_RESPONSE_BYTES:
+                # Never ship a page above the public byte contract, even if a
+                # future PostgreSQL serializer changes its JSONB size relation.
+                raise RuntimeError("predecessor context sizing bound was not conservative")
+            return {key: value for key, value in result.items()
+                    if key not in {"repo_id", "run_id"}}
 
 
 def get_run(store: PgStore, run_id: str) -> dict | None:
