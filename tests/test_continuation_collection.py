@@ -112,6 +112,21 @@ def test_complete_page_archive_is_lossless_and_inspection_stays_unknown(owner_re
     assert report["authenticity"] == report["currentness"] == report["authority"] == "unknown"
 
 
+@pytest.mark.parametrize("field_path", [
+    ("stop_reason",),
+    ("completeness", "references"),
+])
+def test_inspection_rejects_boolean_collection_status_values(owner_response, field_path):
+    collection = create_collection([_page(owner_response)])
+    target = collection
+    for key in field_path[:-1]:
+        target = target[key]
+    target[field_path[-1]] = True
+
+    with pytest.raises(CollectionError, match="malformed continuation"):
+        inspect_collection(collection)
+
+
 def test_independent_cursors_are_chained_and_budget_never_claims_completion(owner_response):
     first_cursor = _cursor(4)
     first = _owner_response(reference_cursor=first_cursor, note_cursor=1,
