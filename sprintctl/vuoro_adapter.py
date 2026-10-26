@@ -1175,6 +1175,163 @@ _EVALUATION_RESULT_SCHEMA = _result_schema(
     tuple(_EVALUATION_RESULT_PROPERTIES), _EVALUATION_RESULT_PROPERTIES
 )
 
+_COMPLETION_BASIS_SCHEMA = _object_schema(
+    {
+        "item_id": {"type": "integer", "minimum": 1},
+        "expected_revision": {
+            "type": "string", "pattern": _releases._RELEASE_REVISION_RE.pattern,
+        },
+        "release_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    },
+    required=("item_id", "expected_revision", "release_digest"),
+)
+_COMPLETION_CURRENT_BASIS = _object_schema(
+    {
+        "item_id": {"type": "integer", "minimum": 1},
+        "expected_revision": {
+            "type": "string", "pattern": _releases._RELEASE_REVISION_RE.pattern,
+        },
+        "release_digest": {"type": ["string", "null"]},
+        "release_item_revision": {"type": ["string", "null"]},
+    },
+    required=("item_id", "expected_revision", "release_digest", "release_item_revision"),
+)
+_COMPLETION_VERIFICATION = _object_schema(
+    {
+        "profile": {"type": "string", "minLength": 1},
+        "requirements": {"type": "array", "items": {"type": "string"}},
+        "required_checks": {"type": "array", "items": {"type": "string"}},
+    },
+    required=("profile", "requirements", "required_checks"),
+)
+_COMPLETION_LEASE = _object_schema(
+    {
+        "lease_id": {"type": "string", "pattern": "^lease_[0-9A-HJKMNP-TV-Z]{26}$"},
+        "state": {"enum": ["active", "superseded", "settled", "released"]},
+        "stale": {"type": "boolean"},
+        "verification": _COMPLETION_VERIFICATION,
+    },
+    required=("lease_id", "state", "stale", "verification"),
+)
+_COMPLETION_REPORT = _object_schema(
+    {
+        "report_id": {"type": "string", "pattern": "^outcome_[0-9A-HJKMNP-TV-Z]{26}$"},
+        "lease_id": {"type": "string", "pattern": "^lease_[0-9A-HJKMNP-TV-Z]{26}$"},
+        "outcome": {"enum": ["succeeded", "failed"]},
+        "disposition": {"enum": ["settled", "recorded", "awaiting-verification", "rejected"]},
+        "reason_code": {"type": ["string", "null"]},
+        "verification_profile": {"type": "string", "minLength": 1},
+        "decision_id": {"type": ["integer", "null"], "minimum": 1},
+        "created_at": {"type": "string", "minLength": 1},
+    },
+    required=(
+        "report_id", "lease_id", "outcome", "disposition", "reason_code",
+        "verification_profile", "decision_id", "created_at",
+    ),
+)
+_COMPLETION_DECISION = _object_schema(
+    {
+        "decision_id": {"type": "integer", "minimum": 1},
+        "kind": {"enum": ["accept", "reject", "withdraw", "supersede", "revise"]},
+        "release_digest": {"type": ["string", "null"]},
+    },
+    required=("decision_id", "kind", "release_digest"),
+)
+_COMPLETION_SUGGESTION = _object_schema(
+    {
+        "recommendation_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "action_kind": {
+            "enum": [
+                "no-change", "reverify", "inspect-conflict",
+                "request-independent-review", "report-outcome",
+            ]
+        },
+        "target_item_id": {"type": "integer", "minimum": 1},
+        "source_snapshot_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "current_revision": {
+            "anyOf": [
+                {"type": "string", "pattern": _releases._RELEASE_REVISION_RE.pattern},
+                {"type": "null"},
+            ]
+        },
+        "reason_code": {"type": "string", "minLength": 1},
+        "next_operation": {"type": ["string", "null"]},
+    },
+    required=(
+        "recommendation_id", "action_kind", "target_item_id", "source_snapshot_digest",
+        "current_revision", "reason_code", "next_operation",
+    ),
+)
+_COMPLETION_RESULT_PROPERTIES = {
+    "repo_id": {"type": "string", "minLength": 1},
+    "schema_version": {"const": "work-completion-assessment/v1"},
+    "evaluator_revision": {"const": "sprintctl-owner-completion/v1"},
+    "requested_basis": _COMPLETION_BASIS_SCHEMA,
+    "current_basis": _COMPLETION_CURRENT_BASIS,
+    "basis_status": {"enum": ["current", "missing", "stale"]},
+    "snapshot_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "assessment": _object_schema(
+        {
+            "status": {
+                "enum": [
+                    "accepted-current", "stale-basis", "missing-release", "conflict",
+                    "unknown", "blocked", "requires-judgment", "incomplete",
+                ]
+            },
+            "reason_codes": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        },
+        required=("status", "reason_codes"),
+    ),
+    "owner_facts": _object_schema(
+        {
+            "item_status": {"enum": ["pending", "active", "blocked", "done"]},
+            "resolution": {
+                "anyOf": [
+                    {"enum": ["accepted", "rejected", "withdrawn", "superseded"]},
+                    {"type": "null"},
+                ]
+            },
+            "terminal_decision": {"anyOf": [_COMPLETION_DECISION, {"type": "null"}]},
+            "verification": _COMPLETION_VERIFICATION,
+            "active_lease": {"anyOf": [_COMPLETION_LEASE, {"type": "null"}]},
+            "outcome_reports": {
+                "type": "array", "maxItems": 64, "items": _COMPLETION_REPORT,
+            },
+            "blocker_item_ids": {
+                "type": "array", "maxItems": 64, "items": {"type": "integer", "minimum": 1},
+            },
+            "source_completeness": _object_schema(
+                {
+                    "current_releases": {"type": "boolean"},
+                    "leases": {"type": "boolean"},
+                    "outcome_reports": {"type": "boolean"},
+                    "blockers": {"type": "boolean"},
+                },
+                required=("current_releases", "leases", "outcome_reports", "blockers"),
+            ),
+            "observed_at": {"type": "string", "minLength": 1},
+        },
+        required=(
+            "item_status", "resolution", "terminal_decision", "verification", "active_lease",
+            "outcome_reports", "blocker_item_ids", "source_completeness", "observed_at",
+        ),
+    ),
+    "follow_up": _object_schema(
+        {
+            "dedupe_scope": {"const": "exact-source-snapshot"},
+            "prior_rejection_tracking": {"const": "unsupported"},
+            "suggestions": {
+                "type": "array", "maxItems": 1, "items": _COMPLETION_SUGGESTION,
+            },
+        },
+        required=("dedupe_scope", "prior_rejection_tracking", "suggestions"),
+    ),
+    "authorizes_acceptance": {"const": False},
+}
+_COMPLETION_RESULT_SCHEMA = _result_schema(
+    tuple(_COMPLETION_RESULT_PROPERTIES), _COMPLETION_RESULT_PROPERTIES
+)
+
 WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
     WorkOperationContract(
         "work.identity.current",
@@ -1569,6 +1726,24 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work:read",
         "read",
         "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.completion.assess-v1",
+        _object_schema(
+            {
+                "item_id": {"type": "integer", "minimum": 1},
+                "expected_revision": {
+                    "type": "string", "pattern": _releases._RELEASE_REVISION_RE.pattern,
+                },
+                "release_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            },
+            required=("item_id", "expected_revision", "release_digest"),
+        ),
+        _COMPLETION_RESULT_SCHEMA,
+        "work:read",
+        "read",
+        "not-allowed",
+        required_remote_schema_version=28,
     ),
     WorkOperationContract(
         "work.evidence.append-v1",
