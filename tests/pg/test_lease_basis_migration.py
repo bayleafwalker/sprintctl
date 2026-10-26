@@ -214,7 +214,9 @@ def test_schema_29_partial_guard_is_read_only_incompatible_and_not_repaired(leas
         pg_migrations.require_compatible_schema(store)
     with store.conn.cursor() as cur:
         cur.execute(
-            "SELECT 1 FROM pg_trigger WHERE tgname=%s AND NOT tgisinternal",
+            "SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid "
+            "JOIN pg_namespace n ON n.oid=c.relnamespace "
+            "WHERE n.nspname=current_schema() AND t.tgname=%s AND NOT t.tgisinternal",
             (_ACQUIRE_GUARD_TRIGGER,),
         )
         assert cur.fetchone() is None

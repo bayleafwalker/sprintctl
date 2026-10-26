@@ -115,8 +115,21 @@ def store(pg_test_scope):
         conn.close()
 
 
+def drop_schema29(cur) -> None:
+    """Remove schema 29 lease-basis bindings before rebuilding an older fixture."""
+    cur.execute("DROP TRIGGER IF EXISTS work_lease_basis_insert_guard ON work_lease")
+    cur.execute("DROP TRIGGER IF EXISTS work_decision_lease_basis_guard ON work_decision")
+    cur.execute("DROP FUNCTION IF EXISTS sprintctl_work_lease_basis_insert_guard()")
+    cur.execute("DROP FUNCTION IF EXISTS sprintctl_work_decision_lease_basis_guard()")
+    cur.execute(
+        "ALTER TABLE work_lease DROP COLUMN IF EXISTS basis_item_revision, "
+        "DROP COLUMN IF EXISTS basis_release_digest"
+    )
+
+
 def drop_schema26(cur) -> None:
     """Remove schema 26+ owner additions before rebuilding an older fixture."""
+    drop_schema29(cur)
     # Remove newer additive layers first when reconstructing a schema-25
     # fixture for upgrade coverage.
     cur.execute("DROP TABLE IF EXISTS operator_request_event, operator_request_dependant, operator_request")

@@ -102,9 +102,13 @@ def test_native_reserve_is_only_catalog_addition_with_all_legacy_bytes_preserved
         "work.run.register-correlated-v1", "work.run.invocation-receipt-get-v1",
     } | set(OPERATION_AUTHORITIES) | AGENT_INBOX_OPERATIONS | SCHEMA26_OPERATIONS | SCHEMA27_OPERATIONS | SCHEMA28_OPERATIONS | {"work.sprint.kind"}
     assert not set(expected) - set(actual)
-    # #2596 intentionally bounds the existing note and context arguments;
-    # all other descriptors stay byte-identical to this attested release.
-    budgeted = {"work.run.predecessor-context-v1", "work.session-note.write-v1"}
+    # Schema 29 adds the captured basis to lease acquire, heartbeat, and read
+    # results; #2596 also bounds the existing note and context arguments. All
+    # other descriptors stay byte-identical to this attested release.
+    budgeted = {
+        "work.run.predecessor-context-v1", "work.session-note.write-v1",
+        "work.lease.acquire-v1", "work.lease.heartbeat-v1", "work.lease.read-v1",
+    }
     preserved = set(expected) - budgeted
     assert {name: actual[name] for name in preserved} == {
         name: expected[name] for name in preserved

@@ -5,7 +5,10 @@ from __future__ import annotations
 import pytest
 
 from sprintctl import pg, pg_migrations, run_invocation_schema, effect_verification_export_index
-from sprintctl import agent_inbox_schema, approval_schema, delegation_schema, operator_request_schema
+from sprintctl import (
+    agent_inbox_schema, approval_schema, delegation_schema, lease_basis_schema,
+    operator_request_schema,
+)
 
 
 CURRENT = pg_migrations.CURRENT_SCHEMA_VERSION
@@ -60,6 +63,8 @@ class _SchemaCursor:
             self._conn.delegation_installed = True
         if query == operator_request_schema.DDL:
             self._conn.operator_request_installed = True
+        if query == lease_basis_schema.DDL:
+            self._conn.lease_basis_installed = True
         return self
 
     rowcount = 0
@@ -70,6 +75,10 @@ class _SchemaCursor:
             return []
         # Schema 17 refuses relations already holding its names; none here.
         if "c.relname = ANY(%s)" in self._query:
+            return []
+        if "c.relname = 'work_lease'" in self._query:
+            # The isolated schema-29 installer fake starts without the basis
+            # columns. The runtime catalog is stubbed below.
             return []
         raise AssertionError(f"unexpected fetchall for query: {self._query}")
 
@@ -90,6 +99,8 @@ class _SchemaCursor:
         if ("SELECT c.relname FROM pg_class" in self._query or "SELECT p.proname FROM pg_proc" in self._query
                 or "SELECT t.tgname FROM pg_trigger" in self._query):
             return None  # No foreign attempt objects in this empty bootstrap fake.
+        if self._query.startswith("SELECT name FROM ("):
+            return None  # No pre-existing schema-29 guard objects in this fake.
         if "SELECT data_type FROM information_schema.columns" in self._query:
             return None  # This empty fake has no pre-existing binding columns.
         if "AS catalog_fingerprint" in self._query:
@@ -139,6 +150,7 @@ class _SchemaConnection:
         self.approval_installed = version is not None and version >= 26
         self.delegation_installed = version is not None and version >= 27
         self.operator_request_installed = version is not None and version >= 28
+        self.lease_basis_installed = version is not None and version >= 29
         self.calls = []
         self.version = version
         self.version_rows = version_rows if version is not None else 0
@@ -238,6 +250,22 @@ def _stub_invocation_catalog_for_schema_state_fakes(monkeypatch):
         }
 
     monkeypatch.setattr(operator_request_schema, "inspect_catalog", inspect_operator_requests)
+
+    def inspect_lease_basis(cur):
+        available = cur._conn.lease_basis_installed
+        columns = ["basis_item_revision", "basis_release_digest"] if available else []
+        return {
+            "schema_version": "sprintctl-work-lease-basis/v1",
+            "available": available,
+            "complete": True,
+            "basis_columns": columns,
+            "expected_basis_columns": ["basis_item_revision", "basis_release_digest"],
+            "guard_function_available": available,
+            "acquire_guard_function_available": available,
+            "guard_trigger_available": available,
+        }
+
+    monkeypatch.setattr(lease_basis_schema, "inspect_catalog", inspect_lease_basis)
 
 
 def test_snapshot_uses_store_connection_factory_instead_of_redacted_dsn(monkeypatch):
@@ -345,6 +373,16 @@ def test_runtime_compatibility_probe_is_read_only_and_publishes_work_api():
                 "trigger_count": 0,
                 "available": True,
                 "complete": True,
+            },
+            "work_lease_basis_storage": {
+                "schema_version": "sprintctl-work-lease-basis/v1",
+                "available": True,
+                "complete": True,
+                "basis_columns": ["basis_item_revision", "basis_release_digest"],
+                "expected_basis_columns": ["basis_item_revision", "basis_release_digest"],
+                "guard_function_available": True,
+                "acquire_guard_function_available": True,
+                "guard_trigger_available": True,
             },
             "repository_ingest_cursor": {
                 "schema_version": "sprintctl-repository-ingest-cursor/v1",

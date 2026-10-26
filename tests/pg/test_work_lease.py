@@ -195,12 +195,23 @@ def _legacy_bar(store, item_id: int, contract: dict, lease_id: str | None = None
         )
         cur.execute("ALTER TABLE work_release ENABLE TRIGGER USER")
         if lease_id is not None:
+            # This helper synthesizes a legacy acceptance contract by creating
+            # a Release after the lease was acquired. Keep the synthetic lease
+            # on the new Release basis so these tests continue to exercise the
+            # verification bar rather than the separate stale-basis rejection.
+            _item, item_revision, _revise_count = pg._release_basis_locked(
+                cur, store.repo_id, item_id
+            )
+            current_release = pg._current_release_locked(cur, store.repo_id, item_id)
             cur.execute(
-                "UPDATE work_lease SET verification_profile = %s, required_checks = %s::jsonb "
+                "UPDATE work_lease SET verification_profile = %s, required_checks = %s::jsonb, "
+                "basis_item_revision = %s, basis_release_digest = %s "
                 "WHERE repo_id = %s AND lease_id = %s",
                 (
                     contract.get("verification_profile", "checked"),
                     json.dumps(sorted(contract.get("evidence_obligations", []))),
+                    item_revision,
+                    current_release["release_digest"] if current_release else None,
                     store.repo_id, lease_id,
                 ),
             )
@@ -1154,15 +1165,17 @@ class TestSchema18Migration:
         """The partial unique index backs the item-row lock."""
         (item,) = _items(store)
         run = _run(store, A)
-        _claim(store, A, item, run, "index-backstop-1")
+        claim = _claim(store, A, item, run, "index-backstop-1")
         with pytest.raises(psycopg.errors.UniqueViolation):
             with store.conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO work_lease(repo_id, lease_id, work_item_id, run_id, principal_id, "
                     "workspace_id, claim_key, state, ttl_seconds, acquired_at, heartbeat_at, "
-                    "verification_profile, required_checks) VALUES (%s, %s, %s, %s, 'p', 'ws-1', "
-                    "'index-backstop-2', 'active', 300, now(), now(), 'checked', '[]'::jsonb)",
-                    (store.repo_id, "lease_" + "1" * 26, item, run),
+                    "verification_profile, required_checks, basis_item_revision, basis_release_digest) "
+                    "VALUES (%s, %s, %s, %s, 'p', 'ws-1', 'index-backstop-2', 'active', 300, "
+                    "now(), now(), 'checked', '[]'::jsonb, %s, %s)",
+                    (store.repo_id, "lease_" + "1" * 26, item, run,
+                     claim["lease"]["basis_item_revision"], claim["lease"]["basis_release_digest"]),
                 )
         store.conn.rollback()
 
