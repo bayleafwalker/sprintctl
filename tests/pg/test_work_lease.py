@@ -763,7 +763,7 @@ class TestRevisionBoundLeaseBasis:
         )
         pg.release_reservation(store, second_release["id"])
         assert second_release["release_digest"] != lease["basis_release_digest"]
-        assert pg.get_release(second_release["release_digest"])["item_revision"] == (
+        assert pg.get_release(store, second_release["release_digest"])["item_revision"] == (
             lease["basis_item_revision"]
         )
 
