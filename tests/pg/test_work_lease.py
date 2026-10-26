@@ -709,6 +709,154 @@ def _iso_minus(value: str, seconds: int) -> str:
     return moved.isoformat().replace("+00:00", "Z")
 
 
+class TestRevisionBoundLeaseBasis:
+    def test_item_edit_after_acquisition_keeps_the_report_but_blocks_settlement(self, store):
+        (item,) = _items(store)
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, "basis-edit-a")["lease"]
+        assert lease["basis_item_revision"]
+        assert lease["basis_release_digest"] is None
+
+        _row, edit_revision = pg.get_work_item_with_edit_revision(store, item)
+        pg.update_work_item_description(
+            store, item, "Changed after lease acquisition",
+            expected_revision=edit_revision, actor="basis-editor",
+        )
+        refused = _refused(lambda: _complete(
+            store, A, lease["lease_id"], run, "basis-edit-c"
+        ))
+
+        assert refused.code == "lease-basis-stale"
+        (report,) = _read(store, item)["outcome_reports"]
+        assert (report["disposition"], report["reason_code"], report["decision_id"]) == (
+            "rejected", "lease-basis-stale", None,
+        )
+        assert _read(store, item)["current_lease"] is None
+        assert _status(store, item) == "active" and pg.list_decisions(store, item) == []
+
+    def test_new_release_at_the_same_item_revision_stales_the_lease(self, store):
+        (item,) = _items(store)
+        first_release = pg.reserve(
+            store, item, actor="operator", session_id="basis-release-first",
+            role="execution", acceptance_contract={"evidence_obligations": ["tests"]},
+        )
+        pg.release_reservation(store, first_release["id"])
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, "basis-release-a")["lease"]
+        assert lease["basis_release_digest"] == first_release["release_digest"]
+
+        second_release = pg.reserve(
+            store, item, actor="operator", session_id="basis-release-second",
+            role="execution",
+            acceptance_contract={"evidence_obligations": ["review", "tests"]},
+        )
+        pg.release_reservation(store, second_release["id"])
+        assert second_release["release_digest"] != lease["basis_release_digest"]
+        assert second_release["item_revision"] == lease["basis_item_revision"]
+
+        refused = _refused(lambda: _complete(
+            store, A, lease["lease_id"], run, "basis-release-c",
+            checks=[
+                {"name": "review", "status": "passed"},
+                {"name": "tests", "status": "passed"},
+            ],
+        ))
+        assert refused.code == "lease-basis-stale"
+        (report,) = _read(store, item)["outcome_reports"]
+        assert (report["disposition"], report["reason_code"], report["decision_id"]) == (
+            "rejected", "lease-basis-stale", None,
+        )
+        assert lease["lease_id"] == report["lease_id"]
+        assert pg.list_decisions(store, item) == []
+
+    def test_concurrent_edit_commits_before_report_basis_check(self, store):
+        from sprintctl import contracts, workitemcore
+
+        (item,) = _items(store)
+        run = _run(store, A)
+        lease = _claim(store, A, item, run, "basis-race-a")["lease"]
+        report_store = _sibling(store)
+        with report_store.conn.cursor() as cur:
+            cur.execute("SELECT pg_backend_pid() AS pid")
+            reporter_pid = cur.fetchone()["pid"]
+        report_store.conn.commit()
+        started = threading.Event()
+        result = []
+
+        def report():
+            started.set()
+            try:
+                result.append(_complete(
+                    report_store, A, lease["lease_id"], run, "basis-race-c"
+                ))
+            except BaseException as exc:  # report the thread's exact outcome
+                result.append(exc)
+
+        thread = threading.Thread(target=report)
+        try:
+            with store.conn.transaction():
+                with store.conn.cursor() as cur:
+                    cur.execute("SELECT pg_backend_pid() AS pid")
+                    editor_pid = cur.fetchone()["pid"]
+                    cur.execute(
+                        "SELECT * FROM work_item WHERE repo_id=%s AND id=%s FOR UPDATE",
+                        (store.repo_id, item),
+                    )
+                    current = dict(cur.fetchone())
+                    _item, previous_revision = pg.get_work_item_with_edit_revision(store, item)
+                    version = int(previous_revision.split("@description:v", 1)[1].split("@", 1)[0])
+                    description = "Committed while the outcome report waits"
+                    revision = workitemcore._description_revision(
+                        {**current, "description": description}, version + 1
+                    )
+                    cur.execute(
+                        "UPDATE work_item SET description=%s, updated_at=now() "
+                        "WHERE repo_id=%s AND id=%s",
+                        (description, store.repo_id, item),
+                    )
+                    pg._insert_event(
+                        store, int(current["sprint_id"]), "basis-editor",
+                        contracts.ITEM_EDITED_EVENT_TYPE, work_item_id=item,
+                        payload={
+                            "summary": f"Item #{item} description edited",
+                            "field": "description",
+                            "previous_description": current.get("description") or "",
+                            "description": description,
+                            "previous_revision": previous_revision,
+                            "revision": revision,
+                        },
+                    )
+                thread.start()
+                assert started.wait(5)
+
+                deadline = time.monotonic() + 10
+                blocked = False
+                while time.monotonic() < deadline:
+                    with store.conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT %s = ANY(pg_blocking_pids(%s)) AS blocked",
+                            (editor_pid, reporter_pid),
+                        )
+                        blocked = bool(cur.fetchone()["blocked"])
+                    if blocked:
+                        break
+                    time.sleep(0.01)
+                assert blocked, "report did not wait for the item edit lock"
+        finally:
+            if thread.ident is not None:
+                thread.join(timeout=15)
+            report_store.conn.close()
+
+        assert not thread.is_alive()
+        assert len(result) == 1 and isinstance(result[0], ApplicationRejection)
+        assert result[0].code == "lease-basis-stale"
+        (report_row,) = _read(store, item)["outcome_reports"]
+        assert (report_row["disposition"], report_row["reason_code"], report_row["decision_id"]) == (
+            "rejected", "lease-basis-stale", None,
+        )
+        assert pg.list_decisions(store, item) == []
+
+
 class TestVerification:
     def _lease(self, store, key: str):
         (item,) = _items(store)
@@ -920,7 +1068,9 @@ class TestMaintenance:
 
 
 class TestSchema18Migration:
-    def test_a_fresh_ladder_creates_exactly_the_pinned_shape_and_reruns_cleanly(self, store):
+    def test_a_fresh_ladder_creates_exactly_the_pinned_shape_and_reruns_cleanly(
+        self, store, monkeypatch,
+    ):
         schema = "migration_18_" + uuid.uuid4().hex
         with store.conn.cursor() as cur:
             cur.execute(f'CREATE SCHEMA "{schema}"')
@@ -934,9 +1084,27 @@ class TestSchema18Migration:
             with conn.cursor() as cur:
                 cur.execute(f'SET search_path TO "{schema}"')
             conn.commit()
+            # Schema 18's exact-shape reapplication belongs at its migration
+            # boundary. Schema 29 deliberately extends work_lease, so checking
+            # schema 18 only after the full ladder would mistake that known
+            # additive column for a foreign relation.
+            install_29 = pg._apply_schema_version_29
+            observed_schema_18 = []
+
+            def verify_schema_18_then_install_29(cur):
+                assert pg._foreign_relations(
+                    cur, pg._SCHEMA_18_TABLES, pg._SCHEMA_18_INDEXES,
+                    pg._SCHEMA_18_INDEX_SHAPES,
+                ) == []
+                pg._apply_schema_version_18(cur)
+                observed_schema_18.append(True)
+                install_29(cur)
+
+            monkeypatch.setattr(pg, "_apply_schema_version_29", verify_schema_18_then_install_29)
             applied = pg_migrations.migrate_schema(pg.PgStore(conn, "migration-18"))
             # Schema 19 (agentops#2541) follows 18 in the ladder.
             assert 18 in applied["applied_versions"]
+            assert observed_schema_18 == [True]
             assert applied["to_version"] == pg_migrations.CURRENT_SCHEMA_VERSION
             with conn.cursor() as cur:
                 cur.execute(f'SET search_path TO "{schema}"')
@@ -1160,6 +1328,13 @@ class TestReviewFindings:
             pg_migrations.migrate_schema(pg.PgStore(conn, "migration-18-index"))
             with conn.cursor() as cur:
                 cur.execute(f'SET search_path TO "{schema}"')
+                # Recreate the schema-18 relation shape before exercising its
+                # historical foreign-index guard; schema 29's columns are a
+                # later, intentional extension of this table.
+                cur.execute(
+                    "ALTER TABLE work_lease DROP COLUMN basis_item_revision, "
+                    "DROP COLUMN basis_release_digest"
+                )
                 cur.execute("DROP INDEX uq_work_lease_active_item")
                 cur.execute("CREATE INDEX uq_work_lease_active_item ON work_lease(repo_id, work_item_id)")
                 with pytest.raises(pg_migrations.RemoteSchemaMigrationError, match="uq_work_lease_active_item"):
@@ -1901,6 +2076,12 @@ class TestSchema18IndexKeyColumns:
             pg_migrations.migrate_schema(pg.PgStore(conn, "migration-18-keys"))
             with conn.cursor() as cur:
                 cur.execute(f'SET search_path TO "{schema}"')
+                # This historical guard is specified against schema 18's
+                # exact table shape, before schema 29 adds the lease basis.
+                cur.execute(
+                    "ALTER TABLE work_lease DROP COLUMN basis_item_revision, "
+                    "DROP COLUMN basis_release_digest"
+                )
                 cur.execute("DROP INDEX uq_work_lease_active_item")
                 cur.execute(
                     f"CREATE UNIQUE INDEX uq_work_lease_active_item ON work_lease({columns}) "

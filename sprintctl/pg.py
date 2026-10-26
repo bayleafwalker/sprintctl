@@ -3351,6 +3351,11 @@ def _apply_schema_version_28(cur: Any) -> None:
     install(cur)
 
 
+def _apply_schema_version_29(cur: Any) -> None:
+    from .lease_basis_schema import install
+    install(cur)
+
+
 def effect_proposal_verification_rows(store: PgStore, intent_id: str, workspace_id: str) -> list:
     """Readonly exact proposal-associated receipt set, within caller snapshot."""
     from .effect_verification_export import read_rows
@@ -7150,6 +7155,8 @@ def _lease_row(row: Mapping[str, Any], generation: int) -> dict:
         "end_reason": row["end_reason"],
         "takeover_of": row["takeover_of"],
         "superseded_by": row["superseded_by"],
+        "basis_item_revision": row.get("basis_item_revision"),
+        "basis_release_digest": row.get("basis_release_digest"),
         "verification": _verification(row["verification_profile"], row["required_checks"]),
     }
 
@@ -7372,6 +7379,16 @@ def _acquire_locked(
     # The bar is pinned when the lease is taken: what the holder was asked
     # for cannot be lowered while it works.
     pinned = verification_config(cur, store, work_item_id)
+    # A successful lease outcome may settle only the exact item/Release basis
+    # observed at acquisition. The item row is already locked by
+    # _lock_claimable_item; read both facts under that same transaction.
+    _, basis_item_revision, _ = _release_basis_locked(
+        cur, store.repo_id, work_item_id, lock=False
+    )
+    basis_release = _current_release_locked(cur, store.repo_id, work_item_id)
+    basis_release_digest = (
+        basis_release["release_digest"] if basis_release is not None else None
+    )
     unenforced = sorted(set(pinned["requirements"]) - _releases.ENFORCED_REQUIREMENTS)
     if unenforced:
         # A contract stored before agentops#2539 may name a profile whose
@@ -7401,14 +7418,16 @@ def _acquire_locked(
     cur.execute(
         "INSERT INTO work_lease(repo_id, lease_id, work_item_id, run_id, principal_id, "
         "workspace_id, client_id, grant_id, claim_key, state, ttl_seconds, acquired_at, "
-        "heartbeat_at, takeover_of, verification_profile, required_checks) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, %s, %s, %s, %s, %s::jsonb) "
+        "heartbeat_at, takeover_of, verification_profile, required_checks, "
+        "basis_item_revision, basis_release_digest) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, %s, %s, %s, %s, %s::jsonb, %s, %s) "
         "RETURNING *",
         (
             store.repo_id, lease_id, work_item_id, run_id, principal_id, workspace_id,
             client_id, grant_id, claim_key, ttl_seconds, now, now,
             previous["lease_id"] if took_over else None,
             pinned["profile"], json.dumps(pinned["required_checks"]),
+            basis_item_revision, basis_release_digest,
         ),
     )
     lease = cur.fetchone()
@@ -7625,6 +7644,47 @@ def _dead_lease_reason(
             f"lease {lease_id} expired: no heartbeat within {int(lease['ttl_seconds'])}s; "
             "re-present the claim to reactivate it if nobody took it over, then "
             "report again under a new idempotency key (this key keeps this answer)",
+        )
+    return None
+
+
+def _lease_basis_reason(
+    cur: Any, store: PgStore, lease: Mapping[str, Any], item: Mapping[str, Any]
+) -> tuple[str, str] | None:
+    """Refuse settlement unless the lease still names the exact current basis.
+
+    Schema-28 rows have null basis columns because their acquisition revision
+    cannot be reconstructed. They remain readable, but cannot settle work.
+    The caller holds the work-item row lock, serializing this comparison with
+    edits, Release creation, and the decision written below.
+    """
+    item_revision = lease.get("basis_item_revision")
+    release_digest = lease.get("basis_release_digest")
+    # A null Release digest can be a valid *bound absence* for a newly
+    # acquired lease, distinguished from a legacy row by its revision pin.
+    if not isinstance(item_revision, str) or not item_revision:
+        return (
+            "lease-basis-unavailable",
+            f"lease {lease['lease_id']} has no recoverable item revision basis",
+        )
+
+    _, current_revision, _ = _release_basis_locked(
+        cur, store.repo_id, int(item["id"]), lock=False
+    )
+    current_release = _current_release_locked(cur, store.repo_id, int(item["id"]))
+    if current_release is None:
+        release_changed = release_digest is not None
+    else:
+        release_changed = (
+            release_digest is None
+            or release_digest != current_release["release_digest"]
+            or current_release["item_revision"] != current_revision
+        )
+    if item_revision != current_revision or release_changed:
+        return (
+            "lease-basis-stale",
+            f"lease {lease['lease_id']} was acquired against an item revision or Release "
+            "that is no longer current",
         )
     return None
 
@@ -7879,9 +7939,10 @@ def complete_lease(
       (``claim-superseded``, with ``details``), is stale
       (``lease-expired``) or ended, or the item was
       settled or is no longer active, or a succeeded outcome does not
-      satisfy the bar (``verification-unsatisfied``).  The payload is kept
-      on the item; the item does not change (INV-L1: a lease grants
-      authority, not ownership of the result).
+      satisfy the bar (``verification-unsatisfied``), or its stored item and
+      Release basis is missing or no longer current. The payload is kept on
+      the item; the item does not change (INV-L1: a lease grants authority,
+      not ownership of the result).
     - ``settled``: a succeeded outcome meeting a bar the holder's report
       can meet -- the owner records an ``accept`` decision naming the
       profile, the item becomes done and the lease ``settled``.
@@ -7947,9 +8008,12 @@ def complete_lease(
             return replayed
         now = _lease_now(cur)
         # The lease first, so no configuration problem can cost a late
-        # report its place as evidence; then the bar: the union of what the
-        # lease was acquired under and what the item asks for now.
+        # report its place as evidence; then require its exact acquisition
+        # basis before applying any outcome; then the bar: the union of what
+        # the lease was acquired under and what the item asks for now.
         dead = _dead_lease_reason(cur, store, lease, item, now)
+        if dead is None:
+            dead = _lease_basis_reason(cur, store, lease, item)
         config = _combined(
             _verification(lease["verification_profile"], lease["required_checks"]),
             verification_config(cur, store, int(item["id"])),
@@ -7988,6 +8052,13 @@ def complete_lease(
                 "accept", actor=SETTLEMENT_ACTOR, rationale=rationale[:4000],
                 evidence_digests=[payload_digest],
             )
+            # Schema 29's decision trigger blocks schema-28 runtimes that do
+            # not perform the acquisition-basis compare above. The local
+            # marker is set only after the current item/Release are proven to
+            # match the locked lease basis.
+            cur.execute(
+                "SELECT set_config('sprintctl.lease_basis_checked', 'on', true)"
+            )
             decision = _decide_locked(cur, store.repo_id, item, normalized)
             _insert_event(
                 store, int(item["sprint_id"]), SETTLEMENT_ACTOR, _decisions.ITEM_DECIDED_EVENT_TYPE,
@@ -7995,15 +8066,26 @@ def complete_lease(
                 payload=_decisions.decided_event_payload(decision, None),
             )
         parking = disposition == "recorded" and outcome_disposition == "parked"
-        if disposition in ("settled", "recorded"):
+        basis_refused = reason_code in {
+            "lease-basis-unavailable", "lease-basis-stale"
+        }
+        if disposition in ("settled", "recorded") or (
+            disposition == "rejected"
+            and basis_refused
+            and lease["state"] == "active"
+        ):
+            if disposition == "settled":
+                next_state, end_reason = "settled", "settled"
+            elif basis_refused:
+                next_state, end_reason = "released", reason_code
+            else:
+                next_state = "released"
+                end_reason = "reported-parked" if parking else "reported-failed"
             cur.execute(
                 "UPDATE work_lease SET state = %s, ended_at = %s, end_reason = %s "
                 "WHERE repo_id = %s AND lease_id = %s",
                 (
-                    "settled" if disposition == "settled" else "released", now,
-                    "settled" if disposition == "settled" else (
-                        "reported-parked" if parking else "reported-failed"
-                    ),
+                    next_state, now, end_reason,
                     store.repo_id, lease_id,
                 ),
             )
