@@ -24,13 +24,26 @@ not a durable recommendation registry: prior rejection and supersession are
 untracked, so callers must not treat a suggestion as a created or reopened
 work item.
 
-When a current lease has reported work, the suggested
-`work.lease.report-outcome-v1` path remains the only lease-based completion
-writer. That operation locks the item and lease, recomputes the union of the
-lease-pinned and current Release verification requirements, checks blockers,
-and records any terminal Decision in its transaction. It does not consume or
-trust an earlier assessment. The report operation must be retried with its
-original idempotency key after an uncertain response.
+Schema 28's lease writer is the only existing lease-based completion writer,
+but it is not safe for automatic acceptance against a revisioned assessment.
+`work_lease` stores verification requirements but no item revision or Release
+digest from acquisition. Editing an item leaves its active lease intact.
+`work.lease.report-outcome-v1` locks the item and lease, recomputes the union
+of verification requirements, checks blockers, then writes a Decision bound
+to the Release current at report time. It does not compare that Release or
+revision with the lease's acquisition basis.
+
+Therefore an active lease always yields an `inspect-conflict` suggestion with
+no `next_operation`; the evaluator never directs a caller to
+`work.lease.report-outcome-v1`. A lease acquired against revision R0 can remain
+active after an edit to R1 and can still settle through the current writer
+against the then-current Release. The owner acceptance race remains blocked
+until a coordinated schema/runtime change records the full item revision and
+Release digest on each new lease and compares both under the item lock before
+writing a Decision. Existing leases have no recoverable acquisition basis and
+must remain unknown and unable to settle successfully after that cutover.
+Reports continue to be retained as evidence on refusal. The outcome report
+must be retried with its original idempotency key after an uncertain response.
 
 This evaluator does not join Auditctl observations, disconnected run evidence,
 model judgments, or effect application outcomes into work completion. The
@@ -38,6 +51,8 @@ S4 `work.evidence.evaluate-v1` operation remains a separate run-chain
 evaluator. The trusted effect-intent reconciler remains separate as well; it
 does not accept or settle Sprintctl work.
 
-This source change needs no database migration. It does not claim a deployed
-owner has published the operation; rollout still requires the normal source,
-catalog, profile, and deployed-contract gates.
+The read-only assessment needs no database migration. It does not claim a
+deployed owner has published the operation; rollout still requires the normal
+source, catalog, profile, and deployed-contract gates. Lease-basis-safe
+automatic acceptance is a separate schema/runtime cutover and is not enabled
+by this assessment.

@@ -573,11 +573,7 @@ class WorkApplication:
 
     @staticmethod
     def _is_pure_read(operation: str) -> bool:
-        return (
-            operation.startswith("work.read.")
-            or operation == "work.completion.assess-v1"
-            or operation in _ADMIN_SHUTDOWN_READ_OPERATIONS
-        )
+        return operation.startswith("work.read.") or operation in _ADMIN_SHUTDOWN_READ_OPERATIONS
 
     @staticmethod
     def _can_retry_after_admin_shutdown(
@@ -846,7 +842,6 @@ class WorkApplication:
             "work.evidence.entry-v1": target._evidence_entry,
             "work.lease.parking-context-v1": target._parking_context,
             "work.evidence.evaluate-v1": target._evidence_evaluate,
-            "work.completion.assess-v1": target._completion_assess,
             "work.evidence.append-v1": target._evidence_append,
             "work.session-note.write-v1": target._session_note_write,
             "work.lease.acquire-v1": target._claim_acquire,
@@ -2664,42 +2659,6 @@ class WorkApplication:
             raise ApplicationRejection("run-not-found", str(exc), 404) from exc
         except evaluation.EvaluationError as exc:
             raise ApplicationRejection(exc.code, str(exc), exc.status) from exc
-
-    def _completion_assess(
-        self, arguments: dict[str, Any], context: InvocationContext
-    ) -> dict[str, Any]:
-        from . import completion_assessment as assessment
-        from . import pg as _pg
-
-        if "work:read" not in (getattr(context.identity, "authorities", ()) or ()):
-            raise ApplicationRejection(
-                "authority-required", "completion assessment requires work:read", 403
-            )
-        if getattr(context, "idempotency_key", None) is not None:
-            raise ApplicationRejection(
-                "invalid-arguments",
-                "completion assessment is read-only and accepts no idempotency key",
-                422,
-            )
-        try:
-            assessment.validate_request(arguments)
-        except assessment.AssessmentError as exc:
-            raise ApplicationRejection(exc.code, str(exc), exc.status) from exc
-        if not callable(getattr(self.backend, "repeatable_read_snapshot", None)) or not callable(
-            getattr(self.backend, "evaluate_work_completion_snapshot", None)
-        ):
-            raise ApplicationRejection(
-                "unsupported-backend", "completion assessment requires the PostgreSQL owner", 501
-            )
-        try:
-            return self.backend.evaluate_work_completion_snapshot(
-                self.store,
-                item_id=arguments["item_id"],
-                expected_revision=arguments["expected_revision"],
-                release_digest=arguments["release_digest"],
-            )
-        except _pg.CompletionItemNotFound as exc:
-            raise ApplicationRejection("item-not-found", str(exc), 404) from exc
 
     def _evidence_append(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         run_id = arguments["run_id"]

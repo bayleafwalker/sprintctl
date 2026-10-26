@@ -88,7 +88,7 @@ def test_stale_requested_revision_fails_closed_before_acceptance():
     assert result["follow_up"]["suggestions"][0]["action_kind"] == "inspect-conflict"
 
 
-def test_report_outcome_and_review_are_separate_recommendations():
+def test_unbound_active_lease_blocks_automatic_follow_up_but_review_stays_separate():
     active = {
         "lease_id": "lease_" + "A" * 26,
         "state": "active",
@@ -101,8 +101,11 @@ def test_report_outcome_and_review_are_separate_recommendations():
     }
     basic = evaluate(snapshot(leases=[active]))
     assert basic["assessment"]["status"] == "incomplete"
-    assert basic["follow_up"]["suggestions"][0]["action_kind"] == "report-outcome"
-    assert basic["follow_up"]["suggestions"][0]["next_operation"] == "work.lease.report-outcome-v1"
+    assert basic["assessment"]["reason_codes"] == [
+        "active-lease-release-basis-unavailable"
+    ]
+    assert basic["follow_up"]["suggestions"][0]["action_kind"] == "inspect-conflict"
+    assert basic["follow_up"]["suggestions"][0]["next_operation"] is None
 
     pending_review = {
         "report_id": "outcome_" + "B" * 26,
@@ -119,7 +122,7 @@ def test_report_outcome_and_review_are_separate_recommendations():
     assert reviewed["follow_up"]["suggestions"][0]["action_kind"] == "request-independent-review"
 
 
-def test_expired_active_lease_recommends_reverification_not_completion_report():
+def test_expired_active_lease_does_not_offer_unbound_lease_for_completion():
     active = {
         "lease_id": "lease_" + "A" * 26,
         "state": "active",
@@ -134,27 +137,11 @@ def test_expired_active_lease_recommends_reverification_not_completion_report():
     result = evaluate(snapshot(leases=[active]))
 
     assert result["assessment"]["status"] == "incomplete"
-    assert result["follow_up"]["suggestions"][0]["action_kind"] == "reverify"
-    assert result["follow_up"]["suggestions"][0]["next_operation"] == "work.lease.acquire-v1"
-
-
-def test_expired_active_lease_recommends_reverification_not_completion_report():
-    active = {
-        "lease_id": "lease_" + "A" * 26,
-        "state": "active",
-        "stale": True,
-        "verification": {
-            "profile": "checked",
-            "requirements": ["checks"],
-            "required_checks": [],
-        },
-    }
-
-    result = evaluate(snapshot(leases=[active]))
-
-    assert result["assessment"]["status"] == "incomplete"
-    assert result["follow_up"]["suggestions"][0]["action_kind"] == "reverify"
-    assert result["follow_up"]["suggestions"][0]["next_operation"] == "work.lease.acquire-v1"
+    assert result["assessment"]["reason_codes"] == [
+        "active-lease-release-basis-unavailable"
+    ]
+    assert result["follow_up"]["suggestions"][0]["action_kind"] == "inspect-conflict"
+    assert result["follow_up"]["suggestions"][0]["next_operation"] is None
 
 
 def test_unknown_owner_history_never_becomes_sufficient_and_ids_are_repeatable():

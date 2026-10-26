@@ -4,7 +4,9 @@ This evaluator reports only facts exposed by the Sprintctl owner. It never
 creates a Decision, changes a lease, or grants permission to accept work.
 Outcome reports remain authoritative only through the existing
 ``work.lease.report-outcome-v1`` writer, which recomputes current requirements
-under the item lock.
+under the item lock. The current lease schema does not bind a lease to the
+item revision or Release at acquisition, so this evaluator never recommends
+that writer as a safe automatic completion path.
 """
 
 from __future__ import annotations
@@ -144,14 +146,14 @@ def evaluate(
         for report in reports
     ):
         status, reason = "requires-judgment", "owner-report-awaits-verification"
-    elif active_lease is not None and active_lease["stale"]:
-        status, reason = "incomplete", "active-lease-expired"
+    elif active_lease is not None:
+        status, reason = "incomplete", "active-lease-release-basis-unavailable"
     elif item["status"] != "active":
         status, reason = "incomplete", "work-item-is-not-active"
     else:
         status, reason = "incomplete", "no-current-owner-acceptance"
 
-    if status == "accepted-current" and all(completeness.values()):
+    if status == "accepted-current" and all(completeness.values()) and active_lease is None:
         action, next_operation = "no-change", None
     elif status == "accepted-current":
         action, next_operation = "inspect-conflict", None
@@ -159,8 +161,8 @@ def evaluate(
         action, next_operation = "inspect-conflict", None
     elif status == "requires-judgment":
         action, next_operation = "request-independent-review", None
-    elif active_lease is not None and not active_lease["stale"]:
-        action, next_operation = "report-outcome", "work.lease.report-outcome-v1"
+    elif active_lease is not None:
+        action, next_operation = "inspect-conflict", None
     else:
         action, next_operation = "reverify", "work.lease.acquire-v1"
 

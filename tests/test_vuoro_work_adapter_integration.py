@@ -83,9 +83,7 @@ def test_adapter_kit_migration_preserves_catalog_bytes_and_registry_revision(
         operation.model_dump(mode="json")
         for operation in registry.catalog().operations
     ]
-# The schema27 delegation trio, sprint-kind extension, and evidence-entry read
-# are additive. New schema-28 operations are excluded by the schema filter in
-# these historical schema-6/7 pins.
+    # The schema27 delegation trio and sprint-kind extension are additive.
     # Preserve every historical descriptor byte and registry revision below;
     # never repin the old catalog to make the extension pass.
     extensions = {"work.run.delegate-v1", "work.run.delegation-get-v1",

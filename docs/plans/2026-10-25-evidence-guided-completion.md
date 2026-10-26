@@ -80,14 +80,37 @@ review. Every output names its exact basis and unknowns.
 
 ## SC-EC2: apply an authorized completion, without changing its meaning
 
-When SC-EC1 finds a current valid contract satisfied, call the **existing**
-current-revision owner acceptance operation under the actual grant/policy,
-with a stable idempotency key. The owner decides accept/refuse; the assessment
-does not force acceptance, and a successful model suggestion carries no
-authority. Test a competing work revision between assessment and apply:
-the owner must refuse the stale attempt, retain its evidence and reread state.
-Do not add universal `review_required` behavior to successful work or wait
-for an optional scribe/Auditctl network upload.
+**Implementation gate:** schema 28 does not provide a revision-bound lease
+acceptance path. `work_lease` does not store the full item revision or Release
+digest at acquisition. An item edit leaves an active lease in place, and
+`work.lease.report-outcome-v1` checks current verification requirements but
+does not compare the lease's acquisition basis with the current item/Release
+before writing its Decision. `work.decision.record` also lacks an atomic
+expected-revision/current-Release compare-and-set. A read-only assessment
+cannot close either write race. Keep automatic acceptance blocked until the
+owner provides a single transaction that compares the full item revision and
+Release digest under the item lock before recording acceptance.
+
+The bounded lease-owner candidate is an additive schema 29 with nullable
+`basis_item_revision` and `basis_release_digest` fields on `work_lease`. New
+leases pin the full item revision and exact current Release under the existing
+item lock. Legacy rows are left null because their original basis cannot be
+reconstructed; a successful outcome from such a lease is retained as a
+rejected report and cannot write a Decision. Settlement recomputes both values
+under the same item lock and rejects a mismatch before `_decide_locked`.
+Release only after exact-schema migration tests, stale-lease-after-edit
+history coverage, and independent concurrent edit/report tests pass on the
+disposable PostgreSQL gate. Until that cutover is deployed, no assessment
+follow-up may recommend the lease outcome writer for automatic application.
+
+After the implementation gate passes, when SC-EC1 finds a current valid
+contract satisfied, call the owner acceptance operation under the actual
+grant/policy, with a stable idempotency key. The owner decides accept/refuse;
+the assessment does not force acceptance, and a successful model suggestion
+carries no authority. Test a competing work revision between assessment and
+apply: the owner must refuse the stale attempt, retain its evidence and reread
+state. Do not add universal `review_required` behavior to successful work or
+wait for an optional scribe/Auditctl network upload.
 
 Record the owner-issued terminal Decision and exact Release digest in the
 owner record. Do not mistake `done`, a merged PR, an effect acceptance,

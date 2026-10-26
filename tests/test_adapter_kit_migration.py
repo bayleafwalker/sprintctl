@@ -80,8 +80,8 @@ def test_resource_schema_gate_removes_exactly_the_three_owner_operations() -> No
         "work.maintenance.resource.changes",
     }
 
-    assert len(available) == 122  # includes 13 schema-28 operations
-    assert len(unavailable) == 119
+    assert len(available) == 121  # includes 12 schema-28 request lifecycle operations
+    assert len(unavailable) == 118
     assert {spec["name"] for spec in available} - {
         spec["name"] for spec in unavailable
     } == resource_names

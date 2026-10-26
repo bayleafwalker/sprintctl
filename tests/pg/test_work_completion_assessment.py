@@ -137,7 +137,7 @@ def test_release_frozen_before_an_edit_is_not_current(prepared):
     assert stale["assessment"]["status"] == "stale-basis"
 
 
-def test_existing_report_outcome_writer_is_the_only_acceptance_path(prepared):
+def test_unbound_lease_never_becomes_an_automatic_completion_follow_up(prepared):
     app, store, item_id, args = prepared
     context = _context(authorities=("work:read", "work:evidence", "work:claim"))
     run = app.invoke("work.run.register-v1", {
@@ -155,29 +155,27 @@ def test_existing_report_outcome_writer_is_the_only_acceptance_path(prepared):
     }, context)["lease"]
 
     pending = _assess(app, args)
-    assert pending["follow_up"]["suggestions"][0]["action_kind"] == "report-outcome"
-    assert pending["follow_up"]["suggestions"][0]["next_operation"] == "work.lease.report-outcome-v1"
+    suggestion = pending["follow_up"]["suggestions"][0]
+    assert pending["assessment"]["status"] == "incomplete"
+    assert pending["assessment"]["reason_codes"] == [
+        "active-lease-release-basis-unavailable"
+    ]
+    assert suggestion["action_kind"] == "inspect-conflict"
+    assert suggestion["next_operation"] is None
+    assert pending["owner_facts"]["active_lease"]["lease_id"] == lease["lease_id"]
 
-    report = app.invoke("work.lease.report-outcome-v1", {
-        "lease_id": lease["lease_id"],
-        "run_id": run,
-        "outcome": "succeeded",
-        "summary": "fixture verification passed",
-        "payload": {"result": "ok"},
-        "checks": [{"name": "tests", "status": "passed"}],
-        "idempotency_key": "completion-outcome-report",
-    }, context)
-    assert report["settled"] is True
-
-    current_release = pg.current_release(store, item_id)
-    accepted = _assess(app, {
-        "item_id": item_id,
-        "expected_revision": current_release["item_revision"],
-        "release_digest": current_release["release_digest"],
-    })
-    assert accepted["assessment"]["status"] == "accepted-current"
-    assert accepted["owner_facts"]["terminal_decision"]["kind"] == "accept"
-    assert accepted["authorizes_acceptance"] is False
+    pg.update_work_item_description(
+        store,
+        item_id,
+        "Edited after active lease acquisition",
+        expected_revision=args["expected_revision"].rsplit("@revise:", 1)[0],
+        actor="completion-test",
+    )
+    stale = _assess(app, args)
+    assert stale["assessment"]["status"] == "stale-basis"
+    assert stale["follow_up"]["suggestions"][0]["action_kind"] == "inspect-conflict"
+    assert stale["follow_up"]["suggestions"][0]["next_operation"] is None
+    assert stale["owner_facts"]["active_lease"]["lease_id"] == lease["lease_id"]
 
 
 def test_authority_and_idempotency_boundaries(prepared):

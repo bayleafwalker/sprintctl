@@ -12,7 +12,6 @@ from sprintctl.agent_inbox import OPERATIONS as AGENT_INBOX_OPERATIONS
 SCHEMA26_OPERATIONS = {"work.run.resolve-v2", "work.approval.record-v1", "work.approval.get-v1"}
 SCHEMA27_OPERATIONS = {"work.run.delegate-v1", "work.run.delegation-revoke-v1", "work.run.delegation-get-v1"}
 SCHEMA28_OPERATIONS = {
-    "work.completion.assess-v1",
     "work.request.publish-v1", "work.request.get-v1", "work.request.list-v1",
     "work.request.revise-v1", "work.request.dependent-add-v1",
     "work.request.dependent-withdraw-v1", "work.request.events-v1",
