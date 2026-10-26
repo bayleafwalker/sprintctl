@@ -763,7 +763,9 @@ class TestRevisionBoundLeaseBasis:
         )
         pg.release_reservation(store, second_release["id"])
         assert second_release["release_digest"] != lease["basis_release_digest"]
-        assert second_release["item_revision"] == lease["basis_item_revision"]
+        assert pg.get_release(second_release["release_digest"])["item_revision"] == (
+            lease["basis_item_revision"]
+        )
 
         refused = _refused(lambda: _complete(
             store, A, lease["lease_id"], run, "basis-release-c",
@@ -1119,10 +1121,13 @@ class TestSchema18Migration:
             assert applied["to_version"] == pg_migrations.CURRENT_SCHEMA_VERSION
             with conn.cursor() as cur:
                 cur.execute(f'SET search_path TO "{schema}"')
-                assert pg._foreign_relations(cur, pg._SCHEMA_18_TABLES, pg._SCHEMA_18_INDEXES) == []
-                # Additive and idempotent: re-applying over its own shape is a no-op.
-                pg._apply_schema_version_18(cur)
-            conn.rollback()
+                from sprintctl import lease_basis_schema
+                assert lease_basis_schema.inspect_catalog(cur)["available"] is True
+            conn.commit()
+            # The full current schema reruns without applying any migrations.
+            assert pg_migrations.migrate_schema(
+                pg.PgStore(conn, "migration-18")
+            )["applied_versions"] == []
         finally:
             conn.close()
             with store.conn.cursor() as cur:
@@ -1192,7 +1197,7 @@ class TestReviewFindings:
         pg.release_reservation(store, reservation["id"])
         return reservation
 
-    def test_a_later_weaker_reservation_cannot_lower_the_bar(self, store):
+    def test_a_later_release_stales_the_lease_even_if_its_bar_is_weaker(self, store):
         (item,) = _items(store)
         self._freeze(store, item, {"evidence_obligations": ["security-review"]}, "strict-session")
         run = _run(store, A)
@@ -1200,27 +1205,33 @@ class TestReviewFindings:
         assert lease["verification"] == {
             "profile": "checked", "requirements": ["checks"], "required_checks": ["security-review"],
         }
-        # Anyone with work:write freezes a weaker contract mid-lease; the
-        # bars combine by union, so it adds nothing and removes nothing.
+        # A later Release changes the owner's basis. The held lease must not
+        # apply evidence against that newer contract, even if it is weaker.
         self._freeze(store, item, {"verification_profile": "self-reported"}, "downgrade-session")
         assert _read(store, item)["verification"] == lease["verification"]
         refused = _refused(lambda: _complete(store, A, lease["lease_id"], run, "bar-lower-c", checks=[]))
-        assert refused.code == "verification-unsatisfied" and "security-review" in refused.message
-        assert _status(store, item) == "active"
+        assert refused.code == "lease-basis-stale"
+        (report,) = _read(store, item)["outcome_reports"]
+        assert (report["reason_code"], report["decision_id"]) == ("lease-basis-stale", None)
+        assert _status(store, item) == "active" and pg.list_decisions(store, item) == []
 
-    def test_the_bar_pinned_at_claim_holds_even_if_releases_change_later(self, store):
+    def test_a_revise_decision_stales_the_preexisting_lease(self, store):
         (item,) = _items(store)
         self._freeze(store, item, {"evidence_obligations": ["tests", "review"]}, "pin-session")
         run = _run(store, A)
         lease = _claim(store, A, item, run, "bar-pinned-a")["lease"]
-        # A revise decision leaves the item with no current release, so its
-        # present bar is the default; the lease keeps the one it was given.
+        # A revise decision clears the current Release. It also changes the
+        # acquisition basis, so the old lease cannot settle.
         pg.record_decision(store, item, "revise", actor="operator")
         assert _read(store, item)["verification"] == {
             "profile": "checked", "requirements": ["checks"], "required_checks": [],
         }
         refused = _refused(lambda: _complete(store, A, lease["lease_id"], run, "bar-pinned-c"))
-        assert refused.code == "verification-unsatisfied" and "review" in refused.message
+        assert refused.code == "lease-basis-stale"
+        (report,) = _read(store, item)["outcome_reports"]
+        assert (report["reason_code"], report["decision_id"]) == ("lease-basis-stale", None)
+        assert _read(store, item)["current_lease"] is None
+        assert pg.list_decisions(store, item)[-1]["kind"] == "revise"
 
     def test_an_unknown_profile_is_refused_when_the_contract_is_written(self, store):
         (item,) = _items(store)
