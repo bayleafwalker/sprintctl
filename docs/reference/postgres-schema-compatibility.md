@@ -16,8 +16,8 @@ create, alter, or repair schema objects.
 work API as `sprintctl-work/v1`, reports the actual remote schema version, and
 reports the minimum and maximum versions this runtime supports.
 
-The current source tree admits exactly remote schema 28: `MINIMUM_SCHEMA_VERSION`
-and `MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 28, and
+The current source tree admits exactly remote schema 29: `MINIMUM_SCHEMA_VERSION`
+and `MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 29, and
 `remote-schema-version` in `pyproject.toml` records the same value. Any other
 ledger version fails closed before a runtime command is served.
 
@@ -354,3 +354,24 @@ is checked at startup; the migration is deployment-only. No request operation
 changes work status or authorizes a protected effect. Event rows are guarded
 against update, delete and truncate. The runtime fingerprint checks the
 constraint definitions and guard function and triggers.
+
+Schema 29 (sprintctl 0.25.0) binds each new work lease to the full item
+revision and current Release observed while the owner holds the item lock. It
+adds nullable `basis_item_revision` and `basis_release_digest` columns to
+`work_lease`; a null Release digest records that no Release existed at
+acquisition, and a null item revision identifies a legacy lease whose basis
+cannot be recovered. The migration does not backfill old rows. Legacy lease
+outcomes remain readable and are retained as rejected evidence with
+`lease-basis-unavailable`; they cannot write a terminal Decision.
+
+The migration installs a `work_lease` insert guard that rejects new rows
+without a revision pin, including rows written by a still-running schema-28
+runtime. It also installs a `work_decision` guard that rejects the lease
+settlement actor unless the transaction has performed the schema-29 basis
+check. The check compares the stored revision and optional Release digest
+with the current item and Release while holding the same item lock used for
+settlement. A mismatch is retained as `lease-basis-stale`, releases the active
+lease, and writes no Decision. Both guards and nullable column definitions are
+inspected exactly at startup; partial or foreign schema-29 objects fail
+closed. Migration remains deployment-owned, and runtime startup remains
+read-only.

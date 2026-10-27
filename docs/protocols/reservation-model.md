@@ -202,7 +202,9 @@ table and operations; it does not replace, create, or consult reservations.
   `sprintctl/work_application.py`). No `sprintctl` CLI command takes a lease,
   and `reservation reserve` behaves exactly as described above.
 - **Storage.** `work_lease` and `work_outcome_report`, installed by PostgreSQL
-  schema 18 (`_apply_schema_version_18` in `sprintctl/pg.py`). The lease
+  schema 18 (`_apply_schema_version_18` in `sprintctl/pg.py`). Schema 29 adds
+  `basis_item_revision` and `basis_release_digest` to each newly acquired
+  lease. The lease
   functions (`acquire_lease`, `resume_lease`, `heartbeat_lease`,
   `complete_lease`) exist only in `sprintctl/pg.py`; SQLite has no lease.
 - **Exclusive.** A partial unique index (`uq_work_lease_active_item`) allows at
@@ -227,6 +229,14 @@ table and operations; it does not replace, create, or consult reservations.
   then settles it under the item's verification profile or records it as
   `rejected` (for example `lease-expired`, `claim-superseded`) without
   changing the item (`complete_lease`).
+- **Basis binding.** Schema 29 captures the full item revision and current
+  Release digest under the item lock at acquisition. The report path compares
+  both with current owner state under that lock before writing a Decision. An
+  edit or new Release makes the lease basis stale; its report is retained,
+  the lease is released, and no Decision is written. A schema-28 lease has no
+  recoverable acquisition basis and remains unsettleable after migration. A
+  null Release digest is a valid pinned absence only when the revision pin is
+  present and there is still no current Release.
 - **Shared locking only.** Leases and reservations share the repo-scoped
   advisory lock (`_lock_repo_for_claims`) so that maintenance activation, which
   counts both, cannot race a claim. A terminal item decision settles any

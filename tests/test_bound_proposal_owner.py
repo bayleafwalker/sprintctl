@@ -72,9 +72,13 @@ def test_only_catalog_addition_and_every_existing_descriptor_byte_preserved():
         "work.run.continuation-delta-v1",
         "work.run.register-correlated-v1", "work.run.invocation-receipt-get-v1",
     } | set(OPERATION_AUTHORITIES) | AGENT_INBOX_OPERATIONS | SCHEMA26_OPERATIONS | SCHEMA27_OPERATIONS | SCHEMA28_OPERATIONS
-    # #2596 intentionally tightens these two existing payload schemas. Every
+    # Schema 29 adds the captured basis to lease acquire, heartbeat, and read
+    # results; #2596 also tightens these two existing payload schemas. Every
     # other descriptor remains byte-identical to the attested release.
-    budgeted = {"work.run.predecessor-context-v1", "work.session-note.write-v1"}
+    budgeted = {
+        "work.run.predecessor-context-v1", "work.session-note.write-v1",
+        "work.lease.acquire-v1", "work.lease.heartbeat-v1", "work.lease.read-v1",
+    }
     preserved = set(baseline['operation_sha256']) - budgeted
     assert {k: actual[k] for k in preserved} == {
         k: baseline['operation_sha256'][k] for k in preserved

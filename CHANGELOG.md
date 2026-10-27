@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.25.0 — 2026-10-26 (candidate)
+
+Schema 29 is a coordinated owner/runtime cutover. New work leases bind to the
+full item revision and current Release observed at acquisition. Existing leases
+are basis-unknown and cannot settle after the migration; concurrent item or
+Release changes are refused before a terminal Decision is written.
+
+### Added
+
+- Exact schema-29 storage checks and deployment-only migration for revision- and
+  Release-bound work leases. Runtime startup remains read-only.
+- Database guards block unbound lease inserts from old runtimes and block lease
+  settlement Decisions unless the current basis was checked under the item lock.
+
 ## 0.24.0 — 2026-10-25 (candidate)
 
 Same PostgreSQL schema 28 as 0.23.0; no database migration is required.

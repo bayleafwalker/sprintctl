@@ -94,7 +94,7 @@ PostgreSQL schema24 adds only
 Its existing name is admitted only with the exact table, method, key, opclass,
 predicate and ready/valid/nonunique shape. A collision refuses. Migration is
 explicit and transactional; normal startup and v3 reads never install or repair
-it. The v3 exporter checks for exactly one schema-version row equal to 24, 25, 26, 27, or 28
+it. The v3 exporter checks for exactly one schema-version row equal to 24, 25, 26, 27, 28, or 29
 and a healthy index. This operation-level check does not widen native runtime
 admission: the running owner must also satisfy the exact compatibility policy in
 [pg_migrations.py](../../sprintctl/pg_migrations.py). The exporter guard is in

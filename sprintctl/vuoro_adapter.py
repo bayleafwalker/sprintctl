@@ -693,6 +693,11 @@ _LEASE_PROPERTIES: dict[str, Any] = {
     "end_reason": _NULLABLE_TEXT_SCHEMA,
     "takeover_of": _NULLABLE_LEASE_ID_SCHEMA,
     "superseded_by": _NULLABLE_LEASE_ID_SCHEMA,
+    "basis_item_revision": {
+        "type": ["string", "null"],
+        "pattern": _releases._RELEASE_REVISION_RE.pattern,
+    },
+    "basis_release_digest": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
     "verification": _VERIFICATION_SCHEMA,
 }
 _LEASE_REQUIRED = tuple(_LEASE_PROPERTIES)
@@ -1820,6 +1825,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work:claim",
         "write",
         "not-allowed",
+        required_remote_schema_version=29,
     ),
     WorkOperationContract(
         "work.lease.heartbeat-v1",
@@ -1833,6 +1839,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work:claim",
         "write",
         "not-allowed",
+        required_remote_schema_version=29,
     ),
     WorkOperationContract(
         "work.lease.report-outcome-v1",
@@ -1841,6 +1848,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work:claim",
         "write",
         "not-allowed",
+        required_remote_schema_version=29,
     ),
     WorkOperationContract(
         "work.lease.complete-v1",
@@ -1849,6 +1857,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work:claim",
         "write",
         "not-allowed",
+        required_remote_schema_version=29,
         deprecation={
             "deprecated": True,
             "replacement": "work.lease.report-outcome-v1",
@@ -1879,6 +1888,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work:read",
         "read",
         "not-allowed",
+        required_remote_schema_version=29,
     ),
     WorkOperationContract(
         _effect.OPERATION_PROPOSE,

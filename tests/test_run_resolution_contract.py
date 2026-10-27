@@ -114,8 +114,8 @@ def test_record_arguments(arguments, code):
         assert caught.value.code == code
 
 
-def test_schema28_operator_request_floor_and_delegation_runtime_window():
-    assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.MAXIMUM_SCHEMA_VERSION == 28
+def test_schema29_lease_basis_floor_and_operator_request_runtime_window():
+    assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.MAXIMUM_SCHEMA_VERSION == 29
     assert approval.SCHEMA_VERSION == 26
     assert "work_approval" in approval_schema.DDL
     assert f"interval '{approval_schema.MAX_LIFETIME_SECONDS} seconds'" in approval_schema.DDL
