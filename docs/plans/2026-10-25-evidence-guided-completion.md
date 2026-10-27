@@ -112,14 +112,47 @@ apply: the owner must refuse the stale attempt, retain its evidence and reread
 state. Do not add universal `review_required` behavior to successful work or
 wait for an optional scribe/Auditctl network upload.
 
+**Atomic basis precondition (blocking for automatic apply):** the current
+served `work.decision.record` contract accepts the item, decision fields, an
+optional `release_digest`, and the invocation idempotency key; it does not
+expose an expected item revision or expected-current-Release comparison, and
+the application handler does not pass an expected revision to the writer
+([catalog contract](https://github.com/bayleafwalker/sprintctl/blob/eeedd3cbe29bc758c76108517f3513fd91c21899/sprintctl/vuoro_adapter.py#L2383),
+[handler](https://github.com/bayleafwalker/sprintctl/blob/eeedd3cbe29bc758c76108517f3513fd91c21899/sprintctl/work_application.py#L4048)).
+For the existing resolver, omitting `release_digest` selects whatever is
+current when the Decision is written; supplying one checks that it belongs to
+the item, not that it remains current
+([resolver](https://github.com/bayleafwalker/sprintctl/blob/eeedd3cbe29bc758c76108517f3513fd91c21899/sprintctl/releasecore.py#L93)).
+A read assessment followed by this write therefore cannot promise refusal
+when the assessed basis changes between those operations.
+
+Before automatic apply, the owner write must compare the exact assessment basis
+with current state in the same transaction as the Decision and terminal status
+change. The comparison must cover the current acceptance-relevant work
+revision and exact current Release digest; it must also cover a mutable
+acceptance-profile revision if the Release digest does not already bind it.
+The Decision must bind to that exact Release. Use an already released owner
+path only if its wire contract and implementation prove this compare-and-set
+behavior end to end. Otherwise, add a versioned CAS input to the existing
+Decision-record contract through EC-00 TypeSpec/OpenAPI governance and route it
+through the same Decision writer. This is a blocking contract prerequisite,
+not authorization for a second terminal-decision writer. Until the CAS-bearing
+operation is released and qualified, leave automatic apply disabled; SC-EC1
+read-only assessment and nonmutating SC-EC3 recommendations may proceed.
+
+A basis mismatch is a no-write conflict: preserve the evidence and assessment,
+then reread and reassess using a new basis and idempotency key. If the write
+response is lost, retry the exact original request with its original key and
+accept only the owner replay result. Never change the basis under an existing
+key.
+
+
 Record the owner-issued terminal Decision and exact Release digest in the
 owner record. Do not mistake `done`, a merged PR, an effect acceptance,
 or a provider completion as a verified Release unless the existing
 Decision/Release join establishes it.
 
-**Acceptance:** one successful owner-qualified automatic completion, one
-stale-basis refusal and one owner-policy refusal, all replay-idempotent;
-turning the optional semantic consumer off changes none of these results.
+**Acceptance:** one successful current-basis automatic completion; a revision/edit or current-Release change between assessment and apply is atomically refused with no Decision or terminal-status write; a policy refusal; exact replay after a lost response returns the one owner Decision; changed-basis reuse of the old key conflicts. Turning the optional semantic consumer off changes none of the deterministic owner results.
 
 ## SC-EC3: bounded follow-up recommendations
 
