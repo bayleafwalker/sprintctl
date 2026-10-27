@@ -31,6 +31,7 @@ PUBLISHED_OPERATIONS = (
         "work.approval.get-v1",
         "work.approval.record-v1",
         "work.batch.apply",
+        "work.completion.assess-v1",
         "work.decision.record",
         "work.effect.accept-v1",
         "work.effect.acceptance-snapshot-v1",
