@@ -27,6 +27,14 @@ closes on success or rejection without ending a caller-owned transaction.
 Separate responses and pagination requests can observe different snapshots;
 the read does not lock out later work changes or authorize an effect.
 
+`work.request.continuation-v1` projects a supported human-attested resolution
+and each active dependant's work coordinates in one such snapshot. It is
+advertised only by a schema29-capable owner implementing the operation. Expired
+freshness or changed work yields `needs-refresh`; unresolved reports and
+unsupported resolution evidence are refused. The packet omits attestation
+text and actor identity. Reading does not record delivery acknowledgement,
+wake a runtime, change work status or grant protected-effect authority.
+
 ## State changes
 
 - Publish creates an `open` request and its initial active dependants.

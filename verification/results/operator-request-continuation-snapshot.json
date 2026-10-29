@@ -1,0 +1,58 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.operator-request.continuation-snapshot",
+  "contract_ref": {
+    "doc_id": "operator-request-lifecycle",
+    "revision": "git:991548dead07b410b121f6eec643b2800b0f4ae0"
+  },
+  "implementation_sha": "991548dead07b410b121f6eec643b2800b0f4ae0",
+  "depth": 2,
+  "environment": {
+    "backend": "disposable unprivileged PostgreSQL16.15 and17.10",
+    "isolation": "sibling PostgreSQL REPEATABLE READ READ ONLY",
+    "tool_versions": {
+      "PostgreSQL": "16.15 and17.10"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 1,
+    "bounds": {
+      "readers": 1,
+      "writers": 1,
+      "racing_histories": 1,
+      "dependants": 2
+    },
+    "faults_exercised": [
+      "work CAS committed between constituent reads",
+      "unsupported resolution event basis",
+      "forged protected effect authorization",
+      "expired request",
+      "withdrawn dependant"
+    ]
+  },
+  "claims": [
+    {
+      "property": "resolution and current work basis describe one owner snapshot",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/test_operator_request_revision_pg.py:test_continuation_resolution_and_work_basis_share_one_owner_snapshot"
+      ]
+    },
+    {
+      "property": "only current, supported human-attested resolution projects metadata; reads preserve events",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_operator_request_revision_pg.py"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "Base implementation SHA plus source/test patch SHA256 2c9b0b10dcf16ea4ed5bb76274bf6c3ffa1df3beb391175cb6c6c540d31a7b26",
+    "Focused owner/schema/contract tests:59 passed,zero skips on each PostgreSQL16.15 and17.10.",
+    "Full mandatory PostgreSQL16.15 suite:1870 passed,zero skips;97 fixture cleanups with zero remaining rows.",
+    "Existing released schema29 storage is reused; no DDL or migration added. Source-observed completion, delivery acknowledgement, native wake and protected-effect authorization are not established.",
+    "Full hermetic non-performance suite:3347 passed,1874 optional skips,14 performance cases deselected. Mandatory PostgreSQL coverage ran separately with zero skips."
+  ]
+}

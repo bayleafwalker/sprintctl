@@ -115,6 +115,7 @@ PUBLISHED_OPERATIONS = (
         "work.read.sprints",
         "work.read.unbound",
         "work.request.attest-v1",
+        "work.request.continuation-v1",
         "work.request.decline-v1",
         "work.request.dependent-add-v1",
         "work.request.dependent-withdraw-v1",

@@ -3255,7 +3255,29 @@ def _operator_request_operation_contracts() -> tuple[WorkOperationContract, ...]
          "actor": {"type": "string"}, "details": {"type": "object"},
          "recorded_at": {"type": "string", "format": "date-time"}},
         required=("request_id", "revision", "action", "actor", "details", "recorded_at"))
+    continuation = _object_schema(
+        {"schema": {"const": "operator-request-continuation-ready/v1"},
+         "owner": _object_schema(
+             {"repo_id": {"type": "string", "minLength": 1},
+              "read_operation": {"const": "work.request.continuation-v1"}},
+             required=("repo_id", "read_operation")),
+         "request_id": request_id, "request_revision": revision,
+         "resolution": _object_schema(
+             {"event_revision": revision, "basis": {"const": "human-attestation"},
+              "event_recorded_at": {"type": "string", "format": "date-time"}},
+             required=("event_revision", "basis", "event_recorded_at")),
+         "dependants": {"type": "array", "maxItems": 128, "items": _object_schema(
+             {"work_item_id": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+              "session_id": {"type": "string", "minLength": 1, "maxLength": 256},
+              "work_revision": {"type": "string", "minLength": 1},
+              "current_work_revision": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+              "state": {"enum": ["continuation-ready", "needs-refresh"]}},
+             required=("work_item_id", "session_id", "work_revision", "current_work_revision", "state"))}},
+        required=("schema", "owner", "request_id", "request_revision", "resolution", "dependants"))
     return (
+        WorkOperationContract("work.request.continuation-v1",
+            _object_schema({"request_id": request_id}, required=("request_id",)),
+            continuation, "work:read", "read", "not-allowed", required_remote_schema_version=29),
         WorkOperationContract("work.request.publish-v1",
             _object_schema({"request_id": request_id, "packet": packet,
                             "dependants": {"type": "array", "minItems": 1, "maxItems": 128, "items": dependant},

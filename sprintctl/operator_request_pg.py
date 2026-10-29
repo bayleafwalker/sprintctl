@@ -445,6 +445,52 @@ def get(cur: Any, store: Any, workspace_id: str, request_id: str) -> dict:
     return _snapshot(cur, store, workspace_id, row, _now(cur))
 
 
+def continuation(cur: Any, store: Any, workspace_id: str, request_id: str) -> dict:
+    """Project a resolved request and its active work links in the caller's snapshot.
+
+    This is a read-only successor packet, not delivery acknowledgement, native
+    scheduling or protected-effect authorization. The supported resolution
+    basis is the existing explicitly labeled human attestation.
+    """
+    row = _request(cur, store, workspace_id, request_id)
+    if row is None:
+        raise RequestRefused("not-found", "no such request in this repository and workspace")
+    if row['state'] != 'resolved':
+        raise RequestRefused("continuation-not-ready", "request has no supported owner resolution")
+    snapshot = _snapshot(cur, store, workspace_id, row, _now(cur))
+    cur.execute(
+        "SELECT action,details,recorded_at FROM operator_request_event "
+        "WHERE repo_id=%s AND workspace_id=%s AND request_id=%s AND revision=%s",
+        (store.repo_id, workspace_id, request_id, snapshot['revision']),
+    )
+    event = cur.fetchone()
+    details = event['details'] if event else None
+    if (event is None or event['action'] != 'resolved-human-attestation'
+            or not isinstance(details, dict) or details.get('completion_basis') != 'human-attestation'
+            or details.get('protected_effect_authorized') is not False):
+        raise RequestRefused('resolution-evidence-unavailable', 'owner resolution event is not supported')
+    dependants = []
+    for dependant in snapshot['dependants']:
+        if dependant['state'] != 'active':
+            continue
+        current = (snapshot['freshness'] == 'current' and not dependant['source_changed']
+                   and dependant['current_work_revision'] == dependant['work_revision'])
+        dependants.append({
+            'work_item_id': dependant['work_item_id'], 'session_id': dependant['session_id'],
+            'work_revision': dependant['work_revision'],
+            'current_work_revision': dependant['current_work_revision'],
+            'state': 'continuation-ready' if current else 'needs-refresh',
+        })
+    return {
+        'schema': 'operator-request-continuation-ready/v1',
+        'owner': {'repo_id': store.repo_id, 'read_operation': contract.OPERATION_CONTINUATION},
+        'request_id': request_id, 'request_revision': snapshot['revision'],
+        'resolution': {'event_revision': snapshot['revision'], 'basis': 'human-attestation',
+                       'event_recorded_at': _iso(event['recorded_at'])},
+        'dependants': dependants,
+    }
+
+
 def list_requests(cur: Any, store: Any, workspace_id: str, args: Mapping[str, Any]) -> dict:
     after = args.get("after_request_id", "")
     parameters: list[Any] = [store.repo_id, workspace_id, after]

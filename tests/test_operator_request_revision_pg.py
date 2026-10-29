@@ -31,6 +31,157 @@ def _served_snapshot(store, identity, operation):
     return value
 
 
+CONTINUATION = 'work.request.continuation-v1'
+
+
+def _continuation_request(store, seed_id, *, fresh=True, sessions=('session-a', 'session-b')):
+    seed = pg.get_work_item(store, seed_id)
+    item_id = pg.create_work_item(store, seed['sprint_id'], seed['track_id'], 'Continuation source')
+    identity = request_id()
+    packet = _packet()
+    if fresh:
+        packet['blocker']['fresh_until'] = '2099-10-24T11:00:00Z'
+    args = contract.publish_arguments({
+        'request_id': identity, 'packet': packet,
+        'dependants': [{'work_item_id': item_id, 'session_id': session} for session in sessions],
+        'idempotency_key': str(uuid4()),
+    })
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        storage.publish(cur, store, 'principal-a', 'workspace-a', args)
+    return identity, item_id
+
+
+def _resolve_continuation(store, identity, revision=1):
+    report(store, identity, revision=revision)
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        storage.attest(cur, store, 'principal-reviewer', 'workspace-a',
+                       attestation_arguments(identity, revision + 1))
+
+
+def _continuation(store, identity, **context):
+    return WorkApplication.postgres(store).invoke(
+        CONTINUATION, {'request_id': identity}, _request_context(store, **context))
+
+
+def test_continuation_read_contains_one_resolution_for_all_current_dependants(request_owner):
+    store, seed_id = request_owner
+    identity, item_id = _continuation_request(store, seed_id)
+    _resolve_continuation(store, identity)
+    history = events(store, identity)
+    value = _continuation(store, identity, authorities=frozenset({'work:read'}))
+    assert value == {
+        'schema': 'operator-request-continuation-ready/v1',
+        'owner': {'repo_id': store.repo_id, 'read_operation': CONTINUATION},
+        'request_id': identity, 'request_revision': 3,
+        'resolution': {'event_revision': 3, 'basis': 'human-attestation',
+                       'event_recorded_at': history[-1]['recorded_at']},
+        'dependants': [
+            {'work_item_id': item_id, 'session_id': session,
+             'work_revision': value['dependants'][0]['work_revision'],
+             'current_work_revision': value['dependants'][0]['work_revision'],
+             'state': 'continuation-ready'} for session in ('session-a', 'session-b')
+        ],
+    }
+    assert events(store, identity) == history  # Reading never acknowledges delivery.
+
+
+@pytest.mark.parametrize('outcome', [None, 'performed', 'partial', 'uncertain'])
+def test_continuation_read_refuses_unresolved_and_unverified_reports(request_owner, outcome):
+    from sprintctl.application import ApplicationRejection
+    store, seed_id = request_owner
+    identity, _ = _continuation_request(store, seed_id)
+    if outcome:
+        report(store, identity, outcome=outcome)
+    with pytest.raises(ApplicationRejection) as caught:
+        _continuation(store, identity)
+    assert caught.value.code == 'continuation-not-ready'
+
+
+@pytest.mark.parametrize('change', ['expired', 'changed-work', 'withdrawn-dependant'])
+def test_continuation_read_preserves_freshness_and_each_dependant_need(request_owner, change):
+    store, seed_id = request_owner
+    identity, item_id = _continuation_request(store, seed_id, fresh=change != 'expired')
+    revision = 1
+    if change == 'withdrawn-dependant':
+        with store.conn.transaction(), store.conn.cursor() as cur:
+            storage.withdraw_dependant(cur, store, 'principal-a', 'workspace-a', {
+                'request_id': identity, 'expected_revision': 1,
+                'work_item_id': item_id, 'session_id': 'session-a',
+            })
+        revision += 1
+    _resolve_continuation(store, identity, revision)
+    if change == 'changed-work':
+        item = pg.get_work_item(store, item_id)
+        pg.set_work_item_status(store, item_id, 'active', 'continuation-successor',
+                                expected_revision=item_status_revision(item))
+    value = _continuation(store, identity)
+    assert len(value['dependants']) == (1 if change == 'withdrawn-dependant' else 2)
+    assert {row['state'] for row in value['dependants']} == {
+        'continuation-ready' if change == 'withdrawn-dependant' else 'needs-refresh'}
+    if change == 'withdrawn-dependant':
+        assert value['dependants'][0]['session_id'] == 'session-b'
+
+
+def test_continuation_read_never_leaks_another_workspace_request(request_owner):
+    from sprintctl.application import ApplicationRejection
+    store, seed_id = request_owner
+    identity, _ = _continuation_request(store, seed_id)
+    _resolve_continuation(store, identity)
+    with pytest.raises(ApplicationRejection) as caught:
+        _continuation(store, identity, workspace_id='workspace-b')
+    assert caught.value.code == 'not-found'
+
+
+@pytest.mark.parametrize('change', ['unsupported-basis', 'claimed-effect-authority'])
+def test_continuation_read_requires_the_exact_immutable_resolution_basis(request_owner, monkeypatch, change):
+    from sprintctl.application import ApplicationRejection
+    store, seed_id = request_owner
+    identity, _ = _continuation_request(store, seed_id)
+    original = storage._record_event
+
+    def malformed_resolution(cur, owner, workspace, selected, revision, actor, action, details, at):
+        if action == 'resolved-human-attestation':
+            details = dict(details)
+            if change == 'unsupported-basis':
+                action = 'claimed-source-completion'
+                details['completion_basis'] = 'caller-verified'
+            else:
+                details['protected_effect_authorized'] = True
+        return original(cur, owner, workspace, selected, revision, actor, action, details, at)
+
+    monkeypatch.setattr(storage, '_record_event', malformed_resolution)
+    _resolve_continuation(store, identity)
+    with pytest.raises(ApplicationRejection) as caught:
+        _continuation(store, identity)
+    assert caught.value.code == 'resolution-evidence-unavailable'
+
+
+def test_continuation_resolution_and_work_basis_share_one_owner_snapshot(request_owner, monkeypatch):
+    store, seed_id = request_owner
+    identity, item_id = _continuation_request(store, seed_id)
+    _resolve_continuation(store, identity)
+    original = storage._snapshot
+    committed = []
+
+    def change_work_after_request(cur, reader, workspace, row, now):
+        if row['request_id'] == identity and not committed:
+            with store.connection_factory() as conn:
+                writer = PgStore(conn, store.repo_id, store.authority_repo_uuid)
+                item = pg.get_work_item(writer, item_id)
+                pg.set_work_item_status(writer, item_id, 'active', 'continuation-writer',
+                                        expected_revision=item_status_revision(item))
+                committed.append(True)
+        return original(cur, reader, workspace, row, now)
+
+    monkeypatch.setattr(storage, '_snapshot', change_work_after_request)
+    first = _continuation(store, identity)
+    assert committed == [True]
+    assert {row['state'] for row in first['dependants']} == {'continuation-ready'}
+    assert first['resolution']['event_revision'] == first['request_revision'] == 3
+    second = _continuation(store, identity)
+    assert {row['state'] for row in second['dependants']} == {'needs-refresh'}
+
+
 @pytest.mark.parametrize('operation', [contract.OPERATION_GET, contract.OPERATION_LIST])
 def test_request_read_excludes_withdrawal_committed_between_constituents(request_owner, monkeypatch, operation):
     """The request header and dependant state must describe one owner snapshot."""

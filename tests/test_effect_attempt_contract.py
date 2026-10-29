@@ -109,7 +109,7 @@ def test_only_attempt_and_declared_preview_descriptors_are_added_to_released_cat
         }
         | AGENT_INBOX_OPERATIONS
         | SCHEMA26_OPERATIONS
-        | SCHEMA27_OPERATIONS | SCHEMA28_OPERATIONS | {"work.sprint.kind"}
+        | SCHEMA27_OPERATIONS | SCHEMA28_OPERATIONS | {"work.request.continuation-v1"} | {"work.sprint.kind"}
     )
     # Schema 29 adds the captured basis to lease acquire, heartbeat, and read
     # results; #2596 also tightens these two existing payload schemas. Every

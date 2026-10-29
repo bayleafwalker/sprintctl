@@ -1,0 +1,83 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.operator-request.continuation-snapshot",
+  "owner_repo": "sprintctl",
+  "subject": "one-authoritative-request-continuation-read",
+  "contract_ref": {
+    "doc_id": "operator-request-lifecycle",
+    "revision": "git:991548dead07b410b121f6eec643b2800b0f4ae0"
+  },
+  "source_of_truth": "repository/workspace-scoped request, immutable resolution event, active dependant and current work rows",
+  "depth": 2,
+  "backends": [
+    "postgresql"
+  ],
+  "actors": [
+    "successor-reader",
+    "independent-work-writer",
+    "attesting-operator"
+  ],
+  "initial_state": [
+    "one resolved human-attested request with two active session dependants and matching work basis"
+  ],
+  "operations": [
+    {
+      "name": "work.request.continuation-v1",
+      "actors": [
+        "successor-reader"
+      ],
+      "synchronization": "read request header; commit an independent work writer before aggregate projection"
+    },
+    {
+      "name": "change-work-status",
+      "actors": [
+        "independent-work-writer"
+      ],
+      "synchronization": "independent connection commits after read snapshot establishment"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "one metadata-only continuation response"
+  },
+  "assumptions": {
+    "isolation": "sibling PostgreSQL REPEATABLE READ READ ONLY",
+    "clock": "owner freshness check within one read transaction"
+  },
+  "bounds": {
+    "readers": 1,
+    "writers": 1,
+    "racing_histories": 1,
+    "dependants": 2
+  },
+  "invariants": [
+    "resolution and current work basis describe one owner snapshot",
+    "a performed/partial/uncertain report alone never creates continuation readiness",
+    "foreign workspace requests remain undisclosed",
+    "withdrawn dependants are excluded",
+    "a subsequent read observes the committed work change",
+    "read emits no delivery acknowledgement or protected-effect authorization"
+  ],
+  "faults": [
+    "work CAS committed between constituent reads",
+    "unsupported resolution event basis",
+    "forged protected effect authorization",
+    "expired request",
+    "withdrawn dependant"
+  ],
+  "oracles": [
+    "first response retains matching work bases; the next requires refresh",
+    "unsupported resolution and unresolved request refuse",
+    "request event history is unchanged by reads"
+  ],
+  "implementation_anchors": [
+    "sprintctl/operator_request_pg.py:continuation",
+    "sprintctl/work_application.py:WorkApplication._operator_request",
+    "tests/test_operator_request_revision_pg.py:test_continuation_resolution_and_work_basis_share_one_owner_snapshot"
+  ],
+  "expansions": [
+    "semantic-doc",
+    "concurrent-history",
+    "fault-scenario"
+  ]
+}

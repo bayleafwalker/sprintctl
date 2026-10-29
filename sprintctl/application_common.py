@@ -99,6 +99,7 @@ _ADMIN_SHUTDOWN_READ_OPERATIONS = frozenset(
         "work.request.get-v1",
         "work.request.list-v1",
         "work.request.events-v1",
+        "work.request.continuation-v1",
         "work.evidence.tail-v1",
         "work.evidence.entry-v1",
         "work.lease.parking-context-v1",
