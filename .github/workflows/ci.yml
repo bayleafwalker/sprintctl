@@ -126,7 +126,10 @@ jobs:
       # captured so the shared checker below can assert on it.
       - name: Run PostgreSQL integration suite
         shell: bash
-        run: uv run pytest -q -m pg -rs tests/pg/ tests/test_work_application_pg.py 2>&1 | tee pg-pytest.out
+        run: >-
+          uv run pytest -q -m pg -rs tests/pg/ tests/test_work_application_pg.py
+          tests/test_operator_request_pg.py tests/test_operator_request_revision_pg.py
+          2>&1 | tee pg-pytest.out
 
       - name: Check cleanup evidence
         run: python3 scripts/pg-cleanup-report-check.py "$SPRINTCTL_TEST_PG_CLEANUP_REPORT" pg-pytest.out

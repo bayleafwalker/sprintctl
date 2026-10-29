@@ -113,7 +113,8 @@ while IFS= read -r name; do
   case "$name" in SPRINTCTL_TEST_PG_*) ;; *) unset "$name" ;; esac
 done < <(compgen -e | grep '^SPRINTCTL_' || true)
 rc=0
-uv run --extra dev --extra remote pytest -q -m pg -rs tests/pg/ tests/test_work_application_pg.py "$@" \
+uv run --extra dev --extra remote pytest -q -m pg -rs tests/pg/ tests/test_work_application_pg.py \
+  tests/test_operator_request_pg.py tests/test_operator_request_revision_pg.py "$@" \
   >"$work/pytest.out" 2>&1 || rc=$?
 cat "$work/pytest.out"
 [ "$rc" = 0 ] || exit "$rc"
