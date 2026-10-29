@@ -19,6 +19,14 @@ procedure, and rejects duplicate dependencies and unsafe integer values.
 Mutations use the owner idempotency ledger and expected revisions. An exact
 retry returns the stored result; a stale revision returns a conflict.
 
+Each served get, list or event-page response uses one read-only PostgreSQL
+repeatable-read snapshot. Request headers, dependant rows and current work
+revisions therefore describe the same database snapshot, including when a
+writer commits between constituent reads. The short-lived sibling connection
+closes on success or rejection without ending a caller-owned transaction.
+Separate responses and pagination requests can observe different snapshots;
+the read does not lock out later work changes or authorize an effect.
+
 ## State changes
 
 - Publish creates an `open` request and its initial active dependants.

@@ -1,0 +1,63 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.operator-request.read-snapshot",
+  "contract_ref": {
+    "doc_id": "operator-request-lifecycle",
+    "revision": "git:4dc58ecafe442f44b69f50cdc61e64cd27422168"
+  },
+  "implementation_sha": "4dc58ecafe442f44b69f50cdc61e64cd27422168",
+  "depth": 2,
+  "environment": {
+    "backend": "PostgreSQL16.15 and17.10, unprivileged disposable databases",
+    "isolation": "one sibling REPEATABLE READ READ ONLY response; independent writer connection",
+    "tool_versions": {
+      "PostgreSQL": "16.15 and17.10"
+    }
+  },
+  "execution": {
+    "seed": null,
+    "histories": 4,
+    "bounds": {
+      "readers": 1,
+      "writers": 1,
+      "racing_histories": 4,
+      "connection_lifecycle_cases": 5
+    },
+    "faults_exercised": [
+      "last-dependant withdrawal between header and dependant reads",
+      "work status CAS between request header and current-work reads",
+      "missing request rejection with caller transaction already open"
+    ]
+  },
+  "claims": [
+    {
+      "property": "One response excludes later writer commits from its request/dependant/work aggregate",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/test_operator_request_revision_pg.py:test_request_read_excludes_withdrawal_committed_between_constituents",
+        "tests/test_operator_request_revision_pg.py:test_request_read_excludes_work_change_after_request_snapshot"
+      ]
+    },
+    {
+      "property": "All three read operations close their read-only sibling on success or rejection while preserving caller transaction ID",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_operator_request_revision_pg.py:test_request_read_owns_only_a_closed_readonly_sibling"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Before repair both get and list mixed an old request header with a newly withdrawn dependant or changed work revision. Four deterministic race cases failed before repair and pass afterward.",
+      "trace_ref": "verification/fixtures/operator-request-mixed-read-counterexample.json"
+    }
+  ],
+  "notes": [
+    "implementation_sha identifies the base commit; tested source/test patch SHA256 is 8579fea64ea2cea611e77af51f7aed5880b9de0a7cd7b24a2da1179e814a0b04",
+    "Digest input: git diff --binary -- sprintctl/work_application.py tests/test_operator_request_revision_pg.py. Evidence and documentation excluded.",
+    "Focused request owner/schema/contract suite:47 passed,zero skips,on each of PostgreSQL16.15 and17.10.",
+    "Full required disposable PostgreSQL16.15 gate:1858 passed,zero skips;97 fixture cleanups with zero remaining rows.",
+    "Standalone SQLite does not store operator requests. No cross-response atomicity, general linearizability, source-observed completion, delivery acknowledgement, native wake or protected-effect claim.",
+    "Full non-performance suite with the pinned served and remote extras:3347 passed,1862 optional skips,14 performance cases deselected. Mandatory PostgreSQL coverage ran separately with zero skips."
+  ]
+}

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Served operator-request reads now keep request headers, dependants and work
+  revisions in one read-only snapshot while preserving caller transactions.
+
 ## 0.25.0 — 2026-10-26 (candidate)
 
 Schema 29 is a coordinated owner/runtime cutover. New work leases bind to the
