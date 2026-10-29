@@ -116,15 +116,18 @@ def test_list_rejects_non_string_state():
         request.list_arguments({"limit": 25, "state": []})
 
 
-def test_request_operations_are_advertised_only_by_schema28_owners():
+def test_request_catalog_preserves_schema28_ops_and_gates_continuation_at29():
     old = catalog_operation_specs(resource_schema_available=True, remote_schema_version=27)
     current = catalog_operation_specs(resource_schema_available=True, remote_schema_version=28)
+    continuation_owner = catalog_operation_specs(resource_schema_available=True, remote_schema_version=29)
     request_names = {contract.name for contract in WORK_OPERATION_CONTRACTS
                      if contract.name.startswith("work.request.")}
 
     assert request_names
     assert not (request_names & {spec["name"] for spec in old})
-    assert request_names <= {spec["name"] for spec in current}
+    assert request_names - {request.OPERATION_CONTINUATION} <= {spec["name"] for spec in current}
+    assert request.OPERATION_CONTINUATION not in {spec["name"] for spec in current}
+    assert request_names <= {spec["name"] for spec in continuation_owner}
 
 
 def test_outcome_and_progress_arguments_preserve_distinct_states():

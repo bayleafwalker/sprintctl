@@ -17,6 +17,7 @@ OPERATION_PUBLISH = "work.request.publish-v1"
 OPERATION_GET = "work.request.get-v1"
 OPERATION_LIST = "work.request.list-v1"
 OPERATION_EVENTS = "work.request.events-v1"
+OPERATION_CONTINUATION = "work.request.continuation-v1"
 OPERATION_REVISE = "work.request.revise-v1"
 OPERATION_DEPENDENT_ADD = "work.request.dependent-add-v1"
 OPERATION_DEPENDENT_WITHDRAW = "work.request.dependent-withdraw-v1"
@@ -37,7 +38,7 @@ WRITE_OPERATIONS = frozenset({
     OPERATION_DECLINE,
     OPERATION_SUPERSEDE,
 })
-READ_OPERATIONS = frozenset({OPERATION_GET, OPERATION_LIST, OPERATION_EVENTS})
+READ_OPERATIONS = frozenset({OPERATION_GET, OPERATION_LIST, OPERATION_EVENTS, OPERATION_CONTINUATION})
 OPERATIONS = WRITE_OPERATIONS | READ_OPERATIONS
 
 REQUEST_ID_RE = re.compile(r"^req_[0-9A-HJKMNP-TV-Z]{26}$")

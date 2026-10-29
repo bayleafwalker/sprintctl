@@ -2919,6 +2919,12 @@ class WorkApplication:
         from . import operator_request_pg as storage
         from . import pg as _pg
 
+        if (operation == _operator_request_contract.OPERATION_CONTINUATION
+                and (getattr(self.store, "remote_schema_version", None) or 0) < 29):
+            raise ApplicationRejection(
+                "owner-capability-unavailable", "continuation snapshots require the schema29 owner", 503,
+            )
+
         principal_id, workspace_id = _identity_binding(context)
         if operation in {_operator_request_contract.OPERATION_ATTEST,
                          _operator_request_contract.OPERATION_DECLINE}:
@@ -2935,6 +2941,9 @@ class WorkApplication:
                 # describe one owner snapshot. A sibling also leaves any
                 # transaction already owned by the caller untouched.
                 with _pg.repeatable_read_snapshot(self.store) as snapshot, snapshot.conn.cursor() as cur:
+                    if operation == _operator_request_contract.OPERATION_CONTINUATION:
+                        args = _operator_request_contract.get_arguments(arguments)
+                        return storage.continuation(cur, snapshot, workspace_id, args["request_id"])
                     if operation == _operator_request_contract.OPERATION_GET:
                         args = _operator_request_contract.get_arguments(arguments)
                         return storage.get(cur, snapshot, workspace_id, args["request_id"])
