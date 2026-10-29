@@ -170,14 +170,14 @@ def revise(cur: Any, store: Any, principal_id: str, workspace_id: str, args: Map
         raise RequestRefused("revision-conflict", "request revision changed", {
             "expected_revision": expected, "current_revision": int(row["revision"]),
         })
-    if row["state"] != "open":
-        raise RequestRefused("request-not-open", "only an open request may be revised")
+    if row["state"] not in {"open", "reported-performed", "verifying"}:
+        raise RequestRefused("request-not-open", "only a live request may be revised")
     revision = _next_revision(expected)
     packet = args["packet"]
     packet_digest = _digest(packet)
     now = _now(cur)
     cur.execute(
-        "UPDATE operator_request SET revision=%s,material_revision=material_revision+1,packet=%s::jsonb,"
+        "UPDATE operator_request SET revision=%s,state='open',material_revision=material_revision+1,packet=%s::jsonb,"
         "packet_digest=%s,updated_at=%s WHERE repo_id=%s AND workspace_id=%s AND request_id=%s",
         (revision, json.dumps(packet), packet_digest, now, store.repo_id, workspace_id, args["request_id"]),
     )
