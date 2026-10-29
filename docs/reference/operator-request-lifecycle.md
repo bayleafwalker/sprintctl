@@ -26,6 +26,11 @@ retry returns the stored result; a stale revision returns a conflict.
 - A performed report moves the request to `reported-performed`; partial or
   uncertain reports move it to `verifying`. None of those reports resolve the
   request.
+- The requesting principal can revise a live request after a report. Changing
+  the packet increments its material revision and returns it to `open` in the
+  same transaction as its revision event. The previous report remains in
+  history; attestation requires a new report about the current packet. A
+  stale concurrent attestation conflicts, and terminal requests stay terminal.
 - `work.request.attest-v1` requires `work:approve`, a current revision and a
   prior performed or uncertain report. It records a labeled
   `human-attestation` event and resolves the request. It does not grant

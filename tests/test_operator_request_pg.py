@@ -138,7 +138,7 @@ def test_served_application_binds_authority_workspace_replay_and_completion(requ
     """Exercise catalog operations through the real schema-28 application path."""
     store, item_id = request_owner
     app = WorkApplication.postgres(store)
-    request_id = "req_01JBC3D4E5F6G7H8J9K0MNPQRS"
+    request_id = "req_01JBC3D4E5F6G7H8J9K0MNPQSD"
     arguments = contract.publish_arguments({
         "request_id": request_id,
         "packet": _packet(),
