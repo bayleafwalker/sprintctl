@@ -1,0 +1,27 @@
+{
+  "schema": "operator-request-read-counterexample/v1",
+  "source": "deterministic disposable PostgreSQL16.15 histories before the snapshot repair",
+  "histories": [
+    {
+      "operations": ["get-v1", "list-v1"],
+      "trace": [
+        "reader obtains revision1/open request header",
+        "independent writer commits last-dependant withdrawal and revision2/withdrawn",
+        "reader obtains the newly withdrawn dependant"
+      ],
+      "observed": {"request_revision": 1, "request_state": "open", "dependant_state": "withdrawn"},
+      "required": {"request_revision": 1, "request_state": "open", "dependant_state": "active"}
+    },
+    {
+      "operations": ["get-v1", "list-v1"],
+      "trace": [
+        "reader obtains an open request header",
+        "independent owner CAS changes linked work from pending to active",
+        "reader computes current work revision from the later commit"
+      ],
+      "observed": {"source_changed": true},
+      "required": {"source_changed": false}
+    }
+  ],
+  "limits": ["one response snapshot only", "separate responses may observe later commits", "no protected-effect or native delivery claim"]
+}

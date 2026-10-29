@@ -1,0 +1,68 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.operator-request.read-snapshot",
+  "owner_repo": "sprintctl",
+  "subject": "served-operator-request-read-consistency",
+  "contract_ref": {
+    "doc_id": "operator-request-lifecycle",
+    "revision": "git:4dc58ecafe442f44b69f50cdc61e64cd27422168"
+  },
+  "source_of_truth": "repository/workspace-scoped request, dependant, work-item and append-only request-event rows",
+  "depth": 2,
+  "backends": ["postgresql"],
+  "actors": ["request-reader", "requester-writer", "work-writer"],
+  "initial_state": [
+    "one open request with one active dependant and its attached work revision",
+    "caller connection may already own an implicit transaction"
+  ],
+  "operations": [
+    {
+      "name": "get-or-list-request",
+      "actors": ["request-reader"],
+      "synchronization": "read request header, commit independent writer, then read dependants and current work"
+    },
+    {
+      "name": "withdraw-last-dependant",
+      "actors": ["requester-writer"],
+      "synchronization": "independent connection commits after the reader obtains its request header"
+    },
+    {
+      "name": "change-work-status",
+      "actors": ["work-writer"],
+      "synchronization": "independent owner CAS commits before the reader fetches current work"
+    },
+    {
+      "name": "read-or-reject-request-page",
+      "actors": ["request-reader"],
+      "synchronization": "get, list and events use a sibling while the caller retains its transaction ID"
+    }
+  ],
+  "consistency": {"target": "application-invariant", "object": "one request aggregate or event-page response"},
+  "assumptions": {
+    "isolation": "sibling PostgreSQL REPEATABLE READ READ ONLY; writer uses an independent connection",
+    "clock": "freshness uses owner clock within the response; no timing-dependent race oracle",
+    "fairness": "one independent writer completes synchronously in the reader boundary hook"
+  },
+  "bounds": {"readers": 1, "writers": 1, "racing_histories": 4, "connection_lifecycle_cases": 5},
+  "invariants": [
+    "request header and dependants exclude a withdrawal committed after snapshot establishment",
+    "current-work revision and source-changed flag exclude later work commits",
+    "a later read observes the committed writer state",
+    "each sibling is read-only and closes on success or rejection",
+    "caller transaction ID remains unchanged"
+  ],
+  "faults": ["withdrawal between constituent reads", "work status change between constituent reads", "missing request rejection"],
+  "oracles": [
+    "first response revision1/open/active followed by revision2/withdrawn/withdrawn",
+    "first response retains attached work revision followed by source-changed on the next read",
+    "server isolation and read-only settings, sibling closure and unchanged caller transaction ID"
+  ],
+  "implementation_anchors": [
+    "sprintctl/work_application.py:WorkApplication._operator_request",
+    "sprintctl/pg.py:repeatable_read_snapshot",
+    "tests/test_operator_request_revision_pg.py:test_request_read_excludes_withdrawal_committed_between_constituents",
+    "tests/test_operator_request_revision_pg.py:test_request_read_excludes_work_change_after_request_snapshot",
+    "tests/test_operator_request_revision_pg.py:test_request_read_owns_only_a_closed_readonly_sibling"
+  ],
+  "expansions": ["semantic-doc", "concurrent-history", "fault-scenario"]
+}

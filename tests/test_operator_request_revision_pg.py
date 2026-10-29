@@ -9,7 +9,9 @@ import pytest
 from sprintctl import operator_request as contract
 from sprintctl import operator_request_pg as storage
 from sprintctl.pg import PgStore
+from sprintctl import pg
 from sprintctl.application import WorkApplication
+from sprintctl.workitemcore import item_status_revision
 from tests.test_operator_request_pg import (  # noqa: F401
     _packet, _publish, _read, _request_context, pytestmark, request_owner,
 )
@@ -17,6 +19,139 @@ from tests.test_operator_request_pg import (  # noqa: F401
 
 def request_id():
     return 'req_' + uuid4().hex[:26].upper()
+
+
+def _served_snapshot(store, identity, operation):
+    arguments = ({'limit': 100} if operation == contract.OPERATION_LIST
+                 else {'request_id': identity})
+    value = WorkApplication.postgres(store).invoke(
+        operation, arguments, _request_context(store))
+    if operation == contract.OPERATION_LIST:
+        return next(row for row in value['requests'] if row['request_id'] == identity)
+    return value
+
+
+@pytest.mark.parametrize('operation', [contract.OPERATION_GET, contract.OPERATION_LIST])
+def test_request_read_excludes_withdrawal_committed_between_constituents(request_owner, monkeypatch, operation):
+    """The request header and dependant state must describe one owner snapshot."""
+    store, item_id = request_owner
+    identity = request_id()
+    _publish(store, item_id, identity)
+    original = storage._dependants
+    committed = []
+
+    def withdraw_after_header(cur, reader, workspace, selected):
+        if selected == identity and not committed:
+            with store.connection_factory() as conn:
+                writer = PgStore(conn, store.repo_id, store.authority_repo_uuid)
+                with conn.cursor() as writer_cur:
+                    result = storage.withdraw_dependant(writer_cur, writer, 'principal-a', 'workspace-a', {
+                        'request_id': identity, 'expected_revision': 1,
+                        'work_item_id': item_id, 'session_id': 'session-a',
+                    })
+                conn.commit()
+                committed.append(result['revision'])
+        return original(cur, reader, workspace, selected)
+
+    monkeypatch.setattr(storage, '_dependants', withdraw_after_header)
+    before = _served_snapshot(store, identity, operation)
+    assert committed == [2]
+    assert (before['revision'], before['state'], before['dependants'][0]['state']) == (1, 'open', 'active')
+    after = _served_snapshot(store, identity, operation)
+    assert (after['revision'], after['state'], after['dependants'][0]['state']) == (2, 'withdrawn', 'withdrawn')
+
+
+@pytest.mark.parametrize('operation', [contract.OPERATION_GET, contract.OPERATION_LIST])
+def test_request_read_excludes_work_change_after_request_snapshot(request_owner, monkeypatch, operation):
+    """Source-changed flags cannot incorporate a later work transaction."""
+    store, seed_id = request_owner
+    seed = pg.get_work_item(store, seed_id)
+    item_id = pg.create_work_item(store, seed['sprint_id'], seed['track_id'], 'Snapshot work change')
+    identity = request_id()
+    _publish(store, item_id, identity)
+    original = storage._work_item
+    committed = []
+
+    def change_after_header(cur, reader, selected, **kwargs):
+        if selected == item_id and not committed:
+            with store.connection_factory() as conn:
+                writer = PgStore(conn, store.repo_id, store.authority_repo_uuid)
+                with conn.cursor() as writer_cur:
+                    old = original(writer_cur, writer, item_id)
+                pg.set_work_item_status(writer, item_id, 'active', 'snapshot-writer',
+                                        expected_revision=item_status_revision(old))
+                committed.append(True)
+        return original(cur, reader, selected, **kwargs)
+
+    monkeypatch.setattr(storage, '_work_item', change_after_header)
+    before = _served_snapshot(store, identity, operation)
+    assert committed == [True]
+    dependant = before['dependants'][0]
+    assert dependant['source_changed'] is False
+    assert dependant['current_work_revision'] == dependant['work_revision']
+    after = _served_snapshot(store, identity, operation)
+    assert after['dependants'][0]['source_changed'] is True
+
+
+@pytest.mark.parametrize('operation,missing', [
+    (contract.OPERATION_GET, False), (contract.OPERATION_LIST, False),
+    (contract.OPERATION_EVENTS, False), (contract.OPERATION_GET, True),
+    (contract.OPERATION_EVENTS, True),
+])
+def test_request_read_owns_only_a_closed_readonly_sibling(request_owner, monkeypatch, operation, missing):
+    from psycopg.pq import TransactionStatus
+    from sprintctl.application import ApplicationRejection
+
+    store, item_id = request_owner
+    identity = request_id()
+    if not missing:
+        _publish(store, item_id, identity)
+    factory = store.connection_factory
+    opened = []
+
+    def factory_spy():
+        connection = factory()
+        opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(store, 'connection_factory', factory_spy)
+    observed = []
+    original = storage._request
+
+    def observe_read(cur, reader, *args, **kwargs):
+        cur.execute('SHOW transaction_isolation')
+        isolation = next(iter(cur.fetchone().values()))
+        cur.execute('SHOW transaction_read_only')
+        readonly = next(iter(cur.fetchone().values()))
+        observed.append((isolation, readonly, reader.conn is store.conn))
+        return original(cur, reader, *args, **kwargs)
+
+    # list starts with its own SELECT before it calls _snapshot/_dependants.
+    monkeypatch.setattr(storage, '_request', observe_read)
+    original_dependants = storage._dependants
+    def observe_dependants(cur, reader, workspace, selected):
+        observe_read(cur, reader, workspace, selected)
+        return original_dependants(cur, reader, workspace, selected)
+    if operation == contract.OPERATION_LIST:
+        monkeypatch.setattr(storage, '_dependants', observe_dependants)
+
+    xid = store.conn.execute('SELECT pg_current_xact_id() AS xid').fetchone()['xid']
+    assert store.conn.info.transaction_status == TransactionStatus.INTRANS
+    args = ({'limit': 100} if operation == contract.OPERATION_LIST else {'request_id': identity})
+    if operation == contract.OPERATION_EVENTS:
+        args.update(after_revision=0, limit=100)
+    app = WorkApplication.postgres(store)
+    if missing:
+        with pytest.raises(ApplicationRejection) as caught:
+            app.invoke(operation, args, _request_context(store))
+        assert caught.value.code == 'not-found'
+    else:
+        app.invoke(operation, args, _request_context(store))
+    assert observed and all(row == ('repeatable read', 'on', False) for row in observed)
+    assert len(opened) == 1 and opened[0].closed
+    assert store.conn.info.transaction_status == TransactionStatus.INTRANS
+    assert store.conn.execute('SELECT pg_current_xact_id() AS xid').fetchone()['xid'] == xid
+    store.conn.rollback()
 
 
 def report(store, identity, outcome='performed', revision=1):

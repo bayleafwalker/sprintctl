@@ -2931,15 +2931,18 @@ class WorkApplication:
                 )
         try:
             if operation in _operator_request_contract.READ_OPERATIONS:
-                with self.store.conn.cursor() as cur:
+                # Request headers, dependants and current work revisions must
+                # describe one owner snapshot. A sibling also leaves any
+                # transaction already owned by the caller untouched.
+                with _pg.repeatable_read_snapshot(self.store) as snapshot, snapshot.conn.cursor() as cur:
                     if operation == _operator_request_contract.OPERATION_GET:
                         args = _operator_request_contract.get_arguments(arguments)
-                        return storage.get(cur, self.store, workspace_id, args["request_id"])
+                        return storage.get(cur, snapshot, workspace_id, args["request_id"])
                     if operation == _operator_request_contract.OPERATION_LIST:
                         args = _operator_request_contract.list_arguments(arguments)
-                        return storage.list_requests(cur, self.store, workspace_id, args)
+                        return storage.list_requests(cur, snapshot, workspace_id, args)
                     args = _operator_request_contract.events_arguments(arguments)
-                    return storage.events(cur, self.store, workspace_id, args)
+                    return storage.events(cur, snapshot, workspace_id, args)
 
             parsers = {
                 _operator_request_contract.OPERATION_PUBLISH: (
