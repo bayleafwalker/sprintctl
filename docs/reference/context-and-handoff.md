@@ -362,6 +362,15 @@ handoff delta/freshness. Missing current Git context means unknown cleanliness,
 even when older bundle counters contain zero. A missing prior handoff supplies no
 change baseline. These presentation additions do not alter bundle version 1.
 
+The bundle transfers recorded working context. It does not restore a native
+provider session, transfer permissions, or prove that referenced repository or
+artifact bytes are available on another host. A semantic session note and
+native capture evidence may be linked through the existing evidence/ref paths;
+they retain their own format, scope and provenance. Capture integrity, source
+coverage, independent effect observation and work acceptance remain separate
+questions. The [portable workflow refinement](../plans/2026-10-24-portable-agent-workflows.md#implementation-refinement-handoff-evidence-and-admission-2026-10-30)
+specifies their use in a clean-host successor check without opening raw logs.
+
 ## `run brief`
 
 The served-only `run brief` command calls the existing bounded
@@ -421,7 +430,7 @@ Each recent decision entry includes:
 
 - reservations are advisory coordination signals; there is no ownership proof
 - `sprintctl reservation reassign` transfers the visible reservation to another session
-- `sprintctl handoff` transfers resumable context
+- `sprintctl handoff` transfers recorded working context for a successor
 - `sprintctl reservation list --all` finds active reservations when context is lost
 - `session resume --json` surfaces reservation status without exposing any credential
 

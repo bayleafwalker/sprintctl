@@ -4,9 +4,10 @@ Vuoro owns the contract: `docs/architecture/agent-directory-and-inbox.md`
 (contract v1, with the vuoro#219 `launch-ambiguous` amendment) and the
 `agent-{declaration,message,message-receipt,directory-entry}-v1` schemas.
 Copies of the schemas live in `tests/fixtures/agent-inbox-v1/`, and the tests
-validate every result against them. Sprintctl is the store owner and serves
-ten operations on PostgreSQL schema 25 only. Standalone SQLite refuses each one
-with `unsupported-backend`.
+validate every result against them. Sprintctl is the store owner. PostgreSQL
+schema 25 introduced these ten operations; serving them follows the current
+[remote-schema compatibility gates](postgres-schema-compatibility.md).
+Standalone SQLite refuses each one with `unsupported-backend`.
 
 | Operation | Authority | Arguments | Result |
 |---|---|---|---|
@@ -24,6 +25,42 @@ with `unsupported-backend`.
 The store takes `principal_id` and `workspace_id` from the authenticated
 identity and `repo_id` from the call's scope. It never reads them from
 arguments. A record outside the caller's `(workspace, repo)` is `not-found`.
+
+## Receipt meaning and the work boundary
+
+The inbox records message handling. Its state is separate from native process
+state, durable work leases, work acceptance and external effects:
+
+| Record | Meaning | Does not establish |
+| --- | --- | --- |
+| Successful `send` | The scoped inbox has retained the message. | Receiver observation or native execution. |
+| `observed` / `acknowledged` | A recipient instance reports receipt/acknowledgement. | Capacity, work ownership or effect permission. |
+| `accepted` | One instance of the recipient principal accepts handling. | Reserved runtime capacity, an acquired work lease or a terminal work Decision. |
+| `run-linked` | The acceptor links an eligible run. | A running native process or successful execution. |
+| `launch-ambiguous` | The acceptor records uncertainty about launch. | Failure, non-invocation or permission to launch again. |
+| `result-linked` | A permitted instance records an outcome and evidence references. | Independent verification of that outcome or settlement of the work item. |
+| `cancel-requested` | The sender asks for cancellation. | Cancellation acknowledged, the process stopped or its effects reconciled. |
+
+The current `accepted`/`refused` decision is single-winner for the message,
+not a per-instance renewable offer. It has no automatic expiry/reoffer path.
+Directory liveness observations do not transfer acceptance, and another
+principal cannot acquire a message by becoming more available. A transiently
+busy instance must not write the message-wide `refused` receipt unless the
+recipient's policy means to decline that message.
+
+Capacity and native permission checks belong to the consuming adapter and
+execution owner. These checks can precede acceptance, but the inbox and an
+external runtime are not one transaction: admission must still be confirmed
+at launch. The [portable workflow plan](../plans/2026-10-24-portable-agent-workflows.md#implementation-refinement-handoff-evidence-and-admission-2026-10-30)
+records the implementation and qualification requirements. It does not change
+the current receipt schema or add automatic retry to the store.
+
+An evidence reference preserves a link to an owner record or artifact; it
+does not import that artifact's bytes, authenticate its source, grant access
+or promote its claims into facts. The existing
+[effect-attempt boundary](effect-attempts.md) and
+[durable work lease](../protocols/reservation-model.md#the-durable-work-lease-is-a-separate-mechanism)
+continue to govern invocation and settlement independently of inbox outcomes.
 
 ## Choices the contract leaves open
 
