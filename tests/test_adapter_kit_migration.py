@@ -80,8 +80,8 @@ def test_resource_schema_gate_removes_exactly_the_three_owner_operations() -> No
         "work.maintenance.resource.changes",
     }
 
-    assert len(available) == 124  # includes schema-30 continuation receipt
-    assert len(unavailable) == 121
+    assert len(available) == 125  # adds exact-basis report-outcome-v2
+    assert len(unavailable) == 122
     assert {spec["name"] for spec in available} - {
         spec["name"] for spec in unavailable
     } == resource_names

@@ -7909,6 +7909,98 @@ def _report_parking(cur: Any, store: PgStore, report_id: str) -> dict | None:
     return {"event_id": int(row["id"]), "reason_ref": payload.get("reason_ref")}
 
 
+def _lock_outcome_basis_tables(cur: Any) -> None:
+    # Fixed order before item/lease rows. SUE permits ordinary DML and blocks
+    # constraint/trigger DDL, including on FK source tables used by imports.
+    # Respect stricter caller settings; every lock/statement remains bounded.
+    for setting, milliseconds in (("lock_timeout", 1000), ("statement_timeout", 5000)):
+        cur.execute(
+            "SELECT set_config(%s, CASE WHEN current_setting(%s)::interval = interval '0' "
+            "OR current_setting(%s)::interval > %s * interval '1 millisecond' "
+            "THEN %s ELSE current_setting(%s) END, true)",
+            (setting, setting, setting, milliseconds, str(milliseconds), setting),
+        )
+    cur.execute("LOCK TABLE event, ref, reservation, work_decision, work_item, work_release "
+                "IN SHARE UPDATE EXCLUSIVE MODE")
+
+
+def _lock_outcome_references(cur: Any, store: PgStore, item_id: int) -> bool:
+    """Fence current refs and validate every basis-population insert path.
+
+    Normal owner mutators lock the item; archive/state-transfer imports can
+    append facts directly. Their validated item FKs force conflicting parent
+    KEY SHARE at insert or commit, so an uncommitted append cannot cross the
+    locked compare/Decision commit. The source and target table locks protect
+    these FK constraints and enabled triggers against concurrent DDL.
+    """
+    cur.execute("SHOW session_replication_role")
+    if next(iter(cur.fetchone().values())) != "origin":
+        return False
+    for table in ("event", "ref", "reservation", "work_decision", "work_release"):
+        cur.execute("""
+            SELECT c.oid FROM pg_constraint c
+            WHERE c.conrelid=%s::regclass AND c.confrelid='work_item'::regclass
+              AND c.contype='f' AND c.convalidated
+              AND (NOT c.condeferrable OR %s <> 'ref')
+              AND c.conkey=ARRAY[
+                (SELECT attnum FROM pg_attribute WHERE attrelid=c.conrelid AND attname='repo_id'),
+                (SELECT attnum FROM pg_attribute WHERE attrelid=c.conrelid AND attname='work_item_id')
+              ]::smallint[]
+              AND c.confkey=ARRAY[
+                (SELECT attnum FROM pg_attribute WHERE attrelid=c.confrelid AND attname='repo_id'),
+                (SELECT attnum FROM pg_attribute WHERE attrelid=c.confrelid AND attname='id')
+              ]::smallint[]
+              AND (SELECT count(*) FROM pg_trigger t WHERE t.tgconstraint=c.oid) = 4
+              AND (SELECT count(*) FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid
+                   WHERE t.tgconstraint=c.oid AND t.tgisinternal
+                     AND t.tgenabled IN ('O','A') AND t.tgnargs=0
+                     AND p.pronamespace='pg_catalog'::regnamespace
+                     AND ((t.tgrelid=c.conrelid AND t.tgconstrrelid=c.confrelid
+                           AND ((t.tgtype=5 AND p.proname='RI_FKey_check_ins')
+                             OR (t.tgtype=17 AND p.proname='RI_FKey_check_upd')))
+                       OR (t.tgrelid=c.confrelid AND t.tgconstrrelid=c.conrelid
+                           AND ((t.tgtype=9 AND p.proname=CASE c.confdeltype
+                                 WHEN 'a' THEN 'RI_FKey_noaction_del'
+                                 WHEN 'r' THEN 'RI_FKey_restrict_del'
+                                 WHEN 'c' THEN 'RI_FKey_cascade_del'
+                                 WHEN 'n' THEN 'RI_FKey_setnull_del'
+                                 WHEN 'd' THEN 'RI_FKey_setdefault_del' END)
+                             OR (t.tgtype=17 AND p.proname=CASE c.confupdtype
+                                 WHEN 'a' THEN 'RI_FKey_noaction_upd'
+                                 WHEN 'r' THEN 'RI_FKey_restrict_upd'
+                                 WHEN 'c' THEN 'RI_FKey_cascade_upd'
+                                 WHEN 'n' THEN 'RI_FKey_setnull_upd'
+                                 WHEN 'd' THEN 'RI_FKey_setdefault_upd' END))))) = 4
+        """, (table, table))
+        if cur.fetchone() is None:
+            return False
+    cur.execute(
+        "SELECT id FROM ref WHERE repo_id=%s AND work_item_id=%s ORDER BY id LIMIT 65 FOR UPDATE",
+        (store.repo_id, item_id),
+    )
+    return len(cur.fetchall()) <= 64
+
+
+def _outcome_current_basis_reason(cur: Any, store: PgStore, item: Any,
+                                  checkpoint: dict) -> tuple | None:
+    from . import continuation_basis
+
+    item_id = int(item["id"])
+    if not _lock_outcome_references(cur, store, item_id):
+        return ("work-basis-unavailable", "bounded reference locking or validated immediate FK protection is unavailable")
+    result = get_work_item_with_edit_revision(store, item_id)
+    current_item, edit_revision = result
+    current = continuation_basis.project(
+        store.repo_id, item_id, edit_revision, item_status_revision(current_item),
+        current_release(store, item_id), owner_read_facts(store, item_id),
+    )
+    if not continuation_basis.complete(checkpoint) or not continuation_basis.complete(current):
+        return ("work-basis-unavailable", "a complete Decision and reference population is required")
+    if checkpoint != current:
+        return ("work-basis-stale", "the exact continuation basis changed before outcome settlement")
+    return None
+
+
 def complete_lease(
     store: PgStore,
     *,
@@ -7927,6 +8019,7 @@ def complete_lease(
     actor: str,
     outcome_disposition: str | None = None,
     reason_ref: str | None = None,
+    checkpoint: dict | None = None,
     cur: Any | None = None,
 ) -> dict:
     """Record the holder's outcome report and let the owner settle it.
@@ -7977,6 +8070,8 @@ def complete_lease(
         raise ValueError("reason_ref is only accepted with disposition=parked")
 
     def body(cur: Any) -> dict:
+        if checkpoint is not None:
+            _lock_outcome_basis_tables(cur)
         found = _owned_lease(cur, store, lease_id, run_id, binding)
         cur.execute(
             "SELECT * FROM work_item WHERE repo_id = %s AND id = %s FOR UPDATE",
@@ -8014,6 +8109,8 @@ def complete_lease(
         dead = _dead_lease_reason(cur, store, lease, item, now)
         if dead is None:
             dead = _lease_basis_reason(cur, store, lease, item)
+        if dead is None and checkpoint is not None:
+            dead = _outcome_current_basis_reason(cur, store, item, checkpoint)
         config = _combined(
             _verification(lease["verification_profile"], lease["required_checks"]),
             verification_config(cur, store, int(item["id"])),
@@ -8067,7 +8164,8 @@ def complete_lease(
             )
         parking = disposition == "recorded" and outcome_disposition == "parked"
         basis_refused = reason_code in {
-            "lease-basis-unavailable", "lease-basis-stale"
+            "lease-basis-unavailable", "lease-basis-stale",
+            "work-basis-unavailable", "work-basis-stale"
         }
         if disposition in ("settled", "recorded") or (
             disposition == "rejected"

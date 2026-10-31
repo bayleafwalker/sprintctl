@@ -8,6 +8,8 @@ without the service distribution.
 
 from __future__ import annotations
 
+from .continuation_basis import SCHEMA as _CONTINUATION_BASIS_SCHEMA
+
 import inspect
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -1548,17 +1550,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         _object_schema({
             "run_id": _RUN_ID_SCHEMA,
             "item_id": {"type": "integer", "minimum": 1},
-            "checkpoint": {"type": "object", "properties": {
-                "repo_id": {"type": "string", "minLength": 1},
-                "item_id": {"type": "integer", "minimum": 1},
-                "work_edit_revision": {"type": "string", "minLength": 1},
-                "status_revision": {"type": "string", "minLength": 1},
-                "current_release_digest": {"anyOf": [_EFFECT_DIGEST_SCHEMA, {"type": "null"}]},
-                "current_decision_digest": {"anyOf": [{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, {"type": "null"}]},
-                "current_reference_set_digest": {"anyOf": [{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, {"type": "null"}]},
-            }, "required": ["repo_id", "item_id", "work_edit_revision", "status_revision",
-                           "current_release_digest", "current_decision_digest", "current_reference_set_digest"],
-                "additionalProperties": False},
+            "checkpoint": _CONTINUATION_BASIS_SCHEMA,
             "limit": {"type": "integer", "minimum": 1, "maximum": 64, "default": 32},
             "cursor": {"type": "object", "properties": {
                 "expected_snapshot_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
@@ -1589,14 +1581,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
                     "description_truncated": {"type": "boolean"},
                     "description_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
                 }),
-                "current": _preview_object({
-                    "repo_id": {"type": "string"}, "item_id": {"type": "integer", "minimum": 1},
-                    "work_edit_revision": {"type": "string", "minLength": 1},
-                    "status_revision": {"type": "string", "minLength": 1},
-                    "current_release_digest": {"anyOf": [_EFFECT_DIGEST_SCHEMA, {"type": "null"}]},
-                    "current_decision_digest": {"anyOf": [{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, {"type": "null"}]},
-                    "current_reference_set_digest": {"anyOf": [{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, {"type": "null"}]},
-                }),
+                "current": _CONTINUATION_BASIS_SCHEMA,
                 "comparison": _preview_object({key: {"enum": ["unknown", "changed", "unchanged"]}
                     for key in ("work_edit_revision", "status_revision", "current_release_digest",
                                 "current_decision_digest", "current_reference_set_digest")}),
@@ -1839,6 +1824,15 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work:claim",
         "write",
         "not-allowed",
+        required_remote_schema_version=29,
+    ),
+    WorkOperationContract(
+        "work.lease.report-outcome-v2",
+        _object_schema({**_REPORT_OUTCOME_INPUT["properties"],
+                        "checkpoint": _CONTINUATION_BASIS_SCHEMA},
+                       required=(*_REPORT_OUTCOME_INPUT["required"], "checkpoint")),
+        _REPORT_OUTCOME_RESULT,
+        "work:claim", "write", "not-allowed",
         required_remote_schema_version=29,
     ),
     WorkOperationContract(
