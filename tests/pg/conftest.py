@@ -17,6 +17,8 @@ def pytest_ignore_collect(collection_path, config):
     """Keep the opt-in experiment out of the ordinary zero-skip PG gate."""
     import os
 
+    if collection_path.name == 'test_outcome_trigger_faults.py':
+        return not bool(os.environ.get('SPRINTCTL_TEST_FK_FAULT_ADMIN_URL'))
     if collection_path.name == 'test_independent_reader_trial.py':
         return not bool(os.environ.get('RESUME_COLD_TRIAL_OUTPUT'))
     if collection_path.name == 'test_e4_edge_composition.py':

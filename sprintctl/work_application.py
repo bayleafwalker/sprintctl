@@ -6,6 +6,8 @@ owns the single-repository service implementation.
 
 from __future__ import annotations
 
+from . import continuation_basis as _continuation_basis
+
 import hashlib
 import json
 import re
@@ -852,6 +854,7 @@ class WorkApplication:
             "work.lease.acquire-v1": target._claim_acquire,
             "work.lease.heartbeat-v1": target._claim_heartbeat,
             "work.lease.report-outcome-v1": target._claim_complete,
+            "work.lease.report-outcome-v2": target._claim_complete_current,
             # Deprecated alias (agentops#2540): the same operation, ledger
             # and digest, so a key used under either name is one report.
             "work.lease.complete-v1": target._claim_complete,
@@ -3092,9 +3095,23 @@ class WorkApplication:
             raise self._lease_refused(exc) from exc
         return {"repo_id": self.repo_id, "lease": lease}
 
-    def _claim_complete(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+    def _claim_complete_current(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        if "checkpoint" not in arguments:
+            raise ApplicationRejection("invalid-arguments", "checkpoint is required", 422)
+        return self._claim_complete(arguments, context, current_basis=True)
+
+    def _claim_complete(self, arguments: dict[str, Any], context: InvocationContext,
+                        *, current_basis: bool = False) -> dict[str, Any]:
         lease_id = _required_text(arguments.get("lease_id"), "lease_id")
         run_id = _required_text(arguments.get("run_id"), "run_id")
+        checkpoint = arguments.get("checkpoint") if current_basis else None
+        if current_basis:
+            try:
+                _continuation_basis.validate(checkpoint, self.repo_id, checkpoint.get("item_id") if isinstance(checkpoint, dict) else None)
+            except ValueError as exc:
+                raise ApplicationRejection("invalid-arguments", str(exc), 422) from exc
+        elif "checkpoint" in arguments:
+            raise ApplicationRejection("invalid-arguments", "checkpoint requires report-outcome-v2", 422)
         outcome = arguments.get("outcome")
         if outcome not in ("succeeded", "failed"):
             raise ApplicationRejection(
@@ -3118,6 +3135,7 @@ class WorkApplication:
                     request_digest=request_digest, outcome=outcome, summary=summary,
                     payload=payload, checks=checks, actor=actor, cur=cur,
                     outcome_disposition=outcome_disposition, reason_ref=reason_ref,
+                    **({"checkpoint": checkpoint} if current_basis else {}),
                     **binding,
                 )
             except _pg.LeaseRefused as exc:
@@ -3134,7 +3152,7 @@ class WorkApplication:
         # One ledger tool for report-outcome-v1 and its deprecated alias
         # complete-v1: the operator-facing name is report_outcome.
         result = self._idempotent_write(
-            context, "report_outcome",
+            context, "report_outcome_current" if current_basis else "report_outcome",
             {**arguments, "summary": summary, "payload": payload, "checks": checks},
             effect,
             digest_binding={"client_id": binding["client_id"], "grant_id": binding["grant_id"]},
@@ -3596,23 +3614,11 @@ class WorkApplication:
             if value is not None and (type(value) is not int or value < 0):
                 raise ApplicationRejection("invalid-arguments", f"{name} must be a non-negative integer", 422)
         checkpoint = arguments.get("checkpoint")
-        checkpoint_fields = {"repo_id", "item_id", "work_edit_revision", "status_revision",
-                             "current_release_digest", "current_decision_digest",
-                             "current_reference_set_digest"}
         if checkpoint is not None:
-            if type(checkpoint) is not dict or set(checkpoint) != checkpoint_fields:
-                raise ApplicationRejection("invalid-arguments", "checkpoint must use the complete owner checkpoint schema", 422)
-            if (checkpoint.get("repo_id") != self.repo_id or checkpoint.get("item_id") != item_id
-                    or any(not isinstance(checkpoint.get(key), str) or not checkpoint[key]
-                           for key in ("work_edit_revision", "status_revision"))
-                    or (checkpoint["current_release_digest"] is not None
-                        and (not isinstance(checkpoint["current_release_digest"], str)
-                             or not re.fullmatch(r"[0-9a-f]{64}", checkpoint["current_release_digest"])))
-                    or any(checkpoint.get(key) is not None and (
-                           not isinstance(checkpoint[key], str)
-                           or not re.fullmatch(r"sha256:[0-9a-f]{64}", checkpoint[key]))
-                           for key in ("current_decision_digest", "current_reference_set_digest"))):
-                raise ApplicationRejection("invalid-arguments", "checkpoint does not match this repository and item", 422)
+            try:
+                _continuation_basis.validate(checkpoint, self.repo_id, item_id)
+            except ValueError as exc:
+                raise ApplicationRejection("invalid-arguments", str(exc), 422) from exc
         checkpoint_digest = _owner_read_digest(checkpoint)
         cursor = arguments.get("cursor")
         if cursor is not None:
@@ -3659,29 +3665,14 @@ class WorkApplication:
             )
             decisions = owner_facts_page["decisions"]
             decision_count = owner_facts_page["decision_count"]
-            decision_facts = [{"id": row["id"], "kind": row["kind"],
-                               "release_digest": row.get("release_digest"),
-                               "evidence_digests": row.get("evidence_digests", [])}
-                              for row in decisions]
+            decision_facts = _continuation_basis.decision_facts(owner_facts_page)
             reference_facts = [{"id": row["id"], "ref_type": row["ref_type"],
                                 "url": row["url"], "label": row.get("label", "")}
                                for row in owner_facts_page["references"]]
-            release_digest = release["release_digest"] if release is not None else None
-            decision_digest = (_owner_read_digest(decision_facts)
-                               if owner_facts_page["decisions_complete"] else None)
-            reference_digest_facts = owner_facts_page["reference_digest_facts"]
-            reference_digest = (_owner_read_digest([{
-                "id": row["id"], "ref_type": row["ref_type"],
-                "url": row["url"], "label": row.get("label", ""),
-            } for row in reference_digest_facts])
-                if owner_facts_page["references_complete"] else None)
-            current = {
-                "repo_id": self.repo_id, "item_id": item_id,
-                "work_edit_revision": edit_revision, "status_revision": status_revision,
-                "current_release_digest": release_digest,
-                "current_decision_digest": decision_digest,
-                "current_reference_set_digest": reference_digest,
-            }
+            current = _continuation_basis.project(
+                self.repo_id, item_id, edit_revision, status_revision, release, owner_facts_page
+            )
+            release_digest = current["current_release_digest"]
             checkpoint_reader = getattr(self.backend, "current_unacked_source_checkpoint", None)
             if not callable(checkpoint_reader):
                 raise ApplicationRejection("unsupported-backend", "source checkpoint reads require PostgreSQL", 501)

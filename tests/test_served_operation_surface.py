@@ -73,6 +73,7 @@ PUBLISHED_OPERATIONS = (
         "work.lease.parking-context-v1",
         "work.lease.read-v1",
         "work.lease.report-outcome-v1",
+        "work.lease.report-outcome-v2",
         "work.lifecycle.arbitrate",
         "work.maintain.check",
         "work.maintenance.prepare",
