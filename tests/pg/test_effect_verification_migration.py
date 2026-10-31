@@ -71,13 +71,13 @@ def test_upgrade_preserves_legacy_acceptance_and_is_idempotent(migration_store):
         assert cur.fetchall() == []  # read-only startup has not migrated
     store.conn.rollback()
     result = pg_migrations.migrate_schema(store)
-    assert result["applied_versions"] == [21, 22, 23, 24, 25, 26, 27, 28, 29]
+    assert result["applied_versions"] == [21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
     assert _get(store, intent["intent_id"]) == accepted
     assert pg_migrations.migrate_schema(store)["applied_versions"] == []
     assert _get(store, intent["intent_id"]) == accepted
     # The old schema-20 admission range cannot admit the upgraded database.
     actual = result["compatibility"]["remote_schema"]["actual"]
-    assert actual == 29 and not 20 <= actual <= 20
+    assert actual == 30 and not 20 <= actual <= 20
 
 
 @pytest.mark.parametrize("column, sql_type", [

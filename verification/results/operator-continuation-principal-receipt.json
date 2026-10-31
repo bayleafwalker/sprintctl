@@ -1,0 +1,23 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "sprintctl.operator-continuation.principal-receipt",
+  "contract_ref": {"doc_id": "operator-actions:OA-04", "revision": "git:35ba4d2210607920e169fda5f8a57dacc9bb58d2"},
+  "implementation_sha": "4e4d7744438714ba9a2cc34756a26a0d585dfdbc",
+  "depth": 2,
+  "environment": {"backend": "disposable restricted PostgreSQL 16.15 and 17.10", "isolation": "READ COMMITTED with explicit row locks", "tool_versions": {"PostgreSQL": "16.15 and 17.10"}},
+  "execution": {"seed": null, "histories": 2, "bounds": {"requesters": 2, "writers": 1, "dependants": 2, "racing_histories": 2}, "faults_exercised": ["lost response and replay", "concurrent duplicate keys", "work update concurrent with receipt", "revoked authority", "foreign principal and workspace", "schema migration interruption", "status ABA and description edit"]},
+  "claims": [
+    {"property": "concurrent receipt attempts for the same logical tuple write one receipt", "result": "concurrency-tested", "evidence": ["tests/pg/test_continuation_receipt_pg.py:test_same_receipt_concurrent_different_keys"]},
+    {"property": "a concurrent work status update waits for receipt transaction completion", "result": "concurrency-tested", "evidence": ["tests/pg/test_continuation_receipt_pg.py:test_work_change_waits_for_receipt_commit"]},
+    {"property": "exact replay returns historical receipt and foreign or unprivileged calls refuse", "result": "example-tested", "evidence": ["tests/pg/test_continuation_receipt_pg.py:test_exact_replay_still_requires_live_authority_and_owner_binding", "tests/pg/test_continuation_receipt_pg.py:test_lost_response_replay_is_historical_after_work_changes"]},
+    {"property": "status ABA and description edits remain outside current-status-token detection", "result": "example-tested", "evidence": ["tests/pg/test_continuation_receipt_pg.py:test_status_aba_and_description_edits_are_not_detected_by_status_token"]},
+    {"property": "schema migration failure rolls back and collisions refuse", "result": "example-tested", "evidence": ["tests/pg/test_continuation_receipt_migration.py"]}
+  ],
+  "counterexamples": [],
+  "notes": [
+    "Implementation SHA is the base commit; candidate owner source operator_request_pg.py SHA256 6b695357a263a5d4bbcab0af08ee18b5911a253225bdf2323ae7a69cd17b88f3 and schema source continuation_receipt_schema.py SHA256 b81531ebb6d897fbcedee30990ee8b8ca00c5de177473b9dcb94be99f9e59863.",
+    "Full PG16 and PG17 required suites each passed 1893 with zero skips and 98 zero-row fixture cleanups; these ran before final strict descriptor-only controls and one added idempotency conflict case, which passed focused checks. Exact-head CI remains required.",
+    "Non-PG suite passed 3350 with four named optional skips; sandboxed ptrace tests previously failed and were rerun successfully outside the sandbox.",
+    "Principal assertion only: no native session delivery, independent source verification, work-to-workspace provenance or protected-effect authority is established."
+  ]
+}

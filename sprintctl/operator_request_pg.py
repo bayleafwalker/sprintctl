@@ -491,6 +491,65 @@ def continuation(cur: Any, store: Any, workspace_id: str, request_id: str) -> di
     }
 
 
+def continuation_receipt(cur: Any, store: Any, principal_id: str, workspace_id: str,
+                         args: Mapping[str, Any]) -> dict:
+    """Record the requester's receipt, not delivery to a runtime session."""
+    request_id = args["request_id"]
+    row = _request(cur, store, workspace_id, request_id, lock=True)
+    if row is None:
+        raise RequestRefused("not-found", "no such request in this repository and workspace")
+    if row["requester_principal_id"] != principal_id:
+        raise RequestRefused("requester-not-owner", "only the requesting principal may record receipt")
+    resolution = args["resolution_event_revision"]
+    if row["state"] != "resolved" or int(row["revision"]) != resolution:
+        raise RequestRefused("continuation-not-ready", "the exact resolution is not current")
+    cur.execute("SELECT action,details FROM operator_request_event WHERE repo_id=%s AND workspace_id=%s "
+                "AND request_id=%s AND revision=%s", (store.repo_id, workspace_id, request_id, resolution))
+    event = cur.fetchone()
+    if (not event or event["action"] != "resolved-human-attestation"
+            or not isinstance(event["details"], dict)
+            or event["details"].get("completion_basis") != "human-attestation"
+            or event["details"].get("protected_effect_authorized") is not False):
+        raise RequestRefused("resolution-evidence-unavailable", "owner resolution event is not supported")
+    packet = row["packet"] if isinstance(row["packet"], dict) else json.loads(row["packet"])
+    expiry = datetime.fromisoformat(packet["blocker"]["fresh_until"].replace("Z", "+00:00"))
+    cur.execute("SELECT session_id,work_revision FROM operator_request_dependant WHERE repo_id=%s "
+                "AND workspace_id=%s AND request_id=%s AND work_item_id=%s AND state='active' ORDER BY session_id",
+                (store.repo_id, workspace_id, request_id, args["work_item_id"]))
+    dependants = cur.fetchall()
+    if not dependants:
+        raise RequestRefused("dependant-not-active", "no active dependant for this work")
+    cur.execute("SELECT id,aggregate_uuid,status FROM work_item WHERE repo_id=%s AND id=%s FOR SHARE",
+                (store.repo_id, args["work_item_id"]))
+    work = cur.fetchone()
+    if work is None:
+        raise RequestRefused("work-not-found", "dependant work no longer exists")
+    now = _now(cur)
+    if now >= expiry:
+        raise RequestRefused("continuation-needs-refresh", "request freshness expired")
+    revision = item_status_revision(work)
+    if revision != args["expected_work_revision"] or any(d["work_revision"] != revision for d in dependants):
+        raise RequestRefused("continuation-needs-refresh", "dependant work revision changed")
+    sessions = [d["session_id"] for d in dependants]
+    key = (store.repo_id, workspace_id, request_id, resolution, args["work_item_id"], revision)
+    cur.execute("SELECT * FROM operator_continuation_receipt WHERE repo_id=%s AND workspace_id=%s "
+                "AND request_id=%s AND resolution_revision=%s AND work_item_id=%s AND work_revision=%s", key)
+    existing = cur.fetchone()
+    if existing:
+        return {"request_id": request_id, "resolution_event_revision": resolution,
+                "work_item_id": args["work_item_id"], "work_revision": revision,
+                "material_revision": int(existing["material_revision"]), "packet_digest": existing["packet_digest"],
+                "sessions": existing["sessions"], "recorded_at": _iso(existing["recorded_at"]), "replayed": True}
+    cur.execute("INSERT INTO operator_continuation_receipt(repo_id,workspace_id,request_id,resolution_revision,"
+                "work_item_id,work_revision,principal_id,material_revision,packet_digest,sessions,recorded_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)",
+                (*key, principal_id, row["material_revision"], row["packet_digest"], json.dumps(sessions), now))
+    return {"request_id": request_id, "resolution_event_revision": resolution,
+            "work_item_id": args["work_item_id"], "work_revision": revision,
+            "material_revision": int(row["material_revision"]), "packet_digest": row["packet_digest"],
+            "sessions": sessions, "recorded_at": _iso(now), "replayed": False}
+
+
 def list_requests(cur: Any, store: Any, workspace_id: str, args: Mapping[str, Any]) -> dict:
     after = args.get("after_request_id", "")
     parameters: list[Any] = [store.repo_id, workspace_id, after]

@@ -5,6 +5,20 @@
 - Served operator-request reads now keep request headers, dependants and work
   revisions in one read-only snapshot while preserving caller transactions.
 
+## 0.27.0 — 2026-10-31 (candidate)
+
+Schema 30 is a coordinated owner/runtime cutover. The requesting principal can
+record an immutable, retry-safe assertion of receipt for affected work against
+the current human-attested resolution, material packet and status token. The
+owner selects active session routing metadata; this is not proof of session
+delivery, consumption or wake. Status tokens do not detect status ABA or
+description changes. Source verification and full OA-04 acceptance remain open.
+
+- Add exact schema-30 receipt storage and read-only startup catalog checks;
+  preserve the existing continuation-v1 response and request event revisions.
+- Serialize receipt with request and work status updates, and deduplicate
+  logical receipts across idempotency keys. A replay is a historical receipt.
+
 ## 0.25.0 — 2026-10-26 (candidate)
 
 Schema 29 is a coordinated owner/runtime cutover. New work leases bind to the

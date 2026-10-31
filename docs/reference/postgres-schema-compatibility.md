@@ -16,8 +16,8 @@ create, alter, or repair schema objects.
 work API as `sprintctl-work/v1`, reports the actual remote schema version, and
 reports the minimum and maximum versions this runtime supports.
 
-The current source tree admits exactly remote schema 29: `MINIMUM_SCHEMA_VERSION`
-and `MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 29, and
+The current source tree admits exactly remote schema 30: `MINIMUM_SCHEMA_VERSION`
+and `MAXIMUM_SCHEMA_VERSION` in `sprintctl/pg_migrations.py` are both 30, and
 `remote-schema-version` in `pyproject.toml` records the same value. Any other
 ledger version fails closed before a runtime command is served.
 
@@ -375,3 +375,9 @@ lease, and writes no Decision. Both guards and nullable column definitions are
 inspected exactly at startup; partial or foreign schema-29 objects fail
 closed. Migration remains deployment-owned, and runtime startup remains
 read-only.
+
+Schema 30 adds a separate append-only principal continuation receipt table.
+Its exact catalog, uniqueness and mutation guards are verified at startup.
+Migration and runtime cutover must be coordinated; schema 29 runtimes do not
+admit schema 30. It leaves request-event revision semantics intact and does
+not establish runtime-session delivery or grant effect authority.

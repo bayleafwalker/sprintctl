@@ -3182,6 +3182,9 @@ def _operator_request_operation_contracts() -> tuple[WorkOperationContract, ...]
     request_id = {"type": "string", "pattern": r"^req_[0-9A-HJKMNP-TV-Z]{26}$"}
     idem_key = {"type": "string", "pattern": r"^[A-Za-z0-9._:-]{8,128}$"}
     revision = {"type": "integer", "minimum": 1, "maximum": 2147483647}
+    receipt_request_id = {**request_id, "minLength": 30, "maxLength": 30}
+    receipt_work_revision = {"type": "string", "minLength": 1, "maxLength": 512,
+                             "pattern": r"^(?![\s\S]*\u0000)(?=[\s\S]*\S)[\s\S]+(?![\s\S])"}
     packet = _object_schema(
         {
             "schema": {"const": "operator-request/v1"},
@@ -3275,6 +3278,24 @@ def _operator_request_operation_contracts() -> tuple[WorkOperationContract, ...]
              required=("work_item_id", "session_id", "work_revision", "current_work_revision", "state"))}},
         required=("schema", "owner", "request_id", "request_revision", "resolution", "dependants"))
     return (
+        WorkOperationContract("work.request.continuation-receipt-v1",
+            _object_schema({"request_id": receipt_request_id, "resolution_event_revision": revision,
+                            "work_item_id": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+                            "expected_work_revision": receipt_work_revision,
+                            "idempotency_key": idem_key},
+                           required=("request_id", "resolution_event_revision", "work_item_id",
+                                     "expected_work_revision", "idempotency_key")),
+            _object_schema({"request_id": receipt_request_id, "resolution_event_revision": revision,
+                            "work_item_id": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+                            "work_revision": receipt_work_revision,
+                            "material_revision": revision,
+                            "packet_digest": {"type": "string", "pattern": r"^[0-9a-f]{64}(?![\s\S])"},
+                            "sessions": {"type": "array", "minItems": 1,
+                                         "items": {"type": "string", "minLength": 1, "maxLength": 256}},
+                            "recorded_at": {"type": "string", "format": "date-time"}, "replayed": {"type": "boolean"}},
+                           required=("request_id", "resolution_event_revision", "work_item_id", "work_revision",
+                                     "material_revision", "packet_digest", "sessions", "recorded_at", "replayed")),
+            "work:write", "write", "not-allowed", required_remote_schema_version=30),
         WorkOperationContract("work.request.continuation-v1",
             _object_schema({"request_id": request_id}, required=("request_id",)),
             continuation, "work:read", "read", "not-allowed", required_remote_schema_version=29),

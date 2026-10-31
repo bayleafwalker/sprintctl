@@ -62,14 +62,15 @@ class TestReleaseIntegrity:
         0.23.0 adds schema28 operator-request storage and served operations.
         Candidate 0.24.0 bounds session-note writes and predecessor-context pages
         on schema28. Candidate 0.25.0 is the schema29 lease-basis cutover.
-        Minor 0.26.0 adds the authoritative continuation read on schema29."""
+        Minor 0.26.0 adds the authoritative continuation read on schema29.
+        Candidate 0.27.0 adds principal continuation receipts on schema30."""
         from sprintctl import pg_migrations
 
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
-        assert pyproject["project"]["version"] == __version__ == "0.26.0"
-        assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 29
-        assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 29
+        assert pyproject["project"]["version"] == __version__ == "0.27.0"
+        assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 30
+        assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 30
 
     def test_release_contract_names_this_version(self):
         """The tag workflow validates the wheel against RELEASE_VERSION; a
