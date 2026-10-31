@@ -69,6 +69,7 @@ PUBLISHED_OPERATIONS = (
         "work.item.ref.remove",
         "work.lease.acquire-v1",
         "work.lease.complete-v1",
+        "work.lease.currentness-v1",
         "work.lease.heartbeat-v1",
         "work.lease.parking-context-v1",
         "work.lease.read-v1",

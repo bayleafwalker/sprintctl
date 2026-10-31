@@ -26,6 +26,7 @@ _KEY_RE = re.compile(r"\A[A-Za-z0-9._:-]{8,128}\Z")
 _REASON_RE = re.compile(r"\A[a-z][a-z0-9-]{0,63}\Z")
 _OP_AUTHORITY = {
     "work.run.resolve-v1": None,
+    delegation.CURRENTNESS_OPERATION: "work:read",
     "work.run.predecessor-context-v1": "work:read",
     "work.session-note.write-v1": "work:evidence",
     "work.evidence.append-v1": "work:evidence",
@@ -309,15 +310,15 @@ def revoke_creator_instance(
 def require_live(
     cur: Any, store: Any, *, context: DelegatedRunContext, operation: str,
     run_id: str, principal_id: str, workspace_id: str,
-    client_id: str | None, grant_id: str | None, authorities: set[str],
-) -> None:
+    client_id: str | None, grant_id: str | None, authorities: set[str], lock: bool = True,
+) -> dict:
     context = delegation.validate_delegated_context(context)
     if operation not in delegation.DELEGATED_OPERATIONS or operation not in context.operations:
         _refuse("delegation-operation-not-allowed", "operation is outside the delegation allowlist", 403)
     if run_id != context.run_id:
         _refuse("delegation-run-mismatch", "operation run_id differs from the delegated run", 403)
     cur.execute(
-        "SELECT * FROM work_run_delegation WHERE repo_id=%s AND delegation_id=%s FOR SHARE",
+        "SELECT * FROM work_run_delegation WHERE repo_id=%s AND delegation_id=%s" + (" FOR SHARE" if lock else ""),
         (store.repo_id, context.delegation_id),
     )
     row = cur.fetchone()
@@ -335,6 +336,7 @@ def require_live(
     required = _OP_AUTHORITY[operation]
     if required is not None and required not in allowed_authorities:
         _refuse("authority-required", f"delegation parent lacks {required}", 403)
+    return dict(row)
 
 
 def resolve_token_digest(store: Any, token_sha256: str) -> ResolvedRunDelegation:
@@ -371,7 +373,11 @@ def resolve_token_digest(store: Any, token_sha256: str) -> ResolvedRunDelegation
         repo_id=row["repo_id"], principal_id=row["principal_id"],
         workspace_id=row["workspace_id"], client_id=row["client_id"],
         grant_id=row["grant_id"], expires_at=_iso(row["expires_at"]) or "",
-        authorities=frozenset(row["parent_authorities"]),
+        # The currentness guard receives only its read capability. Existing
+        # delegation operation sets keep their released authority projection.
+        authorities=(frozenset({"work:read"}) & frozenset(row["parent_authorities"])
+                     if tuple(row["operations"]) == (delegation.CURRENTNESS_OPERATION,)
+                     else frozenset(row["parent_authorities"])),
     )
 
 

@@ -46,7 +46,7 @@ def test_exact_index_explicit_upgrade_readonly_admission_and_idempotent_migratio
         assert inspect_catalog(cur) == {"available": False, "complete": True}
     store.conn.rollback()
     result = pg_migrations.migrate_schema(store)
-    assert result["applied_versions"] == [24, 25, 26, 27, 28, 29, 30] and result["to_version"] == 30
+    assert result["applied_versions"] == [24, 25, 26, 27, 28, 29, 30, 31] and result["to_version"] == 31
     with store.conn.cursor() as cur:
         assert inspect_catalog(cur) == {"available": True, "complete": True}
     store.conn.rollback()
@@ -111,7 +111,7 @@ def test_index_ddl_failure_rolls_back_index_and_ledger(isolated, monkeypatch):
         assert inspect_catalog(cur) == {"available": False, "complete": True}
     isolated.conn.rollback()
     monkeypatch.setattr(index, "DDL", original)
-    assert pg_migrations.migrate_schema(isolated)["applied_versions"] == [24, 25, 26, 27, 28, 29, 30]
+    assert pg_migrations.migrate_schema(isolated)["applied_versions"] == [24, 25, 26, 27, 28, 29, 30, 31]
 
 
 @pytest.mark.parametrize("flag", ["indisvalid", "indisready"])

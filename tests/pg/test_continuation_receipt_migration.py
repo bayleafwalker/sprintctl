@@ -5,7 +5,7 @@ import pytest
 from sprintctl import pg, pg_migrations, continuation_receipt_schema as schema
 from sprintctl import operator_request as contract, operator_request_pg as storage
 from tests.test_operator_request_pg import _packet
-from tests.pg._shared import PG_MARKS, _PG_URL, psycopg, dict_row, assert_disposable_connection
+from tests.pg._shared import drop_schema30, PG_MARKS, _PG_URL, psycopg, dict_row, assert_disposable_connection
 
 pytestmark = PG_MARKS
 
@@ -33,6 +33,7 @@ def isolated():
 
 def reconstruct29(store):
     with store.conn.cursor() as cur:
+        drop_schema30(cur)
         cur.execute('DROP TABLE operator_continuation_receipt')
         cur.execute('DROP FUNCTION sprintctl_continuation_receipt_append_only()')
         cur.execute('UPDATE schema_version SET version=29')
@@ -54,7 +55,7 @@ def test_upgrade_preserves_request_and_is_repeatable(isolated):
     store.conn.commit()
     reconstruct29(store)
     assert pg_migrations.compatibility_handshake(store)['reason'] == 'schema-too-old'
-    assert pg_migrations.migrate_schema(store)['applied_versions'] == [30]
+    assert pg_migrations.migrate_schema(store)['applied_versions'] == [30,31]
     assert pg_migrations.migrate_schema(store)['applied_versions'] == []
     with store.conn.cursor() as cur:
         after = storage.get(cur, store, 'workspace-a', identity)

@@ -343,8 +343,9 @@ class TestSchema14Fold:
                 patch.setattr(continuation_receipt_schema, "install", lambda cur: None)
                 # This isolated legacy fixture omits the agent-inbox owner
                 # tables that schema 27's delegation FK requires.
-                from sprintctl import delegation_schema
+                from sprintctl import delegation_schema, work_currentness_schema
                 patch.setattr(delegation_schema, "install", lambda cur: None)
+                patch.setattr(work_currentness_schema, "install", lambda cur: None)
                 patch.setattr(pg_migrations, "compatibility_handshake", lambda store: {"compatible": True})
                 pg_migrations.migrate_schema(store)
             with conn.cursor() as cur:
@@ -355,8 +356,9 @@ class TestSchema14Fold:
             conn.commit()
 
             with monkeypatch.context() as patch:
-                from sprintctl import delegation_schema
+                from sprintctl import delegation_schema, work_currentness_schema
                 patch.setattr(delegation_schema, "install", lambda cur: None)
+                patch.setattr(work_currentness_schema, "install", lambda cur: None)
                 patch.setattr(pg_migrations, "compatibility_handshake", lambda store: {"compatible": True})
                 migrated = pg_migrations.migrate_schema(store)
             assert migrated["applied_versions"] == list(range(14, pg_migrations.CURRENT_SCHEMA_VERSION + 1))

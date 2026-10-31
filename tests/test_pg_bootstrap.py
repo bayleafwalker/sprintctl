@@ -7,7 +7,7 @@ import pytest
 from sprintctl import pg, pg_migrations, run_invocation_schema, effect_verification_export_index
 from sprintctl import (
     agent_inbox_schema, approval_schema, delegation_schema, lease_basis_schema,
-    operator_request_schema, continuation_receipt_schema,
+    operator_request_schema, continuation_receipt_schema, work_currentness_schema,
 )
 
 
@@ -65,6 +65,8 @@ class _SchemaCursor:
             self._conn.operator_request_installed = True
         if query == lease_basis_schema.DDL:
             self._conn.lease_basis_installed = True
+        if query == work_currentness_schema.DDL:
+            self._conn.currentness_scope_installed = True
         if query == continuation_receipt_schema.DDL:
             self._conn.continuation_receipt_installed = True
         return self
@@ -154,6 +156,7 @@ class _SchemaConnection:
         self.operator_request_installed = version is not None and version >= 28
         self.lease_basis_installed = version is not None and version >= 29
         self.continuation_receipt_installed = version is not None and version >= 30
+        self.currentness_scope_installed = version is not None and version >= 31
         self.calls = []
         self.version = version
         self.version_rows = version_rows if version is not None else 0
@@ -240,6 +243,12 @@ def _stub_invocation_catalog_for_schema_state_fakes(monkeypatch):
         }
 
     monkeypatch.setattr(delegation_schema, "inspect_catalog", inspect_delegation)
+    monkeypatch.setattr(work_currentness_schema,"inspect_catalog",lambda cur: {
+        "table_count":1 if cur._conn.currentness_scope_installed else 0,
+        "catalog_fingerprint":work_currentness_schema.EXPECTED_CATALOG_FINGERPRINT,
+        "expected_catalog_fingerprint":work_currentness_schema.EXPECTED_CATALOG_FINGERPRINT,
+        "available":cur._conn.currentness_scope_installed,"complete":True})
+
 
     def inspect_operator_requests(cur):
         available = cur._conn.operator_request_installed
@@ -369,8 +378,8 @@ def test_runtime_compatibility_probe_is_read_only_and_publishes_work_api():
             "delegation_storage": {
                 "schema_version": "sprintctl-run-delegation-storage/v1",
                 "table_count": 1,
-                "catalog_fingerprint": delegation_schema.EXPECTED_CATALOG_FINGERPRINT,
-                "expected_catalog_fingerprint": delegation_schema.EXPECTED_CATALOG_FINGERPRINT,
+                "catalog_fingerprint": work_currentness_schema.EXPECTED_CATALOG_FINGERPRINT,
+                "expected_catalog_fingerprint": work_currentness_schema.EXPECTED_CATALOG_FINGERPRINT,
                 "available": True,
                 "complete": True,
             },
