@@ -7928,7 +7928,12 @@ def lease_currentness(store: PgStore, *, run_id: str, lease_id: str, checkpoint:
         raise work_currentness.CurrentnessRefused(code, text, status)
     with repeatable_read_snapshot(store) as snapshot:
         with snapshot.conn.cursor() as cur:
-            cur.execute("SET LOCAL statement_timeout='5s'")
+            cur.execute(
+                "SELECT set_config('statement_timeout', CASE "
+                "WHEN current_setting('statement_timeout')::interval = interval '0' "
+                "OR current_setting('statement_timeout')::interval > interval '5 seconds' "
+                "THEN '5000' ELSE current_setting('statement_timeout') END, true)"
+            )
             observed = _lease_now(cur)
             scope = None
             if delegated is not None:

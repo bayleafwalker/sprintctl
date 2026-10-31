@@ -205,3 +205,28 @@ def test_delegation_expiry_is_rechecked_at_final_owner_time(store,monkeypatch):
     monkeypatch.setattr(pg,'owner_read_facts',slow_snapshot)
     with pytest.raises(ApplicationRejection) as error: invoke(store,body,context)
     assert error.value.code=='credential-invalid'
+
+
+@pytest.mark.parametrize('configured,expected',[('0','5s'),('10s','5s'),('100ms','100ms')])
+def test_owner_read_preserves_stricter_timeout_and_bounds_longer_policy(store,monkeypatch,configured,expected):
+    _,body=setup(store)
+    factory=store.connection_factory
+    def connect():
+        conn=factory()
+        conn.execute("SELECT set_config('statement_timeout',%s,false)",(configured,))
+        conn.commit()
+        return conn
+    monkeypatch.setattr(store,'connection_factory',connect)
+    original=pg.owner_read_facts
+    observed=[]
+    def read(snapshot,*args,**kwargs):
+        with snapshot.conn.cursor() as cur:
+            cur.execute('SHOW statement_timeout');observed.append(cur.fetchone()['statement_timeout'])
+            if configured=='100ms': cur.execute('SELECT pg_sleep(0.2)')
+        return original(snapshot,*args,**kwargs)
+    monkeypatch.setattr(pg,'owner_read_facts',read)
+    if configured=='100ms':
+        with pytest.raises(psycopg.errors.QueryCanceled): invoke(store,body)
+    else:
+        assert invoke(store,body)['authorizes_effect'] is False
+    assert observed==[expected]
