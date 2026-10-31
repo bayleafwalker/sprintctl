@@ -1,6 +1,6 @@
 # Operator request lifecycle candidate
 
-This document describes the schema 28 source candidate. It is not a deployed
+This document describes a schema 30 source candidate. It is not a deployed
 service or a qualified human workflow.
 
 ## Records and scope
@@ -34,6 +34,36 @@ freshness or changed work yields `needs-refresh`; unresolved reports and
 unsupported resolution evidence are refused. The packet omits attestation
 text and actor identity. Reading does not record delivery acknowledgement,
 wake a runtime, change work status or grant protected-effect authority.
+
+`work.request.continuation-receipt-v1` lets the authenticated requesting
+principal with `work:write` record receipt for one affected work item. The
+owner binds the immutable receipt to its current human-attested resolution,
+material revision and packet digest, current work status revision, and its
+own active session routing metadata. Callers cannot supply a session.
+Authenticated service identity and workspace authorization remain required.
+The owner scopes the request and principal to that workspace and re-reads the
+work item in the repository through an owner-stored dependant link; it has no
+independent work-to-workspace provenance or authenticated session identity.
+The status check is not material source verification. The owner serializes
+with request changes and locks work against concurrent status
+changes; expired freshness or a different current status token is refused.
+The status token encodes item identity and current status, not a monotonic
+work revision: an intervening status change and return, or a description edit,
+is not detected. This receipt does not prove that all work material remained
+unchanged. Session strings are
+not authenticated identities: this is a principal's receipt, not proof that
+a runtime received, consumed, woke or resumed anything. It does not mutate
+work or grant effect authority.
+
+The receipt has a logical uniqueness key for request, resolution, work and
+work status revision, so concurrent different-key calls commit at most one
+record. The owner idempotency ledger returns an exact historical receipt after
+a lost response; that replay is not a renewed freshness or work-currentness
+check. Reconcile with a new continuation read and independently verify any
+work material needed before acting. The immutable
+receipt table is independent of request events, preserving the existing v1
+continuation revision and response. A schema 30 migration and exact catalog
+startup gate are required; this source candidate does not deploy either.
 
 ## State changes
 
@@ -69,7 +99,7 @@ revalidation, so this does not prove a blocker is still current. The `unknown`
 freshness value is reserved for that future evidence path.
 
 This candidate does not yet provide source-observation verification, per-
-dependant continuation acknowledgements, native wake/resume, local offline
+runtime-session continuation acknowledgements, native wake/resume, local offline
 outbox reconciliation, assignment or defer-until conditions. Event reads let
 clients reconcile durable owner history; they do not prove that an event was
 delivered to a native runtime.

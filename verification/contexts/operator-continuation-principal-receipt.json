@@ -1,0 +1,24 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "sprintctl.operator-continuation.principal-receipt",
+  "owner_repo": "sprintctl",
+  "subject": "publisher-principal-continuation-packet-receipt",
+  "contract_ref": {"doc_id": "operator-actions:OA-04", "revision": "git:35ba4d2210607920e169fda5f8a57dacc9bb58d2"},
+  "source_of_truth": "repository/workspace-scoped request, immutable resolution, active dependant links, work status and append-only principal receipts",
+  "depth": 2,
+  "backends": ["postgresql"],
+  "actors": ["requesting-principal", "foreign-principal", "independent-work-writer"],
+  "initial_state": ["one fresh human-attested resolution with active work links"],
+  "operations": [
+    {"name": "work.request.continuation-receipt-v1", "actors": ["requesting-principal"], "synchronization": "request row FOR UPDATE and work row FOR SHARE until commit"},
+    {"name": "change-work-status", "actors": ["independent-work-writer"], "synchronization": "independent update races the work lock"}
+  ],
+  "consistency": {"target": "application-invariant", "object": "one principal receipt for a request resolution and work status token"},
+  "assumptions": {"isolation": "PostgreSQL READ COMMITTED with explicit row locks", "clock": "owner clock checked after work lock"},
+  "bounds": {"requesters": 2, "writers": 1, "dependants": 2, "racing_histories": 2},
+  "invariants": ["one logical receipt per request resolution work and status token", "foreign principal and workspace refuse", "a new receipt with expired freshness or different current work status token refuses", "work status and request-event revisions are not changed by receipt", "session routing metadata is not session identity proof or effect authority"],
+  "faults": ["lost response and replay", "concurrent duplicate keys", "work update concurrent with receipt", "revoked authority", "foreign principal and workspace", "schema migration interruption", "status ABA and description edit"],
+  "oracles": ["one immutable row and identical historic replay", "work update waits for receipt commit", "status ABA and description edits remain undetected by the status token", "schema collision and migration faults leave old version intact"],
+  "implementation_anchors": ["sprintctl/operator_request_pg.py:continuation_receipt", "sprintctl/work_application.py:WorkApplication._operator_request", "tests/pg/test_continuation_receipt_pg.py:test_work_change_waits_for_receipt_commit", "tests/pg/test_continuation_receipt_migration.py:test_failed_migration_rolls_back_schema_and_version"],
+  "expansions": ["semantic-doc", "concurrent-history", "fault-scenario"]
+}

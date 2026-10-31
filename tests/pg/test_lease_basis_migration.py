@@ -99,6 +99,8 @@ def test_schema_28_lease_rows_remain_basis_unknown_and_cannot_settle(lease_basis
     # Reconstruct the schema-28 shape around a live lease. The acquisition
     # revision is deliberately lost, as it would be for a real legacy row.
     with store.conn.cursor() as cur:
+        cur.execute("DROP TABLE operator_continuation_receipt")
+        cur.execute("DROP FUNCTION sprintctl_continuation_receipt_append_only()")
         cur.execute(f"DROP TRIGGER {_ACQUIRE_GUARD_TRIGGER} ON work_lease")
         cur.execute(f"DROP TRIGGER {_GUARD_TRIGGER} ON work_decision")
         cur.execute(f"DROP FUNCTION {_ACQUIRE_GUARD_FUNCTION}()")
@@ -120,7 +122,7 @@ def test_schema_28_lease_rows_remain_basis_unknown_and_cannot_settle(lease_basis
     assert before["complete"] is True and before["available"] is False
 
     migrated = pg_migrations.migrate_schema(store)
-    assert migrated["applied_versions"] == [29]
+    assert migrated["applied_versions"] == [29, 30]
     assert migrated["compatibility"]["compatible"] is True
     with store.conn.cursor() as cur:
         cur.execute(

@@ -115,7 +115,7 @@ def test_record_arguments(arguments, code):
 
 
 def test_schema29_lease_basis_floor_and_operator_request_runtime_window():
-    assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.MAXIMUM_SCHEMA_VERSION == 29
+    assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.MAXIMUM_SCHEMA_VERSION == 30
     assert approval.SCHEMA_VERSION == 26
     assert "work_approval" in approval_schema.DDL
     assert f"interval '{approval_schema.MAX_LIFETIME_SECONDS} seconds'" in approval_schema.DDL

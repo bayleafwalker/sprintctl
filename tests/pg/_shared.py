@@ -116,6 +116,8 @@ def store(pg_test_scope):
 
 
 def drop_schema29(cur) -> None:
+    cur.execute("DROP TABLE IF EXISTS operator_continuation_receipt")
+    cur.execute("DROP FUNCTION IF EXISTS sprintctl_continuation_receipt_append_only()")
     """Remove schema 29 lease-basis bindings before rebuilding an older fixture."""
     cur.execute("DROP TRIGGER IF EXISTS work_lease_basis_insert_guard ON work_lease")
     cur.execute("DROP TRIGGER IF EXISTS work_decision_lease_basis_guard ON work_decision")

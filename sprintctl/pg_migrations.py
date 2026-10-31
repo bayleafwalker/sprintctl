@@ -15,7 +15,7 @@ from typing import Any, Mapping
 
 
 WORK_API_VERSION = "sprintctl-work/v1"
-CURRENT_SCHEMA_VERSION = 29
+CURRENT_SCHEMA_VERSION = 30
 # The v0.3 release is a coordinated schema/runtime cutover, so the runtime
 # admits exactly the schema it was built against.  A wider window would be a
 # false promise: reservation storage only arrived in schema 8, the live
@@ -60,7 +60,9 @@ CURRENT_SCHEMA_VERSION = 29
 # work status, effect acceptance, or agent-inbox v1 records.
 # 29 binds each new work lease to the full item revision and current Release
 # it observed. Legacy lease rows remain basis-unknown and cannot settle.
-MINIMUM_SCHEMA_VERSION = 29
+# 30 adds immutable principal continuation receipts without changing request
+# event revisions or establishing runtime delivery.
+MINIMUM_SCHEMA_VERSION = 30
 MAXIMUM_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION
 STARTUP_MODE_ENV = "SPRINTCTL_REMOTE_SCHEMA_MODE"
 MIGRATION_LOCK_TIMEOUT_ENV = "SPRINTCTL_MIGRATION_LOCK_TIMEOUT"
@@ -263,6 +265,8 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
             operator_requests = inspect_operator_requests(cur)
             from .lease_basis_schema import inspect_catalog as inspect_lease_basis
             lease_basis = inspect_lease_basis(cur)
+            from .continuation_receipt_schema import inspect_catalog as inspect_continuation_receipts
+            continuation_receipts = inspect_continuation_receipts(cur)
     finally:
         if was_idle:
             store.conn.rollback()
@@ -285,6 +289,8 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
         and (state.version is None or state.version < 28 or operator_requests["available"])
         and lease_basis["complete"]
         and (state.version is None or state.version < 29 or lease_basis["available"])
+        and continuation_receipts["complete"]
+        and (state.version is None or state.version < 30 or continuation_receipts["available"])
     )
     if state.version is None:
         reason = "schema-version-table-missing"
@@ -324,6 +330,10 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
         reason = "work-lease-basis-storage-partial"
     elif state.version is not None and state.version >= 29 and not lease_basis["available"]:
         reason = "work-lease-basis-storage-missing"
+    elif not continuation_receipts["complete"]:
+        reason = "continuation-receipt-storage-partial"
+    elif state.version is not None and state.version >= 30 and not continuation_receipts["available"]:
+        reason = "continuation-receipt-storage-missing"
     else:
         reason = None
     return {
@@ -359,6 +369,7 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
                 **operator_requests,
             },
             "work_lease_basis_storage": lease_basis,
+            "continuation_receipt_storage": continuation_receipts,
             "repository_ingest_cursor": {
                 "schema_version": "sprintctl-repository-ingest-cursor/v1",
                 "scope": "repository",
@@ -618,6 +629,11 @@ def migrate_schema(store: Any) -> dict[str, Any]:
                 _pg._apply_schema_version_29(cur)
                 cur.execute("UPDATE schema_version SET version = %s", (29,))
                 applied.append(29)
+            if state.version < 30:
+                from .continuation_receipt_schema import install
+                install(cur)
+                cur.execute("UPDATE schema_version SET version = %s", (30,))
+                applied.append(30)
         store.conn.commit()
     except Exception:
         store.conn.rollback()

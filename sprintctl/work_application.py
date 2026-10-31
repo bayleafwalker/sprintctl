@@ -2925,7 +2925,14 @@ class WorkApplication:
                 "owner-capability-unavailable", "continuation snapshots require the schema29 owner", 503,
             )
 
+        if (operation == _operator_request_contract.OPERATION_CONTINUATION_RECEIPT
+                and (getattr(self.store, "remote_schema_version", None) or 0) < 30):
+            raise ApplicationRejection("owner-capability-unavailable", "continuation receipts require schema30", 503)
+
         principal_id, workspace_id = _identity_binding(context)
+        if (operation == _operator_request_contract.OPERATION_CONTINUATION_RECEIPT
+                and "work:write" not in (getattr(context.identity, "authorities", frozenset()) or frozenset())):
+            raise ApplicationRejection("authority-required", "continuation receipt requires work:write", 403)
         if operation in {_operator_request_contract.OPERATION_ATTEST,
                          _operator_request_contract.OPERATION_DECLINE}:
             authorities = getattr(context.identity, "authorities", frozenset()) or frozenset()
@@ -2954,6 +2961,9 @@ class WorkApplication:
                     return storage.events(cur, snapshot, workspace_id, args)
 
             parsers = {
+                _operator_request_contract.OPERATION_CONTINUATION_RECEIPT: (
+                    _operator_request_contract.continuation_receipt_arguments, storage.continuation_receipt,
+                    "operator_continuation_receipt"),
                 _operator_request_contract.OPERATION_PUBLISH: (
                     _operator_request_contract.publish_arguments, storage.publish, "operator_request_publish"),
                 _operator_request_contract.OPERATION_REVISE: (

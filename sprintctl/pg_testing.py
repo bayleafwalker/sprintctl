@@ -21,6 +21,7 @@ TEST_ROLE_PREFIX = "sprintctl_test_"
 TEST_DATABASE_PREFIX = "sprintctl_test_"
 DISPOSABLE_DATABASE_COMMENT = "sprintctl:disposable-integration-test"
 REPO_TABLES = (
+    "operator_continuation_receipt",
     # Schema 28: request event and dependant history before the request row.
     "operator_request_event",
     "operator_request_dependant",
@@ -237,6 +238,7 @@ def cleanup_test_repositories(conn: Any, repo_ids: Iterable[str]) -> dict[str, A
                 "agent_declaration_revision",
                 "agent_instance",
                 "operator_request_event",
+                "operator_continuation_receipt",
                 "work_approval",
                 "work_run_delegation",
                 "run_predecessor",

@@ -125,9 +125,12 @@ def test_request_catalog_preserves_schema28_ops_and_gates_continuation_at29():
 
     assert request_names
     assert not (request_names & {spec["name"] for spec in old})
-    assert request_names - {request.OPERATION_CONTINUATION} <= {spec["name"] for spec in current}
+    assert request_names - {request.OPERATION_CONTINUATION, request.OPERATION_CONTINUATION_RECEIPT} <= {spec["name"] for spec in current}
     assert request.OPERATION_CONTINUATION not in {spec["name"] for spec in current}
-    assert request_names <= {spec["name"] for spec in continuation_owner}
+    assert request_names - {request.OPERATION_CONTINUATION_RECEIPT} <= {spec["name"] for spec in continuation_owner}
+    assert request.OPERATION_CONTINUATION_RECEIPT not in {spec["name"] for spec in continuation_owner}
+    receipt_owner = catalog_operation_specs(resource_schema_available=True, remote_schema_version=30)
+    assert request_names <= {spec["name"] for spec in receipt_owner}
 
 
 def test_outcome_and_progress_arguments_preserve_distinct_states():
@@ -170,3 +173,39 @@ def test_progress_and_attestation_reject_ambiguous_or_invalid_inputs():
             "request_id": "req_01JBC3D4E5F6G7H8J9K0MNPQRS", "expected_revision": 3,
             "statement": "complete", "performed_at": "not a time", "idempotency_key": "attest-key-1",
         })
+
+
+def test_continuation_receipt_result_contract_bounds():
+    import jsonschema
+    schema = next(c.result_schema for c in WORK_OPERATION_CONTRACTS
+                  if c.name == request.OPERATION_CONTINUATION_RECEIPT)
+    receipt = {'request_id': 'req_01JBC3D4E5F6G7H8J9K0MNPQRS',
+               'resolution_event_revision': 3, 'work_item_id': 1,
+               'work_revision': 'item:fixture@status:pending', 'material_revision': 1,
+               'packet_digest': 'a' * 64, 'sessions': ['session-a'],
+               'recorded_at': '2026-10-31T00:00:00Z', 'replayed': False}
+    jsonschema.validate(receipt, schema)
+    for change in ({'work_item_id': 9007199254740992}, {'work_revision': ''},
+                   {'request_id': receipt['request_id'] + '\n'}, {'work_revision': '  '},
+                   {'work_revision': 'status\x00pending'}, {'sessions': ['']},
+                   {'sessions': ['x' * 257]},
+                   {'work_revision': 'x' * 513}, {'packet_digest': 'a' * 64 + '\n'},
+                   {'packet_digest': 'A' * 64}, {'sessions': []}):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(receipt | change, schema)
+
+
+def test_continuation_receipt_input_bounds_and_handler_refusal():
+    import jsonschema
+    contract = next(c for c in WORK_OPERATION_CONTRACTS
+                    if c.name == request.OPERATION_CONTINUATION_RECEIPT)
+    args = {'request_id': 'req_01JBC3D4E5F6G7H8J9K0MNPQRS',
+            'resolution_event_revision': 3, 'work_item_id': 1,
+            'expected_work_revision': 'item:fixture@status:pending', 'idempotency_key': 'receipt-key'}
+    jsonschema.validate(args, contract.input_schema)
+    for change in ({'request_id': args['request_id'] + '\n'}, {'expected_work_revision': ' \t'},
+                   {'expected_work_revision': 'x\x00y'}):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(args | change, contract.input_schema)
+        with pytest.raises(request.RequestRefused):
+            request.continuation_receipt_arguments(args | change)

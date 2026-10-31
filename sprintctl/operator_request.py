@@ -18,6 +18,7 @@ OPERATION_GET = "work.request.get-v1"
 OPERATION_LIST = "work.request.list-v1"
 OPERATION_EVENTS = "work.request.events-v1"
 OPERATION_CONTINUATION = "work.request.continuation-v1"
+OPERATION_CONTINUATION_RECEIPT = "work.request.continuation-receipt-v1"
 OPERATION_REVISE = "work.request.revise-v1"
 OPERATION_DEPENDENT_ADD = "work.request.dependent-add-v1"
 OPERATION_DEPENDENT_WITHDRAW = "work.request.dependent-withdraw-v1"
@@ -28,6 +29,7 @@ OPERATION_DECLINE = "work.request.decline-v1"
 OPERATION_SUPERSEDE = "work.request.supersede-v1"
 
 WRITE_OPERATIONS = frozenset({
+    OPERATION_CONTINUATION_RECEIPT,
     OPERATION_PUBLISH,
     OPERATION_REVISE,
     OPERATION_DEPENDENT_ADD,
@@ -157,6 +159,21 @@ def validate_revision(value: Any, name: str = "expected_revision") -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_REVISION:
         _invalid(f"{name} must be a positive int32")
     return value
+
+
+def continuation_receipt_arguments(value: Any) -> dict:
+    args = _object(value, "arguments", required={"request_id", "resolution_event_revision",
+                   "work_item_id", "expected_work_revision", "idempotency_key"})
+    item = args["work_item_id"]
+    if isinstance(item, bool) or not isinstance(item, int) or not 1 <= item <= MAX_SAFE_INTEGER:
+        _invalid("work_item_id must be a positive safe integer")
+    work_revision = _text(args["expected_work_revision"], "expected_work_revision", maximum=512)
+    if not work_revision.strip():
+        _invalid("expected_work_revision must not be blank")
+    return {"request_id": validate_request_id(args["request_id"]),
+            "resolution_event_revision": validate_revision(args["resolution_event_revision"]),
+            "work_item_id": item, "expected_work_revision": work_revision,
+            "idempotency_key": validate_idempotency_key(args["idempotency_key"])}
 
 
 def validate_packet(value: Any) -> dict:
