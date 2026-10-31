@@ -63,12 +63,16 @@ class TestReleaseIntegrity:
         Candidate 0.24.0 bounds session-note writes and predecessor-context pages
         on schema28. Candidate 0.25.0 is the schema29 lease-basis cutover.
         Minor 0.26.0 adds the authoritative continuation read on schema29.
-        Candidate 0.27.0 adds principal continuation receipts on schema30."""
+        Published 0.27.0 adds principal continuation receipts and schema30.
+        Minor 0.28.0 adds the read-only, nonauthorizing work-currentness
+        observation and schema31's single delegation-operation admission.
+        A schema29 owner reaches31 through the existing30 receipt migration,
+        then the31 currentness constraint migration."""
         from sprintctl import pg_migrations
 
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
-        assert pyproject["project"]["version"] == __version__ == "0.27.0"
+        assert pyproject["project"]["version"] == __version__ == "0.28.0"
         assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 31
         assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 31
 
