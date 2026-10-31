@@ -577,7 +577,7 @@ class WorkApplication:
     def _is_pure_read(operation: str) -> bool:
         return (
             operation.startswith("work.read.")
-            or operation == "work.completion.assess-v1"
+            or operation in {"work.completion.assess-v1", "work.lease.currentness-v1"}
             or operation in _ADMIN_SHUTDOWN_READ_OPERATIONS
         )
 

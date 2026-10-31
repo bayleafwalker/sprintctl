@@ -716,7 +716,7 @@ def test_append_only_records_refuse_update_and_delete(w):
 def test_schema_29_handshake_still_reports_the_agent_inbox_catalog(w):
     compatibility = pg_migrations.compatibility_handshake(w.c.store)
     storage = compatibility["capabilities"]["agent_inbox_storage"]
-    assert compatibility["compatible"] and compatibility["remote_schema"]["actual"] == 30
+    assert compatibility["compatible"] and compatibility["remote_schema"]["actual"] == 31
     assert storage["available"] and storage["complete"] and storage["table_count"] == 6
     assert storage["catalog_fingerprint"] == storage["expected_catalog_fingerprint"]
 
