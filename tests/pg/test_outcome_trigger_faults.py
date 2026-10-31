@@ -42,7 +42,8 @@ def test_disabled_source_fk_trigger_refuses_unprivileged_owner(function):
             cur.execute(psycopg.sql.SQL("COMMENT ON DATABASE {} IS 'sprintctl:disposable-integration-test'").format(psycopg.sql.Identifier(database)))
         owner = psycopg.connect(admin_url, dbname=database, user=role, row_factory=dict_row)
         assert_disposable_connection(owner)
-        store = pg.PgStore(conn=owner, repo_id='itest-fk-fault-' + uuid.uuid4().hex[:12], authority_repo_uuid=str(uuid.uuid4()))
+        store = pg.PgStore(conn=owner, repo_id='itest-fk-fault-' + uuid.uuid4().hex[:12], authority_repo_uuid=str(uuid.uuid4()),
+                           connection_factory=lambda: psycopg.connect(admin_url, dbname=database, user=role, row_factory=dict_row))
         pg.init_db(store)
         item, body = setup(store)
         owner.commit()

@@ -16,6 +16,23 @@ pytestmark = PG_MARKS
 OP = "work.lease.report-outcome-v2"
 
 
+@pytest.fixture(scope='module')
+def store(pg_test_scope):
+    def connect():
+        conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+        assert_disposable_connection(conn)
+        conn.rollback()  # snapshot factory must return an idle connection
+        return conn
+    conn = connect()
+    owner = pg.PgStore(conn=conn, repo_id=pg_test_scope('outcome-basis'),
+                       authority_repo_uuid=str(uuid.uuid4()), connection_factory=connect)
+    pg.init_db(owner)
+    try:
+        yield owner
+    finally:
+        conn.close()
+
+
 def setup(store):
     item = _items(store)[0]
     reservation = pg.reserve(store, item, actor="fixture", session_id=uuid.uuid4().hex,
