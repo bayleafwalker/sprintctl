@@ -115,7 +115,17 @@ def store(pg_test_scope):
         conn.close()
 
 
+def drop_schema30(cur) -> None:
+    """Remove schema31's one new allowed delegation operation for old fixtures."""
+    cur.execute("ALTER TABLE work_run_delegation DROP CONSTRAINT work_run_delegation_operations_check")
+    cur.execute("""ALTER TABLE work_run_delegation ADD CONSTRAINT work_run_delegation_operations_check
+        CHECK(jsonb_typeof(operations)='array' AND jsonb_array_length(operations)>0
+        AND operations <@ '["work.run.resolve-v1","work.run.predecessor-context-v1",
+        "work.session-note.write-v1","work.evidence.append-v1"]'::jsonb)""")
+
+
 def drop_schema29(cur) -> None:
+    drop_schema30(cur)
     cur.execute("DROP TABLE IF EXISTS operator_continuation_receipt")
     cur.execute("DROP FUNCTION IF EXISTS sprintctl_continuation_receipt_append_only()")
     """Remove schema 29 lease-basis bindings before rebuilding an older fixture."""

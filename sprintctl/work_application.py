@@ -855,6 +855,7 @@ class WorkApplication:
             "work.lease.heartbeat-v1": target._claim_heartbeat,
             "work.lease.report-outcome-v1": target._claim_complete,
             "work.lease.report-outcome-v2": target._claim_complete_current,
+            "work.lease.currentness-v1": target._lease_currentness,
             # Deprecated alias (agentops#2540): the same operation, ledger
             # and digest, so a key used under either name is one report.
             "work.lease.complete-v1": target._claim_complete,
@@ -2218,6 +2219,9 @@ class WorkApplication:
         operations = _delegation_storage.validate_operations(
             arguments.get("operations"), authorities
         )
+        if (_delegation_contract.CURRENTNESS_OPERATION in operations
+                and (getattr(self.store,"remote_schema_version",None) or 0) < 31):
+            raise ApplicationRejection("owner-capability-unavailable", "Currentness delegation requires schema31", 503)
         ttl_seconds = _delegation_storage.validate_ttl_seconds(arguments.get("ttl_seconds"))
         key = _delegation_storage.validate_idempotency_key(arguments.get("idempotency_key"))
         parent_expires_at = _delegation_storage.parse_parent_expiry(
@@ -3094,6 +3098,39 @@ class WorkApplication:
         except _pg.LeaseRefused as exc:
             raise self._lease_refused(exc) from exc
         return {"repo_id": self.repo_id, "lease": lease}
+
+    def _lease_currentness(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
+        from . import pg, work_currentness
+        _effect_arguments(arguments,frozenset({'run_id','lease_id','checkpoint'}))
+        if 'work:read' not in (getattr(context.identity,'authorities',()) or ()):
+            raise ApplicationRejection('authority-required','Currentness observation requires work:read',403)
+        run_id, lease_id = arguments.get('run_id'), arguments.get('lease_id')
+        if (not isinstance(run_id,str) or re.fullmatch(r'run_[0-9A-HJKMNP-TV-Z]{26}',run_id) is None
+                or not isinstance(lease_id,str) or re.fullmatch(r'lease_[0-9A-HJKMNP-TV-Z]{26}',lease_id) is None):
+            raise ApplicationRejection('invalid-arguments','Give an owned run and lease',422)
+        checkpoint=arguments.get('checkpoint')
+        try:
+            _continuation_basis.validate(checkpoint,self.repo_id,checkpoint.get('item_id') if isinstance(checkpoint,dict) else None)
+        except ValueError as exc:
+            raise ApplicationRejection('invalid-arguments',str(exc),422) from exc
+        if not callable(getattr(self.backend,'lease_currentness',None)):
+            raise ApplicationRejection('unsupported-backend','Currentness observations require PostgreSQL',501)
+        if (getattr(self.store,'remote_schema_version',None) or 0) < work_currentness.SCHEMA_VERSION:
+            raise ApplicationRejection('owner-capability-unavailable','Currentness delegation requires schema31',503)
+        principal,workspace=_identity_binding(context)
+        client,grant=_grant_binding(context)
+        delegated=self._delegated_context(context,work_currentness.OPERATION,run_id)
+        try:
+            result=self.backend.lease_currentness(self.store,run_id=run_id,lease_id=lease_id,
+                checkpoint=checkpoint,principal_id=principal,workspace_id=workspace,client_id=client,grant_id=grant,
+                delegated=delegated,authorities=set(getattr(context.identity,'authorities',()) or ()))
+        except pg.RunNotFound as exc:
+            raise ApplicationRejection('run-not-found','No owned run was found',404) from exc
+        except pg.LeaseRefused as exc:
+            raise self._lease_refused(exc) from exc
+        except work_currentness.CurrentnessRefused as exc:
+            raise ApplicationRejection(exc.code,str(exc),exc.http_status) from exc
+        return {'repo_id':self.repo_id,'currentness':result}
 
     def _claim_complete_current(self, arguments: dict[str, Any], context: InvocationContext) -> dict[str, Any]:
         if "checkpoint" not in arguments:

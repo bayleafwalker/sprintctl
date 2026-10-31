@@ -52,7 +52,7 @@ def test_resolver_is_internal_and_public_surface_is_three_owner_operations():
     assert delegation.INTERNAL_RESOLVE not in delegation.PUBLIC_OPERATIONS
     assert len(delegation.PUBLIC_OPERATIONS) == 3
     assert delegation.DELEGATED_OPERATIONS == frozenset({
-        "work.run.resolve-v1", "work.run.predecessor-context-v1",
+        "work.lease.currentness-v1", "work.run.resolve-v1", "work.run.predecessor-context-v1",
         "work.session-note.write-v1", "work.evidence.append-v1",
     })
 

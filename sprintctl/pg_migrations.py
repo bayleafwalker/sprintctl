@@ -15,7 +15,7 @@ from typing import Any, Mapping
 
 
 WORK_API_VERSION = "sprintctl-work/v1"
-CURRENT_SCHEMA_VERSION = 30
+CURRENT_SCHEMA_VERSION = 31
 # The v0.3 release is a coordinated schema/runtime cutover, so the runtime
 # admits exactly the schema it was built against.  A wider window would be a
 # false promise: reservation storage only arrived in schema 8, the live
@@ -62,7 +62,9 @@ CURRENT_SCHEMA_VERSION = 30
 # it observed. Legacy lease rows remain basis-unknown and cannot settle.
 # 30 adds immutable principal continuation receipts without changing request
 # event revisions or establishing runtime delivery.
-MINIMUM_SCHEMA_VERSION = 30
+# 31 adds only the exact currentness-read operation to the existing delegation
+# CHECK. Older runtimes cannot publish/enforce that read-only scope.
+MINIMUM_SCHEMA_VERSION = 31
 MAXIMUM_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION
 STARTUP_MODE_ENV = "SPRINTCTL_REMOTE_SCHEMA_MODE"
 MIGRATION_LOCK_TIMEOUT_ENV = "SPRINTCTL_MIGRATION_LOCK_TIMEOUT"
@@ -260,7 +262,11 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
             from .approval_schema import inspect_catalog as inspect_approval
             approval = inspect_approval(cur)
             from .delegation_schema import inspect_catalog as inspect_delegation
-            delegation_store = inspect_delegation(cur)
+            if state.version is not None and state.version >= 31:
+                from . import work_currentness_schema
+                delegation_store = work_currentness_schema.inspect_catalog(cur)
+            else:
+                delegation_store = inspect_delegation(cur)
             from .operator_request_schema import inspect_catalog as inspect_operator_requests
             operator_requests = inspect_operator_requests(cur)
             from .lease_basis_schema import inspect_catalog as inspect_lease_basis
@@ -634,6 +640,11 @@ def migrate_schema(store: Any) -> dict[str, Any]:
                 install(cur)
                 cur.execute("UPDATE schema_version SET version = %s", (30,))
                 applied.append(30)
+            if state.version < 31:
+                from .work_currentness_schema import install
+                install(cur)
+                cur.execute("UPDATE schema_version SET version = %s", (31,))
+                applied.append(31)
         store.conn.commit()
     except Exception:
         store.conn.rollback()

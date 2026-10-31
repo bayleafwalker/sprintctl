@@ -12,12 +12,15 @@ from datetime import datetime
 import re
 from typing import Any
 
+from .work_currentness import OPERATION as CURRENTNESS_OPERATION
+
 OP_DELEGATE = "work.run.delegate-v1"
 OP_REVOKE = "work.run.delegation-revoke-v1"
 OP_GET = "work.run.delegation-get-v1"
 INTERNAL_RESOLVE = "work.run.delegation-resolve-internal"
 PUBLIC_OPERATIONS = frozenset({OP_DELEGATE, OP_REVOKE, OP_GET})
 DELEGATED_OPERATIONS = frozenset({
+    CURRENTNESS_OPERATION,
     "work.run.resolve-v1",
     "work.run.predecessor-context-v1",
     "work.session-note.write-v1",

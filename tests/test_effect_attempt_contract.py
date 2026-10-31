@@ -103,7 +103,7 @@ def test_only_attempt_and_declared_preview_descriptors_are_added_to_released_cat
             "work.effect.acceptance-snapshot-v1",
             "work.effect.export-proposal-v2",
             "work.effect.export-proposal-v3", "work.effect.basis-v1",
-            "work.run.continuation-delta-v1", "work.lease.report-outcome-v2",
+            "work.run.continuation-delta-v1", "work.lease.report-outcome-v2", "work.lease.currentness-v1",
             "work.run.register-correlated-v1",
             "work.run.invocation-receipt-get-v1",
         }

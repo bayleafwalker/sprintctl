@@ -7909,6 +7909,72 @@ def _report_parking(cur: Any, store: PgStore, report_id: str) -> dict | None:
     return {"event_id": int(row["id"]), "reason_ref": payload.get("reason_ref")}
 
 
+def lease_currentness(store: PgStore, *, run_id: str, lease_id: str, checkpoint: dict,
+                      principal_id: str, workspace_id: str, client_id: str | None,
+                      grant_id: str | None, delegated: Any = None,
+                      authorities: set[str] | None = None) -> dict:
+    """One bounded, read-only owner snapshot; no lease renewal or grant.
+
+    Facts linearize at the repeatable snapshot. A concurrent revocation after
+    that snapshot may coexist with this observation; every future admission
+    needs another read. Final owner time refuses an observation that has
+    already outlived the captured lease/delegation expiry.
+    """
+    from . import continuation_basis, delegation_pg, work_currentness
+    from hashlib import sha256
+
+    binding = (principal_id, workspace_id, client_id, grant_id)
+    def refuse(code, text, status=409):
+        raise work_currentness.CurrentnessRefused(code, text, status)
+    with repeatable_read_snapshot(store) as snapshot:
+        with snapshot.conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout='5s'")
+            observed = _lease_now(cur)
+            scope = None
+            if delegated is not None:
+                scope = delegation_pg.require_live(
+                    cur, snapshot, context=delegated, operation=work_currentness.OPERATION,
+                    run_id=run_id, principal_id=principal_id, workspace_id=workspace_id,
+                    client_id=client_id, grant_id=grant_id, authorities=authorities or set(), lock=False,
+                )
+            run = resolve_run_facts(snapshot, run_id, principal_id=principal_id,
+                workspace_id=workspace_id, client_id=client_id, grant_id=grant_id)
+            if run['state'] != 'active':
+                refuse('run-superseded','The owned run is no longer active')
+            lease = _owned_lease(cur, snapshot, lease_id, run_id, binding)
+            item_id = int(lease['work_item_id'])
+            if checkpoint['repo_id'] != snapshot.repo_id or checkpoint['item_id'] != item_id:
+                refuse('work-basis-stale','The checkpoint does not bind this owned lease')
+            found = get_work_item_with_edit_revision(snapshot,item_id)
+            if found is None:
+                refuse('work-not-found','The owned lease no longer has a work item',404)
+            item, edit_revision = found
+            dead = _dead_lease_reason(cur,snapshot,lease,item,observed)
+            if dead is None: dead = _lease_basis_reason(cur,snapshot,lease,item)
+            if dead is not None: refuse(dead[0],dead[1])
+            current = continuation_basis.project(snapshot.repo_id,item_id,edit_revision,
+                item_status_revision(item),current_release(snapshot,item_id),owner_read_facts(snapshot,item_id))
+            if not continuation_basis.complete(checkpoint) or not continuation_basis.complete(current):
+                refuse('work-basis-unavailable','Complete current Decision and reference populations are required')
+            if checkpoint != current:
+                refuse('work-basis-stale','The exact owner continuation basis changed')
+            checked = _lease_now(cur)
+            expires = lease['heartbeat_at'] + timedelta(seconds=int(lease['ttl_seconds']))
+            if checked >= expires:
+                refuse('lease-expired','The lease expired during the owner observation')
+            if scope is not None and checked >= scope['expires_at']:
+                refuse('credential-invalid','The delegation expired during the owner observation',401)
+            return {'schema_version':work_currentness.SCHEMA,'authorizes_effect':False,
+                'run_id':run_id,'lease_id':lease_id,
+                'holder':dict(zip(('principal_id','workspace_id','client_id','grant_id'),binding)),
+                'checkpoint':current,
+                'requirements_sha256':'sha256:'+sha256((item.get('description') or '').encode('utf-8')).hexdigest(),
+                'observed_at':_iso(observed),'checked_at':_iso(checked),'lease_expires_at':_iso(expires),
+                'delegation':None if scope is None else {
+                    'delegation_id':scope['delegation_id'],'run_id':scope['run_id'],
+                    'operations':list(scope['operations']),'expires_at':_iso(scope['expires_at'])}}
+
+
 def _lock_outcome_basis_tables(cur: Any) -> None:
     # Fixed order before item/lease rows. SUE permits ordinary DML and blocks
     # constraint/trigger DDL, including on FK source tables used by imports.

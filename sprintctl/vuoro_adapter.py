@@ -9,6 +9,7 @@ without the service distribution.
 from __future__ import annotations
 
 from .continuation_basis import SCHEMA as _CONTINUATION_BASIS_SCHEMA
+from . import work_currentness as _currentness
 
 import inspect
 from dataclasses import dataclass
@@ -1825,6 +1826,15 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "write",
         "not-allowed",
         required_remote_schema_version=29,
+    ),
+    WorkOperationContract(
+        _currentness.OPERATION,
+        _object_schema({"run_id":_RUN_ID_SCHEMA,"lease_id":_LEASE_ID_SCHEMA,
+                        "checkpoint":_CONTINUATION_BASIS_SCHEMA},
+                       required=("run_id","lease_id","checkpoint")),
+        _result_schema(("repo_id","currentness"),
+                       {"repo_id":{"type":"string"},"currentness":_currentness.RESULT_SCHEMA}),
+        "work:read", "read", "not-allowed", required_remote_schema_version=_currentness.SCHEMA_VERSION,
     ),
     WorkOperationContract(
         "work.lease.report-outcome-v2",
