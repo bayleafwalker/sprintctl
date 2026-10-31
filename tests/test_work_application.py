@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import re
 from types import SimpleNamespace
@@ -12,6 +12,7 @@ import jsonschema
 import pytest
 
 from sprintctl import application, authority, contracts, db, outbox
+from sprintctl import reservation as reservation_model
 from sprintctl.application import (
     ApplicationRejection,
     ProjectMemberApplication,
@@ -1708,7 +1709,9 @@ def test_lane_checkpoint_note_without_the_new_fields_still_parses(conn, active_s
         assert payload.get(field) is None
 
 
-def test_item_edit_is_cas_protected_and_appends_authenticated_audit(conn, active_sprint):
+def test_item_edit_is_cas_protected_and_appends_authenticated_audit(
+    conn, active_sprint, monkeypatch
+):
     track = db.get_or_create_track(conn, active_sprint["id"], "edit")
     item_id = db.create_work_item(
         conn, active_sprint["id"], track, "Editable", "Original scope"
@@ -1718,9 +1721,32 @@ def test_item_edit_is_cas_protected_and_appends_authenticated_audit(conn, active
     )
     db.add_ref(conn, item_id, "doc", "docs/edit-contract.md", "edit-contract")
     db.add_dep(conn, blocker_id, item_id)
-    db.reserve(conn, item_id, actor="reservation-owner", session_id="session-edit", role="inspect")
+    reservation = db.reserve(
+        conn, item_id, actor="reservation-owner", session_id="session-edit", role="inspect"
+    )
+    reservation_id = reservation["id"]
+    persisted_reservation_before = dict(
+        conn.execute("SELECT * FROM reservation WHERE id = ?", (reservation_id,)).fetchone()
+    )
+    persisted_events_before = db.list_events(conn, active_sprint["id"])
     app = _application(store=conn, backend=db)
+
+    class FrozenDateTime(datetime):
+        current: datetime
+
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return cls.current.replace(tzinfo=None)
+            return cls.current.astimezone(tz)
+
+    last_activity = datetime.fromisoformat(
+        persisted_reservation_before["last_activity_at"].replace("Z", "+00:00")
+    )
+    FrozenDateTime.current = last_activity + timedelta(milliseconds=500)
+    monkeypatch.setattr(reservation_model, "datetime", FrozenDateTime)
     before = app.invoke("work.read.item", {"item_id": item_id}, _context())
+    assert before["active_reservations"][0]["activity_age_seconds"] == 0
     revision = before["item"]["edit_revision"]
     prior_event_ids = [event["id"] for event in before["events"]]
 
@@ -1741,18 +1767,43 @@ def test_item_edit_is_cas_protected_and_appends_authenticated_audit(conn, active
     assert edited["item"]["description"] == "Corrected scope"
     assert edited["previous_revision"] == revision
     assert edited["revision"] != revision
+    # This value is computed from the current clock when a reservation is
+    # displayed; advancing this test clock deterministically crosses one
+    # second without changing any persisted row.
+    FrozenDateTime.current = last_activity + timedelta(seconds=1, milliseconds=500)
     after = app.invoke("work.read.item", {"item_id": item_id}, _context())
+    assert after["active_reservations"][0]["activity_age_seconds"] == 1
+
+    def without_activity_age(reservations):
+        return [
+            {key: value for key, value in row.items() if key != "activity_age_seconds"}
+            for row in reservations
+        ]
+
     assert after["item"]["aggregate_uuid"] == before["item"]["aggregate_uuid"]
     assert after["item"]["edit_revision"] == edited["revision"]
     assert after["item"]["title"] == before["item"]["title"]
     assert after["item"]["status"] == before["item"]["status"]
-    assert after["active_reservations"] == before["active_reservations"]
+    assert without_activity_age(after["active_reservations"]) == without_activity_age(
+        before["active_reservations"]
+    )
+    assert after["active_reservations"][0]["stale"] is before["active_reservations"][0]["stale"]
+    persisted_reservation_after = dict(
+        conn.execute("SELECT * FROM reservation WHERE id = ?", (reservation_id,)).fetchone()
+    )
+    assert persisted_reservation_after == persisted_reservation_before
+    persisted_events_after = db.list_events(conn, active_sprint["id"])
+    persisted_events_after_by_id = {event["id"]: event for event in persisted_events_after}
+    assert {
+        event_id: persisted_events_after_by_id[event_id]
+        for event_id in (event["id"] for event in persisted_events_before)
+    } == {event["id"]: event for event in persisted_events_before}
     assert after["refs"] == before["refs"]
     assert after["deps"] == before["deps"]
     assert prior_event_ids == [
         event["id"] for event in after["events"] if event["id"] in prior_event_ids
     ]
-    audit = next(event for event in after["events"] if event["id"] == edited["event_id"])
+    audit = next(event for event in persisted_events_after if event["id"] == edited["event_id"])
     assert audit["event_type"] == contracts.ITEM_EDITED_EVENT_TYPE
     assert audit["actor"] == "authenticated-editor"
     payload = json.loads(audit["payload"])
@@ -1780,7 +1831,10 @@ def test_item_edit_is_cas_protected_and_appends_authenticated_audit(conn, active
     assert stale.value.code == "item-edit-conflict"
     assert stale.value.http_status == 409
     assert db.get_work_item(conn, item_id)["description"] == "Corrected scope"
-    assert len(db.list_events(conn, active_sprint["id"])) == len(after["events"])
+    assert db.list_events(conn, active_sprint["id"]) == persisted_events_after
+    assert dict(
+        conn.execute("SELECT * FROM reservation WHERE id = ?", (reservation_id,)).fetchone()
+    ) == persisted_reservation_before
 
     with pytest.raises(ApplicationRejection) as noop:
         app.invoke(
@@ -1793,7 +1847,7 @@ def test_item_edit_is_cas_protected_and_appends_authenticated_audit(conn, active
             _context(actor="authenticated-editor"),
         )
     assert noop.value.code == "item-edit-rejected"
-    assert len(db.list_events(conn, active_sprint["id"])) == len(after["events"])
+    assert db.list_events(conn, active_sprint["id"]) == persisted_events_after
 
 
 def test_item_edit_distinguishes_missing_item_and_required_revision(
