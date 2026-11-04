@@ -34,10 +34,10 @@ def case():
     _publish(store, item, request)
     instance = 'ins_' + 'A' * 26
     with conn.transaction(), conn.cursor() as cur:
-        cur.execute('INSERT INTO agent_instance(repo_id,workspace_id,instance_id,principal_id,registered_at) VALUES (%s,%s,%s,%s,now())', (store.repo_id, 'workspace', instance, 'principal'))
+        cur.execute('INSERT INTO agent_instance(repo_id,workspace_id,instance_id,principal_id,registered_at) VALUES (%s,%s,%s,%s,now())', (store.repo_id, 'workspace', instance, provenance().principal_id))
     caller = replace(provenance(), workspace_id='workspace-a')
     with conn.transaction(), conn.cursor() as cur:
-        cur.execute('INSERT INTO agent_instance(repo_id,workspace_id,instance_id,principal_id,registered_at) VALUES (%s,%s,%s,%s,now())', (store.repo_id, 'workspace-a', instance, 'principal'))
+        cur.execute('INSERT INTO agent_instance(repo_id,workspace_id,instance_id,principal_id,registered_at) VALUES (%s,%s,%s,%s,now())', (store.repo_id, 'workspace-a', instance, caller.principal_id))
     yield store, name, request, item, instance, caller
     conn.rollback()
     with conn.cursor() as cur:
@@ -87,14 +87,14 @@ def test_bind_withdraw_and_foreign_refusals(case):
         row = cur.fetchone()
         assert row['resource'] == caller.resource and set(row['token_scopes']) == caller.token_scopes
         assert row['effective_authority'] == ['work:read']
-    for change in ({'workspace_id': 'elsewhere'}, {'principal_id': 'foreign'}):
+    for change in ({'workspace_id': 'elsewhere'}, {'principal_id': 'issuer:foreign:1', 'subject': 'foreign'}):
         with pytest.raises((RequestRefused, InboxRefused)):
             do_bind(case, replace(caller, **change))
     with pytest.raises(RequestRefused):
         do_bind(case, work_item_id=item + 99999)
     with pytest.raises(RequestRefused):
         with store.conn.transaction(), store.conn.cursor() as cur:
-            binding.withdraw(cur, store, replace(caller, principal_id='foreign'), request_id=request, binding_id=result['binding_id'], expected_revision=1)
+            binding.withdraw(cur, store, replace(caller, principal_id='issuer:foreign:1', subject='foreign'), request_id=request, binding_id=result['binding_id'], expected_revision=1)
     with store.conn.transaction(), store.conn.cursor() as cur:
         assert binding.withdraw(cur, store, caller, request_id=request, binding_id=result['binding_id'], expected_revision=1)['revision'] == 2
     with pytest.raises(RequestRefused) as exc:
@@ -388,3 +388,13 @@ def test_bind_serializes_with_request_mutations(case, mutation):
         with pytest.raises(RequestRefused) as exc:
             do_bind(case)
         assert exc.value.code == 'dependant-not-active'
+
+
+def test_inconsistent_provenance_never_reaches_consent_storage(case):
+    store, _, _, _, _, caller = case
+    with pytest.raises(ValueError, match="principal_id must match"):
+        do_bind(case, replace(caller, subject='different-subject'))
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        cur.execute('SELECT count(*) AS n FROM operator_request_recipient_binding')
+        assert cur.fetchone()['n'] == 0
+    assert do_bind(case)['binding_id']

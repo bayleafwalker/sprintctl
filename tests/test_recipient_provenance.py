@@ -7,7 +7,7 @@ from sprintctl.recipient_provenance import RecipientProvenance
 
 def provenance():
     return RecipientProvenance(
-        principal_id="principal", workspace_id="workspace", gateway_issuer="issuer",
+        principal_id="issuer:subject:1", workspace_id="workspace", gateway_issuer="issuer",
         subject="subject", epoch=1, client_id="client", grant_id="grant", resource="resource",
         token_scopes=frozenset({"vuoro:work.read", "vuoro:evidence.record", "other"}),
         effective_scopes=frozenset({"work:read", "work:evidence"}),
@@ -33,3 +33,23 @@ def test_provenance_is_immutable_and_preserves_original_scopes():
 def test_incomplete_or_expanded_provenance_is_rejected(changes):
     with pytest.raises(ValueError):
         replace(provenance(), **changes)
+
+
+@pytest.mark.parametrize("changes", [
+    {"principal_id": "issuer:other:1"},
+    {"gateway_issuer": "other"},
+    {"subject": "other"},
+    {"epoch": 2},
+    {"principal_id": "issuer:subject:01"},
+])
+def test_inconsistent_identity_tuple_is_rejected(changes):
+    with pytest.raises(ValueError, match="principal_id must match"):
+        replace(provenance(), **changes)
+
+
+def test_composed_identity_accepts_colons_and_safe_epoch_boundary():
+    value = replace(provenance(), gateway_issuer="https://issuer:443",
+                    subject="subject:part", epoch=2**53 - 1,
+                    principal_id=f"https://issuer:443:subject:part:{2**53 - 1}")
+    assert value.principal_id == f"{value.gateway_issuer}:{value.subject}:{value.epoch}"
+    assert value.token_scopes != value.effective_scopes

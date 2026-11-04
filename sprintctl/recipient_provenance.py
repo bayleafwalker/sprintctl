@@ -29,6 +29,8 @@ class RecipientProvenance:
                 raise ValueError(f"{name} must be a nonempty string")
         if isinstance(self.epoch, bool) or not isinstance(self.epoch, int) or not 0 <= self.epoch <= 2**53 - 1:
             raise ValueError("epoch must be a nonnegative safe integer")
+        if self.principal_id != f"{self.gateway_issuer}:{self.subject}:{self.epoch}":
+            raise ValueError("principal_id must match gateway issuer, subject, and epoch")
         for name in ("token_scopes", "effective_scopes"):
             scopes = getattr(self, name)
             if not isinstance(scopes, frozenset) or any(
