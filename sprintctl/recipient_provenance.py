@@ -35,5 +35,7 @@ class RecipientProvenance:
                 not isinstance(scope, str) or not scope.strip() for scope in scopes
             ):
                 raise ValueError(f"{name} must be a frozenset of nonempty strings")
+        if not {"vuoro:work.read", "vuoro:evidence.record"} <= self.token_scopes:
+            raise ValueError("binding requires original OAuth scopes")
         if not {"work:read", "work:evidence"} <= self.effective_scopes:
             raise ValueError("binding requires admitted work:read and work:evidence")

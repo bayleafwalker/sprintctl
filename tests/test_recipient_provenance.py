@@ -25,7 +25,10 @@ def test_provenance_is_immutable_and_preserves_original_scopes():
     {"subject": ""}, {"gateway_issuer": None}, {"epoch": True}, {"epoch": -1},
     {"token_scopes": {"work:read", "work:evidence"}},
     {"effective_scopes": frozenset({"work:read"})},
+    {"effective_scopes": frozenset({"work:evidence"})},
     {"resource": ""},
+    {"token_scopes": frozenset({"vuoro:work.read"})},
+    {"token_scopes": frozenset({"vuoro:evidence.record"})},
 ])
 def test_incomplete_or_expanded_provenance_is_rejected(changes):
     with pytest.raises(ValueError):
