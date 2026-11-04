@@ -69,6 +69,9 @@ snapshot timestamp. At owner admission, the interval start must be at most 30 se
 that limit. The owner allows at most two seconds of future clock skew, refuses
 older or further-future interval starts, and requires a new provider read after expiry.
 Assertion issuance must not precede the recorded read beyond that skew.
+The provider obtains an idle connection and starts a fresh read-only READ COMMITTED
+transaction for that single eligibility statement; an already active transaction
+is refused. Thus the snapshot cannot predate the recorded statement interval.
 
 Revocation committed before the authoritative read begins must refuse; revocation racing
 with or after it may race the owner commit. The response cannot claim recipient
