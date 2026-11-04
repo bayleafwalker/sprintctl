@@ -339,8 +339,10 @@ class TestSchema14Fold:
                 # real schema-28 install is exercised by its dedicated PG gate.
                 patch.setattr(pg, "_apply_schema_version_28", lambda cur: None)
                 patch.setattr(pg, "_apply_schema_version_29", lambda cur: None)
-                from sprintctl import continuation_receipt_schema
+                from sprintctl import continuation_receipt_schema, recipient_binding_schema
                 patch.setattr(continuation_receipt_schema, "install", lambda cur: None)
+                # Schema 32 depends on the schema 28 request owner withheld here.
+                patch.setattr(recipient_binding_schema, "install", lambda cur: None)
                 # This isolated legacy fixture omits the agent-inbox owner
                 # tables that schema 27's delegation FK requires.
                 from sprintctl import delegation_schema, work_currentness_schema
@@ -362,6 +364,9 @@ class TestSchema14Fold:
                 patch.setattr(pg_migrations, "compatibility_handshake", lambda store: {"compatible": True})
                 migrated = pg_migrations.migrate_schema(store)
             assert migrated["applied_versions"] == list(range(14, pg_migrations.CURRENT_SCHEMA_VERSION + 1))
+            with conn.cursor() as cur:
+                assert recipient_binding_schema.inspect_catalog(cur)["complete"]
+                assert recipient_binding_schema.inspect_catalog(cur)["available"]
 
             with conn.cursor() as cur:
                 decisions, evidence, items = _fold_counts(cur, repo_id)

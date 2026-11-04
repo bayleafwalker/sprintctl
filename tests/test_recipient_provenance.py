@@ -47,9 +47,15 @@ def test_inconsistent_identity_tuple_is_rejected(changes):
         replace(provenance(), **changes)
 
 
-def test_composed_identity_accepts_colons_and_safe_epoch_boundary():
+def test_composed_identity_accepts_gateway_subject_and_safe_epoch_boundary():
     value = replace(provenance(), gateway_issuer="https://issuer:443",
-                    subject="subject:part", epoch=2**53 - 1,
-                    principal_id=f"https://issuer:443:subject:part:{2**53 - 1}")
+                    subject="Subject.part_9-x", epoch=2**53 - 1,
+                    principal_id=f"https://issuer:443:Subject.part_9-x:{2**53 - 1}")
     assert value.principal_id == f"{value.gateway_issuer}:{value.subject}:{value.epoch}"
     assert value.token_scopes != value.effective_scopes
+
+
+@pytest.mark.parametrize("subject", ["subject:part", "subject/part", "subject part", "é", "subject\n"])
+def test_subject_rejects_characters_outside_gateway_grammar(subject):
+    with pytest.raises(ValueError, match="subject must match"):
+        replace(provenance(), subject=subject, principal_id=f"issuer:{subject}:1")

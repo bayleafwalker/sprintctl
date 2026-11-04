@@ -7,6 +7,7 @@ There is deliberately no conversion from public operation arguments.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +28,8 @@ class RecipientProvenance:
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{name} must be a nonempty string")
+        if re.fullmatch(r"[A-Za-z0-9._-]+", self.subject) is None:
+            raise ValueError("subject must match gateway subject grammar")
         if isinstance(self.epoch, bool) or not isinstance(self.epoch, int) or not 0 <= self.epoch <= 2**53 - 1:
             raise ValueError("epoch must be a nonnegative safe integer")
         if self.principal_id != f"{self.gateway_issuer}:{self.subject}:{self.epoch}":
