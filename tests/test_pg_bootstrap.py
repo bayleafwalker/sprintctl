@@ -7,7 +7,7 @@ import pytest
 from sprintctl import pg, pg_migrations, run_invocation_schema, effect_verification_export_index
 from sprintctl import (
     agent_inbox_schema, approval_schema, delegation_schema, lease_basis_schema,
-    operator_request_schema, continuation_receipt_schema, work_currentness_schema,
+    operator_request_schema, continuation_receipt_schema, work_currentness_schema, recipient_binding_schema,
 )
 
 
@@ -67,6 +67,8 @@ class _SchemaCursor:
             self._conn.lease_basis_installed = True
         if query == work_currentness_schema.DDL:
             self._conn.currentness_scope_installed = True
+        if query == recipient_binding_schema.DDL:
+            self._conn.recipient_binding_installed = True
         if query == continuation_receipt_schema.DDL:
             self._conn.continuation_receipt_installed = True
         return self
@@ -156,6 +158,7 @@ class _SchemaConnection:
         self.operator_request_installed = version is not None and version >= 28
         self.lease_basis_installed = version is not None and version >= 29
         self.continuation_receipt_installed = version is not None and version >= 30
+        self.recipient_binding_installed = version is not None and version >= 32
         self.currentness_scope_installed = version is not None and version >= 31
         self.calls = []
         self.version = version
@@ -268,6 +271,9 @@ def _stub_invocation_catalog_for_schema_state_fakes(monkeypatch):
         return {"available": available, "complete": True}
 
     monkeypatch.setattr(continuation_receipt_schema, "inspect_catalog", inspect_continuation_receipt)
+
+    monkeypatch.setattr(recipient_binding_schema, "inspect_catalog", lambda cur: {
+        "available": cur._conn.recipient_binding_installed, "complete": True})
 
     def inspect_lease_basis(cur):
         available = cur._conn.lease_basis_installed
@@ -393,6 +399,7 @@ def test_runtime_compatibility_probe_is_read_only_and_publishes_work_api():
                 "complete": True,
             },
             "continuation_receipt_storage": {"available": True, "complete": True},
+            "recipient_binding_storage": {"available": True, "complete": True},
             "work_lease_basis_storage": {
                 "schema_version": "sprintctl-work-lease-basis/v1",
                 "available": True,
