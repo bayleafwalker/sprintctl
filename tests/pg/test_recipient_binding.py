@@ -11,7 +11,7 @@ from sprintctl.operator_request import RequestRefused
 from sprintctl.agent_inbox import InboxRefused
 from tests.pg._shared import PG_MARKS, _PG_URL, psycopg, dict_row, assert_disposable_connection
 from tests.test_operator_request_pg import _publish
-from tests.test_recipient_provenance import provenance
+from tests.test_recipient_provenance import provenance, owner_identity
 
 pytestmark = PG_MARKS
 
@@ -94,12 +94,12 @@ def test_bind_withdraw_and_foreign_refusals(case):
         do_bind(case, work_item_id=item + 99999)
     with pytest.raises(RequestRefused):
         with store.conn.transaction(), store.conn.cursor() as cur:
-            binding.withdraw(cur, store, replace(caller, principal_id='issuer:foreign:1', subject='foreign'), request_id=request, binding_id=result['binding_id'], expected_revision=1)
+            binding.withdraw(cur, store, replace(owner_identity(caller), principal_id='issuer:foreign:1', subject='foreign'), request_id=request, binding_id=result['binding_id'], expected_revision=1)
     with store.conn.transaction(), store.conn.cursor() as cur:
-        assert binding.withdraw(cur, store, caller, request_id=request, binding_id=result['binding_id'], expected_revision=1)['revision'] == 2
+        assert binding.withdraw(cur, store, owner_identity(caller), request_id=request, binding_id=result['binding_id'], expected_revision=1)['revision'] == 2
     with pytest.raises(RequestRefused) as exc:
         with store.conn.transaction(), store.conn.cursor() as cur:
-            binding.withdraw(cur, store, caller, request_id=request, binding_id=result['binding_id'], expected_revision=1)
+            binding.withdraw(cur, store, owner_identity(caller), request_id=request, binding_id=result['binding_id'], expected_revision=1)
     assert exc.value.code == 'revision-conflict'
     assert do_bind(case)['binding_id'] != result['binding_id']
 
@@ -115,7 +115,7 @@ def test_concurrent_withdraw_cas(case):
                 with conn.cursor() as cur:
                     cur.execute(f'SET search_path TO "{name}"')
                     barrier.wait(10)
-                    binding.withdraw(cur, pg.PgStore(conn, store.repo_id), caller, request_id=request, binding_id=identifier, expected_revision=1)
+                    binding.withdraw(cur, pg.PgStore(conn, store.repo_id), owner_identity(caller), request_id=request, binding_id=identifier, expected_revision=1)
                 conn.commit()
             outcomes.append('committed')
         except RequestRefused as exc:
@@ -200,7 +200,7 @@ def test_lost_response_retry_conflict_and_fresh_binding(case):
         do_bind(case, replace(caller, effective_scopes=caller.effective_scopes | {'extra'}), idempotency_key='retry')
     assert exc.value.code == 'idempotency-conflict'
     with store.conn.transaction(), store.conn.cursor() as cur:
-        binding.withdraw(cur, store, caller, request_id=request, binding_id=first['binding_id'], expected_revision=1)
+        binding.withdraw(cur, store, owner_identity(caller), request_id=request, binding_id=first['binding_id'], expected_revision=1)
     assert do_bind(case, idempotency_key='retry') == {
         **first, 'historical_replay': True, 'current_revision': 2, 'current_status': 'withdrawn'}
     with store.conn.transaction(), store.conn.cursor() as cur:
@@ -220,7 +220,7 @@ def test_different_keys_one_active_and_renewal(case):
     with store.conn.transaction(), store.conn.cursor() as cur:
         cur.execute('SELECT count(*) AS n FROM operator_request_recipient_binding WHERE withdrawn_at IS NULL')
         assert cur.fetchone()['n'] == 1
-        binding.withdraw(cur, store, caller, request_id=request, binding_id=first['binding_id'], expected_revision=1)
+        binding.withdraw(cur, store, owner_identity(caller), request_id=request, binding_id=first['binding_id'], expected_revision=1)
     second = do_bind(case, idempotency_key='second')
     assert second['binding_id'] != first['binding_id']
     with store.conn.transaction(), store.conn.cursor() as cur:
@@ -338,7 +338,7 @@ def test_runtime_role_can_bind_and_withdraw_without_ddl(case):
             cur.execute(f'SET search_path TO "{name}"')
             runtime = pg.PgStore(conn, store.repo_id)
             result = binding.bind(cur, runtime, caller, request_id=request, work_item_id=item, instance_id=instance, idempotency_key='runtime')
-            binding.withdraw(cur, runtime, caller, request_id=request, binding_id=result['binding_id'], expected_revision=1)
+            binding.withdraw(cur, runtime, owner_identity(caller), request_id=request, binding_id=result['binding_id'], expected_revision=1)
         conn.commit()
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             with conn.cursor() as cur:
@@ -398,3 +398,35 @@ def test_inconsistent_provenance_never_reaches_consent_storage(case):
         cur.execute('SELECT count(*) AS n FROM operator_request_recipient_binding')
         assert cur.fetchone()['n'] == 0
     assert do_bind(case)['binding_id']
+
+
+def test_withdraw_after_scope_loss_and_identity_substitution(case):
+    store, _, request, item, instance, caller = case
+    result = do_bind(case)
+    owner = owner_identity(caller)  # Current authentication carries no consent scopes.
+    for substitute in (
+        replace(owner, workspace_id='elsewhere'),
+        replace(owner, principal_id='issuer:foreign:1', subject='foreign'),
+        replace(owner, principal_id='other:subject:1', gateway_issuer='other'),
+        replace(owner, principal_id='issuer:subject:2', epoch=2),
+    ):
+        with pytest.raises(RequestRefused) as exc:
+            with store.conn.transaction(), store.conn.cursor() as cur:
+                binding.withdraw(cur, store, substitute, request_id=request,
+                                 binding_id=result['binding_id'], expected_revision=1)
+        assert exc.value.code == 'not-found'
+    with pytest.raises(TypeError, match='authenticated owner identity'):
+        with store.conn.transaction(), store.conn.cursor() as cur:
+            binding.withdraw(cur, store, caller, request_id=request,
+                             binding_id=result['binding_id'], expected_revision=1)
+    with pytest.raises(TypeError, match='verified recipient provenance'):
+        with store.conn.transaction(), store.conn.cursor() as cur:
+            binding.bind(cur, store, owner, request_id=request, work_item_id=item,
+                         instance_id=instance, idempotency_key='scope-loss')
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        assert binding.withdraw(cur, store, owner, request_id=request,
+                                binding_id=result['binding_id'], expected_revision=1)['revision'] == 2
+        cur.execute('SELECT revision, withdrawn_at FROM operator_request_recipient_binding WHERE binding_id=%s',
+                    (result['binding_id'],))
+        row = cur.fetchone()
+        assert row['revision'] == 2 and row['withdrawn_at'] is not None

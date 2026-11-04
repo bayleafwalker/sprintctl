@@ -10,6 +10,33 @@ from dataclasses import dataclass
 import re
 
 
+def _validate_identity(value: object) -> None:
+    for name in ("principal_id", "workspace_id", "gateway_issuer", "subject"):
+        field = getattr(value, name)
+        if not isinstance(field, str) or not field.strip():
+            raise ValueError(f"{name} must be a nonempty string")
+    if re.fullmatch(r"[A-Za-z0-9._-]+", value.subject) is None:
+        raise ValueError("subject must match gateway subject grammar")
+    if isinstance(value.epoch, bool) or not isinstance(value.epoch, int) or not 0 <= value.epoch <= 2**53 - 1:
+        raise ValueError("epoch must be a nonnegative safe integer")
+    if value.principal_id != f"{value.gateway_issuer}:{value.subject}:{value.epoch}":
+        raise ValueError("principal_id must match gateway issuer, subject, and epoch")
+
+
+@dataclass(frozen=True, slots=True)
+class AuthenticatedOwnerIdentity:
+    """Current identity attested by a trusted adapter, independently of consent scopes."""
+
+    principal_id: str
+    workspace_id: str
+    gateway_issuer: str
+    subject: str
+    epoch: int
+
+    def __post_init__(self) -> None:
+        _validate_identity(self)
+
+
 @dataclass(frozen=True, slots=True)
 class RecipientProvenance:
     principal_id: str
@@ -24,16 +51,11 @@ class RecipientProvenance:
     effective_scopes: frozenset[str]
 
     def __post_init__(self) -> None:
-        for name in ("principal_id", "workspace_id", "gateway_issuer", "subject", "client_id", "grant_id", "resource"):
+        _validate_identity(self)
+        for name in ("client_id", "grant_id", "resource"):
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{name} must be a nonempty string")
-        if re.fullmatch(r"[A-Za-z0-9._-]+", self.subject) is None:
-            raise ValueError("subject must match gateway subject grammar")
-        if isinstance(self.epoch, bool) or not isinstance(self.epoch, int) or not 0 <= self.epoch <= 2**53 - 1:
-            raise ValueError("epoch must be a nonnegative safe integer")
-        if self.principal_id != f"{self.gateway_issuer}:{self.subject}:{self.epoch}":
-            raise ValueError("principal_id must match gateway issuer, subject, and epoch")
         for name in ("token_scopes", "effective_scopes"):
             scopes = getattr(self, name)
             if not isinstance(scopes, frozenset) or any(

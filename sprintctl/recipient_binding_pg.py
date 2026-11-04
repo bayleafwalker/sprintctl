@@ -12,7 +12,7 @@ from typing import Any
 from .operator_request import RequestRefused
 from .operator_request_pg import _now, _request
 from .agent_inbox_pg import _owned_instance
-from .recipient_provenance import RecipientProvenance
+from .recipient_provenance import AuthenticatedOwnerIdentity, RecipientProvenance
 
 
 def bind(cur: Any, store: Any, caller: RecipientProvenance, *, request_id: str,
@@ -71,10 +71,10 @@ def bind(cur: Any, store: Any, caller: RecipientProvenance, *, request_id: str,
     return {"binding_id": binding_id, "revision": 1}
 
 
-def withdraw(cur: Any, store: Any, caller: RecipientProvenance, *, request_id: str,
+def withdraw(cur: Any, store: Any, caller: AuthenticatedOwnerIdentity, *, request_id: str,
              binding_id: str, expected_revision: int) -> dict:
-    if not isinstance(caller, RecipientProvenance):
-        raise TypeError("verified recipient provenance required")
+    if not isinstance(caller, AuthenticatedOwnerIdentity):
+        raise TypeError("authenticated owner identity required")
     if isinstance(expected_revision, bool) or not isinstance(expected_revision, int) or expected_revision < 1:
         raise ValueError("expected_revision must be a positive integer")
     workspace = caller.workspace_id
@@ -83,7 +83,8 @@ def withdraw(cur: Any, store: Any, caller: RecipientProvenance, *, request_id: s
     cur.execute("SELECT * FROM operator_request_recipient_binding WHERE repo_id=%s AND workspace_id=%s "
                 "AND request_id=%s AND binding_id=%s FOR UPDATE", (store.repo_id, workspace, request_id, binding_id))
     row = cur.fetchone()
-    if row is None or row["principal_id"] != caller.principal_id:
+    if row is None or any(row[name] != getattr(caller, name) for name in
+                          ("principal_id", "gateway_issuer", "subject", "epoch")):
         raise RequestRefused("not-found", "binding not found")
     if row["revision"] != expected_revision:
         raise RequestRefused("revision-conflict", "binding revision changed")

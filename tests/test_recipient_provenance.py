@@ -2,7 +2,7 @@ from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
-from sprintctl.recipient_provenance import RecipientProvenance
+from sprintctl.recipient_provenance import AuthenticatedOwnerIdentity, RecipientProvenance
 
 
 def provenance():
@@ -59,3 +59,18 @@ def test_composed_identity_accepts_gateway_subject_and_safe_epoch_boundary():
 def test_subject_rejects_characters_outside_gateway_grammar(subject):
     with pytest.raises(ValueError, match="subject must match"):
         replace(provenance(), subject=subject, principal_id=f"issuer:{subject}:1")
+
+
+def owner_identity(value=None):
+    value = value or provenance()
+    return AuthenticatedOwnerIdentity(value.principal_id, value.workspace_id, value.gateway_issuer,
+                                      value.subject, value.epoch)
+
+
+def test_owner_identity_is_separate_immutable_and_validated():
+    owner = owner_identity()
+    with pytest.raises(FrozenInstanceError):
+        owner.workspace_id = "other"
+    with pytest.raises(ValueError, match="principal_id must match"):
+        replace(owner, subject="other")
+    assert not isinstance(owner, RecipientProvenance)
