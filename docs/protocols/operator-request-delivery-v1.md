@@ -20,8 +20,8 @@ V1 supports Cloud OAuth identity only. A subscriber with current `work:read`
 and `work:evidence` explicitly consents to disclose its principal and instance
 to the authorized requester for delivery. Its binding names the exact request,
 item and its own active directory instance. The owner takes principal,
-workspace, gateway assertion issuer, opaque subject, epoch, client ID, grant ID
-the exact original token scope set, and the admitted effective `work:read`
+workspace, gateway assertion issuer, opaque subject, epoch, client ID, grant ID,
+resource, the exact original OAuth token scope set, and the admitted effective `work:read`
 ceiling from verified context, never subscriber arguments. Vuoro must first extend verified gateway identity with
 issuer, subject and original token scopes as separately verified internal
 fields, exactly bound to the verified principal, epoch and assertion; other
@@ -31,6 +31,21 @@ distinct. Missing verified fields, a non-Cloud identity or inactive/foreign
 instance refuses. Grant replacement requires fresh binding; stored grant scopes
 cannot expand the original admitted authority. Binding expresses interest, not
 session or work ownership. Only its owner may withdraw it with CAS.
+
+The binding is durable self-consent for routing, not an enduring bearer token
+or an independent authorization grant. The original bearer may expire without
+ending that consent; this does not renew its validity or authorize reads,
+actions, or native wake. Never retain bearer or refresh secrets. A new delivery
+requires a fresh live grant, membership, role and workspace check constrained by
+the original scope and resource ceiling, plus exact principal, epoch, instance,
+request and work checks. Revocation, withdrawal, epoch change, grant replacement
+or loss of required original scopes refuses; restoration requiring a new grant
+or identity requires a fresh binding. This check is not current-bearer admission.
+Original OAuth scopes (including `vuoro:work.read` and `vuoro:evidence.record`)
+and internal authorities (`work:read` and `work:evidence`) are distinct sets;
+their relationship follows the verified gateway mapping and role intersection,
+never a direct set comparison. The owner stores both provenance and admitted
+ceiling without treating either as an authenticated caller-supplied argument.
 
 Association is item-level: at least one active owner-recorded dependant row for
 the item must exist; send checks status revisions of every active row for that
