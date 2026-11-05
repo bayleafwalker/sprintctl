@@ -21,6 +21,7 @@ TEST_ROLE_PREFIX = "sprintctl_test_"
 TEST_DATABASE_PREFIX = "sprintctl_test_"
 DISPOSABLE_DATABASE_COMMENT = "sprintctl:disposable-integration-test"
 REPO_TABLES = (
+    "operator_request_recipient_binding",
     "operator_continuation_receipt",
     # Schema 28: request event and dependant history before the request row.
     "operator_request_event",

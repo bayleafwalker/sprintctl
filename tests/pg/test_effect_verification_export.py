@@ -223,10 +223,11 @@ def test_optional_proposal_still_refuses_malformed_associated_receipt(store):
     refused(lambda: export(store, intent), "proposal-verification-candidate-invalid")
 
 
-def test_v3_refuses_schema23_even_when_exact_index_was_left_in_place(store):
+@pytest.mark.parametrize("version", [23, 33])
+def test_v3_refuses_unsupported_schema_even_when_exact_index_is_present(store, version):
     _, _, intent = setup(store, required=False)
     with store.conn.cursor() as cur:
-        cur.execute("UPDATE schema_version SET version=23")
+        cur.execute("UPDATE schema_version SET version=%s", (version,))
     store.conn.commit()
     try:
         refused(lambda: export(store, intent), "proposal-verification-index-unavailable")

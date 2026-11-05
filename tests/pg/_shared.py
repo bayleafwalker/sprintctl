@@ -116,7 +116,8 @@ def store(pg_test_scope):
 
 
 def drop_schema30(cur) -> None:
-    """Remove schema31's one new allowed delegation operation for old fixtures."""
+    """Remove newer storage and schema 31 additions for old fixtures."""
+    cur.execute("DROP TABLE IF EXISTS operator_request_recipient_binding")
     cur.execute("ALTER TABLE work_run_delegation DROP CONSTRAINT work_run_delegation_operations_check")
     cur.execute("""ALTER TABLE work_run_delegation ADD CONSTRAINT work_run_delegation_operations_check
         CHECK(jsonb_typeof(operations)='array' AND jsonb_array_length(operations)>0
@@ -145,6 +146,7 @@ def drop_schema26(cur) -> None:
     # The complete delegation relation is removed below. Reinstating its old
     # CHECK first is both unnecessary and invalid if another fixture issued a
     # currentness-only scope, which the historical schema cannot represent.
+    cur.execute("DROP TABLE IF EXISTS operator_request_recipient_binding")
     drop_schema29(cur, reset_currentness=False)
     # Remove newer additive layers first when reconstructing a schema-25
     # fixture for upgrade coverage.

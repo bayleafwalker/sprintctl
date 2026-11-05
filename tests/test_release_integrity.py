@@ -67,14 +67,15 @@ class TestReleaseIntegrity:
         Minor 0.28.0 adds the read-only, nonauthorizing work-currentness
         observation and schema31's single delegation-operation admission.
         A schema29 owner reaches31 through the existing30 receipt migration,
-        then the31 currentness constraint migration."""
+        then the31 currentness constraint migration. Current source adds
+        schema32 recipient consent storage; it is not a released migration."""
         from sprintctl import pg_migrations
 
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
         assert pyproject["project"]["version"] == __version__ == "0.28.0"
-        assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 31
-        assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 31
+        assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 32
+        assert pg_migrations.MINIMUM_SCHEMA_VERSION == pg_migrations.CURRENT_SCHEMA_VERSION == 32
 
     def test_release_contract_names_this_version(self):
         """The tag workflow validates the wheel against RELEASE_VERSION; a
