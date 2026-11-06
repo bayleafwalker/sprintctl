@@ -129,7 +129,12 @@ def test_ci_postgres_job_runs_the_script_suite_then_the_shared_checker():
     ]
     assert len(pytest_steps) == 1, steps
     pytest_step = steps[pytest_steps[0]]
-    for token in ("-m pg", "-rs", "tests/pg/", "tests/test_work_application_pg.py"):
+    for token in (
+        "-m 'pg and not gateway_admission'",
+        "-rs",
+        "tests/pg/",
+        "tests/test_work_application_pg.py",
+    ):
         assert token in pytest_step, f"pytest step lacks {token!r}:\n{pytest_step}"
 
     checker_steps = [
@@ -144,6 +149,19 @@ def test_ci_postgres_job_runs_the_script_suite_then_the_shared_checker():
     assert "pg-cleanup-report.json" in upload[0]
     assert "if-no-files-found: error" in upload[0]
     assert "SPRINTCTL_TEST_PG_CLEANUP_REPORT: pg-cleanup-report.json" in job
+
+
+def test_python312_gateway_job_requires_the_marked_signed_and_postgres_tests():
+    block = _job_block(CI.read_text(), "gateway-admission")
+    job = "\n".join(block)
+    assert "uses: ./.github/workflows/gateway-admission.yml" in job
+    shared = (ROOT / ".github" / "workflows" / "gateway-admission.yml").read_text()
+    assert 'python-version: "3.12"' in shared
+    assert "--frozen --extra dev --extra remote --extra gateway-test" in shared
+    assert "vuoro_service.gateway_identity" in shared
+    assert "tests/test_recipient_admission_adapter.py" in shared
+    assert "test_private_adapter_rechecks_gateway_expiry_after_owner_lock_wait" in shared
+    assert '"\\b\\d+ skipped\\b"' in shared
 
 
 # --- A9 ---------------------------------------------------------------------

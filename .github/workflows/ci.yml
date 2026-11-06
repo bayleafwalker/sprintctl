@@ -127,7 +127,7 @@ jobs:
       - name: Run PostgreSQL integration suite
         shell: bash
         run: >-
-          uv run pytest -q -m pg -rs tests/pg/ tests/test_work_application_pg.py
+          uv run pytest -q -m 'pg and not gateway_admission' -rs tests/pg/ tests/test_work_application_pg.py
           tests/test_operator_request_pg.py tests/test_operator_request_revision_pg.py
           2>&1 | tee pg-pytest.out
 
@@ -141,3 +141,9 @@ jobs:
           name: postgres-integration-cleanup-evidence
           path: pg-cleanup-report.json
           if-no-files-found: error
+
+  gateway-admission:
+    name: Gateway Admission
+    uses: ./.github/workflows/gateway-admission.yml
+    permissions:
+      contents: read
