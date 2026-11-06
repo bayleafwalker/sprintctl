@@ -38,6 +38,33 @@ class AuthenticatedOwnerIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class AuthenticatedRequesterContext:
+    """Identity and authorities supplied by a trusted owner invocation adapter.
+
+    Constructing this value does not verify credentials. The type marks the
+    boundary between a verified invocation and the private owner lookup; it is
+    not accepted from operation arguments or the public application surface.
+    """
+
+    principal_id: str
+    workspace_id: str
+    gateway_issuer: str
+    subject: str
+    epoch: int
+    authorities: frozenset[str]
+
+    def __post_init__(self) -> None:
+        _validate_identity(self)
+        if not isinstance(self.authorities, frozenset) or any(
+            not isinstance(authority, str) or not authority.strip()
+            for authority in self.authorities
+        ):
+            raise ValueError("authorities must be a frozenset of nonempty strings")
+        if "work:evidence" not in self.authorities:
+            raise ValueError("requester requires work:evidence authority")
+
+
+@dataclass(frozen=True, slots=True)
 class RecipientProvenance:
     principal_id: str
     workspace_id: str
