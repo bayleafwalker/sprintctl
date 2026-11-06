@@ -71,7 +71,7 @@ jobs:
         run: |
           set -o pipefail
           rm -f "$SPRINTCTL_TEST_PG_CLEANUP_REPORT"
-          uv run pytest -q -rs -m 'pg and gateway_admission' \
+          uv run pytest -q -rs \
             tests/pg/test_recipient_binding.py::test_signed_delivery_replay_convergence_auth_and_restricted_read \
             tests/pg/test_recipient_binding.py::test_invalid_signed_admission_has_no_inbox_or_ledger_effect \
             tests/pg/test_recipient_binding.py::test_current_v1_declaration_cannot_receive_resolution_notification \
@@ -82,5 +82,15 @@ jobs:
             tests/pg/test_recipient_binding.py::test_historical_replay_rechecks_gateway_expiry_after_request_lock_wait \
             tests/pg/test_recipient_binding.py::test_private_adapter_rechecks_gateway_expiry_after_owner_lock_wait \
             | tee recipient-delivery-pg-pytest.out
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          output = Path("recipient-delivery-pg-pytest.out").read_text(encoding="utf-8")
+          if not re.search(r"\b11 passed\b", output):
+              raise SystemExit("expected exactly 11 passed recipient-delivery cases")
+          if re.search(r"\b\d+ (?:skipped|deselected)\b", output):
+              raise SystemExit("recipient-delivery gates must have zero skipped or deselected cases")
+          PY
           python3 scripts/pg-cleanup-report-check.py \
             "$SPRINTCTL_TEST_PG_CLEANUP_REPORT" recipient-delivery-pg-pytest.out
