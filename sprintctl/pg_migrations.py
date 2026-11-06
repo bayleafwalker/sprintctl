@@ -15,7 +15,7 @@ from typing import Any, Mapping
 
 
 WORK_API_VERSION = "sprintctl-work/v1"
-CURRENT_SCHEMA_VERSION = 32
+CURRENT_SCHEMA_VERSION = 33
 # The v0.3 release is a coordinated schema/runtime cutover, so the runtime
 # admits exactly the schema it was built against.  A wider window would be a
 # false promise: reservation storage only arrived in schema 8, the live
@@ -275,6 +275,8 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
             continuation_receipts = inspect_continuation_receipts(cur)
             from .recipient_binding_schema import inspect_catalog as inspect_recipient_bindings
             recipient_bindings = inspect_recipient_bindings(cur)
+            from .recipient_delivery_schema import inspect_catalog as inspect_recipient_deliveries
+            recipient_deliveries = inspect_recipient_deliveries(cur)
     finally:
         if was_idle:
             store.conn.rollback()
@@ -299,6 +301,8 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
         and (state.version is None or state.version < 29 or lease_basis["available"])
         and recipient_bindings["complete"]
         and (state.version is None or state.version < 32 or recipient_bindings["available"])
+        and recipient_deliveries["complete"]
+        and (state.version is None or state.version < 33 or recipient_deliveries["available"])
         and continuation_receipts["complete"]
         and (state.version is None or state.version < 30 or continuation_receipts["available"])
     )
@@ -348,6 +352,10 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
         reason = "recipient-binding-storage-partial"
     elif state.version is not None and state.version >= 32 and not recipient_bindings["available"]:
         reason = "recipient-binding-storage-missing"
+    elif not recipient_deliveries["complete"]:
+        reason = "recipient-delivery-storage-partial"
+    elif state.version is not None and state.version >= 33 and not recipient_deliveries["available"]:
+        reason = "recipient-delivery-storage-missing"
     else:
         reason = None
     return {
@@ -385,6 +393,7 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
             "work_lease_basis_storage": lease_basis,
             "continuation_receipt_storage": continuation_receipts,
             "recipient_binding_storage": recipient_bindings,
+            "recipient_delivery_storage": recipient_deliveries,
             "repository_ingest_cursor": {
                 "schema_version": "sprintctl-repository-ingest-cursor/v1",
                 "scope": "repository",
@@ -659,6 +668,12 @@ def migrate_schema(store: Any) -> dict[str, Any]:
                 install(cur)
                 cur.execute("UPDATE schema_version SET version = %s", (32,))
                 applied.append(32)
+                state = SchemaState(version=32, row_count=1)
+            if state.version < 33:
+                from .recipient_delivery_schema import install
+                install(cur)
+                cur.execute("UPDATE schema_version SET version = %s", (33,))
+                applied.append(33)
         store.conn.commit()
     except Exception:
         store.conn.rollback()

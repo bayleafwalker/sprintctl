@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -54,7 +55,29 @@ def _assert_release_order(workflow: str) -> None:
     assert "vuoro_service.gateway_identity" in gateway_job
     assert "tests/test_recipient_admission_adapter.py" in gateway_job
     assert "test_private_adapter_rechecks_gateway_expiry_after_owner_lock_wait" in gateway_job
-    assert '"\\b\\d+ skipped\\b"' in gateway_job
+    assert "test_signed_delivery_replay_convergence_auth_and_restricted_read" in gateway_job
+    assert "test_invalid_signed_admission_has_no_inbox_or_ledger_effect" in gateway_job
+    assert "test_jti_conflict_rolls_back_message_counter_delivery_and_key" in gateway_job
+    assert "test_authority_read_age_is_rechecked_after_waiting_on_jti_uniqueness" in gateway_job
+    assert "test_historical_replay_rechecks_gateway_expiry_after_request_lock_wait" in gateway_job
+    assert "pg-cleanup-report-check.py" in gateway_job
+    assert "expected exactly 11 passed recipient-delivery cases" in gateway_job
+    assert "zero skipped or deselected cases" in gateway_job
+    assert "-m 'pg and gateway_admission'" not in gateway_job
+    recipient_delivery_nodes = re.findall(
+        r"tests/pg/test_recipient_binding\.py::([A-Za-z0-9_]+)", gateway_job
+    )
+    assert recipient_delivery_nodes == [
+        "test_signed_delivery_replay_convergence_auth_and_restricted_read",
+        "test_invalid_signed_admission_has_no_inbox_or_ledger_effect",
+        "test_current_v1_declaration_cannot_receive_resolution_notification",
+        "test_schema32_remains_compatible_but_private_delivery_fails_closed",
+        "test_concurrent_same_logical_delivery_converges_on_one_message",
+        "test_jti_conflict_rolls_back_message_counter_delivery_and_key",
+        "test_authority_read_age_is_rechecked_after_waiting_on_jti_uniqueness",
+        "test_historical_replay_rechecks_gateway_expiry_after_request_lock_wait",
+        "test_private_adapter_rechecks_gateway_expiry_after_owner_lock_wait",
+    ]
 
     sync = workflow.index("uv sync --frozen --extra dev")
     full_suite = workflow.index("uv run pytest -q")

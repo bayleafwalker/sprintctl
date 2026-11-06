@@ -124,7 +124,7 @@ def test_schema_28_lease_rows_remain_basis_unknown_and_cannot_settle(lease_basis
     assert before["complete"] is True and before["available"] is False
 
     migrated = pg_migrations.migrate_schema(store)
-    assert migrated["applied_versions"] == [29, 30, 31, 32]
+    assert migrated["applied_versions"] == [29, 30, 31, 32, 33]
     assert migrated["compatibility"]["compatible"] is True
     with store.conn.cursor() as cur:
         cur.execute(

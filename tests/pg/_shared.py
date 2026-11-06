@@ -117,6 +117,9 @@ def store(pg_test_scope):
 
 def drop_schema30(cur) -> None:
     """Remove newer storage and schema 31 additions for old fixtures."""
+    cur.execute("DROP TABLE IF EXISTS operator_request_delivery_key")
+    cur.execute("DROP TABLE IF EXISTS operator_request_delivery")
+    cur.execute("DROP FUNCTION IF EXISTS sprintctl_request_delivery_append_only()")
     cur.execute("DROP TABLE IF EXISTS operator_request_recipient_binding")
     cur.execute("ALTER TABLE work_run_delegation DROP CONSTRAINT work_run_delegation_operations_check")
     cur.execute("""ALTER TABLE work_run_delegation ADD CONSTRAINT work_run_delegation_operations_check
@@ -146,7 +149,7 @@ def drop_schema26(cur) -> None:
     # The complete delegation relation is removed below. Reinstating its old
     # CHECK first is both unnecessary and invalid if another fixture issued a
     # currentness-only scope, which the historical schema cannot represent.
-    cur.execute("DROP TABLE IF EXISTS operator_request_recipient_binding")
+    drop_schema30(cur)
     drop_schema29(cur, reset_currentness=False)
     # Remove newer additive layers first when reconstructing a schema-25
     # fixture for upgrade coverage.

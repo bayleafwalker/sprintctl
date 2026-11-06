@@ -2,7 +2,9 @@
 import threading
 import time
 import uuid
-from dataclasses import replace
+import hashlib
+import json
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -10,6 +12,7 @@ import pytest
 
 from sprintctl import pg, pg_migrations, recipient_binding_schema as schema
 from sprintctl import recipient_binding_pg as binding, operator_request_pg as requests
+from sprintctl import recipient_delivery_pg as deliveries
 from sprintctl.operator_request import RequestRefused
 from sprintctl.agent_inbox import InboxRefused
 from sprintctl.workitemcore import item_status_revision
@@ -22,7 +25,7 @@ pytestmark = PG_MARKS
 
 
 @pytest.fixture
-def case():
+def case(pg_test_scope):
     conn = psycopg.connect(_PG_URL, row_factory=dict_row)
     assert_disposable_connection(conn)
     name = 'recipient_' + uuid.uuid4().hex
@@ -30,7 +33,7 @@ def case():
         cur.execute(f'CREATE SCHEMA "{name}"')
         cur.execute(f'SET search_path TO "{name}"')
     conn.commit()
-    store = pg.PgStore(conn, 'recipient-repo')
+    store = pg.PgStore(conn, pg_test_scope("recipient-binding"))
     pg.init_db(store)
     sprint = pg.create_sprint(store, 'test', status='active')
     track = pg.get_or_create_track(store, sprint, 'test')
@@ -59,7 +62,7 @@ def do_bind(case, caller=None, **kwargs):
         return binding.bind(cur, store, caller or default, **args)
 
 
-def prepare_lookup(case):
+def prepare_lookup(case, recipient_caller=None):
     store, _, request, item, _, recipient = case
     requester = AuthenticatedRequesterContext(
         repo_id=store.repo_id, principal_id='issuer:requester:2', workspace_id='workspace-a',
@@ -83,7 +86,7 @@ def prepare_lookup(case):
                                    {'request_id': request, 'expected_revision': 2,
                                     'statement': 'verified',
                                     'performed_at': '2026-11-06T00:00:00Z'})
-    bound = do_bind(case)
+    bound = do_bind(case, caller=recipient_caller)
     with store.conn.cursor() as cur:
         cur.execute('SELECT id,aggregate_uuid,status FROM work_item WHERE repo_id=%s AND id=%s',
                     (store.repo_id, item))
@@ -91,6 +94,546 @@ def prepare_lookup(case):
     store.conn.commit()
     token = item_status_revision(work)
     return requester, bound, resolved['revision'], token
+
+
+def _delivery_setup(case):
+    """Seed an explicit v2 receiver capability and derive signed claim input."""
+    from vuoro_service.recipient_admission import AdmissionBinding
+
+    store, _, request, item, instance, _recipient = case
+    delivery_recipient = replace(
+        case[5], token_scopes=frozenset({"vuoro:work.read", "vuoro:evidence.record"}))
+    requester, bound, revision, token = prepare_lookup(case, recipient_caller=delivery_recipient)
+    declaration = {
+        "schema": "agent-declaration/v2", "accepted_kinds": ["request-resolution/v1"]
+    }
+    encoded = json.dumps(declaration, sort_keys=True, separators=(",", ":"))
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO agent_declaration_revision(repo_id,workspace_id,instance_id,revision,"
+            "declaration,declaration_digest,recorded_at) VALUES (%s,%s,%s,1,%s::jsonb,%s,now())",
+            (store.repo_id, requester.workspace_id, instance, encoded,
+             hashlib.sha256(encoded.encode()).hexdigest()),
+        )
+        owner = binding.lookup_for_recipient_admission(
+            cur, store, requester, request_id=request, request_revision=revision,
+            resolution_event_revision=revision, work_item_id=item, work_revision=token,
+            binding_id=bound["binding_id"], binding_revision=bound["revision"],
+        )
+    coords = {
+        "request_id": request, "request_revision": revision,
+        "resolution_event_revision": revision, "work_item_id": item,
+        "work_revision": token, "binding_id": bound["binding_id"],
+        "binding_revision": bound["revision"],
+    }
+    return store, requester, coords, deliveries._expected_binding(requester, owner)
+
+
+def _signed_delivery_assertion(expected, *, jti=None, changes=None, expired=False, stale_read=False):
+    jwt = pytest.importorskip("jwt")
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from vuoro_service.recipient_admission import AUDIENCE
+
+    private = Ed25519PrivateKey.generate()
+    now = int(datetime.now(UTC).timestamp())
+    claims = asdict(expected)
+    claims.update({
+        "iss": "recipient-admission-test", "aud": AUDIENCE,
+        "jti": jti or uuid.uuid4().hex,
+        "iat": now - 20 if expired else now,
+        "exp": now - 1 if expired else now + 30,
+        "authority_read_start": now - 21 if expired else now - 31 if stale_read else now - 1,
+        "authority_read_end": now - 20 if expired else now - 30 if stale_read else now,
+    })
+    claims.update(changes or {})
+    token = jwt.encode(claims, private, algorithm="EdDSA",
+                       headers={"typ": "JWT", "kid": "recipient-test"})
+    return token, {"recipient-test": private.public_key()}
+
+
+def _invocation_context(store, requester, *, authorities=None, expires=None):
+    vuoro_identity = pytest.importorskip("vuoro_service.identity")
+    identity = vuoro_identity.Identity(
+        actor="requester", environment="delivery-test",
+        authorities=frozenset(authorities or {"work:evidence"}),
+        repo_ids=frozenset({store.repo_id}), workspace_id=requester.workspace_id,
+        principal_id=requester.principal_id, principal_epoch=requester.epoch,
+        gateway_issuer=requester.gateway_issuer, gateway_subject=requester.subject,
+        expires_at=expires or datetime.now(UTC) + timedelta(minutes=5),
+    )
+    return SimpleNamespace(identity=identity, repo_id=store.repo_id)
+
+
+def _recipient_context(store, expected, *, authorities=None):
+    vuoro_identity = pytest.importorskip("vuoro_service.identity")
+    identity = vuoro_identity.Identity(
+        actor="recipient", environment="delivery-test",
+        authorities=frozenset(authorities or {"work:read"}),
+        repo_ids=frozenset({store.repo_id}), workspace_id=expected.workspace,
+        principal_id=expected.recipient_principal, principal_epoch=expected.epoch,
+        gateway_issuer=expected.gateway_issuer, gateway_subject=expected.subject,
+        client_id=expected.client, grant_id=expected.grant,
+        oauth_resource=expected.resource, oauth_scopes=frozenset({"vuoro:work.read"}),
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    return SimpleNamespace(identity=identity, repo_id=store.repo_id)
+
+
+def _deliver(store, requester, coords, expected, *, key="delivery-key", token=None,
+             keys=None, context=None):
+    context = context or _invocation_context(store, requester)
+    if token is None:
+        token, keys = _signed_delivery_assertion(expected)
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        result = deliveries.deliver(
+            cur, store, context, idempotency_key=key, assertion=token,
+            keys=keys, issuer="recipient-admission-test", coords=coords,
+        )
+    return store, requester, coords, expected, context, result
+
+
+@pytest.mark.gateway_admission
+def test_signed_delivery_replay_convergence_auth_and_restricted_read(case):
+    pytest.importorskip("vuoro_service.recipient_admission")
+    store, requester, coords, expected = _delivery_setup(case)
+    token, keys = _signed_delivery_assertion(expected)
+    context = _invocation_context(store, requester)
+    recipient_context = _recipient_context(store, expected)
+
+    _, _, _, _, _, created = _deliver(
+        store, requester, coords, expected, key="first-key", token=token, keys=keys, context=context)
+    assert created["historical_replay"] is False and created["converged"] is False
+
+    # A lost response can replay without a still-live admission assertion, but
+    # only after the current authenticated owner and request ownership checks.
+    replay = _deliver(store, requester, coords, expected, key="first-key", token="", keys={}, context=context)[-1]
+    assert replay == {"message_id": created["message_id"], "historical_replay": True}
+    changed = dict(coords, work_revision="changed")
+    with pytest.raises(RequestRefused) as caught:
+        _deliver(store, requester, changed, expected, key="first-key", token="", keys={}, context=context)
+    assert caught.value.code == "idempotency-conflict"
+    changed_tuple = dict(coords, binding_id="binding-from-another-logical-tuple")
+    with pytest.raises(RequestRefused) as caught:
+        _deliver(store, requester, changed_tuple, expected, key="first-key", token="", keys={}, context=context)
+    assert caught.value.code == "idempotency-conflict"
+
+    # Same logical tuple with another idempotency key converges and does not
+    # create another inbox message or consume a second assertion.
+    second_token, second_keys = _signed_delivery_assertion(expected)
+    converged = _deliver(store, requester, coords, expected, key="second-key",
+                         token=second_token, keys=second_keys, context=context)[-1]
+    assert converged["message_id"] == created["message_id"] and converged["converged"] is True
+
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        verified = deliveries.verify_delivery(
+            cur, store, recipient_context,
+            instance_id=expected.recipient_instance, message_id=created["message_id"],
+        )
+    assert verified["verified"] is True and verified["envelope_digest"] == created["envelope_digest"]
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        cur.execute("SELECT envelope FROM agent_message WHERE repo_id=%s AND workspace_id=%s AND message_id=%s",
+                    (store.repo_id, requester.workspace_id, created["message_id"]))
+        assert token not in cur.fetchone()["envelope"]
+
+    # Disposable-only corruption seeds prove the read binds both the message
+    # address columns and immutable delivery digest to the verified envelope.
+    corruptions = (
+        ("agent_message", "sprintctl_agent_message_append_only", "recipient_principal_id",
+         "issuer:wrong-recipient:9"),
+        ("operator_request_delivery", "request_delivery_append_only", "envelope_digest", "0" * 64),
+    )
+    for table, guard, column, corrupt_value in corruptions:
+        with store.conn.transaction(), store.conn.cursor() as cur:
+            cur.execute(f"SELECT {column} FROM {table} WHERE repo_id=%s AND workspace_id=%s AND message_id=%s",
+                        (store.repo_id, requester.workspace_id, created["message_id"]))
+            original_value = cur.fetchone()[column]
+            cur.execute(f"ALTER TABLE {table} DISABLE TRIGGER {guard}")
+            cur.execute(f"UPDATE {table} SET {column}=%s WHERE repo_id=%s AND workspace_id=%s AND message_id=%s",
+                        (corrupt_value, store.repo_id, requester.workspace_id, created["message_id"]))
+            cur.execute(f"ALTER TABLE {table} ENABLE TRIGGER {guard}")
+        with pytest.raises(RequestRefused) as caught:
+            with store.conn.transaction(), store.conn.cursor() as cur:
+                deliveries.verify_delivery(
+                    cur, store, recipient_context,
+                    instance_id=expected.recipient_instance, message_id=created["message_id"],
+                )
+        assert caught.value.code == "not-found"
+        with store.conn.transaction(), store.conn.cursor() as cur:
+            cur.execute(f"ALTER TABLE {table} DISABLE TRIGGER {guard}")
+            cur.execute(f"UPDATE {table} SET {column}=%s WHERE repo_id=%s AND workspace_id=%s AND message_id=%s",
+                        (original_value, store.repo_id, requester.workspace_id, created["message_id"]))
+            cur.execute(f"ALTER TABLE {table} ENABLE TRIGGER {guard}")
+
+    foreign_expected = replace(expected, recipient_principal="issuer:foreign:3",
+                               subject="foreign", epoch=3)
+    for reader_expected, instance in ((foreign_expected, expected.recipient_instance),
+                                      (expected, "ins_" + "B" * 26)):
+        with pytest.raises(RequestRefused) as caught:
+            with store.conn.transaction(), store.conn.cursor() as cur:
+                deliveries.verify_delivery(
+                    cur, store, _recipient_context(store, reader_expected, authorities={"work:read"}),
+                    instance_id=instance, message_id=created["message_id"],
+                )
+        assert caught.value.code == "not-found"
+
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        binding.withdraw(cur, store, owner_identity(case[5]), request_id=coords["request_id"],
+                         binding_id=coords["binding_id"], expected_revision=coords["binding_revision"])
+    with pytest.raises(RequestRefused) as caught:
+        with store.conn.transaction(), store.conn.cursor() as cur:
+            deliveries.verify_delivery(
+                cur, store, recipient_context,
+                instance_id=expected.recipient_instance, message_id=created["message_id"],
+            )
+    assert caught.value.code == "not-found"
+
+    foreign_requester = replace(
+        requester, principal_id="issuer:foreign:3", subject="foreign", epoch=3)
+    with pytest.raises(RequestRefused) as caught:
+        _deliver(store, foreign_requester, coords, expected, key="first-key",
+                 token="", keys={}, context=_invocation_context(store, foreign_requester))
+    assert caught.value.code == "not-found"
+
+    unauthorized = _invocation_context(store, requester, authorities={"work:read"})
+    with pytest.raises(RequestRefused) as caught:
+        _deliver(store, requester, coords, expected, key="unauthorized-replay",
+                 token="", keys={}, context=unauthorized)
+    assert caught.value.code == "authority-required"
+
+
+@pytest.mark.gateway_admission
+def test_historical_replay_rechecks_gateway_expiry_after_request_lock_wait(case):
+    pytest.importorskip("vuoro_service.recipient_admission")
+    store, requester, coords, expected = _delivery_setup(case)
+    token, keys = _signed_delivery_assertion(expected)
+    _deliver(store, requester, coords, expected, key="expiry-replay-key", token=token, keys=keys)
+    expiry = datetime.now(UTC) + timedelta(seconds=2)
+    blocker = psycopg.connect(_PG_URL, row_factory=dict_row)
+    assert_disposable_connection(blocker)
+    blocker.cursor().execute(f'SET search_path TO "{case[1]}"')
+    blocker.cursor().execute(
+        "SELECT request_id FROM operator_request WHERE repo_id=%s AND workspace_id=%s "
+        "AND request_id=%s FOR UPDATE",
+        (store.repo_id, requester.workspace_id, coords["request_id"]),
+    )
+    application_name = "delivery-replay-" + uuid.uuid4().hex[:16]
+    started = threading.Event()
+    outcomes = []
+
+    def replay_worker():
+        conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+        try:
+            assert_disposable_connection(conn)
+            with conn.cursor() as cur:
+                cur.execute(f'SET search_path TO "{case[1]}"')
+                cur.execute("SELECT set_config('application_name',%s,false)", (application_name,))
+            conn.commit()
+            worker_store = pg.PgStore(conn, store.repo_id)
+            context = _invocation_context(worker_store, requester, expires=expiry)
+            started.set()
+            _deliver(worker_store, requester, coords, expected, key="expiry-replay-key",
+                     token="", keys={}, context=context)
+            outcomes.append("returned")
+        except RequestRefused as exc:
+            outcomes.append(exc.code)
+        finally:
+            conn.close()
+
+    worker = threading.Thread(target=replay_worker)
+    worker.start()
+    assert started.wait(5)
+    waiting = False
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        with store.conn.cursor() as cur:
+            cur.execute("SELECT wait_event_type,query FROM pg_stat_activity WHERE application_name=%s",
+                        (application_name,))
+            activity = cur.fetchone()
+        store.conn.rollback()
+        if activity and activity["wait_event_type"] == "Lock" and "operator_request" in activity["query"]:
+            waiting = True
+            break
+        time.sleep(0.02)
+    try:
+        assert waiting, f"delivery replay did not wait on request lock: {activity!r}"
+        time.sleep(max(0, (expiry - datetime.now(UTC)).total_seconds()) + 0.1)
+    finally:
+        blocker.commit()
+        blocker.close()
+        worker.join(10)
+    assert not worker.is_alive()
+    assert outcomes == ["gateway-identity-expired"]
+
+
+@pytest.mark.gateway_admission
+@pytest.mark.parametrize("mutation", ["expired", "stale-authority-read", "foreign-recipient"])
+def test_invalid_signed_admission_has_no_inbox_or_ledger_effect(case, mutation):
+    pytest.importorskip("vuoro_service.recipient_admission")
+    store, requester, coords, expected = _delivery_setup(case)
+    changes = {"recipient_instance": "ins_" + "B" * 26} if mutation == "foreign-recipient" else None
+    token, keys = _signed_delivery_assertion(
+        expected, changes=changes, expired=mutation == "expired",
+        stale_read=mutation == "stale-authority-read")
+    before = {}
+    with store.conn.cursor() as cur:
+        for table in ("agent_message", "operator_request_delivery", "operator_request_delivery_key"):
+            cur.execute(f"SELECT count(*) AS n FROM {table} WHERE repo_id=%s AND workspace_id=%s",
+                        (store.repo_id, requester.workspace_id))
+            before[table] = cur.fetchone()["n"]
+    with pytest.raises(ValueError):
+        _deliver(store, requester, coords, expected, key="invalid-assertion",
+                 token=token, keys=keys)
+    with store.conn.cursor() as cur:
+        for table in before:
+            cur.execute(f"SELECT count(*) AS n FROM {table} WHERE repo_id=%s AND workspace_id=%s",
+                        (store.repo_id, requester.workspace_id))
+            assert cur.fetchone()["n"] == before[table]
+
+
+@pytest.mark.gateway_admission
+def test_current_v1_declaration_cannot_receive_resolution_notification(case):
+    pytest.importorskip("vuoro_service.recipient_admission")
+    store, requester, coords, expected = _delivery_setup(case)
+    declaration = {
+        "schema": "agent-declaration/v1", "accepted_kinds": ["continue"]
+    }
+    encoded = json.dumps(declaration, sort_keys=True, separators=(",", ":"))
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO agent_declaration_revision(repo_id,workspace_id,instance_id,revision,"
+            "declaration,declaration_digest,recorded_at) VALUES (%s,%s,%s,2,%s::jsonb,%s,now())",
+            (store.repo_id, requester.workspace_id, expected.recipient_instance, encoded,
+             hashlib.sha256(encoded.encode()).hexdigest()),
+        )
+    token, keys = _signed_delivery_assertion(expected)
+    with pytest.raises(RequestRefused) as caught:
+        _deliver(store, requester, coords, expected, key="v1-must-refuse", token=token, keys=keys)
+    assert caught.value.code == "recipient-unsupported"
+    with store.conn.cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM agent_message WHERE repo_id=%s AND workspace_id=%s",
+                    (store.repo_id, requester.workspace_id))
+        assert cur.fetchone()["n"] == 0
+
+
+@pytest.mark.gateway_admission
+def test_schema32_remains_compatible_but_private_delivery_fails_closed(case):
+    pytest.importorskip("vuoro_service.recipient_admission")
+    store, _, _, _, _, _ = case
+    requester = AuthenticatedRequesterContext(
+        repo_id=store.repo_id, principal_id="issuer:requester:2", workspace_id="workspace-a",
+        gateway_issuer="issuer", subject="requester", epoch=2,
+        authorities=frozenset({"work:evidence"}),
+    )
+    context = _invocation_context(store, requester)
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        cur.execute("DROP TABLE operator_request_delivery_key")
+        cur.execute("DROP TABLE operator_request_delivery")
+        cur.execute("DROP FUNCTION sprintctl_request_delivery_append_only()")
+        cur.execute("UPDATE schema_version SET version=32")
+        handshake = pg_migrations.compatibility_handshake(store)
+        assert handshake["compatible"] and handshake["remote_schema"]["actual"] == 32
+        with pytest.raises(RequestRefused) as caught:
+            deliveries.deliver(
+                cur, store, context, idempotency_key="missing-storage", assertion="",
+                keys={}, issuer="recipient-admission-test", coords={},
+            )
+        assert caught.value.code == "delivery-storage-unavailable"
+
+
+@pytest.mark.gateway_admission
+def test_concurrent_same_logical_delivery_converges_on_one_message(case):
+    pytest.importorskip("vuoro_service.recipient_admission")
+    store, requester, coords, expected = _delivery_setup(case)
+    name = case[1]
+    barrier = threading.Barrier(2)
+    results, errors = [], []
+
+    def worker(index):
+        token, keys = _signed_delivery_assertion(expected)
+        try:
+            conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+            assert_disposable_connection(conn)
+            with conn.cursor() as cur:
+                cur.execute(f'SET search_path TO "{name}"')
+            conn.commit()
+            context = _invocation_context(pg.PgStore(conn, store.repo_id), requester)
+            barrier.wait(10)
+            with conn.transaction(), conn.cursor() as cur:
+                result = deliveries.deliver(
+                    cur, pg.PgStore(conn, store.repo_id), context,
+                    idempotency_key=f"parallel-{index}", assertion=token,
+                    keys=keys, issuer="recipient-admission-test", coords=coords,
+                )
+            results.append(result)
+            conn.close()
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(index,)) for index in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(20)
+    assert all(not thread.is_alive() for thread in threads)
+    assert not errors, errors
+    assert len(results) == 2 and results[0]["message_id"] == results[1]["message_id"]
+    assert sorted(result["converged"] for result in results) == [False, True]
+    with store.conn.cursor() as cur:
+        expected_counts = {"agent_message": 1, "operator_request_delivery": 1,
+                           "operator_request_delivery_key": 2}
+        for table, expected_count in expected_counts.items():
+            cur.execute(f"SELECT count(*) AS n FROM {table} WHERE repo_id=%s AND workspace_id=%s",
+                        (store.repo_id, requester.workspace_id))
+            assert cur.fetchone()["n"] == expected_count
+    store.conn.rollback()
+
+
+@pytest.mark.gateway_admission
+def test_jti_conflict_rolls_back_message_counter_delivery_and_key(case):
+    pytest.importorskip("vuoro_service.recipient_admission")
+    store, requester, coords, expected = _delivery_setup(case)
+    first_jti = "jti-once-" + uuid.uuid4().hex
+    token, keys = _signed_delivery_assertion(expected, jti=first_jti)
+    created = _deliver(store, requester, coords, expected, key="first-jti-key", token=token, keys=keys)[-1]
+
+    second_instance = "ins_" + "B" * 26
+    recipient = replace(
+        case[5], token_scopes=frozenset({"vuoro:work.read", "vuoro:evidence.record"}))
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        cur.execute("INSERT INTO agent_instance(repo_id,workspace_id,instance_id,principal_id,registered_at) "
+                    "VALUES (%s,%s,%s,%s,now())",
+                    (store.repo_id, requester.workspace_id, second_instance, recipient.principal_id))
+        declaration = {"schema": "agent-declaration/v2", "accepted_kinds": ["request-resolution/v1"]}
+        encoded = json.dumps(declaration, sort_keys=True, separators=(",", ":"))
+        cur.execute("INSERT INTO agent_declaration_revision(repo_id,workspace_id,instance_id,revision,"
+                    "declaration,declaration_digest,recorded_at) VALUES (%s,%s,%s,1,%s::jsonb,%s,now())",
+                    (store.repo_id, requester.workspace_id, second_instance, encoded,
+                     hashlib.sha256(encoded.encode()).hexdigest()))
+        second_binding = binding.bind(
+            cur, store, recipient, request_id=coords["request_id"],
+            work_item_id=coords["work_item_id"], instance_id=second_instance,
+            idempotency_key="second-instance-binding",
+        )
+    second_coords = dict(coords, binding_id=second_binding["binding_id"],
+                         binding_revision=second_binding["revision"])
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        owner = binding.lookup_for_recipient_admission(cur, store, requester, **second_coords)
+    second_expected = deliveries._expected_binding(requester, owner)
+    second_token, second_keys = _signed_delivery_assertion(second_expected, jti=first_jti)
+    before = {}
+    with store.conn.cursor() as cur:
+        cur.execute("SELECT last_seq FROM agent_inbox_counter WHERE repo_id=%s AND workspace_id=%s",
+                    (store.repo_id, requester.workspace_id))
+        before["last_seq"] = cur.fetchone()["last_seq"]
+        for table in ("agent_message", "operator_request_delivery", "operator_request_delivery_key"):
+            cur.execute(f"SELECT count(*) AS n FROM {table} WHERE repo_id=%s AND workspace_id=%s",
+                        (store.repo_id, requester.workspace_id))
+            before[table] = cur.fetchone()["n"]
+
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        _deliver(store, requester, second_coords, second_expected, key="second-jti-key",
+                 token=second_token, keys=second_keys)
+    with store.conn.cursor() as cur:
+        cur.execute("SELECT last_seq FROM agent_inbox_counter WHERE repo_id=%s AND workspace_id=%s",
+                    (store.repo_id, requester.workspace_id))
+        assert cur.fetchone()["last_seq"] == before["last_seq"]
+        for table in ("agent_message", "operator_request_delivery", "operator_request_delivery_key"):
+            cur.execute(f"SELECT count(*) AS n FROM {table} WHERE repo_id=%s AND workspace_id=%s",
+                        (store.repo_id, requester.workspace_id))
+            assert cur.fetchone()["n"] == before[table]
+    assert created["message_id"]
+    store.conn.rollback()
+
+
+@pytest.mark.gateway_admission
+def test_authority_read_age_is_rechecked_after_waiting_on_jti_uniqueness(case):
+    pytest.importorskip("vuoro_service.recipient_admission")
+    store, requester, coords, expected = _delivery_setup(case)
+    now = int(datetime.now(UTC).timestamp())
+    jti = "blocked-jti-" + uuid.uuid4().hex
+    authority_read_start = now - 25
+    token, keys = _signed_delivery_assertion(expected, jti=jti, changes={
+        "iat": now - 20, "exp": now + 10,
+        "authority_read_start": authority_read_start, "authority_read_end": now - 20,
+    })
+
+    blocker = psycopg.connect(_PG_URL, row_factory=dict_row)
+    assert_disposable_connection(blocker)
+    blocker.cursor().execute(f'SET search_path TO "{case[1]}"')
+    blocker.commit()
+
+    app_name = "jti-age-" + uuid.uuid4().hex[:16]
+    outcomes = []
+    started = threading.Event()
+
+    def worker():
+        conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+        try:
+            assert_disposable_connection(conn)
+            with conn.cursor() as cur:
+                cur.execute(f'SET search_path TO "{case[1]}"')
+                cur.execute("SELECT set_config('application_name',%s,false)", (app_name,))
+            conn.commit()
+            worker_store = pg.PgStore(conn, store.repo_id)
+            context = _invocation_context(worker_store, requester)
+            started.set()
+            with conn.transaction(), conn.cursor() as cur:
+                deliveries.deliver(
+                    cur, worker_store, context, idempotency_key="aged-jti-key",
+                    assertion=token, keys=keys, issuer="recipient-admission-test", coords=coords,
+                )
+            outcomes.append("returned")
+        except Exception as exc:
+            outcomes.append(type(exc).__name__)
+        finally:
+            conn.close()
+
+    # Create the competing uncommitted JTI row. The request transaction must
+    # get past lookup and counter locks, then block on the unique index.
+    with blocker.cursor() as cur:
+        cur.execute(
+            "INSERT INTO operator_request_delivery(repo_id,workspace_id,request_id,resolution_revision,"
+            "work_item_id,work_status_token,recipient_instance_id,binding_id,binding_revision,"
+            "sender_principal_id,admission_issuer,admission_jti,message_id,envelope_digest,recorded_at) "
+            "VALUES (%s,%s,%s,1,998,'held','ins_BBBBBBBBBBBBBBBBBBBBBBBBBB','held-binding',1,"
+            "'other-sender','recipient-admission-test',%s,'msg_DDDDDDDDDDDDDDDDDDDDDDDDDD',%s,now())",
+            (store.repo_id, requester.workspace_id, "held-request", jti, "0" * 64),
+        )
+    worker_thread = threading.Thread(target=worker)
+    try:
+        worker_thread.start()
+        assert started.wait(5)
+        waiting = False
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            with store.conn.cursor() as cur:
+                cur.execute("SELECT wait_event_type,query FROM pg_stat_activity WHERE application_name=%s",
+                            (app_name,))
+                activity = cur.fetchone()
+            store.conn.rollback()
+            if activity and activity["wait_event_type"] == "Lock" and "operator_request_delivery" in activity["query"]:
+                waiting = True
+                break
+            time.sleep(0.02)
+        assert waiting, f"delivery did not wait on JTI uniqueness: {activity!r}"
+        wait_until = authority_read_start + 30.1
+        time.sleep(max(0, wait_until - time.time()))
+        # Rollback releases the blocked unique check; the stale token is
+        # verified again after its new delivery insert and then rolled back.
+    finally:
+        blocker.rollback()
+        if worker_thread.ident is not None:
+            worker_thread.join(10)
+        blocker.close()
+    assert not worker_thread.is_alive()
+    assert outcomes == ["AdmissionVerificationError"]
+    with store.conn.cursor() as cur:
+        for table in ("agent_message", "operator_request_delivery",
+                      "operator_request_delivery_key", "agent_inbox_counter"):
+            cur.execute(f"SELECT count(*) AS n FROM {table} WHERE repo_id=%s AND workspace_id=%s",
+                        (store.repo_id, requester.workspace_id))
+            assert cur.fetchone()["n"] == 0
+    store.conn.rollback()
 
 
 def test_private_lookup_derives_recipient_and_is_read_only(case):
@@ -458,6 +1001,9 @@ def test_migration_fingerprint_and_rollback(case, monkeypatch):
     store = case[0]
     with store.conn.transaction(), store.conn.cursor() as cur:
         assert schema.inspect_catalog(cur)['available']
+        cur.execute('DROP TABLE operator_request_delivery_key')
+        cur.execute('DROP TABLE operator_request_delivery')
+        cur.execute('DROP FUNCTION sprintctl_request_delivery_append_only()')
         cur.execute('DROP TABLE operator_request_recipient_binding')
         cur.execute('UPDATE schema_version SET version=31')
     original = schema.install
@@ -472,7 +1018,7 @@ def test_migration_fingerprint_and_rollback(case, monkeypatch):
         assert cur.fetchone() == {'version': 31, 'relation': None}
     store.conn.rollback()
     monkeypatch.setattr(schema, 'install', original)
-    assert pg_migrations.migrate_schema(store)['applied_versions'] == [32]
+    assert pg_migrations.migrate_schema(store)['applied_versions'] == [32, 33]
     assert pg_migrations.migrate_schema(store)['applied_versions'] == []
     with store.conn.transaction(), store.conn.cursor() as cur:
         cur.execute('ALTER TABLE operator_request_recipient_binding ADD COLUMN drift integer')
@@ -694,6 +1240,9 @@ def test_concurrent_exact_retries(case):
 def test_collision_preserves_foreign_relation(case):
     store = case[0]
     with store.conn.transaction(), store.conn.cursor() as cur:
+        cur.execute('DROP TABLE operator_request_delivery_key')
+        cur.execute('DROP TABLE operator_request_delivery')
+        cur.execute('DROP FUNCTION sprintctl_request_delivery_append_only()')
         cur.execute('DROP TABLE operator_request_recipient_binding')
         cur.execute('CREATE TABLE operator_request_recipient_binding (foreign_value integer)')
         cur.execute('INSERT INTO operator_request_recipient_binding VALUES (42)')
@@ -712,6 +1261,9 @@ def test_collision_preserves_foreign_relation(case):
 def test_handshake_rejects_missing_and_partial_binding_storage(case):
     store = case[0]
     with store.conn.transaction(), store.conn.cursor() as cur:
+        cur.execute('DROP TABLE operator_request_delivery_key')
+        cur.execute('DROP TABLE operator_request_delivery')
+        cur.execute('DROP FUNCTION sprintctl_request_delivery_append_only()')
         cur.execute('DROP TABLE operator_request_recipient_binding')
     assert pg_migrations.compatibility_handshake(store)['reason'] == 'recipient-binding-storage-missing'
     store.conn.rollback()
