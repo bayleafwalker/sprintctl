@@ -64,15 +64,23 @@ jobs:
           CREATE DATABASE sprintctl_test_ci OWNER sprintctl_test_ci;
           COMMENT ON DATABASE sprintctl_test_ci IS 'sprintctl:disposable-integration-test';
           SQL
-      - name: Run the lock-wait credential-expiry PostgreSQL regression
+      - name: Run the private recipient-delivery ledger PostgreSQL gates
         shell: bash
+        env:
+          SPRINTCTL_TEST_PG_CLEANUP_REPORT: recipient-delivery-cleanup.jsonl
         run: |
           set -o pipefail
-          uv run pytest -q -rs tests/pg/test_recipient_binding.py::test_private_adapter_rechecks_gateway_expiry_after_owner_lock_wait | tee gateway-expiry-pg-pytest.out
-          python3 - <<'PY'
-          import re
-          from pathlib import Path
-          output = Path("gateway-expiry-pg-pytest.out").read_text()
-          if not re.search(r"\b1 passed\b", output) or re.search(r"\b\d+ skipped\b", output):
-              raise SystemExit("gateway expiry PostgreSQL regression must pass and may not skip")
-          PY
+          rm -f "$SPRINTCTL_TEST_PG_CLEANUP_REPORT"
+          uv run pytest -q -rs -m 'pg and gateway_admission' \
+            tests/pg/test_recipient_binding.py::test_signed_delivery_replay_convergence_auth_and_restricted_read \
+            tests/pg/test_recipient_binding.py::test_invalid_signed_admission_has_no_inbox_or_ledger_effect \
+            tests/pg/test_recipient_binding.py::test_current_v1_declaration_cannot_receive_resolution_notification \
+            tests/pg/test_recipient_binding.py::test_schema32_remains_compatible_but_private_delivery_fails_closed \
+            tests/pg/test_recipient_binding.py::test_concurrent_same_logical_delivery_converges_on_one_message \
+            tests/pg/test_recipient_binding.py::test_jti_conflict_rolls_back_message_counter_delivery_and_key \
+            tests/pg/test_recipient_binding.py::test_authority_read_age_is_rechecked_after_waiting_on_jti_uniqueness \
+            tests/pg/test_recipient_binding.py::test_historical_replay_rechecks_gateway_expiry_after_request_lock_wait \
+            tests/pg/test_recipient_binding.py::test_private_adapter_rechecks_gateway_expiry_after_owner_lock_wait \
+            | tee recipient-delivery-pg-pytest.out
+          python3 scripts/pg-cleanup-report-check.py \
+            "$SPRINTCTL_TEST_PG_CLEANUP_REPORT" recipient-delivery-pg-pytest.out

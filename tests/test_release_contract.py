@@ -54,6 +54,12 @@ def _assert_release_order(workflow: str) -> None:
     assert "vuoro_service.gateway_identity" in gateway_job
     assert "tests/test_recipient_admission_adapter.py" in gateway_job
     assert "test_private_adapter_rechecks_gateway_expiry_after_owner_lock_wait" in gateway_job
+    assert "test_signed_delivery_replay_convergence_auth_and_restricted_read" in gateway_job
+    assert "test_invalid_signed_admission_has_no_inbox_or_ledger_effect" in gateway_job
+    assert "test_jti_conflict_rolls_back_message_counter_delivery_and_key" in gateway_job
+    assert "test_authority_read_age_is_rechecked_after_waiting_on_jti_uniqueness" in gateway_job
+    assert "test_historical_replay_rechecks_gateway_expiry_after_request_lock_wait" in gateway_job
+    assert "pg-cleanup-report-check.py" in gateway_job
     assert '"\\b\\d+ skipped\\b"' in gateway_job
 
     sync = workflow.index("uv sync --frozen --extra dev")
