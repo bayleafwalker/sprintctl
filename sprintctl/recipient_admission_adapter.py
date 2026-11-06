@@ -16,6 +16,17 @@ from .recipient_binding_pg import lookup_for_recipient_admission
 from .recipient_provenance import AuthenticatedRequesterContext
 
 
+def _require_unexpired_identity(identity: Any) -> None:
+    expires_at = getattr(identity, "expires_at", None)
+    if not isinstance(expires_at, datetime) or expires_at.utcoffset() is None:
+        raise RequestRefused(
+            "gateway-provenance-unavailable",
+            "current verified gateway identity expiry is unavailable",
+        )
+    if expires_at <= datetime.now(timezone.utc):
+        raise RequestRefused("gateway-identity-expired", "gateway identity expired during the lookup")
+
+
 def requester_from_invocation_context(context: Any) -> AuthenticatedRequesterContext:
     """Build the private requester context from Vuoro's resolved Identity.
 
@@ -58,12 +69,12 @@ def requester_from_invocation_context(context: Any) -> AuthenticatedRequesterCon
             or not isinstance(principal_id, str)
             or principal_id != f"{issuer}:{subject}:{epoch}"
             or not isinstance(workspace_id, str) or not workspace_id.strip()
-            or not isinstance(expires_at, datetime) or expires_at.utcoffset() is None
-            or expires_at <= datetime.now(timezone.utc)):
+            or not isinstance(expires_at, datetime) or expires_at.utcoffset() is None):
         raise RequestRefused(
             "gateway-provenance-unavailable",
             "current verified gateway principal provenance is unavailable",
         )
+    _require_unexpired_identity(identity)
 
     try:
         return AuthenticatedRequesterContext(
@@ -95,6 +106,10 @@ def lookup_for_invocation(
     from the persisted binding by the underlying lookup.
     """
     requester = requester_from_invocation_context(context)
-    return lookup_for_recipient_admission(
+    result = lookup_for_recipient_admission(
         cur, store, requester, **opaque_current_coordinates
     )
+    # The owner lookup can block on row locks. A credential valid at entry may
+    # expire while waiting; do not release recipient data after its expiry.
+    _require_unexpired_identity(context.identity)
+    return result

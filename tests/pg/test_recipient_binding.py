@@ -3,6 +3,8 @@ import threading
 import time
 import uuid
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -369,6 +371,86 @@ def test_private_lookup_rechecks_freshness_after_waiting_for_request_lock(case):
         worker.join(10)
     assert not worker.is_alive()
     assert outcomes == ['request-needs-refresh']
+
+
+def test_private_adapter_rechecks_gateway_expiry_after_owner_lock_wait(case, tmp_path):
+    """A valid assertion must not expose recipient data after lock-wait expiry."""
+    vuoro_identity = pytest.importorskip('vuoro_service.identity')
+    from sprintctl.recipient_admission_adapter import lookup_for_invocation
+
+    store, name, request, item, _, _ = case
+    requester, bound, revision, token = prepare_lookup(case)
+
+    # This expiry race tests the post-lookup boundary using the actual runtime
+    # Identity object. The neighboring adapter integration test verifies that
+    # object is created from a real signed gateway assertion.
+    identity_type = vuoro_identity.Identity
+    expiry = datetime.now(UTC) + timedelta(seconds=3)
+    identity = identity_type(
+        actor='github:requester', environment='adapter-test',
+        authorities=frozenset({'work:evidence'}), repo_ids=frozenset({store.repo_id}),
+        workspace_id=requester.workspace_id, principal_id=requester.principal_id,
+        principal_epoch=requester.epoch, gateway_issuer=requester.gateway_issuer,
+        gateway_subject=requester.subject, expires_at=expiry,
+    )
+    context = SimpleNamespace(identity=identity, repo_id=store.repo_id)
+
+    blocker = psycopg.connect(_PG_URL, row_factory=dict_row)
+    blocker.cursor().execute(f'SET search_path TO "{name}"')
+    blocker.cursor().execute(
+        'SELECT request_id FROM operator_request WHERE repo_id=%s AND workspace_id=%s '
+        'AND request_id=%s FOR UPDATE',
+        (store.repo_id, requester.workspace_id, request),
+    )
+    application_name = 'admission_' + uuid.uuid4().hex[:20]
+    outcomes = []
+    started = threading.Event()
+
+    def lookup_worker():
+        try:
+            with psycopg.connect(_PG_URL, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(f'SET search_path TO "{name}"')
+                    cur.execute("SELECT set_config('application_name',%s,false)", (application_name,))
+                    started.set()
+                    lookup_for_invocation(
+                        cur, pg.PgStore(conn, store.repo_id), context,
+                        request_id=request, request_revision=revision,
+                        resolution_event_revision=revision, work_item_id=item,
+                        work_revision=token, binding_id=bound['binding_id'],
+                        binding_revision=bound['revision'],
+                    )
+            outcomes.append('returned')
+        except RequestRefused as exc:
+            outcomes.append(exc.code)
+        except Exception as exc:
+            outcomes.append(type(exc).__name__)
+
+    worker = threading.Thread(target=lookup_worker)
+    worker.start()
+    waiting = False
+    deadline = time.monotonic() + 10
+    try:
+        assert started.wait(5)
+        while time.monotonic() < deadline:
+            with store.conn.cursor() as cur:
+                cur.execute('SELECT wait_event_type,query FROM pg_stat_activity WHERE application_name=%s',
+                            (application_name,))
+                activity = cur.fetchone()
+            if activity and activity['wait_event_type'] == 'Lock' and 'operator_request' in activity['query']:
+                waiting = True
+                break
+            if outcomes:
+                break
+            time.sleep(0.02)
+        assert waiting, f'admission lookup did not block on request lock: {activity!r}, {outcomes!r}'
+        time.sleep(max(0, (expiry - datetime.now(UTC)).total_seconds()) + 0.1)
+    finally:
+        blocker.rollback()
+        blocker.close()
+        worker.join(10)
+    assert not worker.is_alive()
+    assert outcomes == ['gateway-identity-expired']
 
 
 def test_migration_fingerprint_and_rollback(case, monkeypatch):
