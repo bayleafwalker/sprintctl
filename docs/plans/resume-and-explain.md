@@ -46,6 +46,14 @@ Priorities are recommendations for live refinement, not assertions about the
 current execution queue. No new item may be registered solely because this table
 uses different wording from an existing item.
 
+The [6 November protected-publication owner plan](2026-11-06-outcome-settlement-owner.md)
+adds a concrete qualification case for the existing continuation and result
+reconstruction work: reconcile a committed target effect after a lost response,
+then accept the exact outcome under current Work authority. It preserves the
+owners and open gates above and adds no second work ledger or execution runtime.
+The case and any required owner changes remain draft planning scope, not a
+completed field qualification.
+
 ## R1 decisions and acceptance
 
 `run brief --run-id <own-run> --item-id <repository-local-id>` uses
