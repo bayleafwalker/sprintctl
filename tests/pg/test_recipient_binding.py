@@ -373,6 +373,7 @@ def test_private_lookup_rechecks_freshness_after_waiting_for_request_lock(case):
     assert outcomes == ['request-needs-refresh']
 
 
+@pytest.mark.gateway_admission
 def test_private_adapter_rechecks_gateway_expiry_after_owner_lock_wait(case, tmp_path):
     """A valid assertion must not expose recipient data after lock-wait expiry."""
     vuoro_identity = pytest.importorskip('vuoro_service.identity')

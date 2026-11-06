@@ -48,7 +48,7 @@ Then run only against that disposable instance:
 export SPRINTCTL_TEST_PG_URL='postgresql://sprintctl_test_local:<temporary-password>@127.0.0.1/sprintctl_test_local'
 export SPRINTCTL_TEST_PG_CLEANUP_REPORT="$PWD/pg-cleanup-report.json"
 rm -f "$SPRINTCTL_TEST_PG_CLEANUP_REPORT"   # the report appends; start from an empty file
-uv run --extra remote pytest -m pg tests/pg/ -v
+uv run --extra remote pytest -m "pg and not gateway_admission" tests/pg/ -v
 ```
 
 The password is temporary test infrastructure state. Never commit it or reuse
@@ -88,7 +88,7 @@ follows with KILL only if that cleanup hangs. The script:
   only the explicit host, port and URLs are used;
 - clears every `SPRINTCTL_*` variable except `SPRINTCTL_TEST_PG_*` (for example
   a served-mode `SPRINTCTL_BACKEND`) so the suite is hermetic;
-- runs `uv run --extra dev --extra remote pytest -m pg tests/pg/
+- runs `uv run --extra dev --extra remote pytest -m "pg and not gateway_admission" tests/pg/
   tests/test_work_application_pg.py`, then runs
   `scripts/pg-cleanup-report-check.py` on the cleanup report and the captured
   pytest output (see below);

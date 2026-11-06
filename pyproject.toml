@@ -55,5 +55,6 @@ remote-schema-version = 32
 testpaths = ["tests"]
 markers = [
     "pg: requires an explicitly disposable PostgreSQL integration-test database",
+    "gateway_admission: requires Python 3.12 and the published Vuoro gateway-test extra; run the dedicated gateway-admission job",
     "perf: wall-clock timing assertion, sensitive to shared/contended hardware (item #2506) — deselected in ci.yml and release-sprintctl.yaml, run explicitly with `-m perf`",
 ]
