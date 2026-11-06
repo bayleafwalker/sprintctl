@@ -22,6 +22,9 @@ inspection = ["jsonschema>=4.23,<5"]
 remote = [
     "psycopg[binary]>=3.1",
 ]
+gateway-test = [
+    "vuoro-service @ https://github.com/bayleafwalker/vuoro/releases/download/vuoro-service-v0.1.104/vuoro_service-0.1.104-py3-none-any.whl#sha256=39f5ee328a8e4dd96f119c651d64e063811b3202d0ea621165f43231c51dc8e4 ; python_version >= '3.12'",
+]
 # The served transport is distributed as an attested GitHub Release wheel.
 # Pin both its immutable release URL and verified digest; no package index or
 # mutable source checkout participates in installation.
