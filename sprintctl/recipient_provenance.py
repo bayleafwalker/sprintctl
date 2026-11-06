@@ -46,6 +46,7 @@ class AuthenticatedRequesterContext:
     not accepted from operation arguments or the public application surface.
     """
 
+    repo_id: str
     principal_id: str
     workspace_id: str
     gateway_issuer: str
@@ -54,6 +55,8 @@ class AuthenticatedRequesterContext:
     authorities: frozenset[str]
 
     def __post_init__(self) -> None:
+        if not isinstance(self.repo_id, str) or not self.repo_id.strip():
+            raise ValueError("repo_id must be a nonempty string")
         _validate_identity(self)
         if not isinstance(self.authorities, frozenset) or any(
             not isinstance(authority, str) or not authority.strip()

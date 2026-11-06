@@ -82,7 +82,7 @@ def test_owner_identity_is_separate_immutable_and_validated():
 
 def test_requester_context_requires_evidence_authority_and_is_distinct():
     requester = AuthenticatedRequesterContext(
-        principal_id="issuer:requester:2", workspace_id="workspace",
+        repo_id="repo", principal_id="issuer:requester:2", workspace_id="workspace",
         gateway_issuer="issuer", subject="requester", epoch=2,
         authorities=frozenset({"work:evidence"}),
     )
@@ -90,13 +90,13 @@ def test_requester_context_requires_evidence_authority_and_is_distinct():
     assert not isinstance(requester, AuthenticatedOwnerIdentity)
     with pytest.raises(ValueError, match="work:evidence"):
         AuthenticatedRequesterContext(
-            principal_id="issuer:requester:2", workspace_id="workspace",
+            repo_id="repo", principal_id="issuer:requester:2", workspace_id="workspace",
             gateway_issuer="issuer", subject="requester", epoch=2,
             authorities=frozenset({"work:read"}),
         )
     with pytest.raises(ValueError, match="authorities"):
         AuthenticatedRequesterContext(
-            principal_id="issuer:requester:2", workspace_id="workspace",
+            repo_id="repo", principal_id="issuer:requester:2", workspace_id="workspace",
             gateway_issuer="issuer", subject="requester", epoch=2,
             authorities={"work:evidence"},
         )

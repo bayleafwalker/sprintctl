@@ -43,6 +43,8 @@ def lookup_for_recipient_admission(
     """
     if not isinstance(requester, AuthenticatedRequesterContext):
         raise TypeError("trusted authenticated requester context required")
+    if requester.repo_id != store.repo_id:
+        raise RequestRefused("repository-mismatch", "requester identity is not scoped to this repository")
     for name, value in (("request_revision", request_revision),
                         ("resolution_event_revision", resolution_event_revision),
                         ("work_item_id", work_item_id),
@@ -83,10 +85,6 @@ def lookup_for_recipient_admission(
             raise ValueError("fresh_until lacks timezone")
     except (KeyError, TypeError, ValueError) as exc:
         raise RequestRefused("request-freshness-unavailable", "request freshness is unavailable") from exc
-    now = _now(cur)
-    if now >= expiry:
-        raise RequestRefused("request-needs-refresh", "request freshness has expired")
-
     cur.execute(
         "SELECT action,details,recorded_at FROM operator_request_event "
         "WHERE repo_id=%s AND workspace_id=%s AND request_id=%s AND revision=%s",
@@ -154,28 +152,31 @@ def lookup_for_recipient_admission(
 
     cur.execute(
         "SELECT work_item_id,work_revision FROM operator_request_dependant "
-        "WHERE repo_id=%s AND workspace_id=%s AND request_id=%s AND state='active' "
+        "WHERE repo_id=%s AND workspace_id=%s AND request_id=%s AND work_item_id=%s AND state='active' "
         "ORDER BY work_item_id,session_id",
-        (store.repo_id, workspace, request_id),
+        (store.repo_id, workspace, request_id, work_item_id),
     )
     dependants = cur.fetchall()
     if not any(int(row["work_item_id"]) == work_item_id for row in dependants):
         raise RequestRefused("dependant-not-active", "no active dependant for recipient work")
 
-    current_revisions: dict[int, str] = {}
-    for item_id in sorted({int(row["work_item_id"]) for row in dependants}):
-        # FOR SHARE prevents status updates until this lookup transaction ends.
-        cur.execute("SELECT id,aggregate_uuid,status FROM work_item WHERE repo_id=%s AND id=%s FOR SHARE",
-                    (store.repo_id, item_id))
-        work = cur.fetchone()
-        if work is None:
-            raise RequestRefused("work-not-found", "active dependant work is unavailable")
-        current_revisions[item_id] = item_status_revision(work)
-    if any(current_revisions[int(row["work_item_id"])] != row["work_revision"]
-           for row in dependants):
+    # All active session rows for the requested work item share one status row.
+    # Lock it once, after the request, binding and instance locks.
+    cur.execute("SELECT id,aggregate_uuid,status FROM work_item WHERE repo_id=%s AND id=%s FOR SHARE",
+                (store.repo_id, work_item_id))
+    work = cur.fetchone()
+    if work is None:
+        raise RequestRefused("work-not-found", "active dependant work is unavailable")
+    current_revision = item_status_revision(work)
+    if any(current_revision != row["work_revision"] for row in dependants):
         raise RequestRefused("work-needs-refresh", "an active dependant work status changed")
-    if current_revisions.get(work_item_id) != work_revision:
+    if current_revision != work_revision:
         raise RequestRefused("work-needs-refresh", "exact recipient work status is not current")
+
+    # A previous clock read could become stale while waiting on any FOR SHARE
+    # lock above. Check request freshness only after all eligibility locks land.
+    if _now(cur) >= expiry:
+        raise RequestRefused("request-needs-refresh", "request freshness has expired")
 
     return {
         "repo_id": store.repo_id,
