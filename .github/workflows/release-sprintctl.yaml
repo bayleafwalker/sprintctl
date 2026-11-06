@@ -39,9 +39,15 @@ jobs:
         # `uv run pytest -q -m perf`.
         run: uv run pytest -q -m "not perf"
 
+  gateway-admission:
+    name: Gateway Admission
+    uses: ./.github/workflows/gateway-admission.yml
+    permissions:
+      contents: read
+
   publish:
     name: Build, attest, and publish the Sprintctl wheel
-    needs: tests
+    needs: [tests, gateway-admission]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Sprintctl at the release tag

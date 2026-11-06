@@ -14,6 +14,7 @@ from verification.validate_release_contract import (
 
 ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "release-sprintctl.yaml"
+GATEWAY_WORKFLOW = ROOT / ".github" / "workflows" / "gateway-admission.yml"
 
 
 def test_adapter_dependency_is_an_immutable_github_wheel_pin() -> None:
@@ -43,7 +44,17 @@ def _assert_release_order(workflow: str) -> None:
     assert workflow.count('"3.12"') == 2
     assert workflow.count("uv build --wheel") == 1
     assert workflow.count("uses: actions/attest@v4") == 1
-    assert "needs: tests" in workflow
+    assert "needs: [tests, gateway-admission]" in workflow
+
+    gateway_job = workflow.split("  gateway-admission:", 1)[1].split("\n  publish:", 1)[0]
+    assert "uses: ./.github/workflows/gateway-admission.yml" in gateway_job
+    gateway_job = GATEWAY_WORKFLOW.read_text(encoding="utf-8")
+    assert 'python-version: "3.12"' in gateway_job
+    assert "--frozen --extra dev --extra remote --extra gateway-test" in gateway_job
+    assert "vuoro_service.gateway_identity" in gateway_job
+    assert "tests/test_recipient_admission_adapter.py" in gateway_job
+    assert "test_private_adapter_rechecks_gateway_expiry_after_owner_lock_wait" in gateway_job
+    assert '"\\b\\d+ skipped\\b"' in gateway_job
 
     sync = workflow.index("uv sync --frozen --extra dev")
     full_suite = workflow.index("uv run pytest -q")
@@ -86,6 +97,9 @@ def test_release_workflow_has_two_python_gates_and_one_gated_build() -> None:
         ),
         lambda workflow: workflow.replace("  contents: write", "  contents: read"),
         lambda workflow: workflow.replace("  id-token: write", "  id-token: read"),
+        lambda workflow: workflow.replace(
+            "needs: [tests, gateway-admission]", "needs: tests"
+        ),
     ],
     ids=(
         "partial-sync",
@@ -95,6 +109,7 @@ def test_release_workflow_has_two_python_gates_and_one_gated_build() -> None:
         "clobber-release-asset",
         "read-only-release-permission",
         "read-only-attestation-permission",
+        "release-without-gateway-admission-gate",
     ),
 )
 def test_release_workflow_contract_rejects_regressions(broken) -> None:

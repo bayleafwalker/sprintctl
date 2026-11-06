@@ -154,12 +154,14 @@ def test_ci_postgres_job_runs_the_script_suite_then_the_shared_checker():
 def test_python312_gateway_job_requires_the_marked_signed_and_postgres_tests():
     block = _job_block(CI.read_text(), "gateway-admission")
     job = "\n".join(block)
-    assert 'python-version: "3.12"' in job
-    assert "--extra gateway-test" in job
-    assert "vuoro_service.gateway_identity" in job
-    assert "tests/test_recipient_admission_adapter.py" in job
-    assert "test_private_adapter_rechecks_gateway_expiry_after_owner_lock_wait" in job
-    assert '"\\b\\d+ skipped\\b"' in job
+    assert "uses: ./.github/workflows/gateway-admission.yml" in job
+    shared = (ROOT / ".github" / "workflows" / "gateway-admission.yml").read_text()
+    assert 'python-version: "3.12"' in shared
+    assert "--frozen --extra dev --extra remote --extra gateway-test" in shared
+    assert "vuoro_service.gateway_identity" in shared
+    assert "tests/test_recipient_admission_adapter.py" in shared
+    assert "test_private_adapter_rechecks_gateway_expiry_after_owner_lock_wait" in shared
+    assert '"\\b\\d+ skipped\\b"' in shared
 
 
 # --- A9 ---------------------------------------------------------------------
