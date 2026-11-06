@@ -11,10 +11,9 @@ TABLES = ("operator_request_delivery", "operator_request_delivery_key")
 RELATIONS = TABLES + (
     "operator_request_delivery_pkey", "uq_request_delivery_logical",
     "uq_request_delivery_jti", "operator_request_delivery_key_pkey",
-    "uq_request_delivery_sender_key",
 )
 FUNCTIONS = ("sprintctl_request_delivery_append_only",)
-EXPECTED_CATALOG_FINGERPRINT = "5468d1d984aa72c9205c6a7e5897d8ba475a4b37244153a732ee0e8cdc635696"
+EXPECTED_CATALOG_FINGERPRINT = "329e20935208b4c53b1f09dc018dd8a054fb11969210ee67c5ee6e900494e8ea"
 
 
 def install(cur):
@@ -79,4 +78,8 @@ CREATE TRIGGER request_delivery_append_only BEFORE UPDATE OR DELETE ON operator_
     FOR EACH ROW EXECUTE FUNCTION sprintctl_request_delivery_append_only();
 CREATE TRIGGER request_delivery_key_append_only BEFORE UPDATE OR DELETE ON operator_request_delivery_key
     FOR EACH ROW EXECUTE FUNCTION sprintctl_request_delivery_append_only();
+CREATE TRIGGER request_delivery_no_truncate BEFORE TRUNCATE ON operator_request_delivery
+    FOR EACH STATEMENT EXECUTE FUNCTION sprintctl_request_delivery_append_only();
+CREATE TRIGGER request_delivery_key_no_truncate BEFORE TRUNCATE ON operator_request_delivery_key
+    FOR EACH STATEMENT EXECUTE FUNCTION sprintctl_request_delivery_append_only();
 """
