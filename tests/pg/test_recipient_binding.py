@@ -1,5 +1,6 @@
 """Disposable PostgreSQL schema 32 and private consent transactions."""
 import threading
+import time
 import uuid
 from dataclasses import replace
 
@@ -9,9 +10,11 @@ from sprintctl import pg, pg_migrations, recipient_binding_schema as schema
 from sprintctl import recipient_binding_pg as binding, operator_request_pg as requests
 from sprintctl.operator_request import RequestRefused
 from sprintctl.agent_inbox import InboxRefused
+from sprintctl.workitemcore import item_status_revision
 from tests.pg._shared import PG_MARKS, _PG_URL, psycopg, dict_row, assert_disposable_connection
 from tests.test_operator_request_pg import _publish
 from tests.test_recipient_provenance import provenance, owner_identity
+from sprintctl.recipient_provenance import AuthenticatedRequesterContext
 
 pytestmark = PG_MARKS
 
@@ -52,6 +55,320 @@ def do_bind(case, caller=None, **kwargs):
     args = dict(request_id=request, work_item_id=item, instance_id=instance, idempotency_key=str(uuid.uuid4())) | kwargs
     with store.conn.transaction(), store.conn.cursor() as cur:
         return binding.bind(cur, store, caller or default, **args)
+
+
+def prepare_lookup(case):
+    store, _, request, item, _, recipient = case
+    requester = AuthenticatedRequesterContext(
+        repo_id=store.repo_id, principal_id='issuer:requester:2', workspace_id='workspace-a',
+        gateway_issuer='issuer', subject='requester', epoch=2,
+        authorities=frozenset({'work:evidence'}),
+    )
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        # The canned packet fixture is historical; this lookup test needs a
+        # currently fresh request without changing production freshness rules.
+        cur.execute(
+            "UPDATE operator_request SET requester_principal_id=%s, "
+            "packet=jsonb_set(packet, '{blocker,fresh_until}', "
+            "to_jsonb((clock_timestamp()+interval '1 hour')::text)) "
+            "WHERE repo_id=%s AND workspace_id=%s AND request_id=%s",
+            (requester.principal_id, store.repo_id, requester.workspace_id, request),
+        )
+        requests.report_performed(cur, store, requester.principal_id, requester.workspace_id,
+                                  {'request_id': request, 'expected_revision': 1,
+                                   'outcome': 'performed', 'note': 'test'})
+        resolved = requests.attest(cur, store, requester.principal_id, requester.workspace_id,
+                                   {'request_id': request, 'expected_revision': 2,
+                                    'statement': 'verified',
+                                    'performed_at': '2026-11-06T00:00:00Z'})
+    bound = do_bind(case)
+    with store.conn.cursor() as cur:
+        cur.execute('SELECT id,aggregate_uuid,status FROM work_item WHERE repo_id=%s AND id=%s',
+                    (store.repo_id, item))
+        work = cur.fetchone()
+    store.conn.commit()
+    token = item_status_revision(work)
+    return requester, bound, resolved['revision'], token
+
+
+def test_private_lookup_derives_recipient_and_is_read_only(case):
+    store, _, request, item, _, _ = case
+    requester, bound, revision, token = prepare_lookup(case)
+    with store.conn.cursor() as cur:
+        cur.execute('SELECT revision,state,packet_digest FROM operator_request WHERE repo_id=%s AND request_id=%s',
+                    (store.repo_id, request))
+        request_before = cur.fetchone()
+        cur.execute('SELECT revision,withdrawn_at,principal_id,instance_id FROM operator_request_recipient_binding WHERE binding_id=%s',
+                    (bound['binding_id'],))
+        binding_before = cur.fetchone()
+        cur.execute('SELECT count(*) AS n FROM operator_request_event WHERE repo_id=%s AND request_id=%s',
+                    (store.repo_id, request))
+        events_before = cur.fetchone()['n']
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        result = binding.lookup_for_recipient_admission(
+            cur, store, requester, request_id=request, request_revision=revision,
+            resolution_event_revision=revision, work_item_id=item, work_revision=token,
+            binding_id=bound['binding_id'], binding_revision=bound['revision'])
+    assert result['recipient'] == {
+        'principal_id': 'issuer:subject:1', 'instance_id': case[4],
+        'gateway_issuer': 'issuer', 'subject': 'subject', 'epoch': 1,
+        'client_id': 'client', 'grant_id': 'grant', 'resource': 'resource',
+        'token_scopes': ['other', 'vuoro:evidence.record', 'vuoro:work.read'],
+        'effective_scopes': ['work:evidence', 'work:read'],
+        'effective_authority': ['work:read'],
+    }
+    assert result['request_revision'] == revision and result['work_revision'] == token
+    assert 'session_id' not in result and 'packet' not in result
+    with store.conn.cursor() as cur:
+        cur.execute('SELECT revision,state,packet_digest FROM operator_request WHERE repo_id=%s AND request_id=%s',
+                    (store.repo_id, request))
+        assert cur.fetchone() == request_before
+        cur.execute('SELECT revision,withdrawn_at,principal_id,instance_id FROM operator_request_recipient_binding WHERE binding_id=%s',
+                    (bound['binding_id'],))
+        assert cur.fetchone() == binding_before
+        cur.execute('SELECT count(*) AS n FROM operator_request_event WHERE repo_id=%s AND request_id=%s',
+                    (store.repo_id, request))
+        assert cur.fetchone()['n'] == events_before
+
+
+@pytest.mark.parametrize('change,code', [
+    ({'request_revision': 2}, 'resolution-not-current'),
+    ({'resolution_event_revision': 2}, 'resolution-not-current'),
+    ({'work_revision': 'item:00000000-0000-0000-0000-000000000000@status:done'}, 'work-needs-refresh'),
+    ({'binding_revision': 2}, 'binding-unavailable'),
+    ({'binding_id': 'foreign-binding'}, 'binding-unavailable'),
+])
+def test_private_lookup_exact_revision_and_binding_refusals(case, change, code):
+    store, _, request, item, _, _ = case
+    requester, bound, revision, token = prepare_lookup(case)
+    arguments = {'request_revision': revision, 'resolution_event_revision': revision,
+                 'work_item_id': item, 'work_revision': token,
+                 'binding_id': bound['binding_id'], 'binding_revision': bound['revision']}
+    arguments.update(change)
+    with pytest.raises(RequestRefused) as exc:
+        with store.conn.transaction(), store.conn.cursor() as cur:
+            binding.lookup_for_recipient_admission(cur, store, requester,
+                                                   request_id=request, **arguments)
+    assert exc.value.code == code
+
+
+def test_private_lookup_requires_requester_ownership_and_evidence_authority(case):
+    store, _, request, item, _, _ = case
+    requester, bound, revision, token = prepare_lookup(case)
+    foreign = AuthenticatedRequesterContext(
+        repo_id=store.repo_id, principal_id='issuer:foreign:3', workspace_id=requester.workspace_id,
+        gateway_issuer='issuer', subject='foreign', epoch=3,
+        authorities=frozenset({'work:evidence'}))
+    for caller in (foreign,):
+        with pytest.raises(RequestRefused) as exc:
+            with store.conn.transaction(), store.conn.cursor() as cur:
+                binding.lookup_for_recipient_admission(
+                    cur, store, caller, request_id=request, request_revision=revision,
+                    resolution_event_revision=revision, work_item_id=item, work_revision=token,
+                    binding_id=bound['binding_id'], binding_revision=bound['revision'])
+        assert exc.value.code == 'not-found'
+    with pytest.raises(RequestRefused) as exc:
+        with store.conn.transaction(), store.conn.cursor() as cur:
+            binding.lookup_for_recipient_admission(
+                cur, store, replace(requester, repo_id='another-repo'),
+                request_id=request, request_revision=revision,
+                resolution_event_revision=revision, work_item_id=item, work_revision=token,
+                binding_id=bound['binding_id'], binding_revision=bound['revision'])
+    assert exc.value.code == 'repository-mismatch'
+    with pytest.raises(ValueError, match='work:evidence'):
+        AuthenticatedRequesterContext(
+            repo_id=store.repo_id, principal_id=requester.principal_id, workspace_id=requester.workspace_id,
+            gateway_issuer=requester.gateway_issuer, subject=requester.subject,
+            epoch=requester.epoch, authorities=frozenset({'work:read'}))
+
+
+@pytest.mark.parametrize('mutation,code', [
+    ('withdraw-binding', 'binding-unavailable'),
+    ('retire-instance', 'instance-retired'),
+    ('change-work-status', 'work-needs-refresh'),
+    ('withdraw-all-dependants', 'dependant-not-active'),
+    ('corrupt-binding-provenance', 'binding-provenance-unavailable'),
+    ('expire-request', 'request-needs-refresh'),
+])
+def test_private_lookup_refuses_changed_owner_state(case, mutation, code):
+    store, _, request, item, instance, recipient = case
+    requester, bound, revision, token = prepare_lookup(case)
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        if mutation == 'withdraw-binding':
+            binding.withdraw(cur, store, owner_identity(recipient), request_id=request,
+                             binding_id=bound['binding_id'], expected_revision=bound['revision'])
+        elif mutation == 'retire-instance':
+            cur.execute("UPDATE agent_instance SET retired_at=now(),retire_reason='test' "
+                        "WHERE repo_id=%s AND workspace_id=%s AND instance_id=%s",
+                        (store.repo_id, 'workspace-a', instance))
+        elif mutation == 'change-work-status':
+            cur.execute("UPDATE work_item SET status='active' WHERE repo_id=%s AND id=%s",
+                        (store.repo_id, item))
+        elif mutation == 'withdraw-all-dependants':
+            cur.execute("UPDATE operator_request_dependant SET state='withdrawn',withdrawn_at=now() "
+                        "WHERE repo_id=%s AND workspace_id=%s AND request_id=%s",
+                        (store.repo_id, 'workspace-a', request))
+        elif mutation == 'corrupt-binding-provenance':
+            cur.execute("UPDATE operator_request_recipient_binding SET effective_authority='[]'::jsonb "
+                        "WHERE binding_id=%s", (bound['binding_id'],))
+        elif mutation == 'expire-request':
+            cur.execute("UPDATE operator_request SET packet=jsonb_set(packet,'{blocker,fresh_until}',"
+                        "to_jsonb((clock_timestamp()-interval '1 second')::text)) "
+                        "WHERE repo_id=%s AND request_id=%s", (store.repo_id, request))
+    with pytest.raises(RequestRefused) as exc:
+        with store.conn.transaction(), store.conn.cursor() as cur:
+            binding.lookup_for_recipient_admission(
+                cur, store, requester, request_id=request, request_revision=revision,
+                resolution_event_revision=revision, work_item_id=item, work_revision=token,
+                binding_id=bound['binding_id'], binding_revision=bound['revision'])
+    assert exc.value.code == code
+
+
+def test_private_lookup_requires_supported_attestation_event(case):
+    store, _, request, item, _, recipient = case
+    requester = AuthenticatedRequesterContext(
+        repo_id=store.repo_id, principal_id='issuer:requester:2', workspace_id='workspace-a',
+        gateway_issuer='issuer', subject='requester', epoch=2,
+        authorities=frozenset({'work:evidence'}),
+    )
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        cur.execute(
+            "UPDATE operator_request SET requester_principal_id=%s,state='resolved',revision=2, "
+            "packet=jsonb_set(packet, '{blocker,fresh_until}', "
+            "to_jsonb((clock_timestamp()+interval '1 hour')::text)), updated_at=now() "
+            "WHERE repo_id=%s AND workspace_id=%s AND request_id=%s",
+            (requester.principal_id, store.repo_id, requester.workspace_id, request),
+        )
+        cur.execute(
+            "INSERT INTO operator_request_event(repo_id,workspace_id,request_id,revision,actor,action,details,recorded_at) "
+            "VALUES (%s,%s,%s,2,%s,'resolved-human-attestation',%s::jsonb,now())",
+            (store.repo_id, requester.workspace_id, request, requester.principal_id,
+             '{"completion_basis":"human-attestation"}'),
+        )
+    bound = do_bind(case, recipient)
+    with store.conn.cursor() as cur:
+        cur.execute('SELECT id,aggregate_uuid,status FROM work_item WHERE repo_id=%s AND id=%s',
+                    (store.repo_id, item))
+        token = item_status_revision(cur.fetchone())
+    store.conn.commit()
+    with pytest.raises(RequestRefused) as exc:
+        with store.conn.transaction(), store.conn.cursor() as cur:
+            binding.lookup_for_recipient_admission(
+                cur, store, requester, request_id=request, request_revision=2,
+                resolution_event_revision=2, work_item_id=item, work_revision=token,
+                binding_id=bound['binding_id'], binding_revision=bound['revision'])
+    assert exc.value.code == 'resolution-evidence-unavailable'
+
+
+def test_private_lookup_checks_only_target_dependant_and_all_its_sessions(case):
+    store, _, request, item, _, _ = case
+    requester, bound, revision, token = prepare_lookup(case)
+    with store.conn.cursor() as cur:
+        cur.execute('SELECT sprint_id,track_id FROM work_item WHERE repo_id=%s AND id=%s',
+                    (store.repo_id, item))
+        parent = cur.fetchone()
+    other_item = pg.create_work_item(store, parent['sprint_id'], parent['track_id'], 'unrelated')
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        cur.execute('SELECT id,aggregate_uuid,status FROM work_item WHERE repo_id=%s AND id=%s',
+                    (store.repo_id, item))
+        target = cur.fetchone()
+        cur.execute('SELECT id,aggregate_uuid,status FROM work_item WHERE repo_id=%s AND id=%s',
+                    (store.repo_id, other_item))
+        unrelated = cur.fetchone()
+        cur.execute(
+            "INSERT INTO operator_request_dependant(repo_id,workspace_id,request_id,work_item_id,session_id,"
+            "work_revision,state,attached_at) VALUES (%s,'workspace-a',%s,%s,'target-session-2',%s,'active',now()),"
+            "(%s,'workspace-a',%s,%s,'unrelated-session',%s,'active',now())",
+            (store.repo_id, request, item, item_status_revision(target),
+             store.repo_id, request, other_item, item_status_revision(unrelated)),
+        )
+        cur.execute("UPDATE work_item SET status='active' WHERE repo_id=%s AND id=%s",
+                    (store.repo_id, other_item))
+    store.conn.commit()
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        result = binding.lookup_for_recipient_admission(
+            cur, store, requester, request_id=request, request_revision=revision,
+            resolution_event_revision=revision, work_item_id=item, work_revision=token,
+            binding_id=bound['binding_id'], binding_revision=bound['revision'])
+    assert result['dependant_count'] == 2
+
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        cur.execute("UPDATE operator_request_dependant SET work_revision=%s WHERE repo_id=%s "
+                    "AND workspace_id='workspace-a' AND request_id=%s AND work_item_id=%s "
+                    "AND session_id='target-session-2'",
+                    ('item:00000000-0000-0000-0000-000000000000@status:done',
+                     store.repo_id, request, item))
+    with pytest.raises(RequestRefused) as exc:
+        with store.conn.transaction(), store.conn.cursor() as cur:
+            binding.lookup_for_recipient_admission(
+                cur, store, requester, request_id=request, request_revision=revision,
+                resolution_event_revision=revision, work_item_id=item, work_revision=token,
+                binding_id=bound['binding_id'], binding_revision=bound['revision'])
+    assert exc.value.code == 'work-needs-refresh'
+
+
+def test_private_lookup_rechecks_freshness_after_waiting_for_request_lock(case):
+    store, name, request, item, _, _ = case
+    requester, bound, revision, token = prepare_lookup(case)
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        cur.execute("UPDATE operator_request SET packet=jsonb_set(packet,'{blocker,fresh_until}',"
+                    "to_jsonb((clock_timestamp()+interval '2 seconds')::text)) "
+                    "WHERE repo_id=%s AND workspace_id='workspace-a' AND request_id=%s",
+                    (store.repo_id, request))
+
+    blocker = psycopg.connect(_PG_URL, row_factory=dict_row)
+    blocker.cursor().execute(f'SET search_path TO "{name}"')
+    blocker.cursor().execute(
+        'SELECT request_id FROM operator_request WHERE repo_id=%s AND workspace_id=%s AND request_id=%s FOR UPDATE',
+        (store.repo_id, requester.workspace_id, request))
+    application_name = 'lookup_' + uuid.uuid4().hex[:20]
+    outcomes = []
+    started = threading.Event()
+
+    def lookup_worker():
+        try:
+            with psycopg.connect(_PG_URL, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(f'SET search_path TO "{name}"')
+                    cur.execute("SELECT set_config('application_name',%s,false)", (application_name,))
+                    started.set()
+                    binding.lookup_for_recipient_admission(
+                        cur, pg.PgStore(conn, store.repo_id), requester,
+                        request_id=request, request_revision=revision,
+                        resolution_event_revision=revision, work_item_id=item,
+                        work_revision=token, binding_id=bound['binding_id'],
+                        binding_revision=bound['revision'])
+            outcomes.append('returned')
+        except RequestRefused as exc:
+            outcomes.append(exc.code)
+        except Exception as exc:
+            outcomes.append(type(exc).__name__)
+
+    worker = threading.Thread(target=lookup_worker)
+    worker.start()
+    waiting = False
+    deadline = time.monotonic() + 10
+    try:
+        assert started.wait(5)
+        while time.monotonic() < deadline:
+            with store.conn.cursor() as cur:
+                cur.execute('SELECT wait_event_type,query FROM pg_stat_activity WHERE application_name=%s',
+                            (application_name,))
+                activity = cur.fetchone()
+            if activity and activity['wait_event_type'] == 'Lock' and 'operator_request' in activity['query']:
+                waiting = True
+                break
+            if outcomes:
+                break
+            time.sleep(0.02)
+        assert waiting, f'lookup did not block on the request lock: activity={activity!r}, outcomes={outcomes!r}'
+        time.sleep(2.2)
+    finally:
+        blocker.commit()
+        blocker.close()
+        worker.join(10)
+    assert not worker.is_alive()
+    assert outcomes == ['request-needs-refresh']
 
 
 def test_migration_fingerprint_and_rollback(case, monkeypatch):
