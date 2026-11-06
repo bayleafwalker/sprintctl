@@ -8,6 +8,7 @@ from sprintctl import pg, pg_migrations, run_invocation_schema, effect_verificat
 from sprintctl import (
     agent_inbox_schema, approval_schema, delegation_schema, lease_basis_schema,
     operator_request_schema, continuation_receipt_schema, work_currentness_schema, recipient_binding_schema,
+    recipient_delivery_schema,
 )
 
 
@@ -69,6 +70,8 @@ class _SchemaCursor:
             self._conn.currentness_scope_installed = True
         if query == recipient_binding_schema.DDL:
             self._conn.recipient_binding_installed = True
+        if query == recipient_delivery_schema.DDL:
+            self._conn.recipient_delivery_installed = True
         if query == continuation_receipt_schema.DDL:
             self._conn.continuation_receipt_installed = True
         return self
@@ -159,6 +162,7 @@ class _SchemaConnection:
         self.lease_basis_installed = version is not None and version >= 29
         self.continuation_receipt_installed = version is not None and version >= 30
         self.recipient_binding_installed = version is not None and version >= 32
+        self.recipient_delivery_installed = version is not None and version >= 33
         self.currentness_scope_installed = version is not None and version >= 31
         self.calls = []
         self.version = version
@@ -274,6 +278,8 @@ def _stub_invocation_catalog_for_schema_state_fakes(monkeypatch):
 
     monkeypatch.setattr(recipient_binding_schema, "inspect_catalog", lambda cur: {
         "available": cur._conn.recipient_binding_installed, "complete": True})
+    monkeypatch.setattr(recipient_delivery_schema, "inspect_catalog", lambda cur: {
+        "available": cur._conn.recipient_delivery_installed, "complete": True})
 
     def inspect_lease_basis(cur):
         available = cur._conn.lease_basis_installed
@@ -400,6 +406,7 @@ def test_runtime_compatibility_probe_is_read_only_and_publishes_work_api():
             },
             "continuation_receipt_storage": {"available": True, "complete": True},
             "recipient_binding_storage": {"available": True, "complete": True},
+            "recipient_delivery_storage": {"available": True, "complete": True},
             "work_lease_basis_storage": {
                 "schema_version": "sprintctl-work-lease-basis/v1",
                 "available": True,
@@ -426,7 +433,7 @@ def test_runtime_compatibility_probe_is_read_only_and_publishes_work_api():
     assert not any("information_schema" in query for query in queries)
 
 
-@pytest.mark.parametrize("version", range(5, pg_migrations.CURRENT_SCHEMA_VERSION))
+@pytest.mark.parametrize("version", range(5, pg_migrations.MINIMUM_SCHEMA_VERSION))
 def test_every_pre_cutover_schema_is_refused_however_complete_it_looks(version):
     """v0.3 is a coordinated cutover: only the schema it was built against runs.
 

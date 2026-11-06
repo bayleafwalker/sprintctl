@@ -458,6 +458,9 @@ def test_migration_fingerprint_and_rollback(case, monkeypatch):
     store = case[0]
     with store.conn.transaction(), store.conn.cursor() as cur:
         assert schema.inspect_catalog(cur)['available']
+        cur.execute('DROP TABLE operator_request_delivery_key')
+        cur.execute('DROP TABLE operator_request_delivery')
+        cur.execute('DROP FUNCTION sprintctl_request_delivery_append_only()')
         cur.execute('DROP TABLE operator_request_recipient_binding')
         cur.execute('UPDATE schema_version SET version=31')
     original = schema.install
@@ -472,7 +475,7 @@ def test_migration_fingerprint_and_rollback(case, monkeypatch):
         assert cur.fetchone() == {'version': 31, 'relation': None}
     store.conn.rollback()
     monkeypatch.setattr(schema, 'install', original)
-    assert pg_migrations.migrate_schema(store)['applied_versions'] == [32]
+    assert pg_migrations.migrate_schema(store)['applied_versions'] == [32, 33]
     assert pg_migrations.migrate_schema(store)['applied_versions'] == []
     with store.conn.transaction(), store.conn.cursor() as cur:
         cur.execute('ALTER TABLE operator_request_recipient_binding ADD COLUMN drift integer')
@@ -694,6 +697,9 @@ def test_concurrent_exact_retries(case):
 def test_collision_preserves_foreign_relation(case):
     store = case[0]
     with store.conn.transaction(), store.conn.cursor() as cur:
+        cur.execute('DROP TABLE operator_request_delivery_key')
+        cur.execute('DROP TABLE operator_request_delivery')
+        cur.execute('DROP FUNCTION sprintctl_request_delivery_append_only()')
         cur.execute('DROP TABLE operator_request_recipient_binding')
         cur.execute('CREATE TABLE operator_request_recipient_binding (foreign_value integer)')
         cur.execute('INSERT INTO operator_request_recipient_binding VALUES (42)')
@@ -712,6 +718,9 @@ def test_collision_preserves_foreign_relation(case):
 def test_handshake_rejects_missing_and_partial_binding_storage(case):
     store = case[0]
     with store.conn.transaction(), store.conn.cursor() as cur:
+        cur.execute('DROP TABLE operator_request_delivery_key')
+        cur.execute('DROP TABLE operator_request_delivery')
+        cur.execute('DROP FUNCTION sprintctl_request_delivery_append_only()')
         cur.execute('DROP TABLE operator_request_recipient_binding')
     assert pg_migrations.compatibility_handshake(store)['reason'] == 'recipient-binding-storage-missing'
     store.conn.rollback()
