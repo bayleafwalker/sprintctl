@@ -62,7 +62,7 @@ def test_upgrade_preserves_existing_delegation_and_enables_only_new_read(isolate
     assert unavailable.value.code=='owner-capability-unavailable'
     assert raw_delegate(store,minted['delegation_id'])==before
     result=pg_migrations.migrate_schema(store)
-    assert result['applied_versions']==[31,32,33] and result['to_version']==33
+    assert result['applied_versions']==[31,32,33,34] and result['to_version']==34
     assert pg_migrations.migrate_schema(store)['applied_versions']==[]
     assert raw_delegate(store,minted['delegation_id'])==before
     assert delegation_pg.resolve_token(store,minted['token']).delegation.operations==('work.run.resolve-v1',)

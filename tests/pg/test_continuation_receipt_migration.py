@@ -55,7 +55,7 @@ def test_upgrade_preserves_request_and_is_repeatable(isolated):
     store.conn.commit()
     reconstruct29(store)
     assert pg_migrations.compatibility_handshake(store)['reason'] == 'schema-too-old'
-    assert pg_migrations.migrate_schema(store)['applied_versions'] == [30,31,32,33]
+    assert pg_migrations.migrate_schema(store)['applied_versions'] == [30,31,32,33,34]
     assert pg_migrations.migrate_schema(store)['applied_versions'] == []
     with store.conn.cursor() as cur:
         after = storage.get(cur, store, 'workspace-a', identity)

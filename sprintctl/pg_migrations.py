@@ -15,7 +15,7 @@ from typing import Any, Mapping
 
 
 WORK_API_VERSION = "sprintctl-work/v1"
-CURRENT_SCHEMA_VERSION = 33
+CURRENT_SCHEMA_VERSION = 34
 # The v0.3 release is a coordinated schema/runtime cutover, so the runtime
 # admits exactly the schema it was built against.  A wider window would be a
 # false promise: reservation storage only arrived in schema 8, the live
@@ -64,6 +64,10 @@ CURRENT_SCHEMA_VERSION = 33
 # event revisions or establishing runtime delivery.
 # 31 adds only the exact currentness-read operation to the existing delegation
 # CHECK. Older runtimes cannot publish/enforce that read-only scope.
+# 32 adds the immutable recipient-binding ledger.
+# 33 adds the private recipient-delivery ledger.
+# 34 adds adjunct v2 capability revisions bound to an exact v1 declaration
+# revision; the v1 directory and declaration tables remain unchanged.
 MINIMUM_SCHEMA_VERSION = 32
 MAXIMUM_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION
 STARTUP_MODE_ENV = "SPRINTCTL_REMOTE_SCHEMA_MODE"
@@ -277,6 +281,8 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
             recipient_bindings = inspect_recipient_bindings(cur)
             from .recipient_delivery_schema import inspect_catalog as inspect_recipient_deliveries
             recipient_deliveries = inspect_recipient_deliveries(cur)
+            from .agent_capability_schema import inspect_catalog as inspect_agent_capabilities
+            agent_capabilities = inspect_agent_capabilities(cur)
     finally:
         if was_idle:
             store.conn.rollback()
@@ -303,6 +309,8 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
         and (state.version is None or state.version < 32 or recipient_bindings["available"])
         and recipient_deliveries["complete"]
         and (state.version is None or state.version < 33 or recipient_deliveries["available"])
+        and agent_capabilities["complete"]
+        and (state.version is None or state.version < 34 or agent_capabilities["available"])
         and continuation_receipts["complete"]
         and (state.version is None or state.version < 30 or continuation_receipts["available"])
     )
@@ -356,6 +364,10 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
         reason = "recipient-delivery-storage-partial"
     elif state.version is not None and state.version >= 33 and not recipient_deliveries["available"]:
         reason = "recipient-delivery-storage-missing"
+    elif not agent_capabilities["complete"]:
+        reason = "agent-capability-storage-partial"
+    elif state.version is not None and state.version >= 34 and not agent_capabilities["available"]:
+        reason = "agent-capability-storage-missing"
     else:
         reason = None
     return {
@@ -394,6 +406,10 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
             "continuation_receipt_storage": continuation_receipts,
             "recipient_binding_storage": recipient_bindings,
             "recipient_delivery_storage": recipient_deliveries,
+            "agent_capability_storage": {
+                "schema_version": "sprintctl-agent-capability-storage/v1",
+                **agent_capabilities,
+            },
             "repository_ingest_cursor": {
                 "schema_version": "sprintctl-repository-ingest-cursor/v1",
                 "scope": "repository",
@@ -674,6 +690,12 @@ def migrate_schema(store: Any) -> dict[str, Any]:
                 install(cur)
                 cur.execute("UPDATE schema_version SET version = %s", (33,))
                 applied.append(33)
+                state = SchemaState(version=33, row_count=1)
+            if state.version < 34:
+                from .agent_capability_schema import install
+                install(cur)
+                cur.execute("UPDATE schema_version SET version = %s", (34,))
+                applied.append(34)
         store.conn.commit()
     except Exception:
         store.conn.rollback()

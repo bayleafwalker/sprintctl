@@ -140,11 +140,13 @@ class TestSchema16Migration:
                 # real schema-28 install is exercised by its dedicated PG gate.
                 patch.setattr(pg, "_apply_schema_version_28", lambda cur: None)
                 patch.setattr(pg, "_apply_schema_version_29", lambda cur: None)
-                from sprintctl import continuation_receipt_schema, recipient_binding_schema, recipient_delivery_schema
+                from sprintctl import (agent_capability_schema, continuation_receipt_schema,
+                                       recipient_binding_schema, recipient_delivery_schema)
                 patch.setattr(continuation_receipt_schema, "install", lambda cur: None)
                 # Schema 32 depends on the schema 28 request owner withheld here.
                 patch.setattr(recipient_binding_schema, "install", lambda cur: None)
                 patch.setattr(recipient_delivery_schema, "install", lambda cur: None)
+                patch.setattr(agent_capability_schema, "install", lambda cur: None)
                 # Schema 27's FK needs the agent-instance relation that this
                 # deliberately incomplete schema-15 fixture withholds.
                 from sprintctl import delegation_schema, work_currentness_schema

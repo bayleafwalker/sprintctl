@@ -1,4 +1,4 @@
-"""Agent directory and durable inbox, contract v1: argument rules and codes.
+"""Agent directory and durable inbox, contract v1/v2: argument rules and codes.
 
 Vuoro owns the contract (docs/architecture/agent-directory-and-inbox.md and
 the agent-*-v1 JSON schemas); this module is sprintctl's store-side reading of
@@ -203,9 +203,10 @@ def _reason(value: Any, name: str = "reason") -> dict:
     return reason
 
 
-# -- declarations (agent-declaration/v1) -------------------------------------
+# -- declarations (agent-declaration/v1 and v2) -----------------------------
 
 def validate_declaration(value: Any) -> dict:
+    """Validate the frozen v1 registration contract."""
     declaration = _object(value, "declaration", required=(
         "schema", "harness", "adapter", "host_class", "interactivity", "accepted_kinds", "channels"))
     if declaration["schema"] != DECLARATION_SCHEMA:
@@ -225,6 +226,44 @@ def validate_declaration(value: Any) -> dict:
     if not isinstance(kinds, list) or len(kinds) > 8 or any(kind != "continue" for kind in kinds) \
             or len(kinds) != len(set(kinds)):
         raise invalid("declaration.accepted_kinds admits only unique 'continue' entries")
+    channels = declaration["channels"]
+    if not isinstance(channels, list) or len(channels) > 8:
+        raise invalid("declaration.channels must be a list of at most 8 channels")
+    for index, raw in enumerate(channels):
+        channel = _object(raw, f"declaration.channels[{index}]", required=("channel", "wake_modes"))
+        _string(channel["channel"], f"declaration.channels[{index}].channel", pattern=CHANNEL_RE)
+        modes = channel["wake_modes"]
+        if not isinstance(modes, list) or not modes or len(modes) != len(set(map(str, modes))) \
+                or any(mode not in _WAKE_MODES for mode in modes):
+            raise invalid(f"declaration.channels[{index}].wake_modes is invalid")
+    return declaration
+
+
+_DECLARATION_V2_KINDS = ("continue", "request-resolution/v1")
+
+
+def validate_declaration_v2(value: Any) -> dict:
+    """Strictly validate v2 capability records without widening register-v1."""
+    declaration = _object(value, "declaration", required=(
+        "schema", "harness", "adapter", "host_class", "interactivity", "accepted_kinds", "channels"))
+    if declaration["schema"] != "agent-declaration/v2":
+        raise invalid("declaration.schema must be agent-declaration/v2")
+    for name in ("harness", "adapter"):
+        part = declaration[name]
+        if name == "adapter" and part is None:
+            continue
+        part = _object(part, f"declaration.{name}", required=("name", "version"))
+        for key in ("name", "version"):
+            _string(part[key], f"declaration.{name}.{key}", min_length=1, max_length=64)
+    if declaration["host_class"] not in _HOST_CLASSES:
+        raise invalid("declaration.host_class is not a known host class")
+    if declaration["interactivity"] not in _INTERACTIVITY:
+        raise invalid("declaration.interactivity must be interactive or non-interactive")
+    kinds = declaration["accepted_kinds"]
+    if (not isinstance(kinds, list) or len(kinds) > 8
+            or any(not isinstance(kind, str) or kind not in _DECLARATION_V2_KINDS for kind in kinds)
+            or len(kinds) != len(set(kinds))):
+        raise invalid("declaration.accepted_kinds must contain unique supported v2 kinds")
     channels = declaration["channels"]
     if not isinstance(channels, list) or len(channels) > 8:
         raise invalid("declaration.channels must be a list of at most 8 channels")
