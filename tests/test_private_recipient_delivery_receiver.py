@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import asyncio
 import json
+from dataclasses import replace
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -15,11 +16,12 @@ pytest.importorskip("httpx")
 pytest.importorskip("jwt")
 pytest.importorskip("cryptography")
 
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 from sprintctl.recipient_delivery_receiver import (
     RECEIVER_AUDIENCE,
     RECEIVER_SCHEMA,
@@ -109,6 +111,7 @@ def _config(tmp_path, private, *, guard, store):
         # A deployment-owned private-network policy is injected here; the
         # HTTP request cannot influence this function's result.
         private_ingress_guard=guard,
+        trusted_cloud_adapter_guard=lambda _request: True,
         store_lease_for_repo=store_lease,
         admission_keys={"test-cloud": object()},
         admission_issuer="test-cloud",
@@ -133,6 +136,41 @@ def test_enabled_receiver_requires_all_trust_inputs():
         assert "exact gateway trust, ingress guard, owner, and issuer keys" in str(exc)
     else:  # pragma: no cover - explicit fail-closed assertion
         raise AssertionError("incomplete private receiver config was accepted")
+
+
+def test_enabled_receiver_requires_independent_service_guard(tmp_path):
+    private = Ed25519PrivateKey.generate()
+    config = _config(tmp_path, private, guard=lambda: True, store=None)
+    with pytest.raises(ValueError, match="exact gateway trust"):
+        create_private_delivery_router(
+            replace(config, trusted_cloud_adapter_guard=None)
+        )
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_untrusted_cloud_service_is_hidden_before_owner_lease(tmp_path, raises):
+    private = Ed25519PrivateKey.generate()
+    lease_calls = []
+
+    def refused(_request):
+        if raises:
+            raise RuntimeError("private test detail")
+        return False
+
+    config = _config(tmp_path, private, guard=lambda: True, store=None)
+    config = replace(
+        config,
+        trusted_cloud_adapter_guard=refused,
+        store_lease_for_repo=lambda repo_id: lease_calls.append(repo_id),
+    )
+    payload = _payload()
+    token = _signed_identity(private, payload["invocation_id"])
+    headers = {"X-Vuoro-Identity": token, "X-Request-ID": payload["invocation_id"]}
+    with _client(config) as client:
+        response = client.post(ROUTE, content=json.dumps(payload), headers=headers)
+    assert response.status_code == 404
+    assert response.json()["error"] == "not-found"
+    assert lease_calls == []
 
 
 def test_real_gateway_signed_identity_builds_owner_context_and_replay_is_refused(
@@ -265,7 +303,10 @@ def test_chunked_body_limit_is_incremental_and_does_not_buffer_tail():
 
 
 def test_oversized_declared_body_is_rejected_without_reading():
-    from sprintctl.recipient_delivery_receiver import _MAX_BODY_BYTES, _read_bounded_body
+    from sprintctl.recipient_delivery_receiver import (
+        _MAX_BODY_BYTES,
+        _read_bounded_body,
+    )
 
     class FakeRequest:
         headers = {"content-length": str(_MAX_BODY_BYTES + 1)}
@@ -304,6 +345,7 @@ def test_non_idle_owner_lease_is_refused_without_receiver_rollback_or_close(tmp_
 
 def test_commit_value_error_is_unknown_and_domain_refusal_is_terminal(tmp_path, monkeypatch):
     from contextlib import contextmanager
+
     from sprintctl.operator_request import RequestRefused
 
     private = Ed25519PrivateKey.generate()

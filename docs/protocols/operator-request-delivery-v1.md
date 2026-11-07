@@ -84,6 +84,17 @@ snapshot timestamp. At owner admission, the interval start must be at most 30 se
 that limit. The owner allows at most two seconds of future clock skew, refuses
 older or further-future interval starts, and requires a new provider read after expiry.
 Assertion issuance must not precede the recorded read beyond that skew.
+
+At the private HTTP boundary, the receiver requires both the end-user gateway
+assertion and an independently authenticated Cloud service assertion through
+`trusted_cloud_adapter_guard`, plus the process-owned private ingress guard.
+The service assertion uses its own Ed25519 key and scalar audience
+`sprintctl-trusted-cloud-adapter/v1`; it binds issuer, key ID, workspace, exact
+method/path, and the SHA-256 of the bounded request bytes. Its verifier must
+reject a key reused for the gateway user assertion or recipient-admission
+assertion. The bounded body is read before service verification, but JSON is
+not parsed and no owner lease begins until both guards succeed. Service-token
+replay caching is process-local and does not replace durable owner idempotency.
 The provider obtains an idle connection and starts a fresh read-only READ COMMITTED
 transaction for that single eligibility statement; an already active transaction
 is refused. Thus the snapshot cannot predate the recorded statement interval.
