@@ -81,7 +81,7 @@ jobs:
             tests/pg/test_recipient_binding.py::test_authority_read_age_is_rechecked_after_waiting_on_jti_uniqueness \
             tests/pg/test_recipient_binding.py::test_historical_replay_rechecks_gateway_expiry_after_request_lock_wait \
             tests/pg/test_recipient_binding.py::test_private_adapter_rechecks_gateway_expiry_after_owner_lock_wait \
-            tests/pg/test_private_delivery_receiver.py::test_signed_gateway_request_reaches_owner_and_dedupes_across_resolvers \
+            tests/pg/test_private_delivery_receiver.py::test_signed_gateway_delivery_and_private_owner_readback \
             | tee recipient-delivery-pg-pytest.out
           python3 - <<'PY'
           import re
