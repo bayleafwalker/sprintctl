@@ -117,6 +117,8 @@ def store(pg_test_scope):
 
 def drop_schema30(cur) -> None:
     """Remove newer storage and schema 31 additions for old fixtures."""
+    cur.execute("DROP TABLE IF EXISTS agent_capability_revision")
+    cur.execute("DROP FUNCTION IF EXISTS sprintctl_agent_capability_append_only()")
     cur.execute("DROP TABLE IF EXISTS operator_request_delivery_key")
     cur.execute("DROP TABLE IF EXISTS operator_request_delivery")
     cur.execute("DROP FUNCTION IF EXISTS sprintctl_request_delivery_append_only()")

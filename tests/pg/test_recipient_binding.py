@@ -11,10 +11,12 @@ from types import SimpleNamespace
 import pytest
 
 from sprintctl import pg, pg_migrations, recipient_binding_schema as schema
+from sprintctl import agent_capability_pg
 from sprintctl import recipient_binding_pg as binding, operator_request_pg as requests
 from sprintctl import recipient_delivery_pg as deliveries
 from sprintctl.operator_request import RequestRefused
-from sprintctl.agent_inbox import InboxRefused
+from sprintctl.agent_inbox import InboxRefused, canonical_bytes
+from sprintctl.application import WorkApplication
 from sprintctl.workitemcore import item_status_revision
 from tests.pg._shared import PG_MARKS, _PG_URL, psycopg, dict_row, assert_disposable_connection
 from tests.test_operator_request_pg import _publish
@@ -22,6 +24,79 @@ from tests.test_recipient_provenance import provenance, owner_identity
 from sprintctl.recipient_provenance import AuthenticatedRequesterContext
 
 pytestmark = PG_MARKS
+
+
+def _v2_declaration(**overrides):
+    declaration = {
+        "schema": "agent-declaration/v2",
+        "harness": {"name": "test-harness", "version": "1"},
+        "adapter": None,
+        "host_class": "cloud-unattended",
+        "interactivity": "non-interactive",
+        "accepted_kinds": ["request-resolution/v1"],
+        "channels": [],
+    }
+    declaration.update(overrides)
+    return declaration
+
+
+def _v1_declaration(**overrides):
+    declaration = {
+        "schema": "agent-declaration/v1",
+        "harness": {"name": "test-harness", "version": "1"},
+        "adapter": None,
+        "host_class": "cloud-unattended",
+        "interactivity": "non-interactive",
+        "accepted_kinds": ["continue"],
+        "channels": [],
+    }
+    declaration.update(overrides)
+    return declaration
+
+
+def _invocation(store, owner):
+    identity = SimpleNamespace(
+        actor=owner.principal_id, environment="pg-test",
+        authorities=frozenset({"work:evidence", "work:read", "work:claim"}),
+        principal_id=owner.principal_id, workspace_id=owner.workspace_id,
+        client_id=None, grant_id=None,
+    )
+    return SimpleNamespace(
+        identity=identity, request_id="req-" + uuid.uuid4().hex,
+        basis_revision=None, catalog_revision="test",
+        idempotency_requirement="not-allowed", idempotency_key=None,
+        repo_id=store.repo_id,
+    )
+
+
+def _register_v1(store, owner, instance, declaration=None):
+    return WorkApplication.postgres(store).invoke(
+        "work.agent.register-v1",
+        {
+            "instance_id": instance,
+            "declaration": declaration or _v1_declaration(),
+            "idempotency_key": "register-" + uuid.uuid4().hex,
+        },
+        _invocation(store, owner),
+    )
+
+
+def _authenticated_owner(store, owner):
+    return AuthenticatedRequesterContext(
+        repo_id=store.repo_id, principal_id=owner.principal_id,
+        workspace_id=owner.workspace_id, gateway_issuer=owner.gateway_issuer,
+        subject=owner.subject, epoch=owner.epoch,
+        authorities=frozenset({"work:evidence"}),
+    )
+
+
+def _publish_v2(store, owner, instance, *, base_revision, declaration=None):
+    with store.conn.transaction(), store.conn.cursor() as cur:
+        return agent_capability_pg.publish(
+            cur, store, _authenticated_owner(store, owner),
+            instance_id=instance, base_declaration_revision=base_revision,
+            declaration=declaration or _v2_declaration(),
+        )
 
 
 @pytest.fixture
@@ -41,11 +116,9 @@ def case(pg_test_scope):
     request = 'req_' + uuid.uuid4().hex[:26].upper()
     _publish(store, item, request)
     instance = 'ins_' + 'A' * 26
-    with conn.transaction(), conn.cursor() as cur:
-        cur.execute('INSERT INTO agent_instance(repo_id,workspace_id,instance_id,principal_id,registered_at) VALUES (%s,%s,%s,%s,now())', (store.repo_id, 'workspace', instance, provenance().principal_id))
     caller = replace(provenance(), workspace_id='workspace-a')
-    with conn.transaction(), conn.cursor() as cur:
-        cur.execute('INSERT INTO agent_instance(repo_id,workspace_id,instance_id,principal_id,registered_at) VALUES (%s,%s,%s,%s,now())', (store.repo_id, 'workspace-a', instance, caller.principal_id))
+    _register_v1(store, provenance(), instance)
+    _register_v1(store, caller, instance)
     yield store, name, request, item, instance, caller
     conn.rollback()
     with conn.cursor() as cur:
@@ -103,18 +176,11 @@ def _delivery_setup(case):
     store, _, request, item, instance, _recipient = case
     delivery_recipient = replace(
         case[5], token_scopes=frozenset({"vuoro:work.read", "vuoro:evidence.record"}))
+    registered = _register_v1(store, case[5], instance)
     requester, bound, revision, token = prepare_lookup(case, recipient_caller=delivery_recipient)
-    declaration = {
-        "schema": "agent-declaration/v2", "accepted_kinds": ["request-resolution/v1"]
-    }
-    encoded = json.dumps(declaration, sort_keys=True, separators=(",", ":"))
+    _publish_v2(store, case[5], instance, base_revision=registered["declaration_revision"])
+    assert registered["declaration_revision"] == 1
     with store.conn.transaction(), store.conn.cursor() as cur:
-        cur.execute(
-            "INSERT INTO agent_declaration_revision(repo_id,workspace_id,instance_id,revision,"
-            "declaration,declaration_digest,recorded_at) VALUES (%s,%s,%s,1,%s::jsonb,%s,now())",
-            (store.repo_id, requester.workspace_id, instance, encoded,
-             hashlib.sha256(encoded.encode()).hexdigest()),
-        )
         owner = binding.lookup_for_recipient_admission(
             cur, store, requester, request_id=request, request_revision=revision,
             resolution_event_revision=revision, work_item_id=item, work_revision=token,
@@ -394,17 +460,8 @@ def test_invalid_signed_admission_has_no_inbox_or_ledger_effect(case, mutation):
 def test_current_v1_declaration_cannot_receive_resolution_notification(case):
     pytest.importorskip("vuoro_service.recipient_admission")
     store, requester, coords, expected = _delivery_setup(case)
-    declaration = {
-        "schema": "agent-declaration/v1", "accepted_kinds": ["continue"]
-    }
-    encoded = json.dumps(declaration, sort_keys=True, separators=(",", ":"))
-    with store.conn.transaction(), store.conn.cursor() as cur:
-        cur.execute(
-            "INSERT INTO agent_declaration_revision(repo_id,workspace_id,instance_id,revision,"
-            "declaration,declaration_digest,recorded_at) VALUES (%s,%s,%s,2,%s::jsonb,%s,now())",
-            (store.repo_id, requester.workspace_id, expected.recipient_instance, encoded,
-             hashlib.sha256(encoded.encode()).hexdigest()),
-        )
+    updated = _v1_declaration(channels=[{"channel": "mcp", "wake_modes": ["start-after-stop"]}])
+    assert _register_v1(store, case[5], expected.recipient_instance, updated)["declaration_revision"] == 2
     token, keys = _signed_delivery_assertion(expected)
     with pytest.raises(RequestRefused) as caught:
         _deliver(store, requester, coords, expected, key="v1-must-refuse", token=token, keys=keys)
@@ -413,6 +470,214 @@ def test_current_v1_declaration_cannot_receive_resolution_notification(case):
         cur.execute("SELECT count(*) AS n FROM agent_message WHERE repo_id=%s AND workspace_id=%s",
                     (store.repo_id, requester.workspace_id))
         assert cur.fetchone()["n"] == 0
+
+
+def test_private_delivery_requires_a_complete_valid_v2_capability(case):
+    store, _, _, _, instance, recipient = case
+    workspace = recipient.workspace_id
+    registered = _register_v1(store, recipient, instance)
+    _publish_v2(store, recipient, instance, base_revision=registered["declaration_revision"])
+    with pytest.raises(InboxRefused):
+        _publish_v2(
+            store, recipient, instance, base_revision=registered["declaration_revision"],
+            declaration=_v2_declaration(accepted_kinds=[
+                "request-resolution/v1", "request-resolution/v1"]),
+        )
+    with store.conn.cursor() as cur:
+        deliveries._require_capability(cur, store, workspace, instance)
+
+    malformed = [
+        {"schema": "agent-declaration/v2", "accepted_kinds": ["request-resolution/v1"]},
+        _v2_declaration(host_class="unknown"),
+        _v2_declaration(accepted_kinds=["request-resolution/v1", "request-resolution/v1"]),
+        _v2_declaration(extra=True),
+    ]
+    for revision, declaration in enumerate(malformed, start=2):
+        encoded = json.dumps(declaration, sort_keys=True, separators=(",", ":"))
+        with store.conn.transaction(), store.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO agent_capability_revision(repo_id,workspace_id,instance_id,revision,"
+                "base_declaration_revision,capability,capability_digest,recorded_at) "
+                "VALUES (%s,%s,%s,%s,1,%s::jsonb,%s,now())",
+                (store.repo_id, workspace, instance, revision, encoded,
+                 hashlib.sha256(encoded.encode()).hexdigest()),
+            )
+        with store.conn.cursor() as cur:
+            with pytest.raises(RequestRefused) as caught:
+                deliveries._require_capability(cur, store, workspace, instance)
+        assert caught.value.code == "recipient-unsupported"
+
+
+def test_concurrent_adjunct_publish_replays_one_capability_revision(case):
+    store, schema_name, _request, _item, instance, owner = case
+    registered = _register_v1(store, owner, instance)
+    owner_context = _authenticated_owner(store, owner)
+    barrier = threading.Barrier(3)
+    results = []
+    errors = []
+
+    def publish():
+        conn = psycopg.connect(_PG_URL, row_factory=dict_row)
+        try:
+            assert_disposable_connection(conn)
+            with conn.cursor() as cur:
+                cur.execute(f'SET search_path TO "{schema_name}"')
+            conn.commit()
+            actor_store = pg.PgStore(conn, store.repo_id)
+            barrier.wait(timeout=10)
+            with conn.transaction(), conn.cursor() as cur:
+                results.append(agent_capability_pg.publish(
+                    cur, actor_store, owner_context, instance_id=instance,
+                    base_declaration_revision=registered["declaration_revision"],
+                    declaration=_v2_declaration(),
+                ))
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            conn.close()
+
+    threads = [threading.Thread(target=publish) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    barrier.wait(timeout=10)
+    for thread in threads:
+        thread.join(timeout=20)
+    assert not any(thread.is_alive() for thread in threads)
+    assert errors == []
+    assert sorted(result["replayed"] for result in results) == [False, True]
+    assert {result["capability_revision"] for result in results} == {1}
+
+
+def test_capability_check_holds_instance_share_lock_until_commit(case):
+    store, schema_name, _request, _item, instance, owner = case
+    registered = _register_v1(store, owner, instance)
+    _publish_v2(store, owner, instance,
+                base_revision=registered["declaration_revision"])
+    locked, release, retirement_started, retired = (
+        threading.Event(), threading.Event(), threading.Event(), threading.Event())
+    errors = []
+
+    def capability_reader():
+        try:
+            with psycopg.connect(_PG_URL, row_factory=dict_row) as conn:
+                assert_disposable_connection(conn)
+                with conn.cursor() as cur:
+                    cur.execute(f'SET search_path TO "{schema_name}"')
+                reader_store = pg.PgStore(conn, store.repo_id)
+                with conn.transaction(), conn.cursor() as cur:
+                    deliveries._require_capability(
+                        cur, reader_store, owner.workspace_id, instance)
+                    locked.set()
+                    assert release.wait(10)
+        except Exception as exc:
+            errors.append(exc)
+
+    def retire_instance():
+        try:
+            with psycopg.connect(_PG_URL, row_factory=dict_row) as conn:
+                assert_disposable_connection(conn)
+                with conn.cursor() as cur:
+                    cur.execute(f'SET search_path TO "{schema_name}"')
+                retirement_started.set()
+                with conn.transaction(), conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE agent_instance SET retired_at=now(), retire_reason='test' "
+                        "WHERE repo_id=%s AND workspace_id=%s AND instance_id=%s",
+                        (store.repo_id, owner.workspace_id, instance),
+                    )
+            retired.set()
+        except Exception as exc:
+            errors.append(exc)
+
+    reader = threading.Thread(target=capability_reader)
+    reader.start()
+    assert locked.wait(10)
+    retire = threading.Thread(target=retire_instance)
+    retire.start()
+    assert retirement_started.wait(10)
+    try:
+        assert not retired.wait(.2)
+    finally:
+        release.set()
+        reader.join(10)
+        retire.join(10)
+    assert not reader.is_alive() and not retire.is_alive()
+    assert not errors and retired.is_set()
+
+
+def test_capability_check_rechecks_base_after_waiting_for_v1_registration(case):
+    store, schema_name, _request, _item, instance, owner = case
+    registered = _register_v1(store, owner, instance)
+    _publish_v2(store, owner, instance,
+                base_revision=registered["declaration_revision"])
+    writer = psycopg.connect(_PG_URL, row_factory=dict_row)
+    assert_disposable_connection(writer)
+    with writer.cursor() as cur:
+        cur.execute(f'SET search_path TO "{schema_name}"')
+    writer.commit()
+    with writer.transaction(), writer.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM agent_instance WHERE repo_id=%s AND workspace_id=%s "
+            "AND instance_id=%s FOR UPDATE",
+            (store.repo_id, owner.workspace_id, instance),
+        )
+        declaration = _v1_declaration(
+            harness={"name": "test-harness", "version": "2"})
+        encoded = canonical_bytes(declaration).decode("utf-8")
+        cur.execute(
+            "INSERT INTO agent_declaration_revision(repo_id,workspace_id,instance_id,revision,"
+            "declaration,declaration_digest,recorded_at) VALUES (%s,%s,%s,2,%s::jsonb,%s,now())",
+            (store.repo_id, owner.workspace_id, instance, encoded,
+             hashlib.sha256(encoded.encode("utf-8")).hexdigest()),
+        )
+        backend_pid = []
+        result = []
+        errors = []
+
+        def read_capability():
+            try:
+                with psycopg.connect(_PG_URL, row_factory=dict_row) as conn:
+                    assert_disposable_connection(conn)
+                    with conn.cursor() as reader:
+                        reader.execute(f'SET search_path TO "{schema_name}"')
+                    conn.commit()
+                    with conn.transaction(), conn.cursor() as reader:
+                        reader.execute("SELECT pg_backend_pid() AS pid")
+                        backend_pid.append(reader.fetchone()["pid"])
+                        try:
+                            deliveries._require_capability(
+                                reader, pg.PgStore(conn, store.repo_id),
+                                owner.workspace_id, instance)
+                        except RequestRefused as exc:
+                            result.append(exc.code)
+                        else:
+                            result.append("accepted")
+            except Exception as exc:
+                errors.append(exc)
+
+        reader = threading.Thread(target=read_capability)
+        reader.start()
+        deadline = time.monotonic() + 10
+        blocked = False
+        while time.monotonic() < deadline and not backend_pid:
+            time.sleep(.01)
+        assert backend_pid
+        while time.monotonic() < deadline:
+            with store.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT wait_event_type FROM pg_stat_activity WHERE pid=%s",
+                    (backend_pid[0],),
+                )
+                activity = cur.fetchone()
+            if activity and activity["wait_event_type"] == "Lock":
+                blocked = True
+                break
+            time.sleep(.01)
+        assert blocked, "capability reader did not wait on the v1 registration lock"
+    writer.close()
+    reader.join(10)
+    assert not reader.is_alive() and not errors
+    assert result == ["recipient-unsupported"]
 
 
 @pytest.mark.gateway_admission
@@ -499,16 +764,10 @@ def test_jti_conflict_rolls_back_message_counter_delivery_and_key(case):
     second_instance = "ins_" + "B" * 26
     recipient = replace(
         case[5], token_scopes=frozenset({"vuoro:work.read", "vuoro:evidence.record"}))
+    registered = _register_v1(store, case[5], second_instance)
+    _publish_v2(store, case[5], second_instance,
+                base_revision=registered["declaration_revision"])
     with store.conn.transaction(), store.conn.cursor() as cur:
-        cur.execute("INSERT INTO agent_instance(repo_id,workspace_id,instance_id,principal_id,registered_at) "
-                    "VALUES (%s,%s,%s,%s,now())",
-                    (store.repo_id, requester.workspace_id, second_instance, recipient.principal_id))
-        declaration = {"schema": "agent-declaration/v2", "accepted_kinds": ["request-resolution/v1"]}
-        encoded = json.dumps(declaration, sort_keys=True, separators=(",", ":"))
-        cur.execute("INSERT INTO agent_declaration_revision(repo_id,workspace_id,instance_id,revision,"
-                    "declaration,declaration_digest,recorded_at) VALUES (%s,%s,%s,1,%s::jsonb,%s,now())",
-                    (store.repo_id, requester.workspace_id, second_instance, encoded,
-                     hashlib.sha256(encoded.encode()).hexdigest()))
         second_binding = binding.bind(
             cur, store, recipient, request_id=coords["request_id"],
             work_item_id=coords["work_item_id"], instance_id=second_instance,
@@ -1001,6 +1260,8 @@ def test_migration_fingerprint_and_rollback(case, monkeypatch):
     store = case[0]
     with store.conn.transaction(), store.conn.cursor() as cur:
         assert schema.inspect_catalog(cur)['available']
+        cur.execute('DROP TABLE agent_capability_revision')
+        cur.execute('DROP FUNCTION sprintctl_agent_capability_append_only()')
         cur.execute('DROP TABLE operator_request_delivery_key')
         cur.execute('DROP TABLE operator_request_delivery')
         cur.execute('DROP FUNCTION sprintctl_request_delivery_append_only()')
@@ -1018,7 +1279,7 @@ def test_migration_fingerprint_and_rollback(case, monkeypatch):
         assert cur.fetchone() == {'version': 31, 'relation': None}
     store.conn.rollback()
     monkeypatch.setattr(schema, 'install', original)
-    assert pg_migrations.migrate_schema(store)['applied_versions'] == [32, 33]
+    assert pg_migrations.migrate_schema(store)['applied_versions'] == [32, 33, 34]
     assert pg_migrations.migrate_schema(store)['applied_versions'] == []
     with store.conn.transaction(), store.conn.cursor() as cur:
         cur.execute('ALTER TABLE operator_request_recipient_binding ADD COLUMN drift integer')
@@ -1240,6 +1501,8 @@ def test_concurrent_exact_retries(case):
 def test_collision_preserves_foreign_relation(case):
     store = case[0]
     with store.conn.transaction(), store.conn.cursor() as cur:
+        cur.execute('DROP TABLE agent_capability_revision')
+        cur.execute('DROP FUNCTION sprintctl_agent_capability_append_only()')
         cur.execute('DROP TABLE operator_request_delivery_key')
         cur.execute('DROP TABLE operator_request_delivery')
         cur.execute('DROP FUNCTION sprintctl_request_delivery_append_only()')

@@ -22,6 +22,8 @@ TEST_DATABASE_PREFIX = "sprintctl_test_"
 DISPOSABLE_DATABASE_COMMENT = "sprintctl:disposable-integration-test"
 REPO_TABLES = (
     "operator_request_recipient_binding",
+    # Schema 34: adjunct capabilities restrict the v1 declaration revision.
+    "agent_capability_revision",
     "operator_continuation_receipt",
     # Schema 28: request event and dependant history before the request row.
     "operator_request_event",
@@ -236,6 +238,7 @@ def cleanup_test_repositories(conn: Any, repo_ids: Iterable[str]) -> dict[str, A
                 "agent_message_receipt",
                 "agent_message",
                 "agent_observation",
+                "agent_capability_revision",
                 "agent_declaration_revision",
                 "agent_instance",
                 "operator_request_event",

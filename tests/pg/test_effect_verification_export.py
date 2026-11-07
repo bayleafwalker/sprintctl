@@ -223,7 +223,7 @@ def test_optional_proposal_still_refuses_malformed_associated_receipt(store):
     refused(lambda: export(store, intent), "proposal-verification-candidate-invalid")
 
 
-@pytest.mark.parametrize("version", [23, 34])
+@pytest.mark.parametrize("version", [23, 35])
 def test_v3_refuses_unsupported_schema_even_when_exact_index_is_present(store, version):
     _, _, intent = setup(store, required=False)
     with store.conn.cursor() as cur:

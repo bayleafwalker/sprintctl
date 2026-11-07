@@ -32,6 +32,12 @@ def declaration(**overrides):
     return value
 
 
+def declaration_v2(**overrides):
+    value = declaration(schema="agent-declaration/v2", accepted_kinds=["request-resolution/v1"], channels=[])
+    value.update(overrides)
+    return value
+
+
 def envelope(**overrides):
     value = {"schema": "agent-message/v1", "message_id": MSG, "recipient": {"principal_id": "github:2:0"},
              "kind": "continue", "mode": "request", "context": {"item_id": 1},
@@ -61,9 +67,23 @@ DECLARATIONS = [
     declaration(channels=[{"channel": "mcp", "wake_modes": []}]),
     declaration(channels=[{"channel": "mcp", "wake_modes": ["sometimes"]}]),
     declaration(harness={"name": "", "version": "1"}),
-    declaration(schema="agent-declaration/v2"),
     {**declaration(), "extra": 1},
     {k: v for k, v in declaration().items() if k != "adapter"},
+]
+
+V2_VALID_DECLARATIONS = [
+    declaration_v2(),
+    declaration_v2(accepted_kinds=["continue", "request-resolution/v1"]),
+]
+
+V2_INVALID_DECLARATIONS = [
+    declaration_v2(accepted_kinds=["delegate"]),
+    declaration_v2(accepted_kinds=["continue", "continue"]),
+    declaration_v2(accepted_kinds=["request-resolution/v1"] * 9),
+    declaration_v2(accepted_kinds=[{"kind": "request-resolution/v1"}]),
+    declaration_v2(channels=[{"channel": "mcp", "wake_modes": ["unknown"]}]),
+    declaration_v2(extra=True),
+    {k: v for k, v in declaration_v2().items() if k != "harness"},
 ]
 
 ENVELOPES = [
@@ -96,6 +116,20 @@ ENVELOPES = [
 @pytest.mark.parametrize("value", DECLARATIONS)
 def test_declaration_validation_agrees_with_the_contract_schema(value):
     assert _accepts(inbox.validate_declaration, value) == is_valid("declaration", value)
+
+
+@pytest.mark.parametrize("value", V2_VALID_DECLARATIONS)
+def test_v2_declaration_validation_accepts_supported_shapes(value):
+    assert _accepts(inbox.validate_declaration_v2, value) == is_valid("declaration", value)
+
+
+def test_frozen_v1_registration_validator_rejects_v2():
+    assert not _accepts(inbox.validate_declaration, declaration_v2())
+
+
+@pytest.mark.parametrize("value", V2_INVALID_DECLARATIONS)
+def test_v2_declaration_validation_rejects_malformed_or_unsupported_shapes(value):
+    assert _accepts(inbox.validate_declaration_v2, value) == is_valid("declaration", value)
 
 
 @pytest.mark.parametrize("value", ENVELOPES)

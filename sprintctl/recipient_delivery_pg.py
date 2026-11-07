@@ -11,6 +11,8 @@ import secrets
 from typing import Any, Mapping
 
 from .agent_inbox_pg import _allocate_inbox_seq
+from .agent_inbox import InboxRefused, canonical_bytes, validate_declaration_v2
+from .agent_capability_pg import latest_for_instance
 from .operator_request import RequestRefused
 from .operator_request_pg import _request
 from .recipient_binding_pg import lookup_for_recipient_admission
@@ -51,22 +53,29 @@ def _require_delivery_storage(cur: Any) -> None:
 
 
 def _require_capability(cur: Any, store: Any, workspace: str, instance: str) -> None:
-    cur.execute(
-        "SELECT d.declaration FROM agent_declaration_revision d JOIN agent_instance i "
-        "USING (repo_id,workspace_id,instance_id) WHERE d.repo_id=%s AND d.workspace_id=%s "
-        "AND d.instance_id=%s AND i.retired_at IS NULL ORDER BY d.revision DESC LIMIT 1",
-        (store.repo_id, workspace, instance),
-    )
-    row = cur.fetchone()
-    declaration = row["declaration"] if row else None
+    from .agent_capability_schema import inspect_catalog
+    if not inspect_catalog(cur)["available"]:
+        raise RequestRefused("recipient-unsupported", "recipient capability storage is unavailable")
+    row = latest_for_instance(cur, store, workspace, instance)
+    if (row is None or row["retired_at"] is not None
+            or row["capability_revision"] is None
+            or row["current_base_declaration_revision"] is None
+            or row["base_declaration_revision"] != row["current_base_declaration_revision"]):
+        raise RequestRefused("recipient-unsupported", "recipient has no current v2 capability")
+    declaration = row["capability"]
     if isinstance(declaration, str):
         try:
             declaration = json.loads(declaration)
         except ValueError:
             declaration = None
+    try:
+        declaration = validate_declaration_v2(declaration)
+    except InboxRefused:
+        declaration = None
     kinds = declaration.get("accepted_kinds") if isinstance(declaration, dict) else None
     if (not isinstance(declaration, dict) or declaration.get("schema") != CAPABILITY_SCHEMA
-            or not isinstance(kinds, list) or CAPABILITY_KIND not in kinds):
+            or hashlib.sha256(canonical_bytes(declaration)).hexdigest() != row["capability_digest"]
+            or CAPABILITY_KIND not in kinds):
         raise RequestRefused("recipient-unsupported", "recipient does not advertise request-resolution/v1")
 
 
