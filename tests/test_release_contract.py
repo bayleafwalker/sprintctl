@@ -61,12 +61,16 @@ def _assert_release_order(workflow: str) -> None:
     assert "test_authority_read_age_is_rechecked_after_waiting_on_jti_uniqueness" in gateway_job
     assert "test_historical_replay_rechecks_gateway_expiry_after_request_lock_wait" in gateway_job
     assert "pg-cleanup-report-check.py" in gateway_job
-    assert "expected exactly 11 passed recipient-delivery cases" in gateway_job
+    assert "expected exactly 12 passed recipient-delivery cases" in gateway_job
     assert "zero skipped or deselected cases" in gateway_job
     assert "-m 'pg and gateway_admission'" not in gateway_job
     recipient_delivery_nodes = re.findall(
         r"tests/pg/test_recipient_binding\.py::([A-Za-z0-9_]+)", gateway_job
     )
+    assert (
+        "tests/pg/test_private_delivery_receiver.py::"
+        "test_signed_gateway_request_reaches_owner_and_dedupes_across_resolvers"
+    ) in gateway_job
     assert recipient_delivery_nodes == [
         "test_signed_delivery_replay_convergence_auth_and_restricted_read",
         "test_invalid_signed_admission_has_no_inbox_or_ledger_effect",
