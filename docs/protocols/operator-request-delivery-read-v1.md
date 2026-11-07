@@ -26,6 +26,16 @@ composition independently authenticates the trusted Cloud admission service
 caller through `trusted_cloud_adapter_guard`, in addition to the process-owned
 private ingress guard. Neither guard is supplied by this module.
 
+The trusted adapter guard must verify a distinct Cloud service assertion, not
+a caller-controlled header or the end-user gateway assertion. The source
+composition contract uses a dedicated Ed25519 key and scalar audience
+`sprintctl-trusted-cloud-adapter/v1`, pins issuer and key ID, binds the exact
+workspace, `POST` path, and SHA-256 of the bounded request bytes, and limits
+assertions to 30 seconds. The end-user gateway assertion remains a separate
+header and continues to authorize the owner read. The service assertion JTI
+cache is per process; it is not cluster-wide one-use. The durable owner does
+not rely on it for read authorization or delivery dedupe.
+
 The lookup returns current owner coordinates and persisted recipient consent
 provenance only to that separately authenticated Cloud admission component.
 It includes the original verified OAuth scopes and verified internal

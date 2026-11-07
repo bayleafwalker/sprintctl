@@ -188,6 +188,7 @@ def test_signed_gateway_delivery_and_private_owner_readback(
                 gateway_key_id="gateway-test",
                 replay_not_before=now - 1,
                 private_ingress_guard=lambda: True,
+                trusted_cloud_adapter_guard=lambda _request: True,
                 store_lease_for_repo=fresh_store,
                 admission_keys=admission_keys,
                 admission_issuer="recipient-admission-test",

@@ -25,16 +25,16 @@ enforces idempotency across retries.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 import inspect
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
-
 from vuoro_service.identity import Identity, InvocationContext
+
 from .workitemcore import validate_item_status_revision
 
 RECEIVER_SCHEMA = "operator-request-delivery/v1"
@@ -64,6 +64,9 @@ class PrivateDeliveryReceiverConfig:
     replay_not_before: float | None = None
     # Process-owned policy only; never pass request data into this gate.
     private_ingress_guard: Callable[[], bool] | None = None
+    # Independent Cloud process identity. The end-user assertion is not a
+    # substitute for this service-to-service authentication.
+    trusted_cloud_adapter_guard: Callable[[Request], bool] | None = None
     # Must return an owned per-request connection lease context manager. The
     # receiver never closes or rolls back a borrowed/shared application store.
     store_lease_for_repo: Callable[[str], Any] | None = None
@@ -147,6 +150,7 @@ def create_private_delivery_router(config: PrivateDeliveryReceiverConfig) -> API
             or isinstance(config.replay_not_before, bool)
             or not isinstance(config.replay_not_before, (int, float))
             or not callable(config.private_ingress_guard)
+            or not callable(config.trusted_cloud_adapter_guard)
             or not callable(config.store_lease_for_repo) or not config.admission_keys
             or not isinstance(config.admission_issuer, str) or not config.admission_issuer.strip()):
         raise ValueError("private delivery receiver requires exact gateway trust, ingress guard, owner, and issuer keys")
@@ -186,6 +190,15 @@ def create_private_delivery_router(config: PrivateDeliveryReceiverConfig) -> API
             return _error(400, "invalid-request")
         if raw is None:
             return _error(413, "request-too-large")
+        request.state.vuoro_bounded_body = raw
+        try:
+            trusted_adapter = config.trusted_cloud_adapter_guard(request)
+            if inspect.isawaitable(trusted_adapter):
+                trusted_adapter = await trusted_adapter
+        except Exception:  # noqa: BLE001 - keep service-auth details opaque.
+            trusted_adapter = False
+        if trusted_adapter is not True:
+            return _error(404, "not-found")
         try:
             payload = json.loads(raw, object_pairs_hook=_json_object_without_duplicates)
         except (ValueError, UnicodeError):
@@ -235,8 +248,9 @@ def create_private_delivery_router(config: PrivateDeliveryReceiverConfig) -> API
             idempotency_key=f"gateway:{payload['invocation_id']}",
             repo_id=repo_id,
         )
-        from .operator_request import RequestRefused
         from vuoro_service.recipient_admission import AdmissionVerificationError
+
+        from .operator_request import RequestRefused
 
         try:
             lease = config.store_lease_for_repo(repo_id)

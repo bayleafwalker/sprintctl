@@ -113,6 +113,13 @@ def create_private_delivery_read_router(config: PrivateDeliveryReadConfig) -> AP
         if allowed is not True:
             return _error(404, "not-found")
         try:
+            raw = await _read_bounded_body(request)
+        except ValueError:
+            return _error(400, "invalid-request")
+        if raw is None:
+            return _error(413, "request-too-large")
+        request.state.vuoro_bounded_body = raw
+        try:
             trusted_adapter = config.trusted_cloud_adapter_guard(request)
             if inspect.isawaitable(trusted_adapter):
                 trusted_adapter = await trusted_adapter
@@ -120,12 +127,6 @@ def create_private_delivery_read_router(config: PrivateDeliveryReadConfig) -> AP
             trusted_adapter = False
         if trusted_adapter is not True:
             return _error(404, "not-found")
-        try:
-            raw = await _read_bounded_body(request)
-        except ValueError:
-            return _error(400, "invalid-request")
-        if raw is None:
-            return _error(413, "request-too-large")
         try:
             payload = json.loads(raw, object_pairs_hook=_json_object_without_duplicates)
         except (ValueError, UnicodeError):
