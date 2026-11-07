@@ -12,7 +12,6 @@ from verification.validate_release_contract import (
     validate_wheel,
 )
 
-
 ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "release-sprintctl.yaml"
 GATEWAY_WORKFLOW = ROOT / ".github" / "workflows" / "gateway-admission.yml"
@@ -69,7 +68,7 @@ def _assert_release_order(workflow: str) -> None:
     )
     assert (
         "tests/pg/test_private_delivery_receiver.py::"
-        "test_signed_gateway_request_reaches_owner_and_dedupes_across_resolvers"
+        "test_signed_gateway_delivery_and_private_owner_readback"
     ) in gateway_job
     assert recipient_delivery_nodes == [
         "test_signed_delivery_replay_convergence_auth_and_restricted_read",
