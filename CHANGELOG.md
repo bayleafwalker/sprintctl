@@ -5,6 +5,13 @@
 - Served operator-request reads now keep request headers, dependants and work
   revisions in one read-only snapshot while preserving caller transactions.
 
+## 0.28.1 — 2026-11-07 (candidate)
+
+The private operator-request delivery and readback routes are default-off and
+unmounted. They require independently authenticated Cloud service and gateway
+identity before accessing owner state. Deployment and end-to-end acceptance
+remain open.
+
 ## 0.27.0 — 2026-10-31 (candidate)
 
 Schema 30 is a coordinated owner/runtime cutover. The requesting principal can
