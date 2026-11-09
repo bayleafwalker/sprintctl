@@ -1090,6 +1090,7 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.23,<5" },
     { name = "pydantic", specifier = ">=2.10,<3" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3,<9" },
+    { name = "vuoro-contracts", marker = "extra == 'test'" },
 ]
 provides-extras = ["test"]
 
