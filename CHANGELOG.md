@@ -5,6 +5,12 @@
 - Served operator-request reads now keep request headers, dependants and work
   revisions in one read-only snapshot while preserving caller transactions.
 
+## 0.28.2 — 2026-11-09 (candidate)
+
+The served extra now pins vuoro-client 0.1.8, which sends the invocation
+request ID in `X-Request-ID` for workspace PAT correlation. The work schema
+contract is unchanged: schema 34, accepting schemas 32–34.
+
 ## 0.28.1 — 2026-11-07 (candidate)
 
 The private operator-request delivery and readback routes are default-off and

@@ -28,8 +28,8 @@ class TestReleaseIntegrity:
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
         requirement, = pyproject["project"]["optional-dependencies"]["served"]
-        assert "vuoro-client-v0.1.1/vuoro_client-0.1.1-py3-none-any.whl" in requirement
-        assert "sha256=b5fb6bad174abd00d67504398690bcfb8c3cc3be891e5465983827e5a1740f6d" in requirement
+        assert "vuoro-client-v0.1.8/vuoro_client-0.1.8-py3-none-any.whl" in requirement
+        assert "sha256=41237d59d2503498f5b994048bc3b466186cff8c2cfde2b49bbbea0198409405" in requirement
         assert "git+" not in requirement
 
     def test_remote_schema_cutover_is_a_minor_release_past_0_8(self):
@@ -68,13 +68,14 @@ class TestReleaseIntegrity:
         observation and schema31's single delegation-operation admission.
         A schema29 owner reaches31 through the existing30 receipt migration,
         then the31 currentness constraint migration. Current source adds
-        schema32 recipient consent and schema33 delivery storage; this branch
-        has not published a release."""
+        schema32 recipient consent, schema33 delivery storage, and schema34
+        adjunct v2 capability revisions. Version 0.28.2 keeps the existing
+        32-through-34 compatibility contract."""
         from sprintctl import pg_migrations
 
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
-        assert pyproject["project"]["version"] == __version__ == "0.28.1"
+        assert pyproject["project"]["version"] == __version__ == "0.28.2"
         assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 34
         assert pg_migrations.MINIMUM_SCHEMA_VERSION == 32
         assert pg_migrations.CURRENT_SCHEMA_VERSION == 34

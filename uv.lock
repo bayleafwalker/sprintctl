@@ -903,7 +903,7 @@ wheels = [
 
 [[package]]
 name = "sprintctl"
-version = "0.28.1"
+version = "0.28.2"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -938,7 +938,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], marker = "extra == 'remote'", specifier = ">=3.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "vuoro-adapter-kit", url = "https://github.com/bayleafwalker/vuoro/releases/download/vuoro-adapter-kit-v0.2.2/vuoro_adapter_kit-0.2.2-py3-none-any.whl" },
-    { name = "vuoro-client", marker = "python_full_version >= '3.12' and extra == 'served'", url = "https://github.com/bayleafwalker/vuoro/releases/download/vuoro-client-v0.1.1/vuoro_client-0.1.1-py3-none-any.whl" },
+    { name = "vuoro-client", marker = "python_full_version >= '3.12' and extra == 'served'", url = "https://github.com/bayleafwalker/vuoro/releases/download/vuoro-client-v0.1.8/vuoro_client-0.1.8-py3-none-any.whl" },
     { name = "vuoro-service", marker = "python_full_version >= '3.12' and extra == 'gateway-test'", url = "https://github.com/bayleafwalker/vuoro/releases/download/vuoro-service-v0.1.104/vuoro_service-0.1.104-py3-none-any.whl" },
 ]
 provides-extras = ["dev", "inspection", "remote", "gateway-test", "served"]
@@ -1073,15 +1073,15 @@ provides-extras = ["test"]
 
 [[package]]
 name = "vuoro-client"
-version = "0.1.1"
-source = { url = "https://github.com/bayleafwalker/vuoro/releases/download/vuoro-client-v0.1.1/vuoro_client-0.1.1-py3-none-any.whl" }
+version = "0.1.8"
+source = { url = "https://github.com/bayleafwalker/vuoro/releases/download/vuoro-client-v0.1.8/vuoro_client-0.1.8-py3-none-any.whl" }
 dependencies = [
     { name = "httpx" },
     { name = "jsonschema" },
     { name = "pydantic" },
 ]
 wheels = [
-    { url = "https://github.com/bayleafwalker/vuoro/releases/download/vuoro-client-v0.1.1/vuoro_client-0.1.1-py3-none-any.whl", hash = "sha256:b5fb6bad174abd00d67504398690bcfb8c3cc3be891e5465983827e5a1740f6d" },
+    { url = "https://github.com/bayleafwalker/vuoro/releases/download/vuoro-client-v0.1.8/vuoro_client-0.1.8-py3-none-any.whl", hash = "sha256:41237d59d2503498f5b994048bc3b466186cff8c2cfde2b49bbbea0198409405" },
 ]
 
 [package.metadata]
