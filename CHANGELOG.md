@@ -10,6 +10,8 @@
 The served extra now pins vuoro-client 0.1.8, which sends the invocation
 request ID in `X-Request-ID` for workspace PAT correlation. The work schema
 contract is unchanged: schema 34, accepting schemas 32–34.
+The `gateway-test` extra intentionally stays on vuoro-service 0.1.104; it was
+not re-qualified against 0.1.105 in this release.
 
 ## 0.28.1 — 2026-11-07 (candidate)
 
