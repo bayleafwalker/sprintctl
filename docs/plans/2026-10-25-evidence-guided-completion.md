@@ -203,3 +203,61 @@ Before code: bind SC-EC1..4 to existing served Sprintctl items in this repo.
 Check current releases and EC-05 work/read contract migration for overlapping
 operations. Planning IDs are not Sprintctl ids. No new service or approval
 account is approved here.
+
+## Proposed basis applicability follow-through (14 November 2026)
+
+This SC-EC1/SC-EC2 refinement follows the
+[HLA consumer plan](https://github.com/bayleafwalker/homelab-analytics/blob/main/docs/plans/2026-11-14-basis-tracked-revalidation.md)
+for `electricity_contract_keep_or_switch`. HLA keeps its domain decisions and
+reporting authority. Shared integration is conditional on its paired correctness
+fixture and the owner gates below, not on demonstrating savings from selective
+reuse. This amendment changes no runtime, schema or acceptance writer.
+
+The earlier schema-28 limitation is historical: current source includes
+acquisition-bound leases and
+[`work.lease.report-outcome-v2`](../protocols/exact-outcome-basis.md), which compares
+the complete continuation checkpoint inside settlement. The read-only
+[`work.lease.currentness-v1`](../protocols/work-currentness.md) requires schema 31
+and grants no effect authority. Establish installed support from actual catalog,
+schema and qualified operation pins; source availability is insufficient.
+
+Reuse the existing `WorkRelease`/Release binding of item revision, acceptance
+contract and context refs; `EvidenceItem` validity within `EvidenceSet`; and the
+terminal `Decision`. Keep the consumer's applicability mode separate from its
+declared dependency set and method revision. No new values are added to the
+existing validity `basis` enum, and no universal basis schema is selected.
+Supplied context is not proof of consumption. The closed continuation checkpoint
+hashes owner reference metadata, not fetched source bytes behind those references.
+
+Before reusable evidence can affect settlement, the owner design must specify
+complete dependency membership, exact method identity, current-source assurance
+and the qualified result's integration into the existing acceptance transaction.
+Missing, inaccessible, expired and unsupported inputs cannot count as a match.
+Missing legacy basis remains unknown. A source or method change after assessment
+must refuse stale settlement within the declared owner boundary; external-source
+observation windows and cross-owner limits remain explicit.
+
+Current [`complete_lease`](../../sprintctl/pg.py) checks owner basis and reported
+check names/statuses. It does not independently resolve external source bytes or
+invoke the evidence-validity evaluator. Adding a `basis-currentness` check label
+or arbitrary acceptance-contract metadata therefore does not establish enforcement.
+The existing [`validity`](../../sprintctl/evidence_evaluation.py) evaluator reports
+missing inputs as unknown but labels its input digests caller-supplied. Qualifying
+stronger source assurance and enforcement is deferred owner work under an explicit
+profile/operation version, with refusal on unsupported consumers. Preserve v1
+behavior, existing canonical digests and the closed checkpoint shape.
+
+Later applicability findings retain the original terminal Decision. Record new
+evidence and derive applicability; correction work uses the existing work owner.
+No second terminal lifecycle, automatic reopening or blanket human gate is added.
+
+### Planning backlog
+
+| Planning key | Owner scope | Recommended priority | Dependencies | Acceptance | Live work binding |
+| --- | --- | --- | --- | --- | --- |
+| SC-BR1 | Qualify source-basis applicability at existing evidence/completion and settlement boundaries | 3 (1 highest; recommendation only) | HLA paired correctness fixture; source-assurance contract; versioned owner integration and installed catalog qualification before use | Missing/expired/method-changed and added/removed dependencies are explicit; stale assessment cannot settle; exact lost-response replay preserves one Decision; unsupported/legacy inputs cannot manufacture currentness | Unknown; pending repository-scoped served reconciliation |
+
+`SC-BR1` refines SC-EC1/SC-EC2; it is not a served item or readiness claim. Reconcile
+overlapping work before binding or creating an item and pin the plan revision.
+Rollback disables reuse/new assessment integration, retains evidence/Decisions
+and restores full recomputation through the existing owner acceptance path.
