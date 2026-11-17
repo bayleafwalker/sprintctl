@@ -45,6 +45,11 @@ from .. import sync as _sync
 from ..cli_support import _redacted_postgres_error
 from ..render import render_sprint_doc
 
+def _target(config) -> str:
+    """Local database path, or the credential-free backend target."""
+    return _orientation.db_label() if config.mode == "local" else _backend_target(config)
+
+
 def _echo_handoff_plan(sid, dest, content, target) -> None:
     where = "stdout" if dest == "-" else f"{dest} ({'exists, would be overwritten' if os.path.exists(dest) else 'new file'})"
     click.echo(f"dry run: would write {len(content.encode())} bytes to {where}")
@@ -85,7 +90,7 @@ def handoff_cmd(obj, sprint_id, output_path, events_limit, fmt, dry_run) -> None
         ext = ".txt" if fmt == "text" else ".json"
         dest = output_path or f"handoff-{sid}{ext}"
         if dry_run:
-            _echo_handoff_plan(sid, dest, content, _orientation.target_label(config))
+            _echo_handoff_plan(sid, dest, content, _target(config))
             return
         if dest == "-":
             click.echo(content)
@@ -123,7 +128,7 @@ def handoff_cmd(obj, sprint_id, output_path, events_limit, fmt, dry_run) -> None
 
     dest = output_path or f"handoff-{sid}{ext}"
     if dry_run:
-        _echo_handoff_plan(sid, dest, content, _orientation.target_label(obj["backend_config"]))
+        _echo_handoff_plan(sid, dest, content, _target(obj["backend_config"]))
         return
     if dest == "-":
         click.echo(content)
@@ -843,6 +848,13 @@ def status_cmd(obj, sprint_id, show_all, as_json) -> None:
             "status", _served.read_context, config.served_profile,
             repo_id=config.repo_id, sprint_id=sprint_id, resolved_context=_resolved_context(config),
         )
+        try:  # reservation rows carry no titles; best effort, never fail the view
+            items = _served.read_items(
+                config.served_profile, repo_id=config.repo_id, sprint_id=snapshot["sprint"]["id"]
+            )["items"]
+            titles = {it["id"]: it["title"] for it in items}
+        except Exception:  # noqa: BLE001
+            titles = None
     else:
         store, m = _get_store(obj)
         config = obj["backend_config"]
@@ -851,7 +863,7 @@ def status_cmd(obj, sprint_id, show_all, as_json) -> None:
         titles = {it["id"]: it["title"] for it in m.list_work_items(store, sprint_id=s["id"])}
     context = {
         **_resolved_context(config),
-        "target": _orientation.target_label(config),
+        "target": _target(config),
         "fallback": _orientation.fallback_reason(config),
     }
     status = _orientation.build_status(snapshot, context, titles=titles)

@@ -278,9 +278,8 @@ SERVED_COMMAND_DISPOSITIONS: dict[str, ServedDisposition] = {
     # The no-option form prints static command help. ``usage --context`` is
     # catalog-backed; the CLI selects that disposition from parsed options.
     "usage": "local",
-    # Catalog-backed through the same context read as ``usage --context``; the
-    # command selects the backend itself, like the no-option ``usage`` form.
-    "status": "local",
+    # Reads the served catalog through the same context read as ``usage --context``.
+    "status": "catalog",
     "git-context": "local",
     "render": "unavailable",
     "remote-schema check": "unavailable",

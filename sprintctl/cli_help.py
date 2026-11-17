@@ -74,23 +74,15 @@ def derive_short_help(command: click.Command) -> str | None:
     return text or None
 
 
-def apply_short_help(root: click.Group) -> None:
-    """Give every command an unclipped one-line description."""
-    for name, command in root.commands.items():
-        if name in SHORT_HELP:
+def apply_short_help(group: click.Group, *, top: bool = True) -> None:
+    """Give every command an unclipped one-line description (recursive)."""
+    for name, command in group.commands.items():
+        if top and name in SHORT_HELP:
             command.short_help = SHORT_HELP[name]
         elif command.short_help is None:
             command.short_help = derive_short_help(command)
         if isinstance(command, click.Group):
-            apply_short_help_nested(command)
-
-
-def apply_short_help_nested(group: click.Group) -> None:
-    for command in group.commands.values():
-        if command.short_help is None:
-            command.short_help = derive_short_help(command)
-        if isinstance(command, click.Group):
-            apply_short_help_nested(command)
+            apply_short_help(command, top=False)
 
 
 class RootGroup(click.Group):

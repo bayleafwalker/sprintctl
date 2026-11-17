@@ -158,3 +158,96 @@ def test_generated_usage_covers_every_leaf_and_marks_unavailable(monkeypatch):
     monkeypatch.setenv("SPRINTCTL_VUORO_PROFILE", "/nonexistent")
     # Unresolvable served config falls back to the plain reference rather than failing.
     assert run("usage").exit_code == 0
+
+
+def _snapshot(**over):
+    snap = {
+        "sprint": {"id": 7, "name": "S", "goal": "", "status": "active"},
+        "summary": {"total": 1, "done": 0, "active": 1, "pending": 0, "blocked": 0, "stale": 0,
+                    "ready": 0, "waiting_on_dependencies": 0, "active_reservations": 1, "active_unreserved": 0},
+        "active_reservations": [], "active_unreserved_items": [], "conflicts": [], "ready_items": [],
+        "blocked_items": [], "stale_items": [], "recent_decisions": [],
+        "next_action": {"kind": "no-action", "summary": "", "reason": ""},
+    }
+    snap.update(over)
+    return snap
+
+
+def test_served_status_titles_in_flight_items_and_omits_actor(tmp_path, monkeypatch):
+    import json as _json
+    import sprintctl.cli as cli_module
+
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".sprintctl").mkdir()
+    (tmp_path / ".sprintctl" / "backend.json").write_text(_json.dumps({"backend": "served", "repo_id": "r"}))
+    profile = tmp_path / "profile.json"
+    profile.write_text(_json.dumps({
+        "schema_version": "vuoro-client-profile/v1", "id": "p",
+        "target": {"environment_id": "t", "environment_class": "development", "endpoint": "https://v.example.test/"},
+        "credential_ref": "file:~/.config/vuoro/test",
+    }))
+    monkeypatch.setenv("SPRINTCTL_BACKEND", "served")
+    monkeypatch.setenv("SPRINTCTL_VUORO_PROFILE", str(profile))
+    monkeypatch.delenv("SPRINTCTL_DB", raising=False)
+    reservation = {"id": 3, "work_item_id": 9, "actor": "bob", "session_id": "s", "role": "execution",
+                   "activity_age_seconds": 180, "stale": False}
+    snap = _snapshot(
+        active_reservations=[reservation],
+        ready_items=[{"id": 4, "title": "free one", "track": "t"}],
+        next_action={"kind": "start-ready-item", "summary": "", "reason": "", "item_id": 4},
+    )
+    monkeypatch.setattr(cli_module._served, "read_context", lambda profile, *, repo_id, sprint_id=None: snap)
+    monkeypatch.setattr(
+        cli_module._served, "read_items",
+        lambda profile, *, repo_id, sprint_id=None, **kw: {"items": [{"id": 9, "title": "Active reserved work"}]},
+    )
+    out = run("status")
+    assert out.exit_code == 0, out.output
+    assert "#9 Active reserved work  bob  3m" in out.output
+    assert "next: sprintctl reservation reserve --item-id 4\n" in out.output + "\n"
+    assert "--actor" not in out.output
+    assert json.loads(run("status", "--json").output)["in_flight"][0]["title"] == "Active reserved work"
+
+
+def test_local_reserve_command_is_pasteable(world):
+    out = run("status").output
+    line = next(ln for ln in out.splitlines() if "reservation reserve" in ln)
+    assert '--actor "$USER"' in line and "<you>" not in line
+
+
+def test_status_never_exceeds_24_lines():
+    from sprintctl import orientation
+
+    res = [{"id": i, "work_item_id": i, "actor": "a", "session_id": "s", "role": "execution",
+            "activity_age_seconds": 99999, "stale": i < 12} for i in range(1, 15)]
+    ready = [{"id": 100 + i, "title": f"ready {i}", "track": "t"} for i in range(15)]
+    snap = _snapshot(active_reservations=res, ready_items=ready,
+                     blocked_items=[{"id": 300, "title": "b", "track": "t"}],
+                     summary={**_snapshot()["summary"], "total": 40, "waiting_on_dependencies": 2})
+    ctx = {"repo_id": "r", "repo_source": "marker", "backend": "local", "target": "x", "fallback": None}
+    text = orientation.render_status(orientation.build_status(snap, ctx))
+    assert len(text.splitlines()) <= 24
+    assert "more (--all)" in text
+    assert len(orientation.render_status(orientation.build_status(snap, ctx), show_all=True).splitlines()) > 24
+
+
+def test_status_next_matches_usage_context_and_empty_sprint_suggests_item_add(conn, db_path):
+    sid = db.create_sprint(conn, "Empty", "g", None, None, "active")
+    out = run("status").output
+    assert f"next: sprintctl item add --sprint-id {sid}" in out
+    assert "next: sprintctl next-work" not in out
+
+
+def test_item_list_all_with_limit_message_and_empty_open(world, conn):
+    out = run("item", "list", "--all", "--limit", "3").output
+    assert "… 3 more items not shown (--limit N)" in out
+    assert "--limit N or --all" not in out
+    for item_id in world["items"][:4]:
+        conn.execute("UPDATE work_item SET status='blocked' WHERE id=?", (item_id,))
+    # no open items: a sprint of only done work
+    sid = db.create_sprint(conn, "Done only", "g", None, None, "active")
+    conn.execute("UPDATE sprint SET status='closed' WHERE id=?", (world["sprint"],))
+    conn.commit()
+    out = run("item", "list").output
+    assert f"No open items in sprint #{sid}." in out
+    assert "ID " not in out

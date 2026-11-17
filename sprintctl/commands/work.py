@@ -1170,9 +1170,11 @@ def _bound_items(items, *, status, sprint_id, project, show_all, limit, active_i
     An explicit --status, --sprint-id or --project is honoured as given.
     """
     notes: list[str] = []
+    scope = ""
     if not show_all and sprint_id is None and not project:
         active = set(active_ids())
         if active:
+            scope = " in sprint " + ", ".join(f"#{n}" for n in sorted(active))
             others = [it for it in items if it.get("sprint_id") not in active]
             items = [it for it in items if it.get("sprint_id") in active]
             if others:
@@ -1182,11 +1184,12 @@ def _bound_items(items, *, status, sprint_id, project, show_all, limit, active_i
         items = [it for it in items if it["status"] != "done"]
         if done:
             notes.insert(0, f"… {len(done)} done items hidden (--all)")
-    cap = None if show_all else (limit or DEFAULT_ITEM_LIMIT)
-    if limit is not None:
-        cap = limit
+        if not items:
+            notes.insert(0, f"No open items{scope}.")
+    cap = limit if limit is not None else (None if show_all else DEFAULT_ITEM_LIMIT)
     if cap is not None and len(items) > cap:
-        notes.append(f"… {len(items) - cap} more open items not shown (--limit N or --all)")
+        noun = "items" if show_all or status is not None else "open items"
+        notes.append(f"… {len(items) - cap} more {noun} not shown ({'--limit N' if show_all else '--limit N or --all'})")
         items = items[:cap]
     return items, notes
 
@@ -1278,6 +1281,11 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, project_path, limit, s
                 )["sprints"]
             ],
         )
+        if not items:
+            for note in notes:
+                click.echo(note)
+            click.echo(_render_resolved_context(_resolved_context(config)))
+            return
         rows = [[f"#{it['id']}", _style_status(it["status"]), _format_priority(it), it["track_name"], it.get("assignee") or "-", it["title"]] for it in items]
         for line in _render_table(["ID", "STATUS", "PRI", "TRACK", "ASSIGNEE", "TITLE"], rows):
             click.echo(line)
@@ -1337,6 +1345,10 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, project_path, limit, s
         show_all=show_all, limit=limit,
         active_ids=lambda: [row["id"] for row in scopes[0][2].list_active_sprints(scopes[0][1])],
     )
+    if not items:
+        for note in notes:
+            click.echo(note)
+        return
     rows: list[list[str]] = []
     for it in items:
         assignee = it.get("assignee") or "-"

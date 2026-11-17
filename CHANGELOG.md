@@ -6,9 +6,9 @@
   `next:` commands; `--json` is `sprintctl.status/v1`). The root help is grouped
   by task with examples, bare `sprintctl` prints it (exit 0), a misspelled
   command suggests the right one, and `sprintctl usage` is generated from the
-  command tree. `usage --context`, `next-work` and `item list` mark reserved
-  items, state real idle ages and print the exact next command; empty results
-  from a fallback database say so (`doctor` warns). Text `item list` defaults to
+  command tree. `usage --context` and `next-work` mark reserved items, `usage --context`
+  states real idle ages and prints the exact next command; empty results from
+  a fallback database say so (`doctor` warns). Text `item list` defaults to
   open items of the active sprint with `--limit`/`--all`; `--json` stays
   unbounded and is compact off a TTY. `handoff` documents its file and event
   effects and gains `--dry-run`.

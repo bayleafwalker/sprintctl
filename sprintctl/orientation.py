@@ -18,7 +18,7 @@ from typing import Any
 import click
 
 STATUS_SCHEMA = "sprintctl.status/v1"
-ROWS_PER_SECTION = 5
+ROWS_PER_SECTION = 3  # worst case 24 lines: 15 fixed + 3 sections x (3 rows + 'more')
 
 
 def format_age(seconds: int | float | None) -> str:
@@ -53,23 +53,11 @@ def fallback_reason(config: Any) -> str | None:
     return "no .sprintctl/ marker" if config.marker is None else "SPRINTCTL_DB unset"
 
 
-def target_label(config: Any) -> str:
-    """The concrete target: served endpoint, or the sqlite database path."""
-    if config.mode == "served":
-        return config.served_profile.endpoint
-    if config.mode == "local":
-        from . import db as _db  # noqa: PLC0415
+def db_label() -> str:
+    """The local sqlite database path in use (only meaningful in local mode)."""
+    from . import db as _db  # noqa: PLC0415
 
-        return _tilde(_db.get_db_path())
-    return config.url or config.mode
-
-
-def context_line(config: Any) -> str:
-    """``context:`` line naming target, repo and how each was resolved."""
-    target = target_label(config)
-    reason = fallback_reason(config)
-    how = f"fallback: {reason}" if reason else f"repo from {config.repo_source}"
-    return f"context: {target} [{config.mode}] repo={config.repo_id} ({how})"
+    return _tilde(_db.get_db_path())
 
 
 def fallback_notice(config: Any) -> str | None:
@@ -78,7 +66,7 @@ def fallback_notice(config: Any) -> str | None:
     if reason is None:
         return None
     return (
-        f"note: read {target_label(config)}, a fallback target ({reason}); "
+        f"note: read {db_label()}, a fallback target ({reason}); "
         "this is probably not the repository you meant\n"
         "  fix: cd into the repository, or set SPRINTCTL_DB=<repo>/.sprintctl/sprintctl.db"
     )
@@ -103,7 +91,19 @@ def no_active_sprint() -> None:
     sys.exit(1)
 
 
-def next_action_command(action: dict[str, Any]) -> str | None:
+def _is_served() -> bool:
+    config = _root_obj().get("backend_config")
+    return config is not None and config.mode == "served"
+
+
+def reserve_command(item_id: int, *, served: bool | None = None) -> str:
+    """Pasteable reserve command; served mode binds the actor to the identity."""
+    served = _is_served() if served is None else served
+    actor = "" if served else ' --actor "$USER"'
+    return f"sprintctl reservation reserve --item-id {item_id}{actor}"
+
+
+def next_action_command(action: dict[str, Any], *, served: bool | None = None) -> str | None:
     """Exact command that acts on a ContextContract ``next_action``."""
     kind = action.get("kind")
     item, blocker, reservation = (action.get(k) for k in ("item_id", "blocker_item_id", "reservation_id"))
@@ -112,7 +112,7 @@ def next_action_command(action: dict[str, Any]) -> str | None:
     if kind in {"unblock-dependent-work", "resolve-blocker"} and blocker:
         return f"sprintctl item show --id {blocker}"
     if kind == "start-ready-item" and item:
-        return f"sprintctl reservation reserve --item-id {item} --actor <you>"
+        return reserve_command(item, served=served)
     if item and kind != "no-action":
         return f"sprintctl item show --id {item}"
     return None
@@ -199,13 +199,16 @@ def build_status(
     free = [item for item in ready if item["id"] not in held]
     reserved = [{**item, "reserved_by": held[item["id"]]["actor"]} for item in ready if item["id"] in held]
 
-    nxt = [row["command"] for row in needs if row.get("command")][:2]
-    if free and len(nxt) < 3:
-        nxt.append(f"sprintctl reservation reserve --item-id {free[0]['id']} --actor <you>")
-    if len(nxt) < 3 and len(ready) > 1:
-        nxt.append("sprintctl next-work")
+    served = context.get("backend") == "served"
+    candidates = [next_action_command(snapshot.get("next_action") or {}, served=served)]
+    candidates += [row["command"] for row in needs if row.get("command")][:2]
+    if free:
+        candidates.append(reserve_command(free[0]["id"], served=served))
+    if snapshot["summary"]["total"] == 0:
+        candidates.append(f"sprintctl item add --sprint-id {snapshot['sprint']['id']} --track main --title \"...\"")
+    nxt = list(dict.fromkeys(c for c in candidates if c))[:3]
     if not nxt:
-        nxt.append("sprintctl next-work")
+        nxt = ["sprintctl item list --all"]
 
     summary = snapshot["summary"]
     return {
