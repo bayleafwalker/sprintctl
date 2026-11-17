@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 
 import click
 import pytest
@@ -173,6 +174,7 @@ def _snapshot(**over):
     return snap
 
 
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="served mode requires Python 3.12+")
 def test_served_status_titles_in_flight_items_and_omits_actor(tmp_path, monkeypatch):
     import json as _json
     import sprintctl.cli as cli_module
