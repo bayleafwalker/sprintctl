@@ -169,6 +169,7 @@ def _backend_facts(cwd: Path, environ: Mapping[str, str]) -> dict[str, Any]:
     )
     if config.mode == "local" and not facts["database_path"]:
         facts["database_path"] = str(Path.home() / ".sprintctl" / "sprintctl.db")
+        facts["database_fallback"] = "no .sprintctl/ marker" if config.marker is None else "SPRINTCTL_DB unset"
     return facts
 
 
@@ -409,6 +410,17 @@ def evaluate_facts(facts: Mapping[str, Any]) -> dict[str, Any]:
                 "warning",
                 f"Imported sprintctl {package['code_version']} differs from source {source['version']}.",
                 [REINSTALL_GUIDANCE["source"], REINSTALL_GUIDANCE["pipx"], REINSTALL_GUIDANCE["uv"]],
+            )
+        )
+
+    if backend.get("database_fallback"):
+        findings.append(
+            _finding(
+                "fallback-database",
+                "warning",
+                f"Local target is the home database {backend['database_path']} "
+                f"(fallback: {backend['database_fallback']}); lists may be empty or belong to another project.",
+                ["cd into the repository, or export SPRINTCTL_DB=<repo>/.sprintctl/sprintctl.db"],
             )
         )
 

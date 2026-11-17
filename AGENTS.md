@@ -49,6 +49,7 @@ agent sessions.  Read this file before touching any sprint item.
 ## Quick reference
 
 ```
+sprintctl status                  # what needs you, what is in flight, what is free (start here)
 sprintctl agent-protocol          # print full lifecycle protocol (human-readable)
 sprintctl agent-protocol --json   # machine-readable JSON version
 ```

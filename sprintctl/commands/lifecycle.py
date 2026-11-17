@@ -24,6 +24,7 @@ from .. import __version__
 from .. import application as _application
 from .. import application_common as _application_common
 from .. import backend as _backend
+from .. import orientation as _orientation
 from .. import authority as _authority
 from .. import authority_config as _authority_config
 from .. import commands as _commands
@@ -595,8 +596,7 @@ def _resolve_sprint(conn, sprint_id: int | None, *, m=None) -> dict:
     else:
         s = _resolve_implicit_sprint(conn, m=m)
         if s is None:
-            click.echo("No active sprint found. Use --sprint-id to specify one.", err=True)
-            sys.exit(1)
+            _orientation.no_active_sprint()
     return s
 
 
@@ -1062,7 +1062,7 @@ def _derive_conflicts(
             {
                 "kind": "stale-reservation",
                 "severity": "warning",
-                "summary": f"{len(stale_reservations)} active reservation(s) have been idle for four hours.",
+                "summary": _context_contract._stale_summary(stale_reservations),
                 "reservation_ids": [reservation["id"] for reservation in stale_reservations],
                 "item_ids": [reservation["work_item_id"] for reservation in stale_reservations],
             }
@@ -1362,8 +1362,12 @@ def _render_context_text(snapshot: dict) -> str:
     ready_items = snapshot["ready_items"]
     lines.append(f"Ready to start ({len(ready_items)}):")
     if ready_items:
+        held = _orientation.reserved_by(snapshot)
         for item in ready_items[:5]:
-            lines.append(f"  #{item['id']}  {item['title']}  (track: {item['track']})")
+            lines.append(
+                f"  #{item['id']}  {item['title']}  (track: {item['track']})"
+                + _orientation.reserved_tag(held.get(item["id"]))
+            )
         if len(ready_items) > 5:
             lines.append(f"  ... {len(ready_items) - 5} more")
     else:
@@ -1405,6 +1409,9 @@ def _render_context_text(snapshot: dict) -> str:
     next_action = snapshot["next_action"]
     lines.append("Next action:")
     lines.append(f"  [{next_action['kind']}]  {next_action['summary']}")
+    command = _orientation.next_action_command(next_action)
+    if command:
+        lines.append(f"  next: {command}")
     return "\n".join(lines)
 
 

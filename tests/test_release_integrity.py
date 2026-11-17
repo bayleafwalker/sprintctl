@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -144,8 +145,9 @@ class TestReleaseIntegrity:
             check=False,
         )
         assert result.returncode == 0, result.stderr
-        assert "next-work      [--sprint-id ID] [--json] [--explain]" in result.stdout
-        assert "session resume [--sprint-id ID] [--json]" in result.stdout
+        # `usage` is generated from the Click tree: one line per command path.
+        assert re.search(r"^  next-work  .*\[--explain\]", result.stdout, re.M)
+        assert re.search(r"^  session resume  .*\[--json\]", result.stdout, re.M)
 
     def test_module_entrypoint_next_work_help_includes_explain(self, db_path):
         env = os.environ.copy()
@@ -165,18 +167,22 @@ class TestReleaseIntegrity:
         result = runner.invoke(cli, ["usage"])
         assert result.exit_code == 0, result.output
         assert f"sprintctl v{__version__}" in result.output
-        for fragment in (
-            "doctor         [--json]",
-            "usage          [--context] [--sprint-id ID] [--json]",
-            "handoff        [--sprint-id ID] [--output PATH] [--events N] [--format json|text]",
-            "next-work      [--sprint-id ID] [--json] [--explain]",
-            "session resume [--sprint-id ID] [--json]",
-            "git-context",
-            "sprint show    [--id ID] [--detail] [--watch] [--interval SECONDS] [--json]",
-            "item list      [--sprint-id ID] [--track NAME] [--status STATUS] [--fzf] [--json]",
-            "event add      --sprint-id ID --type|--event-type TYPE --actor NAME [--item-id ID]",
-            "event log      Alias for event add",
-            "takeup take    --sprint-id ID --actor NAME [--instance-id ID] [--context TEXT]",
-            "takeup         take|release|list|show|sweep",
+        for command, flags in (
+            ("doctor", ("--json",)),
+            ("usage", ("--context", "--sprint-id", "--json")),
+            ("handoff", ("--sprint-id", "--output", "--events", "--format json|text", "--dry-run")),
+            ("next-work", ("--sprint-id", "--json", "--explain")),
+            ("session resume", ("--sprint-id", "--json")),
+            ("git-context", ()),
+            ("sprint show", ("--id", "--detail", "--watch", "--interval", "--json")),
+            ("item list", ("--sprint-id", "--track", "--status", "--fzf", "--limit", "--all", "--json")),
+            ("event add", ("--sprint-id", "--actor", "--item-id")),
+            ("event log", ("--sprint-id", "--actor")),
+            ("takeup take", ("--sprint-id", "--actor", "--instance-id", "--context")),
+            ("takeup release", ("--sprint-id", "--actor")),
+            ("status", ("--json", "--all")),
         ):
-            assert fragment in result.output
+            match = re.search(rf"^  {re.escape(command)}  ((?:.*\n      .*)*|.*)$", result.output, re.M)
+            assert match, f"usage lacks {command}"
+            for flag in flags:
+                assert flag in match.group(0), f"usage {command} lacks {flag}"

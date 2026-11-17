@@ -1639,7 +1639,7 @@ class TestUsageCommand:
 
     def test_usage_covers_major_groups(self, runner, db_path):
         result = runner.invoke(cli, ["usage"])
-        for section in ("SPRINT", "ITEM", "RESERVATION", "EVENT", "MAINTAIN", "TOP-LEVEL", "ENV"):
+        for section in ("START HERE", "COORDINATE", "INSPECT", "MAINTAIN", "PLUMBING", "ENV"):
             assert section in result.output, f"Missing section: {section}"
 
     def test_usage_mentions_key_commands(self, runner, db_path):
