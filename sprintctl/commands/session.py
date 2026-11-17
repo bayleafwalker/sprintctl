@@ -20,6 +20,8 @@ import click
 from .. import __version__
 from .. import application as _application
 from .. import backend as _backend
+from .. import orientation as _orientation
+from .. import cli_help as _cli_help
 from .. import authority as _authority
 from .. import authority_config as _authority_config
 from .. import commands as _commands
@@ -43,6 +45,13 @@ from .. import sync as _sync
 from ..cli_support import _redacted_postgres_error
 from ..render import render_sprint_doc
 
+def _echo_handoff_plan(sid, dest, content, target) -> None:
+    where = "stdout" if dest == "-" else f"{dest} ({'exists, would be overwritten' if os.path.exists(dest) else 'new file'})"
+    click.echo(f"dry run: would write {len(content.encode())} bytes to {where}")
+    click.echo(f"dry run: would record a handoff-generated event on sprint #{sid} at {target}")
+    click.echo("nothing written, nothing recorded")
+
+
 @click.command("handoff")
 @click.option("--sprint-id", type=int, default=None, help="Sprint ID (defaults to active)")
 @click.option("--output", "output_path", default=None, help="Output file path (default: handoff-N.json or handoff-N.txt)")
@@ -53,9 +62,14 @@ from ..render import render_sprint_doc
     type=click.Choice(["json", "text"]),
     help="Output format: json (default) or text (human-readable summary)",
 )
+@click.option("--dry-run", is_flag=True, default=False, help="Print what would be written and recorded; change nothing")
 @click.pass_obj
-def handoff_cmd(obj, sprint_id, output_path, events_limit, fmt) -> None:
-    """Produce a working-memory handoff bundle for session resumption.
+def handoff_cmd(obj, sprint_id, output_path, events_limit, fmt, dry_run) -> None:
+    """Write a handoff bundle (records an event).
+
+    Writes handoff-N.json (or .txt) into the current directory, overwriting
+    any existing file, and records a handoff-generated event on the sprint in
+    the active backend (the shared one in served mode). --dry-run does neither.
 
     Use --format text for a human-readable summary suitable for LLM context injection.
     Use --format json (default) for a machine-parseable bundle.
@@ -70,6 +84,9 @@ def handoff_cmd(obj, sprint_id, output_path, events_limit, fmt) -> None:
         content = _render_handoff_text(bundle) if fmt == "text" else json.dumps(bundle, indent=2)
         ext = ".txt" if fmt == "text" else ".json"
         dest = output_path or f"handoff-{sid}{ext}"
+        if dry_run:
+            _echo_handoff_plan(sid, dest, content, _orientation.target_label(config))
+            return
         if dest == "-":
             click.echo(content)
         else:
@@ -105,6 +122,9 @@ def handoff_cmd(obj, sprint_id, output_path, events_limit, fmt) -> None:
         ext = ".json"
 
     dest = output_path or f"handoff-{sid}{ext}"
+    if dry_run:
+        _echo_handoff_plan(sid, dest, content, _orientation.target_label(obj["backend_config"]))
+        return
     if dest == "-":
         click.echo(content)
         _record_handoff_generated(store, sid, bundle, m=m)
@@ -330,6 +350,15 @@ def _echo_checkpointed_unacked_section(checkpoints: list[dict]) -> None:
             click.echo(f"    #{checkpoint['item_id']}  {detail_line}")
 
 
+def _served_reservation_holders(config, sprint_id: int) -> dict[int, dict]:
+    """Best-effort item -> active reservation map for marking served ready lists."""
+    try:
+        snapshot = _served.read_context(config.served_profile, repo_id=config.repo_id, sprint_id=sprint_id)
+    except Exception:  # noqa: BLE001 - marking is advisory; never fail the list
+        return {}
+    return _orientation.reserved_by(snapshot)
+
+
 @click.command("next-work")
 @click.option("--sprint-id", type=str, default=None, help="Sprint ID or repo#id (defaults to active)")
 @click.option(
@@ -359,8 +388,9 @@ def _echo_checkpointed_unacked_section(checkpoints: list[dict]) -> None:
 def next_work_cmd(obj, sprint_id, project_path, as_json, explain, include_checkpoints) -> None:
     """Suggest pending items that are ready to start (no unresolved blocking deps).
 
-    Items are listed in creation order. Items blocked by incomplete predecessors
-    are excluded from the suggestion.
+    Items are listed by priority (p1 first), then creation order. Items blocked
+    by incomplete predecessors are excluded; items with an active reservation
+    are listed but marked [reserved: actor].
     """
     if sprint_id is not None:
         sprint_id = _apply_scoped_id(obj, sprint_id, field="sprint")
@@ -407,10 +437,12 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain, include_checkp
                 return
             click.echo(f"Ready to start in sprint #{s['id']} ({s['name']}):")
             rows: list[list[str]] = []
+            held = _served_reservation_holders(config, s["id"])
             for it in ready:
                 assignee = it.get("assignee") or "-"
                 rows.append(
-                    [f"#{it['id']}", _format_priority(it), it["track_name"], assignee, it["title"]]
+                    [f"#{it['id']}", _format_priority(it), it["track_name"], assignee,
+                     it["title"] + _orientation.reserved_tag(held.get(it["id"]))]
                 )
             for line in _render_table(["ID", "PRI", "TRACK", "ASSIGNEE", "TITLE"], rows):
                 click.echo(f"  {line}")
@@ -467,8 +499,7 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain, include_checkp
         else:
             s = _resolve_implicit_sprint(store, m=m)
             if s is None:
-                click.echo("No active sprint found. Use --sprint-id to specify one.", err=True)
-                sys.exit(1)
+                _orientation.no_active_sprint()
         ready = m.get_ready_items(store, s["id"])
         payload = None
         # next-work suggestions require current item/dependency state, which
@@ -517,13 +548,18 @@ def next_work_cmd(obj, sprint_id, project_path, as_json, explain, include_checkp
             click.echo(status_line)
         if not ready:
             click.echo(f"No pending items ready to start in sprint #{s['id']} ({s['name']}).")
+            _orientation.echo_fallback_notice()
         else:
             click.echo(f"Ready to start in sprint #{s['id']} ({s['name']}):")
             rows: list[list[str]] = []
+            held = _orientation.reserved_by(
+                {"active_reservations": m.list_reservations_by_sprint(store, s["id"], active_only=True)}
+            )
             for it in ready:
                 assignee = it.get("assignee") or "-"
                 rows.append(
-                    [f"#{it['id']}", _format_priority(it), it["track_name"], assignee, it["title"]]
+                    [f"#{it['id']}", _format_priority(it), it["track_name"], assignee,
+                     it["title"] + _orientation.reserved_tag(held.get(it["id"]))]
                 )
             for line in _render_table(["ID", "PRI", "TRACK", "ASSIGNEE", "TITLE"], rows):
                 click.echo(f"  {line}")
@@ -691,8 +727,7 @@ def context_candidates_cmd(obj, sprint_id, explicit_item_id, target_paths, query
         else:
             s = _resolve_implicit_sprint(store, m=m)
             if s is None:
-                click.echo("No active sprint found. Use --sprint-id to specify one.", err=True)
-                sys.exit(1)
+                _orientation.no_active_sprint()
         ready_items = m.get_ready_items(store, s["id"])
         refs_by_item = m.list_refs_for_items(store, [item["id"] for item in ready_items])
         explicit_item = m.get_work_item(store, explicit_item_id) if explicit_item_id is not None else None
@@ -787,6 +822,57 @@ def session_resume_cmd(obj, sprint_id, as_json) -> None:
         click.echo(json.dumps(payload, indent=2))
         return
     click.echo(_render_session_resume_text(payload))
+
+
+@click.command("status")
+@click.option("--sprint-id", type=str, default=None, help="Sprint ID or repo#id (defaults to the active sprint)")
+@click.option("--all", "show_all", is_flag=True, default=False, help="Show every row instead of the first five per section")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output a sprintctl.status/v1 object")
+@click.pass_obj
+def status_cmd(obj, sprint_id, show_all, as_json) -> None:
+    """Show what needs you, what is in flight and what is free to start.
+
+    Built on the same snapshot as `usage --context`; ends with `next:` commands.
+    """
+    if sprint_id is not None:
+        sprint_id = _apply_scoped_id(obj, sprint_id, field="sprint")
+    titles = None
+    config = _served_config_or_none(obj)
+    if config is not None:
+        snapshot = _run_served(
+            "status", _served.read_context, config.served_profile,
+            repo_id=config.repo_id, sprint_id=sprint_id, resolved_context=_resolved_context(config),
+        )
+    else:
+        store, m = _get_store(obj)
+        config = obj["backend_config"]
+        s = _resolve_sprint(store, sprint_id, m=m)
+        snapshot = _collect_context_contract(store, s, datetime.now(timezone.utc), m=m)
+        titles = {it["id"]: it["title"] for it in m.list_work_items(store, sprint_id=s["id"])}
+    context = {
+        **_resolved_context(config),
+        "target": _orientation.target_label(config),
+        "fallback": _orientation.fallback_reason(config),
+    }
+    status = _orientation.build_status(snapshot, context, titles=titles)
+    if as_json:
+        click.echo(_orientation.dumps(status))
+        return
+    click.echo(_orientation.render_status(status, show_all=show_all))
+
+
+def _unavailable_in_active_backend(obj) -> set[str]:
+    """Command paths the served backend cannot run (empty for local)."""
+    try:
+        config = _backend.load_backend_config(
+            explicit_repo_id=obj.get("explicit_repo_id"),
+            allow_markerless_nonlocal=obj.get("allow_markerless_nonlocal", False),
+        )
+    except _backend.BackendConfigError:
+        return set()
+    if config.mode != "served":
+        return set()
+    return {path for path, kind in _served_routes.SERVED_COMMAND_DISPOSITIONS.items() if kind == "unavailable"}
 
 
 @click.command("usage")
@@ -947,85 +1033,9 @@ def usage_cmd(obj, as_context, sprint_id, project_path, as_json) -> None:
         click.echo(_render_context_text(snapshot))
         return
 
-    lines = [
-        f"sprintctl v{__version__} — agent-centric sprint coordination CLI",
-        "  doctor         [--json]  # read-only provenance/backend/schema diagnostics",
-        "",
-        "SPRINT",
-        "  sprint create  --name NAME [--goal GOAL] [--start YYYY-MM-DD] [--end YYYY-MM-DD]",
-        "                 [--status planned|active|closed] [--kind active_sprint|backlog|archive] [--json]",
-        "  sprint show    [--id ID] [--detail] [--watch] [--interval SECONDS] [--json]",
-        "  sprint status  --id ID --status planned|active|closed [--actor NAME] [--json]",
-        "  sprint list    [--include-backlog] [--include-archive] [--json]",
-        "                 [--project PROJECT_TOML]",
-        "  sprint kind    --id ID --kind active_sprint|backlog|archive",
-        "",
-        "ITEM",
-        "  item add       --sprint-id ID --track NAME --title TITLE [--description TEXT]",
-        "                 [--assignee NAME] [--priority N] [--json]",
-        "  item edit      --id ID --description TEXT [--json]",
-        "  item priority  --id ID (--set N | --clear) [--json]",
-        "  item show      --id ID [--json]",
-        "  item list      [--sprint-id ID] [--track NAME] [--status STATUS] [--fzf] [--json]",
-        "                 [--project PROJECT_TOML]",
-        "  item note      --id ID --type TYPE --summary TEXT [--detail TEXT] [--tags T1,T2]",
-        "                 [--actor NAME]",
-        "  item status    --id ID --status pending|active|done|blocked [--actor NAME] [--json]",
-        "  item ref add   --id ID --type pr|issue|doc|other --url URL [--label TEXT]",
-        "  item ref list  --id ID [--json]",
-        "  item ref remove --id ID --ref-id N",
-        "  item dep add   --id BLOCKER_ID --blocks-item-id BLOCKED_ID",
-        "  item dep list  --id ID [--json]",
-        "  item dep remove --id ID --dep-id N",
-        "",
-        "RESERVATION",
-        "  reservation reserve  --item-id ID --actor NAME --session-id ID [--role ROLE] [--correlation-ref REF]",
-        "                       [--interrupt-existing] [--json]",
-        "  reservation touch    --id ID --session-id ID [--correlation-ref REF] [--json]",
-        "  reservation reassign --id ID --actor NAME --session-id ID [--correlation-ref REF] [--json]",
-        "  reservation release  --id ID [--actor NAME] [--json]",
-        "  reservation list     [--item-id ID] [--all] [--json]",
-        "  reservation show     --id ID [--json]",
-        "",
-        "EVENT",
-        "  event add      --sprint-id ID --type|--event-type TYPE --actor NAME [--item-id ID]",
-        "                 [--source actor|daemon|system] [--payload JSON] [--json]",
-        "  event log      Alias for event add",
-        "  event list     --sprint-id ID [--item-id ID] [--type TYPE] [--limit N] [--json]",
-        "",
-        "TAKEUP",
-        "  takeup take    --sprint-id ID --actor NAME [--instance-id ID] [--context TEXT]",
-        "                 [--force] [--json]",
-        "  takeup release --sprint-id ID --actor NAME [--instance-id ID] [--reason TEXT] [--json]",
-        "  takeup list    [--sprint-id ID] [--all-history] [--json]",
-        "  takeup show    --sprint-id ID [--json]",
-        "  takeup sweep   [--sprint-id ID] [--stale-after SECONDS] [--json]",
-        "",
-        "MAINTAIN",
-        "  maintain check    [--sprint-id ID] [--threshold Nh] [--json]",
-        "  maintain sweep    [--sprint-id ID] [--threshold Nh] [--auto-close]",
-        "  maintain carryover --from-sprint ID --to-sprint ID",
-        "  db vacuum         [--json]",
-        "  db integrity      [--json]",
-        "",
-        "TOP-LEVEL",
-        "  export         --sprint-id ID [--output PATH]",
-        "  import         --file PATH",
-        "  handoff        [--sprint-id ID] [--output PATH] [--events N] [--format json|text]",
-        "  render         [--sprint-id ID] [--output PATH]",
-        "  next-work      [--sprint-id ID] [--json] [--explain]",
-        "                 [--project PROJECT_TOML]",
-        "  takeup         take|release|list|show|sweep",
-        "  session resume [--sprint-id ID] [--json]",
-        "  git-context    [--json]",
-        "  agent-protocol [--json]",
-        "  usage          [--context] [--sprint-id ID] [--json]",
-        "                 [--project PROJECT_TOML]",
-        "",
-        "PROJECTION-READS (guarded projection-backed reads, default off)",
-        "  projection-reads status  [--json]",
-        "  projection-reads enable  [--json]",
-        "  projection-reads disable [--json]   # rollback: returns all reads to backend",
+    root = click.get_current_context().find_root().command
+    click.echo(_cli_help.render_usage(root, version=__version__, unavailable=_unavailable_in_active_backend(obj)))
+    click.echo("\n".join([
         "",
         "ENV",
         "  SPRINTCTL_DB                    Database path (default: ~/.sprintctl/sprintctl.db)",
@@ -1035,8 +1045,7 @@ def usage_cmd(obj, as_context, sprint_id, project_path, as_json) -> None:
         "  SPRINTCTL_INSTANCE_ID           Stable per-process instance UUID",
         "  SPRINTCTL_PROJECTION_READS      Override projection-reads enable/disable for one invocation",
         "  SPRINTCTL_PROJECTION_STALE_SECONDS  Projection staleness threshold in seconds (default: 300)",
-    ]
-    click.echo("\n".join(lines))
+    ]))
 
 
 # ---------------------------------------------------------------------------
@@ -1504,6 +1513,6 @@ def register(root: click.Group, *, runtime: dict[str, object]) -> None:
     _RUNTIME.clear()
     _RUNTIME.update({name: value for name, value in runtime.items() if not name.startswith("__")})
     _sync_runtime()
-    for command in (handoff_cmd, agent_protocol_cmd, next_work_cmd, context_candidates_cmd, session, usage_cmd, git_context_cmd, render_cmd, migrate_to_remote_cmd, remote_backfill_cmd):
+    for command in (handoff_cmd, agent_protocol_cmd, next_work_cmd, context_candidates_cmd, session, usage_cmd, git_context_cmd, render_cmd, migrate_to_remote_cmd, remote_backfill_cmd, status_cmd):
         root.add_command(command)
         _wrap_runtime_callbacks(command)

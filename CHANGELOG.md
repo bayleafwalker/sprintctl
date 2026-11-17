@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Added `sprintctl status` (needs you / in flight / ready free vs reserved /
+  `next:` commands; `--json` is `sprintctl.status/v1`). The root help is grouped
+  by task with examples, bare `sprintctl` prints it (exit 0), a misspelled
+  command suggests the right one, and `sprintctl usage` is generated from the
+  command tree. `usage --context`, `next-work` and `item list` mark reserved
+  items, state real idle ages and print the exact next command; empty results
+  from a fallback database say so (`doctor` warns). Text `item list` defaults to
+  open items of the active sprint with `--limit`/`--all`; `--json` stays
+  unbounded and is compact off a TTY. `handoff` documents its file and event
+  effects and gains `--dry-run`.
 - Served operator-request reads now keep request headers, dependants and work
   revisions in one read-only snapshot while preserving caller transactions.
 

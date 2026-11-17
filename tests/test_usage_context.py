@@ -164,6 +164,6 @@ class TestUsageContext:
     def test_bare_usage_still_works_after_context_flag_added(self, runner, db_path):
         result = runner.invoke(cli, ["usage"])
         assert result.exit_code == 0
-        assert "SPRINT" in result.output
-        assert "ITEM" in result.output
+        assert "START HERE" in result.output
+        assert "item add" in result.output
         assert "--context" in result.output

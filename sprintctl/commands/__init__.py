@@ -131,6 +131,7 @@ reservation_group = reservation.reservation
 handoff_cmd = session.handoff_cmd
 agent_protocol_cmd = session.agent_protocol_cmd
 next_work_cmd = session.next_work_cmd
+status_cmd = session.status_cmd
 context_candidates_cmd = session.context_candidates_cmd
 session_group = session.session
 usage_cmd = session.usage_cmd

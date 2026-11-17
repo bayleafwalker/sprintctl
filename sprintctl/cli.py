@@ -11,6 +11,7 @@ from . import commands as _commands
 from . import served_routes as _served_routes
 from . import cli_runtime as _cli_runtime
 from . import debug_diagnostics as _debug_diagnostics
+from . import cli_help as _cli_help
 
 # Command modules retain private compatibility seams during the staged
 # extraction.  Export the runtime namespace deliberately (including private
@@ -32,7 +33,7 @@ def _get_project_stores(obj, project_value):
     )
 
 
-@click.group()
+@click.group(cls=_cli_help.RootGroup, invoke_without_command=True)
 @click.version_option(__version__, prog_name="sprintctl")
 @click.option("--repo-id", default=None, help="Explicit repository scope for this invocation")
 @click.option(
@@ -43,6 +44,10 @@ def _get_project_stores(obj, project_value):
 )
 @click.pass_context
 def cli(ctx: click.Context, repo_id: str | None, allow_markerless_nonlocal: bool) -> None:
+    """Advisory sprint coordination for agent sessions and operators."""
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+        ctx.exit(0)
     ctx.ensure_object(dict)
     ctx.obj.setdefault("conn", None)
     ctx.obj["explicit_repo_id"] = repo_id
@@ -180,6 +185,7 @@ def _install_served_command_guards(command: click.Command, prefix: tuple[str, ..
     command.callback = guarded_callback
 
 
+_cli_help.apply_short_help(cli)
 _CLICK_LEAF_PATHS = _click_leaf_paths(cli)
 assert _CLICK_LEAF_PATHS == _served_routes.classified_click_paths(), (
     "SERVED_COMMAND_DISPOSITIONS must classify every Click leaf exactly; "

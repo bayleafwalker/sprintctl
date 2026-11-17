@@ -26,6 +26,7 @@ import click
 from .. import __version__
 from .. import application as _application
 from .. import backend as _backend
+from .. import orientation as _orientation
 from .. import authority as _authority
 from .. import authority_config as _authority_config
 from .. import commands as _commands
@@ -1159,6 +1160,37 @@ def item_show(obj, item_id: str, as_json) -> None:
         click.echo("\nEvents: (none)")
 
 
+DEFAULT_ITEM_LIMIT = 50
+
+
+def _bound_items(items, *, status, sprint_id, project, show_all, limit, active_ids):
+    """Bound the text listing: open items of the active sprint, ``limit`` rows.
+
+    Returns the items to print and the ``…`` notes saying what was hidden.
+    An explicit --status, --sprint-id or --project is honoured as given.
+    """
+    notes: list[str] = []
+    if not show_all and sprint_id is None and not project:
+        active = set(active_ids())
+        if active:
+            others = [it for it in items if it.get("sprint_id") not in active]
+            items = [it for it in items if it.get("sprint_id") in active]
+            if others:
+                notes.append(f"… {len(others)} items in other sprints hidden (--all)")
+    if not show_all and status is None:
+        done = [it for it in items if it["status"] == "done"]
+        items = [it for it in items if it["status"] != "done"]
+        if done:
+            notes.insert(0, f"… {len(done)} done items hidden (--all)")
+    cap = None if show_all else (limit or DEFAULT_ITEM_LIMIT)
+    if limit is not None:
+        cap = limit
+    if cap is not None and len(items) > cap:
+        notes.append(f"… {len(items) - cap} more open items not shown (--limit N or --all)")
+        items = items[:cap]
+    return items, notes
+
+
 @item.command("list")
 @click.option("--sprint-id", type=str, default=None, help="Filter by sprint ID or repo#id")
 @click.option("--track", "track_name", default=None, help="Filter by track name")
@@ -1183,10 +1215,17 @@ def item_show(obj, item_id: str, as_json) -> None:
     flag_value=Path("."),
     help="Union backlog repositories from project.toml (a directory resolves upward).",
 )
-@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
+@click.option("--limit", type=click.IntRange(min=1), default=None, help="Show at most N items (text default: 50)")
+@click.option("--all", "show_all", is_flag=True, default=False, help="Include done items and other sprints; no limit")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON (unbounded unless --limit is given)")
 @click.pass_obj
-def item_list(obj, sprint_id, track_name, status, as_fzf, project_path, as_json) -> None:
-    """List work items."""
+def item_list(obj, sprint_id, track_name, status, as_fzf, project_path, limit, show_all, as_json) -> None:
+    """List work items (text: open items of the active sprint, 50 at most).
+
+    Without --all the text table hides done items and items of other sprints,
+    and says how many were hidden. --json and --fzf keep listing everything
+    unless --limit is given.
+    """
     if sprint_id is not None:
         sprint_id = _apply_scoped_id(obj, sprint_id, field="sprint")
     if as_json and as_fzf:
@@ -1222,15 +1261,28 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, project_path, as_json)
             )
         items = result["items"]
         if as_json:
-            click.echo(json.dumps(items, indent=2))
+            click.echo(_orientation.dumps(items[:limit]))
             return
         if not items:
             click.echo("No items found.")
             click.echo(_render_resolved_context(_resolved_context(config)))
             return
+        items, notes = _bound_items(
+            items, status=status, sprint_id=sprint_id, project=project_path is not None,
+            show_all=show_all, limit=limit,
+            active_ids=lambda: [
+                row["id"] for row in _run_served(
+                    "item list", _served.read_sprints, config.served_profile,
+                    repo_id=config.repo_id, active_only=True,
+                    resolved_context=_resolved_context(config),
+                )["sprints"]
+            ],
+        )
         rows = [[f"#{it['id']}", _style_status(it["status"]), _format_priority(it), it["track_name"], it.get("assignee") or "-", it["title"]] for it in items]
         for line in _render_table(["ID", "STATUS", "PRI", "TRACK", "ASSIGNEE", "TITLE"], rows):
             click.echo(line)
+        for note in notes:
+            click.echo(note)
         click.echo(_render_resolved_context(_resolved_context(config)))
         return
 
@@ -1254,10 +1306,10 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, project_path, as_json)
         # object shape, so freshness is intentionally not surfaced here.
         # Use `sprintctl projection-reads status --json` to check freshness
         # instead.
-        click.echo(json.dumps(items, indent=2))
+        click.echo(_orientation.dumps(items[:limit]))
         return
     if as_fzf:
-        for it in items:
+        for it in items[:limit]:
             assignee = it.get("assignee") or "-"
             priority = _format_priority(it)
             origin = f"{_escape_fzf_field(it['origin_repo'])}\t" if project_path is not None else ""
@@ -1278,7 +1330,13 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, project_path, as_json)
             click.echo(status_line)
     if not items:
         click.echo("No items found.")
+        _orientation.echo_fallback_notice()
         return
+    items, notes = _bound_items(
+        items, status=status, sprint_id=sprint_id, project=project_path is not None,
+        show_all=show_all, limit=limit,
+        active_ids=lambda: [row["id"] for row in scopes[0][2].list_active_sprints(scopes[0][1])],
+    )
     rows: list[list[str]] = []
     for it in items:
         assignee = it.get("assignee") or "-"
@@ -1299,6 +1357,8 @@ def item_list(obj, sprint_id, track_name, status, as_fzf, project_path, as_json)
     headers.extend(["STATUS", "PRI", "TRACK", "ASSIGNEE", "TITLE"])
     for line in _render_table(headers, rows):
         click.echo(line)
+    for note in notes:
+        click.echo(note)
 
 
 def _served_item_note(

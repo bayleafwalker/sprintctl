@@ -13,6 +13,7 @@ from typing import Any
 
 from . import contracts, maintain
 from . import reservation_policy as _reservation_policy
+from .orientation import format_age
 
 
 def _event_payload(event: dict[str, Any]) -> dict[str, Any]:
@@ -63,11 +64,17 @@ def _stale_after_hours() -> str:
     return f"{hours:g}"
 
 
+def _stale_summary(stale: list[dict[str, Any]]) -> str:
+    ages = [row["activity_age_seconds"] for row in stale if row.get("activity_age_seconds") is not None]
+    idle = f"idle up to {format_age(max(ages))}" if ages else "idle"
+    return f"{len(stale)} active reservation(s) {idle} (stale after {_stale_after_hours()}h)."
+
+
 def _conflicts(*, active_reservations, active_unreserved_items, blocked_items, stale_items, waiting, now):
     conflicts = []
     stale = [row for row in active_reservations if row.get("stale")]
     if stale:
-        conflicts.append({"kind": "stale-reservation", "severity": "warning", "summary": f"{len(stale)} active reservation(s) have been idle for {_stale_after_hours()} hours.", "reservation_ids": [row["id"] for row in stale], "item_ids": [row["work_item_id"] for row in stale]})
+        conflicts.append({"kind": "stale-reservation", "severity": "warning", "summary": _stale_summary(stale), "reservation_ids": [row["id"] for row in stale], "item_ids": [row["work_item_id"] for row in stale]})
     if active_unreserved_items:
         conflicts.append({"kind": "unreserved-active-work", "reason_code": "active-item-without-reservation", "severity": "warning", "summary": f"{len(active_unreserved_items)} active item(s) have no reservation and need resume, reassignment, or status triage.", "item_ids": [row["id"] for row in active_unreserved_items]})
     if waiting:
