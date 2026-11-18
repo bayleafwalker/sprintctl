@@ -70,13 +70,13 @@ class TestReleaseIntegrity:
         A schema29 owner reaches31 through the existing30 receipt migration,
         then the31 currentness constraint migration. Current source adds
         schema32 recipient consent, schema33 delivery storage, and schema34
-        adjunct v2 capability revisions. Version 0.28.2 keeps the existing
+        adjunct v2 capability revisions. Version 0.29.0 keeps the existing
         32-through-34 compatibility contract."""
         from sprintctl import pg_migrations
 
         with (ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
-        assert pyproject["project"]["version"] == __version__ == "0.28.2"
+        assert pyproject["project"]["version"] == __version__ == "0.29.0"
         assert pyproject["tool"]["sprintctl"]["remote-schema-version"] == 34
         assert pg_migrations.MINIMUM_SCHEMA_VERSION == 32
         assert pg_migrations.CURRENT_SCHEMA_VERSION == 34

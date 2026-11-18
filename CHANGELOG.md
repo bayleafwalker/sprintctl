@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.29.0 — 2026-11-18
 
 - Added `sprintctl status` (needs you / in flight / ready free vs reserved /
   `next:` commands; `--json` is `sprintctl.status/v1`). The root help is grouped
