@@ -691,7 +691,10 @@ class TestTakeoverAndStaleCompletion:
         destination = pg_test_scope("restored-work-archive")
         source = {**archive, "repo_id": destination}
         with psycopg.connect(_PG_URL, row_factory=dict_row) as conn:
-            restored = pg.PgStore(conn, destination, remote_schema_version=35)
+            restored = pg.PgStore(
+                conn, destination, remote_schema_version=35,
+                connection_factory=lambda: psycopg.connect(_PG_URL, row_factory=dict_row),
+            )
             restore_meta = {"workspace_id": "destination-workspace", "actor": "destination-admin"}
             invalid = deepcopy(source)
             invalid["items"][-1]["title"] = None
