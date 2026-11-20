@@ -95,7 +95,8 @@ def test_after_actual_native_effect_python_fault_leaves_pending_owner_state(writ
             raise RuntimeError('after actual direct native effect')
         if point == 'stamp':
             original = pg._stamp_awaiting_reports
-            def stamp(*args):
+            def stamp(*args, reviewed_report_id):
+                assert reviewed_report_id is None
                 original(*args)
                 observe()
             patch.setattr(pg, '_stamp_awaiting_reports', stamp)
