@@ -530,6 +530,22 @@ def test_create_task_rolls_back_the_track_and_item_on_failure(store, monkeypatch
     assert write.effects() == 1
 
 
+def test_create_task_key_is_shared_across_client_argument_shapes(store):
+    write = _create_task_write(store)
+    write.context.idempotency_key = "different-envelope-key"
+    failure = _refused(
+        lambda: _invoke(store, write.operation, write.arguments, write.context)
+    )
+    assert failure.code == "invalid-arguments"
+    assert write.effects() == 0
+
+    write.context.idempotency_key = write.arguments["idempotency_key"]
+    with_defaults = dict(write.arguments, description=None, assignee=None, priority=None)
+    first = _invoke(store, write.operation, with_defaults, write.context)
+    assert _invoke(store, write.operation, write.arguments, write.context) == first
+    assert write.effects() == 1
+
+
 KEYED_WRITES: dict[str, Callable[[Any], KeyedWrite]] = {
     "register_run": _register_run_write,
     "create_task": _create_task_write,
