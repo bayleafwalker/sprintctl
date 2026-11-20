@@ -89,6 +89,7 @@ PUBLISHED_OPERATIONS = (
         "work.message.send-v1",
         "work.message.status-v1",
         "work.outcome.accept-v1",
+        "work.outcome.review-queue-v1",
         "work.outcome.review-v1",
         "work.project.batch",
         "work.project.context",
