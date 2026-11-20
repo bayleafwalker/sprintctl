@@ -152,6 +152,12 @@ def _validate(records, repo, workspace, item_id):
         or decision["release_digest"] not in rels
     ):
         raise ValueError("broken historical Decision/Release join")
+    if decision["actor"] != pg.SETTLEMENT_ACTOR or any(
+        d["id"] != decision["id"] and d["kind"] == "accept"
+        and d["actor"] == pg.SETTLEMENT_ACTOR
+        for d in tables["work_decision"]
+    ):
+        raise ValueError("archive must contain exactly one owner lease settlement")
     lease = leases.get(report["lease_id"])
     release = rels[decision["release_digest"]]
     if (
@@ -605,7 +611,11 @@ def import_fixture_result(
             if set(record["data"]) != columns:
                 raise ValueError("owner column shape mismatch")
         base = [r for r in records if r["table"] in pg._EXPORT_TABLES]
-        counts = pg.import_ndjson(store, base, _archive_transaction=True)
+        decision_id = next(
+            r["data"]["terminal_decision_id"]
+            for r in base if r["table"] == "work_item" and r["data"]["id"] == item_id
+        )
+        counts = pg.import_ndjson(store, base, _fixture_settlement_id=decision_id)
         with store.conn.cursor() as cur:
             for table in NATIVE:
                 rows = [r for r in records if r["table"] == table]

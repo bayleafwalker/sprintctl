@@ -38,6 +38,7 @@ def shell(store):
     from vuoro_service.identity import Identity, StaticBearerIdentityResolver
 
     registry = CatalogRegistry()
+    pg.require_compatible_schema(store)
     register_work_catalog(registry, WorkApplication.postgres(store))
     token = secrets.token_urlsafe(32)
     app = create_app(
@@ -591,6 +592,12 @@ def test_actual_native_source_archive_target_and_refusals(monkeypatch):
 
             # Resealing outer projections cannot hide wrong native digest domains.
             mutations = [
+                lambda b: next(
+                    r["data"]
+                    for r in b["records"]
+                    if r["table"] == "work_decision"
+                    and r["data"]["kind"] == "accept"
+                ).update(actor="unverified-reviewer"),
                 lambda b: b.update(workspace_id="other"),
                 lambda b: b["source"].update(schema=999),
                 lambda b: b["records"].append(

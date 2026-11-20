@@ -5537,7 +5537,7 @@ def import_ndjson(
     remap_ids: bool = False,
     trusted_state_transfer: bool = False,
     archive_result: dict | None = None,
-    _archive_transaction: bool = False,
+    _fixture_settlement_id: int | None = None,
 ) -> dict[str, int]:
     """Import NDJSON records into pg, preserving original sqlite integer IDs.
 
@@ -5550,6 +5550,12 @@ def import_ndjson(
     imports demote them to explicit non-authoritative imported history.
     All work done in a single transaction.
     """
+    if _fixture_settlement_id is not None:
+        from .archival_result import _fixture
+
+        if archive_result is not None or replace or remap_ids or trusted_state_transfer:
+            raise ValueError("fixture settlement import requires an isolated archive transaction")
+        _fixture(store.conn, destination=True)
     if archive_result is not None:
         if replace or remap_ids or trusted_state_transfer:
             raise ValueError("archival reconstruction cannot replace, remap or restore authority")
@@ -5630,6 +5636,15 @@ def import_ndjson(
                 data = dict(record["data"])
                 rid = record.get("repo_id", store.repo_id)
 
+                if (
+                    _fixture_settlement_id is not None and table == "work_decision"
+                    and data["id"] == _fixture_settlement_id
+                    and data["kind"] == "accept" and data["actor"] == SETTLEMENT_ACTOR
+                ):
+                    # Validated as historical data in an empty disposable archive
+                    # target. The trigger consumes this marker on this row only.
+                    cur.execute("SELECT set_config('sprintctl.lease_basis_checked', 'on', true)")
+
                 if table == "work_item" and "legacy" not in data:
                     # An archive that predates decisions holds only legacy
                     # rows.  A row that already carries decision columns is
@@ -5678,10 +5693,10 @@ def import_ndjson(
             # names this import instead of surfacing at a later commit.
             cur.execute("SET CONSTRAINTS ALL IMMEDIATE")
 
-        if not _archive_transaction:
+        if _fixture_settlement_id is None:
             store.conn.commit()
     except Exception:
-        if not _archive_transaction:
+        if _fixture_settlement_id is None:
             store.conn.rollback()
         raise
     return counts
