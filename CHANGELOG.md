@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.30.0
+
+- Added retry-safe task creation to the served API and CLI, with an option to require independent outcome review.
+- Added a browser review queue and report-bound acceptance. Acceptance receipts remain readable after archival restore.
+- Kept the existing PostgreSQL schema compatibility range (32–34).
+
 ## 0.29.0 — 2026-11-18
 
 - Added `sprintctl status` (needs you / in flight / ready free vs reserved /
