@@ -4194,6 +4194,82 @@ def _stamp_awaiting_reports(
             )
 
 
+def review_outcome_snapshot(
+    store: PgStore, *, item_id: int, workspace_id: str, principal_id: str,
+) -> dict:
+    """Read the exact report and decision basis for a browser reviewer."""
+    with repeatable_read_snapshot(store) as snapshot, snapshot.conn.cursor() as cur:
+        cur.execute("SET LOCAL statement_timeout = '5s'")
+        cur.execute(
+            "SELECT id,title,description,status,resolution,terminal_decision_id "
+            "FROM work_item WHERE repo_id=%s AND id=%s",
+            (store.repo_id, item_id),
+        )
+        item = cur.fetchone()
+        if item is None:
+            raise LeaseRefused("work-not-found", "The work item is not in this repository")
+        release = _current_release_locked(cur, store.repo_id, item_id)
+        cur.execute(
+            "SELECT r.* FROM work_outcome_report r WHERE r.repo_id=%s "
+            "AND r.workspace_id=%s AND r.work_item_id=%s "
+            "ORDER BY (r.disposition IN ('awaiting-verification','settled')) DESC, "
+            "r.created_at DESC,r.report_id DESC LIMIT 26",
+            (store.repo_id, workspace_id, item_id),
+        )
+        rows = cur.fetchall()
+        decision = None
+        if item["terminal_decision_id"] is not None:
+            cur.execute(
+                "SELECT * FROM work_decision WHERE repo_id=%s AND work_item_id=%s AND id=%s",
+                (store.repo_id, item_id, item["terminal_decision_id"]),
+            )
+            row = cur.fetchone()
+            if row is not None:
+                decision = _decision_row(row)
+        candidate = None
+        if item["status"] == "active" and release is not None:
+            cur.execute(
+                "SELECT * FROM work_lease WHERE repo_id=%s AND work_item_id=%s "
+                "AND workspace_id=%s AND state='active'",
+                (store.repo_id, item_id, workspace_id),
+            )
+            lease = cur.fetchone()
+            if (
+                lease is not None and lease["basis_release_digest"] == release["release_digest"]
+                and lease["principal_id"].rsplit(":", 1)[0] != principal_id.rsplit(":", 1)[0]
+                and _lease_basis_reason(cur, snapshot, lease, item) is None
+            ):
+                config = _combined(
+                    _verification(lease["verification_profile"], lease["required_checks"]),
+                    verification_config(cur, snapshot, item_id),
+                )
+                if (
+                    "human-authorization" in config["requirements"]
+                    and not set(config["requirements"]) - {"checks", "human-authorization"}
+                    and not any(
+                        row["blocker_status"] != "done" for row in list_deps_blocking(snapshot, item_id)
+                    )
+                ):
+                    candidate = next((
+                        row["report_id"] for row in rows[:25]
+                        if row["lease_id"] == lease["lease_id"]
+                        and row["principal_id"] == lease["principal_id"]
+                        and row["run_id"] == lease["run_id"]
+                        and row["disposition"] == "awaiting-verification"
+                        and row["outcome"] == "succeeded"
+                        and "human-authorization" in _verification(row["verification_profile"], [])["requirements"]
+                        and _verification_verdict(config, row["checks"])[0] == "awaiting-verification"
+                    ), None)
+        return {
+            "item": item,
+            "release": release,
+            "reports": [_report_row(row) for row in rows[:25]],
+            "reports_truncated": len(rows) > 25,
+            "reviewable_report_id": candidate,
+            "decision": decision,
+        }
+
+
 def accept_reviewed_outcome(
     cur: Any, store: PgStore, *, item_id: int, workspace_id: str,
     principal_id: str, actor: str, report_id: str, payload_digest: str,

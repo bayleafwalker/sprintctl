@@ -1869,6 +1869,22 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         },
     ),
     WorkOperationContract(
+        "work.outcome.review-v1",
+        _object_schema({"item_id": {"type": "integer", "minimum": 1}}, required=("item_id",)),
+        _result_schema(
+            ("item", "release", "reports", "reports_truncated", "reviewable_report_id", "decision"),
+            {
+                "item": {"type": "object"},
+                "release": {"type": ["object", "null"]},
+                "reports": {"type": "array", "items": _OUTCOME_REPORT_SCHEMA, "maxItems": 25},
+                "reports_truncated": {"type": "boolean"},
+                "reviewable_report_id": {"type": ["string", "null"]},
+                "decision": {"type": ["object", "null"]},
+            },
+        ),
+        "work:review.accept", "read", "not-allowed", required_remote_schema_version=29,
+    ),
+    WorkOperationContract(
         "work.outcome.accept-v1",
         _object_schema(
             {

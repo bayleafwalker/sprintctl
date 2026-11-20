@@ -861,6 +861,7 @@ class WorkApplication:
             "work.lease.complete-v1": target._claim_complete,
             "work.lease.read-v1": target._claim_read,
             "work.outcome.accept-v1": target._outcome_accept,
+            "work.outcome.review-v1": target._outcome_review,
             _effect.OPERATION_PROPOSE: target._effect_propose,
             _effect.OPERATION_BOUND_PROPOSE: target._effect_propose_bound,
             _effect.OPERATION_GET: target._effect_get,
@@ -3209,22 +3210,40 @@ class WorkApplication:
             )
         return result
 
-    def _outcome_accept(
+    def _outcome_review(
         self, arguments: dict[str, Any], context: InvocationContext,
     ) -> dict[str, Any]:
+        principal_id, workspace_id = self._browser_review_binding(context)
+        from . import pg as _pg
+
+        try:
+            return _pg.review_outcome_snapshot(
+                self.store, item_id=_positive_int(arguments.get("item_id"), "item_id"),
+                workspace_id=workspace_id, principal_id=principal_id,
+            )
+        except _pg.LeaseRefused as exc:
+            raise ApplicationRejection(exc.code, str(exc), 404) from exc
+
+    def _browser_review_binding(self, context: InvocationContext) -> tuple[str, str]:
         identity = context.identity
         if (
             getattr(identity, "browser_work_review", False) is not True
             or "work:review.accept" not in identity.authorities
         ):
             raise ApplicationRejection(
-                "review-identity-required", "A browser reviewer must accept the outcome", 403,
+                "review-identity-required", "A browser reviewer is required", 403,
             )
         if (getattr(self.store, "remote_schema_version", None) or 0) < 29:
             raise ApplicationRejection(
                 "owner-capability-unavailable", "Outcome review requires schema 29", 503,
             )
-        principal_id, workspace_id = _identity_binding(context)
+        return _identity_binding(context)
+
+    def _outcome_accept(
+        self, arguments: dict[str, Any], context: InvocationContext,
+    ) -> dict[str, Any]:
+        identity = context.identity
+        principal_id, workspace_id = self._browser_review_binding(context)
         key = _idempotency_key(arguments.get("idempotency_key"))
         if context.idempotency_key != key:
             raise ApplicationRejection(

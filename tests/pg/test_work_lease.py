@@ -540,7 +540,8 @@ class TestTakeoverAndStaleCompletion:
         assert final["current_lease"] is None
         assert [r["disposition"] for r in final["outcome_reports"]] == ["rejected", "settled"]
 
-    def test_browser_review_accepts_only_the_exact_pending_successor_report(self, store):
+    def test_browser_review_accepts_only_the_exact_pending_successor_report(self, store, monkeypatch):
+        monkeypatch.setattr(store, "connection_factory", lambda: psycopg.connect(_PG_URL, row_factory=dict_row))
         item, dependent = _items(store, 2)
         pg.add_dep(store, item, dependent)
         sprint = pg.get_work_item(store, item)["sprint_id"]
@@ -580,6 +581,15 @@ class TestTakeoverAndStaleCompletion:
             return context
 
         independent = reviewer("github:300:0")
+        review_op = "work.outcome.review-v1"
+        view = _invoke(store, review_op, {"item_id": item}, independent)
+        assert view["reviewable_report_id"] == report["report_id"]
+        assert view["release"]["release_digest"] == args["release_digest"]
+        assert {row["disposition"] for row in view["reports"]} == {
+            "rejected", "awaiting-verification",
+        }
+        self_view = _invoke(store, review_op, {"item_id": item}, reviewer("github:200:1"))
+        assert self_view["reviewable_report_id"] is None
         assert _refused(lambda: _invoke(store, op, args, reviewer(
             "github:300:0", browser=False,
         ))).code == "review-identity-required"
@@ -608,6 +618,9 @@ class TestTakeoverAndStaleCompletion:
         assert decision["actor"] == independent.identity.actor
         assert decision["release_digest"] == args["release_digest"]
         assert decision["evidence_digests"] == [args["payload_digest"]]
+        view = _invoke(store, review_op, {"item_id": item}, independent)
+        assert view["reviewable_report_id"] is None
+        assert view["decision"]["id"] == receipt["decision_id"]
         assert dependent in {row["id"] for row in pg.get_ready_items(store, sprint)}
 
     def test_a_replayed_late_completion_refuses_the_same_way_with_one_report(self, store):
