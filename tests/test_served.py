@@ -265,6 +265,22 @@ def test_event_add_and_item_create_never_send_a_client_actor(fake_vuoro_client):
     assert sprint["arguments"] == {"sprint_id": None}
 
 
+def test_item_create_with_key_sends_it_in_arguments_and_envelope(fake_vuoro_client):
+    result = served.item_create(
+        _profile(), repo_id="repo-x", sprint_id=9, track_name="served",
+        title="Task", idempotency_key="retry-task-9", require_review=True,
+    )
+
+    assert result["operation"] == "work.item.create-v1"
+    assert result["arguments"]["require_review"] is True
+    assert result["arguments"]["idempotency_key"] == "retry-task-9"
+    client = _FakeAsyncVuoroClient.instances[-1]
+    assert client.invocations[0][2] == {
+        "repo_id": "repo-x", "idempotency_key": "retry-task-9",
+    }
+
+
+
 def test_item_edit_sends_required_revision_and_never_a_client_actor(fake_vuoro_client):
     result = served.item_edit(
         _profile(),

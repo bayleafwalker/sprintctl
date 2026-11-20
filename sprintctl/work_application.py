@@ -815,6 +815,7 @@ class WorkApplication:
             "work.event.add": target._event_add,
             "work.handoff.record": target._handoff_record,
             "work.item.create": target._item_create,
+            "work.item.create-v1": target._item_create_keyed,
             "work.item.edit": target._item_edit,
             "work.item.priority": target._item_priority,
             "work.item.ref.add": target._item_ref_add,
@@ -860,6 +861,9 @@ class WorkApplication:
             # and digest, so a key used under either name is one report.
             "work.lease.complete-v1": target._claim_complete,
             "work.lease.read-v1": target._claim_read,
+            "work.outcome.accept-v1": target._outcome_accept,
+            "work.outcome.review-v1": target._outcome_review,
+            "work.outcome.review-queue-v1": target._outcome_review_queue,
             _effect.OPERATION_PROPOSE: target._effect_propose,
             _effect.OPERATION_BOUND_PROPOSE: target._effect_propose_bound,
             _effect.OPERATION_GET: target._effect_get,
@@ -1677,7 +1681,44 @@ class WorkApplication:
         return {"event_id": event_id, "sprint_id": sprint_id, "item_id": work_item_id,
                 "type": event_type, "actor": context.identity.actor, "source": source_type}
 
-    def _item_create(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+    def _item_create_keyed(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        if (getattr(self.store, "remote_schema_version", None) or 0) < 17:
+            raise ApplicationRejection(
+                "owner-capability-unavailable",
+                "keyed task creation requires the PostgreSQL schema 17 owner",
+                503,
+            )
+        require_review = arguments.get("require_review", False)
+        if type(require_review) is not bool:
+            raise ApplicationRejection("invalid-arguments", "require_review must be a boolean", 422)
+        if require_review and self.store.remote_schema_version < 29:
+            raise ApplicationRejection(
+                "owner-capability-unavailable", "Reviewer-gated tasks require schema 29", 503,
+            )
+        key = _idempotency_key(arguments.get("idempotency_key"))
+        if context.idempotency_key is not None and context.idempotency_key != key:
+            raise ApplicationRejection(
+                "invalid-arguments",
+                "invocation and task idempotency keys must match",
+                422,
+            )
+        request = {name: value for name, value in arguments.items() if value is not None}
+        if not require_review:
+            request.pop("require_review", None)
+        return self._idempotent_write(
+            context, "work.item.create-v1", request,
+            lambda _cur, _digest: self._item_create(
+                arguments, context, transactional=True,
+                review_actor=context.identity.actor if require_review else None,
+            ),
+        )
+
+    def _item_create(
+        self, arguments: dict[str, Any], _context: InvocationContext, *,
+        transactional: bool = False, review_actor: str | None = None,
+    ) -> dict[str, Any]:
         """Create an item and resolve its track in the server-side repository scope."""
         sprint_id = _positive_int(arguments.get("sprint_id"), "sprint_id")
         track_name = _optional_text(arguments.get("track_name"), "track_name")
@@ -1696,17 +1737,28 @@ class WorkApplication:
         if assignee is not None and not isinstance(assignee, str):
             raise ApplicationRejection("invalid-arguments", "assignee must be a string or null", 422)
         priority = arguments.get("priority")
+        release_digest = None
         try:
             db.validate_priority(priority)
-            track_id = self.backend.get_or_create_track(self.store, sprint_id, track_name)
-            item_id = self.backend.create_work_item(self.store, sprint_id, track_id, title,
-                description=description or "", assignee=assignee, priority=priority)
+            if transactional:
+                item_id, release_digest = self.backend.create_work_item_in_transaction(
+                    self.store, sprint_id, track_name, title,
+                    description=description or "", assignee=assignee, priority=priority,
+                    review_actor=review_actor,
+                )
+            else:
+                track_id = self.backend.get_or_create_track(self.store, sprint_id, track_name)
+                item_id = self.backend.create_work_item(self.store, sprint_id, track_id, title,
+                    description=description or "", assignee=assignee, priority=priority)
         except ValueError as exc:
             raise ApplicationRejection("item-create-rejected", str(exc)) from exc
         item = self.backend.get_work_item(self.store, item_id)
         if item is None:  # pragma: no cover - backend postcondition
             raise ApplicationRejection("item-create-failed", "created item could not be read back", 500)
-        return {"item": item, "track_name": track_name}
+        result = {"item": item, "track_name": track_name}
+        if release_digest is not None:
+            result["review_release_digest"] = release_digest
+        return result
 
     def _item_edit(
         self, arguments: dict[str, Any], context: InvocationContext
@@ -3207,6 +3259,78 @@ class WorkApplication:
                 details=report.get("details"),
             )
         return result
+
+    def _outcome_review_queue(
+        self, arguments: dict[str, Any], context: InvocationContext,
+    ) -> dict[str, Any]:
+        principal_id, workspace_id = self._browser_review_binding(context)
+        from . import pg as _pg
+
+        cursor = arguments.get("after_item_id")
+        return _pg.list_pending_outcome_reviews(
+            self.store, workspace_id=workspace_id, principal_id=principal_id,
+            after_item_id=0 if cursor is None else _positive_int(cursor, "after_item_id"),
+        )
+
+    def _outcome_review(
+        self, arguments: dict[str, Any], context: InvocationContext,
+    ) -> dict[str, Any]:
+        principal_id, workspace_id = self._browser_review_binding(context)
+        from . import pg as _pg
+
+        try:
+            return _pg.review_outcome_snapshot(
+                self.store, item_id=_positive_int(arguments.get("item_id"), "item_id"),
+                workspace_id=workspace_id, principal_id=principal_id,
+            )
+        except _pg.LeaseRefused as exc:
+            raise ApplicationRejection(exc.code, str(exc), 404) from exc
+
+    def _browser_review_binding(self, context: InvocationContext) -> tuple[str, str]:
+        identity = context.identity
+        if (
+            getattr(identity, "browser_work_review", False) is not True
+            or "work:review.accept" not in identity.authorities
+        ):
+            raise ApplicationRejection(
+                "review-identity-required", "A browser reviewer is required", 403,
+            )
+        if (getattr(self.store, "remote_schema_version", None) or 0) < 29:
+            raise ApplicationRejection(
+                "owner-capability-unavailable", "Outcome review requires schema 29", 503,
+            )
+        return _identity_binding(context)
+
+    def _outcome_accept(
+        self, arguments: dict[str, Any], context: InvocationContext,
+    ) -> dict[str, Any]:
+        identity = context.identity
+        principal_id, workspace_id = self._browser_review_binding(context)
+        key = _idempotency_key(arguments.get("idempotency_key"))
+        if context.idempotency_key != key:
+            raise ApplicationRejection(
+                "invalid-arguments", "Invocation and review idempotency keys must match", 422,
+            )
+        item_id = _positive_int(arguments.get("item_id"), "item_id")
+        report_id = _required_text(arguments.get("report_id"), "report_id")
+        payload_digest = _required_text(arguments.get("payload_digest"), "payload_digest")
+        release_digest = _required_text(arguments.get("release_digest"), "release_digest")
+        rationale = _required_text(arguments.get("rationale"), "rationale")
+
+        from . import pg as _pg
+
+        try:
+            return self._idempotent_write(
+                context, "work.outcome.accept-v1", arguments,
+                lambda cur, _digest: _pg.accept_reviewed_outcome(
+                    cur, self.store, item_id=item_id, workspace_id=workspace_id,
+                    principal_id=principal_id, actor=identity.actor, report_id=report_id,
+                    payload_digest=payload_digest, release_digest=release_digest, rationale=rationale,
+                ),
+            )
+        except _pg.LeaseRefused as exc:
+            status = {"report-not-found": 404, "independent-review-required": 403}.get(exc.code, 409)
+            raise ApplicationRejection(exc.code, str(exc), status) from exc
 
     def _claim_read(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
         item_id = _positive_int(arguments.get("item_id"), "item_id")

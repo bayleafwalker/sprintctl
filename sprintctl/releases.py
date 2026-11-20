@@ -60,6 +60,7 @@ VERIFICATION_REQUIREMENTS: dict[str, frozenset[str]] = {
 #: the decision path yet, and accepting the name would promise a bar nothing
 #: enforces.
 ENFORCED_REQUIREMENTS = frozenset({"checks"})
+BROWSER_REVIEW_PROTOCOL = "browser-outcome-v1"
 SUPPORTED_VERIFICATION_PROFILES = tuple(
     profile for profile in VERIFICATION_PROFILES
     if VERIFICATION_REQUIREMENTS[profile] <= ENFORCED_REQUIREMENTS
@@ -160,9 +161,15 @@ def normalize_acceptance_contract(contract: Mapping[str, Any] | None) -> dict[st
                 "acceptance_contract.effect_check_revisions must map one to 64 "
                 "non-empty check names to exact sha256 revisions"
             )
+    browser_review = "review_protocol" in contract
+    if browser_review and (
+        contract["review_protocol"] != BROWSER_REVIEW_PROTOCOL
+        or contract.get("verification_profile") != "human-authorized"
+    ):
+        raise ValueError("browser review requires the human-authorized verification profile")
     if "verification_profile" in contract:
         profile = contract["verification_profile"]
-        if profile not in SUPPORTED_VERIFICATION_PROFILES:
+        if not browser_review and profile not in SUPPORTED_VERIFICATION_PROFILES:
             unenforced = (
                 isinstance(profile, str) and profile in VERIFICATION_PROFILES
             )

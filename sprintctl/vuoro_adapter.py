@@ -1869,6 +1869,69 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         },
     ),
     WorkOperationContract(
+        "work.outcome.review-queue-v1",
+        _object_schema({"after_item_id": {"type": "integer", "minimum": 1}}),
+        _result_schema(
+            ("items", "next_after_item_id"),
+            {
+                "items": {"type": "array", "maxItems": 25, "items": _object_schema(
+                    {
+                        "item_id": {"type": "integer", "minimum": 1},
+                        "title": {"type": "string"},
+                        "report_id": _OUTCOME_REPORT_SCHEMA["properties"]["report_id"],
+                        "created_at": {"type": "string"},
+                    },
+                    required=("item_id", "title", "report_id", "created_at"),
+                )},
+                "next_after_item_id": {"type": ["integer", "null"], "minimum": 1},
+            },
+        ),
+        "work:review.accept", "read", "not-allowed", required_remote_schema_version=29,
+    ),
+    WorkOperationContract(
+        "work.outcome.review-v1",
+        _object_schema({"item_id": {"type": "integer", "minimum": 1}}, required=("item_id",)),
+        _result_schema(
+            ("item", "release", "reports", "reports_truncated", "reviewable_report_id", "decision"),
+            {
+                "item": {"type": "object"},
+                "release": {"type": ["object", "null"]},
+                "reports": {"type": "array", "items": _OUTCOME_REPORT_SCHEMA, "maxItems": 25},
+                "reports_truncated": {"type": "boolean"},
+                "reviewable_report_id": {"type": ["string", "null"]},
+                "decision": {"type": ["object", "null"]},
+                "acceptance_receipt": {"type": ["object", "null"]},
+            },
+        ),
+        "work:review.accept", "read", "not-allowed", required_remote_schema_version=29,
+    ),
+    WorkOperationContract(
+        "work.outcome.accept-v1",
+        _object_schema(
+            {
+                "item_id": {"type": "integer", "minimum": 1},
+                "report_id": _OUTCOME_REPORT_SCHEMA["properties"]["report_id"],
+                "payload_digest": _OUTCOME_REPORT_SCHEMA["properties"]["payload_digest"],
+                "release_digest": _OUTCOME_REPORT_SCHEMA["properties"]["payload_digest"],
+                "rationale": {"type": "string", "minLength": 1, "maxLength": 4000},
+                "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
+            },
+            required=("item_id", "report_id", "payload_digest", "release_digest", "rationale", "idempotency_key"),
+        ),
+        _result_schema(
+            ("item_id", "report_id", "payload_digest", "release_digest", "decision_id", "reviewer_principal_id"),
+            {
+                "item_id": {"type": "integer", "minimum": 1},
+                "report_id": _OUTCOME_REPORT_SCHEMA["properties"]["report_id"],
+                "payload_digest": _OUTCOME_REPORT_SCHEMA["properties"]["payload_digest"],
+                "release_digest": _OUTCOME_REPORT_SCHEMA["properties"]["payload_digest"],
+                "decision_id": {"type": "integer", "minimum": 1},
+                "reviewer_principal_id": {"type": "string", "minLength": 1},
+            },
+        ),
+        "work:review.accept", "write", "required", required_remote_schema_version=29,
+    ),
+    WorkOperationContract(
         "work.lease.read-v1",
         _object_schema({"item_id": {"type": "integer", "minimum": 1}}, required=("item_id",)),
         _result_schema(
@@ -2444,6 +2507,29 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
             {"item": {"type": "object"}, "track_name": {"type": "string"}},
         ),
         "work:lifecycle", "write", "not-allowed",
+    ),
+    WorkOperationContract(
+        "work.item.create-v1",
+        _object_schema(
+            {
+                "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
+                "require_review": {"type": "boolean"},
+                "sprint_id": {"type": "integer", "minimum": 1},
+                "track_name": {"type": "string", "minLength": 1},
+                "title": {"type": "string", "minLength": 1},
+                "description": {"type": ["string", "null"]},
+                "assignee": {"type": ["string", "null"]},
+                "priority": {"type": ["integer", "null"], "minimum": 1, "maximum": 9},
+            }, required=("sprint_id", "track_name", "title", "idempotency_key"),
+        ),
+        _result_schema(
+            ("item", "track_name"),
+            {
+                "item": {"type": "object"}, "track_name": {"type": "string"},
+                "review_release_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            },
+        ),
+        "work:task.create", "write", "required", required_remote_schema_version=17,
     ),
     WorkOperationContract(
         "work.item.edit",

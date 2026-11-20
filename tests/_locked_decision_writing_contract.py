@@ -369,7 +369,8 @@ class LockedDecisionWritingCases:
             patch.setattr(d.backend, decoder_name, decode)
             if d.is_pg:
                 original_stamp = d.backend._stamp_awaiting_reports
-                def stamp(cur, repo_id, item_id, recorded):
+                def stamp(cur, repo_id, item_id, recorded, *, reviewed_report_id):
+                    assert reviewed_report_id is None
                     assert len(decoded) == 1 and recorded is decoded[0]
                     original_stamp(cur, repo_id, item_id, recorded)
                     order.append('stamp-reports')

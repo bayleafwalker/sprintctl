@@ -3782,6 +3782,38 @@ def create_work_item(
     )
 
 
+def create_work_item_in_transaction(
+    store: PgStore,
+    sprint_id: int,
+    track_name: str,
+    title: str,
+    *,
+    description: str,
+    assignee: str | None,
+    priority: int | None,
+    review_actor: str | None = None,
+) -> tuple[int, str | None]:
+    """Create a work item, its track, and any review policy atomically."""
+    track = _TrackPg(store, commit_insert=False)
+    adapter = _WorkItemPg(store, commit_insert=False)
+    track_id = _trackcore.get_or_create_track(track, sprint_id, track_name)
+    item_id = _workitemcore.create_work_item(
+        adapter, sprint_id, track_id, title, description, assignee, priority
+    )
+    release_digest = None
+    if review_actor is not None:
+        with store.conn.cursor() as cur:
+            item, revision, revise_count = _release_basis_locked(cur, store.repo_id, item_id)
+            release_digest = _freeze_release_locked(
+                cur, store.repo_id, item, revision, revise_count, actor=review_actor,
+                acceptance_contract={
+                    "verification_profile": "human-authorized",
+                    "review_protocol": _releases.BROWSER_REVIEW_PROTOCOL,
+                },
+            )
+    return item_id, release_digest
+
+
 @contextmanager
 def _carryover_transaction(store: PgStore):
     """Own one source row lock, copy, Decision and audit-event transaction."""
@@ -4022,12 +4054,31 @@ def _decision_row(row: Any) -> dict:
     return decision
 
 
-def _decide_locked(cur: Any, repo_id: str, item: Any, decision: dict) -> dict:
+def _requires_browser_review(cur: Any, repo_id: str, item_id: int) -> bool:
+    cur.execute(
+        "SELECT 1 FROM work_release r WHERE r.repo_id=%s AND r.work_item_id=%s "
+        "AND r.acceptance_contract->>'review_protocol'=%s "
+        "AND r.revise_count=(SELECT count(*) FROM work_decision d WHERE d.repo_id=r.repo_id "
+        "AND d.work_item_id=r.work_item_id AND d.kind='revise') LIMIT 1",
+        (repo_id, item_id, _releases.BROWSER_REVIEW_PROTOCOL),
+    )
+    return cur.fetchone() is not None
+
+
+def _decide_locked(
+    cur: Any, repo_id: str, item: Any, decision: dict, *, reviewed_report_id: str | None = None
+) -> dict:
     """Record one normalized decision about an item already locked FOR UPDATE.
 
     A terminal kind closes the item in the same statement that binds it to the
     decision, so the item can never be done without one.
     """
+
+    if (
+        decision["kind"] == "accept" and reviewed_report_id is None
+        and _requires_browser_review(cur, repo_id, int(item["id"]))
+    ):
+        raise InvalidTransition("This release requires acceptance of an exact report by a browser reviewer")
 
     def successor_exists(superseded_by):
         cur.execute(
@@ -4063,7 +4114,7 @@ def _decide_locked(cur: Any, repo_id: str, item: Any, decision: dict) -> dict:
         return recorded
 
     def stamp_reports(item_id, handle):
-        _stamp_awaiting_reports(cur, repo_id, item_id, handle)
+        _stamp_awaiting_reports(cur, repo_id, item_id, handle, reviewed_report_id=reviewed_report_id)
 
     def bind_legacy(item_id, resolution, handle):
         # Bind the historical closure without rewriting its status or close time.
@@ -4108,7 +4159,10 @@ def _decide_locked(cur: Any, repo_id: str, item: Any, decision: dict) -> dict:
     )
 
 
-def _stamp_awaiting_reports(cur: Any, repo_id: str, item_id: int, decision: Mapping[str, Any]) -> None:
+def _stamp_awaiting_reports(
+    cur: Any, repo_id: str, item_id: int, decision: Mapping[str, Any],
+    *, reviewed_report_id: str | None = None,
+) -> None:
     """Give outcome reports awaiting verification the decision that landed
     (agentops#2528).  Every awaiting report stays as evidence; what the
     decision makes of it:
@@ -4117,7 +4171,8 @@ def _stamp_awaiting_reports(cur: Any, repo_id: str, item_id: int, decision: Mapp
       ``rejected`` with ``claim-superseded`` whatever the decision (INV-L1:
       a result submitted under a superseded lease never settles work;
       0.9.0 let such a lease be taken over while its report waited);
-    - ``accept`` settles a report whose bar the owner can evaluate
+    - a report-bound review settles only the explicitly reviewed report;
+    - a generic ``accept`` settles a report whose bar the owner can evaluate
       (``releases.ENFORCED_REQUIREMENTS``) and names the decision; a
       report pinned to a verifier or human requirement nothing checked
       (a 0.9.0 ``role-separated``, ``identity-separated`` or
@@ -4144,6 +4199,8 @@ def _stamp_awaiting_reports(cur: Any, repo_id: str, item_id: int, decision: Mapp
             reason = "claim-superseded"
         elif decision["kind"] != "accept":
             reason = f"decided-{decision['kind']}"
+        elif reviewed_report_id is not None:
+            reason = None if row["report_id"] == reviewed_report_id else "different-report-accepted"
         elif set(_verification(row["verification_profile"], [])["requirements"]) - (
             _releases.ENFORCED_REQUIREMENTS
         ):
@@ -4167,6 +4224,226 @@ def _stamp_awaiting_reports(cur: Any, repo_id: str, item_id: int, decision: Mapp
                 "WHERE repo_id = %s AND report_id = %s",
                 (reason, repo_id, row["report_id"]),
             )
+
+
+def list_pending_outcome_reviews(
+    store: PgStore, *, workspace_id: str, principal_id: str, after_item_id: int,
+) -> dict:
+    """Page pending reports without projecting evidence or granting acceptance."""
+    with repeatable_read_snapshot(store) as snapshot, snapshot.conn.cursor() as cur:
+        cur.execute("SET LOCAL statement_timeout = '5s'")
+        cur.execute(
+            "SELECT DISTINCT ON (i.id) i.id AS item_id,i.title,r.report_id,r.created_at "
+            "FROM work_outcome_report r "
+            "JOIN work_item i ON i.repo_id=r.repo_id AND i.id=r.work_item_id "
+            "JOIN work_lease l ON l.repo_id=r.repo_id AND l.lease_id=r.lease_id "
+            "WHERE r.repo_id=%s AND r.workspace_id=%s AND i.id>%s AND i.status='active' "
+            "AND r.disposition='awaiting-verification' AND r.outcome='succeeded' "
+            "AND l.state='active' AND l.workspace_id=r.workspace_id AND l.work_item_id=i.id "
+            "AND l.run_id=r.run_id AND l.principal_id=r.principal_id "
+            "AND l.basis_release_digest IS NOT NULL "
+            "AND regexp_replace(r.principal_id, ':[^:]+$', '')<>%s "
+            "AND 'human-authorized'=ANY(string_to_array(r.verification_profile, '+')) "
+            "ORDER BY i.id,r.created_at DESC,r.report_id DESC LIMIT 26",
+            (store.repo_id, workspace_id, after_item_id, principal_id.rsplit(":", 1)[0]),
+        )
+        rows = cur.fetchall()
+    return {
+        "items": [{**row, "created_at": _iso(row["created_at"])} for row in rows[:25]],
+        "next_after_item_id": rows[24]["item_id"] if len(rows) > 25 else None,
+    }
+
+
+def _review_receipt(decision: Mapping[str, Any], report: Mapping[str, Any], reviewer: str) -> dict:
+    return {
+        "item_id": int(decision["work_item_id"]),
+        "report_id": report["report_id"],
+        "payload_digest": report["payload_digest"],
+        "release_digest": decision["release_digest"],
+        "decision_id": int(decision["id"]),
+        "reviewer_principal_id": reviewer,
+    }
+
+
+def _find_review_receipt(cur: Any, repo_id: str, decision: dict | None, reports: list) -> dict | None:
+    if decision is None or decision["kind"] != "accept" or decision["release_digest"] is None:
+        return None
+    report = next((
+        row for row in reports if row["decision_id"] == decision["id"]
+        and row["disposition"] == "settled"
+    ), None)
+    if report is None or decision["evidence_digests"] != [report["payload_digest"]]:
+        return None
+    cur.execute(
+        "SELECT event_type,payload FROM event WHERE repo_id=%s AND work_item_id=%s AND actor=%s "
+        "AND (event_type='item-decided' AND payload->>'reviewed_report_id'=%s "
+        "OR event_type='item-decided-imported' AND payload->'source_payload'->>'reviewed_report_id'=%s) "
+        "LIMIT 2",
+        (repo_id, decision["work_item_id"], decision["actor"], report["report_id"], report["report_id"]),
+    )
+    events = cur.fetchall()
+    if len(events) != 1:
+        return None
+    event = events[0]
+    payload = event["payload"]
+    if event["event_type"] == "item-decided-imported":
+        payload = payload["source_payload"]
+    elif payload.get("decision_id") != decision["id"]:
+        return None
+    reviewer = payload.get("reviewer_principal_id")
+    if (
+        payload.get("kind") != "accept" or payload.get("release_digest") != decision["release_digest"]
+        or not isinstance(reviewer, str) or not reviewer
+        or reviewer.rsplit(":", 1)[0] == report["principal_id"].rsplit(":", 1)[0]
+    ):
+        return None
+    return _review_receipt(decision, report, reviewer)
+
+
+def review_outcome_snapshot(
+    store: PgStore, *, item_id: int, workspace_id: str, principal_id: str,
+) -> dict:
+    """Read the exact report and decision basis for a browser reviewer."""
+    with repeatable_read_snapshot(store) as snapshot, snapshot.conn.cursor() as cur:
+        cur.execute("SET LOCAL statement_timeout = '5s'")
+        cur.execute(
+            "SELECT id,title,description,status,resolution,terminal_decision_id "
+            "FROM work_item WHERE repo_id=%s AND id=%s",
+            (store.repo_id, item_id),
+        )
+        item = cur.fetchone()
+        if item is None:
+            raise LeaseRefused("work-not-found", "The work item is not in this repository")
+        release = _current_release_locked(cur, store.repo_id, item_id)
+        cur.execute(
+            "SELECT r.* FROM work_outcome_report r WHERE r.repo_id=%s "
+            "AND r.workspace_id=%s AND r.work_item_id=%s "
+            "ORDER BY (r.decision_id IS NOT NULL) DESC, "
+            "(r.disposition='awaiting-verification') DESC, "
+            "r.created_at DESC,r.report_id DESC LIMIT 26",
+            (store.repo_id, workspace_id, item_id),
+        )
+        rows = cur.fetchall()
+        decision = None
+        if item["terminal_decision_id"] is not None:
+            cur.execute(
+                "SELECT * FROM work_decision WHERE repo_id=%s AND work_item_id=%s AND id=%s",
+                (store.repo_id, item_id, item["terminal_decision_id"]),
+            )
+            row = cur.fetchone()
+            if row is not None:
+                decision = _decision_row(row)
+        candidate = None
+        if item["status"] == "active" and release is not None:
+            cur.execute(
+                "SELECT * FROM work_lease WHERE repo_id=%s AND work_item_id=%s "
+                "AND workspace_id=%s AND state='active'",
+                (store.repo_id, item_id, workspace_id),
+            )
+            lease = cur.fetchone()
+            if (
+                lease is not None and lease["basis_release_digest"] == release["release_digest"]
+                and lease["principal_id"].rsplit(":", 1)[0] != principal_id.rsplit(":", 1)[0]
+                and _lease_basis_reason(cur, snapshot, lease, item) is None
+            ):
+                config = _combined(
+                    _verification(lease["verification_profile"], lease["required_checks"]),
+                    verification_config(cur, snapshot, item_id),
+                )
+                if (
+                    "human-authorization" in config["requirements"]
+                    and not set(config["requirements"]) - {"checks", "human-authorization"}
+                    and not any(
+                        row["blocker_status"] != "done" for row in list_deps_blocking(snapshot, item_id)
+                    )
+                ):
+                    candidate = next((
+                        row["report_id"] for row in rows[:25]
+                        if row["lease_id"] == lease["lease_id"]
+                        and row["principal_id"] == lease["principal_id"]
+                        and row["run_id"] == lease["run_id"]
+                        and row["disposition"] == "awaiting-verification"
+                        and row["outcome"] == "succeeded"
+                        and "human-authorization" in _verification(row["verification_profile"], [])["requirements"]
+                        and _verification_verdict(config, row["checks"])[0] == "awaiting-verification"
+                    ), None)
+        return {
+            "item": item,
+            "release": release,
+            "reports": [_report_row(row) for row in rows[:25]],
+            "reports_truncated": len(rows) > 25,
+            "reviewable_report_id": candidate,
+            "decision": decision,
+            "acceptance_receipt": _find_review_receipt(cur, store.repo_id, decision, rows[:25]),
+        }
+
+
+def accept_reviewed_outcome(
+    cur: Any, store: PgStore, *, item_id: int, workspace_id: str,
+    principal_id: str, actor: str, report_id: str, payload_digest: str,
+    release_digest: str, rationale: str,
+) -> dict:
+    """Settle one reviewed report under the caller-owned ledger transaction."""
+    cur.execute(
+        "SELECT * FROM work_item WHERE repo_id=%s AND id=%s FOR UPDATE",
+        (store.repo_id, item_id),
+    )
+    item = cur.fetchone()
+    cur.execute(
+        "SELECT * FROM work_outcome_report WHERE repo_id=%s AND workspace_id=%s "
+        "AND work_item_id=%s AND report_id=%s",
+        (store.repo_id, workspace_id, item_id, report_id),
+    )
+    report = cur.fetchone()
+    if item is None or report is None:
+        raise LeaseRefused("report-not-found", "No such outcome report in this workspace")
+    if report["principal_id"].rsplit(":", 1)[0] == principal_id.rsplit(":", 1)[0]:
+        raise LeaseRefused("independent-review-required", "The submitter cannot accept this report")
+    cur.execute(
+        "SELECT * FROM work_lease WHERE repo_id=%s AND lease_id=%s FOR UPDATE",
+        (store.repo_id, report["lease_id"]),
+    )
+    lease = cur.fetchone()
+    if (
+        item["status"] != "active" or report["disposition"] != "awaiting-verification"
+        or report["outcome"] != "succeeded" or report["payload_digest"] != payload_digest
+        or lease is None or lease["state"] != "active"
+        or lease["work_item_id"] != item_id or lease["workspace_id"] != workspace_id
+        or lease["run_id"] != report["run_id"] or lease["principal_id"] != report["principal_id"]
+        or lease["basis_release_digest"] != release_digest
+    ):
+        raise LeaseRefused("review-basis-stale", "The report, release, or lease has changed")
+    basis = _lease_basis_reason(cur, store, lease, item)
+    if basis is not None:
+        raise LeaseRefused(*basis)
+    report_requirements = set(_verification(report["verification_profile"], [])["requirements"])
+    config = _combined(
+        _verification(lease["verification_profile"], lease["required_checks"]),
+        verification_config(cur, store, item_id),
+    )
+    if (
+        "human-authorization" not in report_requirements
+        or _verification_verdict(config, report["checks"])[0] != "awaiting-verification"
+        or set(config["requirements"]) - {"checks", "human-authorization"}
+    ):
+        raise LeaseRefused("review-verification-unsatisfied", "The report requires different verification")
+    if any(row["blocker_status"] != "done" for row in list_deps_blocking(store, item_id)):
+        raise LeaseRefused("work-blocked", "The work still has unsettled blockers")
+    normalized = _decisions.normalize_decision(
+        "accept", actor=actor, rationale=rationale,
+        evidence_digests=[payload_digest], release_digest=release_digest,
+    )
+    decision = _decide_locked(cur, store.repo_id, item, normalized, reviewed_report_id=report_id)
+    _insert_event(
+        store, int(item["sprint_id"]), actor, _decisions.ITEM_DECIDED_EVENT_TYPE,
+        work_item_id=item_id,
+        payload={
+            **_decisions.decided_event_payload(decision, None),
+            "reviewed_report_id": report_id,
+            "reviewer_principal_id": principal_id,
+        },
+    )
+    return _review_receipt(decision, report, principal_id)
 
 
 def record_decision(
@@ -5537,7 +5814,7 @@ def import_ndjson(
     remap_ids: bool = False,
     trusted_state_transfer: bool = False,
     archive_result: dict | None = None,
-    _archive_transaction: bool = False,
+    _fixture_settlement_id: int | None = None,
 ) -> dict[str, int]:
     """Import NDJSON records into pg, preserving original sqlite integer IDs.
 
@@ -5550,6 +5827,12 @@ def import_ndjson(
     imports demote them to explicit non-authoritative imported history.
     All work done in a single transaction.
     """
+    if _fixture_settlement_id is not None:
+        from .archival_result import _fixture
+
+        if archive_result is not None or replace or remap_ids or trusted_state_transfer:
+            raise ValueError("fixture settlement import requires an isolated archive transaction")
+        _fixture(store.conn, destination=True)
     if archive_result is not None:
         if replace or remap_ids or trusted_state_transfer:
             raise ValueError("archival reconstruction cannot replace, remap or restore authority")
@@ -5630,6 +5913,15 @@ def import_ndjson(
                 data = dict(record["data"])
                 rid = record.get("repo_id", store.repo_id)
 
+                if (
+                    _fixture_settlement_id is not None and table == "work_decision"
+                    and data["id"] == _fixture_settlement_id
+                    and data["kind"] == "accept" and data["actor"] == SETTLEMENT_ACTOR
+                ):
+                    # Validated as historical data in an empty disposable archive
+                    # target. The trigger consumes this marker on this row only.
+                    cur.execute("SELECT set_config('sprintctl.lease_basis_checked', 'on', true)")
+
                 if table == "work_item" and "legacy" not in data:
                     # An archive that predates decisions holds only legacy
                     # rows.  A row that already carries decision columns is
@@ -5678,10 +5970,10 @@ def import_ndjson(
             # names this import instead of surfacing at a later commit.
             cur.execute("SET CONSTRAINTS ALL IMMEDIATE")
 
-        if not _archive_transaction:
+        if _fixture_settlement_id is None:
             store.conn.commit()
     except Exception:
-        if not _archive_transaction:
+        if _fixture_settlement_id is None:
             store.conn.rollback()
         raise
     return counts
@@ -7389,7 +7681,11 @@ def _acquire_locked(
     basis_release_digest = (
         basis_release["release_digest"] if basis_release is not None else None
     )
-    unenforced = sorted(set(pinned["requirements"]) - _releases.ENFORCED_REQUIREMENTS)
+    unenforced = set(pinned["requirements"]) - _releases.ENFORCED_REQUIREMENTS
+    if unenforced == {"human-authorization"} and _requires_browser_review(
+        cur, store.repo_id, work_item_id,
+    ):
+        unenforced.clear()
     if unenforced:
         # A contract stored before agentops#2539 may name a profile whose
         # verifier the owner cannot check yet.  Leasing the item would
@@ -7397,7 +7693,7 @@ def _acquire_locked(
         raise LeaseRefused(
             "verification-unsupported",
             f"item #{work_item_id} requires verification profile {pinned['profile']} "
-            f"({', '.join(unenforced)}), which this authority does not enforce yet; "
+            f"({', '.join(sorted(unenforced))}), which this authority does not enforce yet; "
             "it cannot be leased",
         )
     if previous is not None:

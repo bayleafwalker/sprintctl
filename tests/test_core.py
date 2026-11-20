@@ -201,6 +201,16 @@ class TestItemCRUD:
         tracks = db.list_tracks(conn, active_sprint["id"])
         assert any(t["name"] == "backend" for t in tracks)
 
+    def test_item_add_key_refuses_local_mode(self, runner, conn, active_sprint):
+        result = runner.invoke(
+            cli,
+            ["item", "add", "--sprint-id", str(active_sprint["id"]),
+             "--track", "backend", "--title", "Task", "--idempotency-key", "retry-task"],
+        )
+        assert result.exit_code == 2
+        assert "--idempotency-key requires served mode" in result.output
+        assert db.list_tracks(conn, active_sprint["id"]) == []
+
     def test_item_add_reuses_existing_track(self, runner, conn, active_sprint):
         sid = str(active_sprint["id"])
         runner.invoke(cli, ["item", "add", "--sprint-id", sid, "--track", "backend", "--title", "Item 1"])

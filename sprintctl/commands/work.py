@@ -625,8 +625,13 @@ def item() -> None:
     help="Priority 1-9 (1 = highest; omit for unprioritized)",
 )
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output created item as JSON")
+@click.option(
+    "--idempotency-key",
+    help="Served mode only. Reuse this key with the same arguments to retry safely.",
+)
+@click.option("--require-review", is_flag=True, help="Require independent browser acceptance.")
 @click.pass_obj
-def item_add(obj, sprint_id: str, track_name, title, description, assignee, priority, as_json) -> None:
+def item_add(obj, sprint_id: str, track_name, title, description, assignee, priority, as_json, idempotency_key, require_review) -> None:
     """Add a work item to a sprint track."""
     sprint_id = _apply_scoped_id(obj, sprint_id, field="sprint")
     if description is not None:
@@ -640,19 +645,32 @@ def item_add(obj, sprint_id: str, track_name, title, description, assignee, prio
         except ValueError as exc:
             raise click.BadParameter(str(exc), param_hint="--priority") from exc
     config = _served_config_or_none(obj)
+    if require_review and idempotency_key is None:
+        raise click.UsageError("--require-review requires --idempotency-key.")
+    if idempotency_key is not None:
+        if config is None:
+            raise click.UsageError("--idempotency-key requires served mode.")
+        if re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", idempotency_key) is None:
+            raise click.BadParameter(
+                "Use 8–128 letters, digits, or . _ : -", param_hint="--idempotency-key"
+            )
     if config is not None:
         context = _resolved_context(config)
         result = _run_served(
             "item add", _served.item_create, config.served_profile,
             repo_id=config.repo_id, sprint_id=sprint_id, track_name=track_name,
             title=title, description=description, assignee=assignee, priority=priority,
-            resolved_context=context,
+            idempotency_key=idempotency_key, require_review=require_review, resolved_context=context,
         )
         created = {**result["item"], "track_name": result["track_name"]}
+        if result.get("review_release_digest"):
+            created["review_release_digest"] = result["review_release_digest"]
         if as_json:
             click.echo(json.dumps(created, indent=2))
             return
         click.echo(f"Added item #{created['id']}: {created['title']}  [track: {created['track_name']}]")
+        if "review_release_digest" in created:
+            click.echo("Requires independent browser review.")
         click.echo(_render_resolved_context(context))
         return
     store, m = _get_store(obj)

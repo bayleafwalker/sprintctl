@@ -540,6 +540,105 @@ class TestTakeoverAndStaleCompletion:
         assert final["current_lease"] is None
         assert [r["disposition"] for r in final["outcome_reports"]] == ["rejected", "settled"]
 
+    def test_browser_review_accepts_only_the_exact_pending_successor_report(self, store, monkeypatch):
+        monkeypatch.setattr(store, "connection_factory", lambda: psycopg.connect(_PG_URL, row_factory=dict_row))
+        (dependent,) = _items(store)
+        sprint = pg.get_work_item(store, dependent)["sprint_id"]
+        creator = _context("github:400:0")
+        creator.identity.authorities = frozenset({"work:task.create"})
+        params = {
+            "sprint_id": sprint, "track_name": "lease", "title": "Review the current result",
+            "require_review": True, "idempotency_key": "create-browser-review",
+        }
+        created = _invoke(store, "work.item.create-v1", params, creator)
+        assert _invoke(store, "work.item.create-v1", params, creator) == created
+        assert _refused(lambda: _invoke(
+            store, "work.item.create-v1", {**params, "require_review": False}, creator,
+        )).code == "idempotency-conflict"
+        item = created["item"]["id"]
+        release = pg.current_release(store, item)
+        assert release["release_digest"] == created["review_release_digest"]
+        assert release["acceptance_contract"]["review_protocol"] == "browser-outcome-v1"
+        pg.add_dep(store, item, dependent)
+        run_a = _run(store, A)
+        lease_a = _claim(store, A, item, run_a, "review-claim-a")["lease"]
+        _backdate(store, lease_a["lease_id"], 601)
+        run_b = _run(store, B)
+        lease_b = _claim(store, B, item, run_b, "review-claim-b")["lease"]
+        assert _refused(lambda: _complete(
+            store, A, lease_a["lease_id"], run_a, "review-report-a",
+        )).code == "claim-superseded"
+        report = _complete(store, B, lease_b["lease_id"], run_b, "review-report-b")["report"]
+        assert report["disposition"] == "awaiting-verification"
+        assert dependent not in {row["id"] for row in pg.get_ready_items(store, sprint)}
+
+        op = "work.outcome.accept-v1"
+        args = {
+            "item_id": item, "report_id": report["report_id"],
+            "payload_digest": report["payload_digest"],
+            "release_digest": pg.current_release(store, item)["release_digest"],
+            "rationale": "Reviewed the submitted evidence.", "idempotency_key": "review-report-b-accept",
+        }
+
+        def reviewer(principal, *, browser=True):
+            context = _context(principal)
+            context.identity.authorities = frozenset({"work:review.accept"})
+            context.identity.browser_work_review = browser
+            context.idempotency_key = args["idempotency_key"]
+            return context
+
+        independent = reviewer("github:300:0")
+        review_op = "work.outcome.review-v1"
+        view = _invoke(store, review_op, {"item_id": item}, independent)
+        assert view["reviewable_report_id"] == report["report_id"]
+        assert view["release"]["release_digest"] == args["release_digest"]
+        assert {row["disposition"] for row in view["reports"]} == {
+            "rejected", "awaiting-verification",
+        }
+        queue_op = "work.outcome.review-queue-v1"
+        queue = _invoke(store, queue_op, {}, independent)
+        assert [(row["item_id"], row["report_id"]) for row in queue["items"]] == [
+            (item, report["report_id"]),
+        ]
+        assert _invoke(store, queue_op, {"after_item_id": item}, independent)["items"] == []
+        assert _invoke(store, queue_op, {}, reviewer("github:200:1"))["items"] == []
+        self_view = _invoke(store, review_op, {"item_id": item}, reviewer("github:200:1"))
+        assert self_view["reviewable_report_id"] is None
+        assert _refused(lambda: _invoke(store, op, args, reviewer(
+            "github:300:0", browser=False,
+        ))).code == "review-identity-required"
+        assert _refused(lambda: _invoke(
+            store, op, args, reviewer("github:200:1"),
+        )).code == "independent-review-required"
+        for key in ("payload_digest", "release_digest"):
+            assert _refused(lambda: _invoke(
+                store, op, {**args, key: "0" * 64}, independent,
+            )).code == "review-basis-stale"
+        assert _status(store, item) == "active"
+        assert not pg.list_decisions(store, item)
+        with pytest.raises(pg.InvalidTransition, match="requires acceptance of an exact report"):
+            pg.record_decision(store, item, "accept", actor="legacy-operator")
+        assert dependent not in {row["id"] for row in pg.get_ready_items(store, sprint)}
+
+        receipt = _invoke(store, op, args, independent)
+        assert _invoke(store, op, args, independent) == receipt
+        assert _refused(lambda: _invoke(
+            store, op, {**args, "rationale": "Changed review."}, independent,
+        )).code == "idempotency-conflict"
+        first, second = _read(store, item)["outcome_reports"]
+        assert first["disposition"] == "rejected" and first["decision_id"] is None
+        assert second["disposition"] == "settled" and second["decision_id"] == receipt["decision_id"]
+        (decision,) = pg.list_decisions(store, item)
+        assert decision["actor"] == independent.identity.actor
+        assert decision["release_digest"] == args["release_digest"]
+        assert decision["evidence_digests"] == [args["payload_digest"]]
+        view = _invoke(store, review_op, {"item_id": item}, independent)
+        assert view["reviewable_report_id"] is None
+        assert view["decision"]["id"] == receipt["decision_id"]
+        assert view["acceptance_receipt"] == receipt
+        assert _invoke(store, queue_op, {}, independent)["items"] == []
+        assert dependent in {row["id"] for row in pg.get_ready_items(store, sprint)}
+
     def test_a_replayed_late_completion_refuses_the_same_way_with_one_report(self, store):
         (item,) = _items(store)
         run_a = _run(store, A)
