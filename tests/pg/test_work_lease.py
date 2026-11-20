@@ -15,11 +15,12 @@ import time
 import uuid
 from copy import deepcopy
 from types import SimpleNamespace
+from tests.pg._shared import pg_test_scope
 
 import jsonschema
 import pytest
 
-from sprintctl import pg, pg_migrations, work_archive, work_archive_validation
+from sprintctl import pg, pg_migrations, work_archive, work_archive_restore, work_archive_validation
 from sprintctl.application import ApplicationRejection, WorkApplication
 from sprintctl.maintenance_capability import (
     MaintenanceCapabilityError,
@@ -541,7 +542,7 @@ class TestTakeoverAndStaleCompletion:
         assert final["current_lease"] is None
         assert [r["disposition"] for r in final["outcome_reports"]] == ["rejected", "settled"]
 
-    def test_browser_review_accepts_only_the_exact_pending_successor_report(self, store, monkeypatch, tmp_path):
+    def test_browser_review_accepts_only_the_exact_pending_successor_report(self, store, monkeypatch, tmp_path, pg_test_scope):
         monkeypatch.setattr(store, "connection_factory", lambda: psycopg.connect(_PG_URL, row_factory=dict_row))
         (dependent,) = _items(store)
         sprint = pg.get_work_item(store, dependent)["sprint_id"]
@@ -687,6 +688,44 @@ class TestTakeoverAndStaleCompletion:
         )
         foreign_archive = work_archive.export_repository(other_repo, workspace_id="ws-1")
         assert foreign_archive["items"] == foreign_archive["acceptance_receipts"] == []
+        destination = pg_test_scope("restored-work-archive")
+        source = {**archive, "repo_id": destination}
+        with psycopg.connect(_PG_URL, row_factory=dict_row) as conn:
+            restored = pg.PgStore(conn, destination)
+            args = {"workspace_id": "destination-workspace", "actor": "destination-admin"}
+            invalid = deepcopy(source)
+            invalid["items"][-1]["title"] = None
+            with pytest.raises(psycopg.errors.NotNullViolation):
+                work_archive_restore.restore_repository(restored, invalid, **args)
+            assert work_archive_restore.read_restored_source(
+                restored, workspace_id=args["workspace_id"],
+            ) is None
+            result = work_archive_restore.restore_repository(restored, source, **args)
+            assert work_archive_restore.restore_repository(restored, source, **args) == result
+            edited = deepcopy(source)
+            edited["workspace_id"] = "changed"
+            with pytest.raises(work_archive_restore.RestoreConflict):
+                work_archive_restore.restore_repository(restored, edited, **args)
+            ids = result["item_ids"]
+            restored_item = pg.get_work_item(restored, ids[str(item)])
+            assert (restored_item["status"], restored_item["resolution"]) == ("done", "accepted")
+            ready = pg.get_ready_items(restored, restored_item["sprint_id"])
+            assert ids[str(dependent)] in {row["id"] for row in ready}
+            history = work_archive_restore.read_restored_source(
+                restored, workspace_id=args["workspace_id"],
+            )
+            assert history["source_archive"]["acceptance_receipts"] == [receipt]
+            assert history["archive_digest"] == result["archive_digest"]
+            assert work_archive_restore.read_restored_source(restored, workspace_id="other") is None
+            restored_view = pg.review_outcome_snapshot(
+                restored, item_id=ids[str(item)], workspace_id=args["workspace_id"], principal_id="github:400:0",
+            )
+            assert restored_view["acceptance_receipt"] is None
+            assert restored_view["decision"]["actor"] == args["actor"]
+            assert conn.execute(
+                "SELECT 1 FROM work_lease WHERE repo_id=%s LIMIT 1", (destination,)
+            ).fetchone() is None
+
         monkeypatch.setattr(work_archive, "MAX_BYTES", 1)
         exceeded = _refused(lambda: _invoke(store, archive_op, {}, independent))
         assert exceeded.code == "archive-limit-exceeded" and exceeded.http_status == 413

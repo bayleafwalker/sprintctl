@@ -15,7 +15,7 @@ from typing import Any, Mapping
 
 
 WORK_API_VERSION = "sprintctl-work/v1"
-CURRENT_SCHEMA_VERSION = 34
+CURRENT_SCHEMA_VERSION = 35
 # The v0.3 release is a coordinated schema/runtime cutover, so the runtime
 # admits exactly the schema it was built against.  A wider window would be a
 # false promise: reservation storage only arrived in schema 8, the live
@@ -68,6 +68,7 @@ CURRENT_SCHEMA_VERSION = 34
 # 33 adds the private recipient-delivery ledger.
 # 34 adds adjunct v2 capability revisions bound to an exact v1 declaration
 # revision; the v1 directory and declaration tables remain unchanged.
+# 35 records portable work restores and their source-only receipt history.
 MINIMUM_SCHEMA_VERSION = 32
 MAXIMUM_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION
 STARTUP_MODE_ENV = "SPRINTCTL_REMOTE_SCHEMA_MODE"
@@ -283,6 +284,8 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
             recipient_deliveries = inspect_recipient_deliveries(cur)
             from .agent_capability_schema import inspect_catalog as inspect_agent_capabilities
             agent_capabilities = inspect_agent_capabilities(cur)
+            cur.execute("SELECT to_regclass('work_archive_restore') IS NOT NULL AS available")
+            archive_restore_available = bool(_value(cur.fetchone(), "available"))
     finally:
         if was_idle:
             store.conn.rollback()
@@ -311,6 +314,7 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
         and (state.version is None or state.version < 33 or recipient_deliveries["available"])
         and agent_capabilities["complete"]
         and (state.version is None or state.version < 34 or agent_capabilities["available"])
+        and (state.version is None or state.version < 35 or archive_restore_available)
         and continuation_receipts["complete"]
         and (state.version is None or state.version < 30 or continuation_receipts["available"])
     )
@@ -368,6 +372,8 @@ def compatibility_handshake(store: Any) -> dict[str, Any]:
         reason = "agent-capability-storage-partial"
     elif state.version is not None and state.version >= 34 and not agent_capabilities["available"]:
         reason = "agent-capability-storage-missing"
+    elif state.version >= 35 and not archive_restore_available:
+        reason = "work-archive-restore-storage-missing"
     else:
         reason = None
     return {
@@ -696,6 +702,11 @@ def migrate_schema(store: Any) -> dict[str, Any]:
                 install(cur)
                 cur.execute("UPDATE schema_version SET version = %s", (34,))
                 applied.append(34)
+            if state.version < 35:
+                from .work_archive_schema import install
+                install(cur)
+                cur.execute("UPDATE schema_version SET version = %s", (35,))
+                applied.append(35)
         store.conn.commit()
     except Exception:
         store.conn.rollback()

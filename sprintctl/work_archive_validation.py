@@ -92,6 +92,7 @@ def validate_archive(archive: dict, *, expected_repo_id: str) -> None:
         _lookup(sprints, sprint_id, "item sprint")
         track = _lookup(tracks, item.get("track_id"), "item track")
         _require(track.get("sprint_id") == sprint_id, "item track belongs to a different sprint")
+        _require(item.get("status") in ("pending", "active", "blocked", "done"), "invalid task status")
         terminal_id = item.get("terminal_decision_id")
         if terminal_id is None:
             _require(item.get("resolution") is None, "item resolution requires a terminal decision")

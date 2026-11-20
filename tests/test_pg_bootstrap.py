@@ -74,6 +74,8 @@ class _SchemaCursor:
             self._conn.recipient_delivery_installed = True
         if query == agent_capability_schema.DDL:
             self._conn.agent_capability_installed = True
+        if "CREATE TABLE IF NOT EXISTS work_archive_restore" in query:
+            self._conn.archive_restore_installed = True
         if query == continuation_receipt_schema.DDL:
             self._conn.continuation_receipt_installed = True
         return self
@@ -138,6 +140,8 @@ class _SchemaCursor:
             }
         if "SELECT version FROM sprintctl_schema_capability" in self._query:
             return {"version": self._conn.marker_version}
+        if "to_regclass('work_archive_restore')" in self._query:
+            return {"available": self._conn.archive_restore_installed}
         if "to_regclass" in self._query:
             relation = "schema_version" if self._conn.version is not None else None
             return {"relation": relation}
@@ -166,6 +170,7 @@ class _SchemaConnection:
         self.recipient_binding_installed = version is not None and version >= 32
         self.recipient_delivery_installed = version is not None and version >= 33
         self.agent_capability_installed = version is not None and version >= 34
+        self.archive_restore_installed = version is not None and version >= 35
         self.currentness_scope_installed = version is not None and version >= 31
         self.calls = []
         self.version = version
