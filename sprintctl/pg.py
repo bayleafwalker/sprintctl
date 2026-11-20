@@ -4194,6 +4194,34 @@ def _stamp_awaiting_reports(
             )
 
 
+def list_pending_outcome_reviews(
+    store: PgStore, *, workspace_id: str, principal_id: str, after_item_id: int,
+) -> dict:
+    """Page pending reports without projecting evidence or granting acceptance."""
+    with repeatable_read_snapshot(store) as snapshot, snapshot.conn.cursor() as cur:
+        cur.execute("SET LOCAL statement_timeout = '5s'")
+        cur.execute(
+            "SELECT DISTINCT ON (i.id) i.id AS item_id,i.title,r.report_id,r.created_at "
+            "FROM work_outcome_report r "
+            "JOIN work_item i ON i.repo_id=r.repo_id AND i.id=r.work_item_id "
+            "JOIN work_lease l ON l.repo_id=r.repo_id AND l.lease_id=r.lease_id "
+            "WHERE r.repo_id=%s AND r.workspace_id=%s AND i.id>%s AND i.status='active' "
+            "AND r.disposition='awaiting-verification' AND r.outcome='succeeded' "
+            "AND l.state='active' AND l.workspace_id=r.workspace_id AND l.work_item_id=i.id "
+            "AND l.run_id=r.run_id AND l.principal_id=r.principal_id "
+            "AND l.basis_release_digest IS NOT NULL "
+            "AND regexp_replace(r.principal_id, ':[^:]+$', '')<>%s "
+            "AND 'human-authorized'=ANY(string_to_array(r.verification_profile, '+')) "
+            "ORDER BY i.id,r.created_at DESC,r.report_id DESC LIMIT 26",
+            (store.repo_id, workspace_id, after_item_id, principal_id.rsplit(":", 1)[0]),
+        )
+        rows = cur.fetchall()
+    return {
+        "items": [{**row, "created_at": _iso(row["created_at"])} for row in rows[:25]],
+        "next_after_item_id": rows[24]["item_id"] if len(rows) > 25 else None,
+    }
+
+
 def review_outcome_snapshot(
     store: PgStore, *, item_id: int, workspace_id: str, principal_id: str,
 ) -> dict:

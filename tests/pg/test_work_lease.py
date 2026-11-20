@@ -588,6 +588,13 @@ class TestTakeoverAndStaleCompletion:
         assert {row["disposition"] for row in view["reports"]} == {
             "rejected", "awaiting-verification",
         }
+        queue_op = "work.outcome.review-queue-v1"
+        queue = _invoke(store, queue_op, {}, independent)
+        assert [(row["item_id"], row["report_id"]) for row in queue["items"]] == [
+            (item, report["report_id"]),
+        ]
+        assert _invoke(store, queue_op, {"after_item_id": item}, independent)["items"] == []
+        assert _invoke(store, queue_op, {}, reviewer("github:200:1"))["items"] == []
         self_view = _invoke(store, review_op, {"item_id": item}, reviewer("github:200:1"))
         assert self_view["reviewable_report_id"] is None
         assert _refused(lambda: _invoke(store, op, args, reviewer(
@@ -621,6 +628,7 @@ class TestTakeoverAndStaleCompletion:
         view = _invoke(store, review_op, {"item_id": item}, independent)
         assert view["reviewable_report_id"] is None
         assert view["decision"]["id"] == receipt["decision_id"]
+        assert _invoke(store, queue_op, {}, independent)["items"] == []
         assert dependent in {row["id"] for row in pg.get_ready_items(store, sprint)}
 
     def test_a_replayed_late_completion_refuses_the_same_way_with_one_report(self, store):

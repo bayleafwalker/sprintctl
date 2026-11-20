@@ -862,6 +862,7 @@ class WorkApplication:
             "work.lease.read-v1": target._claim_read,
             "work.outcome.accept-v1": target._outcome_accept,
             "work.outcome.review-v1": target._outcome_review,
+            "work.outcome.review-queue-v1": target._outcome_review_queue,
             _effect.OPERATION_PROPOSE: target._effect_propose,
             _effect.OPERATION_BOUND_PROPOSE: target._effect_propose_bound,
             _effect.OPERATION_GET: target._effect_get,
@@ -3209,6 +3210,18 @@ class WorkApplication:
                 details=report.get("details"),
             )
         return result
+
+    def _outcome_review_queue(
+        self, arguments: dict[str, Any], context: InvocationContext,
+    ) -> dict[str, Any]:
+        principal_id, workspace_id = self._browser_review_binding(context)
+        from . import pg as _pg
+
+        cursor = arguments.get("after_item_id")
+        return _pg.list_pending_outcome_reviews(
+            self.store, workspace_id=workspace_id, principal_id=principal_id,
+            after_item_id=0 if cursor is None else _positive_int(cursor, "after_item_id"),
+        )
 
     def _outcome_review(
         self, arguments: dict[str, Any], context: InvocationContext,
