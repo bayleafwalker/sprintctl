@@ -3782,6 +3782,25 @@ def create_work_item(
     )
 
 
+def create_work_item_in_transaction(
+    store: PgStore,
+    sprint_id: int,
+    track_name: str,
+    title: str,
+    *,
+    description: str,
+    assignee: str | None,
+    priority: int | None,
+) -> int:
+    """Create a work item and its track within the caller's transaction."""
+    track = _TrackPg(store, commit_insert=False)
+    item = _WorkItemPg(store, commit_insert=False)
+    track_id = _trackcore.get_or_create_track(track, sprint_id, track_name)
+    return _workitemcore.create_work_item(
+        item, sprint_id, track_id, title, description, assignee, priority
+    )
+
+
 @contextmanager
 def _carryover_transaction(store: PgStore):
     """Own one source row lock, copy, Decision and audit-event transaction."""

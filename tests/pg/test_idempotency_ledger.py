@@ -493,8 +493,46 @@ def _propose_write(store) -> KeyedWrite:
     )
 
 
+def _create_task_write(store) -> KeyedWrite:
+    sprint_id = pg.create_sprint(
+        store, f"Task-{_uid()}", "Goal", "2026-01-01", "2026-12-31", "active"
+    )
+    operation = "work.item.create-v1"
+    arguments = {
+        "sprint_id": sprint_id, "track_name": "tasks", "title": "New task",
+        "idempotency_key": _key("task"),
+    }
+    return KeyedWrite(
+        context=_context("worker", {"work:task.create"}),
+        operation=operation, tool=operation,
+        arguments=arguments, changed={**arguments, "title": "Different task"},
+        identity=lambda result: result["item"]["id"],
+        effects=lambda: _count(
+            store, "SELECT count(*) AS n FROM work_item WHERE repo_id = %s AND sprint_id = %s",
+            (store.repo_id, sprint_id),
+        ),
+    )
+
+
+def test_create_task_rolls_back_the_track_and_item_on_failure(store, monkeypatch):
+    write = _create_task_write(store)
+    with monkeypatch.context() as patch:
+        patch.setattr(pg, "get_work_item", lambda *_args: None)
+        failure = _refused(
+            lambda: _invoke(store, write.operation, write.arguments, write.context)
+        )
+    assert failure.code == "item-create-failed"
+    assert write.effects() == 0
+    assert pg.list_tracks(store, write.arguments["sprint_id"]) == []
+
+    result = _invoke(store, write.operation, write.arguments, write.context)
+    assert _invoke(store, write.operation, write.arguments, write.context) == result
+    assert write.effects() == 1
+
+
 KEYED_WRITES: dict[str, Callable[[Any], KeyedWrite]] = {
     "register_run": _register_run_write,
+    "create_task": _create_task_write,
     "claim_work": _claim_write,
     "report_outcome": _report_write,
     "propose_effect": _propose_write,

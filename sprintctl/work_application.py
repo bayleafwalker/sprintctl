@@ -815,6 +815,7 @@ class WorkApplication:
             "work.event.add": target._event_add,
             "work.handoff.record": target._handoff_record,
             "work.item.create": target._item_create,
+            "work.item.create-v1": target._item_create_keyed,
             "work.item.edit": target._item_edit,
             "work.item.priority": target._item_priority,
             "work.item.ref.add": target._item_ref_add,
@@ -1677,7 +1678,25 @@ class WorkApplication:
         return {"event_id": event_id, "sprint_id": sprint_id, "item_id": work_item_id,
                 "type": event_type, "actor": context.identity.actor, "source": source_type}
 
-    def _item_create(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
+    def _item_create_keyed(
+        self, arguments: dict[str, Any], context: InvocationContext
+    ) -> dict[str, Any]:
+        if (getattr(self.store, "remote_schema_version", None) or 0) < 17:
+            raise ApplicationRejection(
+                "owner-capability-unavailable",
+                "keyed task creation requires the PostgreSQL schema 17 owner",
+                503,
+            )
+        _idempotency_key(arguments.get("idempotency_key"))
+        return self._idempotent_write(
+            context, "work.item.create-v1", arguments,
+            lambda _cur, _digest: self._item_create(arguments, context, transactional=True),
+        )
+
+    def _item_create(
+        self, arguments: dict[str, Any], _context: InvocationContext, *,
+        transactional: bool = False,
+    ) -> dict[str, Any]:
         """Create an item and resolve its track in the server-side repository scope."""
         sprint_id = _positive_int(arguments.get("sprint_id"), "sprint_id")
         track_name = _optional_text(arguments.get("track_name"), "track_name")
@@ -1698,9 +1717,15 @@ class WorkApplication:
         priority = arguments.get("priority")
         try:
             db.validate_priority(priority)
-            track_id = self.backend.get_or_create_track(self.store, sprint_id, track_name)
-            item_id = self.backend.create_work_item(self.store, sprint_id, track_id, title,
-                description=description or "", assignee=assignee, priority=priority)
+            if transactional:
+                item_id = self.backend.create_work_item_in_transaction(
+                    self.store, sprint_id, track_name, title,
+                    description=description or "", assignee=assignee, priority=priority,
+                )
+            else:
+                track_id = self.backend.get_or_create_track(self.store, sprint_id, track_name)
+                item_id = self.backend.create_work_item(self.store, sprint_id, track_id, title,
+                    description=description or "", assignee=assignee, priority=priority)
         except ValueError as exc:
             raise ApplicationRejection("item-create-rejected", str(exc)) from exc
         item = self.backend.get_work_item(self.store, item_id)
