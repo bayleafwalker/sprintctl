@@ -1690,6 +1690,13 @@ class WorkApplication:
                 "keyed task creation requires the PostgreSQL schema 17 owner",
                 503,
             )
+        require_review = arguments.get("require_review", False)
+        if type(require_review) is not bool:
+            raise ApplicationRejection("invalid-arguments", "require_review must be a boolean", 422)
+        if require_review and self.store.remote_schema_version < 29:
+            raise ApplicationRejection(
+                "owner-capability-unavailable", "Reviewer-gated tasks require schema 29", 503,
+            )
         key = _idempotency_key(arguments.get("idempotency_key"))
         if context.idempotency_key is not None and context.idempotency_key != key:
             raise ApplicationRejection(
@@ -1698,14 +1705,19 @@ class WorkApplication:
                 422,
             )
         request = {name: value for name, value in arguments.items() if value is not None}
+        if not require_review:
+            request.pop("require_review", None)
         return self._idempotent_write(
             context, "work.item.create-v1", request,
-            lambda _cur, _digest: self._item_create(arguments, context, transactional=True),
+            lambda _cur, _digest: self._item_create(
+                arguments, context, transactional=True,
+                review_actor=context.identity.actor if require_review else None,
+            ),
         )
 
     def _item_create(
         self, arguments: dict[str, Any], _context: InvocationContext, *,
-        transactional: bool = False,
+        transactional: bool = False, review_actor: str | None = None,
     ) -> dict[str, Any]:
         """Create an item and resolve its track in the server-side repository scope."""
         sprint_id = _positive_int(arguments.get("sprint_id"), "sprint_id")
@@ -1725,12 +1737,14 @@ class WorkApplication:
         if assignee is not None and not isinstance(assignee, str):
             raise ApplicationRejection("invalid-arguments", "assignee must be a string or null", 422)
         priority = arguments.get("priority")
+        release_digest = None
         try:
             db.validate_priority(priority)
             if transactional:
-                item_id = self.backend.create_work_item_in_transaction(
+                item_id, release_digest = self.backend.create_work_item_in_transaction(
                     self.store, sprint_id, track_name, title,
                     description=description or "", assignee=assignee, priority=priority,
+                    review_actor=review_actor,
                 )
             else:
                 track_id = self.backend.get_or_create_track(self.store, sprint_id, track_name)
@@ -1741,7 +1755,10 @@ class WorkApplication:
         item = self.backend.get_work_item(self.store, item_id)
         if item is None:  # pragma: no cover - backend postcondition
             raise ApplicationRejection("item-create-failed", "created item could not be read back", 500)
-        return {"item": item, "track_name": track_name}
+        result = {"item": item, "track_name": track_name}
+        if release_digest is not None:
+            result["review_release_digest"] = release_digest
+        return result
 
     def _item_edit(
         self, arguments: dict[str, Any], context: InvocationContext

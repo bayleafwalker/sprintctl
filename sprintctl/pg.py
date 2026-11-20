@@ -3791,14 +3791,27 @@ def create_work_item_in_transaction(
     description: str,
     assignee: str | None,
     priority: int | None,
-) -> int:
-    """Create a work item and its track within the caller's transaction."""
+    review_actor: str | None = None,
+) -> tuple[int, str | None]:
+    """Create a work item, its track, and any review policy atomically."""
     track = _TrackPg(store, commit_insert=False)
-    item = _WorkItemPg(store, commit_insert=False)
+    adapter = _WorkItemPg(store, commit_insert=False)
     track_id = _trackcore.get_or_create_track(track, sprint_id, track_name)
-    return _workitemcore.create_work_item(
-        item, sprint_id, track_id, title, description, assignee, priority
+    item_id = _workitemcore.create_work_item(
+        adapter, sprint_id, track_id, title, description, assignee, priority
     )
+    release_digest = None
+    if review_actor is not None:
+        with store.conn.cursor() as cur:
+            item, revision, revise_count = _release_basis_locked(cur, store.repo_id, item_id)
+            release_digest = _freeze_release_locked(
+                cur, store.repo_id, item, revision, revise_count, actor=review_actor,
+                acceptance_contract={
+                    "verification_profile": "human-authorized",
+                    "review_protocol": _releases.BROWSER_REVIEW_PROTOCOL,
+                },
+            )
+    return item_id, release_digest
 
 
 @contextmanager

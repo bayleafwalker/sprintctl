@@ -2512,6 +2512,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         _object_schema(
             {
                 "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
+                "require_review": {"type": "boolean"},
                 "sprint_id": {"type": "integer", "minimum": 1},
                 "track_name": {"type": "string", "minLength": 1},
                 "title": {"type": "string", "minLength": 1},
@@ -2522,7 +2523,10 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         ),
         _result_schema(
             ("item", "track_name"),
-            {"item": {"type": "object"}, "track_name": {"type": "string"}},
+            {
+                "item": {"type": "object"}, "track_name": {"type": "string"},
+                "review_release_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            },
         ),
         "work:task.create", "write", "required", required_remote_schema_version=17,
     ),

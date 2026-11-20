@@ -516,18 +516,21 @@ def _create_task_write(store) -> KeyedWrite:
 
 def test_create_task_rolls_back_the_track_and_item_on_failure(store, monkeypatch):
     write = _create_task_write(store)
+    arguments = {**write.arguments, "require_review": True}
     with monkeypatch.context() as patch:
         patch.setattr(pg, "get_work_item", lambda *_args: None)
         failure = _refused(
-            lambda: _invoke(store, write.operation, write.arguments, write.context)
+            lambda: _invoke(store, write.operation, arguments, write.context)
         )
     assert failure.code == "item-create-failed"
     assert write.effects() == 0
-    assert pg.list_tracks(store, write.arguments["sprint_id"]) == []
+    assert pg.list_tracks(store, arguments["sprint_id"]) == []
+    assert _count(store, "SELECT count(*) AS n FROM work_release WHERE repo_id = %s", (store.repo_id,)) == 0
 
-    result = _invoke(store, write.operation, write.arguments, write.context)
-    assert _invoke(store, write.operation, write.arguments, write.context) == result
+    result = _invoke(store, write.operation, arguments, write.context)
+    assert _invoke(store, write.operation, arguments, write.context) == result
     assert write.effects() == 1
+    assert result["review_release_digest"]
 
 
 def test_create_task_key_is_shared_across_client_argument_shapes(store):

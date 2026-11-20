@@ -542,17 +542,24 @@ class TestTakeoverAndStaleCompletion:
 
     def test_browser_review_accepts_only_the_exact_pending_successor_report(self, store, monkeypatch):
         monkeypatch.setattr(store, "connection_factory", lambda: psycopg.connect(_PG_URL, row_factory=dict_row))
-        item, dependent = _items(store, 2)
+        (dependent,) = _items(store)
+        sprint = pg.get_work_item(store, dependent)["sprint_id"]
+        creator = _context("github:400:0")
+        creator.identity.authorities = frozenset({"work:task.create"})
+        params = {
+            "sprint_id": sprint, "track_name": "lease", "title": "Review the current result",
+            "require_review": True, "idempotency_key": "create-browser-review",
+        }
+        created = _invoke(store, "work.item.create-v1", params, creator)
+        assert _invoke(store, "work.item.create-v1", params, creator) == created
+        assert _refused(lambda: _invoke(
+            store, "work.item.create-v1", {**params, "require_review": False}, creator,
+        )).code == "idempotency-conflict"
+        item = created["item"]["id"]
+        release = pg.current_release(store, item)
+        assert release["release_digest"] == created["review_release_digest"]
+        assert release["acceptance_contract"]["review_protocol"] == "browser-outcome-v1"
         pg.add_dep(store, item, dependent)
-        sprint = pg.get_work_item(store, item)["sprint_id"]
-        reservation = pg.reserve(
-            store, item, actor="operator", session_id="review-release",
-            acceptance_contract={
-                "verification_profile": "human-authorized",
-                "review_protocol": "browser-outcome-v1",
-            },
-        )
-        pg.release_reservation(store, reservation["id"])
         run_a = _run(store, A)
         lease_a = _claim(store, A, item, run_a, "review-claim-a")["lease"]
         _backdate(store, lease_a["lease_id"], 601)

@@ -528,13 +528,17 @@ def event_add(
 def item_create(
     served_profile: ServedProfile, *, repo_id: str, sprint_id: int, track_name: str, title: str,
     description: str | None = None, assignee: str | None = None, priority: int | None = None,
-    idempotency_key: str | None = None,
+    idempotency_key: str | None = None, require_review: bool = False,
 ) -> dict[str, Any]:
     """Create a served item, opting into durable replay with a caller key."""
     arguments = {
         "sprint_id": sprint_id, "track_name": track_name, "title": title,
         "description": description, "assignee": assignee, "priority": priority,
     }
+    if require_review:
+        if idempotency_key is None:
+            raise ValueError("review-gated task creation requires an idempotency key")
+        arguments["require_review"] = True
     if idempotency_key is None:
         return asyncio.run(_invoke_operation(
             served_profile, "work.item.create", arguments, repo_id=repo_id,
