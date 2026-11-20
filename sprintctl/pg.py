@@ -4254,6 +4254,52 @@ def list_pending_outcome_reviews(
     }
 
 
+def _review_receipt(decision: Mapping[str, Any], report: Mapping[str, Any], reviewer: str) -> dict:
+    return {
+        "item_id": int(decision["work_item_id"]),
+        "report_id": report["report_id"],
+        "payload_digest": report["payload_digest"],
+        "release_digest": decision["release_digest"],
+        "decision_id": int(decision["id"]),
+        "reviewer_principal_id": reviewer,
+    }
+
+
+def _find_review_receipt(cur: Any, repo_id: str, decision: dict | None, reports: list) -> dict | None:
+    if decision is None or decision["kind"] != "accept" or decision["release_digest"] is None:
+        return None
+    report = next((
+        row for row in reports if row["decision_id"] == decision["id"]
+        and row["disposition"] == "settled"
+    ), None)
+    if report is None or decision["evidence_digests"] != [report["payload_digest"]]:
+        return None
+    cur.execute(
+        "SELECT event_type,payload FROM event WHERE repo_id=%s AND work_item_id=%s AND actor=%s "
+        "AND (event_type='item-decided' AND payload->>'reviewed_report_id'=%s "
+        "OR event_type='item-decided-imported' AND payload->'source_payload'->>'reviewed_report_id'=%s) "
+        "LIMIT 2",
+        (repo_id, decision["work_item_id"], decision["actor"], report["report_id"], report["report_id"]),
+    )
+    events = cur.fetchall()
+    if len(events) != 1:
+        return None
+    event = events[0]
+    payload = event["payload"]
+    if event["event_type"] == "item-decided-imported":
+        payload = payload["source_payload"]
+    elif payload.get("decision_id") != decision["id"]:
+        return None
+    reviewer = payload.get("reviewer_principal_id")
+    if (
+        payload.get("kind") != "accept" or payload.get("release_digest") != decision["release_digest"]
+        or not isinstance(reviewer, str) or not reviewer
+        or reviewer.rsplit(":", 1)[0] == report["principal_id"].rsplit(":", 1)[0]
+    ):
+        return None
+    return _review_receipt(decision, report, reviewer)
+
+
 def review_outcome_snapshot(
     store: PgStore, *, item_id: int, workspace_id: str, principal_id: str,
 ) -> dict:
@@ -4272,7 +4318,8 @@ def review_outcome_snapshot(
         cur.execute(
             "SELECT r.* FROM work_outcome_report r WHERE r.repo_id=%s "
             "AND r.workspace_id=%s AND r.work_item_id=%s "
-            "ORDER BY (r.disposition IN ('awaiting-verification','settled')) DESC, "
+            "ORDER BY (r.decision_id IS NOT NULL) DESC, "
+            "(r.disposition='awaiting-verification') DESC, "
             "r.created_at DESC,r.report_id DESC LIMIT 26",
             (store.repo_id, workspace_id, item_id),
         )
@@ -4327,6 +4374,7 @@ def review_outcome_snapshot(
             "reports_truncated": len(rows) > 25,
             "reviewable_report_id": candidate,
             "decision": decision,
+            "acceptance_receipt": _find_review_receipt(cur, store.repo_id, decision, rows[:25]),
         }
 
 
@@ -4395,11 +4443,7 @@ def accept_reviewed_outcome(
             "reviewer_principal_id": principal_id,
         },
     )
-    return {
-        "item_id": item_id, "report_id": report_id, "payload_digest": payload_digest,
-        "release_digest": release_digest, "decision_id": decision["id"],
-        "reviewer_principal_id": principal_id,
-    }
+    return _review_receipt(decision, report, principal_id)
 
 
 def record_decision(

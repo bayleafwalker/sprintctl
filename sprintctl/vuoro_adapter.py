@@ -1900,6 +1900,7 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
                 "reports_truncated": {"type": "boolean"},
                 "reviewable_report_id": {"type": ["string", "null"]},
                 "decision": {"type": ["object", "null"]},
+                "acceptance_receipt": {"type": ["object", "null"]},
             },
         ),
         "work:review.accept", "read", "not-allowed", required_remote_schema_version=29,

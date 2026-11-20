@@ -635,6 +635,7 @@ class TestTakeoverAndStaleCompletion:
         view = _invoke(store, review_op, {"item_id": item}, independent)
         assert view["reviewable_report_id"] is None
         assert view["decision"]["id"] == receipt["decision_id"]
+        assert view["acceptance_receipt"] == receipt
         assert _invoke(store, queue_op, {}, independent)["items"] == []
         assert dependent in {row["id"] for row in pg.get_ready_items(store, sprint)}
 

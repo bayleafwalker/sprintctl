@@ -993,6 +993,10 @@ def test_browser_review_receipt_survives_archival_restore():
                 imported = json.loads(event["payload"])["source_payload"]
                 assert imported["reviewer_principal_id"] == receipt["reviewer_principal_id"]
                 assert imported["reviewed_report_id"] == receipt["report_id"]
+                restored = pg.review_outcome_snapshot(
+                    target, item_id=item, workspace_id="demo", principal_id="github:reader:0",
+                )
+                assert restored["acceptance_receipt"] == receipt
                 assert "decision_id" not in imported and "idempotency_key" not in imported
                 assert dependent in {row["id"] for row in pg.get_ready_items(target, sprint)}
                 assert target.conn.execute("SELECT count(*) AS n FROM work_idempotency_ledger").fetchone()["n"] == 0
