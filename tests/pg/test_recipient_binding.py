@@ -1279,7 +1279,7 @@ def test_migration_fingerprint_and_rollback(case, monkeypatch):
         assert cur.fetchone() == {'version': 31, 'relation': None}
     store.conn.rollback()
     monkeypatch.setattr(schema, 'install', original)
-    assert pg_migrations.migrate_schema(store)['applied_versions'] == [32, 33, 34]
+    assert pg_migrations.migrate_schema(store)['applied_versions'] == [32, 33, 34, 35]
     assert pg_migrations.migrate_schema(store)['applied_versions'] == []
     with store.conn.transaction(), store.conn.cursor() as cur:
         cur.execute('ALTER TABLE operator_request_recipient_binding ADD COLUMN drift integer')

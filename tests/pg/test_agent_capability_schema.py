@@ -93,8 +93,8 @@ def test_schema34_migration_from_33_installs_only_adjunct_storage(store, pg_test
         conn.commit()
         migrated = pg_migrations.migrate_schema(
             isolated)
-        assert migrated["applied_versions"] == [34]
-        assert migrated["to_version"] == 34
+        assert migrated["applied_versions"] == [34, 35]
+        assert migrated["to_version"] == 35
         with conn.cursor() as cur:
             assert agent_capability_schema.inspect_catalog(cur)["available"]
         conn.commit()

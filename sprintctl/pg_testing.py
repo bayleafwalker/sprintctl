@@ -23,6 +23,7 @@ DISPOSABLE_DATABASE_COMMENT = "sprintctl:disposable-integration-test"
 REPO_TABLES = (
     "operator_request_recipient_binding",
     # Schema 34: adjunct capabilities restrict the v1 declaration revision.
+    "work_archive_restore",
     "agent_capability_revision",
     "operator_continuation_receipt",
     # Schema 28: request event and dependant history before the request row.

@@ -13,12 +13,14 @@ import json
 import threading
 import time
 import uuid
+from copy import deepcopy
 from types import SimpleNamespace
+from tests.pg._shared import pg_test_scope
 
 import jsonschema
 import pytest
 
-from sprintctl import pg, pg_migrations
+from sprintctl import pg, pg_migrations, work_archive, work_archive_restore, work_archive_validation
 from sprintctl.application import ApplicationRejection, WorkApplication
 from sprintctl.maintenance_capability import (
     MaintenanceCapabilityError,
@@ -540,7 +542,7 @@ class TestTakeoverAndStaleCompletion:
         assert final["current_lease"] is None
         assert [r["disposition"] for r in final["outcome_reports"]] == ["rejected", "settled"]
 
-    def test_browser_review_accepts_only_the_exact_pending_successor_report(self, store, monkeypatch):
+    def test_browser_review_accepts_only_the_exact_pending_successor_report(self, store, monkeypatch, tmp_path, pg_test_scope):
         monkeypatch.setattr(store, "connection_factory", lambda: psycopg.connect(_PG_URL, row_factory=dict_row))
         (dependent,) = _items(store)
         sprint = pg.get_work_item(store, dependent)["sprint_id"]
@@ -636,6 +638,110 @@ class TestTakeoverAndStaleCompletion:
         assert view["reviewable_report_id"] is None
         assert view["decision"]["id"] == receipt["decision_id"]
         assert view["acceptance_receipt"] == receipt
+        archive_op = "work.archive.export-v1"
+        archive = _invoke(store, archive_op, {}, independent)
+        assert _refused(lambda: _invoke(store, archive_op, {}, reviewer(
+            "github:300:0", browser=False,
+        ))).code == "review-identity-required"
+        assert archive["acceptance_receipts"] == [receipt]
+        path = tmp_path / "archive.json"
+        path.write_text(json.dumps(archive, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        assert work_archive_validation.load_archive(path, expected_repo_id=store.repo_id) == archive
+        path.write_text('{"repo_id":"one","repo_id":"two"}', encoding="utf-8")
+        with pytest.raises(ValueError, match="duplicate JSON key"):
+            work_archive_validation.load_archive(path, expected_repo_id=store.repo_id)
+        with pytest.raises(ValueError, match="different repository"):
+            work_archive_validation.validate_archive(archive, expected_repo_id="different")
+        for section, field, invalid, message in (
+            ("acceptance_receipts", "reviewer_principal_id", "github:200:1", "acceptance receipt"),
+            ("acceptance_receipts", "release_digest", "a" * 64, "acceptance receipt"),
+            ("reports", "summary", "changed evidence", "report digest"),
+            ("releases", "item_revision", "changed revision", "release digest"),
+            ("dependencies", "blocked_item_id", 2**63, "blocking item"),
+        ):
+            altered = deepcopy(archive)
+            altered[section][-1][field] = invalid
+            with pytest.raises(ValueError, match=message):
+                work_archive_validation.validate_archive(altered, expected_repo_id=store.repo_id)
+        assert (dependent, item) in {
+            (edge["blocked_item_id"], edge["item_id"]) for edge in archive["dependencies"]
+        }
+        assert {
+            row["disposition"] for row in archive["reports"] if row["work_item_id"] == item
+        } == {"rejected", "settled"}
+        assert {
+            row["id"]: row["status"] for row in archive["items"] if row["id"] in {item, dependent}
+        } == {item: "done", dependent: "pending"}
+        assert args["release_digest"] in {
+            row["release_digest"] for row in archive["releases"] if row["work_item_id"] == item
+        }
+        assert not {"claim_key", "idempotency_key", "lease_id", "run_id", "grant_id"} & {
+            key for row in archive["reports"] for key in row
+        }
+        encoded = json.dumps(archive)
+        for excluded in ("review-claim-b", "review-report-b-accept", lease_b["lease_id"]):
+            assert excluded not in encoded
+        other_workspace = work_archive.export_repository(store, workspace_id="other")
+        assert other_workspace["reports"] == other_workspace["acceptance_receipts"] == []
+        other_repo = pg.PgStore(
+            store.conn, "empty-archive-scope", connection_factory=store.connection_factory,
+        )
+        foreign_archive = work_archive.export_repository(other_repo, workspace_id="ws-1")
+        assert foreign_archive["items"] == foreign_archive["acceptance_receipts"] == []
+        destination = pg_test_scope("restored-work-archive")
+        source = {**archive, "repo_id": destination}
+        with psycopg.connect(_PG_URL, row_factory=dict_row) as conn:
+            restored = pg.PgStore(
+                conn, destination, remote_schema_version=35,
+                connection_factory=lambda: psycopg.connect(_PG_URL, row_factory=dict_row),
+            )
+            restore_meta = {"workspace_id": "destination-workspace", "actor": "destination-admin"}
+            invalid = deepcopy(source)
+            invalid["items"][-1]["title"] = None
+            with pytest.raises(psycopg.errors.NotNullViolation):
+                work_archive_restore.restore_repository(restored, invalid, **restore_meta)
+            assert work_archive_restore.read_restored_source(
+                restored, workspace_id=restore_meta["workspace_id"],
+            ) is None
+            restorer = reviewer("github:400:0")
+            restorer.identity.actor = restore_meta["actor"]
+            restorer.identity.workspace_id = restore_meta["workspace_id"]
+            request = {"archive": source, "idempotency_key": restorer.idempotency_key}
+            result = _invoke(restored, "work.archive.restore-v1", request, restorer)
+            assert _invoke(restored, "work.archive.restore-v1", request, restorer) == result
+            assert _invoke(restored, "work.archive.restored-source-v1", {}, restorer)["history"][
+                "source_archive"
+            ]["acceptance_receipts"] == [receipt]
+            edited = deepcopy(source)
+            edited["workspace_id"] = "changed"
+            with pytest.raises(work_archive_restore.RestoreConflict):
+                work_archive_restore.restore_repository(restored, edited, **restore_meta)
+            ids = result["item_ids"]
+            restored_item = pg.get_work_item(restored, ids[str(item)])
+            assert (restored_item["status"], restored_item["resolution"]) == ("done", "accepted")
+            ready = pg.get_ready_items(restored, restored_item["sprint_id"])
+            assert ids[str(dependent)] in {row["id"] for row in ready}
+            history = work_archive_restore.read_restored_source(
+                restored, workspace_id=restore_meta["workspace_id"],
+            )
+            assert history["source_archive"]["acceptance_receipts"] == [receipt]
+            assert history["archive_digest"] == result["archive_digest"]
+            assert work_archive_restore.read_restored_source(restored, workspace_id="other") is None
+            restored_view = pg.review_outcome_snapshot(
+                restored, item_id=ids[str(item)], workspace_id=restore_meta["workspace_id"], principal_id="github:400:0",
+            )
+            assert restored_view["acceptance_receipt"] is None
+            assert restored_view["decision"]["actor"] == restore_meta["actor"]
+            assert conn.execute(
+                "SELECT 1 FROM work_lease WHERE repo_id=%s LIMIT 1", (destination,)
+            ).fetchone() is None
+
+        monkeypatch.setattr(work_archive, "MAX_BYTES", 1)
+        exceeded = _refused(lambda: _invoke(store, archive_op, {}, independent))
+        assert exceeded.code == "archive-limit-exceeded" and exceeded.http_status == 413
+        monkeypatch.setattr(work_archive, "MAX_RECORDS", 1)
+        with pytest.raises(ValueError, match="archive record limit"):
+            work_archive.export_repository(store, workspace_id="ws-1")
         assert _invoke(store, queue_op, {}, independent)["items"] == []
         assert dependent in {row["id"] for row in pg.get_ready_items(store, sprint)}
 

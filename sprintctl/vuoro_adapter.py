@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from .continuation_basis import SCHEMA as _CONTINUATION_BASIS_SCHEMA
 from . import work_currentness as _currentness
+from .work_archive import SCHEMA_VERSION as _WORK_ARCHIVE_SCHEMA
 
 import inspect
 from dataclasses import dataclass
@@ -1867,6 +1868,53 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
             "replacement": "work.lease.report-outcome-v1",
             "sunset_at": None,
         },
+    ),
+    WorkOperationContract(
+        "work.archive.export-v1",
+        _object_schema({}),
+        _result_schema(
+            (
+                "schema_version", "workspace_id", "repo_id", "observed_at", "sprints",
+                "tracks", "items", "dependencies", "references", "releases",
+                "release_commits", "decisions", "reports", "acceptance_receipts",
+            ),
+            {
+                "schema_version": {"const": _WORK_ARCHIVE_SCHEMA},
+                "workspace_id": {"type": "string", "minLength": 1},
+                "repo_id": {"type": "string", "minLength": 1},
+                "observed_at": {"type": "string"},
+                **{
+                    name: {"type": "array", "items": {"type": "object"}}
+                    for name in (
+                        "sprints", "tracks", "items", "dependencies", "references",
+                        "releases", "release_commits", "decisions", "reports",
+                        "acceptance_receipts",
+                    )
+                },
+            },
+        ),
+        "work:review.accept", "read", "not-allowed", required_remote_schema_version=29,
+    ),
+    WorkOperationContract(
+        "work.archive.restore-v1",
+        _object_schema(
+            {"archive": {"type": "object"}, "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA},
+            required=("archive", "idempotency_key"),
+        ),
+        _result_schema(
+            ("archive_digest", "item_ids"),
+            {
+                "archive_digest": _SHA256_HEX,
+                "item_ids": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 1}},
+            },
+        ),
+        "work:review.accept", "write", "required", required_remote_schema_version=35,
+    ),
+    WorkOperationContract(
+        "work.archive.restored-source-v1",
+        _object_schema({}),
+        _result_schema(("history",), {"history": {"type": ["object", "null"]}}),
+        "work:review.accept", "read", "not-allowed", required_remote_schema_version=35,
     ),
     WorkOperationContract(
         "work.outcome.review-queue-v1",

@@ -102,7 +102,7 @@ def test_native_reserve_is_only_catalog_addition_with_all_legacy_bytes_preserved
         "work.run.continuation-delta-v1", "work.lease.report-outcome-v2", "work.lease.currentness-v1",
         "work.run.register-correlated-v1", "work.run.invocation-receipt-get-v1",
         "work.item.create-v1", "work.outcome.accept-v1",
-        "work.outcome.review-v1", "work.outcome.review-queue-v1",
+        "work.archive.export-v1", "work.archive.restore-v1", "work.archive.restored-source-v1", "work.outcome.review-v1", "work.outcome.review-queue-v1",
     } | set(OPERATION_AUTHORITIES) | AGENT_INBOX_OPERATIONS | SCHEMA26_OPERATIONS | SCHEMA27_OPERATIONS | SCHEMA28_OPERATIONS | {"work.request.continuation-v1", "work.request.continuation-receipt-v1"} | {"work.sprint.kind"}
     assert not set(expected) - set(actual)
     # Schema 29 adds the captured basis to lease acquire, heartbeat, and read

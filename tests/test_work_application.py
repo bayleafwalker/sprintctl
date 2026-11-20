@@ -550,6 +550,7 @@ def test_catalog_covers_served_work_surfaces_and_legacy_inventory():
         if contract.idempotency == "required"
     }
     assert required_idempotency == {
+        "work.archive.restore-v1",
         "work.outcome.accept-v1",
         "work.item.create-v1",
         "work.lifecycle.arbitrate",
