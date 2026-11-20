@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.31.0
+
+- Added browser-administrator operations to export and restore repository work history.
+- Restores assign destination task IDs, preserve dependencies, and retain source acceptance receipts separately from current workspace authority.
+- Added PostgreSQL schema 35 for restore history. The runtime accepts schemas 32–35. Restore and restored history require schema 35.
+
 ## 0.30.0
 
 - Added retry-safe task creation to the served API and CLI, with an option to require independent outcome review.
