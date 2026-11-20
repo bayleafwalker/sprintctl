@@ -71,6 +71,8 @@ def test_only_catalog_addition_and_every_existing_descriptor_byte_preserved():
         "work.effect.acceptance-snapshot-v1", "work.effect.export-proposal-v2", "work.effect.export-proposal-v3", "work.effect.basis-v1",
         "work.run.continuation-delta-v1", "work.lease.report-outcome-v2", "work.lease.currentness-v1",
         "work.run.register-correlated-v1", "work.run.invocation-receipt-get-v1",
+        "work.item.create-v1", "work.outcome.accept-v1",
+        "work.outcome.review-v1", "work.outcome.review-queue-v1",
     } | set(OPERATION_AUTHORITIES) | AGENT_INBOX_OPERATIONS | SCHEMA26_OPERATIONS | SCHEMA27_OPERATIONS | SCHEMA28_OPERATIONS | {"work.request.continuation-v1", "work.request.continuation-receipt-v1"}
     # Schema 29 adds the captured basis to lease acquire, heartbeat, and read
     # results; #2596 also tightens these two existing payload schemas. Every

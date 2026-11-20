@@ -106,6 +106,8 @@ def test_only_attempt_and_declared_preview_descriptors_are_added_to_released_cat
             "work.run.continuation-delta-v1", "work.lease.report-outcome-v2", "work.lease.currentness-v1",
             "work.run.register-correlated-v1",
             "work.run.invocation-receipt-get-v1",
+            "work.item.create-v1", "work.outcome.accept-v1",
+            "work.outcome.review-v1", "work.outcome.review-queue-v1",
         }
         | AGENT_INBOX_OPERATIONS
         | SCHEMA26_OPERATIONS
