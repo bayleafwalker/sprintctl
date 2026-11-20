@@ -1690,9 +1690,16 @@ class WorkApplication:
                 "keyed task creation requires the PostgreSQL schema 17 owner",
                 503,
             )
-        _idempotency_key(arguments.get("idempotency_key"))
+        key = _idempotency_key(arguments.get("idempotency_key"))
+        if context.idempotency_key is not None and context.idempotency_key != key:
+            raise ApplicationRejection(
+                "invalid-arguments",
+                "invocation and task idempotency keys must match",
+                422,
+            )
+        request = {name: value for name, value in arguments.items() if value is not None}
         return self._idempotent_write(
-            context, "work.item.create-v1", arguments,
+            context, "work.item.create-v1", request,
             lambda _cur, _digest: self._item_create(arguments, context, transactional=True),
         )
 
