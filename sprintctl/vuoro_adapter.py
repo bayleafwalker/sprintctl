@@ -2508,6 +2508,25 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work:lifecycle", "write", "not-allowed",
     ),
     WorkOperationContract(
+        "work.item.create-v1",
+        _object_schema(
+            {
+                "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
+                "sprint_id": {"type": "integer", "minimum": 1},
+                "track_name": {"type": "string", "minLength": 1},
+                "title": {"type": "string", "minLength": 1},
+                "description": {"type": ["string", "null"]},
+                "assignee": {"type": ["string", "null"]},
+                "priority": {"type": ["integer", "null"], "minimum": 1, "maximum": 9},
+            }, required=("sprint_id", "track_name", "title", "idempotency_key"),
+        ),
+        _result_schema(
+            ("item", "track_name"),
+            {"item": {"type": "object"}, "track_name": {"type": "string"}},
+        ),
+        "work:task.create", "write", "required", required_remote_schema_version=17,
+    ),
+    WorkOperationContract(
         "work.item.edit",
         _object_schema(
             {

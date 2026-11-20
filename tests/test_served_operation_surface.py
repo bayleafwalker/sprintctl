@@ -60,6 +60,7 @@ PUBLISHED_OPERATIONS = (
         "work.handoff.record",
         "work.identity.current",
         "work.item.create",
+    "work.item.create-v1",
         "work.item.dep.add",
         "work.item.dep.remove",
         "work.item.edit",
