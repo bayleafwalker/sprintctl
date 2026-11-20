@@ -100,6 +100,8 @@ def export_repository(store: pg.PgStore, *, workspace_id: str) -> dict:
                 )
                 if receipt is not None:
                     receipts.append(receipt)
+        if len(receipts) > remaining:
+            raise ArchiveLimitExceeded("archive record limit exceeded")
         archive["acceptance_receipts"] = receipts
     encoded = json.dumps(archive, ensure_ascii=False, separators=(",", ":")).encode()
     if len(encoded) > MAX_BYTES:

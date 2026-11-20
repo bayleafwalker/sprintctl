@@ -13,12 +13,13 @@ import json
 import threading
 import time
 import uuid
+from copy import deepcopy
 from types import SimpleNamespace
 
 import jsonschema
 import pytest
 
-from sprintctl import pg, pg_migrations, work_archive
+from sprintctl import pg, pg_migrations, work_archive, work_archive_validation
 from sprintctl.application import ApplicationRejection, WorkApplication
 from sprintctl.maintenance_capability import (
     MaintenanceCapabilityError,
@@ -540,7 +541,7 @@ class TestTakeoverAndStaleCompletion:
         assert final["current_lease"] is None
         assert [r["disposition"] for r in final["outcome_reports"]] == ["rejected", "settled"]
 
-    def test_browser_review_accepts_only_the_exact_pending_successor_report(self, store, monkeypatch):
+    def test_browser_review_accepts_only_the_exact_pending_successor_report(self, store, monkeypatch, tmp_path):
         monkeypatch.setattr(store, "connection_factory", lambda: psycopg.connect(_PG_URL, row_factory=dict_row))
         (dependent,) = _items(store)
         sprint = pg.get_work_item(store, dependent)["sprint_id"]
@@ -642,6 +643,25 @@ class TestTakeoverAndStaleCompletion:
             "github:300:0", browser=False,
         ))).code == "review-identity-required"
         assert archive["acceptance_receipts"] == [receipt]
+        path = tmp_path / "archive.json"
+        path.write_text(json.dumps(archive, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        assert work_archive_validation.load_archive(path, expected_repo_id=store.repo_id) == archive
+        path.write_text('{"repo_id":"one","repo_id":"two"}', encoding="utf-8")
+        with pytest.raises(ValueError, match="duplicate JSON key"):
+            work_archive_validation.load_archive(path, expected_repo_id=store.repo_id)
+        with pytest.raises(ValueError, match="different repository"):
+            work_archive_validation.validate_archive(archive, expected_repo_id="different")
+        for section, field, invalid, message in (
+            ("acceptance_receipts", "reviewer_principal_id", "github:200:1", "acceptance receipt"),
+            ("acceptance_receipts", "release_digest", "a" * 64, "acceptance receipt"),
+            ("reports", "summary", "changed evidence", "report digest"),
+            ("releases", "item_revision", "changed revision", "release digest"),
+            ("dependencies", "blocked_item_id", 2**63, "blocking item"),
+        ):
+            altered = deepcopy(archive)
+            altered[section][-1][field] = invalid
+            with pytest.raises(ValueError, match=message):
+                work_archive_validation.validate_archive(altered, expected_repo_id=store.repo_id)
         assert (dependent, item) in {
             (edge["blocked_item_id"], edge["item_id"]) for edge in archive["dependencies"]
         }
