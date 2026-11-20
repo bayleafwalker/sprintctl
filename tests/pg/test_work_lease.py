@@ -18,7 +18,7 @@ from types import SimpleNamespace
 import jsonschema
 import pytest
 
-from sprintctl import pg, pg_migrations
+from sprintctl import pg, pg_migrations, work_archive
 from sprintctl.application import ApplicationRejection, WorkApplication
 from sprintctl.maintenance_capability import (
     MaintenanceCapabilityError,
@@ -636,6 +636,39 @@ class TestTakeoverAndStaleCompletion:
         assert view["reviewable_report_id"] is None
         assert view["decision"]["id"] == receipt["decision_id"]
         assert view["acceptance_receipt"] == receipt
+        archive = work_archive.export_repository(store, workspace_id="ws-1")
+        assert archive["acceptance_receipts"] == [receipt]
+        assert (dependent, item) in {
+            (edge["blocked_item_id"], edge["item_id"]) for edge in archive["dependencies"]
+        }
+        assert {
+            row["disposition"] for row in archive["reports"] if row["work_item_id"] == item
+        } == {"rejected", "settled"}
+        assert {
+            row["id"]: row["status"] for row in archive["items"] if row["id"] in {item, dependent}
+        } == {item: "done", dependent: "pending"}
+        assert args["release_digest"] in {
+            row["release_digest"] for row in archive["releases"] if row["work_item_id"] == item
+        }
+        assert not {"claim_key", "idempotency_key", "lease_id", "run_id", "grant_id"} & {
+            key for row in archive["reports"] for key in row
+        }
+        encoded = json.dumps(archive)
+        for excluded in ("review-claim-b", "review-report-b-accept", lease_b["lease_id"]):
+            assert excluded not in encoded
+        other_workspace = work_archive.export_repository(store, workspace_id="other")
+        assert other_workspace["reports"] == other_workspace["acceptance_receipts"] == []
+        other_repo = pg.PgStore(
+            store.conn, "empty-archive-scope", connection_factory=store.connection_factory,
+        )
+        foreign_archive = work_archive.export_repository(other_repo, workspace_id="ws-1")
+        assert foreign_archive["items"] == foreign_archive["acceptance_receipts"] == []
+        monkeypatch.setattr(work_archive, "MAX_BYTES", 1)
+        with pytest.raises(ValueError, match="archive byte limit"):
+            work_archive.export_repository(store, workspace_id="ws-1")
+        monkeypatch.setattr(work_archive, "MAX_RECORDS", 1)
+        with pytest.raises(ValueError, match="archive record limit"):
+            work_archive.export_repository(store, workspace_id="ws-1")
         assert _invoke(store, queue_op, {}, independent)["items"] == []
         assert dependent in {row["id"] for row in pg.get_ready_items(store, sprint)}
 
