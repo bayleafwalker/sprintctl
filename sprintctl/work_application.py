@@ -860,6 +860,7 @@ class WorkApplication:
             # and digest, so a key used under either name is one report.
             "work.lease.complete-v1": target._claim_complete,
             "work.lease.read-v1": target._claim_read,
+            "work.outcome.accept-v1": target._outcome_accept,
             _effect.OPERATION_PROPOSE: target._effect_propose,
             _effect.OPERATION_BOUND_PROPOSE: target._effect_propose_bound,
             _effect.OPERATION_GET: target._effect_get,
@@ -3207,6 +3208,48 @@ class WorkApplication:
                 details=report.get("details"),
             )
         return result
+
+    def _outcome_accept(
+        self, arguments: dict[str, Any], context: InvocationContext,
+    ) -> dict[str, Any]:
+        identity = context.identity
+        if (
+            getattr(identity, "browser_work_review", False) is not True
+            or "work:review.accept" not in identity.authorities
+        ):
+            raise ApplicationRejection(
+                "review-identity-required", "A browser reviewer must accept the outcome", 403,
+            )
+        if (getattr(self.store, "remote_schema_version", None) or 0) < 29:
+            raise ApplicationRejection(
+                "owner-capability-unavailable", "Outcome review requires schema 29", 503,
+            )
+        principal_id, workspace_id = _identity_binding(context)
+        key = _idempotency_key(arguments.get("idempotency_key"))
+        if context.idempotency_key != key:
+            raise ApplicationRejection(
+                "invalid-arguments", "Invocation and review idempotency keys must match", 422,
+            )
+        item_id = _positive_int(arguments.get("item_id"), "item_id")
+        report_id = _required_text(arguments.get("report_id"), "report_id")
+        payload_digest = _required_text(arguments.get("payload_digest"), "payload_digest")
+        release_digest = _required_text(arguments.get("release_digest"), "release_digest")
+        rationale = _required_text(arguments.get("rationale"), "rationale")
+
+        from . import pg as _pg
+
+        try:
+            return self._idempotent_write(
+                context, "work.outcome.accept-v1", arguments,
+                lambda cur, _digest: _pg.accept_reviewed_outcome(
+                    cur, self.store, item_id=item_id, workspace_id=workspace_id,
+                    principal_id=principal_id, actor=identity.actor, report_id=report_id,
+                    payload_digest=payload_digest, release_digest=release_digest, rationale=rationale,
+                ),
+            )
+        except _pg.LeaseRefused as exc:
+            status = {"report-not-found": 404, "independent-review-required": 403}.get(exc.code, 409)
+            raise ApplicationRejection(exc.code, str(exc), status) from exc
 
     def _claim_read(self, arguments: dict[str, Any], _context: InvocationContext) -> dict[str, Any]:
         item_id = _positive_int(arguments.get("item_id"), "item_id")
