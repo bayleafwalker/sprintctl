@@ -4022,6 +4022,17 @@ def _decision_row(row: Any) -> dict:
     return decision
 
 
+def _requires_browser_review(cur: Any, repo_id: str, item_id: int) -> bool:
+    cur.execute(
+        "SELECT 1 FROM work_release r WHERE r.repo_id=%s AND r.work_item_id=%s "
+        "AND r.acceptance_contract->>'review_protocol'=%s "
+        "AND r.revise_count=(SELECT count(*) FROM work_decision d WHERE d.repo_id=r.repo_id "
+        "AND d.work_item_id=r.work_item_id AND d.kind='revise') LIMIT 1",
+        (repo_id, item_id, _releases.BROWSER_REVIEW_PROTOCOL),
+    )
+    return cur.fetchone() is not None
+
+
 def _decide_locked(
     cur: Any, repo_id: str, item: Any, decision: dict, *, reviewed_report_id: str | None = None
 ) -> dict:
@@ -4030,6 +4041,12 @@ def _decide_locked(
     A terminal kind closes the item in the same statement that binds it to the
     decision, so the item can never be done without one.
     """
+
+    if (
+        decision["kind"] == "accept" and reviewed_report_id is None
+        and _requires_browser_review(cur, repo_id, int(item["id"]))
+    ):
+        raise InvalidTransition("This release requires acceptance of an exact report by a browser reviewer")
 
     def successor_exists(superseded_by):
         cur.execute(
@@ -7469,7 +7486,11 @@ def _acquire_locked(
     basis_release_digest = (
         basis_release["release_digest"] if basis_release is not None else None
     )
-    unenforced = sorted(set(pinned["requirements"]) - _releases.ENFORCED_REQUIREMENTS)
+    unenforced = set(pinned["requirements"]) - _releases.ENFORCED_REQUIREMENTS
+    if unenforced == {"human-authorization"} and _requires_browser_review(
+        cur, store.repo_id, work_item_id,
+    ):
+        unenforced.clear()
     if unenforced:
         # A contract stored before agentops#2539 may name a profile whose
         # verifier the owner cannot check yet.  Leasing the item would
@@ -7477,7 +7498,7 @@ def _acquire_locked(
         raise LeaseRefused(
             "verification-unsupported",
             f"item #{work_item_id} requires verification profile {pinned['profile']} "
-            f"({', '.join(unenforced)}), which this authority does not enforce yet; "
+            f"({', '.join(sorted(unenforced))}), which this authority does not enforce yet; "
             "it cannot be leased",
         )
     if previous is not None:

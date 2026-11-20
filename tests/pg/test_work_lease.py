@@ -544,6 +544,14 @@ class TestTakeoverAndStaleCompletion:
         item, dependent = _items(store, 2)
         pg.add_dep(store, item, dependent)
         sprint = pg.get_work_item(store, item)["sprint_id"]
+        reservation = pg.reserve(
+            store, item, actor="operator", session_id="review-release",
+            acceptance_contract={
+                "verification_profile": "human-authorized",
+                "review_protocol": "browser-outcome-v1",
+            },
+        )
+        pg.release_reservation(store, reservation["id"])
         run_a = _run(store, A)
         lease_a = _claim(store, A, item, run_a, "review-claim-a")["lease"]
         _backdate(store, lease_a["lease_id"], 601)
@@ -552,7 +560,6 @@ class TestTakeoverAndStaleCompletion:
         assert _refused(lambda: _complete(
             store, A, lease_a["lease_id"], run_a, "review-report-a",
         )).code == "claim-superseded"
-        _legacy_bar(store, item, {"verification_profile": "human-authorized"}, lease_b["lease_id"])
         report = _complete(store, B, lease_b["lease_id"], run_b, "review-report-b")["report"]
         assert report["disposition"] == "awaiting-verification"
         assert dependent not in {row["id"] for row in pg.get_ready_items(store, sprint)}
@@ -585,6 +592,9 @@ class TestTakeoverAndStaleCompletion:
             )).code == "review-basis-stale"
         assert _status(store, item) == "active"
         assert not pg.list_decisions(store, item)
+        with pytest.raises(pg.InvalidTransition, match="requires acceptance of an exact report"):
+            pg.record_decision(store, item, "accept", actor="legacy-operator")
+        assert dependent not in {row["id"] for row in pg.get_ready_items(store, sprint)}
 
         receipt = _invoke(store, op, args, independent)
         assert _invoke(store, op, args, independent) == receipt
