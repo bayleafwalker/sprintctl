@@ -1869,6 +1869,32 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         },
     ),
     WorkOperationContract(
+        "work.outcome.accept-v1",
+        _object_schema(
+            {
+                "item_id": {"type": "integer", "minimum": 1},
+                "report_id": _OUTCOME_REPORT_SCHEMA["properties"]["report_id"],
+                "payload_digest": _OUTCOME_REPORT_SCHEMA["properties"]["payload_digest"],
+                "release_digest": _OUTCOME_REPORT_SCHEMA["properties"]["payload_digest"],
+                "rationale": {"type": "string", "minLength": 1, "maxLength": 4000},
+                "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA,
+            },
+            required=("item_id", "report_id", "payload_digest", "release_digest", "rationale", "idempotency_key"),
+        ),
+        _result_schema(
+            ("item_id", "report_id", "payload_digest", "release_digest", "decision_id", "reviewer_principal_id"),
+            {
+                "item_id": {"type": "integer", "minimum": 1},
+                "report_id": _OUTCOME_REPORT_SCHEMA["properties"]["report_id"],
+                "payload_digest": _OUTCOME_REPORT_SCHEMA["properties"]["payload_digest"],
+                "release_digest": _OUTCOME_REPORT_SCHEMA["properties"]["payload_digest"],
+                "decision_id": {"type": "integer", "minimum": 1},
+                "reviewer_principal_id": {"type": "string", "minLength": 1},
+            },
+        ),
+        "work:review.accept", "write", "required", required_remote_schema_version=29,
+    ),
+    WorkOperationContract(
         "work.lease.read-v1",
         _object_schema({"item_id": {"type": "integer", "minimum": 1}}, required=("item_id",)),
         _result_schema(
