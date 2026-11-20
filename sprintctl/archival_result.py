@@ -152,6 +152,16 @@ def _validate(records, repo, workspace, item_id):
         or decision["release_digest"] not in rels
     ):
         raise ValueError("broken historical Decision/Release join")
+    lease = leases.get(report["lease_id"])
+    release = rels[decision["release_digest"]]
+    if (
+        lease is None
+        or lease["state"] != "settled"
+        or release["work_item_id"] != item_id
+        or lease["basis_release_digest"] != release["release_digest"]
+        or lease["basis_item_revision"] != release["item_revision"]
+    ):
+        raise ValueError("broken outcome settlement basis join")
     for d in tables["work_release"]:
         # Owner's immutable release digest is over its exact stored canonical basis.
         if (
@@ -165,14 +175,19 @@ def _validate(records, repo, workspace, item_id):
         ):
             raise ValueError("wrong Release digest")
     for d in tables["work_outcome_report"]:
+        lease = leases.get(d["lease_id"])
+        run = runs.get(d["run_id"])
         if (
             pg.outcome_payload_digest(
                 d["outcome"], d["summary"], d["payload"], d["checks"]
             )
             != d["payload_digest"]
-            or d["lease_id"] not in leases
-            or d["run_id"] not in runs
-            or leases[d["lease_id"]]["run_id"] != d["run_id"]
+            or lease is None
+            or run is None
+            or lease["run_id"] != d["run_id"]
+            or lease["work_item_id"] != d["work_item_id"]
+            or lease["principal_id"] != d["principal_id"]
+            or run["principal_id"] != d["principal_id"]
         ):
             raise ValueError("broken outcome digest/lease/run join")
     for d in tables["work_lease"]:

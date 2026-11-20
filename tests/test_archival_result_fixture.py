@@ -211,6 +211,68 @@ def reseal(bundle):
     return bundle
 
 
+def test_accepted_report_retains_its_owner_and_release_basis():
+    from vuoro_demo.fixture import fixture
+    from vuoro_demo.scenario import REPO
+
+    with tempfile.TemporaryDirectory(prefix="vuoro-archive-", dir="/tmp") as path:
+        root = Path(path)
+        with fixture(root, Path(os.environ["ARCHIVE_PG_BIN"]), state={}) as (
+            endpoint,
+            tokens,
+        ):
+            item, *_ = asyncio.run(create_result(endpoint, tokens, root))
+            source = pg.get_connection(
+                f"dbname=demo_disposable user=demo_migration host={root / 'socket'}"
+            )
+            try:
+                bundle = pg.export_from_postgres(
+                    source.conn,
+                    REPO,
+                    archive_result={
+                        "workspace_id": "demo",
+                        "item_id": item,
+                    },
+                )
+            finally:
+                source.conn.close()
+            assert (
+                archive._validate(bundle["records"], REPO, "demo", item)["disposition"]
+                == "settled"
+            )
+            # An accepted receipt must describe the same work, owner and release
+            # across the report, lease and run, even after archival projection.
+            for table, field, value in (
+                ("work_outcome_report", "principal_id", "other-worker"),
+                ("run", "principal_id", "other-worker"),
+                ("work_lease", "work_item_id", item + 1),
+                ("work_lease", "basis_release_digest", "0" * 64),
+                ("work_lease", "basis_item_revision", "another-revision"),
+                ("work_lease", "state", "superseded"),
+            ):
+                records = copy.deepcopy(bundle["records"])
+                settled = next(
+                    row["data"]
+                    for row in records
+                    if row["table"] == "work_outcome_report"
+                    and row["data"]["disposition"] == "settled"
+                )
+                id_field = {
+                    "work_outcome_report": "report_id",
+                    "run": "run_id",
+                    "work_lease": "lease_id",
+                }[table]
+                row = next(
+                    row["data"]
+                    for row in records
+                    if row["table"] == table
+                    and row["data"][id_field] == settled[id_field]
+                )
+                row[field] = value
+                with pytest.raises(ValueError, match="outcome .* join"):
+                    archive._validate(records, REPO, "demo", item)
+
+
 def test_actual_native_source_archive_target_and_refusals(monkeypatch):
     import psycopg
     from vuoro_demo.fixture import fixture
