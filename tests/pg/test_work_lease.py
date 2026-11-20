@@ -636,7 +636,11 @@ class TestTakeoverAndStaleCompletion:
         assert view["reviewable_report_id"] is None
         assert view["decision"]["id"] == receipt["decision_id"]
         assert view["acceptance_receipt"] == receipt
-        archive = work_archive.export_repository(store, workspace_id="ws-1")
+        archive_op = "work.archive.export-v1"
+        archive = _invoke(store, archive_op, {}, independent)
+        assert _refused(lambda: _invoke(store, archive_op, {}, reviewer(
+            "github:300:0", browser=False,
+        ))).code == "review-identity-required"
         assert archive["acceptance_receipts"] == [receipt]
         assert (dependent, item) in {
             (edge["blocked_item_id"], edge["item_id"]) for edge in archive["dependencies"]
@@ -664,8 +668,8 @@ class TestTakeoverAndStaleCompletion:
         foreign_archive = work_archive.export_repository(other_repo, workspace_id="ws-1")
         assert foreign_archive["items"] == foreign_archive["acceptance_receipts"] == []
         monkeypatch.setattr(work_archive, "MAX_BYTES", 1)
-        with pytest.raises(ValueError, match="archive byte limit"):
-            work_archive.export_repository(store, workspace_id="ws-1")
+        exceeded = _refused(lambda: _invoke(store, archive_op, {}, independent))
+        assert exceeded.code == "archive-limit-exceeded" and exceeded.http_status == 413
         monkeypatch.setattr(work_archive, "MAX_RECORDS", 1)
         with pytest.raises(ValueError, match="archive record limit"):
             work_archive.export_repository(store, workspace_id="ws-1")

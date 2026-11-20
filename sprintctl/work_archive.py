@@ -51,6 +51,10 @@ _REPOSITORY_QUERIES = {
 }
 
 
+class ArchiveLimitExceeded(ValueError):
+    """The complete repository archive exceeds the supported download budget."""
+
+
 def export_repository(store: pg.PgStore, *, workspace_id: str) -> dict:
     """Export task history under one read-only snapshot of the work owner."""
     if not workspace_id:
@@ -70,7 +74,7 @@ def export_repository(store: pg.PgStore, *, workspace_id: str) -> dict:
             archive[section] = [pg._norm(row) for row in cur]
             remaining -= len(archive[section])
             if remaining < 0:
-                raise ValueError("archive record limit exceeded")
+                raise ArchiveLimitExceeded("archive record limit exceeded")
         cur.execute(
             "SELECT report_id, work_item_id, principal_id, outcome, summary, payload, "
             "checks, payload_digest, disposition, reason_code, verification_profile, "
@@ -82,7 +86,7 @@ def export_repository(store: pg.PgStore, *, workspace_id: str) -> dict:
         reports = [pg._norm(row) for row in cur]
         remaining -= len(reports)
         if remaining < 0:
-            raise ValueError("archive record limit exceeded")
+            raise ArchiveLimitExceeded("archive record limit exceeded")
         archive["reports"] = reports
         by_decision = {}
         for report in reports:
@@ -99,5 +103,5 @@ def export_repository(store: pg.PgStore, *, workspace_id: str) -> dict:
         archive["acceptance_receipts"] = receipts
     encoded = json.dumps(archive, ensure_ascii=False, separators=(",", ":")).encode()
     if len(encoded) > MAX_BYTES:
-        raise ValueError("archive byte limit exceeded")
+        raise ArchiveLimitExceeded("archive byte limit exceeded")
     return archive

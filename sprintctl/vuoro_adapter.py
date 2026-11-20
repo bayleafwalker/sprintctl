@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from .continuation_basis import SCHEMA as _CONTINUATION_BASIS_SCHEMA
 from . import work_currentness as _currentness
+from .work_archive import SCHEMA_VERSION as _WORK_ARCHIVE_SCHEMA
 
 import inspect
 from dataclasses import dataclass
@@ -1867,6 +1868,32 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
             "replacement": "work.lease.report-outcome-v1",
             "sunset_at": None,
         },
+    ),
+    WorkOperationContract(
+        "work.archive.export-v1",
+        _object_schema({}),
+        _result_schema(
+            (
+                "schema_version", "workspace_id", "repo_id", "observed_at", "sprints",
+                "tracks", "items", "dependencies", "references", "releases",
+                "release_commits", "decisions", "reports", "acceptance_receipts",
+            ),
+            {
+                "schema_version": {"const": _WORK_ARCHIVE_SCHEMA},
+                "workspace_id": {"type": "string", "minLength": 1},
+                "repo_id": {"type": "string", "minLength": 1},
+                "observed_at": {"type": "string"},
+                **{
+                    name: {"type": "array", "items": {"type": "object"}}
+                    for name in (
+                        "sprints", "tracks", "items", "dependencies", "references",
+                        "releases", "release_commits", "decisions", "reports",
+                        "acceptance_receipts",
+                    )
+                },
+            },
+        ),
+        "work:review.accept", "read", "not-allowed", required_remote_schema_version=29,
     ),
     WorkOperationContract(
         "work.outcome.review-queue-v1",

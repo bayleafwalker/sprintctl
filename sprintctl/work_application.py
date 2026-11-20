@@ -863,6 +863,7 @@ class WorkApplication:
             "work.lease.read-v1": target._claim_read,
             "work.outcome.accept-v1": target._outcome_accept,
             "work.outcome.review-v1": target._outcome_review,
+            "work.archive.export-v1": target._work_archive_export,
             "work.outcome.review-queue-v1": target._outcome_review_queue,
             _effect.OPERATION_PROPOSE: target._effect_propose,
             _effect.OPERATION_BOUND_PROPOSE: target._effect_propose_bound,
@@ -3285,6 +3286,17 @@ class WorkApplication:
             )
         except _pg.LeaseRefused as exc:
             raise ApplicationRejection(exc.code, str(exc), 404) from exc
+
+    def _work_archive_export(
+        self, arguments: dict[str, Any], context: InvocationContext,
+    ) -> dict[str, Any]:
+        _, workspace_id = self._browser_review_binding(context)
+        from . import work_archive
+
+        try:
+            return work_archive.export_repository(self.store, workspace_id=workspace_id)
+        except work_archive.ArchiveLimitExceeded as exc:
+            raise ApplicationRejection("archive-limit-exceeded", str(exc), 413) from exc
 
     def _browser_review_binding(self, context: InvocationContext) -> tuple[str, str]:
         identity = context.identity

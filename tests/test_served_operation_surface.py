@@ -30,6 +30,7 @@ PUBLISHED_OPERATIONS = (
         "work.agent.retire-v1",
         "work.approval.get-v1",
         "work.approval.record-v1",
+        "work.archive.export-v1",
         "work.batch.apply",
         "work.completion.assess-v1",
         "work.decision.record",
