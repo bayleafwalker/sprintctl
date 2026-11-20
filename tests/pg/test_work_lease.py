@@ -691,37 +691,44 @@ class TestTakeoverAndStaleCompletion:
         destination = pg_test_scope("restored-work-archive")
         source = {**archive, "repo_id": destination}
         with psycopg.connect(_PG_URL, row_factory=dict_row) as conn:
-            restored = pg.PgStore(conn, destination)
-            args = {"workspace_id": "destination-workspace", "actor": "destination-admin"}
+            restored = pg.PgStore(conn, destination, remote_schema_version=35)
+            restore_meta = {"workspace_id": "destination-workspace", "actor": "destination-admin"}
             invalid = deepcopy(source)
             invalid["items"][-1]["title"] = None
             with pytest.raises(psycopg.errors.NotNullViolation):
-                work_archive_restore.restore_repository(restored, invalid, **args)
+                work_archive_restore.restore_repository(restored, invalid, **restore_meta)
             assert work_archive_restore.read_restored_source(
-                restored, workspace_id=args["workspace_id"],
+                restored, workspace_id=restore_meta["workspace_id"],
             ) is None
-            result = work_archive_restore.restore_repository(restored, source, **args)
-            assert work_archive_restore.restore_repository(restored, source, **args) == result
+            restorer = reviewer("github:400:0")
+            restorer.identity.actor = restore_meta["actor"]
+            restorer.identity.workspace_id = restore_meta["workspace_id"]
+            request = {"archive": source, "idempotency_key": restorer.idempotency_key}
+            result = _invoke(restored, "work.archive.restore-v1", request, restorer)
+            assert _invoke(restored, "work.archive.restore-v1", request, restorer) == result
+            assert _invoke(restored, "work.archive.restored-source-v1", {}, restorer)["history"][
+                "source_archive"
+            ]["acceptance_receipts"] == [receipt]
             edited = deepcopy(source)
             edited["workspace_id"] = "changed"
             with pytest.raises(work_archive_restore.RestoreConflict):
-                work_archive_restore.restore_repository(restored, edited, **args)
+                work_archive_restore.restore_repository(restored, edited, **restore_meta)
             ids = result["item_ids"]
             restored_item = pg.get_work_item(restored, ids[str(item)])
             assert (restored_item["status"], restored_item["resolution"]) == ("done", "accepted")
             ready = pg.get_ready_items(restored, restored_item["sprint_id"])
             assert ids[str(dependent)] in {row["id"] for row in ready}
             history = work_archive_restore.read_restored_source(
-                restored, workspace_id=args["workspace_id"],
+                restored, workspace_id=restore_meta["workspace_id"],
             )
             assert history["source_archive"]["acceptance_receipts"] == [receipt]
             assert history["archive_digest"] == result["archive_digest"]
             assert work_archive_restore.read_restored_source(restored, workspace_id="other") is None
             restored_view = pg.review_outcome_snapshot(
-                restored, item_id=ids[str(item)], workspace_id=args["workspace_id"], principal_id="github:400:0",
+                restored, item_id=ids[str(item)], workspace_id=restore_meta["workspace_id"], principal_id="github:400:0",
             )
             assert restored_view["acceptance_receipt"] is None
-            assert restored_view["decision"]["actor"] == args["actor"]
+            assert restored_view["decision"]["actor"] == restore_meta["actor"]
             assert conn.execute(
                 "SELECT 1 FROM work_lease WHERE repo_id=%s LIMIT 1", (destination,)
             ).fetchone() is None

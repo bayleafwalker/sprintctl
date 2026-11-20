@@ -864,6 +864,8 @@ class WorkApplication:
             "work.outcome.accept-v1": target._outcome_accept,
             "work.outcome.review-v1": target._outcome_review,
             "work.archive.export-v1": target._work_archive_export,
+            "work.archive.restore-v1": target._work_archive_restore,
+            "work.archive.restored-source-v1": target._work_archive_restored_source,
             "work.outcome.review-queue-v1": target._outcome_review_queue,
             _effect.OPERATION_PROPOSE: target._effect_propose,
             _effect.OPERATION_BOUND_PROPOSE: target._effect_propose_bound,
@@ -3297,6 +3299,46 @@ class WorkApplication:
             return work_archive.export_repository(self.store, workspace_id=workspace_id)
         except work_archive.ArchiveLimitExceeded as exc:
             raise ApplicationRejection("archive-limit-exceeded", str(exc), 413) from exc
+
+    def _work_archive_restore(
+        self, arguments: dict[str, Any], context: InvocationContext,
+    ) -> dict[str, Any]:
+        workspace_id = self._archive_restore_workspace(context)
+        from psycopg import DataError, IntegrityError
+        from . import work_archive_restore
+
+        def restore(cur, _digest):
+            return work_archive_restore.restore_repository(
+                self.store, arguments.get("archive"), workspace_id=workspace_id,
+                actor=context.identity.actor,
+            )
+
+        try:
+            return self._idempotent_write(context, "restore_work_archive", arguments, restore)
+        except work_archive_restore.RestoreConflict as exc:
+            raise ApplicationRejection("archive-restore-conflict", str(exc), 409) from exc
+        except ValueError as exc:
+            raise ApplicationRejection("archive-restore-invalid", str(exc), 422) from exc
+        except (DataError, IntegrityError) as exc:
+            raise ApplicationRejection(
+                "archive-restore-invalid", "A source record violates the destination data contract", 422,
+            ) from exc
+
+    def _work_archive_restored_source(
+        self, arguments: dict[str, Any], context: InvocationContext,
+    ) -> dict[str, Any]:
+        workspace_id = self._archive_restore_workspace(context)
+        from . import work_archive_restore
+
+        return {"history": work_archive_restore.read_restored_source(self.store, workspace_id=workspace_id)}
+
+    def _archive_restore_workspace(self, context: InvocationContext) -> str:
+        _, workspace_id = self._browser_review_binding(context)
+        if (getattr(self.store, "remote_schema_version", None) or 0) < 35:
+            raise ApplicationRejection(
+                "owner-capability-unavailable", "Work archive restore requires schema 35", 503,
+            )
+        return workspace_id
 
     def _browser_review_binding(self, context: InvocationContext) -> tuple[str, str]:
         identity = context.identity

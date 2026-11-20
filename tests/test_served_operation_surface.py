@@ -31,6 +31,8 @@ PUBLISHED_OPERATIONS = (
         "work.approval.get-v1",
         "work.approval.record-v1",
         "work.archive.export-v1",
+        "work.archive.restore-v1",
+        "work.archive.restored-source-v1",
         "work.batch.apply",
         "work.completion.assess-v1",
         "work.decision.record",

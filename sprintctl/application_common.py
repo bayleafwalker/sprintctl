@@ -86,6 +86,7 @@ _ADMIN_SHUTDOWN_READ_OPERATIONS = frozenset(
         "work.outcome.review-v1",
         "work.outcome.review-queue-v1",
         "work.archive.export-v1",
+        "work.archive.restored-source-v1",
         "work.maintain.check",
         "work.maintenance.resource.get",
         "work.maintenance.resource.changes",

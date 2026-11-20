@@ -1896,6 +1896,27 @@ WORK_OPERATION_CONTRACTS: tuple[WorkOperationContract, ...] = (
         "work:review.accept", "read", "not-allowed", required_remote_schema_version=29,
     ),
     WorkOperationContract(
+        "work.archive.restore-v1",
+        _object_schema(
+            {"archive": {"type": "object"}, "idempotency_key": _IDEMPOTENCY_KEY_SCHEMA},
+            required=("archive", "idempotency_key"),
+        ),
+        _result_schema(
+            ("archive_digest", "item_ids"),
+            {
+                "archive_digest": _SHA256_HEX,
+                "item_ids": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 1}},
+            },
+        ),
+        "work:review.accept", "write", "required", required_remote_schema_version=35,
+    ),
+    WorkOperationContract(
+        "work.archive.restored-source-v1",
+        _object_schema({}),
+        _result_schema(("history",), {"history": {"type": ["object", "null"]}}),
+        "work:review.accept", "read", "not-allowed", required_remote_schema_version=35,
+    ),
+    WorkOperationContract(
         "work.outcome.review-queue-v1",
         _object_schema({"after_item_id": {"type": "integer", "minimum": 1}}),
         _result_schema(
