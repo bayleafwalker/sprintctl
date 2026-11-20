@@ -152,14 +152,45 @@ def _validate(records, repo, workspace, item_id):
         or decision["release_digest"] not in rels
     ):
         raise ValueError("broken historical Decision/Release join")
-    if decision["actor"] != pg.SETTLEMENT_ACTOR or any(
-        d["id"] != decision["id"] and d["kind"] == "accept"
-        and d["actor"] == pg.SETTLEMENT_ACTOR
-        for d in tables["work_decision"]
-    ):
-        raise ValueError("archive must contain exactly one owner lease settlement")
     lease = leases.get(report["lease_id"])
     release = rels[decision["release_digest"]]
+    browser_review = (
+        release["acceptance_contract"].get("review_protocol")
+        == releases.BROWSER_REVIEW_PROTOCOL
+    )
+    if any(
+        d["kind"] == "accept" and d["actor"] == pg.SETTLEMENT_ACTOR
+        and (browser_review or d["id"] != decision["id"])
+        for d in tables["work_decision"]
+    ):
+        raise ValueError("archive must contain only the selected owner lease settlement")
+    if browser_review:
+        events = [
+            row for row in tables["event"]
+            if row["event_type"] == "item-decided"
+            and row["work_item_id"] == item_id
+            and isinstance(row["payload"], dict)
+            and row["payload"].get("decision_id") == decision["id"]
+        ]
+        event = events[0] if len(events) == 1 else {}
+        review = event.get("payload", {})
+        reviewer = review.get("reviewer_principal_id")
+        if (
+            not isinstance(reviewer, str) or not reviewer.strip()
+            or reviewer.rsplit(":", 1)[0] == report["principal_id"].rsplit(":", 1)[0]
+            or event.get("actor") != decision["actor"]
+            or review.get("kind") != "accept"
+            or review.get("resolution") != "accepted"
+            or report["outcome"] != "succeeded"
+            or decision["evidence_digests"] != [report["payload_digest"]]
+            or release["acceptance_contract"].get("verification_profile") != "human-authorized"
+            or review.get("release_digest") != release["release_digest"]
+            or review.get("reviewed_report_id") != report["report_id"]
+            or "human-authorized" not in report["verification_profile"].split("+")
+        ):
+            raise ValueError("broken historical browser review receipt")
+    elif decision["actor"] != pg.SETTLEMENT_ACTOR:
+        raise ValueError("archive must contain one owner lease settlement or browser review")
     if (
         lease is None
         or lease["state"] != "settled"
@@ -268,6 +299,12 @@ def _validate(records, repo, workspace, item_id):
         "release_digest",
         "verification_receipt_digest",
     }
+    if (
+        browser_review and not release["acceptance_contract"].get("effect_verification_required")
+        and isinstance(payload, dict) and not tables["work_effect_intent"]
+        and not required_links.intersection(payload)
+    ):
+        return report
     if not isinstance(payload, dict) or any(not payload.get(k) for k in required_links):
         raise ValueError("missing required protected outcome links")
     matching = [

@@ -889,3 +889,112 @@ def test_real_canonical_capability_refuses_without_scrubbing():
     finally:
         if state.get("cleanup") == "complete":
             shutil.rmtree(root)
+
+
+def test_browser_review_receipt_survives_archival_restore():
+    import psycopg
+
+    from vuoro_demo.fixture import fixture
+    from vuoro_demo.scenario import REPO
+
+    with tempfile.TemporaryDirectory(prefix="vuoro-archive-", dir="/tmp") as path:
+        root = Path(path)
+        with fixture(root, Path(os.environ["ARCHIVE_PG_BIN"]), state={}):
+            socket = root / "socket"
+            source = pg.get_connection(f"dbname=demo_disposable user=demo_migration host={socket}")
+            source.repo_id = REPO
+            try:
+                sprint = pg.create_sprint(source, "Archive human review", goal="Preserve the receipt", status="active")
+                track = pg.get_or_create_track(source, sprint, "Review")
+                item = pg.create_work_item(source, sprint, track, "Review this report")
+                dependent = pg.create_work_item(source, sprint, track, "Wait for acceptance")
+                pg.add_dep(source, item, dependent)
+                reservation = pg.reserve(
+                    source, item, actor="manager", session_id="review-session",
+                    acceptance_contract={
+                        "verification_profile": "human-authorized",
+                        "review_protocol": "browser-outcome-v1",
+                    },
+                )
+                pg.release_reservation(source, reservation["id"])
+                binding = {
+                    "principal_id": "github:worker:0", "workspace_id": "demo",
+                    "client_id": None, "grant_id": None,
+                }
+                run = pg.register_run(
+                    source, **binding, idempotency_key="browser-archive-run",
+                    request_digest="a" * 64, harness_id="fixture", harness_build="test",
+                    model_id="test", recipe_id="review", observed_profile={},
+                )
+                claimed = pg.acquire_lease(
+                    source, **binding, work_item_id=item, run_id=run["run_id"],
+                    claim_key="browser-archive-claim", ttl_seconds=600, actor="worker",
+                )
+                report = pg.complete_lease(
+                    source, **binding, lease_id=claimed["lease"]["lease_id"], run_id=run["run_id"],
+                    idempotency_key="browser-archive-report", request_digest="b" * 64,
+                    outcome="succeeded", summary="Evidence is ready", payload={"result": "ok"},
+                    checks=[], actor="worker",
+                )
+                assert report["disposition"] == "awaiting-verification"
+                release = pg.current_release(source, item)["release_digest"]
+                source.conn.commit()
+                with source.conn.transaction(), source.conn.cursor() as cur:
+                    receipt = pg.accept_reviewed_outcome(
+                        cur, source, item_id=item, workspace_id="demo",
+                        principal_id="github:reviewer:0", actor="github:reviewer",
+                        report_id=report["report_id"], payload_digest=report["payload_digest"],
+                        release_digest=release, rationale="Verified the result",
+                    )
+                bundle = pg.export_from_postgres(
+                    source.conn, REPO, archive_result={"workspace_id": "demo", "item_id": item},
+                )
+            finally:
+                source.conn.close()
+
+            name = "archive_fixture_" + secrets.token_hex(8) + "_target"
+            with psycopg.connect(
+                f"dbname=postgres user=demo_migration host={socket}", autocommit=True,
+            ) as admin:
+                admin.execute(f"CREATE DATABASE {name} OWNER demo_migration")
+                admin.execute(
+                    f"COMMENT ON DATABASE {name} IS 'sprintctl:owned-disposable-archive/v1'"
+                )
+            target = pg.get_connection(f"dbname={name} user=demo_migration host={socket}")
+            target.repo_id = REPO
+            try:
+                pg.init_db(target)
+                args = {"workspace_id": "demo", "item_id": item}
+                tampered = copy.deepcopy(bundle)
+                event = next(
+                    r["data"]["payload"] for r in tampered["records"]
+                    if r["table"] == "event" and r["data"]["event_type"] == "item-decided"
+                )
+                event["reviewer_principal_id"] = "github:worker:1"
+                reseal(tampered)
+                with pytest.raises(ValueError, match="broken historical browser review receipt"):
+                    pg.import_ndjson(target, tampered, archive_result={
+                        **args, "expected_bundle_digest": tampered["bundle_digest"],
+                    })
+                target.conn.rollback()
+                pg.import_ndjson(target, bundle, archive_result={
+                    **args, "expected_bundle_digest": bundle["bundle_digest"],
+                })
+                (outcome,) = pg.claim_state(target, item)["outcome_reports"]
+                assert outcome["report_id"] == receipt["report_id"]
+                assert outcome["payload_digest"] == receipt["payload_digest"]
+                assert outcome["decision_id"] == receipt["decision_id"]
+                (decision,) = pg.list_decisions(target, item)
+                assert (decision["actor"], decision["release_digest"]) == ("github:reviewer", release)
+                (event,) = [
+                    row for row in pg.list_events(target, sprint)
+                    if row["event_type"] == "item-decided-imported"
+                ]
+                imported = json.loads(event["payload"])["source_payload"]
+                assert imported["reviewer_principal_id"] == receipt["reviewer_principal_id"]
+                assert imported["reviewed_report_id"] == receipt["report_id"]
+                assert "decision_id" not in imported and "idempotency_key" not in imported
+                assert dependent in {row["id"] for row in pg.get_ready_items(target, sprint)}
+                assert target.conn.execute("SELECT count(*) AS n FROM work_idempotency_ledger").fetchone()["n"] == 0
+            finally:
+                target.conn.close()
