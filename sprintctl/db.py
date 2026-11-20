@@ -2118,6 +2118,8 @@ def reserve(conn: sqlite3.Connection, work_item_id: int, *, actor: str, session_
     if expected_revision is not None:
         expected_revision = _releases.validate_basis(expected_revision)
     contract = _releases.normalize_acceptance_contract(acceptance_contract)
+    if "review_protocol" in contract:
+        raise ValueError("browser review releases require the PostgreSQL owner")
     if get_work_item(conn, work_item_id) is None:
         raise ValueError(f"Work item #{work_item_id} not found")
     _require_idle_connection(conn, operation="reservation admission")
@@ -2446,6 +2448,15 @@ def _decide_locked(conn: sqlite3.Connection, item: dict, decision: dict) -> dict
     The decision row is written first and a terminal kind then closes the item
     in one statement that binds it, which is the order the triggers require.
     """
+
+    if decision["kind"] == "accept" and conn.execute(
+        "SELECT 1 FROM work_release r WHERE r.work_item_id=? "
+        "AND json_extract(r.acceptance_contract, '$.review_protocol')=? "
+        "AND r.revise_count=(SELECT count(*) FROM work_decision d "
+        "WHERE d.work_item_id=r.work_item_id AND d.kind='revise') LIMIT 1",
+        (item["id"], _releases.BROWSER_REVIEW_PROTOCOL),
+    ).fetchone() is not None:
+        raise InvalidTransition("This release requires acceptance of an exact report by a browser reviewer")
 
     def successor_exists(superseded_by):
         return (

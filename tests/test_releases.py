@@ -524,3 +524,15 @@ def test_effect_check_revisions_change_the_frozen_release_digest():
     assert releases.release_digest(UUID, revision, declared, []) != releases.release_digest(
         UUID, revision, legacy, []
     )
+
+
+def test_browser_review_protocol_is_bound_to_human_authorized_profile():
+    contract = {
+        "review_protocol": releases.BROWSER_REVIEW_PROTOCOL,
+        "verification_profile": "human-authorized",
+    }
+    assert releases.normalize_acceptance_contract(contract) == contract
+    with pytest.raises(ValueError, match="browser review requires"):
+        releases.normalize_acceptance_contract(dict(contract, verification_profile="checked"))
+    with pytest.raises(ValueError, match="browser review requires"):
+        releases.normalize_acceptance_contract(dict(contract, review_protocol="unknown"))
